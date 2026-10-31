@@ -10,6 +10,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Model HTTP retries now use the full `CurrentModelRetryPolicy` Reference
+  (`ModelRetryPolicy`, `modelRetryDefaults`) at call execution. The default
+  four attempts include the initial send and a distinct configured fallback's
+  reserved final slot. Long `Retry-After` hints are capped and slept. Empty
+  200 responses, decoding failures and SSE failures no longer replay their
+  transport request. The loop's pre-content stream fallback keeps its frozen
+  request/header and gets a fresh logical budget. Tools and callbacks stay
+  outside model retry/timeout wrappers. HTTP refusals created at the shared
+  request boundary use `AiError.module: "Models"` and method `request`, with
+  bounded provider descriptions and raw HTTP evidence. Stored format remains 8.
+
 - Model request failures now expose typed `model.*` codes instead of the
   generic `loop.failed`; read a returned turn error's code with
   `harnessCodeOf`. Adapters classify native errors or response parts/content
@@ -300,8 +311,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   plain-string ids.
 - An evaluation export that runs longer than 5 minutes now fails as
   `provider`: pass a larger `timeoutMs` to the exporter.
-- Hosts that relied on the long retry ladder of a routed call: the call's
-  600 s budget is a constant for now.
+- Hosts tuning routed-call bounds provide the full `CurrentModelRetryPolicy`
+  Reference; the total deadline defaults to 600 s.
 - `Sessions.changes` merges the signals a follower has not taken into one:
   a follower that counted signals to count commits reads from its cursor
   after each signal instead.
@@ -717,10 +728,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `DecisionCaseId`, `RetrievalDocumentId`, `RetrievalItemId`.
 - Brands are type-only: stored data is unchanged, and every journal and
   report still decodes.
-- `@xandreed/plugin-models`: `retryableLlm(label, budget?)` and
-  `generateWith(selection, options, isFallback?, budget?)` take an optional
-  `CallBudget`; a routed call that once retried for about 40 minutes now
-  fails after 600 s.
+- `@xandreed/plugin-models`: retries move to the HTTP boundary. One logical
+  call's attempt cap and deadline include its configured fallback; model
+  methods, body decoding and toolkit callbacks have no outer retry ladder.
 - `@xandreed/core`: `definePlugin`'s `requires` and `optional` take service
   keys (service classes or References), and a plugin's layer may need only
   the services `requires` lists; a layer needing another one no longer
@@ -1013,6 +1023,14 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- `@xandreed/plugin-models`: per-call model request policy for finite shared
+  attempts, header waits, pending body reads, total deadlines and capped
+  Retry-After sleeps across native, compatible and subscription routes.
+  `modelRequestConformance` and `ModelRequestSubject` ship through the existing
+  conformance entry. Key-free Agent and packed Node/Bun fixtures cover mixed
+  failures, fallback reservation, cancellation, read progress and one durable
+  tool execution.
 
 - Provider-neutral `ModelFailureKind`, failure stamps and helpers, with nine
   published codes for context, authentication, invalid requests, rate limits,
@@ -1349,8 +1367,8 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/evals-langfuse` and `@xandreed/evals-langsmith`: an optional
   `timeoutMs` (default 300 000) bounds a whole export, `flush` included;
   past it the export fails as `provider`.
-- `@xandreed/plugin-models` exports `LLM_CALL_BUDGET_MS`, `CallBudget` and
-  `makeCallBudget`.
+- `@xandreed/plugin-models` exports `LLM_CALL_BUDGET_MS` as the default total
+  request bound; `CurrentModelRetryPolicy` configures each call's bounds.
 - `@xandreed/core` exports `provideDeclared` and `ServiceKeys`, and the
   published codes include `requires.missing`.
 - `toolRegistryConformance` checks the open's `requires.missing`, and that
@@ -1400,6 +1418,14 @@ stays inside its package, with nothing deprecated first:
   name `reasonOf` puts before it for logs and reports.
 
 ### Changed
+
+- `@xandreed/plugin-models`: managed Node HTTP now always uses scoped undici
+  agents with header/body timeouts disabled, direct and through proxy target
+  and CONNECT pools. Effect owns request bounds; the global dispatcher stays
+  unchanged. An explicit Fetch Reference remains authoritative on the managed
+  direct route; proxies and explicit `ModelsTransport` retain precedence.
+  Router watchdog, in-flight handler counting and tool-handoff retry machinery
+  are removed.
 
 - `@xandreed/plugin-agent-loop`: each tool call the loop runs is its own
   `loop.tool_call` span under its step's `engine.turn` (attributes
@@ -1804,18 +1830,13 @@ Model-visible text (exact pins and the compaction golden updated):
 - `@xandreed/evals-langsmith`: each request has a 30 s limit (was 90 s),
   and an interrupted export returns at once without waiting for its
   requests.
-- A routed `generateText`/`generateObject` call no longer counts tool time
-  against its 300 s attempt timeout: once the call starts a tool it is
-  final, not retried and not sent to `fallbackModel`, so tools never run
-  twice and a long tool no longer fails its step.
-- A routed call's attempts, backoff and fallback share a 600 s budget; a
-  hung provider fails after 600 s, naming the budget and the attempts.
-- A streamed model call no longer fails while one of its tools runs: the
-  stream's 300 s idle bound counts only the time no tool runs, so a tool
-  that runs longer mid-stream completes its step.
-- A streamed call's retries share the call's 600 s budget: no attempt
-  starts after it, and an attempt that has sent no content by then is cut,
-  with a message naming the budget and the attempts made.
+- A handed-off model response cannot trigger a transport retry or configured
+  fallback, including when a direct SDK toolkit handler fails. Model timeout
+  wrappers no longer enclose tool/callback work.
+- Header waits and pending streamed or settled body reads obey finite policy
+  bounds and the shared logical deadline (600 s by default). Owned cuts
+  retain the typed `model.timeout` failure; a progressing stream can outlast
+  the header timeout without being mistaken for idle network work.
 - `@xandreed/plugin-sessions`: `Sessions.changes` wakes only the followers
   of the session that was committed to, not every follower of every
   session, and a follower that stops reading holds one signal instead of

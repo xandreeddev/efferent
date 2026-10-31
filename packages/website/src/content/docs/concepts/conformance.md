@@ -7,7 +7,7 @@ description: The port contracts as runnable checks, to run against your own adap
 
 A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core/conformance` ships each contract as a
-list of checks (the models plugin's credential and settings stores' from
+list of checks (the models plugin's credential, settings and model-request kits from
 `@xandreed/plugin-models/conformance`, the tool registry's from
 `@xandreed/sdk/conformance`, since it runs turns over the sdk's
 `TurnLive`), so a host that writes its own
@@ -39,6 +39,7 @@ transports (see [render kits](#render-kits)).
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
 | `authStoreConformance(store, { refresh?, corrupt? })` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), `get` and `all` hand out every secret `Redacted`, holding the value that was set, an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated; with `refresh`, concurrent calls on one expired token send one token request and a `remove` during it sticks; with `corrupt`, damaged backing data fails every call with `auth.corrupt` | an `AuthStore` |
 | `settingsStoreConformance(store, { writable, corrupt? })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
+| `modelRequestConformance(subject?)` | one counter for mixed transport/status failures, permanent structured errors before status retries, execution-time policy overrides and total attempt limits | a request-policy subject over a supplied raw `HttpClient`, the first-party engine by default |
 | `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
 Every kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
@@ -885,6 +886,42 @@ const store = await Effect.runPromise(Effect.service(AuthStore).pipe(Effect.prov
   LocalAuthStoreLive(cwd, home, ".efferent/runtime").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch })))))))
 const checks = authStoreConformance(store, { refresh: endpoint.probe, corrupt: damaged(`${home}/.efferent/runtime/auth.json`) })
 ```
+
+## The model-request kit
+
+`@xandreed/plugin-models/conformance` exports `modelRequestConformance` and
+`ModelRequestSubject`. A subject's `request(client, request, { protocol })`
+executes one logical request over the supplied raw `HttpClient`, returning
+the response's status and guarded text reader in an Effect. The subject owns
+retries; it reads the full `CurrentModelRetryPolicy` Reference at execution.
+Omitting the subject checks the first-party engine. That engine and its
+ephemeral attempt state are internal.
+
+```ts
+import { modelRequestConformance } from "@xandreed/plugin-models/conformance"
+import type { ModelRequestSubject } from "@xandreed/plugin-models/conformance"
+
+declare const subject: ModelRequestSubject
+
+const checks = modelRequestConformance(subject)
+const builtInChecks = modelRequestConformance()
+```
+
+The kit supplies scripted transports, with no network or credentials:
+
+- **mixed-attempts**: a transport failure, 429 and 529 share one counter
+  before a fourth-send success.
+- **permanent-status**: structured invalid-request evidence under HTTP 429
+  fails once as InvalidRequest.
+- **dynamic-policy**: executions with different attempt limits obey their
+  own Reference values.
+
+Careless subjects that send once, retry permanently, or capture/ignore the
+policy fail these checks. Request-engine tests additionally cover bounded
+reads, delays and scoped cancellation. The shared Agent HTTP fixture runs
+on source Bun and packed Node/Bun, checking fallback reservation, frozen
+step replay and exactly one durable tool execution. These tests establish
+request behavior without claiming live provider acceptance or billing.
 
 ## Render kits
 

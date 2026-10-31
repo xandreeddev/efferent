@@ -1,14 +1,14 @@
 import { Agent as HttpAgent } from "node:http"
 import { Agent as HttpsAgent } from "node:https"
-import { Config, Effect, Layer, Match, Option, Redacted } from "effect"
-import type { Context, Scope } from "effect"
+import { Config, Context, Effect, Layer, Match, Option, Redacted } from "effect"
+import type { Scope } from "effect"
 import { errorCodeOf } from "@xandreed/core"
 import type { Agent, Dispatcher, ProxyAgent, buildConnector } from "undici"
-import { ModelsTransport } from "../ports/models-transport.port.js"
+import { CurrentManagedModelsTransport, ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelsFetch, WebSocketProxy } from "../ports/models-transport.port.js"
 import { BUN_WEBSOCKET_PROXY_VERSION, NODE_WEBSOCKET_PROXY_VERSION, PROXY_VARIABLES, ProxyUnsupported } from "./http-proxy.entity.js"
 import type { HttpProxyOptions, ProxyConfig, ProxyEnvironment, ProxyInvalid } from "./http-proxy.entity.js"
-import { atLeastVersion, displayProxy, proxyFor, redactCredentials, resolveProxy, turnsProxyOff, usesProxy } from "./http-proxy.entity.functions.js"
+import { atLeastVersion, displayProxy, proxyFor, redactCredentials, resolveProxy, usesProxy } from "./http-proxy.entity.functions.js"
 import { undiciFetch } from "./undici-fetch.adapter.js"
 
 /** The runtime the plugin runs on, told apart without a Bun-only import (the subscription's WebSocket checks its route against it too). */
@@ -123,7 +123,7 @@ type Undici = typeof import("undici")
 
 const loadUndici: Effect.Effect<Undici, ProxyUnsupported> = Effect.tryPromise({
   try: () => import("undici"),
-  catch: (cause) => new ProxyUnsupported({ message: `undici, which sends the models plugin's calls on Node under a proxy setting, could not be loaded: ${describeFailure(cause)}` }),
+  catch: (cause) => new ProxyUnsupported({ message: `undici, which sends the models plugin's calls on Node, could not be loaded: ${describeFailure(cause)}` }),
 })
 
 /**
@@ -140,7 +140,7 @@ const destroyDispatcher = (dispatcher: { readonly destroy: () => Promise<void> }
   )
 
 const nodeDirect = (undici: Undici) => Effect.gen(function* () {
-  const dispatcher: Agent = new undici.Agent()
+  const dispatcher: Agent = new undici.Agent({ headersTimeout: 0, bodyTimeout: 0 })
   const sockets = { https: new HttpsAgent(), http: new HttpAgent() }
   yield* Effect.addFinalizer(() => Effect.all([
     destroyDispatcher(dispatcher),
@@ -153,9 +153,8 @@ const nodeDirect = (undici: Undici) => Effect.gen(function* () {
 })
 
 /**
- * Node with the proxy turned off (`*` in `noProxy` or `NO_PROXY`): every
- * call on the direct route, so it stays direct even where Node's own fetch
- * would apply the environment's proxy (`NODE_USE_ENV_PROXY`).
+ * Node without proxy routing: every call takes the direct route, even where
+ * Node's own fetch would apply the environment's proxy (`NODE_USE_ENV_PROXY`).
  */
 const nodeDirectTransport = Effect.gen(function* () {
   const direct = yield* nodeDirect(yield* loadUndici)
@@ -175,9 +174,12 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
   const direct = yield* nodeDirect(undici)
   const proxyAgent = (proxy: Redacted.Redacted<string>): ProxyAgent => new undici.ProxyAgent({
     uri: Redacted.value(proxy),
+    // ProxyAgent's separate CONNECT client does not inherit target-pool
+    // options. Its public clientFactory must disable both defaults too.
+    clientFactory: (origin, options) => new undici.Pool(origin, { ...options, headersTimeout: 0, bodyTimeout: 0 }),
     factory: (origin, options) => {
       const connect: unknown = Reflect.get(options, "connect")
-      return new undici.Pool(origin, { ...options, ...(isConnector(connect) ? { connect: tunnelOnce(connect, proxy) } : {}) })
+      return new undici.Pool(origin, { ...options, ...(isConnector(connect) ? { connect: tunnelOnce(connect, proxy) } : {}), headersTimeout: 0, bodyTimeout: 0 })
     },
   })
   const sameUrl = Option.isSome(config.https) && Option.isSome(config.http) && Redacted.value(config.https.value) === Redacted.value(config.http.value)
@@ -213,34 +215,37 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
 })
 
 /**
- * The transport a proxy setting calls for, or `None` when no proxy applies
- * and nothing has to be held direct: then the plugin adds no transport and
- * every call uses the runtime's own fetch, as it did before the plugin knew
- * proxies (a `FetchHttpClient.Fetch` the host provides still reaches the
- * provider SDKs). With the proxy turned off (`*`) on Node it is a transport
- * over undici's direct agent, since Node's global fetch and agents apply the
- * environment's proxy under `NODE_USE_ENV_PROXY`. A proxy URL that cannot
+ * A scoped transport context. Node always owns a direct zero-timeout Agent;
+ * its exact instance is marked so an explicit host fetch may override it.
+ * Actual proxy transports remain authoritative. Bun with no proxy uses its
+ * native fetch. A proxy URL that cannot
  * be used fails with `ProxyInvalid`; a runtime that is neither Node nor Bun
  * fails with `ProxyUnsupported` when a proxy applies. Its connection pools
  * close with the scope.
  */
-export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProxyOptions): Effect.fn.Return<Option.Option<Context.Service.Shape<typeof ModelsTransport>>, ProxyInvalid | ProxyUnsupported | Config.ConfigError, Scope.Scope> {
+export const modelsTransportContextFor = Effect.fnUntraced(function* (options: HttpProxyOptions): Effect.fn.Return<Context.Context<never>, ProxyInvalid | ProxyUnsupported | Config.ConfigError, Scope.Scope> {
   const config = yield* Effect.fromResult(resolveProxy(options, yield* readEnvironment))
   const runtime = currentRuntime()
   if (!usesProxy(config)) {
     return yield* Match.value(runtime).pipe(
-      Match.tag("Node", () => turnsProxyOff(config) ? Effect.map(nodeDirectTransport, Option.some) : Effect.succeedNone),
-      Match.orElse(() => Effect.succeedNone),
+      Match.tag("Node", () => Effect.map(nodeDirectTransport, (transport) => Context.make(ModelsTransport, transport).pipe(Context.add(CurrentManagedModelsTransport, Option.some(transport))))),
+      Match.orElse(() => Effect.succeed(Context.empty())),
     )
   }
-  return Option.some(yield* Match.value(runtime).pipe(
+  const transport = yield* Match.value(runtime).pipe(
     Match.tag("Bun", ({ version }) => Effect.succeed(bunTransport(config, version))),
     Match.tag("Node", ({ version }) => nodeTransport(config, version)),
     Match.tag("Other", () => Effect.fail(new ProxyUnsupported({
       message: "a proxy is configured, but this runtime is neither Node nor Bun: the models plugin cannot send its calls through a proxy here",
     }))),
     Match.exhaustive,
-  ))
+  )
+  return Context.make(ModelsTransport, transport).pipe(Context.add(CurrentManagedModelsTransport, Option.none()))
+})
+
+/** The scoped transport when one is required; Bun without a proxy keeps native fetch. */
+export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProxyOptions) {
+  return Context.getOption(yield* modelsTransportContextFor(options), ModelsTransport)
 })
 
 /**
@@ -248,15 +253,15 @@ export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProx
  * proxy setting: `options.proxy` (or `https_proxy` / `HTTPS_PROXY` and
  * `http_proxy` / `HTTP_PROXY` from the environment) for every call, except
  * loopback hosts and the `noProxy` / `NO_PROXY` hosts, which go direct (see
- * `resolveProxy`). With no proxy at all it is the global fetch, unchanged;
- * with `noProxy: "*"` on Node, undici's direct agent. A proxy URL that cannot
+ * `resolveProxy`). Node always uses a scoped direct undici Agent with its
+ * header/body timeouts disabled; Bun without a proxy keeps native fetch. A proxy URL that cannot
  * be used fails with `ProxyInvalid`; a runtime that is neither Node nor Bun
  * fails with `ProxyUnsupported` when a proxy applies. Its connection pools
  * close with the layer's scope. Hosts use it for the OAuth login helpers too:
  * `exchangeAnthropicCode(code, verifier, { fetch: transport.fetch })`.
  */
 export const ModelsTransportLive = (options: HttpProxyOptions = {}): Layer.Layer<ModelsTransport, ProxyInvalid | ProxyUnsupported | Config.ConfigError> =>
-  Layer.effect(ModelsTransport, Effect.map(modelsTransportFor(options), Option.getOrElse(() => directTransport)))
+  Layer.effectContext(Effect.map(modelsTransportContextFor(options), (context) => Context.add(context, ModelsTransport, Option.getOrElse(Context.getOption(context, ModelsTransport), () => directTransport))))
 
 /**
  * A transport's fetch as `FetchHttpClient.Fetch` takes it (the type of the

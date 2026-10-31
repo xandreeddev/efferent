@@ -7,9 +7,26 @@ import { CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, Mod
 import { AuthError, AuthStore } from "../ports/auth-store.port.js"
 import { EngineSettings, SettingsStore } from "../ports/settings-store.port.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
-import { makeCallBudget, retryableLlm, retryableLlmStream } from "./retry.js"
-import type { CallBudget } from "./retry.js"
-import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung, withHandOff } from "./router.js"
+import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, throughTransport } from "./router.js"
+import type { ProviderServices } from "./providers.js"
+
+test("managed direct routing preserves an explicitly provided global Fetch while authoritative transports keep their route", async () => {
+  const transport = { fetch: () => Promise.resolve(new Response("managed route")) }
+  const services: ProviderServices = {
+    endpoints: {}, modelSettings: {}, transport: Option.some(transport), managedTransport: Option.some(transport),
+    sessions: Option.none(), thinkingPrefixMismatch: "drop_block",
+  }
+  const explicitlyProvided = await Effect.runPromise(throughTransport(services)(Effect.service(FetchHttpClient.Fetch)).pipe(
+    Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+  ))
+  expect(explicitlyProvided).toBe(globalThis.fetch)
+  const managed = await Effect.runPromise(throughTransport(services)(Effect.service(FetchHttpClient.Fetch)))
+  expect(await (await managed("https://fixture.invalid/")).text()).toBe("managed route")
+  const authoritative = await Effect.runPromise(throughTransport({ ...services, managedTransport: Option.none() })(Effect.service(FetchHttpClient.Fetch)).pipe(
+    Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+  ))
+  expect(await (await authoritative("https://fixture.invalid/")).text()).toBe("managed route")
+})
 
 const finish = AiResponse.makePart("finish", {
   reason: "tool-calls",
@@ -230,116 +247,6 @@ describe("an endpoint with its own key", () => {
     )).finally(() => server.stop(true))
     expect(seen).toEqual(["Bearer plain-key", "Bearer redacted-key", null, "Bearer stored-key"])
     expect(Ref.getUnsafe(reads)).toEqual(["get stored", "resolveKey stored"])
-  })
-})
-
-describe("withFallbackRung", () => {
-  const sel = (raw: string): ModelSelection =>
-    Option.getOrThrow(parseModelSelection(raw))
-  const primary = sel("opencode:kimi-k2.6")
-  const fallback = Option.some(sel("google:gemini-3.5-flash"))
-  const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
-  const statusError = (status: number) =>
-    AiError.make({
-      module: "Test",
-      method: "generateText",
-      reason: AiError.reasonFromHttpStatus({ status, http: { request, response: { status, headers: {} } } }),
-    })
-  const transient = statusError(503)
-  const permanent = statusError(401)
-
-  const scripted = (outcomes: Record<string, Effect.Effect<string, unknown>>) => {
-    const calls: Array<{ readonly model: string; readonly isFallback: boolean }> = []
-    const call = (selection: ModelSelection, isFallback: boolean) => {
-      const key = `${selection.provider}:${selection.modelId}`
-      calls.push({ model: key, isFallback })
-      return outcomes[key] ?? Effect.fail("unscripted")
-    }
-    return { call, calls }
-  }
-  /** The rung within a budget: a fresh one, as a routed call makes it, unless one is given. */
-  const rung = <A, E>(
-    fb: Option.Option<ModelSelection>,
-    call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, E>,
-    budget: Effect.Effect<CallBudget> = makeCallBudget(),
-  ) => Effect.flatMap(budget, (made) => withFallbackRung(primary, fb, call, made))
-
-  test("a TRANSIENT primary failure runs the fallback once, labeled", async () => {
-    const { call, calls } = scripted({
-      "opencode:kimi-k2.6": Effect.fail(transient),
-      "google:gemini-3.5-flash": Effect.succeed("saved"),
-    })
-    const out = await Effect.runPromise(
-      rung(fallback, call) as Effect.Effect<string>,
-    )
-    expect(out).toBe("saved")
-    expect(calls).toEqual([
-      { model: "opencode:kimi-k2.6", isFallback: false },
-      { model: "google:gemini-3.5-flash", isFallback: true },
-    ])
-  })
-
-  test("a PERMANENT failure never falls back — a different model can't fix a bad request", async () => {
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(permanent) })
-    const exit = await Effect.runPromiseExit(rung(fallback, call))
-    expect(exit._tag).toBe("Failure")
-    expect(calls).toHaveLength(1)
-  })
-
-  test("an exhausted quota never falls back, though a 429 carried it", async () => {
-    const quota = AiError.make({ module: "Test", method: "generateText", reason: new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } }) })
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(quota), "google:gemini-3.5-flash": Effect.succeed("saved") })
-    const exit = await Effect.runPromiseExit(rung(fallback, call))
-    expect(exit._tag).toBe("Failure")
-    expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
-  })
-
-  test("no fallback configured, or fallback === primary → the error passes through", async () => {
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient) })
-    const none = await Effect.runPromiseExit(rung(Option.none(), call))
-    expect(none._tag).toBe("Failure")
-    const same = await Effect.runPromiseExit(
-      rung(Option.some(primary), call),
-    )
-    expect(same._tag).toBe("Failure")
-    expect(calls).toHaveLength(2)
-  })
-
-  test("a transient failure after the call handed a tool call off never falls back: the fallback would run the tools again", async () => {
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient), "google:gemini-3.5-flash": Effect.succeed("saved") })
-    const handedOff = makeCallBudget().pipe(Effect.tap((budget) => Deferred.succeed(budget.handedOff, undefined)))
-    expect(await Effect.runPromise(Effect.flip(rung(fallback, call, handedOff)))).toBe(transient)
-    expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
-  })
-
-  test("a transient failure once the call's budget is spent never falls back", async () => {
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient), "google:gemini-3.5-flash": Effect.succeed("saved") })
-    expect(await Effect.runPromise(Effect.flip(rung(fallback, call, makeCallBudget(0))))).toBe(transient)
-    expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
-  })
-
-  test("the fall back is logged with both models as annotations, neither in its text", async () => {
-    const logged: Array<readonly [string, unknown, unknown]> = []
-    const capture = Logger.layer([Logger.make((options) => {
-      const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
-      logged.push([[options.message].flat().join(" "), annotations["llm.model"], annotations["llm.fallback_model"]])
-    })])
-    const { call } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient), "google:gemini-3.5-flash": Effect.succeed("saved") })
-    await Effect.runPromise(rung(fallback, call).pipe(Effect.provide(capture)))
-    expect(logged).toHaveLength(1)
-    expect(logged[0]?.[0]).toStartWith("exhausted retries (")
-    expect(logged[0]?.[0]).not.toContain("kimi-k2.6")
-    expect(logged[0]?.[0]).not.toContain("gemini-3.5-flash")
-    expect(logged[0]?.slice(1)).toEqual(["opencode:kimi-k2.6", "google:gemini-3.5-flash"])
-  })
-
-  test("a healthy primary never touches the fallback", async () => {
-    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.succeed("fine") })
-    const out = await Effect.runPromise(
-      rung(fallback, call) as Effect.Effect<string>,
-    )
-    expect(out).toBe("fine")
-    expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
   })
 })
 
@@ -712,155 +619,8 @@ describe("a routed call's providers.generate span", () => {
   })
 })
 
-describe("a routed call's budget and hand-off", () => {
-  const primary = Option.getOrThrow(parseModelSelection("budget:primary"))
-  const fallback = Option.getOrThrow(parseModelSelection("budget:fallback"))
-  const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } }
-  const probeCall: ReadonlyArray<AiResponse.PartEncoded> = [
-    { type: "tool-call", id: "c1", name: "probe", params: {}, providerExecuted: false },
-    { type: "finish", reason: "tool-calls", usage },
-  ]
-  const Probe = Tool.make("probe", { parameters: Schema.Struct({}), success: Schema.String, failureMode: "error" })
-  const kit = Toolkit.make(Probe)
-  const unavailable = AiError.make({
-    module: "Test",
-    method: "generateText",
-    reason: AiError.reasonFromHttpStatus({ status: 503, http: { request: { method: "POST", url: "https://gw.example/chat", urlParams: [], headers: {} }, response: { status: 503, headers: {} } } }),
-  })
-
-  /** A provider that counts its calls and answers with `reply`. */
-  const provider = (calls: Ref.Ref<number>, reply: Effect.Effect<ReadonlyArray<AiResponse.PartEncoded>>) => LanguageModel.make({
-    generateText: () => Ref.update(calls, (n) => n + 1).pipe(Effect.andThen(reply), Effect.map((parts) => [...parts])),
-    streamText: () => Stream.die("not streamed"),
-  })
-
-  /**
-   * A routed call over two scripted providers, as the routed model runs one:
-   * one budget for the call, each rung's toolkit watched for the hand-off
-   * and its attempts retried within the budget, then the fallback rung.
-   */
-  const routed = (models: { readonly primary: LanguageModel.LanguageModel; readonly fallback: LanguageModel.LanguageModel }, options: { readonly prompt: string; readonly toolkit?: unknown }) =>
-    makeCallBudget().pipe(Effect.flatMap((budget) => withFallbackRung(primary, Option.some(fallback), (selection, isFallback) =>
-      ((isFallback ? models.fallback : models.primary).generateText(withHandOff(options, budget) as never) as Effect.Effect<LanguageModel.GenerateTextResponse<Toolkit.Tools<typeof kit>>, AiError.AiError>).pipe(
-        retryableLlm(`${selection.provider}:${selection.modelId}`, budget),
-      ), budget)))
-
-  interface Counts {
-    readonly primary: Ref.Ref<number>
-    readonly fallback: Ref.Ref<number>
-    readonly runs: Ref.Ref<number>
-    /** Done once the tool's handler has started: the clock is moved only then, so no bound fires before the call reached its tool. */
-    readonly started: Deferred.Deferred<void>
-  }
-  /** Runs `body` on a test clock with fresh call counters for both providers and the tool. */
-  const counted = <A>(body: (counts: Counts) => Effect.Effect<A, unknown>) =>
-    Effect.runPromise(Effect.gen(function* () {
-      const counts = { primary: yield* Ref.make(0), fallback: yield* Ref.make(0), runs: yield* Ref.make(0), started: yield* Deferred.make<void>() }
-      return yield* body(counts)
-    }).pipe(Effect.orDie, Effect.provide(TestClock.layer())))
-  /** The tool's handler: counted, then `then`. */
-  const handler = <A, E>(counts: Counts, then: Effect.Effect<A, E>) => () =>
-    Ref.update(counts.runs, (n) => n + 1).pipe(Effect.andThen(Deferred.succeed(counts.started, undefined)), Effect.andThen(then))
-
-  test("a tool that outlasts the attempt timeout and the budget runs once, in one model call, and the call succeeds", async () => {
-    const result = await counted((counts) => Effect.gen(function* () {
-      const models = { primary: yield* provider(counts.primary, Effect.succeed(probeCall)), fallback: yield* provider(counts.fallback, Effect.succeed(probeCall)) }
-      // A yieldable toolkit, resolved inside the call.
-      const toolkit = kit.pipe(Effect.provide(kit.toLayer({ probe: handler(counts, Effect.sleep("700 seconds").pipe(Effect.as("slept"))) })))
-      const fiber = yield* Effect.forkChild(Effect.exit(routed(models, { prompt: "hi", toolkit })))
-      yield* Deferred.await(counts.started)
-      yield* TestClock.adjust("1 hour")
-      const exit = yield* Fiber.join(fiber)
-      return { exit, calls: [yield* Ref.get(counts.primary), yield* Ref.get(counts.fallback), yield* Ref.get(counts.runs)] }
-    }))
-    expect(Exit.isSuccess(result.exit) ? result.exit.value.toolResults.map((part) => part.result) : "failed").toEqual(["slept"])
-    expect(result.calls).toEqual([1, 0, 1])
-  })
-
-  test("a defect in a tool after the hand-off is not retried and never reaches the fallback", async () => {
-    const result = await counted((counts) => Effect.gen(function* () {
-      const models = { primary: yield* provider(counts.primary, Effect.succeed(probeCall)), fallback: yield* provider(counts.fallback, Effect.succeed(probeCall)) }
-      const toolkit = yield* kit.pipe(Effect.provide(kit.toLayer({ probe: handler(counts, Effect.die("the tool broke")) })))
-      const fiber = yield* Effect.forkChild(Effect.exit(routed(models, { prompt: "hi", toolkit })))
-      yield* Deferred.await(counts.started)
-      yield* TestClock.adjust("1 hour")
-      const exit = yield* Fiber.join(fiber)
-      return { died: Exit.isFailure(exit) && Cause.hasDies(exit.cause), calls: [yield* Ref.get(counts.primary), yield* Ref.get(counts.fallback), yield* Ref.get(counts.runs)] }
-    }))
-    expect(result).toEqual({ died: true, calls: [1, 0, 1] })
-  })
-
-  test("a transient failure in a tool after the hand-off is final: no retry, no fallback, the tool ran once", async () => {
-    const result = await counted((counts) => Effect.gen(function* () {
-      const models = { primary: yield* provider(counts.primary, Effect.succeed(probeCall)), fallback: yield* provider(counts.fallback, Effect.succeed(probeCall)) }
-      const toolkit = yield* kit.pipe(Effect.provide(kit.toLayer({ probe: handler(counts, Effect.fail(unavailable)) })))
-      const fiber = yield* Effect.forkChild(Effect.flip(routed(models, { prompt: "hi", toolkit })))
-      yield* Deferred.await(counts.started)
-      yield* TestClock.adjust("1 hour")
-      const error = yield* Fiber.join(fiber)
-      return { error, calls: [yield* Ref.get(counts.primary), yield* Ref.get(counts.fallback), yield* Ref.get(counts.runs)] }
-    }))
-    expect(result).toEqual({ error: unavailable, calls: [1, 0, 1] })
-  })
-
-  test("a hung provider: attempt one is cut at 300 s, attempt two at the budget's deadline; no third attempt and no fallback", async () => {
-    const result = await counted((counts) => Effect.gen(function* () {
-      const models = { primary: yield* provider(counts.primary, Effect.never), fallback: yield* provider(counts.fallback, Effect.never) }
-      const fiber = yield* Effect.forkChild(Effect.timed(Effect.flip(routed(models, { prompt: "hi" }))))
-      yield* TestClock.adjust("299 seconds")
-      const beforeCut = yield* Ref.get(counts.primary)
-      // Past the first cut and the backoff (1 s, jittered by at most 20%).
-      yield* TestClock.adjust("3 seconds")
-      const afterCut = yield* Ref.get(counts.primary)
-      yield* TestClock.adjust("1 hour")
-      const [elapsed, error] = yield* Fiber.join(fiber)
-      return { attempts: [beforeCut, afterCut, yield* Ref.get(counts.primary)], fallback: yield* Ref.get(counts.fallback), elapsed: Duration.toMillis(elapsed), error: String(error) }
-    }))
-    expect(result.attempts).toEqual([1, 2, 2])
-    expect(result.fallback).toBe(0)
-    expect(result.elapsed).toBe(600_000)
-    expect(result.error).toContain("the budget:primary call reached its 600s budget after 2 attempts and was cut off")
-  })
-
-  test("a stream idle for 300 s once its tool's result is in is cut: the handler's time left the bound, and its end resumed it", async () => {
-    const result = await counted((counts) => Effect.gen(function* () {
-      // The tool call, then a part that moves the stream past it (its handler
-      // starts then), then nothing.
-      const parts: ReadonlyArray<AiResponse.StreamPartEncoded> = [
-        { type: "tool-call", id: "c1", name: "probe", params: {}, providerExecuted: false },
-        { type: "text-delta", id: "t1", delta: "checking" },
-      ]
-      const model = yield* LanguageModel.make({
-        generateText: () => Effect.die("not settled"),
-        streamText: () => Stream.unwrap(Ref.update(counts.primary, (n) => n + 1).pipe(
-          Effect.as(Stream.fromArrays(...parts.map((part) => [part])).pipe(Stream.concat(Stream.never))),
-        )),
-      })
-      const toolkit = yield* kit.pipe(Effect.provide(kit.toLayer({ probe: handler(counts, Effect.sleep("100 seconds").pipe(Effect.as("slept"))) })))
-      const streamed = makeCallBudget().pipe(Effect.flatMap((budget) => Effect.timed(Effect.exit(Stream.runCollect(
-        (model.streamText(withHandOff({ prompt: "hi", toolkit }, budget) as never) as Stream.Stream<AiResponse.AnyPart, AiError.AiError>).pipe(
-          retryableLlmStream("budget:primary", budget),
-        ),
-      )))))
-      // Started from a woken sleep, so the clock waits for every fiber the stream forks.
-      const fiber = yield* Effect.forkChild(Effect.sleep("1 millis").pipe(Effect.andThen(streamed)))
-      yield* TestClock.adjust("1 hour")
-      const [elapsed, exit] = yield* Fiber.join(fiber)
-      return {
-        elapsed: Duration.toMillis(elapsed),
-        outcome: Exit.isSuccess(exit) ? "completed" : String(Cause.squash(exit.cause)),
-        calls: [yield* Ref.get(counts.primary), yield* Ref.get(counts.runs)],
-      }
-    }))
-    // The result at 100 s, then 300 s idle.
-    expect(result.elapsed).toBe(400_000)
-    expect(result.outcome).toContain("the budget:primary request exceeded 300s and was cut off")
-    expect(result.calls).toEqual([1, 1])
-  })
-})
-
-describe("the routed model's hand-off", () => {
-  test("a tool that fails transient after the routed model handed it off is not retried and never reaches the fallback", async () => {
+describe("tools after a committed provider response", () => {
+  test("a transient tool failure after response handoff cannot retry or reach the fallback", async () => {
     const bodies: Array<string> = []
     const server = Bun.serve({
       hostname: "127.0.0.1", port: 0,

@@ -1,5 +1,5 @@
-import { Context } from "effect"
-import type { Effect, Option, Redacted } from "effect"
+import { Context, Option } from "effect"
+import type { Effect, Redacted } from "effect"
 import type { Agent } from "node:http"
 import type { ProxyUnsupported } from "../transport/http-proxy.entity.js"
 
@@ -42,3 +42,8 @@ export class ModelsTransport extends Context.Service<ModelsTransport, {
   readonly fetch: ModelsFetch
   readonly webSocketAgent?: (target: URL) => Effect.Effect<Option.Option<WebSocketProxy>, ProxyUnsupported>
 }>()("@xandreed/plugin-models/ModelsTransport") {}
+
+/** Internal provenance: only this exact managed direct instance yields to an explicit call-local fetch. */
+export const CurrentManagedModelsTransport = Context.Reference<Option.Option<Context.Service.Shape<typeof ModelsTransport>>>("@xandreed/plugin-models/CurrentManagedModelsTransport", {
+  defaultValue: Option.none,
+})

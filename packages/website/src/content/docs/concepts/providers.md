@@ -337,7 +337,7 @@ the credentials or models they use; to change those for one turn, give the
 turn its own `LanguageModel`. The routed `LanguageModel` and the `UtilityLlm`
 read the plugin's `endpoints` and `ModelsTransport` once, when they are
 built; everything else a call carries is the call's own (its call policy,
-prompt cache key, trace content and log annotations), never what was in
+retry policy, prompt cache key, trace content and log annotations), never what was in
 force where the plugin was built. A host composing `LanguageModelLive`,
 `LanguageModelSelectionLive` or `UtilityLlmLive` itself provides
 `CurrentModelEndpoints` and `ModelsTransport` to the layer, not around a
@@ -411,10 +411,15 @@ direct agent. Node's global `fetch` ignores `HTTPS_PROXY` unless
 `NODE_USE_ENV_PROXY` is set. The transport depends on neither that nor the
 global dispatcher and agents, so the `noProxy` and loopback hosts stay direct
 even when it is set, and with `noProxy: "*"` every call does. Without any
-proxy setting the plugin adds no transport: its calls use the runtime's own
-fetch, as they did before it knew proxies, and a `FetchHttpClient.Fetch` the
-host provides around a turn still reaches the provider SDKs. Corporate
-certificate authorities come from `NODE_EXTRA_CA_CERTS`.
+proxy setting, managed Node calls also use a scoped undici Agent.
+`headersTimeout` and `bodyTimeout` are zero on the direct Agent, proxy target
+pools and CONNECT clients; Effect's [request policy](#request-policy) owns
+the bounds. Closing the layer closes those pools without changing the global
+dispatcher. An explicit `FetchHttpClient.Fetch` around a call or turn remains
+authoritative on the managed direct route, even when its value is the global
+fetch. A configured proxy or host-provided `ModelsTransport` takes precedence
+over that Reference. Opaque host dispatchers keep the host's own settings.
+Corporate certificate authorities come from `NODE_EXTRA_CA_CERTS`.
 A proxy that closes the connection while a tunnel opens fails the call at
 once.
 
@@ -541,31 +546,89 @@ retains the provider error as `HarnessError.cause` and exposes these codes:
 Context overflow, authentication, invalid requests, quota and invalid
 responses fail without retry or fallback. This includes the loop's usual
 pre-content stream-to-text fallback; the existing image-refusal path can
-still omit refused images and replan once. Rate limits, server/transport
-failures and timeouts retain three fast retries with backoff and the configured
-`fallbackModel` rung. The current policy declines retry and that fallback
-when `Retry-After` exceeds one minute; a long delay alone does not diagnose
-quota exhaustion. Unknown failures retain the existing retry heuristics.
+still omit refused images and replan once. Classified rate limits,
+server/transport failures and timeouts can retry before HTTP response
+handoff under the request policy below. Other failures receive no automatic
+transport retry. A long `Retry-After` alone does not diagnose quota exhaustion.
 
-An attempt is cut after 300 s (`LLM_REQUEST_TIMEOUT_MS`), and a
-`generateText` or `generateObject` call has 600 s (`LLM_CALL_BUDGET_MS`) for
-all its attempts, their backoff and the fallback: no attempt starts after
-that, and one still running then is cut, failing with a message that names
-the budget and the attempts made. A host using an SDK toolkit directly can
-run its handlers inside the routed call; once it does, the call is final,
-with no retry, fallback or provider timeout that could repeat the tool.
-The framework step loop waits for a whole response before running handlers.
-Each tool bounds its own work (a bash timeout, a task's deadline).
+### Request policy
 
-A `streamText` call is cut after 300 s without a part instead. If a host's
-SDK toolkit runs handlers inside the stream, their time does not count
-toward that idle bound; activity is sampled every quarter of the bound
-(75 s with the default 300 s timeout). A stream is retried
-only before its first content
-part, within the same 600 s: no attempt starts after that, and one that has
-sent no content by then is cut. It has no fallback of its own: when a stream
-fails before any part arrives without a known permanent semantic failure,
-the step loop can fall back to `generateText`, a call with a budget of its own.
+`ModelRetryPolicy`, `modelRetryDefaults` and `CurrentModelRetryPolicy` come
+from `@xandreed/plugin-models`. The Reference supplies a complete policy for
+each logical model call; spread the defaults to change selected fields:
+
+```ts
+import { Effect } from "effect"
+import { CurrentModelRetryPolicy, modelRetryDefaults } from "@xandreed/plugin-models"
+import type { Turn } from "@xandreed/sdk"
+
+declare const turn: Turn
+
+const result = turn.run({}).pipe(Effect.provideService(CurrentModelRetryPolicy, {
+  ...modelRetryDefaults,
+  maxAttempts: 2,
+  requestTimeoutMs: 45_000,
+}))
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `maxAttempts` | `4` | Total physical sends, including the initial send and configured fallback |
+| `requestTimeoutMs` | `300_000` | Pending response-header wait |
+| `bodyIdleTimeoutMs` | `300_000` | Each pending body read |
+| `totalTimeoutMs` | `600_000` | One logical call's shared deadline |
+| `retryAfterMaxMs` | `60_000` | Maximum honored server hint |
+| `backoff` | `{ initialMs: 1000, maxMs: 4000, jitter: 0.2 }` | Exponential delay, jittered and capped at `maxMs` |
+
+The policy is read at execution, so concurrent calls can provide different
+values on one agent. Helper completions use it too. It has no models-plugin
+option or `EngineSettings` key and is not stored in request headers.
+Attempts and timeouts are positive finite integers; delay values are
+nonnegative integers, jitter is between zero and one, and the maximum
+backoff must be at least its initial value. `LLM_REQUEST_TIMEOUT_MS` and
+`LLM_CALL_BUDGET_MS` remain aliases of the default header and total bounds.
+
+One counter covers transport errors and rejected statuses across primary and
+fallback. With a distinct `fallbackModel` and at least two attempts,
+the final slot is reserved for its single send: the default is three primary
+sends plus one fallback send. Without a fallback, or with an identical one,
+the primary has all four slots. `maxAttempts: 1` tries the primary once.
+Fallback requires an eligible uncommitted failure and remaining time; a
+permanent error or handed-off response never uses that reserved slot.
+
+Only transport failures and rejected statuses before successful response
+handoff can retry. Structured error evidence precedes status, so a 429 with
+an invalid-request code is permanent. Rejected bodies are read under a
+64 KiB ceiling and timeout bounds; an oversized body is InvalidResponse.
+HTTP refusals created here use `AiError.module: "Models"` and method `request`;
+bounded provider descriptions and raw HTTP evidence remain available.
+Already typed failures retain their original provenance.
+Discarded responses close before another send. One-shot stream and FormData
+bodies are not replayed automatically. OAuth refreshes and authorization-code
+exchanges are outside the model retry policy.
+
+`Retry-After` accepts integer seconds or an HTTP date. Invalid, negative and
+nonfinite hints are ignored; past dates mean zero. The policy sleeps for the
+greater of its jittered, capped backoff and the hint capped at
+`retryAfterMaxMs`, within the remaining deadline. A longer hint is shortened
+to that cap; it does not become a quota failure.
+
+After HTTP response handoff, an empty 200, body/SDK decode failure or SSE
+error is final at the transport boundary. Pending reads still have idle and
+overall bounds; a progressing stream can outlast the header timeout. The
+overall deadline is checked before later sends and reads. Owned timeouts
+retain `model.timeout`, and cancellation interrupts waits and forwards abort
+to the underlying request. Tools and SDK callbacks are never wrapped in
+model retries or timeout wrappers. The framework loop waits for the whole
+response before executing its handlers; tools bound their own work.
+
+The loop's existing fallback from a nonpermanent stream failure before its
+first part to `generateText` is a fresh logical budget. It reuses the same
+frozen prepared header, model, prompt, tools and directive: no second
+`policy.model`/`policy.step` evaluation, StepContext or header is added.
+The request engine and attempt state are internal; no stored shape changes.
+
+### Failure evidence
 
 - Structured provider codes take precedence over generic gateway status.
   Explicit billing/quota errors (such as OpenCode's `CreditsError` or

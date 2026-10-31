@@ -1,6 +1,7 @@
 import { AiError, LanguageModel, Prompt, Tool, type Response as ResponseParts } from "effect/ai"
-import { Cause, Effect, Match, Option, Schema, Stream } from "effect"
+import { Cause, Effect, Match, MutableRef, Option, Ref, Schema, Stream } from "effect"
 import { Base64 } from "effect/encoding"
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf } from "@xandreed/core"
 import { strictJsonSchema, toolParametersSchema } from "@xandreed/core/internal"
 import type { ModelCallPolicy } from "@xandreed/core"
@@ -11,6 +12,8 @@ import { decodeChatCompletion, gatewayErrorOf, isModelRejection, isQuotaExhauste
 import { publicReasoningEffort } from "./modelCatalog.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { transportFetch } from "../transport/models-transport.adapter.js"
+import { resilientRequest } from "../transport/resilient-http-client.adapter.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 
 /**
@@ -21,8 +24,8 @@ import { classifyAiError } from "./provider-failure.entity.functions.js"
  *
  * `generateText` consumes whole turns (`stream: false`); `streamText` runs
  * the same request with `stream: true` through the pure SSE state machine in
- * `sse.ts`. Errors BEFORE any stream part surface with the same taxonomy as
- * `generateText` — that boundary is what the retry gate (router) keys on.
+ * `sse.ts`. Both paths use the same bounded request policy before handing
+ * off a successful response; body and SSE failures after handoff are final.
  */
 
 type Json = Record<string, unknown>
@@ -78,7 +81,7 @@ export interface CompatConfig {
   readonly usage?: UsageReading
   /** The model reads images: send them as `image_url` parts (default false: label lines; see `toChatMessages`). */
   readonly images?: boolean
-  /** The fetch requests go through (the models plugin passes its `ModelsTransport`'s, which knows the proxy); defaults to the global fetch. */
+  /** The fetch requests go through (the models plugin supplies its chosen transport); otherwise uses the call-local FetchHttpClient.Fetch reference. */
   readonly fetchImpl?: ModelsFetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
   readonly beforeRequest?: (body: Readonly<Record<string, unknown>>) => Effect.Effect<void, AiError.AiError>
@@ -88,8 +91,10 @@ export interface CompatConfig {
 }
 
 /** A request that failed before any response, described by the failure's text as `reasonOf` reads it (never a stack: an `AiError` reason has no slot for the failure itself), proxy credentials redacted (the description can reach a session log). */
-const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.AiError =>
-  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(reasonOf(Cause.die(e))) }) })
+const aiUnknown = (moduleName: string, method: string, error: unknown): AiError.AiError => {
+  const cause = HttpClientError.isHttpClientError(error) && error.cause !== undefined ? error.cause : error
+  return AiError.isAiError(cause) ? cause : AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(reasonOf(Cause.die(cause))) }) })
+}
 
 const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method, reason: new AiError.InvalidOutputError({ description }) })
@@ -445,22 +450,35 @@ const postChat = (
   body: Json,
   buffered = false,
 ): Effect.Effect<Response, AiError.AiError> => {
-  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(Effect.tryPromise({
-    try: async (signal) => {
-      const response = await (config.fetchImpl ?? fetch)(config.chatUrl, {
-        signal,
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(config.apiKey === undefined || config.apiKey.length === 0 ? {} : { authorization: `Bearer ${config.apiKey}` }),
-        },
-        body: JSON.stringify(body),
-      })
-      // Keep cancellation attached through non-streaming body consumption.
-      return buffered ? new Response(await response.arrayBuffer(), { status: response.status, statusText: response.statusText, headers: response.headers }) : response
-    },
-    catch: (e) => aiUnknown(config.moduleName, method, e),
-  })))
+  const send = Effect.gen(function* () {
+    const client = yield* Effect.service(HttpClient.HttpClient).pipe(Effect.provide(FetchHttpClient.layer))
+    const metadata = yield* Ref.make({ statusText: "" })
+    const fetch = config.fetchImpl ?? (yield* FetchHttpClient.Fetch)
+    // Keep public response metadata at the foreign callback edge without
+    // retaining its source/body or changing the guarded reader lifecycle.
+    const trackedFetch = transportFetch({ fetch: (input, init) => fetch(input, init).then((response) => {
+      if (init?.signal?.aborted !== true) MutableRef.set(metadata.ref, { statusText: response.statusText })
+      return response
+    }) })
+    const response = yield* resilientRequest(client, HttpClientRequest.post(config.chatUrl).pipe(
+      HttpClientRequest.setHeaders({
+        "content-type": "application/json",
+        ...(config.apiKey === undefined || config.apiKey.length === 0 ? {} : { authorization: `Bearer ${config.apiKey}` }),
+      }),
+      HttpClientRequest.bodyJsonUnsafe(body),
+    ), { protocol: "compat" }).pipe(Effect.provideService(FetchHttpClient.Fetch, trackedFetch))
+    // Buffer settled calls within the public accounting hook. Streaming calls
+    // expose a new Web body backed only by the guarded reader, never its source.
+    const content = buffered ? yield* response.arrayBuffer : yield* Stream.toReadableStreamEffect(response.stream)
+    const { statusText } = yield* Ref.get(metadata)
+    return yield* Effect.try({
+      try: () => Object.defineProperty(new Response([204, 205, 304].includes(response.status) ? null : content, {
+        status: response.status, statusText, headers: response.headers,
+      }), "url", { value: response.url }),
+      catch: (error) => aiUnknown(config.moduleName, method, error),
+    })
+  }).pipe(Effect.mapError((error) => aiUnknown(config.moduleName, method, error)))
+  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(send))
   return config.aroundRequest === undefined ? request : config.aroundRequest(body, request)
 }
 

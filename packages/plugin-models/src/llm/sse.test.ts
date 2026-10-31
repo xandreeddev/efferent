@@ -3,6 +3,8 @@ import { Effect, Match, Option, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { finishReasonFromWire, sseStreamParts } from "./sse.js"
+import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
+import { modelRetryDefaults } from "./model-retry-policy.entity.js"
 
 /**
  * The SSE state machine's spec: exact part sequences from canned wires,
@@ -527,7 +529,7 @@ describe("compat streamText", () => {
     expect(delta.delta).toBe("hi")
   })
 
-  test("a non-OK status is a status-classified AiError BEFORE any part (the retry boundary)", async () => {
+  test("a final non-OK status is a status-classified AiError before any part", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -541,7 +543,7 @@ describe("compat streamText", () => {
         return yield* Stream.runCollect(
           svc.streamText({ prompt: [{ role: "user", content: "hi" }] } as never),
         )
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped, Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 })),
     )
     expect(exit._tag).toBe("Failure")
     const rendered = JSON.stringify(exit)

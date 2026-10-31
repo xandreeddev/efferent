@@ -79,7 +79,7 @@ describe("UtilityLlmLive", () => {
     expect(failed._tag).toBe("UtilityError")
     expect(failed.message).toStartWith("AiError: ")
     expect(failed.message).toContain("the request is malformed")
-    expect(failed.cause).toMatchObject({ _tag: "AiError", method: "generateText" })
+    expect(failed.cause).toMatchObject({ _tag: "AiError", module: "Models", method: "request" })
   })
 
   test("completes on the fast model at the fast role's effort, else the general one; a policy the caller pinned wins", async () => {

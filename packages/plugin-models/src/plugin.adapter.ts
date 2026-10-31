@@ -20,9 +20,9 @@ import { CurrentModelSettings } from "./ports/model-settings.port.js"
 import { ModelSettingsMap } from "./llm/model-settings.entity.js"
 import { CurrentThinkingPrefixMismatch } from "./ports/thinking-binding.port.js"
 import { ThinkingPrefixMismatch } from "./llm/thinking-binding.entity.js"
-import { ModelsTransport } from "./ports/models-transport.port.js"
+import { CurrentManagedModelsTransport, ModelsTransport } from "./ports/models-transport.port.js"
 import { ProxyUrlOption } from "./transport/http-proxy.entity.js"
-import { modelsTransportFor } from "./transport/models-transport.adapter.js"
+import { modelsTransportContextFor } from "./transport/models-transport.adapter.js"
 
 const Config = Schema.Struct({
   model: Schema.String,
@@ -117,12 +117,8 @@ const optionError = (message: string) => new HarnessError({ code: "config.option
 const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, HarnessError>, HarnessError> => Effect.flatMap(Effect.serviceOption(ModelsTransport), Option.match({
   onSome: (host) => Redacted.isRedacted(config.proxy) || config.proxy.length > 0 || config.noProxy.length > 0
     ? Effect.fail(optionError("the host provides ModelsTransport, so the proxy and noProxy options would not apply: give the proxy to the host's transport"))
-    : Effect.succeed(Layer.succeed(ModelsTransport, host)),
-  onNone: () => Effect.succeed(Layer.effectContext(modelsTransportFor({ proxy: config.proxy, noProxy: config.noProxy }).pipe(
-    Effect.map(Option.match({
-      onNone: () => Context.empty(),
-      onSome: (transport): Context.Context<never> => Context.make(ModelsTransport, transport),
-    })),
+    : Effect.succeed(Layer.succeedContext(Context.make(ModelsTransport, host).pipe(Context.add(CurrentManagedModelsTransport, Option.none())))),
+  onNone: () => Effect.succeed(Layer.effectContext(modelsTransportContextFor({ proxy: config.proxy, noProxy: config.noProxy }).pipe(
     Effect.mapError((error) => optionError(error.message)),
   ))),
 }))

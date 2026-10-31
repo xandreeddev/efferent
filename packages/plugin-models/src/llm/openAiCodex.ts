@@ -1,6 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
+import type { HttpClientError, HttpClientResponse } from "effect/http"
 import { Effect, Option, Predicate, Redacted, Schema, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ENGINE_KEY, ModelFailureStamp, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
@@ -10,6 +11,7 @@ import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { withOpenAiFailures } from "./provider-client.adapter.js"
+import { resilientHttpClient } from "../transport/resilient-http-client.adapter.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -162,6 +164,14 @@ export const makeOpenAiCodexLanguageModel = (args: {
               ),
             ),
           ),
+          // The final WebSocket request, including subscription headers/body,
+          // uses the same request budget and guarded readers as native HTTP.
+          // Only this existing SDK erasure boundary narrows the wider typed
+          // response/client channels; runtime AiError values pass unchanged.
+          (client) => resilientHttpClient(client, {
+            protocol: "openai",
+            adaptResponse: (response) => response as HttpClientResponse.HttpClientResponse,
+          }) as HttpClient.HttpClient.With<HttpClientError.HttpClientError>,
         ),
       }).pipe(
         Effect.map(withOpenAiFailures),
