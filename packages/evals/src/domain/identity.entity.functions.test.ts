@@ -21,12 +21,12 @@ describe("reasonOf", () => {
   })
 
   test("keeps a defect's message and nothing of its stack", () => {
-    // Made here, so its stack names this file.
     const defect = new Error("disk on fire\nwhile writing")
+    defect.stack = "Error: disk on fire\nwhile writing\n    at writeFixture (stack-redaction-fixture.ts:12:3)"
     const reason = reasonOf(causeOf(Effect.die(defect)))
+    expect(defect.stack).toContain("stack-redaction-fixture.ts")
     expect(reason).toBe("disk on fire\nwhile writing")
-    expect(reason).not.toContain(import.meta.dir)
-    expect(Cause.pretty(Cause.die(defect))).toContain(import.meta.dir)
+    expect(reason).not.toContain("stack-redaction-fixture.ts")
   })
 
   test("reads strings and other values as Cause.prettyErrors does, and joins several", () => {

@@ -4,6 +4,7 @@ The machine an agent runs on, as core's `FileSystem` and `Bash` ports (`FileSyst
 
 ## Rules
 
+- Change `ImageResizer` behavior through core’s `imageResizerConformance` first. The optional CLI uses Bash and FileSystem on the same tree, probes once, quotes every argument and passes relative input/output filenames so CLI path format languages cannot interpret host paths. Private conversion directories are scoped; cleanup follows timeout or interruption. Every output is rechecked with core’s image helpers. Without the service at activation, read behavior and descriptions stay unchanged; `maxFileBytes` still guards before reads and read-only sources stay untouched.
 - Change `FileSystem` or `Bash` behaviour by adding the check to core's kit (`fileSystemConformance`, `bashConformance`) first; both adapters here must then pass it on Bun and Node.
 - Every doc of these tools says confinement is a guardrail against a model's mistakes, not a sandbox (`bash` is unconfined; a path can change between its check and its use), and that builtin `grep` is not time-bounded (its regular expression runs synchronously in the host; only nested repetition is refused). Ripgrep runs through Bash with a deadline, the pattern on stdin, quoted arguments and links not followed. Its engine is probed once so descriptions stay stable.
 - File-tool roots are resolved per call. The workspace and each extra root are read or write; the longest real root controls writes (last entry wins a tie). Unavailable extra roots are logged and skipped. `confine: false` disables the roots and read-only policy; bash remains unconfined. `protect` and path-shaped `exclude` globs stay relative to the workspace; bare excluded names apply at every search root. An alias into a protected workspace path is still refused.
@@ -20,14 +21,16 @@ The machine an agent runs on, as core's `FileSystem` and `Bash` ports (`FileSyst
 
 - Local system: `localSystemPlugin`, `LocalSystemPluginLive`, `FileSystemLive`, `localFileSystem`, `BashLive`, `makeBash`, `LocalSystemConfig`, `localSystemDefaults`, `BashLiveOptions` (type), `fsReasonOf`.
 - Workspace tools: `workspaceToolsPlugin`, `WorkspaceToolsPluginLive`, `workspaceTools`, `WorkspaceToolsConfig`, `workspaceToolsDefaults`, `WorkspaceToolName`, `WorkspaceSkillName`, `WORKSPACE_PERMISSIONS`, `workspaceToolSchemas`, the params and results (`ReadParams`/`ReadResult` … `BashParams`/`BashToolResult`, `TextEdit`, `LsEntry`, `GrepLine`, `GrepUnreadable`). How `edit` applies its edits (`applyTextEdits`, `normalizeLine`) stays inside the package.
+- Images: `imageResizerPlugin`, `ImageResizerPluginLive`, `ImageResizerCliLive`, `ImageResizerConfig`, `imageResizerDefaults`, `ImageResizeTool`.
 - Skills directory: `skillsDirectoryPlugin`, `SkillsDirectoryPluginLive`, `loadSkillsDirectory`, `skillsCapability`, `SkillsDirectoryConfig`, `skillsDirectoryDefaults`, `SKILLS_CAPABILITY_ID`, `ALWAYS_SECTION_ID`.
 
-The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import the three plugins, `localFileSystem` and `makeBash`, and the rest, which no first-party code imports, are tagged `@public` at their declarations.
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import the plugins, `localFileSystem` and `makeBash`, and the rest, which no first-party code imports, are tagged `@public` at their declarations.
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
 | `localSystemPlugin` | `@xandreed/plugin-workspace/local` | runtime | `@xandreed/core/FileSystem`, `@xandreed/core/Bash` | none | none |
-| `workspaceToolsPlugin` | `@xandreed/plugin-workspace/tools` | runtime | none | `efferent/Capabilities` | `@xandreed/core/FileSystem`, `efferent/SessionEnvironment`; optional: `@xandreed/core/Bash` |
+| `workspaceToolsPlugin` | `@xandreed/plugin-workspace/tools` | runtime | none | `efferent/Capabilities` | `@xandreed/core/FileSystem`, `efferent/SessionEnvironment`; optional: `@xandreed/core/Bash`, `@xandreed/core/ImageResizer` |
+| `imageResizerPlugin` | `@xandreed/plugin-workspace/images` | runtime | `@xandreed/core/ImageResizer` | none | `@xandreed/core/FileSystem`, `@xandreed/core/Bash` |
 | `skillsDirectoryPlugin` | `@xandreed/plugin-workspace/skills` | runtime | none | `efferent/Capabilities` | `@xandreed/core/FileSystem`; optional: `efferent/SessionEnvironment` |
 
 ## Model-facing text
@@ -45,6 +48,8 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Ripgrep description, ignore-files environment line, timeout result/compact note and regex refusal | `src/workspace-tools.entity.functions.ts`, `src/ripgrep.adapter.ts` | exact, `src/ripgrep.adapter.test.ts:77`, `:87`, `:95`; search-output refusals, `src/ripgrep.adapter.test.ts:115` |
 
+| Optional-resize read description and version-3 full/compact original-image notes | `src/workspace-tools.entity.functions.ts` | exact, `src/workspace-tools.entity.functions.test.ts:357`; read-only host-side rejection, `src/workspace-tools.adapter.test.ts:894` |
+
 ## Erasure files
 
 None.
@@ -57,10 +62,12 @@ None.
 | `src/file-system.adapter.ts`, `src/bash.adapter.ts`, `src/plugin.adapter.ts` | `FileSystemLive` (`glob` is core's `walkGlob` over `list`, never `fs.glob`: no dot entries on Node, links followed on Bun), `BashLive` (environment from `parentEnv` through core's `resolveBashEnv`; output relayed by `relayOutput` into a stream buffer of `OUTPUT_BUFFER` events, the pipe paused while it is full, so on Node a slow reader holds the command back, while Bun reads a child's pipes ahead; what is left after the exit read at once; a pipe error fails the stream; output pipes closed `exitGraceMs` after the exit), `localSystemPlugin`, `workspaceToolsPlugin` |
 | `text-window`, `text-edit`, `text-search`, `workspace-path` (`src/<name>.entity.ts` + `.entity.functions.ts`) | the tools' pure parts: line windows, byte cuts, the NUL probe, the BOM; `applyTextEdits` (exact, unique, non-overlapping edits against the original, the normalised fallback, CRLF) and `unifiedDiff`; grep's lines, context, caps and nested-repetition refusal; `ripgrep.entity` and its functions decode rg JSON, quote POSIX arguments and fold bounded matches/context (binary provisional matches are removed at the file end); `ripgrep.adapter.ts` runs the stream on Bash with `bashEnvironment`; confinement through the real path of the nearest existing ancestor, `protect`, `excludesBelow` |
 | `src/workspace-tools.entity.ts` + `.entity.functions.ts`; `src/read-tools.adapter.ts`, `src/write-tools.adapter.ts`, `src/bash-tool.adapter.ts`, `src/workspace-tools.adapter.ts` | config, params and results, descriptions, the environment text, result views; the tools, each declaring the services it reads per call (`WORKSPACE_SERVICES`, `FileSystem` and `SessionEnvironment`; `bash` adds `Bash`), and the `workspace.environment` section, declaring the same per render (`definePromptSection`); `bash` folds `Bash.stream` into a tail, publishes `tool.progress` per `progressMs` and spills under `spillDir` keeping `spillKeep` files; `workspaceTools` assembles the capability (`workspace.read`; `workspace.edit` behind `fs.write`; `workspace.shell` behind `shell.exec`, left out without a `Bash` service) |
+| `src/image-resizer.entity.ts` + `.entity.functions.ts`, `src/image-resizer.adapter.ts`, `src/shell.entity.functions.ts` | CLI options, backend argument builders, shared POSIX quoting; `ImageResizerCliLive` probes ImageMagick/libvips/sips once, fits in scoped temporary files and maps failures to `ImageResizeError` |
 | `src/skills/` | `skillsDirectoryPlugin`: core's `collectSkillFiles` and `readSkillFiles` per root, roots resolved against the workspace, `idPrefix` and first-root-wins merge, `strict`, the limits, the always-on section |
 
 ## Tests
 
+- Images: `src/image-resizer.adapter.test.ts` runs the core kit when ImageMagick is installed and checks libvips, first-frame conversion, literal host paths, probe failures, cleanup and deadlines. Packed verification runs the kit when a host CLI is available and always runs a fitted-image Agent journey on Node and Bun. `sips` is covered by literal command pins; its execution requires macOS.
 - Kits: `src/file-system.adapter.test.ts` and `src/bash.adapter.test.ts` run core's `fileSystemConformance` and `bashConformance` on Bun (the bash subject's `holdsBack` is off on Bun, which reads pipes ahead); `bun run verify:packages` runs both kits and the journey over the packed package on Bun and on Node (`node-imports.mjs`).
 - `src/plugin.adapter.test.ts` (the local system as a plugin), `src/workspace-tools.adapter.test.ts` (the tools over a temporary directory), the pure pairs' tests (with fast-check properties), the key-free journey `src/workspace-tools.journey.test.ts` (`Agent.define` with a scripted model, an image `read` included) and `src/skills/*.test.ts` (an agent and a journey over a temporary directory). Run: `bun test packages/plugin-workspace`.
 

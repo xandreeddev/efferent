@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { MEDIA_LIMITS, mediaFromBytes } from "@xandreed/core"
+import { MEDIA_LIMITS, MediaFingerprint, mediaFromBytes } from "@xandreed/core"
 import { ReadResult, workspaceToolsDefaults } from "./workspace-tools.entity.js"
 import type { BashToolResult, GrepResult, WorkspaceToolName } from "./workspace-tools.entity.js"
 import { mediaTypeOf } from "./text-window.entity.functions.js"
@@ -351,4 +351,14 @@ test("a shell-only environment states that shell commands are unconfined and adv
     "The workspace is /work. Give paths relative to it.",
     "bash runs commands in the workspace root with a 120 s timeout. Shell commands are not confined by the file tools' roots or read-only access.",
   ].join("\n"))
+})
+
+
+test("read describes optional resizing and pins the full and compact source note", () => {
+  const config = { ...workspaceToolsDefaults, imageMaxSide: 1568 }
+  expect(toolDescriptions(config, true).read).toBe("Read a text file of the workspace, or look at an image. Shows at most 2000 lines or 50 KB at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines (at most 2000). A PNG, JPEG, GIF or WebP image is returned as an image you can see; larger images are scaled down to fit 1568 pixels a side and 3.75 MB. Files over 32 MB are refused before resizing. Another binary file is reported, not shown. To see a directory, use ls.")
+  expect(toolDescriptions({ ...config, readImages: false }, true).read).toBe("Read a text file of the workspace. Shows at most 2000 lines or 50 KB at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines (at most 2000). A binary file is reported, not shown. To see a directory, use ls.")
+  const result: Extract<ReadResult, { _tag: "Image" }> = { _tag: "Image", path: "photo.png", image: { type: "media", mediaType: "image/jpeg", bytes: 1258291, data: "", fingerprint: MediaFingerprint.make("0000000000000000") }, original: { mediaType: "image/png", bytes: 14680064, width: 9000, height: 6000 } }
+  expect(renderRead(result)).toBe("[Image photo.png (image/jpeg, 1.2 MB), scaled down from 9000x6000 (image/png, 14 MB).]")
+  expect(compactRead(result)).toBe("(read photo.png: image/jpeg image, 1.2 MB, scaled down from 9000x6000 (image/png, 14 MB))")
 })

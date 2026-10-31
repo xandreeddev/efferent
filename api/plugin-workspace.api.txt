@@ -11,6 +11,10 @@ const GrepLine
 const GrepParams
 const GrepResult
 const GrepUnreadable
+const ImageResizeTool
+const ImageResizerCliLive
+const ImageResizerConfig
+const ImageResizerPluginLive
 const LocalSystemConfig
 const LocalSystemPluginLive
 const LsEntry
@@ -30,6 +34,8 @@ const WorkspaceToolsPluginLive
 const WriteParams
 const WriteResult
 const fsReasonOf
+const imageResizerDefaults
+const imageResizerPlugin
 const loadSkillsDirectory
 const localFileSystem
 const localSystemDefaults
@@ -53,6 +59,8 @@ type GrepLine
 type GrepParams
 type GrepResult
 type GrepUnreadable
+type ImageResizeTool
+type ImageResizerConfig
 type LocalSystemConfig
 type LsEntry
 type LsParams
