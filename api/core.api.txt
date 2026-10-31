@@ -95,6 +95,7 @@ const CompletionEvaluatedEvent
 const CompletionVerdict
 const ContextBuiltEvent
 const ConversationId
+const CurrentAgentRun
 const CurrentAgentStep
 const CurrentEmptyResponseTolerance
 const CurrentModelCallPolicy
@@ -107,6 +108,7 @@ const DEFAULT_SHUTDOWN_RESERVE
 const DecisionId
 const DecisionRecord
 const DecisionRecordedEvent
+const DegeneratePolicy
 const DirEntry
 const ENGINE_KEY
 const EntryId
@@ -140,6 +142,7 @@ const LogBody
 const LogEntry
 const MEDIA_LIMITS
 const MEMORY_KINDS
+const MalformedLimit
 const Media
 const MediaFingerprint
 const MediaSlot
@@ -480,6 +483,7 @@ type CompactionAction
 type CompletionVerdict
 type ConversationId
 type DecisionRecord
+type DegeneratePolicy
 type DigestDefinition
 type DirEntry
 type EntryId

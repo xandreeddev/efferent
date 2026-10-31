@@ -284,12 +284,16 @@ What settles, and when:
 - `tool.completed` with `ok: false`: the handler ran and failed, and the
   model got the failure as the call's result.
 - `tool.refused`: the registry refused the call before its handler ran,
-  and published no `tool.started` or `tool.completed` for it. `reason` is
+  and published no `tool.completed` for it. Initial refusals have no
+  `tool.started`; a queued breaker recheck or nested permit refusal may
+  follow a durable admission. `reason` is
   `inactive`, `forbidden` (a permission the turn lacks), `denied` (the
-  host's `ActionPolicy`), `call-limit` or `tool-call-limit`; `message` is
+  host's `ActionPolicy`), `call-limit`, `tool-call-limit`, `run-call-limit`,
+  `tripped` or `concurrency`; `message` is
   what the model got as the call's result, as `{ error, message }` under a
   name of its own (`ToolInactive`, `PermissionDenied`, `PolicyDenied`,
-  `CallLimit`, `ToolCallLimit`): match on `reason`, not on that name.
+  `CallLimit`, `ToolCallLimit`, `ToolTripped`, `ToolConcurrency`): match on
+  `reason`, not on that name.
 - `step.ended.results` lists the step's recorded tool results (memory entry,
   call id, tool, `ok`), refused calls included as not ok: one place to see
   every call the registry handled that did not succeed.

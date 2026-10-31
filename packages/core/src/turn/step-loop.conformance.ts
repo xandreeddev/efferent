@@ -16,12 +16,12 @@ import type { RunRef } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "../loop/modelPolicy.js"
-import { CurrentAgentStep } from "../loop/stepContext.js"
+import { CurrentAgentRun, CurrentAgentStep } from "../loop/stepContext.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { canonicalJson, entryId } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { InitialBatch, ToolChoice } from "../ports/capability.port.js"
-import type { RunResult, StepLoop, StepRequest } from "../ports/step-loop.port.js"
+import type { LoopLimits, RunResult, StepLoop, StepRequest } from "../ports/step-loop.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import type { TurnTasksService } from "../ports/turn-events.port.js"
 import type { TurnError } from "../session/sessions.entity.js"
@@ -122,6 +122,8 @@ const withUsage = (reply: ReadonlyArray<Part>, value: ReturnType<typeof billed>)
   reply.map((part) => part.type === "finish" ? { ...part, usage: value } : part)
 
 interface Scenario {
+  readonly degenerate?: LoopLimits["degenerate"]
+  readonly malformedLimit?: number
   readonly script: ReadonlyArray<ReadonlyArray<Part>>
   readonly initial?: InitialBatch
   readonly toolChoice?: ToolChoice
@@ -153,6 +155,7 @@ interface Scenario {
   readonly ambientTolerance?: boolean
   /** `CurrentAgentStep` where the loop runs and in the request's services (none by default). */
   readonly ambientStep?: Option.Option<number>
+  readonly ambientRun?: Option.Option<RunRef>
   /** The provider refuses its first request over an image (an `InvalidRequestError` naming one). */
   readonly refuseFirst?: boolean
   /** The request's `onMediaRejected` (answers false by default). */
@@ -212,6 +215,7 @@ interface Observed {
   readonly tolerance: ReadonlyArray<boolean>
   /** `CurrentAgentStep` as each `probe` handler, then each provider call, read it. */
   readonly steps: { readonly handled: ReadonlyArray<Option.Option<number>>; readonly called: ReadonlyArray<Option.Option<number>> }
+  readonly runs: { readonly handled: ReadonlyArray<Option.Option<RunRef>>; readonly called: ReadonlyArray<Option.Option<RunRef>> }
 }
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
@@ -244,6 +248,8 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const tolerance = yield* Ref.make<ReadonlyArray<boolean>>([])
   const handledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
   const calledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
+  const handledRuns = yield* Ref.make<ReadonlyArray<Option.Option<RunRef>>>([])
+  const calledRuns = yield* Ref.make<ReadonlyArray<Option.Option<RunRef>>>([])
   const recorded = yield* Ref.make<ReadonlyArray<LogEntry>>([])
   const atHandlers = yield* Ref.make<ReadonlyArray<ReadonlyArray<LogEntry>>>([])
   /** Append what `reference` reads where this runs. */
@@ -258,6 +264,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     Effect.tap(() => read(CurrentModelCallPolicy, calledPolicies)),
     Effect.tap(() => read(CurrentEmptyResponseTolerance, tolerance)),
     Effect.tap(() => read(CurrentAgentStep, calledSteps)),
+    Effect.tap(() => read(CurrentAgentRun, calledRuns)),
   )
   const stream = scenario.stream
   const model = yield* LanguageModel.make({
@@ -280,6 +287,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       yield* Ref.get(recorded).pipe(Effect.flatMap((entries) => Ref.update(atHandlers, (all) => [...all, entries])))
       const current = yield* Effect.service(CurrentAgentStep)
       yield* Ref.update(handledSteps, (all) => [...all, current])
+      yield* read(CurrentAgentRun, handledRuns)
       const step = Option.getOrElse(current, () => -1)
       const invocationId = InvocationId.make(`probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`)
       const base = { step, invocationId, tool: Probe.name, input: { n }, labels: {}, stage: Option.none() }
@@ -332,8 +340,13 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       Context.add(CurrentModelCallPolicy, scenario.ambientCallPolicy ?? Option.none()),
       Context.add(CurrentEmptyResponseTolerance, scenario.ambientTolerance ?? false),
       Context.add(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
+      Context.add(CurrentAgentRun, scenario.ambientRun ?? Option.none()),
     ),
-    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: scenario.toolConcurrency ?? 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
+    limits: {
+      maxSteps: scenario.maxSteps ?? 6, toolConcurrency: scenario.toolConcurrency ?? 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false,
+      ...(scenario.degenerate === undefined ? {} : { degenerate: scenario.degenerate }),
+      ...(scenario.malformedLimit === undefined ? {} : { malformedLimit: scenario.malformedLimit }),
+    },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
       Effect.andThen(scenario.replay === true ? Ref.get(history) : Effect.succeed([{ role: "user" as const, content: "go" }])),
@@ -378,6 +391,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     Effect.provideService(CurrentModelCallPolicy, scenario.ambientCallPolicy ?? Option.none()),
     Effect.provideService(CurrentEmptyResponseTolerance, scenario.ambientTolerance ?? false),
     Effect.provideService(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
+    Effect.provideService(CurrentAgentRun, scenario.ambientRun ?? Option.none()),
   ))
   return {
     result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded), atHandlers: yield* Ref.get(atHandlers),
@@ -387,6 +401,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     callPolicies: { dispatched: yield* Ref.get(dispatchedPolicies), called: yield* Ref.get(calledPolicies) },
     tolerance: yield* Ref.get(tolerance),
     steps: { handled: yield* Ref.get(handledSteps), called: yield* Ref.get(calledSteps) },
+    runs: { handled: yield* Ref.get(handledRuns), called: yield* Ref.get(calledRuns) },
   }
 }))
 
@@ -513,6 +528,53 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "honours custom degenerate-loop thresholds and explicit disabling without overriding the step cap",
+    run: Effect.gen(function* () {
+      const repeated = Array.from({ length: 8 }, (_, index) => probeCall(`repeat-${index}`, 1))
+      const custom = yield* observe(loop, { script: repeated, maxSteps: 10, degenerate: { _tag: "Enabled", nudgeAfter: 1, breakAfter: 2 } })
+      yield* expect("degenerate-policy", custom.result.reason === "degenerate-loop" && custom.result.steps === 3 && custom.providerCalls.length === 3,
+        `custom thresholds ended ${custom.result.reason} after ${custom.result.steps} steps and ${custom.providerCalls.length} calls, not degenerate-loop after 3`)
+      const nudges = custom.recorded.filter((entry) => entry.body._tag === "Message" && entry.body.message.role === "user")
+      yield* expect("degenerate-policy", nudges.length === 1 && nudges[0]?.step === 2, "the custom nudge was not recorded exactly under the next step that read it")
+      const disabled = yield* observe(loop, { script: [...repeated, textReply("finished")], maxSteps: 10, degenerate: { _tag: "Disabled" } })
+      yield* expect("degenerate-policy", disabled.result.reason === "completed" && disabled.result.text === "finished" && disabled.providerCalls.length === 9,
+        `a disabled breaker ended ${disabled.result.reason} after ${disabled.providerCalls.length} calls`)
+      const capped = yield* observe(loop, { script: repeated, maxSteps: 2, degenerate: { _tag: "Enabled", nudgeAfter: 1, breakAfter: 2 } })
+      yield* expect("degenerate-policy", capped.result.reason === "step-cap" && capped.recorded.every((entry) => entry.step < 2), "a cap left an unread nudge under a step that never started")
+    }),
+  },
+  {
+    name: "fails on the configured consecutive malformed response, with a cut or whole response resetting the streak",
+    run: Effect.gen(function* () {
+      const first = yield* observeRun(loop, { script: [malformedCall("m1"), textReply("must not run")], malformedLimit: 1 })
+      yield* expect("malformed-limit", Result.isFailure(first.result) && first.providerCalls.length === 1 && first.recorded.length === 0,
+        "a one-response malformed limit retried or recorded an unread corrective")
+      const longer = yield* observe(loop, { script: [malformedCall("m1"), malformedCall("m2"), malformedCall("m3"), textReply("recovered")], malformedLimit: 4 })
+      yield* expect("malformed-limit", longer.result.text === "recovered" && longer.providerCalls.length === 4, "a custom malformed cap retained the old three-response limit")
+      const reset = yield* observe(loop, { script: [malformedCall("m1"), cutText("length", "prefix "), malformedCall("m2"), probeCall("p1", 7), malformedCall("m3"), textReply("done")], malformedLimit: 2, maxSteps: 8 })
+      yield* expect("malformed-limit", reset.result.reason === "completed" && reset.providerCalls.length === 6, "a cut or whole response did not reset the malformed streak")
+    }),
+  },
+  {
+    name: "provides the exact request run to handlers and model calls as CurrentAgentRun, whatever the caller's and concurrent runs'",
+    run: Effect.gen(function* () {
+      const arrived = yield* Ref.make(0)
+      const ready = yield* Deferred.make<void>()
+      const timedOut = yield* Ref.make(false)
+      const barrier = Ref.updateAndGet(arrived, (count) => count + 1).pipe(Effect.flatMap((count) => count >= 2
+        ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+        : Deferred.await(ready).pipe(Effect.timeoutOrElse({ duration: "1 second", orElse: () => Ref.set(timedOut, true) }))))
+      const caller = Option.some<RunRef>({ id: RunId.make("outer"), turn: 41, ordinal: RunOrdinal.make(19) })
+      yield* Effect.forEach([0, 1], (ordinal) => Effect.gen(function* () {
+        const run: RunRef = { id: RUN, turn: 2, ordinal: RunOrdinal.make(ordinal) }
+        const observed = yield* observe(loop, { script: [probeCall("same-provider-id", 1), textReply("done")], run, ambientRun: caller, providerCall: barrier })
+        const reads = [...observed.runs.handled, ...observed.runs.called]
+        yield* expect("run-reference", !(yield* Ref.get(timedOut)) && reads.length === 3 && reads.every((read) => Option.isSome(read) && canonicalJson(read.value) === canonicalJson(run)),
+          `run ${ordinal} handlers and model calls read ${canonicalJson(reads.map(Option.getOrNull))}, not their own exact request run`)
+      }), { concurrency: 2 })
+    }),
+  },
   {
     name: "validates every real request immediately before dispatch, excluding planned batches",
     run: Effect.gen(function* () {

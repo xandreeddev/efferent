@@ -1,8 +1,11 @@
 import { Context, Option } from "effect"
-import type { InvocationId } from "../domain/run.entity.js"
+import type { InvocationId, RunRef } from "../domain/run.entity.js"
 import type { ToolCallId } from "../domain/message.entity.js"
 /** Correlation only; unset for work outside the agent loop. */
 export const CurrentAgentStep = Context.Reference<Option.Option<number>>("@xandreed/core/CurrentAgentStep", { defaultValue: () => Option.none() })
+
+/** The exact loop run, including its ordinal; none for direct tool calls outside a loop. @public */
+export const CurrentAgentRun = Context.Reference<Option.Option<RunRef>>("@xandreed/core/CurrentAgentRun", { defaultValue: () => Option.none() })
 
 /** The tool call a handler is running for: the ids its `tool.started`, `tool.progress` and `tool.completed` events share. */
 export interface ToolInvocation {

@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { Capabilities, defineCapability, definePlugin, definePromptSection, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
+import { ToolPolicy } from "./tool-policy.entity.js"
 
 /** @public */
 export const ToolDiscoveryConfig = Schema.Struct({
@@ -8,6 +9,7 @@ export const ToolDiscoveryConfig = Schema.Struct({
   grants: Schema.Array(Schema.String),
   /** Expose the skill catalogue, load_skill and read_skill_reference. */
   loadSkill: Schema.Boolean,
+  /** Legacy name: the total admitted calls per turn, shared by all its loop runs. */
   maxCallsPerRun: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
   maxSkillLoadsPerRun: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
   readConcurrency: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 32 }))),
@@ -15,6 +17,8 @@ export const ToolDiscoveryConfig = Schema.Struct({
   catalogVersion: Schema.NonEmptyString,
   /** Order of the catalogue section within the system prompt. */
   catalogOrder: Schema.Int,
+  /** Limits keyed by registered tool name; call caps and breakers are per loop run. */
+  toolPolicy: Schema.optionalKey(Schema.Record(Schema.String, ToolPolicy)),
 })
 export type ToolDiscoveryConfig = typeof ToolDiscoveryConfig.Type
 export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
