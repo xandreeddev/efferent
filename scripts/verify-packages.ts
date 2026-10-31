@@ -845,6 +845,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(partsReport.trim())
 }
+// The same directory/media and real Agent journey runs from both packed hosts.
+await writeFile(join(consumer, "media-store-consumer.mjs"), await readFile(join(root, "scripts/media-store-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const mediaChild = Bun.spawn([binary, "media-store-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const mediaReport = await new Response(mediaChild.stdout).text()
+  const required = ["kitsVerified", "dedupVerified", "coverageVerified", "logicalHashReplayVerified", "legacyInlineVerified", "literalExtrasVerified", "coldRestartVerified", "noRewriteVerified", "forkCutoffBeforeHydrationVerified", "missingFutureIgnored", "sharedBlobRetentionVerified", "missingNoDispatchVerified", "corruptNoDispatchVerified", "durableBeforeAckVerified", "heldAckRestartVerified"]
+  if (await mediaChild.exited !== 0 || !mediaReport.includes(`media-store {"runtime":"${runtime}"`) || required.some((name) => !mediaReport.includes(`"${name}":true`)) || (mediaReport.match(/"publicationVerified":true/g) ?? []).length !== 2 || (mediaReport.match(/"recoveredVerified":true/g) ?? []).length !== 3) {
+    console.error(`the packed ${runtime} media-store journey lost immutable blobs, logical replay or process recovery`); process.exit(1)
+  }
+  console.log(mediaReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

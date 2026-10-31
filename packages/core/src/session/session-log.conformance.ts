@@ -184,6 +184,16 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       yield* expect("read", seqs(yield* log.read(id, { after: 1, limit: Option.some(2), kinds: ["a", "c"] })) === "3,4", "limit does not apply after the filter")
       yield* expect("read", (yield* log.read(id, { after: 5, limit: Option.none(), kinds: [] })).length === 0, "reading past the end returned events")
     })),
+    check("an inclusive read ceiling selects the visible prefix before kind filtering and limits", "read-through", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      yield* log.create(headerOf(id, owner))
+      yield* log.commit(id, { expect: 0, ...noEvents, events: ["a", "b", "a", "c", "a"].map((kind, n) => draft(kind, { n })) })
+      const seqs = (events: ReadonlyArray<{ readonly seq: number }>) => events.map((event) => event.seq).join()
+      yield* expect("read-through", seqs(yield* log.read(id, { after: 0, through: 3, limit: Option.none(), kinds: [] })) === "1,2,3", "the inclusive ceiling was ignored")
+      yield* expect("read-through", seqs(yield* log.read(id, { after: 1, through: 3, limit: Option.some(2), kinds: ["a", "c"] })) === "3", "kind filtering or limiting leaked a later event")
+      yield* expect("read-through", (yield* log.read(id, { after: 3, through: 3, limit: Option.none(), kinds: [] })).length === 0, "a closed range returned events")
+      yield* expect("read-through", (yield* log.read(id, { after: 0, through: 0, limit: Option.none(), kinds: [] })).length === 0, "an empty prefix returned events")
+    })),
     check("a listing holds the owner's top-level sessions, newest first, before the cursor", "list", (owner) => Effect.gen(function* () {
       const [first, second, third] = [yield* freshId, yield* freshId, yield* freshId]
       yield* log.create(headerOf(first, owner))

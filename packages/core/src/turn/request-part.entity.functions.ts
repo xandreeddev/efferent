@@ -22,9 +22,8 @@ const rounds: ReadonlyArray<number> = [
 const rotr = (value: number, bits: number): number => (value >>> bits) | (value << (32 - bits))
 const at = (words: ReadonlyArray<number>, index: number): number => words[index] ?? 0
 
-/** SHA-256 of a text's UTF-8 bytes, in hex: pure, as the core has no platform crypto. */
-export const sha256Of = (text: string): string => {
-  const bytes = new TextEncoder().encode(text)
+/** SHA-256 of bytes, in hex: pure, as core has no platform crypto. */
+export const sha256BytesOf = (bytes: Uint8Array): string => {
   const size = Math.ceil((bytes.length + 9) / 64) * 64
   const padded = new Uint8Array(size)
   padded.set(bytes)
@@ -54,6 +53,9 @@ export const sha256Of = (text: string): string => {
   return Array.from({ length: size / 64 }, (_, block) => block).reduce(compress, initialHash)
     .map((word) => word.toString(16).padStart(8, "0")).join("")
 }
+
+/** SHA-256 of a text's UTF-8 bytes; retains the request-part identity contract. */
+export const sha256Of = (text: string): string => sha256BytesOf(new TextEncoder().encode(text))
 
 const immutable = <A>(value: A): A => {
   if (typeof value !== "object" || value === null) return value

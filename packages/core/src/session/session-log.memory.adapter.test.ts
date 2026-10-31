@@ -25,6 +25,15 @@ describe("the kit catches a backend that breaks the contract", () => {
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
     expect(failed.flat().toSorted()).toEqual(["conflict", "race"])
   })
+  test("a backend that ignores the read ceiling fails its own conformance check", async () => {
+    const careless = SessionLog.of({
+      ...log,
+      read: (id, { through: _through, ...query }) => log.read(id, query),
+    })
+    const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
+    expect(failed.flat()).toEqual(["read-through"])
+  })
 })
 
 describe("what the in-memory log keeps is JSON, as a store on disk keeps it", () => {

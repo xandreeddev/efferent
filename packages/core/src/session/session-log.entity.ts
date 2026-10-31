@@ -102,9 +102,11 @@ export const SessionCommitted = Schema.Struct({
 })
 export type SessionCommitted = typeof SessionCommitted.Type
 
-/** Events after `after`, ascending; only the given kinds when any are named. */
+/** Events after `after` and at most `through`, ascending; filter by kind before limiting. */
 export const SessionReadQuery = Schema.Struct({
   after: Schema.Int,
+  /** Inclusive sequence ceiling, applied before logical payload decoding or media hydration. Omission reads the current tail. */
+  through: Schema.optionalKey(Schema.Int),
   limit: Schema.OptionFromNullOr(Schema.Int),
   kinds: Schema.Array(Name),
 })

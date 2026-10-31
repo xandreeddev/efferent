@@ -10,6 +10,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 11 adds optional physical media references. Compose
+  `withMediaStore` over the session log and retain its `MediaStore` alongside
+  physical journal backups; logical readers and replay still receive inline
+  `Media`. Earlier inline history stays readable without rewriting it. Older
+  unwrapped typed readers cannot decode physical attachment references, and
+  the newer-format write/run fence remains in force. Custom session backends
+  honor optional inclusive `SessionReadQuery.through` before decoding or
+  hydrating payloads; rerun `sessionLogConformance` to protect fork visibility.
+
 - Stored format 10 adds reusable `request.part` records and version 2 request
   headers referencing canonical system/tool hashes. Retention, export and
   redaction include these sensitive parts and preserve header dependencies.
@@ -1069,6 +1078,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- Add the content-addressed `MediaStore` port, memory adapter, shipped kit and
+  `MediaStoreDirectoryLive` in the files plugin. `withMediaStore` durably stores
+  canonical image bytes before journal commits, deduplicates them across
+  occurrences, and hydrates supported framework event payloads through a cache
+  bounded by entries and bytes. Attachments, nested encoded results, command
+  JSON, provider-executed results and media-bearing request parts retain exact
+  logical values, occurrence labels and opaque JSON fields.
+
 - `@xandreed/plugin-models`: per-call model request policy for finite shared
   attempts, header waits, pending body reads, total deadlines and capped
   Retry-After sleeps across native, compatible and subscription routes.
@@ -1618,6 +1635,12 @@ Model-visible text (exact pins and the compaction golden updated):
   `error`, never a host's code.
 
 ### Fixed
+
+- Retain each files adapter's physical IO slot until the original native
+  promise settles, including after caller timeout or cancellation. Bound queued
+  admission separately, prevent repeated cooldown probes from accumulating
+  pending operations, and abandon only a cancelled call's own health probe.
+  Existing commit nonce and uncertain-acknowledgment behavior is preserved.
 
 - `@xandreed/plugin-models`: streamed chat completions without tool-call
   ids keep them empty until the loop assigns deterministic ids, distinct

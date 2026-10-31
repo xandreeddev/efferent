@@ -5,6 +5,8 @@
 export { ConformanceFailure } from "../conformance.entity.js"
 export type { ConformanceCheck } from "../conformance.entity.js"
 export { check } from "../conformance.functions.js"
+export { mediaStoreConformance } from "../media/media-store.conformance.js"
+export type { MediaStoreSubject } from "../media/media-store.conformance.js"
 export { requestHeaderConformance } from "../turn/request-header.conformance.js"
 export type { RequestHeaderSubject } from "../turn/request-header.conformance.js"
 export { modelCallRecorderConformance } from "../turn/model-call-recorder.conformance.js"

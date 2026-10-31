@@ -1,3 +1,4 @@
+const MediaStoreDirectoryLive
 const SessionFilesConfig
 const SessionLogFilesLive
 const default
@@ -7,5 +8,6 @@ const sessionFilesDefaults
 const sessionFilesPlugin
 const sessionLogFilesPlugin
 interface FilesIo
+interface MediaStoreDirectoryOptions
 interface SessionLogFilesOptions
 type SessionFilesConfig

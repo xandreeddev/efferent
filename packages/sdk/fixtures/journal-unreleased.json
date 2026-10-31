@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 10,
+  "storedFormat": 11,
   "reserved": [
     "turn.started",
     "memory.system",

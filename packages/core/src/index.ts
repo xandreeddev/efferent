@@ -45,6 +45,10 @@ export {
   toolResultMedia,
 } from "./domain/media.entity.functions.js"
 export type { MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
+export { MediaHash, MediaStoreBytes, MediaStoreError } from "./domain/media-store.entity.js"
+export { mediaHashOf } from "./domain/media-store.entity.functions.js"
+export { MediaStore } from "./ports/media-store.port.js"
+export { MediaStoreMemoryLive } from "./media/media-store.memory.adapter.js"
 export { Failure } from "./domain/failure.entity.js"
 export { errorCodeOf, messagesOf, reasonOf } from "./domain/failure.entity.functions.js"
 export { BudgetTokens, ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"
@@ -130,6 +134,8 @@ export {
   TurnStartedData,
 } from "./session/session-event.entity.js"
 export { JOURNAL_KINDS } from "./session/session-event.entity.js"
+export { MediaReference, MediaEnvelope } from "./session/media-reference.entity.js"
+export { withMediaStore } from "./session/session-log-media.adapter.js"
 export { STORED_FORMAT } from "./session/stored-format.entity.js"
 export {
   draftsOfEntries,

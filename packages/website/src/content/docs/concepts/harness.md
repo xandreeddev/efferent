@@ -142,6 +142,18 @@ Retention and export must preserve the referenced parts and treat them as sensit
 prompt content. The framework guide describes the resolver and its strict prefix
 and hash checks; `requestHeaderConformance` verifies custom resolvers.
 
+Stored format 11 adds optional media storage. Compose core's `withMediaStore`
+over the session log with `MediaStoreMemoryLive` or the files plugin's
+`MediaStoreDirectoryLive`. Canonical image bytes are stored once by SHA-256 before
+any reference commits; typed readers and replay receive the original inline
+values through a cache bounded by entries and bytes. This covers attachments,
+nested encoded results, command JSON, provider results and request parts while
+preserving occurrence labels and opaque JSON. Fork reads apply the inclusive
+`SessionReadQuery.through` ceiling before hydration, so invisible later blobs
+cannot break inherited history. Physical backups include the separate media
+root; old unwrapped typed readers need hydrated exports or an updated reader.
+Session deletion does not collect shared blobs.
+
 Accepted positive input counts can raise message estimates through
 `scaledTokens`, using the exact prepared message estimate and system/tool reserve.
 The SDK matches the actual selected model and run; helpers, discarded responses
