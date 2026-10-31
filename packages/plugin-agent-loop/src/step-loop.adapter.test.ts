@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Response, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
 import type { CompletionVerdict, FinishReason, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
@@ -10,7 +10,7 @@ import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
 /** A response the model could not form: its output, or a call's parameters, do not decode, or it names no tool. */
 const isMalformed = (error: unknown): boolean => AiError.isAiError(error) &&
-  ["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"].includes(error.reason._tag)
+  Option.isNone(modelFailureOf(error)) && ["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"].includes(error.reason._tag)
 
 /** The finish reasons of a whole response: any other cuts it short, but `unknown` (the provider gave none) cuts only a reply with calls to run. */
 const WHOLE: ReadonlyArray<FinishReason> = ["stop", "tool-calls", "pause"]
@@ -149,7 +149,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
           : Effect.fail(error)),
         Effect.map(Option.some),
         Effect.catch((error) => isMalformed(error) ? Effect.succeed(Option.none()) : Effect.fail(error)),
-        Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
+        Effect.mapError((error) => isTurnError(error) ? error : harnessError(Option.match(modelFailureOf(error), { onNone: () => "loop.failed", onSome: modelFailureCodeOf }), reasonOf(Cause.fail(error)), error)),
       )
       // A malformed step ends as such, without a verdict; its corrective is the next step's, when there is one.
       if (Option.isNone(answered)) {
@@ -161,6 +161,8 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         return yield* step(index + 1, text, carried, usage, toolCalled, careless === "unreset" ? cuts : 0)
       }
       const response = answered.value
+      const failure = modelFailureOf(response.content)
+      if (Option.isSome(failure)) return yield* Effect.fail(harnessError(modelFailureCodeOf(failure.value), "The model request failed.", response))
       yield* Ref.set(malformed, 0)
       // A provider's id-less calls get ids of this run's own, before the results answer them.
       const parts = withToolCallIds(response.content, index, request.run)
@@ -247,6 +249,15 @@ const failedChecks = (loop: Context.Service.Shape<typeof StepLoop>) => Effect.ru
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }))
   .then((failed) => [...new Set(failed.flat())].toSorted())
 
+test("the model-failures check rejects a loop that erases semantic failure codes", async () => {
+  const careless = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps(request).pipe(
+    Effect.mapError((error) => harnessError("loop.failed", "the model failed", error)),
+  ) })
+  const check = stepLoopConformance(careless).find((candidate) => candidate.name.startsWith("typed model failures"))
+  const result = check === undefined ? undefined : await Effect.runPromise(Effect.result(check.run))
+  expect(result?._tag === "Failure" ? result.failure.check : "passed").toBe("model-failures")
+})
+
 /** `runSteps` with every event it publishes passed through `rewrite` first, as a careless loop would publish it. */
 const republishing = (rewrite: (event: TurnEvent) => TurnEvent) => StepLoop.of({
   id: "republishing", version: "1",
@@ -304,7 +315,7 @@ describe("a loop careless with a reply cut short", () => {
   })
 
   test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part", async () => {
-    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["assistant-first", "cut-unknown", "incremental-results", "record-failure"])
+    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["assistant-first", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {
@@ -487,12 +498,12 @@ describe("runSteps streaming", () => {
 })
 
 describe("runSteps failures", () => {
-  test("a provider failure fails the run with loop.failed, the AiError kept as its cause and its message, without its tag, as the message", async () => {
+  test("an unknown provider failure keeps the AiError as its cause and its message without its tag", async () => {
     const down = AiError.make({ module: "Test", method: "generateText", reason: new AiError.UnknownError({ description: "the provider was down" }) })
     const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
       return yield* runWith(yield* LanguageModel.make({ generateText: () => Effect.fail(down), streamText: () => Stream.fail(down) }), { streaming: false, captureTraceContent: false })
     })))
-    expect([failed._tag, failed._tag === "HarnessError" ? failed.code : null, failed.message]).toEqual(["HarnessError", "loop.failed", "Test.generateText: the provider was down"])
+    expect([failed._tag, failed._tag === "HarnessError" ? failed.code : null, failed.message]).toEqual(["HarnessError", "model.failed", "Test.generateText: the provider was down"])
     expect(failed._tag === "HarnessError" ? failed.cause : null).toBe(down)
   })
 

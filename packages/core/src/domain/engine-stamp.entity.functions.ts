@@ -3,6 +3,13 @@ import type { Response } from "effect/ai"
 import { ENGINE_KEY, ResponseStamp } from "./engine-stamp.entity.js"
 
 const decodeStamp = Schema.decodeUnknownOption(ResponseStamp)
+const isJsonObject = Schema.is(Schema.JsonObject)
+
+/** Merge neutral bookkeeping while preserving provider metadata and engine siblings. */
+export const mergeEngineStamp = (metadata: Response.ProviderMetadata, stamp: Schema.JsonObject): Response.ProviderMetadata => {
+  const previous = metadata[ENGINE_KEY]
+  return { ...metadata, [ENGINE_KEY]: { ...(isJsonObject(previous) ? previous : {}), ...stamp } }
+}
 
 const isFinish = (part: Response.AnyPart): part is Response.FinishPart => part.type === "finish"
 
@@ -14,7 +21,7 @@ const modelOf = (stamp: unknown): Option.Option<string> => Option.map(decodeStam
 
 /** A response part with `model` stamped under {@link ENGINE_KEY} when it is the finish part; any other part as it is. The stream twin of {@link stampResponseModel}. */
 export const stampPartModel = (part: Response.AnyPart, model: string): Response.AnyPart =>
-  isFinish(part) ? { ...part, metadata: { ...part.metadata, [ENGINE_KEY]: { model } } } : part
+  isFinish(part) ? { ...part, metadata: mergeEngineStamp(part.metadata, { model }) } : part
 
 /**
  * A response's content with the model that produced it on its finish part,

@@ -734,6 +734,21 @@ if (await messagesBun.exited !== 0 || !messagesBunReport.includes('anthropic-mes
   console.error("the packed Bun Messages fixture did not complete its real HTTP turns"); process.exit(1)
 }
 console.log(messagesBunReport.trim())
+// Permanent model failures retain exact durable codes without retries, stream
+// fallback or tool dispatch; ordinary output limits keep bounded correctives.
+await writeFile(join(consumer, "model-failures-consumer.mjs"), await readFile(join(root, "scripts/model-failures-consumer.fixture.mjs"), "utf8"))
+const failuresNode = Bun.spawn(["node", "model-failures-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const failuresNodeReport = await new Response(failuresNode.stdout).text()
+if (await failuresNode.exited !== 0 || !failuresNodeReport.includes('model-failures {"runtime":"Node"') || (failuresNodeReport.match(/"failureVerified":true/g) ?? []).length !== 13) {
+  console.error("the packed Node model-failure fixture did not preserve permanent failure behavior"); process.exit(1)
+}
+console.log(failuresNodeReport.trim())
+const failuresBun = Bun.spawn(["bun", "model-failures-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const failuresBunReport = await new Response(failuresBun.stdout).text()
+if (await failuresBun.exited !== 0 || !failuresBunReport.includes('model-failures {"runtime":"Bun"') || (failuresBunReport.match(/"failureVerified":true/g) ?? []).length !== 13) {
+  console.error("the packed Bun model-failure fixture did not preserve permanent failure behavior"); process.exit(1)
+}
+console.log(failuresBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

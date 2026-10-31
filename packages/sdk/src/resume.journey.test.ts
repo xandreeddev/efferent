@@ -224,7 +224,7 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     })))
 
     expect(observed.all.filter((event) => event.kind === "turn.ended").map((event) => [turnOf(event), event.data.reason])).toEqual([[1, "cancelled"], [2, "failed"], [3, "completed"]])
-    expect(codeOf(observed.failed)).toBe("loop.failed")
+    expect(codeOf(observed.failed)).toBe("model.failed")
     expect(codeOf(observed.duplicate)).toBe("turn.duplicate")
     expect([observed.retried.outcome, Option.getOrNull(observed.retried.reply)]).toEqual(["completed", "PAGE of record-alpha-a"])
     expect(ofTurn(observed.all, 3)[0]?.data).toMatchObject({ key: "resume:1:2", resumes: 1, runId: "run-4", origin: "user" })

@@ -150,6 +150,8 @@ const MemoryKindOf
 const MemoryRenderRecipe
 const ModelCallPolicy
 const ModelCatalogEntry
+const ModelFailureKind
+const ModelFailureStamp
 const ModelId
 const ModelLimits
 const ModelPrice
@@ -323,6 +325,9 @@ const mediaLabel
 const mediaSlotsOf
 const mergeOptions
 const messagesOf
+const modelFailureCodeOf
+const modelFailureMessageOf
+const modelFailureOf
 const modelRequestDescriptorOf
 const noMaintenance
 const normalizeUserMessage
@@ -361,7 +366,10 @@ const skillIssuesText
 const skillsFromFiles
 const sniffImageType
 const stackPlugins
+const stampAiErrorFailure
+const stampPartFailure
 const stampPartModel
+const stampResponseFailure
 const stampResponseModel
 const storedJson
 const subscribeAll
@@ -522,6 +530,8 @@ type ModelCallPolicy
 type ModelCallPolicyType
 type ModelCatalogEntry
 type ModelCatalogEntryType
+type ModelFailureKind
+type ModelFailureStamp
 type ModelId
 type ModelLimits
 type ModelPrice

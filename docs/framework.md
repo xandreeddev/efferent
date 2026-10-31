@@ -171,6 +171,59 @@ remain approximate. The slot and lifetime rules follow the
 [provider caching documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 checked on 2026-10-31.
 
+**Typed model failures.** `ModelFailureKind` names a failed model request
+independently of its provider. The step loop exposes these framework codes:
+
+| Kind | Failure code |
+|---|---|
+| `ContextOverflow` | `model.context-overflow` |
+| `Authentication` | `model.auth` |
+| `InvalidRequest` | `model.invalid-request` |
+| `RateLimit` | `model.rate-limit` |
+| `Quota` | `model.quota` |
+| `Transient` | `model.unavailable` |
+| `InvalidResponse` | `model.invalid-response` |
+| `Timeout` | `model.timeout` |
+| `Unknown` | `model.failed` |
+
+`modelFailureOf(value)` accepts a native `AiError`, its reason, a response
+part or a content array. It reads an explicit neutral failure stamp before
+the known Effect AI reason families; `modelFailureCodeOf(kind)` returns its
+framework code. It does not unwrap `HarnessError.cause`: read a returned
+turn error's code with `harnessCodeOf`. `stampPartFailure`,
+`stampResponseFailure` and
+`stampAiErrorFailure` let an adapter preserve that meaning. Failure, model
+and usage metadata coexist under `ENGINE_KEY`; outgoing prompts strip this
+bookkeeping, apart from the temporary volatile-context marker consumed by
+the provider adapter. Core does not search provider messages or arbitrary
+causes. The models plugin interprets structured provider evidence before
+generic status or message fallbacks. A bare HTTP 413 indicates request size,
+not token-context overflow; an explicit context code or narrow context-window
+evidence is needed to classify overflow.
+
+The adapters preserve concrete `AiError` and reason classes, their getters,
+HTTP context and provider metadata. An error-channel failure reaches the
+turn in `HarnessError.cause`; a stamped response failure retains the failed
+response as its cause. Native Anthropic HTTP 200 overflow stops and raw SSE
+failures are intercepted before SDK finish normalization and framework tool
+dispatch. Their causes retain the raw response/event, request id and known
+usage, with request credentials omitted from the added diagnostic context.
+Already published stream deltas cannot be retracted. Ordinary `max_tokens`
+cuts retain the bounded output corrective and `loop.truncated`; content-filter
+finish reasons remain cuts, while provider content-policy errors are invalid
+requests. The provider documents the distinction between
+[output-limit and context-window stops](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)
+and [HTTP errors, byte limits and errors after an SSE 200](https://platform.claude.com/docs/en/api/errors).
+
+Context, authentication, invalid-request, quota and invalid-response failures
+do not trigger provider retry, configured fallback or the loop's pre-content
+stream fallback. Rate-limit, transient and timeout failures keep the existing
+retry timings; a long `Retry-After` can make the current policy decline a
+retry without proving exhausted quota. Unstamped malformed model output
+keeps its corrective contract. The existing image-omission replan remains
+available. Existing `TurnError` tags remain unchanged,
+and unrelated unclassified loop failures still use `loop.failed`.
+
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
 WebSocket) goes through one `ModelsTransport`, built from the plugin's `proxy`
@@ -1238,6 +1291,14 @@ model calls. The caller's values can be in the request's `handlers` as well
 (a turn's services capture the context the turn runs in), so the loop
 provides its own inside `handlers`, never under them. `stepLoopConformance`
 checks each, with the caller's values around the run and in `handlers`.
+
+A custom `StepLoop` also reruns the kit's `model-failures` check. Inspect
+semantic failures before output-cut handling, response persistence, malformed
+correctives or tool admission. A known permanent failure ends its started
+step once as failed, preserves its `model.*` code and cause, and does not
+dispatch another request or a tool. Preserve writer `TurnError` failures
+without relabeling them. Explicit protocol-failure stamps distinguish a
+provider decode error from the model's ordinary malformed output.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,

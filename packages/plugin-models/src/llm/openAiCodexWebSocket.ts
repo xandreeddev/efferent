@@ -90,7 +90,7 @@ export const normalizeOpenAiCodexWebSocketEvent = (value: unknown): unknown =>
 const normalizeFrame = (frame: CodexFrame): CodexFrame =>
   frame.type === "response.done" ? { ...frame, type: "response.completed" } : frame
 
-const TERMINAL_EVENTS: ReadonlySet<string> = new Set(["response.completed", "response.incomplete", "response.failed"])
+const TERMINAL_EVENTS: ReadonlySet<string> = new Set(["response.completed", "response.incomplete", "response.failed", "error"])
 
 export const isOpenAiCodexControlEvent = (type: unknown): boolean =>
   typeof type === "string" && (type.startsWith("codex.") || type === "responsesapi.websocket_timing")
@@ -305,16 +305,17 @@ const framesOf = (pull: Socket.Reader["pull"]): Stream.Stream<Frame, Socket.Sock
 }
 
 /**
- * A frame as the SSE body carries it: an event as its `data:` line. A frame
- * that does not decode, or an `error` event after the stream began, fails
- * the body, and the OpenAI client reports the stream as undecodable.
+ * A frame as the SSE body carries it. Provider errors retain their code and
+ * message for the public client guard; missing nullable fields are filled to
+ * match the pinned SDK's error-event schema. Undecodable frames fail the body.
  */
 const sseBytes = (request: HttpClientRequest.HttpClientRequest) => (frame: Frame): Effect.Effect<Uint8Array, HttpClientError.HttpClientError> =>
   Result.match(frame, {
     onFailure: (error) => Effect.fail(transportFailure(request, `a frame is not a JSON event object: ${error.message}`, error)),
-    onSuccess: (event) => event.type === "error"
-      ? Effect.fail(transportFailure(request, `the stream carried an error: ${JSON.stringify(event).slice(0, 500)}`))
-      : Effect.succeed(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)),
+    onSuccess: (event) => Effect.succeed(encoder.encode(`data: ${JSON.stringify(Option.match(errorAnswer(event), {
+      onNone: () => event,
+      onSome: (answer) => ({ ...event, code: answer.body.error.code ?? answer.body.error.type, message: answer.body.error.message, param: answer.body.error.param }),
+    }))}\n\n`)),
   })
 
 /**

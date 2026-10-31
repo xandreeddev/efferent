@@ -1,11 +1,11 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
-import { CurrentTraceContent, freezeModelRequest, replayableContext } from "@xandreed/core"
+import { CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, replayableContext } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { AgentMessage, AgentResult, HarnessError, StepStatus } from "@xandreed/core"
+import type { AgentMessage, AgentResult, HarnessError, ModelFailureKind, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
@@ -300,7 +300,11 @@ type MalformedResponse = AiError.AiError & {
 }
 const malformedReasons: ReadonlySet<string> = new Set(["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"])
 const isMalformed = (error: unknown): error is MalformedResponse =>
-  AiError.isAiError(error) && malformedReasons.has(error.reason._tag)
+  AiError.isAiError(error) && Option.isNone(modelFailureOf(error)) && malformedReasons.has(error.reason._tag)
+
+const permanentModelFailures: ReadonlySet<ModelFailureKind> = new Set(["ContextOverflow", "Authentication", "InvalidRequest", "Quota", "InvalidResponse"])
+const isPermanentModelFailure = (error: unknown): boolean =>
+  Option.exists(modelFailureOf(error), (kind) => permanentModelFailures.has(kind))
 
 /** A provider's refusal of a request over an image: an invalid request whose message names one. */
 type ImageRejection = AiError.AiError & { readonly reason: AiError.InvalidRequestError }
@@ -695,7 +699,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
               Effect.catch((err) =>
                 Ref.get(partSeen).pipe(
                   Effect.flatMap((armed) =>
-                    armed || isImageRejection(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
+                    armed || isImageRejection(err) || isPermanentModelFailure(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
                   ),
                 ),
               ),
@@ -765,6 +769,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // call's decoder refuses it) settles the step `malformed`, and the loop
         // answers it (`recover`); nothing ran.
         if (outcome._tag === "malformed") return { _tag: "Malformed" as const, err: outcome.err, toolNames }
+
+        const failed = modelFailureOf(outcome.content)
+        if (Option.isSome(failed)) return yield* Effect.fail(harnessError(modelFailureCodeOf(failed.value), modelFailureMessageOf(failed.value), outcome))
 
         // Mint deterministic ids for id-less tool calls BEFORE anything runs or
         // fans out into events and persisted messages: the results answer them,

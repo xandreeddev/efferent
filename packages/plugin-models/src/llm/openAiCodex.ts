@@ -2,12 +2,14 @@ import { AiError, LanguageModel } from "effect/ai"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Predicate, Redacted, Schema, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ENGINE_KEY, ModelFailureStamp, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import type { ReasoningEffortType } from "@xandreed/core"
 import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions, makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
+import { classifyAiError } from "./provider-failure.entity.functions.js"
+import { withOpenAiFailures } from "./provider-client.adapter.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -113,30 +115,19 @@ const responseStatus = (error: unknown): number | undefined =>
   AiError.isAiError(error) && "http" in error.reason ? error.reason.http?.response?.status : undefined
 
 /**
- * A subscription failure in the router's vocabulary: a 404 is a model the
- * account cannot use. A stream the OpenAI client could not decode (its
- * `InvalidOutputError`, or any error on a 200 response) is the subscription's
- * protocol failing, an `InvalidResponseError`: the model's own malformed
- * output is the only invalid output the loop answers with a corrective turn.
+ * Refine structured subscription errors before the legacy protocol fallback.
+ * Keep concrete reason classes and HTTP/provider evidence; explicit semantic
+ * stamps prevent a protocol failure from becoming a model-output corrective.
  */
-export const mapOpenAiCodexError = <E>(model: string, error: E): E | AiError.AiError =>
-  responseStatus(error) === 404
-    ? AiError.make({
-        module: "OpenAiCodex",
-        method: "responses",
-        reason: new AiError.InvalidRequestError({
-          description: `model ${model} is not available to the configured ChatGPT subscription account`,
-        }),
-      })
-    : responseStatus(error) === 200 || (AiError.isAiError(error) && error.module === "OpenAiClient" && error.reason._tag === "InvalidOutputError")
-      ? AiError.make({
-          module: "OpenAiCodex",
-          method: "responses",
-          reason: new AiError.InvalidResponseError({
-            description: `the ${model} subscription stream returned a rejected or incompatible event`,
-          }),
-        })
-      : error
+export const mapOpenAiCodexError = <E>(_model: string, error: E): E | AiError.AiError => {
+  if (!AiError.isAiError(error)) return error
+  const metadata = "metadata" in error.reason ? error.reason.metadata : {}
+  const engine = Object.hasOwn(metadata, ENGINE_KEY) ? metadata[ENGINE_KEY] : undefined
+  if (Predicate.isObject(engine) && Object.hasOwn(engine, "failure") && Option.isSome(Schema.decodeUnknownOption(ModelFailureStamp)(engine))) return error
+  const classified = classifyAiError(error, "openai")
+  if (Option.exists(modelFailureOf(classified), (kind) => kind !== "Unknown")) return classified
+  return responseStatus(classified) === 200 ? stampAiErrorFailure(classified, "InvalidResponse") : classified
+}
 
 export const makeOpenAiCodexLanguageModel = (args: {
   readonly model: string
@@ -173,6 +164,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
           ),
         ),
       }).pipe(
+        Effect.map(withOpenAiFailures),
         Effect.flatMap((client) =>
           OpenAiLanguageModel.make({
             model: args.model,

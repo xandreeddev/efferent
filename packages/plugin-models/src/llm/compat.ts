@@ -11,6 +11,7 @@ import { decodeChatCompletion, gatewayErrorOf, isModelRejection, isQuotaExhauste
 import { publicReasoningEffort } from "./modelCatalog.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { classifyAiError } from "./provider-failure.entity.functions.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -515,7 +516,7 @@ export const makeCompatLanguageModel = (
         })
         const parsed = yield* decodeChatCompletion(config.moduleName, text)
         return (yield* fromChatCompletion(config.moduleName, parsed, config.usage)) as never
-      }),
+      }).pipe(Effect.mapError((error) => classifyAiError(error, "compat"))),
     streamText: (options) =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -533,7 +534,7 @@ export const makeCompatLanguageModel = (
           }
           return sseStreamParts({ moduleName: config.moduleName, body, ...(config.usage === undefined ? {} : { usage: config.usage }) })
         }),
-      ) as never,
+      ).pipe(Stream.mapError((error) => classifyAiError(error, "compat"))) as never,
   }).pipe(Effect.map((model) => describeModel(model,
     Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
       Effect.map(({ cacheKey, policy }) => {

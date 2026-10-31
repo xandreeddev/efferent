@@ -4,12 +4,14 @@ import { OpenAiClient } from "@effect/ai-openai"
 import { AiError } from "effect/ai"
 import { Cache, Effect, Option, Redacted, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
+import { modelFailureOf } from "@xandreed/core"
 import { BUN_WEBSOCKET_PROXY_VERSION } from "../transport/http-proxy.entity.js"
 import { atLeastVersion } from "../transport/http-proxy.entity.functions.js"
 import { startRecordingProxy } from "../transport/recording-proxy.testing.js"
 import { mapOpenAiCodexError } from "./openAiCodex.js"
 import { makeOpenAiCodexSessions, makeOpenAiCodexWebSocketHttpClient, openAiCodexRefusal } from "./openAiCodexWebSocket.js"
 import type { OpenAiCodexSessions } from "./openAiCodexWebSocket.js"
+import { withOpenAiFailures } from "./provider-client.adapter.js"
 
 /** The sockets open on the server, by session id, so a test can tell the client closed its own. */
 const open = new Set<string>()
@@ -30,7 +32,7 @@ const server = Bun.serve<{ readonly originator: string; readonly session: string
   websocket: {
     message: (socket, message) => {
       const created = JSON.parse(String(message)) as { readonly type?: string; readonly model?: string }
-      const delta = JSON.stringify({ type: "response.output_text.delta", delta: `${created.type} from ${socket.data.originator} in ${socket.data.session}` })
+      const delta = JSON.stringify({ type: "response.output_text.delta", item_id: "fixture-item", output_index: 0, content_index: 0, delta: `${created.type} from ${socket.data.originator} in ${socket.data.session}` })
       if (created.model === "gpt-refused") {
         socket.send(JSON.stringify({ type: "error", status: 400, error: { type: "invalid_request_error", code: "invalid_image", message: "Invalid image: the image could not be processed." } }))
       } else if (created.model === "gpt-broken") {
@@ -49,6 +51,9 @@ const server = Bun.serve<{ readonly originator: string; readonly session: string
       } else if (created.model === "gpt-fails-late") {
         socket.send(delta)
         socket.send(JSON.stringify({ type: "error", error: { type: "server_error", message: "lost the thread" } }))
+      } else if (created.model === "gpt-context-late") {
+        socket.send(delta)
+        socket.send(JSON.stringify({ type: "error", error: { type: "invalid_request_error", code: "context_length_exceeded", message: "Fixture context refused." } }))
       } else {
         socket.send(JSON.stringify({ type: "codex.rate_limits", primary: {} }))
         socket.send(delta)
@@ -91,7 +96,7 @@ const streamError = (model: string) => Effect.runPromise(Effect.gen(function* ()
     apiKey: Redacted.make("test"),
     transformClient: () => makeOpenAiCodexWebSocketHttpClient(Option.none()).pipe(
       HttpClient.mapRequest(HttpClientRequest.prependUrl(`http://127.0.0.1:${server.port}/backend-api/codex`))),
-  })
+  }).pipe(Effect.map(withOpenAiFailures))
   const [, events] = yield* client.createResponseStream({ model, input: [] } as never)
   return yield* Effect.flip(Stream.runDrain(events))
 }).pipe(
@@ -144,9 +149,19 @@ describe("the OpenAI subscription WebSocket client", () => {
     expect(silent).toContain("the socket closed before the first event")
   })
 
-  test("a frame that is no JSON event, or an error once the stream began, fails it as a provider protocol failure, not the model's invalid output", async () => {
-    expect(reasonOf(await streamError("gpt-garbage"))).toBe("InvalidResponseError")
-    expect(reasonOf(await streamError("gpt-fails-late"))).toBe("InvalidResponseError")
+  test("malformed frames retain protocol failure while actual late provider errors keep their semantic kind", async () => {
+    const malformed = await streamError("gpt-garbage")
+    expect(reasonOf(malformed)).toBe("InvalidOutputError")
+    expect(modelFailureOf(malformed)).toEqual(Option.some("InvalidResponse"))
+    const late = await streamError("gpt-fails-late")
+    expect(reasonOf(late)).toBe("InternalProviderError")
+    expect(modelFailureOf(late)).toEqual(Option.some("Transient"))
+  })
+
+  test("a late WebSocket context error preserves its raw code before SDK protocol conversion", async () => {
+    const failed = await streamError("gpt-context-late")
+    expect(AiError.isAiError(failed) ? failed.message : "not an AiError").toBe("Models.createResponseStream: Invalid request. The model request exceeded the context limit.")
+    expect(modelFailureOf(failed)).toEqual(Option.some("ContextOverflow"))
   })
 
   test("closes its socket once the stream has ended, failed or been refused", async () => {

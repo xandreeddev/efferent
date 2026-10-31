@@ -6179,7 +6179,52 @@
     {
       "code": "loop.failed",
       "where": "the step loop",
-      "meaning": "The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause."
+      "meaning": "The loop failed with an unclassified error that is not a turn error or a typed model failure; the message is that error's message, without its tag (`messagesOf`), and the error is the cause."
+    },
+    {
+      "code": "model.auth",
+      "where": "the step loop",
+      "meaning": "The model request failed authentication or authorization. The original error or failed response is kept as cause."
+    },
+    {
+      "code": "model.context-overflow",
+      "where": "the step loop",
+      "meaning": "The model request exceeded the context window, established by an explicit failure stamp. No response tool handler runs; an ordinary output-token limit remains a truncated reply."
+    },
+    {
+      "code": "model.failed",
+      "where": "the step loop",
+      "meaning": "A model request failed without a more specific semantic classification. The original error or failed response is kept as cause."
+    },
+    {
+      "code": "model.invalid-request",
+      "where": "the step loop",
+      "meaning": "The model request was invalid or rejected by content policy. The original error or failed response is kept as cause."
+    },
+    {
+      "code": "model.invalid-response",
+      "where": "the step loop",
+      "meaning": "The model returned a response incompatible with its protocol. This is distinct from correctable model-generated tool arguments."
+    },
+    {
+      "code": "model.quota",
+      "where": "the step loop",
+      "meaning": "The model request exhausted available quota or billing capacity. The original error or failed response is kept as cause."
+    },
+    {
+      "code": "model.rate-limit",
+      "where": "the step loop",
+      "meaning": "The model request was rate limited. The original error or failed response is kept as cause, including available retry timing."
+    },
+    {
+      "code": "model.timeout",
+      "where": "the step loop",
+      "meaning": "The model request exceeded a request or call deadline, established by an explicit failure stamp."
+    },
+    {
+      "code": "model.unavailable",
+      "where": "the step loop",
+      "meaning": "The model service or transport was temporarily unavailable. The original error or failed response is kept as cause."
     },
     {
       "code": "loop.truncated",

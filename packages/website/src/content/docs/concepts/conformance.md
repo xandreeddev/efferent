@@ -504,6 +504,23 @@ The memory checks also include:
 A memory adapter that ignores the alternate callback fails
 `alternate-commit`; erasing the inbox identity fails `inbox-intent`.
 
+## Typed model failures in the StepLoop kit
+
+Custom loops rerun `stepLoopConformance` after upgrading. Its
+**model-failures** check distinguishes a semantic failure from the model's
+ordinary malformed output or output-limit cut. A stamped overflow response
+or stream error part fails once with `model.context-overflow` before tool
+admission, assistant persistence, corrective messages or another request.
+A stamped provider decode error fails with `model.invalid-response`, with
+its original cause retained. Each started step ends once as failed, without
+completion evaluation or stream fallback.
+
+Use `modelFailureOf` and `modelFailureCodeOf` for neutral classification;
+provider code/message interpretation belongs in the provider adapter.
+Preserve writer `TurnError` tags and codes. Ordinary malformed output keeps
+its corrective contract, and ordinary `max_tokens` cuts keep the existing
+bounded corrective and `loop.truncated` behavior.
+
 ## Durable steering in the StepLoop kit
 
 The step-loop contract includes five checks, in addition to the response
