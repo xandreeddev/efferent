@@ -119,29 +119,29 @@ const SETTINGS = {
     `{"strictJsonSchema":false,"store":false,"stream":true,"prompt_cache_key":"efferent","text":{"verbosity":"low"},"reasoning":{"effort":"none","summary":"auto"}}`,
   ],
   "anthropic-high": [
-    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
-    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
-    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
   ],
   "anthropic-bound-high": [
-    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
-    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
-    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
   ],
   "anthropic-bound-medium": [
-    `{"max_tokens":128000,"output_config":{"effort":"medium"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
-    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
-    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"medium"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true,"thinkingPrefixMismatch":"drop_block"}`,
   ],
   "anthropic-off": [
-    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
-    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
-    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
   ],
   "anthropic-legacy": [
-    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null}`,
-    `{"max_tokens":32,"thinking":{"type":"disabled"},"systemPrelude":null}`,
-    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":32,"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
+    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null,"promptCache":{"_tag":"Auto","ttl":"5m"},"cacheControl":true}`,
   ],
 } as const
 
@@ -213,7 +213,7 @@ describe("the built-in providers, pinned", () => {
     const subscription = await Effect.runPromise(Effect.scoped(built("anthropic:claude-sonnet-5", CONTEXTS[0]!, { type: "oauth", access: Redacted.make("a"), refresh: Redacted.make("r"), expires: 1 }).pipe(
       Effect.flatMap((model) => Effect.map(modelRequestDescriptorOf(model.svc), (descriptor) => [model.prependClaudeCode, Option.map(descriptor, (value) => value.settings)] as const)),
     )).pipe(Effect.provide(FetchHttpClient.layer)))
-    expect(subscription).toEqual([true, Option.some({ model: "claude-sonnet-5", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "adaptive", display: "summarized" }, systemPrelude: CLAUDE_CODE_SYSTEM })])
+    expect(subscription).toEqual([true, Option.some({ model: "claude-sonnet-5", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "adaptive", display: "summarized" }, systemPrelude: CLAUDE_CODE_SYSTEM, promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true })])
   })
 
   it("each route sends to its URL through its client", async () => {
@@ -296,6 +296,6 @@ describe("documented Messages profile limits", () => {
     expect(modelProfileOf("anthropic:claude-next")).toEqual(Option.some({ id: "claude-next", images: true, efforts: [], bindsThinking: false }))
     const unknown = await Effect.runPromise(Effect.scoped(Effect.result(built("anthropic:claude-next", CONTEXTS[0]!))).pipe(Effect.provide(FetchHttpClient.layer)))
     expect(unknown).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelSettingsError", reason: "OutputLimit" } })
-    expect(JSON.parse(await settingsOf("anthropic:claude-next", CONTEXTS[1]!))).toEqual({ provider: "anthropic", model: "claude-next", settings: JSON.stringify({ model: "claude-next", max_tokens: 32, output_config: { effort: "max" }, systemPrelude: null }) })
+    expect(JSON.parse(await settingsOf("anthropic:claude-next", CONTEXTS[1]!))).toEqual({ provider: "anthropic", model: "claude-next", settings: JSON.stringify({ model: "claude-next", max_tokens: 32, output_config: { effort: "max" }, systemPrelude: null, promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true }) })
   })
 })
