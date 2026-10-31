@@ -87,3 +87,48 @@ test("journey: bootstrap and late helpers persist while two runs retain exact co
   expect(observed.events.filter((event) => event.kind === "model.called")).toHaveLength(8)
   expect(observed.events.findIndex((event) => event.kind === "model.called")).toBeLessThan(observed.events.findIndex((event) => event.kind === "memory.system"))
 })
+
+test("journey: afterRun helper is durable before the final reply and turn-owner closing helper", async () => {
+  const phases: string[] = []
+  const endInput: { messages: number; step: Option.Option<number>; run: Option.Option<number> }[] = []
+  const afterPolicy: MemoryPolicy = { ...memoryPolicy, maintain: ({ entries, signal }) => Effect.gen(function* () {
+    phases.push(signal.phase)
+    if (signal.phase === "turn-end") {
+      endInput.push({ messages: entries.filter((entry) => entry.body._tag === "Message").length, step: yield* CurrentAgentStep,
+        run: Option.map(yield* CurrentAgentRun, (run) => run.ordinal) })
+      yield* completion("after-run", "Helper").pipe(Effect.orDie)
+    }
+    return { actions: [], digest: [] }
+  }) }
+  const afterMemory = definePlugin({
+    id: "fixture/after-run-memory", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [ConversationMemory],
+    layer: () => Layer.succeed(ConversationMemory, { strategy: afterPolicy.strategy, open: (input) => openLogSession(input.log, afterPolicy, { runId: input.runId }) }),
+  })
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const session = { owner: "fixture", id: ConversationId.make("00000000-0000-4000-8000-000000000019") }
+    yield* sessions.create(session)
+    const agent = yield* Agent.define({ plugins: [afterMemory, toolDiscoveryPlugin, stepLoopPlugin, closingHelper],
+      turnServices: [LanguageModel.LanguageModel, Sessions], limits: { streaming: false, maxSteps: 1 } })
+    const scripted = yield* LanguageModel.make({ generateText: () => completion("loop", "Loop").pipe(Effect.orDie, Effect.as([
+      { type: "text", text: "finished" },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 10 }, outputTokens: { total: 2 } }, metadata: { [ENGINE_KEY]: { model: "fixture:actual" } } },
+    ])), streamText: () => Stream.die("not scripted") })
+    const result = yield* agent.turn({ turn: { session, runId: RunId.make("after-run-billing"), userMessage: new UserMessage({ text: "hello" }) },
+      services: Context.make(LanguageModel.LanguageModel, scripted).pipe(Context.add(Sessions, sessions)) }, (turn) => Effect.gen(function* () {
+      yield* turn.run({})
+      phases.push("reply")
+      return yield* turn.reply("custom host reply")
+    }))
+    const events = yield* sessions.read(session)
+    return { result, calls: yield* turnModelCallsOf(events, 1), billed: yield* turnBilledUsageOf(events, 1), events }
+  })))
+  expect(phases).toEqual(["turn-start", "step", "turn-end", "reply"])
+  expect(endInput).toEqual([{ messages: 1, step: Option.none(), run: Option.some(0) }])
+  expect(observed.calls.map((call) => [String(call.callId), Option.getOrNull(call.run), Option.getOrNull(call.step)])).toEqual([
+    ["loop:0", 0, 0], ["after-run:0", 0, null], ["closing:outside", null, null],
+  ])
+  expect(observed.result.usage.totalTokens).toBe(12)
+  expect(observed.billed.totalTokens).toBe(36)
+  expect(observed.events.findIndex((event) => event.kind === "model.called" && event.data.callId === "after-run:0")).toBeLessThan(observed.events.findIndex((event) => event.kind === "turn.ended"))
+})

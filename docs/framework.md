@@ -1073,8 +1073,9 @@ the step fails with `context.budget`. What the strategy does with the
 budget it is given is its own: the window strategy compacts older turns,
 spills the current turn's largest results and drops the oldest turns to
 fit, and fails with `context.budget` when the current turn alone does not;
-the summary strategy summarizes once the messages pass its `triggerRatio`
-of it and keeps its `keepRatio`; the digester ignores it. Every step's
+the summary strategy summarizes once the calibrated messages pass its
+`triggerRatio` of it and keeps its `keepRatio`, normally after the loop run;
+the digester ignores it. Every step's
 `context.built` records the run's `budgetTokens` beside `reservedTokens`
 and the messages' `estimatedTokens`.
 
@@ -1195,7 +1196,11 @@ a new strategy rebuilds from the full-fidelity entries.
   budget it is given: the whole budget at the turn's start, and what the
   system prompt and tool schemas leave of it at each step.
 - The summary strategy folds the oldest turns into one recorded summary once
-  the render passes its trigger. It reads the `UtilityLlm` where its session
+  the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
+  runs after each successful `turn.run`, including a partial return, before
+  that call returns to its host. `summarizeAt: "step"` opts into pre-request
+  maintenance at turn start and steps. Failed or interrupted loop runs skip
+  normal end maintenance. It reads the `UtilityLlm` where its session
   is opened (the turn), so summaries run under the turn's budget, and fails
   with `memory.summary` without one. The summarizer is given the folded
   turns as a transcript of at most 120,000 characters (`digestTranscript`)
@@ -1207,6 +1212,38 @@ a new strategy rebuilds from the full-fidelity entries.
   and decides nothing: the turn goes on with what memory holds (an earlier
   summary still applies), and the summarizer is not asked again in that
   turn.
+
+Both strategies use version 2 decisions. `MaintainSignal.phase` is `turn-start`,
+`step`, `turn-end` or `overflow`; `overflow` is a force-maintenance input for a
+caller that owns recovery. End and overflow window maintenance returns safe
+reductions even when the active turn alone cannot fit. Normal step/start fitting
+still fails with `context.budget` when irreducible. Summaries keep whole-turn
+boundaries and never summarize away the active admitted turn. Successful-summary
+cooldown still applies normally; overflow bypasses it, while a failed helper is
+not asked again in that memory session. The built-in summary adapter also avoids
+repeating an empty or nonreducing ask for the identical eligible frontier and
+declines overlapping/reentrant asks without holding a provider callback lock.
+The public `summaryPolicy` remains a reusable decision policy.
+
+Optional `MaintainSignal.render` binds maintenance to a run ordinal and its
+actual `tail` or `none` placement. SDK calls always supply it; end maintenance
+strips obsolete step context. Older custom signals can omit it and retain their
+start/step projection. Optional `observed: MemoryObservation` carries the actual
+selected model, its useful positive full input count, the frozen message estimate
+and system/tool reserve. SDK evidence is captured after the accepted response's
+tail is durable, including an empty tail, and stays separate from billing facts.
+Tool-result/corrective writes preserve it; an accepted response without usable
+evidence clears it. A fallback model's evidence cannot calibrate a different
+primary model. New runs and reopened sessions start without calibration.
+
+`scaledTokens(estimate, observed)` keeps a message estimate at least as large as
+its raw value. For frozen messages 1,000, reserves 200 and reported input 1,500,
+it scales message candidates by 1.3; adding one reserve predicts 1,500 total.
+Trigger, retained-tail, spill and drop comparisons use that same basis. Cache
+input is already included, and new response/tool content is estimated afresh.
+Zero or missing usable input yields no scale increase. Raw stored estimates,
+fingerprints, stable-prefix counts and version 1 replay stay unchanged; this
+calibration is a budgeting heuristic, not a tokenizer or a provider-limit claim.
 
 Digests of several results run concurrently (`MemoryPolicy.digestConcurrency`,
 four by default) and are recorded in the order of their results.
@@ -2093,12 +2130,24 @@ the cause: the failed reply recorded, its reactions drained interruptibly
 and for ten seconds at most, a failure of that finishing logged; on success
 it returns the `TurnResult`, the outcome with `RunContext.usage`; on failure
 it puts the usage so far on the current span), `turnOf(options)`
-(the `Turn` a host's code gets), `stepRequestOf(policy, options)` and
-`runTurnLoop(policy, options)` for one run of the step loop (over the
+(the `Turn` a host's code gets), `prepareRun(policy, options)`,
+`stepRequestOf(policy, options)` and `runTurnLoop(policy, options)` for one run
+of the step loop (over the
 `TurnRunServices`), and `traceTurn(writer, { spanMeta })` (its options a
 `TurnTraceOptions`; the turn's `agent.turn` span around everything after the
 begin, see traces and metrics). `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key.
+
+`prepareRun` returns a `PreparedRun` with `request` and a cached `afterRun`
+effect. A manual host runs `loop.run(prepared.request)`, then `prepared.afterRun`
+only on success. This shares the SDK lifecycle without another scope requirement;
+`runTurnLoop` performs those steps automatically and returns the same `RunResult`.
+`stepRequestOf` remains the preparation-only API. End maintenance belongs to each
+loop run, so multiple or concurrent runs have their own accepted observations;
+it does not assume the host has chosen its final turn reply. The turn's durable
+recorder stays open through summary helpers and finalizers, keeping their billed
+usage separate from selected run/turn totals. The standalone public `runLoop`
+compact callback retains its existing signature and ordering before steering.
 
 `Agent.turn` is, in order:
 

@@ -10,6 +10,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Memory strategies now use version 2 decisions. The summary strategy defaults
+  to `summarizeAt: "turn-end"`, after each successful loop run; choose `"step"`
+  for pre-request timing. Maintenance accepts optional model-matched input
+  observations and explicit run/render scope, with conservative `scaledTokens`.
+  Custom loops forward optional `AcceptedModelInput` through the third argument
+  of `StepRequest.record`; rerun the step-loop and memory kits. Manual SDK
+  compositions use `prepareRun`, then `loop.run(request)`, then the cached
+  `afterRun` effect; `stepRequestOf` remains preparation-only. Selected usage
+  and stored format 9 remain unchanged, and version 1 requests still replay.
+
+- Restore the 0.14.0 journal fixture from its release tag and retain newer
+  format 9 replay coverage in a separate unreleased fixture. The journal recorder
+  now requires `--unreleased --force` to refresh development evidence and
+  refuses to overwrite a release fixture.
+
 - Stored format 9 adds `model.called` terminal facts for model attempts,
   including retries, helpers and discarded responses. `turnModelCallsOf`
   exposes actual selections and unknown/partial/final reported usage;

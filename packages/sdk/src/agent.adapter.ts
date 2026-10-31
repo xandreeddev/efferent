@@ -110,9 +110,9 @@ export interface AgentConfig {
    * prompt and tool schemas leave of it (`context.budget` when they leave
    * nothing). The window strategy compacts, spills and drops older turns to
    * fit the budget it is given, and fails with `context.budget` when the
-   * current turn alone does not; the summary strategy summarizes once the
-   * messages pass its `triggerRatio` of it; the digester ignores it. Each
-   * step's `context.built` records it.
+   * current turn alone does not; the summary strategy normally summarizes
+   * after a successful run when messages pass its `triggerRatio`; the
+   * digester ignores it. Each step's `context.built` records it.
    */
   readonly budgetTokens?: number
   /** How deep event reactions may nest before the bus fails the publisher. */

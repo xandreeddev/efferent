@@ -43,6 +43,7 @@ const mediaFromBytes
 const onEvent
 const onTool
 const openTurnTools
+const prepareRun
 const processActivity
 const publishToolProgress
 const runTurnLoop
@@ -63,6 +64,7 @@ interface AgentConfig
 interface AgentPluginEntry
 interface Capability
 interface NewTurn
+interface PreparedRun
 interface ShutdownOptions
 interface Turn
 interface TurnBeginTrace

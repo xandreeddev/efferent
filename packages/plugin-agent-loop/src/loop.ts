@@ -1,11 +1,11 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
-import { CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, replayableContext } from "@xandreed/core"
+import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, replayableContext } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { AgentMessage, AgentResult, HarnessError, ModelFailureKind, StepStatus } from "@xandreed/core"
+import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
@@ -158,10 +158,14 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * them, and are recorded only when that step runs (a run the step cap,
    * the breaker or completion ends sends none). Returns the absolute store
    * positions aligned with the input.
+   * A real accepted model response supplies `accepted`, including when the
+   * tail is empty. Planned batches, results and loop messages omit it. An
+   * unusable supplied fact clears prior calibration; omission preserves it.
    */
   readonly onTail?: (
     messages: ReadonlyArray<AgentMessage>,
     step: number,
+    accepted?: AcceptedModelInput,
   ) => Effect.Effect<ReadonlyArray<number>, E, R>
   /**
    * The WITHIN-RUN compaction seam, consulted at turn boundaries while the
@@ -796,7 +800,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         const usage = extractUsage(outcome.usage, response)
         const model = responseModelOf(response)
         const responseTail = planned ? responseToAgentMessages(response) : withUsageOnAssistant(responseToAgentMessages(response), usage, model)
-        const positions = yield* options.onTail?.(responseTail, state.turnIndex) ?? Effect.succeed([])
+        const positions = yield* (planned
+          ? options.onTail?.(responseTail, state.turnIndex)
+          : options.onTail?.(responseTail, state.turnIndex, acceptedModelInputOf(outcome.usage, response))) ?? Effect.succeed([])
         const assistantAt = responseTail.findIndex((message) => message.role === "assistant")
         const assistantPosition = assistantAt >= 0 ? Option.fromNullishOr(positions[assistantAt]) : Option.none<number>()
         const text = responseText(response)

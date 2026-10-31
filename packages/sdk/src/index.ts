@@ -5,7 +5,8 @@ export { agentTaskExecutor } from "./task-executor.adapter.js"
 
 // the turn engine `Agent.turn` runs on, for a host that composes a turn itself
 export { TurnLive } from "./turn/turn.adapter.js"
-export { cacheKeyOf, runTurnLoop, stepRequestOf } from "./turn/turn-run.usecase.functions.js"
+export { cacheKeyOf, prepareRun, runTurnLoop, stepRequestOf } from "./turn/turn-run.usecase.functions.js"
+export type { PreparedRun } from "./turn/turn-run.usecase.functions.js"
 export type { TurnRunServices } from "./turn/turn-run.usecase.functions.js"
 export {
   finishTurn,

@@ -9,6 +9,7 @@ import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, LogQuery, S
 import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
+import type { MemoryObservation } from "../memory/memory-maintenance.entity.js"
 
 /** A conversation's memory log for one turn: the entries stored before it, and one atomic append. */
 export interface LogHandle {
@@ -96,12 +97,18 @@ export interface MemoryReader {
 
 /** @public */
 export interface MaintainSignal {
-  readonly phase: "turn-start" | "step"
+  readonly phase: "turn-start" | "step" | "turn-end" | "overflow"
+  /** Accepted input for the same actual model, not aggregate billing or run usage. */
+  readonly observed?: MemoryObservation
+  /** The calling run's projection; omitted by older hosts. Turn-end always omits step context. */
+  readonly render?: Pick<MemoryRenderRecipe, "run" | "stepContext">
   readonly lastUsage: Option.Option<TokenUsage>
   /**
    * Tokens available to the messages, at least 1: at `step`, what the system
    * prompt and the active tool schemas leave of the run's budget; at
-   * `turn-start`, the run's whole budget (nothing is built yet).
+   * `turn-start`, the run's whole budget (nothing is built yet). Turn-end
+   * and overflow targets are advisory; strategies may return safe reductions
+   * even when an irreducible current tail remains above the target.
    */
   readonly budgetTokens: number
   readonly views: ToolViews

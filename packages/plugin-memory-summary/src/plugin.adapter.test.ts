@@ -17,7 +17,7 @@ const views: ToolViews = {
   digest: () => Effect.succeed(Option.none()),
 }
 const signal = { phase: "step" as const, lastUsage: Option.none(), budgetTokens: 1_000, views }
-const config = { ...memorySummaryDefaults, summaryTimeoutMs: 5_000 }
+const config = { ...memorySummaryDefaults, summarizeAt: "step" as const, summaryTimeoutMs: 5_000 }
 const maintain = (summarize: (prompt: string) => Effect.Effect<string, HarnessError>) => {
   const policy = summaryPolicy(config, summarize)
   const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4"), run: RunOrdinal.make(0) })
@@ -146,7 +146,7 @@ describe("a summarizer that fails or stalls", () => {
         Effect.provideService(UtilityLlm, utility))
       return yield* session.maintain(signal)
     })))
-    expect(recorded.map((entry) => entry.body)).toEqual([{ _tag: "Compaction", strategy: "summary", version: "1", action: { _tag: "Summarize", keepFromTurn: 4, summary: "SUMMARY" } }])
+    expect(recorded.map((entry) => entry.body)).toEqual([{ _tag: "Compaction", strategy: "summary", version: "2", action: { _tag: "Summarize", keepFromTurn: 4, summary: "SUMMARY" } }])
   })
 })
 

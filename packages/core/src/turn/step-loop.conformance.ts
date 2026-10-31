@@ -11,6 +11,7 @@ import type { FinishReason, StepStatus } from "../domain/turn-vocabulary.entity.
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { AcceptedModelInput } from "../domain/accepted-model-input.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
@@ -194,7 +195,7 @@ interface Observed {
   readonly result: RunResult
   readonly events: ReadonlyArray<TurnEvent>
   /** Each `record` call, in order: the step it recorded under, and how many events were published before it. */
-  readonly records: ReadonlyArray<{ readonly step: number; readonly after: number }>
+  readonly records: ReadonlyArray<{ readonly step: number; readonly after: number; readonly tail: ReadonlyArray<AgentMessage>; readonly accepted: Option.Option<AcceptedModelInput> }>
   readonly providerCalls: ReadonlyArray<unknown>
   /** The prompt of each provider call. */
   readonly prompts: ReadonlyArray<Prompt.Prompt>
@@ -316,11 +317,11 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     pollable: [],
     skills: [],
   }
-  const records = yield* Ref.make<ReadonlyArray<{ readonly step: number; readonly after: number }>>([])
+  const records = yield* Ref.make<Observed["records"]>([])
   const history = yield* Ref.make<ReadonlyArray<AgentMessage>>([{ role: "user", content: "go" }])
   const steers = yield* Ref.make(scenario.steering ?? [])
-  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => (scenario.recording?.(step, tail) ?? Effect.void).pipe(Effect.andThen(Ref.get(seen)),
-    Effect.flatMap((published) => Ref.update(records, (all) => [...all, { step, after: published.length }])),
+  const record = (step: number, tail: ReadonlyArray<AgentMessage>, accepted?: AcceptedModelInput) => (scenario.recording?.(step, tail) ?? Effect.void).pipe(Effect.andThen(Ref.get(seen)),
+    Effect.flatMap((published) => Ref.update(records, (all) => [...all, { step, after: published.length, tail, accepted: Option.fromNullishOr(accepted) }])),
     Effect.andThen(Ref.update(history, (all) => [...all, ...tail])),
   ).pipe(Effect.andThen(Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
     const entries = tail.flatMap((message): ReadonlyArray<LogEntry["body"]> => message.role !== "tool"
@@ -477,7 +478,10 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * per-step event order, recorded results on `step.ended`, each step ended
  * once, with its assistant response durable and usage published before any
  * handler runs, and each result durable as it returns while a sibling may
- * still be held; a failed record stops the execution and fails the step;
+ * still be held; accepted response input and actual model passed through
+ * `record` even for empty tails, before handlers, with no such fact for a
+ * planned batch, tool result or corrective (`accepted-input`); a failed
+ * record stops the execution and fails the step;
  * nothing recorded under it after its `step.ended` (the loop's
  * correctives, nudges and steers are the next step's, the corrective after
  * a reply cut at the output limit among them), nothing recorded under a
@@ -531,6 +535,46 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "forwards accepted model input including empty tails, excluding planned, result and corrective writes",
+    run: Effect.gen(function* () {
+      const check = "accepted-input"
+      const stamped = (parts: ReadonlyArray<Part>): ReadonlyArray<Part> => parts.map((part) => part.type === "finish"
+        ? { ...part, usage: billed(150, 7), metadata: { engine: { model: "actual:fallback" } } } : part)
+      const streamed = (parts: ReadonlyArray<Part>): ReadonlyArray<StreamPart> => parts.flatMap((part) => part.type === "tool-call" || part.type === "finish" ? [part] : [])
+      const finishOnly = stamped([{ type: "finish", reason: "stop", usage }])
+      const wanted = (fact: AcceptedModelInput) => Option.contains(fact.inputTokens, 150) && Option.isSome(fact.model)
+        && fact.model.value.provider === "actual" && fact.model.value.modelId === "fallback"
+      yield* Effect.forEach([false, true], (streaming) => Effect.gen(function* () {
+        const first = stamped(probeCall("accepted-probe", 1))
+        const observed = yield* observe(loop, { script: [first, finishOnly], stream: [streamed(first), streamed(finishOnly)], streaming })
+        const facts = observed.records.filter((record) => Option.isSome(record.accepted))
+        yield* expect(check, facts.length === 2 && facts.every((record) => Option.isSome(record.accepted) && wanted(record.accepted.value)),
+          "accepted responses did not pass their selected full input and actual stamped model")
+        yield* expect(check, facts[0]?.step === 0 && facts[1]?.step === 1 && facts[1]?.tail.length === 0,
+          "a finish-only accepted response lost its empty-tail calibration fact")
+        yield* expect(check, observed.records.filter((record) => record.tail.some((message) => message.role === "tool")).every((record) => Option.isNone(record.accepted)),
+          "a result-only write supplied accepted model evidence")
+        yield* expect(check, (facts[0]?.after ?? Infinity) <= indexOf(observed.events, "tool.started", 0),
+          "the accepted response was not recorded before its handler")
+      }), { concurrency: 1 })
+      const planned = yield* observe(loop, {
+        initial: { calls: [{ name: Probe.name, params: { n: 2 } }], skills: [] }, script: [finishOnly],
+      })
+      yield* expect(check, planned.records.filter((record) => record.step === 0).every((record) => Option.isNone(record.accepted))
+        && planned.records.some((record) => record.step === 1 && Option.isSome(record.accepted) && wanted(record.accepted.value)),
+        "a planned batch supplied evidence, or the following provider response lost it")
+      const recovered = yield* observe(loop, {
+        script: [malformedCall("not-accepted"), stamped(cutText("length", "prefix ")), [{ type: "finish", reason: "stop", usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } } }]],
+      })
+      const real = recovered.records.flatMap((record) => Option.toArray(record.accepted).map((fact) => ({ step: record.step, fact })))
+      yield* expect(check, real.length === 2 && real[0]?.step === 1 && real[1]?.step === 2 && real[0] !== undefined && wanted(real[0].fact)
+        && real[1] !== undefined && Option.isNone(real[1].fact.inputTokens) && Option.isNone(real[1].fact.model),
+        "malformed output supplied evidence, an accepted cut lost it, or unusable accepted evidence was omitted")
+      yield* expect(check, recovered.records.filter((record) => record.tail.some((message) => message.role === "user")).every((record) => Option.isNone(record.accepted)),
+        "a corrective supplied accepted response evidence")
+    }),
+  },
   {
     name: "typed model failures fail once before tools, recording, corrections or stream fallback",
     run: Effect.gen(function* () {

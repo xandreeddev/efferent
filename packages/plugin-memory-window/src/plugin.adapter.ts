@@ -17,6 +17,7 @@ import {
   pendingCompaction,
   rewrittenBy,
   RunContext,
+  scaledTokens,
   toolInputOf,
 } from "@xandreed/core"
 import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
@@ -58,7 +59,7 @@ export const memoryWindowDefaults: MemoryWindowConfig = {
 }
 
 /** @public */
-export const WINDOW_STRATEGY = { id: "window", version: "1" } as const
+export const WINDOW_STRATEGY = { id: "window", version: "2" } as const
 
 /** A spilled result's preview: its first `chars` characters, and how to read the rest. */
 export const spillPreview = (entry: LogEntry, view: string, chars: number): string =>
@@ -89,8 +90,9 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     const views: ReadonlyArray<CompactionAction> = compacted.length === 0 ? [] : [{
       _tag: "CompactViews", entries: compacted.map((item) => item.id), texts: compacted.map((item) => item.text),
     }]
-    const over = (actions: ReadonlyArray<CompactionAction>): boolean =>
-      estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(WINDOW_STRATEGY, action, index))])) > signal.budgetTokens
+    const tokens = (actions: ReadonlyArray<CompactionAction>): number =>
+      scaledTokens(estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(WINDOW_STRATEGY, action, index))])), Option.fromNullishOr(signal.observed))
+    const over = (actions: ReadonlyArray<CompactionAction>): boolean => tokens(actions) > signal.budgetTokens
     if (!over(views)) return views
     const spillable = results
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
@@ -99,10 +101,12 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     const spilled = spillable.reduce((actions: ReadonlyArray<CompactionAction>, { entry, result }): ReadonlyArray<CompactionAction> => !over(actions) ? actions
       : [...actions, { _tag: "Spill", entry: entry.id, preview: spillPreview(entry, result.view, config.previewChars) }], views)
     if (!over(spilled)) return spilled
-    const dropped = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
+    const candidates = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
       .map((through): ReadonlyArray<CompactionAction> => [...spilled, { _tag: "DropTurns", throughTurn: through, ledger: ledgerOf(entries, through, config.ledgerTurnChars) }])
-      .find((actions) => !over(actions))
+    const dropped = candidates.find((actions) => !over(actions))
     if (dropped !== undefined) return dropped
+    if (signal.phase === "turn-end" || signal.phase === "overflow") return [spilled, ...candidates]
+      .reduce((best: ReadonlyArray<CompactionAction>, candidate) => tokens(candidate) < tokens(best) ? candidate : best, [])
     return yield* Effect.fail(new HarnessError({ code: "context.budget", message: `The current turn alone exceeds the ${signal.budgetTokens}-token context budget` }))
 })
 

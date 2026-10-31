@@ -101,8 +101,9 @@ The lists the check reads are the `registration` data in
   `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a
   release wrote: record one per release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
-  existing fixture unless `--force` is passed, and `--force` is only for
-  re-recording the current, unreleased version. Evaluation reports follow
+  existing release fixture. During development, record
+  `journal-unreleased.json` with `bun scripts/record-journal-fixture.ts --unreleased`;
+  `--unreleased --force` refreshes only that development fixture. Evaluation reports follow
   the same rule: `packages/evals/src/run-compat.test.ts` reads each
   `packages/evals/fixtures/run-<version>.json`, recorded with
   `bun scripts/record-run-fixture.ts`.

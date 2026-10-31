@@ -59,6 +59,7 @@ class UtilityCompletion
 class UtilityError
 class UtilityLlm
 class WaitingInput
+const AcceptedModelInput
 const ActivationSource
 const ActiveTurn
 const AdmittedTurn
@@ -148,6 +149,7 @@ const Media
 const MediaFingerprint
 const MediaSlot
 const MemoryKindOf
+const MemoryObservation
 const MemoryRenderRecipe
 const ModelCallData
 const ModelCallId
@@ -276,6 +278,7 @@ const UserContentPart
 const UserRoleMessage
 const WaitingInputCount
 const WriteOptions
+const acceptedModelInputOf
 const activationsOf
 const addUsage
 const assistantModel
@@ -369,6 +372,7 @@ const resumeRefusal
 const rewrittenBy
 const sameUserMessage
 const scaledSize
+const scaledTokens
 const sessionAttributes
 const shutdownGracefully
 const shutdownRefusal
@@ -475,6 +479,7 @@ interface TurnToAdmit
 interface TurnTools
 interface TurnWriter
 interface TypedPlugin
+type AcceptedModelInput
 type ActivationSource
 type ActiveTurn
 type AdmittedTurn
@@ -538,6 +543,7 @@ type Media
 type MediaFingerprint
 type MediaSlot
 type MemoryFileSystem
+type MemoryObservation
 type MemoryRenderRecipe
 type MemorySeed
 type ModelCallData

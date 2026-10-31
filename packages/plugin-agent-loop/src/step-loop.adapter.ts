@@ -144,7 +144,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     onStepSettled: settle,
     pendingInput: () => request.steering,
     durableInput: { pending: () => request.pendingSteers, take: request.steer },
-    onTail: (messages, step) => request.record(step, messages).pipe(Effect.as([])),
+    onTail: (messages, step, accepted) => request.record(step, messages, accepted).pipe(Effect.as([])),
     onEvent,
   })
   const result = yield* harnessDefectsAsFailures(loop.pipe(

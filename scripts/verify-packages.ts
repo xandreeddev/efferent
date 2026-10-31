@@ -796,6 +796,21 @@ if (await recorderBun.exited !== 0 || !recorderBunReport.includes('model-call-re
   console.error("the packed Bun model-call recorder failed its public conformance kit"); process.exit(1)
 }
 console.log(recorderBunReport.trim())
+// Accepted request input calibrates maintenance after the loop; manual
+// composition shares that lifecycle without another scope requirement.
+await writeFile(join(consumer, "memory-maintenance-consumer.mjs"), await readFile(join(root, "scripts/memory-maintenance-consumer.fixture.mjs"), "utf8"))
+const maintenanceNode = Bun.spawn(["node", "memory-maintenance-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const maintenanceNodeReport = await new Response(maintenanceNode.stdout).text()
+if (await maintenanceNode.exited !== 0 || !maintenanceNodeReport.includes('memory-maintenance {"runtime":"Node","summaries":1,"manualAfterRun":1,"maintenanceVerified":true}')) {
+  console.error("the packed Node maintenance lifecycle lost accepted input, timing or manual completion"); process.exit(1)
+}
+console.log(maintenanceNodeReport.trim())
+const maintenanceBun = Bun.spawn(["bun", "memory-maintenance-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const maintenanceBunReport = await new Response(maintenanceBun.stdout).text()
+if (await maintenanceBun.exited !== 0 || !maintenanceBunReport.includes('memory-maintenance {"runtime":"Bun","summaries":1,"manualAfterRun":1,"maintenanceVerified":true}')) {
+  console.error("the packed Bun maintenance lifecycle lost accepted input, timing or manual completion"); process.exit(1)
+}
+console.log(maintenanceBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

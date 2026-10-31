@@ -5,6 +5,7 @@ import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
 import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
+import { acceptedModelInputOf } from "@xandreed/core"
 import type { CompletionVerdict, FinishReason, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -128,7 +129,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         })
         // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
         const options = { prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }
-        const generated: Effect.Effect<{ readonly content: ReadonlyArray<Response.AnyPart>; readonly finishReason: FinishReason }, unknown> = streamedThrough
+        const generated: Effect.Effect<{ readonly content: ReadonlyArray<Response.AnyPart>; readonly finishReason: FinishReason; readonly usage?: Response.Usage }, unknown> = streamedThrough
           ? foldStreamParts(provider.streamText(options) as never, () => Effect.void)
           : provider.generateText(resolvedThrough ? options : { ...options, disableToolCallResolution: true }) as never
         return yield* generated.pipe(
@@ -176,14 +177,14 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         toolCalls: responseToolCalls(parts).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used, finishReason: response.finishReason,
       })
       if (careless !== "batch-tail") {
-        yield* record(index, responseToAgentMessages(parts))
+        yield* record(index, responseToAgentMessages(parts), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
         yield* publishAssistant
       }
       const answers = resolvedThrough ? [] : cut ? calls.map(notRun) : yield* runCalls(calls, index)
       if (cut && careless !== "batch-tail") yield* Effect.forEach(answers, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
       const content: ReadonlyArray<Response.AnyPart> = [...parts, ...answers]
       if (careless === "batch-tail") {
-        yield* record(index, responseToAgentMessages(content))
+        yield* record(index, responseToAgentMessages(content), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
         yield* publishAssistant
       }
       const reply = responseText(content)
@@ -249,6 +250,13 @@ const failedChecks = (loop: Context.Service.Shape<typeof StepLoop>) => Effect.ru
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }))
   .then((failed) => [...new Set(failed.flat())].toSorted())
 
+test("the accepted-input check rejects a loop that drops accepted response evidence", async () => {
+  const forgetful = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({
+    ...request, record: (step, tail) => request.record(step, tail),
+  }) })
+  expect(await failedChecks(forgetful)).toEqual(["accepted-input"])
+})
+
 test("the model-failures check rejects a loop that erases semantic failure codes", async () => {
   const careless = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps(request).pipe(
     Effect.mapError((error) => harnessError("loop.failed", "the model failed", error)),
@@ -297,7 +305,7 @@ describe("a loop careless with durable steering", () => {
 
 describe("a loop careless with a reply cut short", () => {
   test("one that records the whole tail after all tools return fails every per-call durability check", async () => {
-    expect(await failedChecks(minimalLoopOf("batch-tail"))).toEqual(["assistant-first", "incremental-results", "record-failure"])
+    expect(await failedChecks(minimalLoopOf("batch-tail"))).toEqual(["accepted-input", "assistant-first", "incremental-results", "record-failure"])
   })
 
   test("one that publishes every assistant.message as finished with stop fails the finish reason's checks", async () => {
@@ -311,15 +319,15 @@ describe("a loop careless with a reply cut short", () => {
   })
 
   test("one that streams through effect/ai's own tool call resolution starts a call before it records the response and before the finish arrives", async () => {
-    expect(await failedChecks(minimalLoopOf("streamed"))).toEqual(["assistant-first", "cut-stream"])
+    expect(await failedChecks(minimalLoopOf("streamed"))).toEqual(["accepted-input", "assistant-first", "cut-stream"])
   })
 
   test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part", async () => {
-    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["assistant-first", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
+    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["accepted-input", "assistant-first", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {
-    expect(await failedChecks(minimalLoopOf("cuts-with-calls"))).toEqual(["cut-fail", "cut-text", "malformed-limit"])
+    expect(await failedChecks(minimalLoopOf("cuts-with-calls"))).toEqual(["accepted-input", "cut-fail", "cut-text", "malformed-limit"])
   })
 
   test("one that ends the run at a paused reply with no calls fails pause", async () => {
@@ -353,7 +361,7 @@ const carelessLoop = StepLoop.of({
       ...request,
       events: { ...request.events, publish: (event) => event._tag === "step.ended" ? endOnce(event) : request.events.publish(event) },
       completion: (info) => request.completion(info).pipe(Effect.onExit((exit) => ended(info.stepIndex, Exit.isSuccess(exit) ? "completed" : "failed").pipe(Effect.orDie))),
-      record: (step, tail) => Effect.service(CurrentAgentStep).pipe(Effect.flatMap((current) => request.record(Option.getOrElse(current, () => step), tail))),
+      record: (step, tail, accepted) => Effect.service(CurrentAgentStep).pipe(Effect.flatMap((current) => request.record(Option.getOrElse(current, () => step), tail, accepted))),
     }).pipe(Effect.tap((result) => result.reason === "step-cap"
       ? request.record(result.steps, [{ role: "user", content: "Complete the requested work." }])
       : Effect.void))
