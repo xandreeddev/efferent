@@ -26,10 +26,19 @@ export const TurnsInFlight = Schema.Struct({
 })
 export type TurnsInFlight = typeof TurnsInFlight.Type
 
+/** Pending durable user inputs in an owner-checked session this Sessions instance has observed. */
+export const WaitingInputCount = Schema.Struct({
+  session: ConversationId,
+  pending: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+})
+export type WaitingInputCount = typeof WaitingInputCount.Type
+
 /**
  * What this process is busy with, for a `/ping` or a graceful shutdown: the
  * turns it holds open (oldest first), the begins still in progress, the
- * background tasks it runs, whether there is any of them, and whether it is
+ * background tasks and drain attempts it runs, and queued user input in
+ * sessions its Sessions has observed. inFlight describes active work; busy
+ * includes durable backlog too. It also reports whether the process is
  * stopping (its `TurnShutdown` refuses new turns: a load balancer stops
  * sending it any).
  */
@@ -37,6 +46,12 @@ export const ProcessActivity = Schema.Struct({
   openTurns: Schema.Array(ActiveTurn),
   beginningTurns: Schema.Int,
   runningTasks: Schema.Int,
+  /** Known sessions with pending durable user input; zero counts are omitted. */
+  waiting: Schema.Array(WaitingInputCount),
+  /** The sum of the pending counts in waiting; legacy notices do not count. */
+  queuedInput: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** An open/beginning turn, task or active drain attempt, excluding queued backlog and retry timers. */
+  inFlight: Schema.Boolean,
   busy: Schema.Boolean,
   stopping: Schema.Boolean,
 })
@@ -44,10 +59,10 @@ export type ProcessActivity = typeof ProcessActivity.Type
 
 /**
  * How a graceful shutdown went (`shutdownGracefully`): whether the process
- * was idle before the deadline, the turns it then interrupted (each ended
- * `turn.shutdown`), and what was still in flight when it returned (`busy`
- * false once every interrupted turn's scope has closed and every task has
- * ended).
+ * had no work in flight before the deadline, the turns it then interrupted
+ * (each ended `turn.shutdown`), and the final activity. left.busy may remain
+ * true because input is retained for the next process even when
+ * left.inFlight is false. Queue counts are cached, without storage I/O.
  */
 export const ShutdownReport = Schema.Struct({
   idle: Schema.Boolean,

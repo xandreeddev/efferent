@@ -18,6 +18,9 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 - `docs/events.md` quotes regions of `src/events-guide.test.ts`: edit the snippet there, then run `bun run docs:generate`.
 - Keep test-only code out of `index.ts`: `src/testing.port.ts` (`Tally`, `Stamp`) serves the tests only, and the build leaves it out.
 
+- `agentInboxRunner(agent, { services, use? })` captures the same Sessions as the drainer and runs a borrowed writer through Agent.turn. It neither begins nor ends; preserve the outcome and typed TurnError. Build it beside the agent to avoid a graph cycle. Its contract is pinned by the core InboxRunner kit and a real-agent queued journey.
+- Runtime activity captures WaitingInput and DrainActivity alongside turn/task/shutdown probes. Installed queue failures stay SessionLogError. Shutdown waits only for inFlight, retaining queued input and using cached queue knowledge.
+
 ## Public surface
 
 - `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`), and `agentTaskExecutor(agent, { services, steering?, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns run with `services` and the calling `Tasks`, and are, by default, the turn's skills selected, then one run of the step loop, its text the reply.

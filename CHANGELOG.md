@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `Sessions` supplies the bounded broadcast `waiting` stream;
+  rerun `sessionsConformance`. Kit instances add `waitingInput` (an optional
+  `WaitingInput` probe). `ProcessActivity` adds `waiting`, `queuedInput`
+  and `inFlight`; `busy` includes queued input. `processActivity`,
+  `Agent.activity` and default `awaitIdle` preserve `SessionLogError` from
+  queue reads. `awaitIdle({ queued: false })` and shutdown stay infallible
+  and wait only for running work, retaining cached backlog for restart.
+
 - A whole `WorkspaceToolsConfig` adds `imageMaxSide: 8000` (or spreads its
   defaults). It applies when an optional `ImageResizer` is present. The
   `read` result view advances to version 3; fitted images may carry scalar
@@ -967,6 +975,13 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Scoped automatic inbox execution with `InboxDrainLive`, explicit owner
+  scopes, fixed workers, startup/local/periodic discovery, bounded backoff,
+  interrupted-root resumption before queued work, and startup-only takeover.
+  SDK's `agentInboxRunner` executes prebegun turns through the agent without
+  owning their ends; the core `InboxRunner` kit checks its contract.
+  `WaitingInput` and `DrainActivity` make queued and running work observable.
 
 - Optional workspace image fitting through the new `ImageResizer` port and
   `imageResizerPlugin`, backed by installed ImageMagick, libvips or sips.

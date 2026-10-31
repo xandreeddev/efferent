@@ -139,6 +139,12 @@ export interface TurnWriter {
  * Reads never write: loading or following a session runs nothing.
  */
 export class Sessions extends Context.Service<Sessions, {
+  /**
+   * Instance-wide broadcast rescan signal: an initial signal after each
+   * subscription, then local commits. Slow subscribers coalesce signals.
+   * Payloads carry no addresses or authority; foreign commits need a sweep.
+   */
+  readonly waiting: Stream.Stream<void>
   readonly create: (input: {
     readonly owner: string
     readonly id?: ConversationId

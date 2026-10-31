@@ -5,6 +5,7 @@ const fileSystemConformance
 const imageResizerConformance
 const imageResizerPng
 const inMemoryLog
+const inboxRunnerConformance
 const memoryConformance
 const modelCatalogConformance
 const probeCall
@@ -22,6 +23,7 @@ interface ConformanceCheck
 interface FileSystemFixture
 interface FileSystemSubject
 interface ImageResizerSubject
+interface InboxRunnerSubject
 interface SessionLogSubject
 interface SessionsInstance
 interface SessionsProcess

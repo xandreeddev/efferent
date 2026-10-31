@@ -26,6 +26,7 @@ const sessionsOf = (owner: string, asked: Array<SessionAddress>) => {
         ? Effect.succeed(stored.filter((event) => event.seq > (query?.after ?? 0)))
         : Effect.fail(new SessionMissing({ session: address.id }))
     },
+    waiting: Stream.succeed(undefined),
     changes: () => Stream.make(undefined),
   })
 }

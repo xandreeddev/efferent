@@ -8,7 +8,7 @@ import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
-import type { TurnActivity, TurnShutdown } from "../ports/activity.port.js"
+import type { TurnActivity, TurnShutdown, WaitingInput } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -30,6 +30,8 @@ export interface SessionsInstance {
   readonly activity: Option.Option<Context.Service.Shape<typeof TurnActivity>>
   /** Its `TurnShutdown`, when it provides one: then checked to refuse its begins and close its turns. */
   readonly shutdown: Option.Option<Context.Service.Shape<typeof TurnShutdown>>
+  /** Its owner-observed queued-input probe, when supplied. */
+  readonly waitingInput: Option.Option<Context.Service.Shape<typeof WaitingInput>>
 }
 
 /**
@@ -590,6 +592,82 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* note(followed)
       const next = yield* eventually(Ref.get(seen), (count) => count > 2)
       yield* expect("changes", next > 2, "a follower that caught up was not signalled after its session's next commit")
+    })),
+
+    scoped("waiting broadcasts an initial signal and coalesced local commits to every subscriber across sessions", "waiting", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      yield* expect("waiting", sessions.waiting !== undefined, "Sessions has no global waiting signal")
+      const [first, second] = [yield* created(sessions, owner), yield* created(sessions, owner)]
+      const counts = [yield* Ref.make(0), yield* Ref.make(0)]
+      const gate = yield* Deferred.make<void>()
+      const payloads = yield* Ref.make(true)
+      const followers = yield* Effect.forEach(counts, (seen) => Effect.forkScoped(sessions.waiting.pipe(Stream.runForEach((signal) =>
+        Ref.update(seen, (n) => n + 1).pipe(Effect.andThen(Ref.update(payloads, (valid) => valid && signal === undefined)), Effect.andThen(Deferred.await(gate)))))), { concurrency: 1 })
+      const read = Effect.forEach(counts, Ref.get, { concurrency: 1 })
+      const initial = yield* eventually(read, (all) => all.every((n) => n > 0))
+      yield* expect("waiting", initial.every((n) => n === 1), `two new subscribers received [${initial.join()}] initial signals without a commit`)
+      yield* sessions.enqueue(first, queued("wake-a"))
+      yield* sessions.enqueue(second, queued("wake-b"))
+      yield* sessions.deliver(first, item("wake-notice"))
+      yield* Deferred.succeed(gate, undefined)
+      const caughtUp = yield* eventually(read, (all) => all.some((n) => n > 2), 50)
+      yield* expect("waiting", caughtUp.every((n) => n === 2), `slow broadcast subscribers received [${caughtUp.join()}] signals instead of initial plus one coalesced wake`)
+      yield* expect("waiting", (yield* sessions.get(first)).pending === 2 && (yield* sessions.get(second)).pending === 1,
+        "a coalesced rescan cannot discover both sessions' committed items")
+      yield* sessions.enqueue(second, queued("wake-c"))
+      const next = yield* eventually(read, (all) => all.every((n) => n > 2))
+      yield* expect("waiting", next.every((n) => n > 2) && (yield* Ref.get(payloads)), "a subscriber missed a later commit or a signal exposed a payload")
+      yield* Fiber.interrupt(followers[0]!)
+      const stopped = yield* Ref.get(counts[0]!)
+      yield* sessions.enqueue(first, queued("wake-d"))
+      const surviving = yield* eventually(Ref.get(counts[1]!), (n) => n > next[1]!)
+      yield* expect("waiting", surviving > next[1]! && (yield* Ref.get(counts[0]!)) === stopped, "cancelling one subscription stopped another or kept delivering to it")
+    })),
+
+    scoped("WaitingInput refreshes only owner-observed queued inputs, excludes notices, and sees foreign claims, release, take, completion and removal", "waiting-input", (owner) => Effect.gen(function* () {
+      const [observer, producer] = [yield* leased(), yield* leased()]
+      if (Option.isNone(observer.waitingInput)) return
+      const probe = observer.waitingInput.value
+      const [address, hidden, secret] = [yield* created(producer.sessions, owner), yield* created(producer.sessions, owner), yield* created(producer.sessions, `${owner}-secret`)]
+      yield* producer.sessions.enqueue(hidden, queued("hidden"))
+      yield* producer.sessions.enqueue(secret, queued("secret"))
+      const positive = probe.current.pipe(Effect.map((all) => all.filter((count) => count.pending > 0)))
+      yield* expect("waiting-input", (yield* positive).length === 0, "a fresh instance observed queued sessions without an owner-checked operation")
+      yield* Effect.result(observer.sessions.get({ id: secret.id, owner }))
+      yield* expect("waiting-input", (yield* positive).length === 0, "a rejected owner check exposed queued input")
+      yield* observer.sessions.get(address)
+      yield* producer.sessions.deliver(address, item("notice-only"))
+      yield* expect("waiting-input", (yield* positive).length === 0, "legacy notices counted as queued user input")
+      yield* producer.sessions.enqueue(address, queued("observed-next"))
+      const steer = queued("observed-steer", "steer")
+      yield* producer.sessions.enqueue(address, steer)
+      const shows = (pending: number, when: string) => positive.pipe(Effect.flatMap((all) => expect("waiting-input",
+        pending === 0 ? all.length === 0 : all.length === 1 && all[0]!.session === address.id && all[0]!.pending === pending,
+        `${when}: [${all.map((count) => `${count.session}:${count.pending}`).join()}], expected only ${pending} in the observed session`)))
+      yield* shows(2, "foreign enqueue")
+      const cached = (yield* probe.cached).filter((count) => count.pending > 0)
+      yield* expect("waiting-input", cached.length === 1 && cached[0]!.pending === 2, "a successful refresh did not update cached knowledge")
+      const claimed = yield* producer.sessions.begin(address, fromQueue("observed-next", "observed-attempt"))
+      yield* shows(1, "foreign claim")
+      yield* claimed.end({ reason: "partial", failure: Option.none() })
+      yield* shows(2, "partial release")
+      const writer = yield* producer.sessions.begin(address, say("consume steering", "waiting-steer"))
+      yield* writer.take([steerEntry(writer, steer, 1)])
+      yield* writer.end(completed)
+      yield* shows(1, "durable take")
+      const waiting = yield* Effect.forkScoped(probe.idle)
+      yield* expect("waiting-input", !(yield* settles(waiting)), "idle completed with an unclaimed queued user input")
+      const answering = yield* producer.sessions.begin(address, fromQueue("observed-next", "observed-completion"))
+      yield* answering.end(completed)
+      // This observer receives no local commit: its probe must also poll foreign changes.
+      yield* subject.advance(10_000)
+      yield* expect("waiting-input", yield* settles(waiting), "idle did not observe another instance's acknowledgement")
+      yield* shows(0, "acknowledgement with a notice remaining")
+      yield* observer.sessions.get(hidden)
+      const visible = yield* positive
+      yield* expect("waiting-input", visible.length === 1 && visible[0]!.session === hidden.id && visible[0]!.pending === 1, "a successful owner-checked read did not observe its session")
+      yield* producer.sessions.remove(hidden)
+      yield* shows(0, "foreign removal")
     })),
 
     scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {

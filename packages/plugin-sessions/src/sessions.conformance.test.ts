@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Match, Option, PubSub, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown } from "@xandreed/core"
+import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { BeginTurn, JsonObject, SessionAddress, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
@@ -37,7 +37,7 @@ const stampNewer = (log: Log) => (address: SessionAddress) => log.head(address.i
 const subjectOver = (log: Log, change: (instance: SessionsInstance) => SessionsInstance = (instance) => instance, renew: "none" | "on-commit" = "on-commit"): SessionsSubject => {
   const instance = (config: SessionsConfig, admission: Context.Service.Shape<typeof TurnAdmission>, liveness?: ProcessLiveness) =>
     Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
-      Effect.map((context) => change({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
+      Effect.map((context) => change({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown), waitingInput: Context.getOption(context, WaitingInput) })))
   return {
     leased: ({ ttlMs, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew } }, admission),
     processOwned: ({ self, running, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "process" } }, admission, {
@@ -80,6 +80,47 @@ describe("the Sessions kit catches careless backends", () => {
       activity: Option.some(TurnActivity.of({ current: Effect.succeed({ open: [], beginning: 0 }), idle: Effect.void })),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, blind)))).toEqual(["activity"])
+  })
+
+  test("one whose waiting stream has no initial signal fails only waiting", async () => {
+    const silent = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({ ...instance.sessions, waiting: Stream.empty }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, silent)))).toEqual(["waiting"])
+  })
+
+  test("one whose waiting stream emits only its initial signal fails only waiting", async () => {
+    const startupOnly = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({ ...instance.sessions, waiting: Stream.succeed(undefined) }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, startupOnly)))).toEqual(["waiting"])
+  })
+
+  test("one whose WaitingInput always reads zero fails only waiting-input", async () => {
+    const blind = (instance: SessionsInstance): SessionsInstance => ({ ...instance, waitingInput: Option.some(WaitingInput.of({ current: Effect.succeed([]), cached: Effect.succeed([]), idle: Effect.void })) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, blind)))).toEqual(["waiting-input"])
+  })
+
+  test("one whose WaitingInput counts legacy notices as user input fails only waiting-input", async () => {
+    const noticesToo = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      waitingInput: Option.map(instance.waitingInput, (probe) => WaitingInput.of({
+        ...probe,
+        current: probe.current.pipe(Effect.flatMap((counts) => Effect.forEach(counts, (count) => memoryLog.head(count.session).pipe(
+          Effect.flatMap((head) => instance.sessions.get({ id: count.session, owner: head.header.owner })),
+          Effect.map((view) => ({ session: count.session, pending: view.pending })),
+          Effect.catchTag("SessionMissing", () => Effect.succeed({ session: count.session, pending: 0 })),
+        ), { concurrency: 1 }))),
+      })),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, noticesToo)))).toEqual(["waiting-input"])
+  })
+
+  test("one whose waiting stream retains several signals fails only waiting", async () => {
+    const hub = Effect.runSync(PubSub.sliding<void>(8))
+    const buffered = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      waiting: Stream.unwrap(PubSub.subscribe(hub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
+      enqueue: (address, input) => instance.sessions.enqueue(address, input).pipe(Effect.tap(() => PubSub.publish(hub, undefined))),
+      deliver: (address, notice) => instance.sessions.deliver(address, notice).pipe(Effect.tap(() => PubSub.publish(hub, undefined))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, buffered)))).toEqual(["waiting"])
   })
 
   test("one that drops the turn's meta fails the checks that read it", async () => {
@@ -249,7 +290,7 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, enqueue: () => Effect.succeed({ enqueued: false, pending: 0 }) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "steering-closed", "steering-pending", "steering-race", "steering-take"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "steering-closed", "steering-pending", "steering-race", "steering-take", "waiting", "waiting-input"])
   })
 
   test("one that silently accepts another payload under an input id fails only input-conflict", async () => {
@@ -335,7 +376,7 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => ({ ...writer, take: () => Effect.succeed(true) }))) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["steering-closed", "steering-race", "steering-take"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["steering-closed", "steering-race", "steering-take", "waiting-input"])
   })
 
   test("one whose writer records messages without consuming input or receipts fails the take and race checks", async () => {
@@ -356,7 +397,7 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, recordedOnly)))).toEqual(["steering-race", "steering-take"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, recordedOnly)))).toEqual(["steering-race", "steering-take", "waiting-input"])
   })
 
   test("the dead-holder and tenure checks run only for a backend with process ownership", () => {

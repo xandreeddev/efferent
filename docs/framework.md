@@ -2493,7 +2493,7 @@ continues while selected work waits, including deliveries during a turn,
 until no selected work remains, the session becomes busy, admission
 refuses or its turn limit is reached.
 
-Hosts arrange execution after enqueue or after the active turn closes,
+Hosts can arrange execution after enqueue or after the active turn closes,
 using `drain` or a queued begin followed by `Agent.turn` with that writer.
 `TurnResult.pending` and each writer's end report all waiting notices and
 inputs, even when a drain selects only one kind. A delivery commits before
@@ -2501,6 +2501,55 @@ the active turn's closing commit and is included in its pending count, or
 after it and finds the session free. Task result reactions use
 `take: "notices"`; hosts whose reaction callback handles notices only
 should select it too.
+
+**Automatic draining.** `InboxDrainLive` from `@xandreed/plugin-sessions`
+executes work for explicit `owners`. Build it beside the agent with
+`agentInboxRunner` from `@xandreed/sdk`, using the same `Sessions` instance.
+The runner executes the borrowed writer through `Agent.turn`; the drainer
+begins and ends it. The default runner selects skills, runs the loop once,
+and preserves its completed, partial or failed outcome. A custom `use`
+can choose the turn's execution.
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { LanguageModel } from "effect/ai"
+import { processActivity } from "@xandreed/core"
+import { InboxDrainLive, SessionsPluginLive } from "@xandreed/plugin-sessions"
+import { Agent, agentInboxRunner, SessionLogMemoryLive, TurnAdmissionOpen } from "@xandreed/sdk"
+
+declare const agent: Agent
+declare const model: LanguageModel.LanguageModel
+const sessionServices = yield* Layer.build(SessionsPluginLive().pipe(
+  Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)),
+))
+const sharedSessions = Layer.succeedContext(sessionServices)
+const runner = agentInboxRunner(agent, { services: Context.make(LanguageModel.LanguageModel, model) })
+  .pipe(Layer.provide(sharedSessions))
+const draining = yield* Layer.build(InboxDrainLive({ owners: ["account"] }).pipe(
+  Layer.provideMerge(runner), Layer.provideMerge(sharedSessions),
+))
+const activity = yield* processActivity.pipe(Effect.provide(draining))
+```
+
+Keep this layer's scope open while the host accepts input. It performs a
+startup sweep, consumes `Sessions.waiting`, and sweeps every second for
+foreign-process commits. That stream broadcasts a post-subscription signal
+and coalesced local commits without disclosing an address. Discovery pages
+through each owner's sessions and their children. Four fixed workers by
+default run at most one attempt per session, with fair turns between
+sessions. Busy, refused or unfinished work retries with bounded exponential
+backoff (250 ms to 30 s); unrelated wakes preserve that deadline. Input is
+never discarded because execution failed repeatedly.
+
+`resume: { _tag: "Before" }` is the default: finish the oldest eligible
+interrupted user root before starting queued work, with `Continue.` as the
+resume message. Supply `userMessage` to change it, or select
+`{ _tag: "Never" }` for queued work only. An intentional cancellation stops
+automatic resumption of that branch. `takeOver` defaults to false; true
+asserts the previous holder is gone and grants takeover only to an initial
+startup attempt, never to a later retry or newly discovered session. Scope
+closure stops the drainer's fibers. A provided `TurnShutdown` stops new
+attempts when the host starts shutting down.
 
 **Background tasks** (`@xandreed/plugin-tasks`). A task is one turn of a
 child session, a fork of the conversation or an empty spawn, whose id is the
@@ -2643,32 +2692,48 @@ what this process has in flight and stop it:
   interrupt is closed the same way as soon as its writer is handed over.
   `SessionsLive` and `SessionsPluginLive` provide it.
 
-`processActivity` reads them from the current services into a
-`ProcessActivity`: `{ openTurns, beginningTurns, runningTasks, busy,
-stopping }` (a port that is not there counts nothing, and is not stopping):
-`stopping` once a shutdown began, for a `/ping` to answer 503 so a load
-balancer sends the process no more turns. `awaitIdle({ timeout })` waits
-until nothing is open, beginning or running at the same moment (a task that
-opens its parent's inbox turn before it ends is waited for too) and returns
-that activity; with a `timeout` it stops waiting then and returns what is
-still in flight, with `busy: true`. `agent.activity` is `processActivity`
-over the agent's runtime services: the `Sessions` and task runner given in
-`Agent.define`'s `services` (built from the layers above, so their ports
-come along), or a runtime-scoped sessions plugin in its graph. A `Sessions`
-passed only in a turn's services is not the agent's to see; read
-`processActivity` over the host's own services instead.
+`SessionsLive` also provides `WaitingInput`: fresh owner-checked counts of
+unclaimed queued user inputs in sessions this instance has observed, plus
+cached knowledge and an idle wait. Notices do not count. Reading, getting,
+creating or listing a session establishes that knowledge; it does not
+enumerate other owners. Its idle wait polls foreign changes at
+`inbox.pollIntervalMs` (100 ms by default). `InboxDrainLive` supplies
+`DrainActivity`, which counts active attempts from admission through end,
+excluding scans and backoff.
+
+`processActivity` reads available probes into `ProcessActivity`:
+`{ openTurns, beginningTurns, runningTasks, waiting, queuedInput, inFlight,
+busy, stopping }`. `waiting` contains positive per-session counts;
+`queuedInput` sums them. `inFlight` includes open or beginning turns, tasks
+and drain attempts; `busy` also includes queued input, even without a
+drainer. A missing probe contributes nothing. A storage failure from an
+installed queue probe remains a typed `SessionLogError`; it cannot report
+false idle. These counts cover the instance's known sessions. A restarted
+instance discovers backlog as its owner-scoped sweep observes sessions.
+
+`awaitIdle({ timeout })` waits for running work and queued user input,
+then returns activity. `awaitIdle({ queued: false, timeout })` waits only
+for running work and performs no queue storage I/O. A timeout reports local
+work with cached queue knowledge. `agent.activity` reads the agent's captured
+runtime services, including probes passed in `Agent.define.services` or
+provided by runtime plugins. A drainer built beside the agent or services
+passed only to a turn are observed with `processActivity` over the composed
+host context. `stopping` becomes true once shutdown begins, for a `/ping`
+to answer 503 so a load balancer sends the process no more turns.
 
 **A shutdown within a deadline.** `shutdownGracefully({ deadline, reserve
 })` stops this process's turns while its services are still open, in
 three steps: refuse every new begin (`TurnShutdown.refuse`); wait until
-idle (`awaitIdle`) for the deadline less its reserve; then, if anything is
+idle (`awaitIdle({ queued: false })`) for the deadline less its reserve; then, if anything is
 still running, close those turns (`TurnShutdown.interrupt`) and wait out
 the reserve for their scopes to close and for the tasks they stop to end.
 `deadline` is the whole time from the call; `reserve` is the part kept for
 the last step (`DEFAULT_SHUTDOWN_RESERVE`, 2 s, and never more than the
 deadline). It returns a `ShutdownReport`: whether the process was `idle`
 in time, the turns it `interrupted`, and what was still in flight when it
-returned (`left`, busy only when something ignored the interrupt). A
+returned (`left`). Queued input remains durable for restart and may keep
+`left.busy` true even when `idle` is true; `left.inFlight` identifies work
+still running. Shutdown uses cached queue knowledge and stays infallible. A
 `Sessions` without `TurnShutdown` is waited for and never interrupted.
 `agent.shutdown(options?)` is `shutdownGracefully` over the agent's runtime
 services, the same ones `agent.activity` reads; its options default to
