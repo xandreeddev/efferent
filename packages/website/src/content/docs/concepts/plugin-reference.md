@@ -409,6 +409,66 @@ Requires: none
 }
 ```
 
+## @xandreed/plugin-workspace/images
+
+Scope: **runtime** · API 3 · Version 0.14.0
+
+Provides: `@xandreed/core/ImageResizer`
+
+Requires: `@xandreed/core/FileSystem`, `@xandreed/core/Bash`
+
+### Defaults
+
+```json
+{
+  "tool": "auto",
+  "tempDir": null,
+  "timeoutMs": 30000
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "tool": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "magick",
+        "convert",
+        "vips",
+        "sips"
+      ]
+    },
+    "tempDir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600000
+    }
+  },
+  "required": [
+    "tool",
+    "tempDir",
+    "timeoutMs"
+  ],
+  "additionalProperties": true
+}
+```
+
 ## @xandreed/plugin-workspace/skills
 
 Scope: **runtime** · API 3 · Version 0.14.0
@@ -528,7 +588,7 @@ Contributes: `efferent/Capabilities`
 
 Requires: `@xandreed/core/FileSystem`, `efferent/SessionEnvironment`
 
-Optional: `@xandreed/core/Bash`
+Optional: `@xandreed/core/Bash`, `@xandreed/core/ImageResizer`
 
 ### Defaults
 
@@ -569,6 +629,7 @@ Optional: `@xandreed/core/Bash`
   "grepIgnoreFiles": false,
   "maxFileBytes": 33554432,
   "readImages": true,
+  "imageMaxSide": 8000,
   "fuzzyEdit": true,
   "bashTimeoutMs": 120000,
   "bashMaxTimeoutMs": 600000,
@@ -728,6 +789,11 @@ Optional: `@xandreed/core/Bash`
     "readImages": {
       "type": "boolean"
     },
+    "imageMaxSide": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 8000
+    },
     "fuzzyEdit": {
       "type": "boolean"
     },
@@ -807,6 +873,7 @@ Optional: `@xandreed/core/Bash`
     "grepIgnoreFiles",
     "maxFileBytes",
     "readImages",
+    "imageMaxSide",
     "fuzzyEdit",
     "bashTimeoutMs",
     "bashMaxTimeoutMs",

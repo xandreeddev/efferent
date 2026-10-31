@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, HarnessError, onEvent, onTool, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, TurnToolbox, UserMessage } from "@xandreed/core"
+import { ConversationId, HarnessError, ImageResizer, onEvent, onTool, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, TurnToolbox, UserMessage } from "@xandreed/core"
 import type { Turn, TurnEventOf } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -78,8 +78,9 @@ const callTool = (name: string, params: unknown): Effect.Effect<unknown, Harness
  * with the script; then, when asked, one more call (`probe`) as the loop
  * would make it.
  */
-const turnOver = (root: string, grants: ReadonlyArray<string>, script: ReadonlyArray<Part>, text: string, probe?: { readonly name: string; readonly params: unknown }, options: Partial<WorkspaceToolsConfig> = {}) => Effect.gen(function* () {
+const turnOver = (root: string, grants: ReadonlyArray<string>, script: ReadonlyArray<Part>, text: string, probe?: { readonly name: string; readonly params: unknown }, options: Partial<WorkspaceToolsConfig> = {}, resizer?: Context.Service.Shape<typeof ImageResizer>) => Effect.gen(function* () {
   const agent = yield* Agent.define({
+    ...(resizer === undefined ? {} : { services: Context.make(ImageResizer, resizer) }),
     plugins: [
       memoryWindowPlugin,
       { plugin: toolDiscoveryPlugin, options: { grants: [...grants], maxCallsPerRun: 200 } },
@@ -238,4 +239,31 @@ test.skipIf(spawnSync("rg", ["--version"]).status !== 0)("journey: rg search out
   expect(seen.stored.filter((event) => event.kind === "tool.completed").map((event) => event.data)).toMatchObject([{ tool: "grep", ok: true }])
   expect(seen.stored.filter((event) => event.kind === "memory.tool-presentation").map((event) => event.data)).toMatchObject([{ body: { viewVersion: "4", view: "notes.txt-1-before\nnotes.txt:2:needle\nnotes.txt-3-after" } }])
   expect(seen.stored.filter((event) => event.kind === "turn.ended")).toHaveLength(1)
+})
+
+test("journey: an optional image resizer sends the fitted image and journals scalar source metadata once", async () => {
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const pixel = Buffer.from(pixelPng, "base64")
+  const source = new Uint8Array(pixel)
+  new DataView(source.buffer).setUint32(16, 9000)
+  new DataView(source.buffer).setUint32(20, 6000)
+  const resizer = ImageResizer.of({ fit: () => Effect.succeed(pixel) })
+  const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const root = yield* workspace
+    yield* Effect.promise(() => writeFile(join(root, "chart.png"), source))
+    const turn = yield* turnOver(root, [], [call("c1", "read", { path: "chart.png" }), stop("The fitted chart.")], "show the chart", undefined, { workspaceAccess: "read", imageMaxSide: 1568 }, resizer)
+    return { ...turn, source: yield* Effect.promise(() => readFile(join(root, "chart.png"))) }
+  })))
+  expect(seen.outcome.outcome).toBe("completed")
+  expect(seen.requests[0]?.read).toContain("larger images are scaled down to fit 1568 pixels a side and 3.75 MB")
+  const text = "[Image chart.png (image/png, 70 B), scaled down from 9000x6000 (image/png, 70 B).]"
+  const messages = JSON.parse(seen.requests[1]?.prompt ?? "[]") as ReadonlyArray<{ readonly role: string; readonly content: ReadonlyArray<Record<string, unknown>> }>
+  expect(messages.find((message) => message.role === "tool")?.content[0]?.["modelOutput"]).toMatchObject([
+    { type: "text", text }, { type: "file", mediaType: "image/png", data: pixelPng, fileName: "chart.png" },
+  ])
+  const record = seen.stored.find((event) => event.kind === "memory.tool-result")
+  expect(JSON.stringify(record)).toContain('"original":{"mediaType":"image/png","bytes":70,"width":9000,"height":6000}')
+  expect(JSON.stringify(seen.stored).split(pixelPng).length - 1).toBe(1)
+  expect(JSON.stringify(seen.stored)).not.toContain(Buffer.from(source).toString("base64"))
+  expect(seen.source).toEqual(Buffer.from(source))
 })

@@ -1,5 +1,5 @@
 import { Effect, Result, Schema } from "effect"
-import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, FsReason, ImageMediaType, Media } from "@xandreed/core"
+import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, MEDIA_LIMITS, BashTermination, compileGlob, FsReason, ImageMediaType, Media } from "@xandreed/core"
 import { WorkspaceAccessMode, WorkspaceAllowedRoot } from "./workspace-path.entity.js"
 
 /**
@@ -78,6 +78,9 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  *   `images`, or memory with `maxMediaChars: 0`) sets `false`: the model
  *   would get a label line in the image's place, and the session would
  *   still store the bytes.
+ * - `imageMaxSide`: with an ImageResizer, fit images to at most this many
+ *   pixels a side (64 to 8000, default 8000). Without a resizer, read keeps
+ *   the existing provider-limit behavior.
  * - `fuzzyEdit`: when an edit's text is not found, match it once more over
  *   whole lines with whitespace, Unicode compatibility forms and smart
  *   quotes normalised (the match must still be unique).
@@ -117,6 +120,7 @@ export const WorkspaceToolsConfig = Schema.Struct({
   grepIgnoreFiles: Schema.Boolean,
   maxFileBytes: between(1_024, 1_073_741_824),
   readImages: Schema.Boolean,
+  imageMaxSide: between(64, MEDIA_LIMITS.maxPixels),
   fuzzyEdit: Schema.Boolean,
   bashTimeoutMs: atLeast(1),
   bashMaxTimeoutMs: atLeast(1),
@@ -152,6 +156,7 @@ export const workspaceToolsDefaults: WorkspaceToolsConfig = {
   grepIgnoreFiles: false,
   maxFileBytes: 33_554_432,
   readImages: true,
+  imageMaxSide: MEDIA_LIMITS.maxPixels,
   fuzzyEdit: true,
   bashTimeoutMs: 120_000,
   bashMaxTimeoutMs: 600_000,
@@ -215,6 +220,10 @@ export const ReadResult = Schema.Union([
   Schema.TaggedStruct("Image", {
     path: Schema.String,
     image: Media,
+    /** Source dimensions and size when a resizer supplied the returned image; no original image bytes. */
+    original: Schema.optionalKey(Schema.Struct({
+      mediaType: ImageMediaType, bytes: atLeast(1), width: atLeast(1), height: atLeast(1),
+    })),
   }),
   Schema.TaggedStruct("ImageRejected", {
     path: Schema.String,

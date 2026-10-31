@@ -1,6 +1,6 @@
 import { Effect, Option, Path, RcMap, Result, Semaphore } from "effect"
 import type { Scope } from "effect"
-import { Bash, compileGlob, defineCapability, definePromptSection, defineSkill, HarnessError, SessionEnvironment } from "@xandreed/core"
+import { Bash, compileGlob, defineCapability, definePromptSection, defineSkill, HarnessError, ImageResizer, SessionEnvironment } from "@xandreed/core"
 import type { Capability, RegisteredTool } from "@xandreed/core"
 import { bashTool } from "./bash-tool.adapter.js"
 import { findTool, grepTool, lsTool, readTool, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
@@ -70,7 +70,7 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
     yield* Effect.logWarning("@xandreed/plugin-workspace/tools: there is no Bash service, so the bash tool and the workspace.shell skill are left out (add localSystemPlugin, or a Bash, to have them)")
   }
   const enabled = wanted.filter((tool) => tool !== "bash" || hasBash)
-  const context: WorkspaceToolContext = { config: resolved, path, protect, locks }
+  const context: WorkspaceToolContext = { config: resolved, path, protect, locks, resizesImages: config.readImages && Option.isSome(yield* Effect.serviceOption(ImageResizer)) }
   // The section reads the turn's workspace as the tools do, so it declares the same services.
   const section = definePromptSection({
     id: "workspace.environment", version: "3", tier: "session", order: config.sectionOrder,

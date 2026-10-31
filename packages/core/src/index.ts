@@ -403,3 +403,8 @@ export interface GlobMatchOptions extends glob.GlobMatchOptions {}
 export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
 /** @public */
 export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
+
+export { ImageResizer } from "./ports/image-resizer.port.js"
+export { ImageInput, ImageFitTarget, ImageResizeReason, ImageResizeError } from "./domain/image-resize.entity.js"
+export { fitTarget, scaledSize } from "./domain/image-resize.entity.functions.js"
+export { imageSizeOf } from "./domain/media.entity.functions.js"

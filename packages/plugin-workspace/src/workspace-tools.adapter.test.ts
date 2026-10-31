@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Bash, BashError, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
+import { Bash, BashError, Capabilities, FileSystem, Failure, ImageResizeError, ImageResizer, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import type { Capability } from "@xandreed/core"
 import { makeRegistry } from "@xandreed/plugin-tool-discovery"
@@ -34,12 +34,14 @@ type Call = (name: string, params: unknown) => Effect.Effect<unknown, unknown>
  * (whose parent environment has `planted` added) and the given options.
  * `outside` is a second directory, beside the workspace, for escapes.
  */
-const bench = (options: Partial<WorkspaceToolsConfig> = {}, planted: Readonly<Record<string, string>> = {}) => Effect.gen(function* () {
+const bench = (options: Partial<WorkspaceToolsConfig> = {}, planted: Readonly<Record<string, string>> = {}, resizer?: Context.Service.Shape<typeof ImageResizer>) => Effect.gen(function* () {
   const root = yield* temporary
   const outside = yield* temporary
   const bash = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ parentEnv: { ...process.env, ...planted }, exitGraceMs: 100 })))
-  const capability = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", ...options }).pipe(Effect.provideService(Bash, bash))
-  const services = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root }), Context.add(Bash, bash))
+  const built = workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", ...options }).pipe(Effect.provideService(Bash, bash))
+  const capability = yield* (resizer === undefined ? built : built.pipe(Effect.provideService(ImageResizer, resizer)))
+  const base = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root }), Context.add(Bash, bash))
+  const services = resizer === undefined ? base : Context.add(base, ImageResizer, resizer)
   return { root, outside, capability, call: caller(capability, services) }
 })
 
@@ -844,4 +846,74 @@ test.skipIf(!hasRg)("rg honours ignore files only when requested, and searches b
   expect(seen.ignored.matches).toBe(0)
   expect(seen.wide.lines).toEqual([{ path: "long.txt", line: 1, text: "x".repeat(16), match: true }])
   expect(seen.bad.error).toBe("InvalidPattern")
+})
+
+
+test("read fits an over-limit image, records only original metadata and leaves its source bytes", async () => {
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64")
+  const huge = new Uint8Array(pixel)
+  new DataView(huge.buffer).setUint32(16, 9000)
+  new DataView(huge.buffer).setUint32(20, 9000)
+  const targets: Array<{ maxSide: number; maxBytes: number }> = []
+  const resizer = ImageResizer.of({ fit: (_image, target) => Effect.sync(() => { targets.push(target); return pixel }) })
+  const seen = await scoped(Effect.gen(function* () {
+    const state = yield* bench({}, {}, resizer)
+    yield* io(() => writeFile(join(state.root, "big.png"), huge))
+    const result = yield* succeeds(ReadResult)(state.call("read", { path: "big.png" }))
+    return { result, text: shown(state.capability, "read", result, { path: "big.png" }), source: yield* io(() => readFile(join(state.root, "big.png"))) }
+  }))
+  expect(seen.result).toMatchObject({ _tag: "Image", image: { data: pixel.toString("base64"), bytes: 70 }, original: { mediaType: "image/png", bytes: 70, width: 9000, height: 9000 } })
+  expect(seen.text).toBe("[Image big.png (image/png, 70 B), scaled down from 9000x9000 (image/png, 70 B).]")
+  expect(targets).toEqual([{ maxBytes: MEDIA_LIMITS.imageBytes, maxSide: 8000 }])
+  expect(seen.source).toEqual(Buffer.from(huge))
+})
+
+test("a fitting failure keeps the image rejection, and an optional host side applies only with a resizer", async () => {
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64")
+  const source = new Uint8Array(pixel)
+  new DataView(source.buffer).setUint32(16, 9000)
+  new DataView(source.buffer).setUint32(20, 9000)
+  const failing = ImageResizer.of({ fit: () => Effect.fail(new ImageResizeError({ reason: "Failed", message: "converter failure is diagnostic only" })) })
+  const seen = await scoped(Effect.gen(function* () {
+    const failed = yield* bench({}, {}, failing)
+    yield* io(() => writeFile(join(failed.root, "big.png"), source))
+    const rejected = yield* succeeds(ReadResult)(failed.call("read", { path: "big.png" }))
+    const smaller = new Uint8Array(pixel)
+    new DataView(smaller.buffer).setUint32(16, 128)
+    new DataView(smaller.buffer).setUint32(20, 128)
+    const ordinary = yield* bench({ imageMaxSide: 64 })
+    yield* io(() => writeFile(join(ordinary.root, "small.png"), smaller))
+    return { rejected, text: shown(failed.capability, "read", rejected, {}), ordinary: yield* succeeds(ReadResult)(ordinary.call("read", { path: "small.png" })) }
+  }))
+  expect(seen.rejected).toMatchObject({ _tag: "ImageRejected", reason: "TooManyPixels", message: "the image is 9000x9000 pixels, more than 8000 a side" })
+  expect(seen.text).toBe("[big.png is an image (image/png, 70 B) that read cannot show: the image is 9000x9000 pixels, more than 8000 a side. To see it, make a smaller copy with bash (scaled down) and read that.]")
+  expect(seen.ordinary).toMatchObject({ _tag: "Image" })
+  expect("original" in seen.ordinary).toBe(false)
+})
+
+test("image fitting works in a read-only workspace, honours the host side and refuses bad fitted output", async () => {
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64")
+  const source = new Uint8Array(pixel)
+  new DataView(source.buffer).setUint32(16, 128)
+  new DataView(source.buffer).setUint32(20, 128)
+  const targets: Array<number> = []
+  const resizer = ImageResizer.of({ fit: (_image, target) => Effect.sync(() => { targets.push(target.maxSide); return pixel }) })
+  const bad = ImageResizer.of({ fit: () => Effect.succeed(source) })
+  const seen = await scoped(Effect.gen(function* () {
+    const state = yield* bench({ workspaceAccess: "read", imageMaxSide: 64 }, {}, resizer)
+    yield* io(() => writeFile(join(state.root, "chart.png"), source))
+    const image = yield* succeeds(ReadResult)(state.call("read", { path: "chart.png" }))
+    const refused = yield* fails(state.call("write", { path: "chart.png", content: "replacement" }))
+    const invalid = yield* bench({ imageMaxSide: 64 }, {}, bad)
+    yield* io(() => writeFile(join(invalid.root, "chart.png"), source))
+    const capped = yield* bench({ maxFileBytes: 64 }, {}, resizer)
+    yield* io(() => writeFile(join(capped.root, "chart.png"), source))
+    return { image, refused, source: yield* io(() => readFile(join(state.root, "chart.png"))), invalid: yield* succeeds(ReadResult)(invalid.call("read", { path: "chart.png" })), capped: yield* fails(capped.call("read", { path: "chart.png" })) }
+  }))
+  expect(seen.image).toMatchObject({ _tag: "Image", original: { width: 128, height: 128 }, image: { bytes: 70 } })
+  expect(targets).toEqual([64])
+  expect(seen.refused.error).toBe("ReadOnly")
+  expect(seen.capped.error).toBe("FileTooLarge")
+  expect(seen.source).toEqual(Buffer.from(source))
+  expect(seen.invalid).toMatchObject({ _tag: "ImageRejected", reason: "TooManyPixels", message: "the image is 128x128 pixels, more than 64 a side" })
 })

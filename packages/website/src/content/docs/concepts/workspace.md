@@ -152,6 +152,47 @@ tells the model to read a smaller copy (scaled down or recompressed with
 check, unread; for an image the refusal says to read a smaller copy too, and
 the tool description gives the smaller of the two limits.
 
+To fit larger images automatically, add `imageResizerPlugin` from the same
+package beside `localSystemPlugin` and `workspaceToolsPlugin`:
+
+```ts
+import { imageResizerPlugin, localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [
+  localSystemPlugin,
+  { plugin: imageResizerPlugin, options: { tool: "auto", timeoutMs: 30_000 } },
+  { plugin: workspaceToolsPlugin, options: { imageMaxSide: 1568 } },
+]
+```
+
+The optional service fits byte and side limits without changing the source,
+including in a read-only root. `imageMaxSide` accepts 64–8000 (default 8000)
+and applies only when a resizer is present at runtime activation. A host can
+instead supply core's `ImageResizer` in `Agent.define.services`. Without it,
+ordinary image reads and the rejection behavior above stay unchanged.
+`maxFileBytes` always refuses larger files before reading or conversion.
+
+A fitted `Image` carries optional `original` metadata: the source's type,
+byte count, width and height. Its version-3 view adds the source dimensions,
+for example `[Image chart.png (image/jpeg, 1.2 MB), scaled down from 9000x6000 (image/png, 14 MB).]`.
+Only fitted bytes are sent and stored. A fit failure logs a warning and
+returns an `ImageRejected` note with the smaller-copy guidance.
+
+The CLI plugin requires `Bash` and `FileSystem` on the same file tree. Its
+`tool` is `auto`, `magick`, `convert`, `vips` (`vipsthumbnail`) or `sips`;
+auto probes once in that order. Activation fails with `images.unavailable`
+when the requested tool is missing or none can run. No native npm dependency
+is installed. `tempDir` is an existing absolute POSIX directory, or `null`
+(default) for Bash's `TMPDIR` with `/tmp` as fallback. `timeoutMs` (default
+30 000, maximum 600 000) bounds the complete fit, then cleanup runs. Private
+conversion directories are removed on success, failure and interruption;
+the source is untouched. Commands use the default `bashEnvironment`
+allowlist over the host's `parentEnv`. Four bounded shrink attempts keep
+aspect and never upscale; JPEG stays JPEG, GIF/WebP uses its first frame,
+and opaque PNG may become JPEG where the backend can establish opacity.
+Output is rechecked with `mediaFromBytes`. Host converters run with the
+shell's access: file-tool confinement is a guardrail, not a sandbox.
+
 Set `readImages: false` to keep images out of the session, for models that
 read text only (an endpoint without `images`, or memory with
 `maxMediaChars: 0`): such a model would get a label line, while the session
@@ -198,6 +239,7 @@ The options are flat; every one has a default
 | `grepIgnoreFiles` | `false` | honour ignore files when using ripgrep |
 | `maxFileBytes` | 32 MB | the largest file `read`, `edit` and `grep` load (an image too), and the most of an output `bash` saves |
 | `readImages` | `true` | `read` returns PNG, JPEG, GIF and WebP files as images |
+| `imageMaxSide` | 8000 | fitted images’ maximum side, 64–8000; applies only with `ImageResizer` |
 | `fuzzyEdit` | `true` | the normalised fallback of `edit` |
 | `bashTimeoutMs`, `bashMaxTimeoutMs` | 120 000, 600 000 | a command's timeout, and the most the model may ask for |
 | `bashEnv`, `bashInheritEnv`, `bashEnvAllow` | `{}`, `false`, the allowlist | a command's environment |

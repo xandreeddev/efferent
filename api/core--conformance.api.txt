@@ -2,6 +2,8 @@ class ConformanceFailure
 const bashConformance
 const check
 const fileSystemConformance
+const imageResizerConformance
+const imageResizerPng
 const inMemoryLog
 const inboxRunnerConformance
 const memoryConformance
@@ -20,6 +22,7 @@ interface BashSubject
 interface ConformanceCheck
 interface FileSystemFixture
 interface FileSystemSubject
+interface ImageResizerSubject
 interface InboxRunnerSubject
 interface SessionLogSubject
 interface SessionsInstance

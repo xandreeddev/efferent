@@ -4,8 +4,8 @@ import type { RgText } from "./ripgrep.entity.js"
 import type { GrepLine, GrepParams, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
 import { clipChars } from "./text-window.entity.functions.js"
 
-/** One literal POSIX shell argument, including quotes, newlines and metacharacters. */
-export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+import { shellQuote } from "./shell.entity.functions.js"
+export { shellQuote } from "./shell.entity.functions.js"
 
 /** The pattern goes only to stdin, never into the shell command. */
 export const ripgrepCommand = (config: WorkspaceToolsConfig, params: GrepParams, target: string, perFile: number, exclude: ReadonlyArray<string>): string => [
