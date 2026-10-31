@@ -5327,6 +5327,11 @@
           "required": true
         },
         {
+          "name": "stableMessages",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "tools",
           "type": "Array<{ name, description, parameters, provider }>",
           "required": true
@@ -5475,6 +5480,11 @@
           },
           "contextFingerprint": {
             "type": "string"
+          },
+          "stableMessages": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
           "tools": {
             "type": "array",

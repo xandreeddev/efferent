@@ -8,7 +8,7 @@ import { SettingsStore } from "../ports/settings-store.port.js"
 import { extractUsage } from "@xandreed/core/internal"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "../ports/settings-store.port.js"
-import { buildProviderOver, endpointOwnKey, modelSettingsFailure, prependClaudeCode, providerServices, resolveMessagesConfiguration, withAnthropicCacheBreakpoints } from "./providers.js"
+import { buildProviderOver, endpointOwnKey, modelSettingsFailure, prependClaudeCode, providerServices, resolveMessagesConfiguration } from "./providers.js"
 import type { BuiltProvider, PromptOptions, ProviderServices } from "./providers.js"
 import { makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -142,11 +142,9 @@ const traceContentVariable: Effect.Effect<boolean> = Config.option(Config.String
 const tracedContent = Effect.all([Effect.service(CurrentTraceContent), traceContentVariable], { concurrency: 1 }).pipe(Effect.map(([capture, variable]) =>
   (content: string): string => capture || variable ? content.slice(0, 500) : "[redacted]"))
 
-/** A call's options as the built model takes them: Anthropic's route adds its cache breakpoints, the subscription's token the Claude Code block. */
-const shapeOptions = <O extends PromptOptions>(built: BuiltProvider, options: O) => {
-  const cached = built.route === "anthropic" ? withAnthropicCacheBreakpoints(options) : options
-  return built.prependClaudeCode ? prependClaudeCode(cached) : cached
-}
+/** Authentication preludes precede the provider's per-call cache preparation. */
+const shapeOptions = <O extends PromptOptions>(built: BuiltProvider, options: O) =>
+  built.prependClaudeCode ? prependClaudeCode(options) : options
 
 /** Resolve the general-role selection from settings, plus the OPTIONAL
  *  fallback rung (an unparseable fallbackModel is ignored, never fatal —

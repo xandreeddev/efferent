@@ -61,8 +61,8 @@ describe("owned Messages controls over ambient SDK configuration", () => {
     expect(server.requests[0]).not.toHaveProperty("thinking")
     expect(server.requests[0]?.["temperature"]).toBe(0.25)
     expect(result._tag === "Success" ? Option.map(result.success.descriptor, (value) => value.settings) : Option.none()).toEqual(Option.some({
-      model: "deployment-alias", max_tokens: 2048, output_config: { effort: "high" }, systemPrelude: null,
-      endpoint: { api: "anthropic-messages", url: server.url, auth: "x-api-key", apiVersion: "2023-06-01", betas: [] },
+      model: "deployment-alias", max_tokens: 2048, output_config: { effort: "high" }, systemPrelude: null, promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true,
+      endpoint: { api: "anthropic-messages", url: server.url, auth: "x-api-key", apiVersion: "2023-06-01", betas: [], cacheControl: true },
     }))
   })
 

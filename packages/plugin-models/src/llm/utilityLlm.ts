@@ -11,10 +11,10 @@ import { generateOver, layerProviderServices, throughTransport, withConfiguredEf
  * The fast helper tier: one-shot completions on `fastModel ?? model`, at
  * `fastReasoningEffort ?? reasoningEffort` (the fast role, as
  * `roleModelView("fast")` reads it; a call policy the caller pinned wins).
- * No toolkit, no cache breakpoints, no loop — a title/digest call that can
- * never park a turn. Like the routed model, it reads its provider services
- * once, where it is built: built over a `ModelsTransport`, its calls go
- * through it.
+ * No toolkit or loop; Messages uses the same per-model prompt-cache policy.
+ * A helper completion cannot park a turn. Like the routed model, it reads
+ * its provider services once, where it is built: over a `ModelsTransport`,
+ * its calls go through it.
  *
  * @public
  */

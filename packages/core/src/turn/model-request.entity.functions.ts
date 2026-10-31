@@ -7,6 +7,7 @@ import type { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { toPromptMessages } from "../internal/mapping.entity.functions.js"
+import { markVolatileContext } from "../internal/volatile-context.entity.functions.js"
 import { toolParametersSchema } from "../internal/tool-schema.entity.functions.js"
 import { canonicalJson, buildContext } from "../memory/memory-log.entity.functions.js"
 import type { EntryId, LogEntry } from "../memory/memory-log.entity.js"
@@ -182,7 +183,11 @@ export const reconstructModelRequest = Effect.fnUntraced(function* (header: Mode
   if (context.fingerprint !== header.contextFingerprint) {
     return yield* Effect.fail(diverged("context", `the memory events rebuild context ${context.fingerprint}, the request was prepared from ${header.contextFingerprint}`))
   }
-  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(context.messages)))
+  if (header.stableMessages !== undefined && header.stableMessages > context.messages.length) {
+    return yield* Effect.fail(diverged("context", `the saved stable prefix ${header.stableMessages} exceeds the rebuilt message count ${context.messages.length}`))
+  }
+  const messages = header.stableMessages === undefined ? context.messages : markVolatileContext(context.messages, header.stableMessages)
+  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(messages)))
   return {
     prompt, contextFingerprint: context.fingerprint, tools: header.tools, toolChoice: header.toolChoice,
     model: header.model, cacheKey: header.cacheKey, callPolicy: header.callPolicy,

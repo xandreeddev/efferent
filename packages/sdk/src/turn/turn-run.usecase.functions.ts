@@ -38,6 +38,7 @@ import {
   checkModelRequest,
   entriesSendingMedia,
   estimateTokens,
+  markVolatileContext,
   modelRequestHeaderOf,
   modelRequestTools,
   reconstructModelRequest,
@@ -202,6 +203,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
       render,
       through: built.through,
       contextFingerprint: built.fingerprint,
+      stableMessages: built.stableMessages,
       tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
       toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
       model: yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf }),
@@ -211,7 +213,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     return {
       model,
       system: finalSystem,
-      messages: built.messages,
+      messages: markVolatileContext(built.messages, built.stableMessages),
       toolChoice: directive.toolChoice,
     }
   })

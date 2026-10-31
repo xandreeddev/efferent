@@ -53,6 +53,8 @@ export const ModelEndpoint = Schema.Union([
     api: Schema.Literal("anthropic-messages"),
     /** The API key is opaque in either header; omission uses x-api-key. */
     auth: Schema.optionalKey(Schema.Literals(["x-api-key", "bearer"])),
+    /** False disables framework caching and refuses caller cache controls. */
+    cacheControl: Schema.optionalKey(Schema.Boolean),
     /** Preserve the pinned SDK's version by default; an explicit version is sent verbatim. */
     apiVersion: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/))),
     /** Added to the SDK's own beta flags, in order with duplicates removed. */

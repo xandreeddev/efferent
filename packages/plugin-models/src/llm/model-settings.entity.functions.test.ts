@@ -31,7 +31,7 @@ describe("Messages settings resolve documented native controls", () => {
     expect(featured.map((model) => value(resolve(model)))).toEqual(featured.map((model) => ({
       selection: selection(model), thinking: Option.some({ _tag: "Adaptive", display: "summarized" }),
       effort: Option.some(model === "claude-opus-5-5" || model === "claude-haiku-5-5" ? "medium" : "high"),
-      maxOutputTokens: 128_000, limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      maxOutputTokens: 128_000, limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 }, promptCache: { _tag: "Auto", ttl: "5m" },
     })))
   })
 
@@ -66,7 +66,7 @@ describe("Messages settings resolve documented native controls", () => {
   test("unknown aliases need an explicit output cap and do not acquire guessed thinking or catalog limits", () => {
     expect(anthropicProfileOf("deployment-alias")).toEqual({ id: "deployment-alias", images: true, efforts: [], bindsThinking: false })
     expect(reason(resolve("deployment-alias"))).toBe("OutputLimit")
-    expect(value(resolve("deployment-alias", {}, Option.some({ effort: "low", maxOutputTokens: 4096 })))).toEqual({ selection: selection("deployment-alias"), thinking: Option.none(), effort: Option.some("low"), maxOutputTokens: 4096 })
+    expect(value(resolve("deployment-alias", {}, Option.some({ effort: "low", maxOutputTokens: 4096 })))).toEqual({ selection: selection("deployment-alias"), thinking: Option.none(), effort: Option.some("low"), maxOutputTokens: 4096, promptCache: { _tag: "Auto", ttl: "5m" } })
     expect(value(resolve("deployment-alias", { limits: { maxOutputTokens: 2048 } })).thinking).toEqual(Option.none())
     expect(value(resolve("deployment-alias", { thinking: { _tag: "Adaptive" }, effort: "max", limits: { maxOutputTokens: 2048 } })).thinking).toEqual(Option.some({ _tag: "Adaptive", display: "summarized" }))
   })
@@ -77,6 +77,38 @@ describe("Messages settings resolve documented native controls", () => {
     expect(value(resolveAnthropicSettings("two:claude-opus-5-5", configured, Option.none())).maxOutputTokens).toBe(128_000)
     expect(reason(resolveAnthropicSettings("no-provider", {}, Option.none()))).toBe("Selection")
     expect(Schema.decodeUnknownOption(ModelSettingsMap)({ "no-provider": {} })).toEqual(Option.none())
+  })
+
+  test("cache policy defaults to five-minute Auto for documented and unknown Messages models", () => {
+    expect(value(resolve("claude-fable-5-1"))).toHaveProperty("promptCache", { _tag: "Auto", ttl: "5m" })
+    expect(value(resolve("deployment-alias", { limits: { maxOutputTokens: 4096 } }))).toHaveProperty("promptCache", { _tag: "Auto", ttl: "5m" })
+    expect(Schema.decodeUnknownOption(ModelSettings)({}, { onExcessProperty: "error" })).toEqual(Option.some({}))
+  })
+
+  test("per-model cache policies preserve each mode and TTL independently of call caps and effort", () => {
+    const policies = [{ _tag: "Auto", ttl: "5m" }, { _tag: "Auto", ttl: "1h" }, { _tag: "TopLevel", ttl: "5m" }, { _tag: "TopLevel", ttl: "1h" }, { _tag: "Off" }] as const
+    policies.forEach((promptCache) => {
+      expect(Schema.decodeUnknownOption(ModelSettings)({ promptCache }, { onExcessProperty: "error" })).toEqual(Option.some({ promptCache }))
+      const resolved = value(resolve("claude-fable-5-1", { promptCache }, Option.some({ effort: "low", maxOutputTokens: 1024 })))
+      expect(resolved).toHaveProperty("promptCache", promptCache)
+      expect([resolved.effort, resolved.maxOutputTokens]).toEqual([Option.some("low"), 1024])
+      expect(Schema.is(ResolvedAnthropicSettings)(resolved)).toBe(true)
+    })
+  })
+
+  test("cache settings reject missing TTL, unknown modes, invalid TTL and companions", () => {
+    const invalid = [null, false, { _tag: "Auto" }, { _tag: "TopLevel" }, { _tag: "Auto", ttl: "10m" }, { _tag: "Auto", ttl: 300 }, { _tag: "Always", ttl: "5m" }, { _tag: "Off", ttl: "5m" }, { _tag: "Auto", ttl: "5m", global: true }]
+    invalid.forEach((promptCache) => {
+      expect(Schema.decodeUnknownOption(ModelSettings)({ promptCache }, { onExcessProperty: "error" })).toEqual(Option.none())
+      expect(reason(resolve("claude-fable-5-1", { promptCache } as never))).toBe("Settings")
+    })
+  })
+
+  test("cache settings use the full selection key without changing another gateway's default", () => {
+    const configured = { "one:claude-opus-5-5": { promptCache: { _tag: "Off" as const } } }
+    expect(value(resolveAnthropicSettings("one:claude-opus-5-5", configured, Option.none()))).toHaveProperty("promptCache", { _tag: "Off" })
+    expect(value(resolveAnthropicSettings("two:claude-opus-5-5", configured, Option.none()))).toHaveProperty("promptCache", { _tag: "Auto", ttl: "5m" })
+    expect(Schema.decodeUnknownOption(ModelSettingsMap)(configured, { onExcessProperty: "error" })).toEqual(Option.some(configured))
   })
 
   test("legacy defaults/caps remain documented; generic effort is ignored only for a non-effort legacy model", () => {

@@ -126,6 +126,46 @@ the default; an explicit `apiVersion` sets the header. Use a host
 request bytes and replay; acceptance by a real provider is separate live
 versioned evidence.
 
+## Prompt caching
+
+Set `modelSettings[selection].promptCache` to
+`{ _tag: "Auto", ttl: "5m" | "1h" }`,
+`{ _tag: "TopLevel", ttl: "5m" | "1h" }`, or `{ _tag: "Off" }`.
+The default is Auto with five minutes. Auto considers the latest two stable
+non-system messages and the last stable system message, preferring recent
+history when caller controls leave fewer slots. It excludes the selected
+run's volatile step-context tail. A volatile system suffix, which the SDK may
+relocate, disables framework Auto additions conservatively.
+
+Caller controls count toward the four effective breakpoints, including
+emitted part and nested tool-result controls and the API's top-level control.
+The planner runs after the pinned SDK converts the prompt, so shadowed or
+skipped markers are not counted twice. One-hour controls must precede
+five-minute controls. Auto fills only slots that preserve that order; it
+never changes a caller's lifetime or upgrades its own five-minute default.
+Invalid caller controls, a fifth effective caller breakpoint, or conflicting
+lifetimes fail locally before HTTP. Controls must be plain own enumerable
+data; accessors, inherited fields and custom serializers are refused because
+they can serialize a different value from the one validated.
+
+TopLevel selects the API's automatic last-block control, including a volatile
+last block when the host chooses this mode. It does not select the earlier
+stable cut. An existing caller top-level control takes precedence; a matching
+explicit final-block lifetime shares its slot, while a different lifetime is
+refused. Off adds nothing and still preserves and validates caller controls.
+For a Messages gateway that cannot accept cache fields, set endpoint
+`cacheControl: false`: it overrides framework caching, refuses non-null
+caller controls and omits SDK-generated null cache fields. Application data
+and tool-schema properties named `cache_control` are preserved.
+
+Helper completions use the same per-model policy. These controls and tests
+establish request behavior, not cache hits: live hits require a sufficiently
+large identical prefix and positive provider cache-read usage. Aggregate
+usage does not distinguish write lifetimes, so mixed-lifetime cost estimates
+remain approximate. The slot and lifetime rules follow the
+[provider caching documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+checked on 2026-10-31.
+
 ## Credentials and storage
 
 The models plugin keeps its credentials (`AuthStore`) and model settings
@@ -523,8 +563,9 @@ a call with a budget of its own.
 The settings' `reasoningEffort` (unless the call pinned a policy of its own)
 reaches each route in the vocabulary it takes: `openai-codex` as it is;
 `openai`, `opencode` and endpoints with `standardOnly: false` with `xhigh`
-and `max` as `high` and `none` as `low`; `anthropic`, `google` and
-standard-only endpoints not at all. On `openai` it is sent only to the
+and `max` as `high` and `none` as `low`; `google` and standard-only chat
+endpoints not at all. Messages routes keep native `xhigh`/`max` and map neutral
+`none` to `low`, with the documented legacy no-effort exceptions above. On `openai` it is sent only to the
 models `reasoningEffortsFor` lists, since the others refuse it. Utility calls
 (titles, digests, summaries) run on `fastModel` at `fastReasoningEffort`,
 else `reasoningEffort`. `generateObject` is routed like `generateText`.

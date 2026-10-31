@@ -132,3 +132,19 @@ test("the memory kit rejects a session that erases the inbox user's provenance",
     Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
   expect(failures.flat()).toEqual(["inbox-intent"])
 })
+
+test.each(["all-stable", "negative", "overflow"] as const)("the memory kit rejects a %s stable prefix", async (mistake) => {
+  const careless = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      build: (options) => session.build(options).pipe(Effect.map((built) => ({
+        ...built,
+        stableMessages: mistake === "negative" ? -1 : built.messages.length + (mistake === "overflow" ? 1 : 0),
+      }))),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(careless), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["stable-messages"])
+})

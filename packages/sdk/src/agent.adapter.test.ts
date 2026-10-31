@@ -47,6 +47,7 @@ import {
   zeroUsage,
 } from "@xandreed/core"
 import type { JsonObject, LogEntry, Plugin, SessionLogEvent, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import { isVolatileContext, stripVolatileContext } from "@xandreed/core/internal"
 import { runSteps, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
@@ -698,7 +699,7 @@ describe("Agent.turn", () => {
   })
 
   test("durable request replay uses its original memory position after later turns", async () => {
-    const { seen, requests, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { seen, requests, legacyRequests, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
       const { seen, model } = yield* scripted(lookupThenDeliver)
@@ -709,16 +710,27 @@ describe("Agent.turn", () => {
       // Diagnostics are deliberately absent: reconstruction depends on protocol and memory facts.
       const retained = events.filter((event) => event.kind !== "context.built" && event.kind !== "step.usage")
       const requests = yield* Effect.forEach([0, 1, 2], (step) => replayModelRequest(retained, RunId.make("run-1"), step))
-      return { seen: yield* Ref.get(seen), requests, events }
+      const legacy = retained.map((event) => {
+        if (event.kind !== "request.prepared") return event
+        const { stableMessages: _stable, ...data } = event.data
+        return { ...event, data }
+      })
+      const legacyRequests = yield* Effect.forEach([0, 1, 2], (step) => replayModelRequest(legacy, RunId.make("run-1"), step))
+      return { seen: yield* Ref.get(seen), requests, legacyRequests, events }
     })))
     expect(requests.map((request) => JSON.stringify(request.prompt.content))).toEqual(seen.map((request) => request.prompt))
     expect(requests.map((request) => request.tools.map((tool) => tool.name))).toEqual(seen.map((request) => [...request.tools]))
     expect(requests[0]?.model).toEqual(Option.some({ provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } }))
     expect(named(events, "request.prepared")).toHaveLength(3)
     expect(requests[0]?.prompt.content.some((message) => JSON.stringify(message).includes("later response"))).toBe(false)
+    expect(requests.map((request) => request.prompt.content.map((message) => isVolatileContext(message.options))))
+      .toEqual(requests.map((request) => request.prompt.content.map((_, index) => index === request.prompt.content.length - 1)))
+    expect(named(events, "request.prepared").map((event) => event.data.stableMessages)).toEqual(requests.map((request) => request.prompt.content.length - 2))
+    expect(legacyRequests.map((request) => request.prompt.content)).toEqual(requests.map((request) => request.prompt.content.map((message) => ({ ...message, options: stripVolatileContext(message.options) }))))
+    expect(JSON.stringify(events)).not.toContain("requestVolatile")
   })
 
-  test.each(["system", "messages", "tools", "model", "toolChoice", "cacheKey", "callPolicy"] as const)("a changed %s request fails before the provider dispatch, naming it", async (changed) => {
+  test.each(["system", "messages", "volatile-marker", "tools", "model", "toolChoice", "cacheKey", "callPolicy"] as const)("a changed %s request fails before the provider dispatch, naming it", async (changed) => {
     const { result, calls } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { seen, model } = yield* scripted([stop("should not run")])
       const original = describeModel(model, { provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } })
@@ -736,6 +748,7 @@ describe("Agent.turn", () => {
             plan: (info) => request.plan(info).pipe(Effect.map((plan) => ({
               ...plan,
               ...(changed === "messages" ? { messages: [{ role: "user" as const, content: "unrecorded input" }] } : {}),
+              ...(changed === "volatile-marker" ? { messages: plan.messages.map((message) => ({ ...message, providerOptions: stripVolatileContext(message.providerOptions ?? {}) })) } : {}),
               ...(changed === "model" ? { model: Option.some(changedModel) } : {}),
               ...(changed === "system" ? { system: "unrecorded system" } : {}),
               ...(changed === "toolChoice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
@@ -752,7 +765,7 @@ describe("Agent.turn", () => {
       return { result, calls: (yield* Ref.get(seen)).length }
     })))
     expect(result._tag).toBe("Failure")
-    expect(result._tag === "Failure" ? [codeOf(result.failure), result.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", changed])
+    expect(result._tag === "Failure" ? [codeOf(result.failure), result.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", changed === "volatile-marker" ? "messages" : changed])
     expect(calls).toBe(0)
   })
 
@@ -1304,8 +1317,8 @@ describe("images a tool returns", () => {
   })
 
   test("a step sent again over a refused image keeps its plan: one policy.model and policy.step call, one memory.step entry", async () => {
-    const { outcome, events, models, directives } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const { model } = yield* refusing([call("c1", "screenshot", { page: "home" }), stop("a page I could not see")], 1)
+    const { outcome, events, models, directives, seen, replayed } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { seen, model } = yield* refusing([call("c1", "screenshot", { page: "home" }), stop("a page I could not see")], 1)
       const models = yield* Ref.make<ReadonlyArray<number>>([])
       const directives = yield* Ref.make<ReadonlyArray<number>>([])
       const agent = yield* define(memoryWindowPlugin, { capabilities: [screenshots] })
@@ -1319,12 +1332,18 @@ describe("images a tool returns", () => {
           })),
           Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
         ))
-      return { outcome, events: yield* journal.stored, models: yield* Ref.get(models), directives: yield* Ref.get(directives) }
+      const events = yield* journal.stored
+      const replayed = yield* Effect.forEach(named(events, "request.prepared"), (header) =>
+        replayModelRequest(events.slice(0, events.indexOf(header) + 1), RunId.make("run-1"), Schema.decodeUnknownSync(Schema.Int)(header.data.step)), { concurrency: 1 })
+      return { outcome, events, models: yield* Ref.get(models), directives: yield* Ref.get(directives), seen: yield* Ref.get(seen), replayed }
     })))
     expect(outcome.outcome).toBe("completed")
     expect(named(events, "memory.compaction")).toHaveLength(1)
     expect([models, directives]).toEqual([[0, 1], [0, 1]])
     expect(named(events, "memory.step").map((event) => event.data.step)).toEqual([0, 1])
+    expect(replayed.map((request) => JSON.stringify(request.prompt.content))).toEqual([...seen])
+    expect(named(events, "request.prepared").map((header) => header.data.stableMessages)).toEqual(replayed.map((request) => request.prompt.content.length - 2))
+    expect(replayed.map((request) => request.prompt.content.map((message) => isVolatileContext(message.options)))).toEqual(replayed.map((request) => request.prompt.content.map((_, index) => index === request.prompt.content.length - 1)))
   })
 
   test("a step loop that plans a step twice, with no image refused, asks the policy again", async () => {

@@ -10,6 +10,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom memory strategy supplies `BuiltContext.stableMessages`, the
+  rendered prefix before its volatile step-context tail, and reruns the
+  memory conformance kit. Stored format 8 adds optional frozen prefix counts
+  to request headers; earlier headers still replay without the marker.
+  Messages caller cache controls now fail locally when their count or
+  lifetime order is invalid, or their object can serialize a different value.
+
 - Messages models now resolve output caps from the call policy, then
   `modelSettings`, then a documented model profile. Unknown/deployment IDs
   need an explicit output cap. Per-model Messages controls own thinking,
@@ -995,6 +1002,13 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Per-model Messages prompt-cache policies: Auto and TopLevel with five-minute
+  or one-hour lifetimes, and Off. Automatic breakpoints share the four slots
+  with caller controls and avoid the volatile tail. Gateway `cacheControl`
+  can disable cache fields, including SDK nulls, while preserving application
+  JSON. Settled, streamed, object and helper calls share the prepared-payload
+  guard; packed Node and Bun journeys cover all policies and signed replay.
 
 - Configured Anthropic Messages endpoints with opaque x-api-key or bearer
   authentication, version headers and merged beta flags. Static per-model

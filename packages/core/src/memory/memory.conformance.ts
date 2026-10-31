@@ -192,6 +192,38 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* expect("step-context", tail.includes("STEP-MARK") && !none.includes("STEP-MARK"), "the step context is misplaced")
       yield* expect("step-context", !later.includes("STEP-MARK"), "the turn's second run was built with the first run's step context")
     })),
+    check("the stable prefix ends before the selected run's step context, after rendering repairs and images", "stable-messages", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      const empty = yield* session.build({ stepContext: "tail", run: firstRun })
+      yield* expect("stable-messages", empty.messages.length === 0 && empty.stableMessages === 0, "an empty build has no stable prefix")
+      const image = yield* mediaFromBase64(pixelPng, { name: "stable.png" }).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "stable-messages", message: error.message })))
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "find alpha", attachments: [image] }) }], 0)
+      yield* session.recordTail([
+        { role: "assistant", content: [
+          { type: "tool-call", toolCallId: callId, toolName: "lookup", input: {} },
+          { type: "tool-call", toolCallId: ToolCallId.make("unfinished-call"), toolName: "lookup", input: {} },
+        ] },
+        ...toolTail.slice(1),
+      ], views, 0)
+      yield* session.record([
+        { _tag: "StepContext", step: 0, run: firstRun, text: "FIRST-OLD" },
+        { _tag: "StepContext", step: 0, run: secondRun, text: "SECOND" },
+        { _tag: "StepContext", step: 1, run: firstRun, text: "FIRST" },
+      ], 1)
+      const reopened = yield* open(log, "run-1")
+      const before = yield* encodeEntries("stable-messages", yield* reopened.entries)
+      const first = yield* reopened.build({ stepContext: "tail", run: firstRun })
+      const second = yield* reopened.build({ stepContext: "tail", run: secondRun })
+      const none = yield* reopened.build({ stepContext: "none", run: firstRun })
+      const other = yield* reopened.build({ stepContext: "tail", run: RunOrdinal.make(2) })
+      yield* expect("stable-messages", [first, second, none, other].every((built) => Number.isInteger(built.stableMessages) && built.stableMessages >= 0 && built.stableMessages <= built.messages.length), "a stable prefix is missing or outside the rendered messages")
+      yield* expect("stable-messages", first.stableMessages === first.messages.length - 1 && second.stableMessages === second.messages.length - 1 && none.stableMessages === none.messages.length && other.stableMessages === other.messages.length, "the selected volatile tail was declared stable or ordinary history was declared volatile")
+      yield* expect("stable-messages", canonicalJson(first.messages.at(-1)) === canonicalJson({ role: "user", content: "FIRST" }) && canonicalJson(second.messages.at(-1)) === canonicalJson({ role: "user", content: "SECOND" }), "a build selected another run's volatile tail")
+      yield* expect("stable-messages", canonicalJson(first.messages.slice(0, first.stableMessages)) === canonicalJson(none.messages) && canonicalJson(second.messages.slice(0, second.stableMessages)) === canonicalJson(none.messages) && canonicalJson(other.messages) === canonicalJson(none.messages), "the boundary did not use the repaired rendered prefix")
+      const toolMessages = first.messages.filter((message) => message.role === "tool")
+      yield* expect("stable-messages", toolMessages.length === 1 && toolMessages[0]?.content.length === 2 && canonicalJson(toolMessages).includes("ToolInterrupted") && canonicalJson(first.messages).includes(image.data), "the stable build lost its merged repair or current image")
+      yield* expect("stable-messages", before === (yield* encodeEntries("stable-messages", yield* reopened.entries)), "building a stable prefix changed durable memory")
+    })),
     check("maintenance only appends to the log", "append-only", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")

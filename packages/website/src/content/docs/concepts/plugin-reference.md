@@ -1015,6 +1015,9 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
                   "bearer"
                 ]
               },
+              "cacheControl": {
+                "type": "boolean"
+              },
               "apiVersion": {
                 "type": "string"
               },
@@ -1149,6 +1152,71 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
               }
             },
             "additionalProperties": true
+          },
+          "promptCache": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Auto"
+                    ]
+                  },
+                  "ttl": {
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "ttl"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "TopLevel"
+                    ]
+                  },
+                  "ttl": {
+                    "type": "string",
+                    "enum": [
+                      "5m",
+                      "1h"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "ttl"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Off"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              }
+            ]
           }
         },
         "additionalProperties": true

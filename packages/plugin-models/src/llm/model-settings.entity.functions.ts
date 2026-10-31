@@ -38,7 +38,7 @@ export const resolveAnthropicSettings = (selection: string, settings: ModelSetti
   if (Option.exists(effort, (value) => !Schema.is(AnthropicEffort)(value) || (traits?.source === "documented" && !profile.efforts.includes(value)))) return Result.fail(error("Effort", "the configured effort is not supported by this Messages model"))
   if (Option.exists(thinking, (value) => (value._tag === "Off" || value._tag === "BetweenTools") && Option.exists(traits?.reducedEfforts ?? Option.none(), (allowed) => Option.exists(effort, (level) => !allowed.includes(level))))) return Result.fail(error("Effort", "this reduced-thinking mode requires low, medium or high effort"))
   if (Option.exists(thinking, (value) => value._tag === "Budget" && value.budgetTokens >= output.success)) return Result.fail(error("Budget", "the thinking budget must be less than maxOutputTokens"))
-  return Result.succeed({ selection, thinking, effort, maxOutputTokens: output.success, ...(Object.keys(limits).length === 0 ? {} : { limits }) })
+  return Result.succeed({ selection, thinking, effort, maxOutputTokens: output.success, promptCache: configured.promptCache ?? { _tag: "Auto", ttl: "5m" }, ...(Object.keys(limits).length === 0 ? {} : { limits }) })
 }
 
 /** Validate request-dependent controls after resolution, before any network I/O. */

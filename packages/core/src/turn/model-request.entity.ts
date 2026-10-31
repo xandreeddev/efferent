@@ -97,6 +97,8 @@ export const ModelRequestHeader = Schema.Struct({
   /** The last memory entry the build included (its cut); none for an empty log. */
   through: Schema.OptionFromNullOr(EntryId),
   contextFingerprint: Schema.String,
+  /** Frozen prefix length before volatile context; absent in historical headers, which replay without a marker. */
+  stableMessages: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   tools: Schema.Array(ModelRequestTool),
   toolChoice: Schema.Unknown,
   /** None explicitly marks an opaque model whose provider configuration cannot be inspected. */
