@@ -157,6 +157,15 @@ reasons, including `NetworkError`, retain identity. `modelFailureCodeOf` names
 the published code and `modelFailureMessageOf` supplies the shared fixed
 reporting text. Provider evidence is interpreted in the models plugin.
 
+`ModelOverflowEvidence` names the actual overflowing `ModelSelection` and known
+`ModelLimits`, with omitted bounds remaining unknown. The stamp helpers accept
+it as an optional third argument for `ContextOverflow` under `ENGINE_KEY.overflow`.
+`modelOverflowEvidenceOf` reads only the same own explicit failure stamp; invalid
+optional evidence cannot mask the failure kind or borrow another part's facts.
+`StepRequest.onContextOverflow` is optional and authorizes one same-step resend
+before a nonempty visible delta, after a durable context reduction. Absence and
+false preserve the original failure. A callback failure keeps its identity.
+
 `ModelCallData` is metadata for one terminal physical model attempt. One
 `ModelCallId` spans its retries/configured fallback; `attempt` is positive.
 Store the actual `ModelSelection`, never requested candidates or descriptor
@@ -365,7 +374,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:111-121` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
+| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
 | Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |

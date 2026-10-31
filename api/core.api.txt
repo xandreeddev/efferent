@@ -165,6 +165,7 @@ const ModelFailureKind
 const ModelFailureStamp
 const ModelId
 const ModelLimits
+const ModelOverflowEvidence
 const ModelPrice
 const ModelRequestDescriptor
 const ModelRequestHeader
@@ -340,6 +341,7 @@ const messagesOf
 const modelFailureCodeOf
 const modelFailureMessageOf
 const modelFailureOf
+const modelOverflowEvidenceOf
 const modelRequestDescriptorOf
 const noMaintenance
 const normalizeUserMessage
@@ -561,6 +563,7 @@ type ModelFailureKind
 type ModelFailureStamp
 type ModelId
 type ModelLimits
+type ModelOverflowEvidence
 type ModelPrice
 type ModelRequestDescriptor
 type ModelRequestHeader

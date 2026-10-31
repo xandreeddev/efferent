@@ -5,7 +5,7 @@ import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
 import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
-import { acceptedModelInputOf } from "@xandreed/core"
+import { acceptedModelInputOf, harnessDefectsAsFailures, modelOverflowEvidenceOf } from "@xandreed/core"
 import type { CompletionVerdict, FinishReason, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -144,7 +144,20 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
           Effect.provide(request.handlers),
         )
       })
-      const answered = yield* attempt.pipe(
+      const overflowed = yield* Ref.make(false)
+      type Attempted = Effect.Success<typeof attempt>
+      const query: Effect.Effect<Attempted, unknown> = Effect.suspend(() => attempt.pipe(Effect.result, Effect.flatMap((result) => {
+        const retry = (error: unknown, source: unknown): Effect.Effect<Attempted, unknown> => Effect.gen(function* () {
+          const hook = request.onContextOverflow
+          if (Option.isSome(planned) || hook === undefined || (yield* Ref.getAndSet(overflowed, true))) return yield* Effect.fail(error)
+          return yield* (yield* hook(index, ...Option.toArray(modelOverflowEvidenceOf(source)))) ? query : Effect.fail(error)
+        })
+        if (result._tag === "Failure") return !isTurnError(result.failure) && Option.contains(modelFailureOf(result.failure), "ContextOverflow")
+          ? retry(result.failure, result.failure) : Effect.fail(result.failure)
+        return Option.contains(modelFailureOf(result.success.content), "ContextOverflow")
+          ? retry(harnessError("model.context-overflow", "The model request failed.", result.success), result.success.content) : Effect.succeed(result.success)
+      })))
+      const answered = yield* harnessDefectsAsFailures(query).pipe(
         Effect.catch((error) => !Option.isSome(planned) && AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
           ? request.onMediaRejected(error.reason.message).pipe(Effect.flatMap((retry) => retry ? attempt : Effect.fail(error)))
           : Effect.fail(error)),
@@ -254,7 +267,15 @@ test("the accepted-input check rejects a loop that drops accepted response evide
   const forgetful = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({
     ...request, record: (step, tail) => request.record(step, tail),
   }) })
-  expect(await failedChecks(forgetful)).toEqual(["accepted-input"])
+  expect(await failedChecks(forgetful)).toEqual(["accepted-input", "context-overflow"])
+})
+
+test("overflow checks reject a loop that ignores the optional recovery hook", async () => {
+  const forgetful = StepLoop.of({ ...STEP_LOOP, run: (request) => {
+    const { onContextOverflow: _ignored, ...unchanged } = request
+    return runSteps(unchanged)
+  } })
+  expect(await failedChecks(forgetful)).toEqual(["context-overflow", "overflow-visible"])
 })
 
 test("the model-failures check rejects a loop that erases semantic failure codes", async () => {
@@ -323,7 +344,7 @@ describe("a loop careless with a reply cut short", () => {
   })
 
   test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part", async () => {
-    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["accepted-input", "assistant-first", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
+    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["accepted-input", "assistant-first", "context-overflow", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {

@@ -4,7 +4,7 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Result, Stream } from "effect"
 import type { Context, Schema, Scope } from "effect"
-import { isTurnError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
+import { isTurnError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelFailureOf, modelRequestDescriptorOf, stampAiErrorFailure } from "@xandreed/core"
 import { isVolatileContext, stripVolatileContext } from "@xandreed/core/internal"
 import { CurrentPromptCacheFrame } from "../ports/prompt-cache-frame.port.js"
 import { PromptCacheError } from "./prompt-cache.entity.js"
@@ -12,7 +12,7 @@ import type { CachePosition, PromptCacheControl, PromptCacheSettings } from "./p
 import type { PromptCacheFrame } from "./prompt-cache-frame.entity.js"
 import { planBreakpoints } from "./prompt-cache.entity.functions.js"
 import { AuthError } from "../ports/auth-store.port.js"
-import type { ModelCallPolicy, ModelSelection } from "@xandreed/core"
+import type { ModelCallPolicy, ModelLimits, ModelSelection } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel, promptWithImageLabels } from "./compat.js"
@@ -102,8 +102,16 @@ const withStrippedVolatileContext = (model: LanguageModel.LanguageModel): Langua
 })
 
 /** Preserve typed provider semantics on every model method without altering responses. */
-const withProviderFailures = (model: LanguageModel.LanguageModel, protocol: ProviderFailureProtocol): LanguageModel.LanguageModel => {
-  const failure = (error: unknown) => AiError.isAiError(error) ? classifyAiError(error, protocol) : error
+const withProviderFailures = (model: LanguageModel.LanguageModel, protocol: ProviderFailureProtocol, selection: ModelSelection, limits: ModelLimits): LanguageModel.LanguageModel => {
+  const actual = { provider: selection.provider, modelId: selection.modelId }
+  const bounds = { ...limits }
+  const failure = (error: unknown) => {
+    if (!AiError.isAiError(error)) return error
+    const classified = classifyAiError(error, protocol)
+    return Option.contains(modelFailureOf(classified), "ContextOverflow")
+      ? stampAiErrorFailure(classified, "ContextOverflow", { model: { ...actual }, limits: { ...bounds } })
+      : classified
+  }
   return {
     ...model,
     generateText: ((options: PromptOptions) => model.generateText(options as never).pipe(Effect.mapError(failure))) as never,
@@ -428,6 +436,8 @@ interface RouteModel {
   readonly svc: LanguageModel.LanguageModel
   readonly settings: Option.Option<Schema.JsonObject>
   readonly prependClaudeCode: boolean
+  /** Known bounds for this built invocation, independently of its public settings JSON. */
+  readonly overflowLimits?: ModelLimits
 }
 
 /** A model as `buildProvider` describes and wraps it. */
@@ -615,6 +625,7 @@ const anthropicModel = (
     svc: withAnthropicSettings(service, resolved, wire, Option.isSome(binding), Option.match(endpoint, { onNone: () => true, onSome: (value) => value.cacheControl ?? true })),
     settings: Option.some({ ...wire, systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null, ...settings }),
     prependClaudeCode: oauth,
+    overflowLimits: { ...resolved.limits, maxOutputTokens: resolved.maxOutputTokens },
   }
 })
 
@@ -723,7 +734,7 @@ export const buildProviderOver = (services: ProviderServices) => (
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
   Effect.map((built) => {
-    const classified = withProviderAccounting(withProviderFailures(built.svc, providerFailureProtocol(built.route)), selection)
+    const classified = withProviderAccounting(withProviderFailures(built.svc, providerFailureProtocol(built.route), selection, built.overflowLimits ?? {}), selection)
     const labeled = built.images ? classified : withImageLabels(classified)
     return {
       svc: describeModel(built.route === "anthropic" ? labeled : withStrippedVolatileContext(labeled), descriptorOf(selection, built)),

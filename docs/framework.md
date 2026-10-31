@@ -225,6 +225,41 @@ keeps its corrective contract. The existing image-omission replan remains
 available. Existing `TurnError` tags remain unchanged,
 and unrelated unclassified loop failures still use `loop.failed`.
 
+For `ContextOverflow`, the loop can invoke optional
+`StepRequest.onContextOverflow(step, evidence)` (the same optional hook on
+standalone `runLoop`). The SDK maintains memory under a tighter budget, proves
+that the rebuilt request is smaller and fits that target, and permits one resend
+per step. The run's input ceiling only shrinks across later steps and recovery;
+it starts from the existing host `budgetTokens`. Known model limits bound the
+target, reserving known output capacity against the context window and system
+and tools once against the input budget. Unknown bounds remain unknown. Estimates
+remain heuristic, so even the one smaller resend can fail.
+
+`ModelOverflowEvidence` and `modelOverflowEvidenceOf` expose optional neutral
+facts from the actual failed route, including a configured fallback's own
+selection and known limits. Messages routes carry their effective sent output
+cap; an omitted cap does not claim that one was sent. The SDK can also consult
+an optional exact catalog entry. Core and the SDK do not parse provider bodies,
+opaque settings or billing rows for recovery evidence. A malformed optional
+evidence value does not erase an otherwise valid failure kind.
+
+Recovery preserves the step's model choice, system, directive, tools, cache key
+and call policy. It records and flushes a fresh same-step request header, then
+validates dispatch again; replay selects that latest header while retaining the
+failed attempt's header. Failed response content runs no handlers and supplies
+no accepted-input calibration. Each actual attempt and any summary helper keep
+their separate billed facts; selected usage includes only accepted responses.
+No positive reduction, protected current-turn history, a declined hook or a
+second overflow retains `model.context-overflow`. Writer and recorder failures
+remain hard failures. Without a hook, existing failure behavior is preserved.
+
+Automatic recovery stops once a nonempty `assistant_delta` has escaped, including
+reasoning or tool-argument deltas. Metadata and error parts alone do not prevent
+recovery. A late overflow preserves the observed deltas and fails without silently
+appending a second answer. After a stream has fallen back to a settled call,
+context recovery stays settled. Media replanning does not reset the step's
+single context-resend allowance.
+
 **Model request policy.** `ModelRetryPolicy`, `modelRetryDefaults` and
 `CurrentModelRetryPolicy` are exported by `@xandreed/plugin-models`. Provide
 the full policy through that Reference around a call or `turn.run`; it is

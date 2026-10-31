@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Custom step loops honor optional `StepRequest.onContextOverflow(step, evidence)`
+  when supplied; rerun `stepLoopConformance`. The SDK compacts to a strictly
+  smaller request and permits one context resend per step, with a shrinking
+  run budget. Missing hooks, irreducible history and already visible streamed
+  deltas retain the original failure. Optional neutral `ModelOverflowEvidence`
+  carries the actual failed route and known limits; existing failure stamps
+  still decode. Stored format 9 and selected usage remain unchanged.
+
 - Memory strategies now use version 2 decisions. The summary strategy defaults
   to `summarizeAt: "turn-end"`, after each successful loop run; choose `"step"`
   for pre-request timing. Maintenance accepts optional model-matched input

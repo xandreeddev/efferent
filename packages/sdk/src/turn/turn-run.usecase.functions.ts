@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Option, Ref, Schema } from "effect"
+import { Context, Deferred, Effect, Exit, Option, Ref, Schema } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   AcceptedModelInput as AcceptedInputSchema,
@@ -10,13 +10,18 @@ import {
   CurrentPromptCacheKey,
   CurrentTraceContent,
   fingerprintOf,
+  formatModelSelection,
+  freezeModelRequest,
   HarnessError,
   harnessDefectsAsFailures,
   isBudgetTokens,
+  ModelCatalog,
+  ModelOverflowEvidence,
   modelRequestDescriptorOf,
   parseModelSelection,
   replayableContext,
   resolveModelRequest,
+  scaledTokens,
   StepLoop,
   TurnEvents,
   TurnMemory,
@@ -31,6 +36,8 @@ import type {
   LoopLimits,
   MemoryRenderRecipe,
   ModelChoice,
+  ModelLimits,
+  ModelRequestHeader,
   ModelSelection,
   RunResult,
   RunTools,
@@ -55,6 +62,7 @@ import {
 } from "@xandreed/core/internal"
 import { TurnObservation } from "./turn-observation.entity.js"
 import { matchingObservation, observeAcceptedInput } from "./turn-observation.entity.functions.js"
+import { tighterOverflowBudget } from "./turn-overflow.entity.functions.js"
 
 /** What a step's plan decided before it built the context: the model choice, the system prompt, the directive. */
 interface StepDecision {
@@ -76,6 +84,8 @@ interface PlannedStep {
   readonly reservedTokens: number
   readonly baseReservedTokens: number
   readonly identity: Option.Option<ModelSelection>
+  readonly header: ModelRequestHeader
+  readonly outgoing: StepPlan
 }
 
 /** The longest provider message an `OmitMedia` compaction keeps as its reason. */
@@ -191,7 +201,17 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   // prompt, directive and resolved model; any other plan of a step decides again.
   const planned = yield* Ref.make(Option.none<PlannedStep>())
   const replanning = yield* Ref.make(Option.none<PlannedStep>())
+  const privatePlans = yield* Ref.make<ReadonlyMap<string, PlannedStep>>(new Map())
+  const dispatched = yield* Ref.make<ReadonlyMap<number, PlannedStep>>(new Map())
+  const recovery = yield* Ref.make(Option.none<PlannedStep>())
+  const recoveryClaims = yield* Ref.make<ReadonlyMap<number, Deferred.Deferred<boolean, TurnError>>>(new Map())
+  const inputCeiling = yield* Ref.make(budget)
   const observed = yield* Ref.make<TurnObservation>({ observed: Option.none(), usage: Option.none(), baseReservedTokens: Option.none() })
+  const recoveryOutcome = Effect.fnUntraced(function* (done: Deferred.Deferred<boolean, TurnError>): Effect.fn.Return<boolean, TurnError> {
+    if (!(yield* Deferred.isDone(done))) return false
+    const terminal = yield* Deferred.await(done).pipe(Effect.interruptible, Effect.exit)
+    return Exit.isFailure(terminal) ? yield* terminal : false
+  })
   const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
     const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info), Option.some(info.stepIndex))
     const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)), Option.some(info.stepIndex))
@@ -204,6 +224,13 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   }).pipe(Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(info.stepIndex)))
 
   const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
+    const ready = Option.filter(yield* Ref.get(recovery), (candidate) => candidate.step === info.stepIndex)
+    if (Option.isSome(ready)) {
+      yield* Ref.set(recovery, Option.none())
+      yield* Ref.set(planned, ready)
+      return ready.value.outgoing
+    }
+    const ceiling = yield* Ref.get(inputCeiling)
     const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
     const { choice, system, directive } = Option.isSome(again) ? again.value.decision : yield* decide(info)
     const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
@@ -211,9 +238,9 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     const toolTokens = schemaTokens(tools, info.activeTools)
     const reserved = estimateTokens(finalSystem) + toolTokens
     const baseReserved = estimateTokens(system) + toolTokens
-    if (budget <= reserved) {
+    if (ceiling <= reserved) {
       return yield* Effect.fail(failure("context.budget",
-        `The system prompt and tool schemas take ${reserved} tokens, all of the ${budget}-token context budget: raise budgetTokens or offer fewer tools`))
+        `The system prompt and tool schemas take ${reserved} tokens, all of the ${ceiling}-token context budget: raise budgetTokens or offer fewer tools`))
     }
     // Resolve once before maintenance so only matching selected evidence applies.
     const model = Option.isSome(again) ? again.value.model : yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
@@ -224,46 +251,38 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     const identity = Option.flatMap(descriptor, (value) => parseModelSelection(`${value.provider}:${value.model}`))
     const prior = matchingObservation(identity, (yield* Ref.get(observed)).observed)
     yield* session.maintain({
-      phase: "step", lastUsage: info.lastUsage, budgetTokens: budget - reserved, views: tools.views, render: renderScope,
+      phase: "step", lastUsage: info.lastUsage, budgetTokens: ceiling - reserved, views: tools.views, render: renderScope,
       ...Option.match(prior, { onNone: () => ({}), onSome: (observed) => ({ observed }) }),
     })
     const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none", run: run.ordinal })
     const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none", run.ordinal)
     // Scalars belong to this exact cut, before context.built reactions can append.
+    const header: ModelRequestHeader = {
+      version: 1, runId: run.id, run: run.ordinal, step: info.stepIndex,
+      strategyVersion: session.strategy.version, system: finalSystem, render,
+      through: built.through, contextFingerprint: built.fingerprint, stableMessages: built.stableMessages,
+      tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
+      toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"), model: descriptor, cacheKey, callPolicy,
+    }
+    const outgoing: StepPlan = { model, system: finalSystem, messages: markVolatileContext(built.messages, built.stableMessages), toolChoice: directive.toolChoice }
     const frozen: PlannedStep = {
       run, step: info.stepIndex, decision: { choice, system, directive }, model, identity,
       through: built.through, render, fingerprint: built.fingerprint,
       estimatedTokens: built.estimatedTokens, reservedTokens: reserved, baseReservedTokens: baseReserved,
+      header, outgoing,
     }
     // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
     yield* events.publish({
       _tag: "context.built", step: info.stepIndex, turn: run.turn, run: run.ordinal,
       strategy: session.strategy.id, strategyVersion: session.strategy.version,
       fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
-      estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: budget,
+      estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: ceiling,
       compactions: built.compactions.length, activeTools: info.activeTools,
     })
-    yield* memory.prepareRequest({
-      version: 1, runId: run.id, run: run.ordinal, step: info.stepIndex,
-      strategyVersion: session.strategy.version,
-      system: finalSystem,
-      render,
-      through: built.through,
-      contextFingerprint: built.fingerprint,
-      stableMessages: built.stableMessages,
-      tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
-      toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
-      model: descriptor,
-      cacheKey,
-      callPolicy,
-    })
+    yield* memory.prepareRequest(header)
+    yield* Ref.update(privatePlans, (all) => new Map([...all, [canonicalJson(header), frozen]]))
     yield* Ref.set(planned, Option.some(frozen))
-    return {
-      model,
-      system: finalSystem,
-      messages: markVolatileContext(built.messages, built.stableMessages),
-      toolChoice: directive.toolChoice,
-    }
+    return outgoing
   }).pipe(Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(info.stepIndex)))
 
   const request: StepRequest = {
@@ -286,9 +305,18 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
         cacheKey: yield* Effect.service(CurrentPromptCacheKey),
         callPolicy: yield* Effect.service(CurrentModelCallPolicy),
       })
+      const frozen = (yield* Ref.get(privatePlans)).get(canonicalJson(header))
+      yield* Ref.update(dispatched, (all) => {
+        const next = new Map(all)
+        if (frozen === undefined) next.delete(step)
+        else next.set(step, { ...frozen, header })
+        return next
+      })
     }),
     record: (step, tail, accepted?: AcceptedModelInput) => Effect.gen(function* () {
-      const frozen = Option.filter(yield* Ref.get(planned), (plan) => plan.step === step && plan.run.id === run.id && plan.run.ordinal === run.ordinal)
+      const sent = Option.fromNullishOr((yield* Ref.get(dispatched)).get(step))
+      const prepared = Option.fromNullishOr([...(yield* Ref.get(privatePlans)).values()].findLast((plan) => plan.step === step))
+      const frozen = Option.filter(Option.orElse(sent, () => prepared), (plan) => plan.run.id === run.id && plan.run.ordinal === run.ordinal)
       const usage = Option.flatMap(Option.fromNullishOr(tail.find((message) => message.role === "assistant")), assistantUsage)
       const candidate = accepted === undefined ? Option.none<TurnObservation>() : yield* Schema.encodeEffect(Schema.fromJsonString(AcceptedInputSchema))(accepted).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(AcceptedInputSchema))),
@@ -308,6 +336,68 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     }).pipe(
       Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(step)),
     ),
+    onContextOverflow: Effect.fnUntraced(function* (step, evidence) {
+      const known = (yield* Ref.get(recoveryClaims)).get(step)
+      if (known !== undefined) return yield* recoveryOutcome(known)
+      const failed = (yield* Ref.get(dispatched)).get(step)
+      if (failed === undefined) return false
+      return yield* Effect.uninterruptible(Effect.gen(function* () {
+        const fresh = yield* Deferred.make<boolean, TurnError>()
+        const previous = yield* Ref.modify(recoveryClaims, (all) => [Option.fromNullishOr(all.get(step)), all.has(step) ? all : new Map([...all, [step, fresh]])] as const)
+        if (Option.isSome(previous)) return yield* recoveryOutcome(previous.value)
+        const operation = inRun(harnessDefectsAsFailures(Effect.gen(function* () {
+          const facts = yield* Option.match(Option.fromNullishOr(evidence), {
+            onNone: () => Effect.succeed(Option.none<ModelOverflowEvidence>()),
+            onSome: (fact) => Schema.encodeEffect(Schema.fromJsonString(ModelOverflowEvidence))(fact).pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ModelOverflowEvidence))), Effect.map(Option.some),
+              Effect.mapError((cause) => new HarnessError({ code: "request.diverged", message: "overflow evidence did not encode", cause })),
+            ),
+          })
+          yield* memory.requestSnapshot
+          const identity = Option.orElse(Option.map(facts, (fact) => fact.model), () => failed.identity)
+          const catalog = yield* Option.match(Context.getOption(runServices, ModelCatalog), { onNone: () => Effect.succeed([]), onSome: (service) => service.list })
+          const limits = Option.flatMap(identity, (selection) => Option.fromNullishOr(catalog.find((entry) => entry.selection === formatModelSelection(selection))?.limits))
+          const contextWindow = Option.orElse(Option.flatMap(facts, (fact) => Option.fromNullishOr(fact.limits.contextWindow)), () => Option.flatMap(limits, (value) => Option.fromNullishOr(value.contextWindow)))
+          // A missing attempted cap is unknown, even if a catalog lists a maximum.
+          const output = Option.flatMap(facts, (fact) => Option.fromNullishOr(fact.limits.maxOutputTokens))
+          const bounds: ModelLimits = {
+            ...Option.match(contextWindow, { onNone: () => ({}), onSome: (contextWindow) => ({ contextWindow }) }),
+            ...Option.match(output, { onNone: () => ({}), onSome: (maxOutputTokens) => ({ maxOutputTokens }) }),
+          }
+          const sameObservation = freezeModelRequest(matchingObservation(identity, (yield* Ref.get(observed)).observed))
+          const failedComparable = scaledTokens(failed.estimatedTokens, sameObservation)
+          const tighter = tighterOverflowBudget(yield* Ref.get(inputCeiling), failed.reservedTokens, failedComparable, bounds)
+          if (Option.isNone(tighter)) return false
+          yield* Ref.update(inputCeiling, (previous) => Math.min(previous, tighter.value.inputCeiling))
+          yield* session.maintain({
+            phase: "overflow", lastUsage: (yield* Ref.get(observed)).usage, budgetTokens: tighter.value.messageBudget,
+            views: tools.views, render: { run: run.ordinal, stepContext: failed.render.stepContext },
+            ...Option.match(sameObservation, { onNone: () => ({}), onSome: (observed) => ({ observed }) }),
+          })
+          const built = yield* session.build({ run: run.ordinal, stepContext: failed.render.stepContext })
+          const comparable = scaledTokens(built.estimatedTokens, sameObservation)
+          const ceiling = yield* Ref.get(inputCeiling)
+          if (comparable >= failedComparable || comparable > Math.min(tighter.value.messageBudget, ceiling - failed.reservedTokens)) return false
+          const render = yield* session.renderRecipe(failed.render.stepContext, run.ordinal)
+          const header: ModelRequestHeader = { ...failed.header, render, through: built.through, contextFingerprint: built.fingerprint, stableMessages: built.stableMessages }
+          const outgoing: StepPlan = { ...failed.outgoing, messages: freezeModelRequest(markVolatileContext(built.messages, built.stableMessages)) }
+          const candidate: PlannedStep = { ...failed, through: built.through, render, fingerprint: built.fingerprint, estimatedTokens: built.estimatedTokens, header, outgoing }
+          yield* events.publish({
+            _tag: "context.built", step, turn: run.turn, run: run.ordinal, strategy: session.strategy.id, strategyVersion: session.strategy.version,
+            fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(failed.decision.system), estimatedTokens: built.estimatedTokens,
+            reservedTokens: failed.reservedTokens, budgetTokens: ceiling, compactions: built.compactions.length, activeTools: failed.header.tools.map((tool) => tool.name),
+          })
+          yield* memory.prepareRequest(header)
+          yield* Ref.update(privatePlans, (all) => new Map([...all, [canonicalJson(header), candidate]]))
+          yield* Ref.set(planned, Option.some(candidate))
+          yield* Ref.set(recovery, Option.some(candidate))
+          return true
+        })), Option.some(step))
+        const terminal = yield* operation.pipe(Effect.interruptible, Effect.exit)
+        yield* Deferred.done(fresh, terminal)
+        return yield* terminal
+      }))
+    }),
     pendingSteers: memory.pendingSteers,
     steer: (step) => memory.steer(step, run.ordinal),
     recorded: (step) => memory.requestSnapshot.pipe(Effect.map(({ entries }) => entries.filter((entry) =>
@@ -344,7 +434,7 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     const accepted = yield* Ref.get(observed)
     const evidence = accepted.observed
     const reserve = Option.orElse(accepted.baseReservedTokens, () => Option.map(last, (plan) => plan.baseReservedTokens))
-    const remaining = budget - Option.getOrElse(reserve, () => 0)
+    const remaining = (yield* Ref.get(inputCeiling)) - Option.getOrElse(reserve, () => 0)
     yield* session.maintain({
       phase: "turn-end", lastUsage: accepted.usage, budgetTokens: Math.max(1, remaining), views: tools.views,
       render: { run: run.ordinal, stepContext: "none" },
