@@ -1,6 +1,6 @@
 {
-  "format": 6,
-  "fingerprint": "cca22513b26bedc76072787b22043780f6e56ebb1ef065a22e13662eb3eacfd9",
+  "format": 7,
+  "fingerprint": "42822c8da0a0713f0ed626bd4e81350e3c5ae80096d11375bad3605095e6b00b",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -26,7 +26,7 @@
     "journal step.usage": "1e13adffdf0e739803565455c25ba80f8e381dc0b5cab2c72f55d489ffd1b287",
     "journal stream.fallback": "a8df996294e170347e1f43b26251d9ada0be3ea01f75a5f0df31c37f3081a17e",
     "journal tool.completed": "15f66882180ac3acfb376c53da57d053a831671f6956f9ea958b02584d05e2c9",
-    "journal tool.refused": "a68da9e15cc1cd0c3638d3a8fa9ffb5eca871d72ffa84bb819d617f465132d4c",
+    "journal tool.refused": "e280635fe70cf43e6f93017bf3603d9cdb520e444653bc8770cc7cc8b397ca48",
     "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
     "journal turn.ended": "9ad790e35056a849ed7121f0d005e0312633732ac43f651e152ff00a71227c3e",
     "journal turn.reply": "e1cc10fb802d4c6169b1bd494f3777f5f9c506519a75faf36bcd307cd8fbe194",
@@ -59,6 +59,10 @@
     {
       "format": 6,
       "fingerprint": "cca22513b26bedc76072787b22043780f6e56ebb1ef065a22e13662eb3eacfd9"
+    },
+    {
+      "format": 7,
+      "fingerprint": "42822c8da0a0713f0ed626bd4e81350e3c5ae80096d11375bad3605095e6b00b"
     }
   ]
 }

@@ -208,7 +208,8 @@ export { PromptId, PromptProvenance } from "./domain/prompt-provenance.entity.js
 
 export { CurrentPromptProvenance } from "./loop/promptProvenance.js"
 
-export { CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
+export { CurrentAgentRun, CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
+export { DegeneratePolicy, MalformedLimit } from "./domain/loop-limits.entity.js"
 export type { ToolInvocation } from "./loop/stepContext.js"
 
 export { CandidateId, DecisionId, DecisionRecord } from "./decision-record.entity.js"

@@ -1,10 +1,11 @@
 import { Tool } from "effect/ai"
-import { Array as Arr, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Array as Arr, Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import {
   ActionPolicy,
   ConversationId,
   ConversationMemory,
+  CurrentAgentRun,
   CurrentAgentStep,
   CurrentToolInvocation,
   defineCapability,
@@ -19,6 +20,7 @@ import {
   publishToolProgress,
   RunContext,
   RunId,
+  RunOrdinal,
   SessionEnvironment,
   storedJson,
   ToolRegistry,
@@ -59,6 +61,13 @@ const freshId = Effect.map(randomUuid, (id) => ConversationId.make(id))
  */
 export interface ToolRegistryLimits {
   readonly maxCallsPerRun: number
+  readonly readConcurrency?: number
+  readonly toolPolicy?: Readonly<Record<string, {
+    readonly concurrency?: number
+    readonly maxCallsPerRun?: number
+    readonly breakAfter?: number
+    readonly breakOn?: "defects" | "failures"
+  }>>
 }
 
 /** The run the kit's turns are, as its invocation ids name it. */
@@ -68,6 +77,7 @@ const RUN = RunId.make("conformance-run")
 const Opener = Context.Reference<string>("efferent/conformance/ToolRegistryOpener", { defaultValue: () => "none" })
 /** What a handler can prove was flushed before it ran. */
 const DurableStarted = Context.Reference<Effect.Effect<boolean>>("efferent/conformance/ToolRegistryDurableStarted", { defaultValue: () => Effect.succeed(false) })
+const ExecutionProbe = Context.Reference<(tool: string) => Effect.Effect<void>>("@xandreed/sdk/conformance/RegistryExecutionProbe", { defaultValue: () => () => Effect.void })
 
 const Ping = Tool.make("kit_ping", {
   description: "Answer pong, at most twice per turn.",
@@ -108,7 +118,11 @@ const Archive = Tool.make("kit_archive", {
   failure: Failure,
   failureMode: "return",
 })
-const TOOLS = [Ping.name, Report.name, Durability.name, Where.name, Vault.name, Archive.name]
+const Flaky = Tool.make("kit_flaky", {
+  description: "Exercise handler failures.", parameters: Schema.Struct({ outcome: Schema.Literals(["success", "failure", "defect"]) }),
+  success: Schema.String, failure: Failure, failureMode: "return",
+})
+const TOOLS = [Ping.name, Report.name, Durability.name, Where.name, Vault.name, Archive.name, Flaky.name]
 const SKILLS = ["kit.basics", "kit.vault", "kit.archiving"]
 
 /**
@@ -122,6 +136,7 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
     id: "conformance.tools",
     version: "1",
     tools: [
+      defineTool({ tool: Flaky, handler: ({ outcome }) => note(Flaky.name).pipe(Effect.andThen(Effect.service(ExecutionProbe)), Effect.flatMap((probe) => probe(Flaky.name)), Effect.andThen(outcome === "defect" ? Effect.die(new Error("broken handler")) : outcome === "failure" ? Effect.fail({ error: "ToolFailed", message: "try a different input" }) : Effect.succeed("ok"))) }),
       defineTool({ tool: Durability, handler: () => Effect.service(DurableStarted).pipe(Effect.flatten) }),
       defineTool({ tool: Ping, handler: ({ n }) => note(Ping.name).pipe(Effect.as(`pong ${n}`)), annotations: { maxCallsPerRun: Option.some(2) } }),
       defineTool({
@@ -139,13 +154,14 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
       defineTool({
         tool: Where,
         requires: [SessionEnvironment],
-        handler: () => note(Where.name).pipe(Effect.andThen(SessionEnvironment), Effect.map((environment) => environment.workspace)),
+        annotations: { readOnly: true },
+        handler: () => note(Where.name).pipe(Effect.andThen(Effect.service(ExecutionProbe)), Effect.flatMap((probe) => probe(Where.name)), Effect.andThen(SessionEnvironment), Effect.map((environment) => environment.workspace)),
       }),
       defineTool({ tool: Vault, handler: ({ key }) => note(Vault.name).pipe(Effect.as(`secret ${key}`)), annotations: { permissions: ["kit.vault"] } }),
       defineTool({ tool: Archive, handler: ({ id }) => note(Archive.name).pipe(Effect.as(`archived ${id}`)) }),
     ],
     skills: [
-      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Durability.name, Where.name], always: true }),
+      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Durability.name, Where.name, Flaky.name], always: true }),
       defineSkill({ id: "kit.vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["kit.vault"] }),
       defineSkill({ id: "kit.archiving", summary: "Archive records.", tools: [Archive.name] }),
     ],
@@ -215,7 +231,9 @@ interface KitTurn {
   readonly catalog: CapabilityCatalog
   readonly tools: RunTools
   /** Call a tool through the open toolkit's handlers at `step`, as the loop (or a host) does. */
-  readonly call: (name: string, params: unknown, step?: number, toolCallId?: string) => Effect.Effect<CallResult, unknown>
+  readonly call: (name: string, params: unknown, step?: number, toolCallId?: string, ordinal?: number) => Effect.Effect<CallResult, unknown>
+  /** Another open of this same registry, proving per-tool permits are outside open's turn-local state. */
+  readonly reopenCall: (name: string, params: unknown) => Effect.Effect<CallResult, unknown>
   /** The `tool.*` and `skills.activated` events published so far, in order. */
   readonly published: Effect.Effect<ReadonlyArray<TurnEvent>>
   /** What the turn stored so far. */
@@ -226,6 +244,9 @@ interface KitTurn {
 
 interface TurnSetup {
   readonly maxCallsPerRun?: number
+  readonly readConcurrency?: number
+  readonly toolPolicy?: ToolRegistryLimits["toolPolicy"]
+  readonly execution?: (tool: string) => Effect.Effect<void>
   readonly policy?: Context.Service.Shape<typeof ActionPolicy>
   readonly grants?: ReadonlyArray<string>
   /** Record `kit_vault` as activated by an earlier turn, as a turn whose grants have since changed finds it. */
@@ -298,7 +319,7 @@ export const toolRegistryConformance = (
 ): ReadonlyArray<ConformanceCheck> => {
   const inTurn = (setup: TurnSetup, body: (turn: KitTurn) => Effect.Effect<void, unknown>) => Effect.scoped(Effect.gen(function* () {
     const ran = yield* Ref.make<ReadonlyArray<string>>([])
-    const registry = yield* make([capabilityOf(ran)], { maxCallsPerRun: setup.maxCallsPerRun ?? 32 })
+    const registry = yield* make([capabilityOf(ran)], { maxCallsPerRun: setup.maxCallsPerRun ?? 32, ...(setup.readConcurrency === undefined ? {} : { readConcurrency: setup.readConcurrency }), ...(setup.toolPolicy === undefined ? {} : { toolPolicy: setup.toolPolicy }) })
     const recorded = yield* memoryWriter
     const services = Layer.merge(
       Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
@@ -317,6 +338,7 @@ export const toolRegistryConformance = (
       const opening = (yield* TurnToolbox).open.pipe(
         Effect.provideService(DurableStarted, recorded.flushed.pipe(Effect.map((events) => events.some((event) => event.kind === "tool.started" && event.data.tool === Durability.name)))),
         Effect.provideService(Opener, "the opener's"),
+        Effect.provideService(ExecutionProbe, setup.execution ?? (() => Effect.void)),
         (open) => setup.withoutEnvironment === true ? open.pipe(Effect.updateContext((context: Context.Context<never>) => Context.omit(SessionEnvironment)(context)))
           : open.pipe(Effect.provideService(SessionEnvironment, { workspace: "the opener's" })),
         (open) => Option.match(Option.fromNullishOr(setup.policy), { onNone: () => open, onSome: (denying) => open.pipe(Effect.provideService(ActionPolicy, denying)) }),
@@ -327,20 +349,28 @@ export const toolRegistryConformance = (
       )
       const tools = yield* opening
       yield* tools.select(run.userMessage)
-      const call = (name: string, params: unknown, step = 1, toolCallId?: string): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
-        const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
+      const callWith = (selected: RunTools, name: string, params: unknown, step = 1, toolCallId?: string, ordinal = 0): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
+        const kit = yield* selected.toolkit.pipe(Effect.provide(selected.handlers))
         const results = yield* Stream.runCollect(yield* kit.handle(name, params, toolCallId))
         const last = results.at(-1)
         return { isFailure: last?.isFailure ?? true, result: last?.result }
       }) as Effect.Effect<CallResult, unknown>).pipe(
         Effect.provideService(CurrentAgentStep, Option.some(step)),
+        Effect.provideService(CurrentAgentRun, Option.some({ id: RUN, turn: 1, ordinal: RunOrdinal.make(ordinal) })),
         Effect.provideService(Opener, "the caller's"),
         Effect.provideService(SessionEnvironment, { workspace: "the caller's" }),
       )
+      const call = (name: string, params: unknown, step?: number, toolCallId?: string, ordinal?: number) => callWith(tools, name, params, step, toolCallId, ordinal)
+      const reopened = yield* registry.open(memory.session).pipe(
+        Effect.provideService(SessionEnvironment, { workspace: "the opener's" }),
+        Effect.provideService(ExecutionProbe, setup.execution ?? (() => Effect.void)),
+      )
+      const reopenCall = (name: string, params: unknown) => reopened.select(run.userMessage).pipe(Effect.andThen(callWith(reopened, name, params)))
       return yield* body({
         catalog: registry.catalog,
         tools,
         call,
+        reopenCall,
         published: run.flush.pipe(Effect.orDie, Effect.andThen(Ref.get(published))),
         stored: run.flush.pipe(Effect.orDie, Effect.andThen(recorded.stored)),
         ran: Ref.get(ran),
@@ -378,6 +408,117 @@ export const toolRegistryConformance = (
       })))
 
   return [
+    check("nested synchronous toolkit calls preserve a queued writer's priority", "nested-writer-priority", () => Effect.gen(function* () {
+      const count = yield* Ref.make(0)
+      const both = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = yield* Ref.make<Option.Option<KitTurn>>(Option.none())
+      const order = yield* Ref.make<ReadonlyArray<string>>([])
+      const nested = yield* Ref.make("none")
+      yield* inTurn({ readConcurrency: 2, execution: (tool) => tool === Flaky.name ? Ref.update(order, (all) => [...all, "writer"]) : Effect.gen(function* () {
+        const position = yield* Ref.updateAndGet(count, (n) => n + 1)
+        if (position <= 2) {
+          if (position === 2) yield* Deferred.succeed(both, undefined)
+          return yield* Deferred.await(release)
+        }
+        yield* Ref.update(order, (all) => [...all, position === 3 ? "reader" : "nested"])
+        if (position === 3) {
+          const outcome = yield* Option.getOrThrow(yield* Ref.get(held)).call(Where.name, {}).pipe(
+            Effect.provideService(Scheduler.Scheduler, new Scheduler.MixedScheduler("sync")), Effect.orDie,
+          )
+          yield* Ref.set(nested, errorOf(outcome.result))
+        }
+      }) }, (turn) => Effect.gen(function* () {
+        yield* Ref.set(held, Option.some(turn))
+        const holders = yield* Effect.forEach([0, 1], () => turn.call(Where.name, {}), { concurrency: 2 }).pipe(Effect.forkChild)
+        yield* Deferred.await(both)
+        const reader = yield* turn.call(Where.name, {}).pipe(Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        const writer = yield* turn.call(Flaky.name, { outcome: "success" }).pipe(Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holders)
+        yield* Fiber.join(reader)
+        yield* Fiber.join(writer)
+        yield* expect("nested-writer-priority", (yield* Ref.get(order)).join() === "reader,writer" && (yield* Ref.get(nested)) === "ToolConcurrency", "a synchronous nested call overtook the queued writer")
+      }))
+    }).pipe(Effect.timeout("2 seconds"))),
+    check("a turn's writers exclude readers and cannot be overtaken by later readers", "read-write-lanes", () => Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const order = yield* Ref.make<ReadonlyArray<string>>([])
+      yield* inTurn({ execution: (tool) => Ref.updateAndGet(order, (all) => [...all, tool]).pipe(Effect.flatMap((all) => all.length === 1
+        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void)) }, (turn) => Effect.gen(function* () {
+        const first = yield* turn.call(Where.name, {}).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        const writer = yield* turn.call(Flaky.name, { outcome: "success" }).pipe(Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        const last = yield* turn.call(Where.name, {}).pipe(Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        yield* expect("read-write-lanes", (yield* Ref.get(order)).join() === Where.name, "a writer overlapped a reader or a later reader overtook it")
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(first)
+        yield* Fiber.join(writer)
+        yield* Fiber.join(last)
+        yield* expect("read-write-lanes", (yield* Ref.get(order)).join() === [Where.name, Flaky.name, Where.name].join(), "a waiting writer was starved by a later reader")
+      }))
+    }).pipe(Effect.timeout("2 seconds"))),
+    check("per-tool concurrency permits are shared across turn opens and are released after interrupted handlers", "policy-concurrency", () => Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const active = yield* Ref.make(0)
+      const peak = yield* Ref.make(0)
+      const waiting = yield* Ref.make(false)
+      yield* inTurn({ toolPolicy: { [Where.name]: { concurrency: 1 } }, execution: () => Ref.updateAndGet(active, (n) => n + 1).pipe(
+        Effect.tap((n) => Ref.update(peak, (value) => Math.max(value, n))),
+        Effect.flatMap((n) => n === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) : Effect.void),
+        Effect.ensuring(Ref.update(active, (n) => n - 1)),
+      ) }, (turn) => Effect.gen(function* () {
+        const first = yield* turn.call(Where.name, {}).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        const second = yield* turn.reopenCall(Where.name, {}).pipe(Effect.ensuring(Ref.set(waiting, true)), Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        yield* expect("policy-concurrency", (yield* Ref.get(peak)) === 1 && !(yield* Ref.get(waiting)), "a second open escaped the agent-wide per-tool permit")
+        const stopping = yield* Fiber.interrupt(second).pipe(Effect.forkChild)
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        const cancelledBeforeRelease = yield* Ref.get(waiting)
+        yield* Fiber.interrupt(first)
+        yield* Fiber.join(stopping)
+        yield* expect("policy-concurrency", cancelledBeforeRelease, "a queued permit wait could not be interrupted while its holder remained active")
+        const fresh = yield* turn.reopenCall(Where.name, {}).pipe(Effect.forkChild)
+        // A fresh handler may block too: interrupting it proves the permit transferred, not a leaked lock.
+        yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, { concurrency: 1 })
+        yield* expect("policy-concurrency", (yield* turn.ran).length === 2, "interruption leaked the first call's permit")
+        yield* Fiber.interrupt(fresh)
+      }))
+    }).pipe(Effect.timeout("2 seconds"))),
+    check("host per-tool call limits are atomic and reset by exact loop run while author limits remain per turn", "policy-run-limit", () => inTurn({ toolPolicy: { [Where.name]: { maxCallsPerRun: 1 }, [Ping.name]: { maxCallsPerRun: 100 } } }, (turn) => Effect.gen(function* () {
+      const results = yield* Effect.forEach([0, 0], (run) => turn.call(Where.name, {}, 1, undefined, run), { concurrency: 2 })
+      yield* expect("policy-run-limit", results.filter((result) => !result.isFailure).length === 1 && results.some((result) => errorOf(result.result) === "ToolCallLimit"), "simultaneous admissions did not share the run's one-call budget")
+      yield* expect("policy-run-limit", !(yield* turn.call(Where.name, {}, 1, undefined, 1)).isFailure, "a fresh run did not reset its host call budget")
+      yield* turn.call(Ping.name, { n: 1 }, 1, undefined, 0)
+      yield* turn.call(Ping.name, { n: 2 }, 1, undefined, 1)
+      yield* expect("policy-run-limit", errorOf((yield* turn.call(Ping.name, { n: 3 }, 1, undefined, 2)).result) === "ToolCallLimit", "host policy widened the author's per-turn budget")
+    }))),
+    check("the default breaker counts consecutive handler defects per run and tool, with successful calls resetting it", "policy-breaker", () => inTurn({ toolPolicy: { [Flaky.name]: { breakAfter: 2 } } }, (turn) => Effect.gen(function* () {
+      yield* turn.call(Flaky.name, { outcome: "defect" })
+      yield* turn.call(Flaky.name, { outcome: "success" })
+      yield* turn.call(Flaky.name, { outcome: "defect" })
+      yield* turn.call(Flaky.name, { outcome: "failure" })
+      yield* expect("policy-breaker", !(yield* turn.call(Flaky.name, { outcome: "success" })).isFailure, "a typed failure tripped the defects-only breaker, or success did not reset it")
+      yield* turn.call(Flaky.name, { outcome: "defect" })
+      yield* turn.call(Flaky.name, { outcome: "defect" })
+      const before = (yield* turn.ran).length
+      const refused = yield* turn.call(Flaky.name, { outcome: "success" }, 1, "tripped-call")
+      const events = yield* turn.published
+      yield* expect("policy-breaker", errorOf(refused.result) === "ToolTripped" && (yield* turn.ran).length === before, "a tripped tool ran its handler")
+      yield* expect("policy-breaker", events.some((event) => event._tag === "tool.refused" && event.reason === "tripped" && event.toolCallId === "tripped-call"), "the tripped refusal lost its provider id or reason")
+      yield* expect("policy-breaker", !(yield* turn.call(Where.name, {})).isFailure && !(yield* turn.call(Flaky.name, { outcome: "success" }, 1, undefined, 1)).isFailure, "a breaker escaped its tool or loop-run scope")
+      yield* expect("policy-breaker", errorOf((yield* turn.call(Flaky.name, { outcome: "success" }, 1, undefined, 0)).result) === "ToolTripped", "a concurrent later run reset an earlier run's breaker")
+    }))),
+    check("breakOn failures counts typed handler failures as well as defects", "policy-failures", () => inTurn({ toolPolicy: { [Flaky.name]: { breakAfter: 1, breakOn: "failures" } } }, (turn) => Effect.gen(function* () {
+      yield* turn.call(Flaky.name, { outcome: "failure" })
+      yield* expect("policy-failures", errorOf((yield* turn.call(Flaky.name, { outcome: "success" })).result) === "ToolTripped", "a typed handler failure did not trip the configured breaker")
+    }))),
     check("the catalog and a run's tools hold every tool and skill the capabilities define, with their permissions", "catalog", () => inTurn({}, (turn) => Effect.gen(function* () {
       const recipes = turn.catalog.recipes.map((recipe): string => recipe.id)
       const listed = turn.catalog.tools.map((tool): string => tool.id)

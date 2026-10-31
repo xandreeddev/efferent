@@ -4,11 +4,12 @@ import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
+import type { DegeneratePolicy } from "../domain/loop-limits.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "../loop/modelPolicy.js"
-import { CurrentAgentStep } from "../loop/stepContext.js"
+import { CurrentAgentRun, CurrentAgentStep } from "../loop/stepContext.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnError } from "../session/sessions.entity.js"
@@ -24,6 +25,10 @@ export interface LoopLimits {
   readonly streaming: boolean
   /** A model stop does not end the run while the completion verdict is incomplete. */
   readonly requireCompletion: boolean
+  /** Defaults to Enabled with nudgeAfter 3 and breakAfter 5. */
+  readonly degenerate?: DegeneratePolicy
+  /** Fail on this consecutive malformed response; default 3 tolerates two correctives. */
+  readonly malformedLimit?: number
 }
 
 /**
@@ -145,9 +150,11 @@ export interface StepRequest {
  * - `CurrentEmptyResponseTolerance`, to its model calls: false until the
  *   run has executed a tool call (a planned batch's included), true after;
  * - `CurrentAgentStep`: the current step, to its tool handlers and its
- *   model calls.
+ *   model calls;
+ * - `CurrentAgentRun`: the exact request's `run`, to its tool handlers,
+ *   dispatch checks and model calls, including concurrent loop runs.
  */
-export const StepLoopReferences = [CurrentPromptCacheKey, CurrentModelCallPolicy, CurrentTraceContent, CurrentEmptyResponseTolerance, CurrentAgentStep] as const
+export const StepLoopReferences = [CurrentPromptCacheKey, CurrentModelCallPolicy, CurrentTraceContent, CurrentEmptyResponseTolerance, CurrentAgentStep, CurrentAgentRun] as const
 
 export interface ModelDispatch {
   readonly prompt: Prompt.Prompt

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Data, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Ref, Result, Schema, SchemaGetter, Stream, Tracer } from "effect"
-import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, HarnessError, hostNote, mediaFromBase64, ToolCallId } from "@xandreed/core"
+import { CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, DegeneratePolicy, Failure, harnessCodeOf, HarnessError, hostNote, MalformedLimit, mediaFromBase64, RunId, RunOrdinal, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, FinishReason, TokenUsage } from "@xandreed/core"
 import type { LoopEvent } from "./loop-event.entity.js"
 import { DEFAULT_TOOL_CONCURRENCY, DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
@@ -832,6 +832,38 @@ describe("runLoop streaming", () => {
 })
 
 describe("runLoop — the decisions, pure", () => {
+  test("schema-backed host thresholds reject zero, infinity and a nudge after the stop", () => {
+    const decode = Schema.decodeUnknownOption(DegeneratePolicy)
+    expect(Option.isSome(decode({ _tag: "Disabled" }))).toBe(true)
+    expect(Option.isSome(decode({ _tag: "Enabled", nudgeAfter: 1, breakAfter: 2 }))).toBe(true)
+    expect([{ nudgeAfter: 0, breakAfter: 2 }, { nudgeAfter: 2, breakAfter: 2 }, { nudgeAfter: 3, breakAfter: 2 }, { nudgeAfter: 1, breakAfter: Infinity }]
+      .map((thresholds) => Option.isNone(decode({ _tag: "Enabled", ...thresholds })))).toEqual([true, true, true, true])
+    expect([0, -1, 1.5, Infinity].map((value) => Option.isNone(Schema.decodeUnknownOption(MalformedLimit)(value)))).toEqual([true, true, true, true])
+  })
+
+  test("foldProgress accepts custom thresholds and Disabled keeps the progress fold without nudges or a stop", () => {
+    const held = { seen: new Set(["echo:ok:x"]), staleTurns: 0 }
+    const custom = foldProgress(held, "echo:ok:x", { _tag: "Enabled", nudgeAfter: 1, breakAfter: 2 })
+    expect([custom.stale, custom.nudge, custom.broke]).toEqual([1, true, false])
+    expect(foldProgress({ seen: custom.seen, staleTurns: custom.stale }, "echo:ok:x", { _tag: "Enabled", nudgeAfter: 1, breakAfter: 2 }).broke).toBe(true)
+    const disabled = foldProgress({ ...held, staleTurns: 100 }, "echo:ok:x", { _tag: "Disabled" })
+    expect([disabled.stale, disabled.nudge, disabled.broke]).toEqual([101, false, false])
+  })
+
+  test("invalid runtime policies fail before a provider request", async () => {
+    const result = await Effect.runPromise(Effect.gen(function* () {
+      const called = yield* Ref.make(0)
+      const model = yield* LanguageModel.make({ generateText: () => Ref.update(called, (n) => n + 1).pipe(Effect.as([{ type: "text" as const, text: "unexpected" }, finish("stop")])), streamText: () => Stream.empty })
+      const results = yield* Effect.forEach([
+        { malformedLimit: 0 }, { malformedLimit: Infinity }, { degenerate: { _tag: "Enabled" as const, nudgeAfter: 3, breakAfter: 2 } },
+      ], (options) => runLoop({ ...options, system: "sys", messages: [user("go")], toolkit: Toolkit.empty }).pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.result), { concurrency: 1 })
+      return {
+        calls: yield* Ref.get(called), failures: results.map((exit) => exit._tag === "Failure" ? Option.getOrElse(harnessCodeOf(exit.failure), () => "none") : "succeeded"),
+        messages: results.map((exit) => exit._tag === "Failure" && "message" in exit.failure ? exit.failure.message : "succeeded"),
+      }
+    }))
+    expect(result).toEqual({ calls: 0, failures: ["config.options", "config.options", "config.options"], messages: ["Loop policy limits are invalid", "Loop policy limits are invalid", "Loop policy limits are invalid"] })
+  })
   test("foldProgress: an empty signature is inert; a repeat counts; nudge at 3, break at 5", () => {
     const start = { seen: new Set<string>(), staleTurns: 0 }
     const first = foldProgress(start, "echo:ok:x")
@@ -996,6 +1028,25 @@ test("the run's callbacks read its own step and empty-response tolerance, never 
     return yield* Ref.get(reads)
   }))
   expect(seen).toEqual(["0:false", "1:true"])
+})
+
+test("standalone loops provide the exact run or none to callbacks and providers, never the caller's run", async () => {
+  const values = await Effect.runPromise(Effect.gen(function* () {
+    const run = { id: RunId.make("inner"), turn: 2, ordinal: RunOrdinal.make(3) }
+    const outer = { id: RunId.make("outer"), turn: 9, ordinal: RunOrdinal.make(8) }
+    return yield* Effect.forEach([Option.some(run), Option.none<typeof run>()], (current) => Effect.gen(function* () {
+      const reads = yield* Ref.make<ReadonlyArray<string>>([])
+      const read = Effect.service(CurrentAgentRun).pipe(Effect.flatMap((value) => Ref.update(reads, (all) => [...all, JSON.stringify(Option.getOrNull(value))])))
+      const model = yield* LanguageModel.make({ generateText: () => read.pipe(Effect.as([{ type: "text" as const, text: "done" }, finish("stop")])), streamText: () => Stream.empty })
+      yield* runLoop({
+        ...Option.match(current, { onNone: () => ({}), onSome: (run) => ({ run }) }),
+        system: "sys", messages: [user("go")], toolkit: Toolkit.empty,
+        render: () => read.pipe(Effect.as([user("go")])),
+      }).pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provideService(CurrentAgentRun, Option.some(outer)))
+      return yield* Ref.get(reads)
+    }), { concurrency: 1 })
+  }))
+  expect(values).toEqual([[JSON.stringify({ id: "inner", turn: 2, ordinal: 3 }), JSON.stringify({ id: "inner", turn: 2, ordinal: 3 })], ["null", "null"]])
 })
 
 test("a caller's span does not capture the loop's callbacks: they run under the step that calls them", async () => {

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Response, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
 import type { CompletionVerdict, FinishReason, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
@@ -61,6 +61,8 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(request.handlers))
     const run = request.run.ordinal
     const ended = yield* Ref.make<ReadonlySet<number>>(new Set())
+    const malformed = yield* Ref.make(0)
+    const progress = yield* Ref.make<{ readonly seen: ReadonlySet<string>; readonly stale: number }>({ seen: new Set(), stale: 0 })
     const record = request.record
     const end = (step: number, status: StepStatus) => Ref.modify(ended, (all): readonly [boolean, ReadonlySet<number>] =>
       [!all.has(step), new Set([...all, step])]).pipe(Effect.flatMap((publish) => !publish ? Effect.void : request.recorded(step).pipe(
@@ -84,6 +86,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         Effect.tap((result) => careless === "batch-tail" ? Effect.void : record(index, responseToAgentMessages([result]))),
       ), { concurrency: request.limits.toolConcurrency }).pipe(
       Effect.provideService(CurrentAgentStep, Option.some(index)),
+      Effect.provideService(CurrentAgentRun, Option.some(request.run)),
       // The turn's services outermost: the caller's step in them must not win.
       Effect.provide(request.handlers),
       Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
@@ -132,6 +135,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
           // The run's trace content switch, for the model call to read.
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
           Effect.provideService(CurrentAgentStep, Option.some(index)),
+          Effect.provideService(CurrentAgentRun, Option.some(request.run)),
           Effect.provideService(CurrentEmptyResponseTolerance, toolCalled),
           Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
           Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
@@ -151,11 +155,13 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       if (Option.isNone(answered)) {
         yield* end(index, "malformed")
         yield* request.pendingSteers
+        if ((yield* Ref.updateAndGet(malformed, (count) => count + 1)) >= (request.limits.malformedLimit ?? 3)) return yield* Effect.fail(harnessError("loop.failed", "The malformed-response limit is reached"))
         if (index + 1 >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text: joined(text, carried, ""), steps: index + 1, usage } satisfies RunResult
         yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
         return yield* step(index + 1, text, carried, usage, toolCalled, careless === "unreset" ? cuts : 0)
       }
       const response = answered.value
+      yield* Ref.set(malformed, 0)
       // A provider's id-less calls get ids of this run's own, before the results answer them.
       const parts = withToolCallIds(response.content, index, request.run)
       const calls = parts.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : [])
@@ -199,10 +205,18 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
       const pending = yield* request.pendingSteers
+      const signature = content.flatMap((part) => part.type === "tool-result" && !request.tools.pollable.includes(part.name) ? [`${part.name}:${part.isFailure}:${JSON.stringify(part.result)}`] : []).toSorted((a, b) => a < b ? -1 : a > b ? 1 : 0).join("|")
+      const stale = yield* Ref.modify(progress, (held) => {
+        const stale = signature === "" ? held.stale : held.seen.has(signature) ? held.stale + 1 : 0
+        return [stale, { seen: new Set([...held.seen, ...(signature === "" ? [] : [signature])]), stale }] as const
+      })
+      const policy = request.limits.degenerate ?? { _tag: "Enabled", nudgeAfter: 3, breakAfter: 5 }
+      if (policy._tag === "Enabled" && signature !== "" && stale >= policy.breakAfter) return { outcome: "partial", reason: "degenerate-loop", text: joined(text, carried, reply), steps: index + 1, usage: total } satisfies RunResult
       const paused = response.finishReason === "pause" && careless !== "ends-at-pause"
       // A step that is no cut restarts the count of cuts in a row.
       const counted = careless === "unreset" ? cuts : 0
       if (!pending && (verdict.complete || (calls.length === 0 && !paused))) return { outcome: "completed", reason: "completed", text: joined(text, carried, reply), steps: index + 1, usage: total } satisfies RunResult
+      if (policy._tag === "Enabled" && signature !== "" && stale === policy.nudgeAfter && index + 1 < request.limits.maxSteps) yield* request.record(index + 1, [{ role: "user", content: "Choose a different action: the result repeated." }])
       // A paused reply goes on: the next call continues it, its text carried to the next reply's.
       return yield* (paused
         ? step(index + 1, text, carried + reply, total, toolCalled || calls.length > 0, counted)
@@ -213,6 +227,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
     return yield* step(0, "", "", zeroUsage, false, 0).pipe(
       Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
       Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
+      Effect.provideService(CurrentAgentRun, Option.some(request.run)),
     )
   }),
 })
@@ -239,6 +254,13 @@ const republishing = (rewrite: (event: TurnEvent) => TurnEvent) => StepLoop.of({
 })
 
 describe("a loop careless with durable steering", () => {
+  test("ignoring host loop policies fails both policy checks", async () => {
+    const careless = StepLoop.of({ ...STEP_LOOP, run: (request) => {
+      const { degenerate: _degenerate, malformedLimit: _malformedLimit, ...limits } = request.limits
+      return runSteps({ ...request, limits })
+    } })
+    expect(await failedChecks(careless)).toEqual(["degenerate-policy", "malformed-limit"])
+  })
   test("ignoring the final pending probe loses new work or its completion boundary", async () => {
     expect(await failedChecks(StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({ ...request, pendingSteers: Effect.succeed(false) }) })))
       .toEqual(["durable-steering", "steering-cap", "steering-empty-poll"])
@@ -286,7 +308,7 @@ describe("a loop careless with a reply cut short", () => {
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {
-    expect(await failedChecks(minimalLoopOf("cuts-with-calls"))).toEqual(["cut-fail", "cut-text"])
+    expect(await failedChecks(minimalLoopOf("cuts-with-calls"))).toEqual(["cut-fail", "cut-text", "malformed-limit"])
   })
 
   test("one that ends the run at a paused reply with no calls fails pause", async () => {
@@ -364,6 +386,7 @@ describe("a loop that provides a wrong value of one of StepLoopReferences", () =
     misproviding(CurrentTraceContent, true),
     misproviding(CurrentEmptyResponseTolerance, true),
     misproviding(CurrentAgentStep, Option.none()),
+    misproviding(CurrentAgentRun, Option.none()),
   ]
   test.each(StepLoopReferences.map((reference) => reference.key))("fails the kit's check of %s", async (key) => {
     const loop = careless.find((candidate) => candidate.key === key)?.loop

@@ -555,6 +555,16 @@ take: `StepRequest.pendingSteers` checks after settlement, and
 are already durable and are never passed through `onTail` again.
 `runLoop` exposes the same pair as `durableInput: { pending, take }`.
 
+`limits.degenerate` controls repeated-result protection. Its default is
+`{ _tag: "Enabled", nudgeAfter: 3, breakAfter: 5 }`; choose
+`{ _tag: "Disabled" }` to leave repeated results to the step cap. Enabled
+thresholds are positive bounded integers, with the nudge before the break.
+Pollable tools do not count. `limits.malformedLimit` defaults to 3: the third
+consecutive unusable reply fails the run, so at most two corrective replies
+are sent. Set it to 1 to fail on the first malformed reply. A cut reply and
+a malformed reply reset each other's streak. These policies never bypass
+`maxSteps`, and a final step appends no unread nudge or corrective.
+
 **The step's response.** A provider's response ends with a finish reason
 (`FinishReason`, effect/ai's list), which says whether it is whole: `stop`
 (the model finished), `tool-calls` (it calls tools and waits for their
@@ -1372,11 +1382,62 @@ returns (its handler's `tool.progress` between them), and a refused call
 publishes `tool.refused` instead. The model reads a refusal as the call's
 result, `{ error, message }`, with a PascalCase name for what is wrong:
 `ToolInactive`, `PermissionDenied` (a permission the turn lacks),
-`PolicyDenied` (the host's `ActionPolicy`), `CallLimit` or `ToolCallLimit`.
+`PolicyDenied` (the host's `ActionPolicy`), `CallLimit`, `ToolCallLimit`,
+`ToolTripped` or `ToolConcurrency`.
 A handler that dies returns `ToolDefect`
 to the model, with the first line of the defect's message only; the whole
 cause, stack included, is logged at error level with the call's `tool` and
 `invocationId`.
+
+The tool discovery plugin accepts `toolPolicy`, keyed by registered tool
+name. Unknown names fail configuration. For example:
+
+```ts
+{ plugin: toolDiscoveryPlugin, options: {
+  toolPolicy: {
+    search: { concurrency: 3, maxCallsPerRun: 20, breakAfter: 2, breakOn: "defects" },
+  },
+} }
+```
+
+Each field is optional. `concurrency` is a positive integer and limits that
+tool across every turn and session using this agent's registry. Different
+agents have separate permits. `toolPolicy[name].maxCallsPerRun` is a
+nonnegative cap for one loop run, including concurrent calls; zero disables
+that tool for the run. The existing top-level `maxCallsPerRun` option and
+the tool annotation of that name retain their **per-turn** scope. Every cap
+applies, so host policy cannot widen an author's annotation. Admissions are
+atomic. Calls admitted before waiting for permits consume their slots even
+if later refused for nested contention or a newly tripped breaker. A new
+`Turn.run` resets its host budget and breaker, and the exact
+`CurrentAgentRun` reference keeps overlapping runs separate. Direct toolkit
+calls outside a loop share a separate turn-local budget and breaker bucket.
+
+`breakAfter` enables a breaker after that many relevant handler failures
+without a successful handler return. `breakOn` defaults to `"defects"`;
+`"failures"` counts typed handler failures too. A typed failure is neutral
+under the defects-only policy. Success resets the streak; framework write
+or subscriber failures, interruption, policy denials and other admission
+refusals do not count. A tripped breaker stays open for that run and tool;
+there is no cooldown or automatic retry. The next call returns `ToolTripped`
+and publishes `tool.refused` with reason `tripped`. Queued calls recheck the
+breaker after acquiring permits and cannot slip past a new trip.
+
+Within each turn, read-only handlers share `readConcurrency` permits and
+writers exclude every other handler. A writer's turnstile prevents later
+readers overtaking it. Per-tool permits are acquired before these turn-local
+lanes. Nested tool calls inherit logical execution ancestry across toolkit
+fibers and acquire permits only when immediately available; otherwise they
+return `ToolConcurrency` with reason `concurrency`. In particular, recursive
+calls at a one-call concurrency limit and read-to-write upgrades refuse
+instead of deadlocking. No handler, policy hook or event subscriber bypasses
+the configured limits.
+
+The registry flushes `tool.started` before waiting for execution permits.
+It proves durable admission, rather than handler execution. A queued call
+whose breaker trips, or a nested call whose permits are occupied, may then
+publish `tool.refused` without `tool.completed`; its invocation and provider
+call ids stay the same. Initial admission refusals have no `tool.started`.
 
 An activation is one step: what is new is worked out from the active set,
 recorded and applied under one lock, so `load_skill` calls running at once

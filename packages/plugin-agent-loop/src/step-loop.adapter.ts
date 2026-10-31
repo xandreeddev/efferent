@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Match, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, messagesOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
+import { CurrentAgentRun, CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, messagesOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopEvent } from "./loop-event.entity.js"
@@ -112,6 +112,8 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     toolConcurrency: request.limits.toolConcurrency,
     streaming: request.limits.streaming,
     requireCompletion: request.limits.requireCompletion,
+    ...(request.limits.degenerate === undefined ? {} : { degenerate: request.limits.degenerate }),
+    ...(request.limits.malformedLimit === undefined ? {} : { malformedLimit: request.limits.malformedLimit }),
     captureTraceContent: request.captureTraceContent,
     pollableTools: request.tools.pollable,
     ...Option.match(request.correctives, { onNone: () => ({}), onSome: (correctives) => ({ correctives }) }),
@@ -150,6 +152,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     // in, so a caller's `CurrentPromptCacheKey` or `CurrentModelCallPolicy` is in them too, and must not win.
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
     Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
+    Effect.provideService(CurrentAgentRun, Option.some(request.run)),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provide(request.handlers),
     // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag: the request's

@@ -18,6 +18,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   thinking. Set `provider-default` to omit it; Off and BetweenTools remain
   honored without binding fields. Existing chat endpoints remain compatible.
 
+- Tool discovery adds per-tool host concurrency, loop-run call caps and
+  consecutive-failure breakers. The existing top-level and annotation
+  `maxCallsPerRun` budgets keep their per-turn scope. Writers now exclude
+  readers fairly within a turn; nested calls refuse occupied permits rather
+  than deadlock. New `ToolTripped`, `ToolConcurrency` and per-run
+  `ToolCallLimit` wording is pinned. Stored format 7 adds `run-call-limit`,
+  `tripped` and `concurrency` refusal reasons; earlier journals still decode.
+  `LoopLimits` adds configurable degenerate protection and `malformedLimit`,
+  retaining the defaults. Custom loops provide `CurrentAgentRun`; rerun the
+  step-loop and tool-registry conformance kits.
+
 - A custom `Sessions` supplies the bounded broadcast `waiting` stream;
   rerun `sessionsConformance`. Kit instances add `waitingInput` (an optional
   `WaitingInput` probe). `ProcessActivity` adds `waiting`, `queuedInput`
@@ -30,6 +41,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   defaults). It applies when an optional `ImageResizer` is present. The
   `read` result view advances to version 3; fitted images may carry scalar
   `original` metadata, while earlier image results still decode.
+
 - A custom `TurnWriter` supplies fresh `steers` and an atomic `take` that
   stores user messages, `inbox.taken` receipts and queue removal together.
   A custom `MemorySession.record` honors its optional commit callback:
