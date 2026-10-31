@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `Sessions` supplies the bounded broadcast `waiting` stream;
+  rerun `sessionsConformance`. Kit instances add `waitingInput` (an optional
+  `WaitingInput` probe). `ProcessActivity` adds `waiting`, `queuedInput`
+  and `inFlight`; `busy` includes queued input. `processActivity`,
+  `Agent.activity` and default `awaitIdle` preserve `SessionLogError` from
+  queue reads. `awaitIdle({ queued: false })` and shutdown stay infallible
+  and wait only for running work, retaining cached backlog for restart.
+
 - A custom `TurnWriter` supplies fresh `steers` and an atomic `take` that
   stores user messages, `inbox.taken` receipts and queue removal together.
   A custom `MemorySession.record` honors its optional commit callback:
@@ -963,6 +971,13 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Scoped automatic inbox execution with `InboxDrainLive`, explicit owner
+  scopes, fixed workers, startup/local/periodic discovery, bounded backoff,
+  interrupted-root resumption before queued work, and startup-only takeover.
+  SDK's `agentInboxRunner` executes prebegun turns through the agent without
+  owning their ends; the core `InboxRunner` kit checks its contract.
+  `WaitingInput` and `DrainActivity` make queued and running work observable.
 
 - Durable in-turn steering: each pending `delivery: "steer"` input is
   taken as its own normalized user message at a started step, before

@@ -171,6 +171,14 @@ sessions in `@xandreed/plugin-sessions`, and the composable agent
 (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry is independent and
 supplies deterministic verification when a host chooses it.
 
+`Sessions.waiting` is a bounded broadcast with an initial post-subscription
+signal. `InboxRunner` executes exactly its borrowed writer and preserves
+outcomes/errors without beginning or ending it. `WaitingInput` reads durable
+queued user input only for owner-observed sessions, with typed storage
+failures and an infallible cache. `DrainActivity` counts active attempts.
+`ProcessActivity.busy` includes queued input; `inFlight` distinguishes work
+shutdown must wait for. `awaitIdle({ queued: false })` performs no queue I/O.
+
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/conformance/index.ts`; the `ToolRegistry`'s is the sdk's,
 `@xandreed/sdk/conformance`, since it runs its turns over `TurnLive`). Run a port's kit against every adapter of it, and

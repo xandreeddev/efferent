@@ -4,10 +4,12 @@ class Bash
 class BashError
 class Capabilities
 class ConversationMemory
+class DrainActivity
 class FileSystem
 class FsError
 class HarnessError
 class InboxFull
+class InboxRunner
 class InputConflict
 class IntentMatcher
 class KeyConflict
@@ -54,6 +56,7 @@ class UserMessage
 class UtilityCompletion
 class UtilityError
 class UtilityLlm
+class WaitingInput
 const ActivationSource
 const ActiveTurn
 const AdmittedTurn
@@ -251,13 +254,13 @@ const TurnsInFlight
 const UsageBreakdown
 const UserContentPart
 const UserRoleMessage
+const WaitingInputCount
 const WriteOptions
 const activationsOf
 const addUsage
 const assistantModel
 const assistantUsage
 const attachmentsOf
-const awaitIdle
 const canonicalJson
 const catalogOf
 const clipTo
@@ -373,6 +376,7 @@ const userMessageText
 const userRoleMessageOf
 const walkGlob
 const zeroUsage
+function awaitIdle
 interface Capability
 interface Correctives
 interface Decided
@@ -597,4 +601,5 @@ type TurnsInFlight
 type UsageBreakdown
 type UserContentPart
 type UserRoleMessage
+type WaitingInputCount
 type WriteOptions

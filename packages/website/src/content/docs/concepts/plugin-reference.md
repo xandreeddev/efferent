@@ -159,7 +159,7 @@ Requires: none
 
 Scope: **runtime** · API 3 · Version 0.14.0
 
-Provides: `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown`
+Provides: `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown`, `@xandreed/core/WaitingInput`
 
 Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
 
@@ -177,7 +177,8 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
   "titleChars": 80,
   "inbox": {
     "maxPending": 20,
-    "attempts": 2
+    "attempts": 2,
+    "pollIntervalMs": 100
   },
   "writer": {
     "capacity": 1024,
@@ -276,6 +277,11 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
           "type": "integer",
           "minimum": 1,
           "maximum": 1000
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
         },
         "attempts": {
           "type": "integer",

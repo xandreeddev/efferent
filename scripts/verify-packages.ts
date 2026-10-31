@@ -448,7 +448,7 @@ const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-a
 const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
 const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
 const { toolDiscoveryPlugin } = await import("@xandreed/plugin-tool-discovery")
-const { Agent, Sessions, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen } = await import("@xandreed/sdk")
+const { Agent, agentInboxRunner, Sessions, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen } = await import("@xandreed/sdk")
 // Run a kit's checks; any failure prints them all and fails the verification.
 const runKit = async (kit, checks) => {
   const failures = (await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run).pipe(
@@ -564,8 +564,8 @@ rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;
 // the TaskRunner, Tasks and ToolRegistry kits over InProcessTaskRunnerLive, TasksLive and the tool discovery plugin.
 const { TestClock } = await import("effect/testing")
-const { TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission, TurnShutdown } = await import("@xandreed/core")
-const { sessionsConformance, taskRunnerConformance, tasksConformance } = await import("@xandreed/core/conformance")
+const { InboxRunner, TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput, zeroUsage } = await import("@xandreed/core")
+const { inboxRunnerConformance, sessionsConformance, taskRunnerConformance, tasksConformance } = await import("@xandreed/core/conformance")
 const { toolRegistryConformance } = await import("@xandreed/sdk/conformance")
 const { SessionsLive, sessionsDefaults } = await import("@xandreed/plugin-sessions")
 const { TasksLive, tasksDefaults } = await import("@xandreed/plugin-tasks")
@@ -573,7 +573,7 @@ const { ToolDiscoveryLive, toolDiscoveryDefaults } = await import("@xandreed/plu
 const sharedLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 const sessionsOver = (config, admission, liveness) => Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(
   Layer.provide(Layer.merge(Layer.succeed(SessionLog, sharedLog), Layer.succeed(TurnAdmission, admission))))).pipe(
-  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
+  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown), waitingInput: Context.getOption(context, WaitingInput) })))
 const sessionChecks = sessionsConformance({
   leased: ({ ttlMs, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
   processOwned: ({ self, running, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "process" } }, admission,
@@ -581,6 +581,16 @@ const sessionChecks = sessionsConformance({
   advance: (millis) => TestClock.adjust(millis),
 }).map((check) => ({ name: check.name, run: check.run.pipe(Effect.provide(TestClock.layer())) }))
 const sessionsKit = await runKit("Sessions", sessionChecks)
+const inboxRunnerKit = await runKit("InboxRunner", inboxRunnerConformance({ open: ({ use }) => Effect.gen(function* () {
+  const admission = yield* Effect.service(TurnAdmission).pipe(Effect.provide(TurnAdmissionOpen))
+  const instance = yield* sessionsOver(sessionsDefaults, admission)
+  const runner = { turn: (input) => "admitted" in input.turn ? use(input.turn).pipe(
+    Effect.tap(() => Context.getUnsafe(input.services, Sessions) === instance.sessions ? Effect.void : Effect.die("wrong Sessions")),
+    Effect.map((outcome) => ({ ...outcome, usage: zeroUsage })),
+  ) : Effect.die("attempted a new turn") }
+  const context = yield* Layer.build(agentInboxRunner(runner, { services: Context.empty() }).pipe(Layer.provide(Layer.succeed(Sessions, instance.sessions))))
+  return Context.get(context, InboxRunner)
+}) }))
 const runnerKit = await runKit("TaskRunner", taskRunnerConformance(Layer.build(InProcessTaskRunnerLive()).pipe(
   Effect.map((context) => ({ runner: Context.get(context, TaskRunner), activity: Context.getOption(context, TaskActivity) })))))
 const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
@@ -589,7 +599,7 @@ const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) =
   Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks), shutdown: Context.getOption(context, TurnShutdown) })))))
 const registryKit = await runKit("ToolRegistry", toolRegistryConformance((capabilities, limits) => Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(
   Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(Effect.map((context) => Context.get(context, ToolRegistry)))))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the InboxRunner kit over agentInboxRunner (" + inboxRunnerKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
 ${localKits}
 ${workspaceJourney}
 `)
@@ -638,6 +648,14 @@ console.log("On Node, the file store kept whole commits after a writer was kille
   const filesCrash = Bun.spawn(["node", "files-crash.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await filesCrash.exited !== 0) process.exit(1)
 } else console.log("node not on PATH: skipped the Node import check")
+// The same real agent restart journey runs on both packed runtimes: kill a
+// tool holder, and kill again after atomic steering take, before recovering
+// the original work and then its queued next input with no lease advance.
+await writeFile(join(consumer, "inbox-restart-consumer.mjs"), await readFile(join(root, "scripts/inbox-restart-consumer.fixture.mjs"), "utf8"))
+const inboxRestartNode = Bun.spawn(["node", "inbox-restart-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await inboxRestartNode.exited !== 0) process.exit(1)
+const inboxRestartBun = Bun.spawn(["bun", "inbox-restart-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await inboxRestartBun.exited !== 0) process.exit(1)
 registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })

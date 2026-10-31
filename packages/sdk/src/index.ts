@@ -1,5 +1,6 @@
 export { Agent } from "./agent.adapter.js"
 export type { AgentConfig, AgentPluginEntry } from "./agent.adapter.js"
+export { agentInboxRunner } from "./inbox-runner.adapter.js"
 export { agentTaskExecutor } from "./task-executor.adapter.js"
 
 // the turn engine `Agent.turn` runs on, for a host that composes a turn itself

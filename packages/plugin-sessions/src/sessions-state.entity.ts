@@ -109,6 +109,8 @@ export const SessionsConfig = Schema.Struct({
   inbox: Schema.Struct({
     /** Items that may wait at once. */
     maxPending: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+    /** Refresh known waiting input across processes at this interval, default 100 ms. */
+    pollIntervalMs: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60_000 }))),
     /** Turns that may take a legacy notice and fail before it is dropped; queued user input is retained. */
     attempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
   }),
@@ -134,7 +136,7 @@ export type SessionsConfig = typeof SessionsConfig.Type
 export const sessionsDefaults: SessionsConfig = {
   ownership: { mode: "lease", ttlMs: 60_000, renew: { everyMs: 20_000 } },
   titleChars: 80,
-  inbox: { maxPending: 20, attempts: 2 },
+  inbox: { maxPending: 20, attempts: 2, pollIntervalMs: 100 },
   writer: { capacity: 1_024, batch: 64 },
   retries: 8,
   turns: { timeLimitMs: 21_600_000 },

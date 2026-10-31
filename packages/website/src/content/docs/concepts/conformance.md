@@ -210,7 +210,7 @@ same way, and `verify:packages` on Node:
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, Sessions, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { SessionLog, Sessions, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -221,7 +221,7 @@ declare const log: SessionLog["Service"] // one store for every instance and che
 const instance = (config: SessionsConfig, admission: TurnAdmission["Service"], liveness?: ProcessLiveness) =>
   Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(
     Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
-    Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
+    Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown), waitingInput: Context.getOption(context, WaitingInput) })))
 
 const subject: SessionsSubject = {
   leased: ({ ttlMs, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
@@ -869,3 +869,8 @@ the same shape, `name` and `run`, and fail with core's
 | `renderSurfaceConformance(subject)` | generations opened only by changed content, operation ids per surface and generation, completion once per version, a retried publish committing what a failed one left out (also after reopening), freezing (before the first publish too, and per surface) and placeholder fills in each version, threads that never see each other's records, preparations one at a time, reopening, rejected components never committed, an idempotent store, two writers of one message never planning the same version, a store that refuses a plan skipping or repeating a generation and every write under a lower fence (`forbidden`) | a `SurfaceSubject`, whose `make(admission)` builds a fresh `Render` and `RenderStore` for each check |
 | `renderFeedConformance(makeFeed)` | resuming after the cursor with one ready frame, heartbeats while idle, records in order, polling at once on a change signal | a function that builds a `RenderFeed` over a `JournalTail` (`makeMemoryJournal` gives one to append to) |
 | `renderTransportConformance({ sse, socket })` | SSE and WebSocket carry identical frames | the two `RenderTransport`s |
+
+`inboxRunnerConformance` from `@xandreed/core/conformance` checks a runner's
+exact borrowed writer, queued message and media, completed/partial/failed
+outcomes, typed failures and caller-owned writer lifetime. The SDK runs it
+over `agentInboxRunner`; a runner neither begins nor ends the writer.

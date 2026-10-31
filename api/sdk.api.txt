@@ -23,8 +23,8 @@ const TurnBeginError
 const TurnEndedData
 const TurnEvent
 const TurnLive
+const agentInboxRunner
 const agentTaskExecutor
-const awaitIdle
 const cacheKeyOf
 const defineCapability
 const defineHostEvent
@@ -57,6 +57,7 @@ const turnEndedOf
 const turnEndingOf
 const turnOf
 const turnTools
+function awaitIdle
 interface Agent
 interface AgentConfig
 interface AgentPluginEntry

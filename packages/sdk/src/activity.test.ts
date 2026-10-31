@@ -6,7 +6,9 @@ import { TestClock } from "effect/testing"
 import {
   awaitIdle,
   ConversationId,
+  DrainActivity,
   harnessCodeOf,
+  InboxItemId,
   isShutdownRefusal,
   processActivity,
   RunId,
@@ -21,6 +23,7 @@ import {
   turnEndedOf,
   TurnRefused,
   UserMessage,
+  WaitingInput,
 } from "@xandreed/core"
 import type { ProcessActivity, SessionLogEvent, ShutdownOptions, Turn } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -67,7 +70,8 @@ const endings = (events: ReadonlyArray<SessionLogEvent>) => events.filter((event
 /** A failure by its framework code (`harnessCodeOf`), else its tag. */
 const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
-const idle: ProcessActivity = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false, stopping: false }
+const idle: ProcessActivity = { openTurns: [], beginningTurns: 0, runningTasks: 0, waiting: [], queuedInput: 0, inFlight: false, busy: false, stopping: false }
+const pending = [{ session: session.id, pending: 2 }]
 
 describe("Agent.activity", () => {
   test("it counts the turn its graph's Sessions holds open and the work of the task runner in its services", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -86,7 +90,7 @@ describe("Agent.activity", () => {
     expect(result.outcome).toBe("completed")
     const seen = Option.getOrThrow(yield* Ref.get(during))
     expect([seen.openTurns.map((open) => [open.session, open.turn]), seen.runningTasks, seen.busy]).toEqual([[[session.id, 1]], 1, true])
-    expect(yield* agent.activity).toEqual({ ...idle, runningTasks: 1, busy: true })
+    expect(yield* agent.activity).toEqual({ ...idle, runningTasks: 1, inFlight: true, busy: true })
     yield* Deferred.succeed(release, undefined)
     yield* Context.get(services, TaskActivity).idle
     expect(yield* agent.activity).toEqual(idle)
@@ -106,6 +110,42 @@ describe("Agent.activity", () => {
       return yield* turn.reply("ok")
     }))
     expect(yield* Ref.get(seen)).toEqual([false, true])
+  }))))
+
+  test("it reports queued user input from its Sessions without a background drainer", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const services = yield* Layer.build(SessionsLive(onCommit).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen))))
+    const sessions = Context.get(services, Sessions)
+    yield* sessions.create({ owner: session.owner, id: session.id })
+    yield* sessions.enqueue(session, { id: InboxItemId.make("activity-input"), userMessage: new UserMessage({ text: "answer later" }), delivery: "next", source: {} })
+    yield* sessions.deliver(session, { id: InboxItemId.make("activity-notice"), content: "task result", source: {} })
+    const agent = yield* define({ services })
+    expect(yield* agent.activity).toEqual({ ...idle, waiting: [{ session: session.id, pending: 1 }], queuedInput: 1, busy: true })
+  }))))
+
+  test("runtime queue and drain probes count, while caller probes stay outside Agent.activity", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const queue = WaitingInput.of({ current: Effect.succeed(pending), cached: Effect.succeed(pending), idle: Effect.never })
+    const draining = DrainActivity.of({ running: Effect.succeed(1), idle: Effect.never })
+    const services = Context.make(WaitingInput, queue).pipe(Context.add(DrainActivity, draining))
+    const own = yield* define({ services })
+    expect(yield* own.activity).toEqual({ ...idle, waiting: pending, queuedInput: 2, inFlight: true, busy: true })
+    const isolated = yield* define()
+    expect(yield* isolated.activity.pipe(Effect.provide(services))).toEqual(idle)
+    expect(yield* processActivity.pipe(Effect.provide(services))).toEqual({ ...idle, waiting: pending, queuedInput: 2, inFlight: true, busy: true })
+  }))))
+
+  test("an installed runtime queue probe preserves its typed storage failure", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const failure = new SessionLogError({ code: "store.busy", message: "queued count unavailable" })
+    const services = Context.make(WaitingInput, WaitingInput.of({ current: Effect.fail(failure), cached: Effect.succeed(pending), idle: Effect.fail(failure) }))
+    const agent = yield* define({ services })
+    const activity: Effect.Effect<ProcessActivity, SessionLogError> = agent.activity
+    const result = yield* Effect.result(activity)
+    expect(result._tag === "Failure" && result.failure).toBe(failure)
+  }))))
+
+  test("shutdown retains cached queued input without waiting for fresh queue storage", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const services = Context.make(WaitingInput, WaitingInput.of({ current: Effect.die("shutdown read queued storage"), cached: Effect.succeed(pending), idle: Effect.never }))
+    const agent = yield* define({ services })
+    expect(yield* agent.shutdown({ deadline: "10 seconds" })).toEqual({ idle: true, interrupted: [], left: { ...idle, waiting: pending, queuedInput: 2, busy: true } })
   }))))
 })
 
