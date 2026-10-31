@@ -30,3 +30,9 @@ export { CurrentModelCallNotifications } from "../ports/model-call-recorder.port
 export { encodeRequestPart, prepareRequestParts, sha256Of } from "../turn/request-part.entity.functions.js"
 
 export { applyModelRequestHook } from "../turn/model-request-hook.entity.functions.js"
+
+export { toolInterceptError } from "../domain/tool-interceptor.entity.functions.js"
+
+export { CurrentToolResultReceipt } from "../ports/tool-result-receipt.port.js"
+export { makeToolResultReceipt, withToolResultReceiptGuard, toolResultReceiptGuardOf } from "../domain/tool-result-receipt.entity.functions.js"
+export type { ToolResultReceiptOwner, ToolResultReceiptContext } from "../ports/tool-result-receipt.port.js"

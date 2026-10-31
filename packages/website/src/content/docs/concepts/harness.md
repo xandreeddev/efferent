@@ -72,6 +72,17 @@ reuse its frozen patch. Historical replay uses the recorded controls and never
 calls the current hook. See the framework guide's host request-hook contract
 for field semantics and the shipped application conformance kit.
 
+Optional `ToolInterceptor` from `@xandreed/core` adds host policy around tools.
+After the original action-policy check, `before` can allow, deny, rewrite
+arguments or supply a response; rewritten parameters are authorized again.
+`after` can keep or replace an actual handler outcome. Callbacks use detached
+encoded JSON and the tool's authored codecs. `tool.intercepted` records accepted
+decisions, while handler events and breakers retain actual execution evidence.
+The final answer and rewritten input are stored before views or digests, so
+reopened typed views use the same effective input. An interrupted `after` can
+leave an unanswered call shown as `ToolInterrupted`; it does not replay the
+handler. Hosts enabling interception use the registry's provided toolkit.
+
 A turn that was cancelled or interrupted (its process stopped, its lease
 was reaped) can be resumed by the next one:
 `turn: { session, userMessage, runId, resumes: 1 }`. Turn 1 must be the

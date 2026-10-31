@@ -148,7 +148,7 @@ export const MEMORY_KINDS: ReadonlyArray<string> = ["turn.started", ...Object.va
 export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
   "step.started", "step.ended", "step.usage", "tool.started", "tool.refused", "tool.completed",
   "completion.evaluated", "context.built", "decision.recorded", "stream.fallback",
-  "request.prepared",
+  "request.prepared", "tool.intercepted",
 ]
 
 /** Bus events not stored from the bus: memory or the session records them itself, and storing them again would be a second copy. */

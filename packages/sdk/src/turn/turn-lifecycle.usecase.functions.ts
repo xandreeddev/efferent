@@ -1,4 +1,5 @@
-import { Cause, Effect, Exit, Option } from "effect"
+import { Cause, Context, Effect, Exit, Option } from "effect"
+import { CurrentToolResultReceipt } from "@xandreed/core/internal"
 import {
   harnessDefectsAsFailures,
   replayableContext,
@@ -196,7 +197,7 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
  * @public
  */
 export const turnOf = Effect.fnUntraced(function* (options: TurnRunOptions = {}): Effect.fn.Return<Turn, TurnError, TurnRunServices | RunContext | StepLoop> {
-  const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
+  const services = Context.omit(CurrentToolResultReceipt)(replayableContext(yield* Effect.context<TurnRunServices | StepLoop>()))
   const run = yield* RunContext
   const memory = yield* TurnMemory
   return {

@@ -457,8 +457,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-memory-summary", path: src("plugin-memory-summary"), canImport: ["core"], externals: ["effect"] },
       ...testLayer("plugin-memory-digest", ["plugin-memory-digest", "core"], ["effect", "effect/testing", "bun:test"]),
       { name: "plugin-memory-digest", path: src("plugin-memory-digest"), canImport: ["core"], externals: ["effect"] },
-      ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core"], ["effect", "effect/ai", "bun:test"]),
-      { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core"], externals: ["effect", "effect/ai"] },
+      ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
+      { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
       // The one package that imports a provider package (`@effect/ai-*`). It
       // tells Bun by `process.versions` and reaches its fetch and WebSocket as
       // globals, so it imports no `bun` module.

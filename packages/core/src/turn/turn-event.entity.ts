@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ToolInterceptAudit, ToolInterceptIdentity } from "../domain/tool-interceptor.entity.js"
 import { ModelCallData } from "../domain/model-call.entity.js"
 import { DecisionRecord } from "../decision-record.entity.js"
 import { InvocationId, RunId, RunKey } from "../domain/run.entity.js"
@@ -67,7 +68,7 @@ export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
 })
 
 /** Why the tool registry refused a call before its handler ran. */
-export const ToolRefusalReason = Schema.Literals(["inactive", "forbidden", "denied", "call-limit", "tool-call-limit", "run-call-limit", "tripped", "concurrency"])
+export const ToolRefusalReason = Schema.Literals(["inactive", "forbidden", "denied", "call-limit", "tool-call-limit", "run-call-limit", "tripped", "concurrency", "intercepted"])
 export type ToolRefusalReason = typeof ToolRefusalReason.Type
 
 /** @public */
@@ -82,7 +83,7 @@ export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   /** What the model is told, as the call's failed result. */
   message: Schema.String,
 }).annotate({
-  description: "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), or a nested call would wait on occupied permits (`concurrency`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.",
+  description: "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), a nested call would wait on occupied permits (`concurrency`), or a validated host interceptor denied it (`intercepted`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.",
 })
 
 /** @public */
@@ -263,6 +264,14 @@ export const ModelCalledEvent = ModelCallData.mapFields((fields) => ({ _tag: Sch
   description: "Published after the turn-owned model-call recorder durably appends and flushes one terminal physical attempt. Provider outcomes are independent of downstream acceptance; Agent turns await recording before tool admission, while direct SDK streaming consumers follow their SDK's consumption policy. Retries and configured fallback share callId and use distinct positive attempts; a loop stream fallback has a new callId while retaining its frozen request header. The actual invoked model, loop/helper purpose, method, optional run and step, duration, provider outcome and Known/Partial/Unknown usage are metadata only. Not journaled from the bus: the recorder stores model.called directly. Unknown usage is not known zero; partial reported subtotals and terminal-only records do not establish an exact provider bill or recover a SIGKILL gap.",
 })
 
+/** A validated interceptor decision; result/media bytes remain in the final memory result. @public */
+export const ToolInterceptedEvent = Schema.TaggedStruct("tool.intercepted", {
+  ...ToolInterceptIdentity.fields,
+  /** Loop means a valid private call owner; direct and absent source prove no root request ownership. */
+  source: Schema.optionalKey(Schema.Literals(["loop", "direct"])),
+  phase: ToolInterceptAudit,
+}).annotate({ description: "Published by the registry after a host interceptor decision and authored input or outcome decoding succeeds. Before records a validated host decision before effective-policy and budget checks, not proof of admission or execution. Optional source is loop only for a valid private loop-call owner; direct or absent source does not identify a requested root call. After describes Keep or Replace of the actual handler candidate; Respond and Replace record only outcome kind, with final encoded bytes stored once in memory. Rewrite input and Deny failure contain sensitive arguments or host text. Journaled and flushed before proceeding; absent interceptor produces no such event." })
+
 export const TurnEvent = Schema.Union(
   [TurnStartedEvent,
   StepStartedEvent,
@@ -280,7 +289,8 @@ export const TurnEvent = Schema.Union(
   StreamFallbackEvent,
   TurnEndedEvent,
   HostEvent,
-  ModelCalledEvent],
+  ModelCalledEvent,
+  ToolInterceptedEvent],
 ).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
 export type TurnEventName = TurnEvent["_tag"]

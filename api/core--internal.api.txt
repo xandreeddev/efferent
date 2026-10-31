@@ -1,4 +1,5 @@
 const CurrentModelCallNotifications
+const CurrentToolResultReceipt
 const applyModelRequestHook
 const checkModelRequest
 const draftOfTurnEvent
@@ -11,6 +12,7 @@ const extractUsage
 const foldStreamParts
 const handoffToMessage
 const isVolatileContext
+const makeToolResultReceipt
 const markVolatileContext
 const modelRequestHeaderOf
 const modelRequestTools
@@ -29,6 +31,11 @@ const sha256Of
 const strictJsonSchema
 const stripVolatileContext
 const toPromptMessages
+const toolInterceptError
 const toolParametersSchema
+const toolResultReceiptGuardOf
 const withToolCallIds
+const withToolResultReceiptGuard
 const withUsageOnAssistant
+interface ToolResultReceiptOwner
+type ToolResultReceiptContext

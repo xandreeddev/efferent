@@ -32,6 +32,7 @@ import {
   TaskExecutor,
   TaskRunner,
   Tasks,
+  ToolInterceptor,
   TurnAdmissionOpen,
   UserMessage,
   UtilityCompletion,
@@ -69,7 +70,8 @@ import { Agent } from "@xandreed/sdk"
  * is delivered to the inbox, one that is cancelled before it runs, and a
  * queued steer atomically taken before a new turn's first provider step,
  * a reducing two-turn summary with an atomic render-snapshot pointer, and a
- * host request hook whose accepted patch and combined context are durable.
+ * host request hook whose accepted patch and combined context are durable,
+ * and an intercepted tool call with a rewritten input and replaced answer.
  */
 
 const root = join(import.meta.dir, "..")
@@ -393,12 +395,35 @@ const record = Effect.gen(function* () {
     return { outcome: done.outcome, reply: Option.some(done.text) }
   }))
 
+  const interceptedAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6101)), owner: address.owner }
+  yield* sessions.create(interceptedAddress)
+  const interceptedModel = yield* scripted([call("intercepted-lookup", "lookup", { query: "alpha" }), stop("The intercepted lookup is ready.")])
+  yield* agent.turn({
+    turn: { session: interceptedAddress, runId: RunId.make("interceptor-fixture-1"), userMessage: new UserMessage({ text: "Inspect the intercepted lookup." }) },
+    services: Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, interceptedModel), digester), matcher).pipe(
+      Context.add(Sessions, sessions),
+      Context.add(ToolInterceptor, ToolInterceptor.of({
+        before: ({ tool }) => Effect.succeed(tool === Lookup.name ? { _tag: "Rewrite", input: { query: "beta" } } : { _tag: "Allow" }),
+        after: ({ tool }) => Effect.succeed(tool === Lookup.name ? { _tag: "Replace", outcome: { _tag: "Success", encoded: {
+          items: [{ id: "record-rewritten", detail: "The host accepted this replacement." }],
+        } } } : { _tag: "Keep" }),
+      })),
+    ),
+  }, (turn) => Effect.gen(function* () {
+    yield* turn.tools.select(turn.userMessage)
+    const done = yield* turn.run({})
+    return { outcome: done.outcome, reply: Option.some(done.text) }
+  }))
+  if ((yield* sessions.read(interceptedAddress)).filter((event) => event.kind === "tool.intercepted").length !== 2) {
+    return yield* Effect.die("the fixture did not record both tool interception phases")
+  }
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress], journal)
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress], journal)
 }).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
 
 const sessions = await Effect.runPromise(record)

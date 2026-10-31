@@ -2,7 +2,7 @@ import { Effect, Match, Option, Schema, Struct } from "effect"
 import type { ToolCallId } from "../domain/message.entity.js"
 import { RunOrdinal } from "../domain/run.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
-import { StepStartedEvent, ToolCompletedEvent, ToolRefusedEvent, ToolStartedEvent } from "../turn/turn-event.entity.js"
+import { StepStartedEvent, ToolCompletedEvent, ToolInterceptedEvent, ToolRefusedEvent, ToolStartedEvent } from "../turn/turn-event.entity.js"
 import { entryOfEvent, journalSchemaOf } from "./session-event.entity.functions.js"
 import type { SessionLogEvent } from "./session-log.entity.js"
 import type { ToolCallResult, ToolCallReturn, ToolCallStart, ToolCallState } from "./tool-call-state.entity.js"
@@ -11,6 +11,7 @@ import type { ToolCallResult, ToolCallReturn, ToolCallStart, ToolCallState } fro
 const started = Schema.Struct(Struct.pick(ToolStartedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "input"]))
 const returned = Schema.Struct(Struct.pick(ToolCompletedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "ok"]))
 const refused = Schema.Struct(Struct.pick(ToolRefusedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "reason", "message"]))
+const intercepted = Schema.Struct(Struct.omit(ToolInterceptedEvent.fields, ["_tag"]))
 const stepStarted = Schema.Struct(Struct.pick(StepStartedEvent.fields, ["step", "run"]))
 const facts = {
   "tool.started": started,
@@ -64,6 +65,9 @@ export const toolCallStatesOf = Effect.fnUntraced(function* (events: ReadonlyArr
     Effect.map((entry): ReadonlyArray<MemoryFact> => Option.toArray(entry).map((entry) => ({ event, entry }))),
   ), { concurrency: 1 })).flat()
   const lifecycle = (yield* Effect.forEach(events, lifecycleOf, { concurrency: 1 })).flat()
+  const interceptions = yield* Effect.forEach(events.filter((event) => event.kind === "tool.intercepted"), (event) => Schema.decodeUnknownEffect(intercepted)(event.data).pipe(
+    Effect.map((data) => ({ event, data })),
+  ), { concurrency: 1 })
   const stepBoundaries = yield* Effect.forEach(events.filter((event) => event.kind === "step.started"), (event) => Option.match(journalSchemaOf(event.kind), {
     onNone: () => Effect.die("The step.started kind has no journal schema"),
     onSome: (schema) => Schema.decodeUnknownEffect(schema)(event.data).pipe(
@@ -89,14 +93,31 @@ export const toolCallStatesOf = Effect.fnUntraced(function* (events: ReadonlyArr
       && event.session === request.session && entry.turn === request.turn && entry.runId === request.runId && entry.step === request.step && (entry.body.run ?? runAt(event)) === request.run
       && entry.body.toolCallId === request.toolCallId && entry.body.toolName === request.tool
       && event.seq > request.requestedSeq && (next === undefined || event.seq < next.requestedSeq)
-      ? [{ entry: entry.id, seq: event.seq, encoded: entry.body.encoded, isError: entry.body.isError }] : [])
+      ? [{ entry: entry.id, seq: event.seq, encoded: entry.body.encoded, isError: entry.body.isError, ...(entry.body.interception === undefined ? {} : { interception: entry.body.interception }) }] : [])
   }
   return requests.map((request): ToolCallState => {
     const ownRequests = requests.filter((other) => sameIdentity(request, other) && other.run === request.run)
     const next = ownRequests.find((other) => other.requestedSeq > request.requestedSeq)
     const first = ownRequests[0]?.request === request.request
-    const ownLifecycle = ownRequests.length > 1 ? [] : lifecycle.filter((fact) => {
+    const ownLifecycle = lifecycle.filter((fact) => {
       if (!scopeOf(request, fact.event, fact.data)) return false
+      // Exact result receipts and pre-handler audits disambiguate overlapping
+      // runs without making provider keys globally unique or inventing starts.
+      const settledOwners = requests.filter((other) => resultFactsOf(other).some((result) => result.interception?.invocationId === fact.data.invocationId))
+      if (settledOwners.length > 0) return settledOwners.length === 1 && settledOwners[0]?.request === request.request
+      const owners = interceptions.filter((audit) => audit.data.source === "loop" && audit.data.phase._tag === "Before"
+        && scopeOf(request, audit.event, audit.data) && audit.event.seq >= request.requestedSeq
+        && (next === undefined || audit.event.seq < next.requestedSeq) && Option.match(audit.data.run, {
+          onNone: () => requests.filter((other) => sameIdentity(request, other) && other.requestedSeq <= audit.event.seq
+            && !resultFactsOf(other).some((result) => result.seq < audit.event.seq)).length === 1,
+          onSome: (run) => run.id === request.runId && run.turn === request.turn && run.ordinal === request.run,
+        }))
+      if (owners.length > 0) return new Set(owners.map((audit) => audit.data.invocationId)).size === 1
+        && owners.every((audit) => audit.data.invocationId === fact.data.invocationId && audit.event.seq <= fact.event.seq)
+      // Direct or unqualified audits describe an invocation, not ownership of
+      // this root request, even when all public pairing fields are reused.
+      if (interceptions.some((audit) => audit.data.invocationId === fact.data.invocationId && scopeOf(request, audit.event, audit.data))) return false
+      if (ownRequests.length > 1) return false
       if (explicit.has(request.request)) {
         // Tool events have no run ordinal. A pairing key shared by overlapping runs proves
         // no particular call started: correlate only while exactly one request is live.

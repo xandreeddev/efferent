@@ -1775,6 +1775,73 @@ to the model, with the first line of the defect's message only; the whole
 cause, stack included, is logged at error level with the call's `tool` and
 `invocationId`.
 
+**Host tool interception.** Supply optional `ToolInterceptor` from
+`@xandreed/core` in the turn's services. Its `before` callback runs after the
+original active-set, grant and `ActionPolicy` checks, with the exact encoded
+arguments captured before the tool's parameter codec. Both callbacks receive
+detached, frozen JSON evidence, the invocation and optional provider call IDs,
+the actual optional full run reference and step. They never receive mutable
+handler parameters or result objects. Callback services come from where the
+registry was opened; run and step references identify the actual invocation.
+
+| Before decision | Behavior |
+|---|---|
+| `Allow` | Continue with the original decoded parameters. |
+| `Deny { failure }` | Return a shared `Failure` refusal without consuming a call budget or running a handler. |
+| `Rewrite { input }` | Decode encoded replacement arguments with the authored schema and reauthorize those effective parameters before admission. The tool name stays fixed. |
+| `Respond { outcome }` | Decode a tagged success or failure answer, apply existing admission limits, then return it without handler permits, lifecycle events, breaker changes or an `after` callback. |
+
+For an actual eligible handler outcome, `after` returns `Keep` or
+`Replace { outcome }`. An outcome is `{ _tag: "Success" | "Failure", encoded }`.
+Encoded replacements are decoded with the tool's authored success or failure
+schema before being returned to Toolkit. A Deny failure is treated as encoded
+input to that failure schema too; an incompatible schema fails with
+`tool.intercept`. Authored `failureMode` still applies, so error-mode tools do
+not promise model-visible failure results. The final Toolkit encoding is the
+stored answer: codecs may normalize a supplied encoded value. The `after`
+evidence is the handler's encoded candidate, which may differ from that final
+encoding when a codec has effects.
+
+Each accepted phase publishes `tool.intercepted`. A before audit is flushed
+before effective authorization and admission, and reports a validated host
+decision, not proof that execution happened. An audit can therefore precede
+a policy or budget refusal. Respond and Replace audits retain only their
+outcome kind; the answer is stored once as `memory.tool-result`. Hooks, codecs
+and subscribers run outside execution permits. Deny consumes no call slot;
+Respond cannot revive a tripped or exhausted tool. Rewrite runs the original
+policy first and the effective-input policy once more. Framework failures,
+interruption, malformed/cut calls and provider-executed tools skip `after`.
+
+`onTool` and `tool.completed` describe the actual handler, even if Replace
+changes the effective success or failure. Breakers likewise use the actual
+handler exit. A synthetic Respond produces no fake handler lifecycle. The
+audit's optional `source` distinguishes a managed `loop` invocation from a
+nested or other `direct` call. Readers use that ownership evidence, or the
+final result's exact invocation metadata, before attaching a lifecycle to a
+requested call; matching provider IDs alone are insufficient. The
+optional raw result's `interception` metadata ties it to its invocation and
+retains an accepted `effectiveInput` for Rewrite. Original assistant arguments
+remain unchanged. Typed views, compaction and digestion decode the effective
+input in the registry's captured services, including after reopening.
+
+An `after` callback is part of producing the effective invocation result. A
+held or interrupted callback can leave `Started` or, once completion was
+durably acknowledged, `Returned`, without a durable encoded answer. A resume
+shows `ToolInterrupted` for that unanswered call and does not automatically
+rerun the handler or hook. Once the effective result returns, its single raw
+ACK precedes views and digests independently of held siblings. It does not
+promise that the original handler output was durable before `after` ran.
+
+Invalid decisions, invalid authored encoded values, unexpected hook failures
+or missing/reused invocation ownership fail with `tool.intercept`. Original
+turn/write errors and interruption keep their identity. Callbacks remain
+interruptible, including under caller masks. Custom loops enabling interception
+evaluate the registry's provided toolkit; reconstructing it over its bare
+handlers loses the required pre-codec capture and is refused. With no
+interceptor, the existing toolkit path and model bytes stay unchanged. The shipped registry kit
+checks interception application and before-audit durability; actual loop and
+directory process journeys separately verify final raw-result ACK and recovery.
+
 The tool discovery plugin accepts `toolPolicy`, keyed by registered tool
 name. Unknown names fail configuration. For example:
 

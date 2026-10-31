@@ -1,5 +1,5 @@
 import { Tool } from "effect/ai"
-import { Array as Arr, Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
+import { Array as Arr, Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import {
   ActionPolicy,
@@ -22,8 +22,10 @@ import {
   RunId,
   RunOrdinal,
   SessionEnvironment,
+  SessionLogError,
   storedJson,
   ToolRegistry,
+  ToolInterceptor,
   TurnMemory,
   turnStartedDraft,
   TurnToolbox,
@@ -32,12 +34,15 @@ import {
 import type {
   Capability,
   CapabilityCatalog,
+  BeforeToolDecision,
+  AfterToolDecision,
   MemoryPolicy,
   RunTools,
   SessionLogEvent,
   ToolRefusalReason,
   TurnDraft,
   TurnEvent,
+  TurnError,
   TurnWriter,
 } from "@xandreed/core"
 import { check, ConformanceFailure } from "@xandreed/core/conformance"
@@ -223,6 +228,7 @@ const memoryWriter = Effect.gen(function* () {
 interface CallResult {
   readonly isFailure: boolean
   readonly result: unknown
+  readonly encoded: unknown
 }
 
 /** One turn over the registry, with its tools open. */
@@ -238,6 +244,8 @@ interface KitTurn {
   readonly published: Effect.Effect<ReadonlyArray<TurnEvent>>
   /** What the turn stored so far. */
   readonly stored: Effect.Effect<ReadonlyArray<SessionLogEvent>>
+  /** Rows already acknowledged by flush, without causing a fresh flush. */
+  readonly durable: Effect.Effect<ReadonlyArray<SessionLogEvent>>
   /** The tools whose handlers ran, in order. */
   readonly ran: Effect.Effect<ReadonlyArray<string>>
 }
@@ -248,6 +256,8 @@ interface TurnSetup {
   readonly toolPolicy?: ToolRegistryLimits["toolPolicy"]
   readonly execution?: (tool: string) => Effect.Effect<void>
   readonly policy?: Context.Service.Shape<typeof ActionPolicy>
+  readonly interceptor?: Context.Service.Shape<typeof ToolInterceptor>
+  readonly auditFailure?: TurnError
   readonly grants?: ReadonlyArray<string>
   /** Record `kit_vault` as activated by an earlier turn, as a turn whose grants have since changed finds it. */
   readonly vaultActive?: boolean
@@ -321,6 +331,11 @@ export const toolRegistryConformance = (
     const ran = yield* Ref.make<ReadonlyArray<string>>([])
     const registry = yield* make([capabilityOf(ran)], { maxCallsPerRun: setup.maxCallsPerRun ?? 32, ...(setup.readConcurrency === undefined ? {} : { readConcurrency: setup.readConcurrency }), ...(setup.toolPolicy === undefined ? {} : { toolPolicy: setup.toolPolicy }) })
     const recorded = yield* memoryWriter
+    const writer: TurnWriter = setup.auditFailure === undefined ? recorded.writer : {
+      ...recorded.writer,
+      flush: recorded.stored.pipe(Effect.flatMap((events) => events.some((event) => event.kind === "tool.intercepted")
+        ? Effect.fail(setup.auditFailure!) : recorded.writer.flush)),
+    }
     const services = Layer.merge(
       Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
       Layer.succeed(ToolRegistry, registry),
@@ -342,6 +357,7 @@ export const toolRegistryConformance = (
         (open) => setup.withoutEnvironment === true ? open.pipe(Effect.updateContext((context: Context.Context<never>) => Context.omit(SessionEnvironment)(context)))
           : open.pipe(Effect.provideService(SessionEnvironment, { workspace: "the opener's" })),
         (open) => Option.match(Option.fromNullishOr(setup.policy), { onNone: () => open, onSome: (denying) => open.pipe(Effect.provideService(ActionPolicy, denying)) }),
+        (open) => Option.match(Option.fromNullishOr(setup.interceptor), { onNone: () => open, onSome: (interceptor) => open.pipe(Effect.provideService(ToolInterceptor, interceptor)) }),
         (open) => Option.match(Option.fromNullishOr(setup.grants), {
           onNone: () => open,
           onSome: (grants) => open.pipe(Effect.provideService(PermissionGrants, PermissionGrants.of({ grants: Effect.succeed(new Set(grants)) }))),
@@ -353,7 +369,7 @@ export const toolRegistryConformance = (
         const kit = yield* selected.toolkit.pipe(Effect.provide(selected.handlers))
         const results = yield* Stream.runCollect(yield* kit.handle(name, params, toolCallId))
         const last = results.at(-1)
-        return { isFailure: last?.isFailure ?? true, result: last?.result }
+        return { isFailure: last?.isFailure ?? true, result: last?.result, encoded: last?.encodedResult }
       }) as Effect.Effect<CallResult, unknown>).pipe(
         Effect.provideService(CurrentAgentStep, Option.some(step)),
         Effect.provideService(CurrentAgentRun, Option.some({ id: RUN, turn: 1, ordinal: RunOrdinal.make(ordinal) })),
@@ -373,12 +389,22 @@ export const toolRegistryConformance = (
         reopenCall,
         published: run.flush.pipe(Effect.orDie, Effect.andThen(Ref.get(published))),
         stored: run.flush.pipe(Effect.orDie, Effect.andThen(recorded.stored)),
+        durable: recorded.flushed,
         ran: Ref.get(ran),
       })
-    }).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
+    }).pipe(Effect.provide(TurnLive({ turn: writer })), Effect.provide(services))
   }))
   const tags = (events: ReadonlyArray<TurnEvent>) => events.map((event) => event._tag).join()
   const idOf = (event: TurnEvent): string => "invocationId" in event ? event.invocationId : ""
+  const allow = Effect.succeed<BeforeToolDecision>({ _tag: "Allow" })
+  const keep = Effect.succeed<AfterToolDecision>({ _tag: "Keep" })
+  const tick = Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+  const interceptCheck = (name: string, id: string, body: () => Effect.Effect<void, unknown>) =>
+    check(name, id, () => body().pipe(Effect.catchDefect(() => fail(id, "the interception path failed before fulfilling its contract")), Effect.timeout("3 seconds")))
+  const originalFailure = (exit: Exit.Exit<unknown, unknown>, original: unknown): boolean => Exit.isFailure(exit)
+    && exit.cause.reasons.some((reason) => Cause.isFailReason(reason) ? reason.error === original : Cause.isDieReason(reason) && reason.defect === original)
+  const failureHasCode = (exit: Exit.Exit<unknown, unknown>, code: string): boolean => Exit.isFailure(exit)
+    && exit.cause.reasons.some((reason) => codeOf(Cause.isFailReason(reason) ? reason.error : Cause.isDieReason(reason) ? reason.defect : undefined) === code)
 
   /** One refusal: the calls made, which of them is refused (the earlier ones run) and how the turn is set up. */
   const refusal = (reason: ToolRefusalReason, id: string, calls: ReadonlyArray<readonly [string, unknown]>, setup: TurnSetup = {}): ConformanceCheck =>
@@ -408,6 +434,147 @@ export const toolRegistryConformance = (
       })))
 
   return [
+    interceptCheck("absence keeps the original handler lifecycle and encoded answer", "interceptor-absence", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const outcome = yield* turn.call(Where.name, {})
+      const events = yield* turn.published
+      yield* expect("interceptor-absence", outcome.result === "the opener's" && outcome.encoded === "the opener's"
+        && !events.some((event) => event._tag === "tool.intercepted")
+        && events.filter((event) => event._tag === "tool.started" || event._tag === "tool.completed").length === 2,
+      "absence changed the result or introduced interception facts")
+    }))),
+    interceptCheck("ActionPolicy precedes both hook phases and denied original calls skip them", "interceptor-order", () => Effect.gen(function* () {
+      const order = yield* Ref.make<ReadonlyArray<string>>([])
+      const decisions = yield* Ref.make(0)
+      yield* inTurn({
+        policy: { authorize: () => Ref.updateAndGet(decisions, (n) => n + 1).pipe(Effect.flatMap((n) => Ref.update(order, (all) => [...all, "policy"]).pipe(
+          Effect.andThen(n === 1 ? Effect.fail(new HarnessError({ code: "conformance.denied", message: "closed" })) : Effect.void)))) },
+        interceptor: { before: () => Ref.update(order, (all) => [...all, "before"]).pipe(Effect.andThen(allow)), after: () => Ref.update(order, (all) => [...all, "after"]).pipe(Effect.andThen(keep)) },
+        execution: () => Ref.update(order, (all) => [...all, "handler"]),
+      }, (turn) => Effect.gen(function* () {
+        yield* turn.call(Where.name, {})
+        yield* expect("interceptor-order", (yield* Ref.get(order)).join() === "policy", "an original policy refusal invoked a hook")
+        yield* turn.call(Where.name, {})
+        yield* expect("interceptor-order", (yield* Ref.get(order)).join() === "policy,policy,before,handler,after", "the fixed policy/before/handler/after order changed")
+        yield* expect("interceptor-order", (yield* turn.published).filter((event) => event._tag === "tool.intercepted").length === 2, "accepted Allow/Keep phases were not audited")
+      }))
+    })),
+    interceptCheck("Deny returns its refusal without consuming caps or fabricating a handler", "interceptor-deny", () => Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const after = yield* Ref.make(0)
+      yield* inTurn({ maxCallsPerRun: 1, interceptor: {
+        before: () => Ref.updateAndGet(calls, (n) => n + 1).pipe(Effect.map((n): BeforeToolDecision => n === 1 ? { _tag: "Deny", failure: { error: "HostDenied", message: "Use another action." } } : { _tag: "Allow" })),
+        after: () => Ref.update(after, (n) => n + 1).pipe(Effect.andThen(keep)),
+      } }, (turn) => Effect.gen(function* () {
+        const denied = yield* turn.call(Where.name, {})
+        yield* expect("interceptor-deny", denied.isFailure && errorOf(denied.result) === "HostDenied" && (yield* turn.ran).length === 0, "Deny ran a handler or lost its failure")
+        const allowed = yield* turn.call(Where.name, {})
+        const limited = yield* turn.call(Where.name, {})
+        yield* expect("interceptor-deny", !allowed.isFailure && errorOf(limited.result) === "CallLimit" && (yield* Ref.get(after)) === 1 && (yield* turn.ran).length === 1, "Deny consumed a cap or invoked after")
+        yield* expect("interceptor-deny", (yield* turn.published).some((event) => event._tag === "tool.refused" && event.reason === "intercepted"), "Deny lost its interception refusal")
+      }))
+    })),
+    interceptCheck("Rewrite validates encoded input and reauthorizes decoded effective parameters", "interceptor-rewrite", () => Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      const nOf = (input: unknown) => Option.match(Schema.decodeUnknownOption(Ping.parametersSchema)(input), { onNone: () => -1, onSome: (value) => value.n })
+      yield* inTurn({ policy: { authorize: (_tool, input) => Ref.update(seen, (all) => [...all, nOf(input)]) }, interceptor: {
+        before: () => Effect.succeed({ _tag: "Rewrite", input: { n: 7 } }), after: () => keep,
+      } }, (turn) => Effect.gen(function* () {
+        const result = yield* turn.call(Ping.name, { n: 1 })
+        yield* expect("interceptor-rewrite", result.result === "pong 7" && (yield* Ref.get(seen)).join() === "1,7", "Rewrite did not reauthorize the actual effective input")
+      }))
+      yield* inTurn({ policy: { authorize: (_tool, input) => nOf(input) === 99 ? Effect.fail(new HarnessError({ code: "conformance.denied", message: "effective input denied" })) : Effect.void }, interceptor: {
+        before: () => Effect.succeed({ _tag: "Rewrite", input: { n: 99 } }), after: () => keep,
+      } }, (turn) => Effect.gen(function* () {
+        const denied = yield* turn.call(Ping.name, { n: 2 })
+        yield* expect("interceptor-rewrite", denied.isFailure && errorOf(denied.result) === "PolicyDenied" && (yield* turn.ran).length === 0, "rewritten input bypassed effective authorization")
+      }))
+    })),
+    interceptCheck("Respond consumes admission but skips handler gates, lifecycle and after", "interceptor-respond", () => Effect.gen(function* () {
+      const after = yield* Ref.make(0)
+      yield* inTurn({ maxCallsPerRun: 1, interceptor: {
+        before: () => Effect.succeed({ _tag: "Respond", outcome: { _tag: "Success", encoded: "synthetic" } }),
+        after: () => Ref.update(after, (n) => n + 1).pipe(Effect.andThen(keep)),
+      } }, (turn) => Effect.gen(function* () {
+        const first = yield* turn.call(Where.name, {})
+        const limited = yield* turn.call(Where.name, {})
+        const events = yield* turn.published
+        yield* expect("interceptor-respond", first.result === "synthetic" && first.encoded === "synthetic" && errorOf(limited.result) === "CallLimit"
+          && (yield* turn.ran).length === 0 && (yield* Ref.get(after)) === 0 && !events.some((event) => event._tag === "tool.started" || event._tag === "tool.completed"),
+        "Respond ran a handler, fabricated lifecycle or escaped admission")
+      }))
+    })),
+    interceptCheck("Replace changes the effective answer while onTool keeps the actual handler evidence", "interceptor-after", () => inTurn({ interceptor: {
+      before: () => allow, after: () => Effect.succeed({ _tag: "Replace", outcome: { _tag: "Failure", encoded: { error: "HostReplaced", message: "The replacement is final." } } }),
+    } }, (turn) => Effect.gen(function* () {
+      const result = yield* turn.call(Where.name, {})
+      const completed = (yield* turn.published).filter((event) => event._tag === "tool.completed")
+      yield* expect("interceptor-after", result.isFailure && errorOf(result.result) === "HostReplaced" && completed.length === 1
+        && completed[0]?.ok === true && completed[0].result === "the opener's" && (yield* turn.ran).length === 1,
+      "Replace changed actual handler evidence or failed to replace the final answer")
+    }))),
+    interceptCheck("before audit is acknowledged before the handler and audit failure runs no handler", "interceptor-durable", () => Effect.gen(function* () {
+      const read = yield* Ref.make<Effect.Effect<ReadonlyArray<SessionLogEvent>>>(Effect.succeed([]))
+      const observed = yield* Ref.make(false)
+      yield* inTurn({ interceptor: { before: () => allow, after: () => keep }, execution: () => Ref.get(read).pipe(Effect.flatten,
+        Effect.flatMap((events) => Ref.set(observed, events.some((event) => event.kind === "tool.intercepted")))) }, (turn) => Effect.gen(function* () {
+          yield* Ref.set(read, turn.durable)
+          yield* turn.call(Where.name, {})
+          yield* expect("interceptor-durable", yield* Ref.get(observed), "handler ran before its audit ACK")
+        }))
+      const original = new SessionLogError({ code: "store.io", message: "audit acknowledgment failed" })
+      yield* inTurn({ auditFailure: original, interceptor: { before: () => allow, after: () => keep } }, (turn) => Effect.gen(function* () {
+        const exit = yield* Effect.exit(turn.call(Where.name, {}))
+        yield* expect("interceptor-durable", originalFailure(exit, original) && (yield* turn.ran).length === 0, "an audit failure was relabelled or ran a handler")
+      }))
+    })),
+    interceptCheck("invalid decisions and hook defects are hard failures, original turn errors and interruption survive", "interceptor-errors", () => Effect.gen(function* () {
+      const original = new SessionLogError({ code: "store.io", message: "original hook failure" })
+      yield* inTurn({ interceptor: { before: () => Effect.fail(original), after: () => keep } }, (turn) => Effect.gen(function* () {
+        yield* expect("interceptor-errors", originalFailure(yield* Effect.exit(turn.call(Where.name, {})), original) && (yield* turn.ran).length === 0, "a typed hook failure lost its identity")
+      }))
+      yield* inTurn({ interceptor: { before: () => Effect.die(new Error("foreign hook defect")), after: () => keep } }, (turn) => Effect.gen(function* () {
+        yield* expect("interceptor-errors", failureHasCode(yield* Effect.exit(turn.call(Where.name, {})), "tool.intercept") && (yield* turn.ran).length === 0, "a hook defect became a model result or ran a handler")
+      }))
+      yield* inTurn({ interceptor: { before: () => Effect.succeed({ _tag: "Rewrite", input: "invalid parameters" }), after: () => keep } }, (turn) => Effect.gen(function* () {
+        yield* expect("interceptor-errors", failureHasCode(yield* Effect.exit(turn.call(Ping.name, { n: 1 })), "tool.intercept") && (yield* turn.ran).length === 0, "invalid Rewrite was treated as a model mistake")
+      }))
+      const calls = yield* Ref.make(0), release = yield* Deferred.make<void>()
+      yield* inTurn({ interceptor: { before: () => Ref.update(calls, (n) => n + 1).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(allow)), after: () => keep } }, (turn) => Effect.gen(function* () {
+        const work = yield* turn.call(Where.name, {}).pipe(Effect.forkChild)
+        yield* tick
+        const stopping = yield* Fiber.interrupt(work).pipe(Effect.forkChild)
+        yield* tick
+        const stopped = stopping.pollUnsafe() !== undefined
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(stopping)
+        const exit = yield* Fiber.await(work)
+        yield* expect("interceptor-errors", (yield* Ref.get(calls)) === 1 && stopped && Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) && (yield* turn.ran).length === 0, "held hook was masked or interruption relabelled")
+      }))
+    })),
+    interceptCheck("hook evidence is encoded, immutable and bound to actual caller run and captured services", "interceptor-scope", () => Effect.gen(function* () {
+      const observations = yield* Ref.make<ReadonlyArray<boolean>>([])
+      const observe = (input: { readonly input: unknown; readonly run: Option.Option<{ readonly ordinal: number }>; readonly step: number }) => Effect.gen(function* () {
+        const run = yield* CurrentAgentRun, step = yield* CurrentAgentStep, opener = yield* Opener
+        yield* Ref.update(observations, (all) => [...all, Object.isFrozen(input.input) && JSON.stringify(input.input) === '{"n":3}'
+          && Option.isSome(input.run) && input.run.value.ordinal === 4 && input.step === 9 && Option.isSome(run) && run.value.ordinal === 4 && Option.contains(step, 9) && opener === "the opener's"])
+      })
+      yield* inTurn({ interceptor: { before: (input) => observe(input).pipe(Effect.andThen(allow)), after: (input) => observe(input).pipe(Effect.andThen(keep)) } }, (turn) => Effect.gen(function* () {
+        const outcome = yield* turn.call(Ping.name, { n: 3 }, 9, "interceptor-scope", 4)
+        yield* expect("interceptor-scope", outcome.result === "pong 3" && (yield* Ref.get(observations)).join() === "true,true", "callbacks saw mutable evidence or the wrong run/services")
+      }))
+    })),
+    interceptCheck("replacement preserves actual breaker failures and Respond cannot revive a tripped tool", "interceptor-policy", () => Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      yield* inTurn({ toolPolicy: { [Flaky.name]: { breakAfter: 1, breakOn: "failures" } }, interceptor: {
+        before: () => Ref.updateAndGet(calls, (n) => n + 1).pipe(Effect.map((n): BeforeToolDecision => n === 1 ? { _tag: "Allow" } : { _tag: "Respond", outcome: { _tag: "Success", encoded: "revived" } })),
+        after: () => Effect.succeed({ _tag: "Replace", outcome: { _tag: "Success", encoded: "masked failure" } }),
+      } }, (turn) => Effect.gen(function* () {
+        const first = yield* turn.call(Flaky.name, { outcome: "failure" })
+        const tripped = yield* turn.call(Flaky.name, { outcome: "success" })
+        yield* expect("interceptor-policy", first.result === "masked failure" && !first.isFailure && errorOf(tripped.result) === "ToolTripped" && (yield* turn.ran).length === 1,
+          "replacement reset actual failure accounting or Respond escaped a tripped breaker")
+      }))
+    })),
     check("nested synchronous toolkit calls preserve a queued writer's priority", "nested-writer-priority", () => Effect.gen(function* () {
       const count = yield* Ref.make(0)
       const both = yield* Deferred.make<void>()

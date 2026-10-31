@@ -878,6 +878,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(hookReport.trim())
 }
+// Interception keeps one effective result durable while held siblings remain interrupted after restart.
+await writeFile(join(consumer, "tool-interceptor-consumer.mjs"), await readFile(join(root, "scripts/tool-interceptor-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const interceptorChild = Bun.spawn([binary, "tool-interceptor-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const interceptorReport = await new Response(interceptorChild.stdout).text()
+  const required = ["oneEffectiveAck", "actualOnToolPreserved", "rewriteRecorded", "encodedEvidenceVerified", "rawBeforeView", "incrementalSiblingAck", "returnedBeforeCancel", "cancelledAfterInterruptible", "noHeldRawResult", "coldReplayVerified", "readOnlyReopenVerified", "interruptedRepairVerified", "noAutomaticReplay", "coldViewsVerified", "sigkillRecoveryVerified", "journalCodecVerified", "presentationNoDuplicate"]
+  if (await interceptorChild.exited !== 0 || !interceptorReport.includes(`tool-interceptor {"runtime":"${runtime}"`) || required.some((name) => !interceptorReport.includes(`"${name}":true`))) {
+    console.error(`the packed ${runtime} tool interceptor lost effective result durability, typed views or restart evidence`); process.exit(1)
+  }
+  console.log(interceptorReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

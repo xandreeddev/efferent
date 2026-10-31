@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope } from "effect"
 import {
   ConversationMemory, CurrentModelCallRecorder, frameworkDraft, harnessCodeOf, HarnessError,
-  ModelCallData, ModelCallId, openLogSession, RunId, RunOrdinal, StepUsageData, storedJson, ToolRegistry,
+  ModelCallData, ModelCallId, openLogSession, RunId, RunOrdinal, StepUsageData, storedJson, ToolCallId, ToolRegistry,
 } from "@xandreed/core"
 import type { MemoryPolicy, ModelCallRecorder, SessionLogEvent, TurnError } from "@xandreed/core"
 import { modelCallRecorderConformance } from "@xandreed/core/conformance"
 import type { ModelCallRecorderSubject } from "@xandreed/core/conformance"
+import { CurrentToolResultReceipt, makeToolResultReceipt } from "@xandreed/core/internal"
 import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
 import { makeTurnModelCallRecorder } from "./model-call-recorder.adapter.js"
@@ -57,6 +58,21 @@ const call = (key: string): ModelCallData => ({
 
 describe("TurnLive model-call recorder", () => {
   modelCallRecorderConformance(subject).forEach((check) => test(check.name, () => Effect.runPromise(check.run)))
+
+  test("billing observers retain the current invocation guard without replaying captured receipt authority", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const fixture = yield* subject.open({ calls: [], legacy: [] })
+      const captured = yield* makeToolResultReceipt({ tool: "capture", toolCallId: ToolCallId.make("capture"), run: Option.none(), step: 0 })
+      const active = yield* makeToolResultReceipt({ tool: "active", toolCallId: ToolCallId.make("active"), run: Option.none(), step: 0 })
+      const correct = yield* Ref.make(false)
+      yield* fixture.recorder.observe({ called: () => CurrentToolResultReceipt.pipe(Effect.flatMap((context) =>
+        Ref.set(correct, Option.isSome(context) && context.value._tag === "Guard" && context.value.guard === active.guard))), closed: () => Effect.void,
+      }).pipe(Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Offer", offer: captured.offer })))
+      yield* fixture.recorder.record(call("receipt-observer")).pipe(Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Guard", guard: active.guard })))
+      return { correct: yield* Ref.get(correct), captured: yield* captured.guard.status, active: yield* active.guard.status }
+    })))
+    expect(observed).toEqual({ correct: true, captured: "Fresh", active: "Fresh" })
+  })
 
   test("an ordinary bus reaction fails once after durability and billing notification", async () => {
     const failure = new HarnessError({ code: "events.background", message: "fixture reaction failed" })

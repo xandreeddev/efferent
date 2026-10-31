@@ -637,9 +637,12 @@ const requestForResult = (entries: ReadonlyArray<LogEntry>, result: LogEntry): O
  * ordinal, falling back only to older requests without one. An unscoped legacy
  * result uses the latest preceding occurrence. Returns an empty object when no
  * request in this prefix matches; another result's reused id cannot supply it.
+ * An intercepted result's own effective encoded input takes precedence,
+ * including explicit JSON null; the assistant's original request stays intact.
  */
 export const toolInputOf = (entries: ReadonlyArray<LogEntry>, result: LogEntry): unknown =>
-  Option.match(requestForResult(entries, result), { onNone: () => ({}), onSome: (request) => request.input })
+  result.body._tag === "ToolResult" && result.body.interception !== undefined && Object.hasOwn(result.body.interception, "effectiveInput")
+    ? result.body.interception.effectiveInput : Option.match(requestForResult(entries, result), { onNone: () => ({}), onSome: (request) => request.input })
 
 /** Present interleaved run exchanges with each request's own results, retaining ordinary completion order within an exchange. */
 const toolExchangesOf = (entries: ReadonlyArray<LogEntry>): {

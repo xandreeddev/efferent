@@ -128,3 +128,56 @@ test("explicit run ordinals keep interleaved same-id results separate and omit a
   expect(all.map((state) => [Number(state.run), state._tag === "Completed" ? state.result.encoded : "missing"])).toEqual([[0, "first"], [1, "second"]])
   expect(all.every((state) => state._tag === "Completed" && Option.isNone(state.started))).toBe(true)
 })
+
+describe("intercepted call facts", () => {
+  const requestIn = (ordinal: number, index: number): LogEntry => ({ ...requested(), id: EntryId.make(`run-1:${index}`), body: { ...requested().body as Extract<LogEntry["body"], { _tag: "Message" }>, run: RunOrdinal.make(ordinal) } })
+  const interception = (ordinal: number, id: InvocationId, decision: Extract<TurnEvent, { _tag: "tool.intercepted" }>["phase"]): TurnEvent => ({
+    _tag: "tool.intercepted", source: "loop", tool: "lookup", toolCallId: callId, invocationId: id, step: 1,
+    run: Option.some({ id: RunId.make("run-1"), turn: 1, ordinal: RunOrdinal.make(ordinal) }), phase: decision,
+  })
+  test("full-run audit identity disambiguates Returned while a sibling reuses the provider id", async () => {
+    const second = InvocationId.make("run-1:call:1")
+    const events = await Effect.runPromise(journal(
+      memory(requestIn(0, 1)), bus(interception(0, invocationId, { _tag: "Before", decision: { _tag: "Rewrite", input: { query: "effective" } } })), bus(started()),
+      memory(requestIn(1, 3)), bus(interception(1, second, { _tag: "Before", decision: { _tag: "Respond", kind: "Success" } })), bus(returned()),
+    ))
+    const states = await Effect.runPromise(toolCallStatesOf(events))
+    expect(states.map((state) => [state.run, state._tag])).toEqual([[RunOrdinal.make(0), "Returned"], [RunOrdinal.make(1), "Requested"]])
+    expect(states[0]).toMatchObject({ input: { query: "encoded" }, returned: { invocationId } })
+  })
+
+  test("synthetic Completed retains result metadata without inventing handler lifecycle", async () => {
+    const result: LogEntry = { ...completed(), body: { ...completed().body as Extract<LogEntry["body"], { _tag: "ToolResult" }>, run: RunOrdinal.make(0), interception: { invocationId, effectiveInput: null } } }
+    const events = await Effect.runPromise(journal(memory(requestIn(0, 1)), bus(interception(0, invocationId, { _tag: "Before", decision: { _tag: "Respond", kind: "Success" } })), memory(result)))
+    const [state] = await Effect.runPromise(toolCallStatesOf(events))
+    expect(state).toMatchObject({ _tag: "Completed", started: Option.none(), returned: Option.none(), result: { interception: { invocationId, effectiveInput: null } } })
+    expect(Schema.is(ToolCallState)(state)).toBe(true)
+  })
+
+  test("malformed intercepted facts fail decoding rather than being silently ignored", async () => {
+    const events = await Effect.runPromise(journal(memory(requestIn(0, 1))))
+    const invalid = { ...events[0]!, seq: 2, kind: "tool.intercepted", data: { invocationId, tool: "lookup", step: 1, run: null, phase: { _tag: "After", decision: { _tag: "Replace", kind: "invalid" } } } }
+    expect((await Effect.runPromise(toolCallStatesOf([...events, invalid]).pipe(Effect.result)))._tag).toBe("Failure")
+  })
+})
+
+test("a loop-source audit identifies the root while nested direct calls reuse its public identity", async () => {
+  const nested = InvocationId.make("run-1:call:1")
+  const request = { ...requested(), body: { ...requested().body as Extract<LogEntry["body"], { _tag: "Message" }>, run: RunOrdinal.make(0) } }
+  const audit = (id: InvocationId): TurnEvent => ({ _tag: "tool.intercepted", source: id === invocationId ? "loop" : "direct", step: 1, invocationId: id, toolCallId: callId, tool: "lookup", run: Option.some({ id: RunId.make("run-1"), turn: 1, ordinal: RunOrdinal.make(0) }), phase: { _tag: "Before", decision: { _tag: "Allow" } } })
+  const events = await Effect.runPromise(journal(memory(request), bus(audit(invocationId)), bus(started()), bus(audit(nested)), bus({ ...started(), invocationId: nested }), bus({ ...returned(), invocationId: nested }), bus(returned())))
+  expect((await Effect.runPromise(toolCallStatesOf(events)))[0]).toMatchObject({ _tag: "Returned", started: Option.some({ invocationId }), returned: { invocationId } })
+  const result: LogEntry = { ...completed(), body: { ...completed().body as Extract<LogEntry["body"], { _tag: "ToolResult" }>, run: RunOrdinal.make(0), interception: { invocationId } } }
+  const memoryDraft = await Effect.runPromise(memory(result))
+  const [settled] = await Effect.runPromise(toolCallStatesOf([...events, { ...memoryDraft, session, seq: events.length + 1, at: 80 }]))
+  expect(settled).toMatchObject({ _tag: "Completed", started: Option.some({ invocationId }), returned: Option.some({ invocationId }), result: { interception: { invocationId } } })
+})
+
+test("direct or absent audit source never supplies positive root lifecycle evidence", async () => {
+  await Effect.runPromise(Effect.forEach([{}, { source: "direct" as const }], (source) => Effect.gen(function* () {
+    const request = { ...requested(), body: { ...requested().body as Extract<LogEntry["body"], { _tag: "Message" }>, run: RunOrdinal.make(0) } }
+    const audit: TurnEvent = { _tag: "tool.intercepted", ...source, tool: "lookup", invocationId, toolCallId: callId, step: 1, run: Option.some({ id: RunId.make("run-1"), turn: 1, ordinal: RunOrdinal.make(0) }), phase: { _tag: "Before", decision: { _tag: "Allow" } } }
+    const events = yield* journal(memory(request), bus(audit), bus(started()), bus(returned()))
+    expect((yield* toolCallStatesOf(events))[0]?._tag).toBe("Requested")
+  }), { concurrency: 1 }))
+})

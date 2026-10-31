@@ -22,6 +22,7 @@
     "decision.recorded",
     "stream.fallback",
     "request.prepared",
+    "tool.intercepted",
     "turn.ended",
     "inbox.queued",
     "inbox.dropped",
@@ -353,7 +354,7 @@
     },
     {
       "name": "tool.refused",
-      "description": "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), or a nested call would wait on occupied permits (`concurrency`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.",
+      "description": "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), a nested call would wait on occupied permits (`concurrency`), or a validated host interceptor denied it (`intercepted`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -390,7 +391,7 @@
         },
         {
           "name": "reason",
-          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\" | \"run-call-limit\" | \"tripped\" | \"concurrency\"",
+          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\" | \"run-call-limit\" | \"tripped\" | \"concurrency\" | \"intercepted\"",
           "required": true
         },
         {
@@ -434,7 +435,8 @@
               "tool-call-limit",
               "run-call-limit",
               "tripped",
-              "concurrency"
+              "concurrency",
+              "intercepted"
             ]
           },
           "message": {
@@ -451,7 +453,7 @@
           "message"
         ],
         "additionalProperties": true,
-        "description": "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), or a nested call would wait on occupied permits (`concurrency`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode."
+        "description": "Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), a nested call would wait on occupied permits (`concurrency`), or a validated host interceptor denied it (`intercepted`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode."
       }
     },
     {
@@ -2274,6 +2276,296 @@
           }
         }
       }
+    },
+    {
+      "name": "tool.intercepted",
+      "description": "Published by the registry after a host interceptor decision and authored input or outcome decoding succeeds. Before records a validated host decision before effective-policy and budget checks, not proof of admission or execution. Optional source is loop only for a valid private loop-call owner; direct or absent source does not identify a requested root call. After describes Keep or Replace of the actual handler candidate; Respond and Replace record only outcome kind, with final encoded bytes stored once in memory. Rewrite input and Deny failure contain sensitive arguments or host text. Journaled and flushed before proceeding; absent interceptor produces no such event.",
+      "transient": false,
+      "stored": {
+        "as": "kind",
+        "kind": "tool.intercepted",
+        "omitted": []
+      },
+      "fields": [
+        {
+          "name": "invocationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "toolCallId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "run",
+          "type": "{ id, turn, ordinal } | null",
+          "required": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "source",
+          "type": "\"loop\" | \"direct\"",
+          "required": false
+        },
+        {
+          "name": "phase",
+          "type": "{ _tag, decision }",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "tool.intercepted"
+            ]
+          },
+          "invocationId": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "turn": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "ordinal": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id",
+                  "turn",
+                  "ordinal"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "loop",
+              "direct"
+            ]
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Before"
+                    ]
+                  },
+                  "decision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Allow"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Deny"
+                            ]
+                          },
+                          "failure": {
+                            "type": "object",
+                            "properties": {
+                              "error": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "error",
+                              "message"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "failure"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Rewrite"
+                            ]
+                          },
+                          "input": {}
+                        },
+                        "required": [
+                          "_tag",
+                          "input"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Respond"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "Success",
+                              "Failure"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "kind"
+                        ],
+                        "additionalProperties": true
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "decision"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "After"
+                    ]
+                  },
+                  "decision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Keep"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Replace"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "Success",
+                              "Failure"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "kind"
+                        ],
+                        "additionalProperties": true
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "decision"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "invocationId",
+          "tool",
+          "run",
+          "step",
+          "phase"
+        ],
+        "additionalProperties": true,
+        "description": "Published by the registry after a host interceptor decision and authored input or outcome decoding succeeds. Before records a validated host decision before effective-policy and budget checks, not proof of admission or execution. Optional source is loop only for a valid private loop-call owner; direct or absent source does not identify a requested root call. After describes Keep or Replace of the actual handler candidate; Respond and Replace record only outcome kind, with final encoded bytes stored once in memory. Rewrite input and Deny failure contain sensitive arguments or host text. Journaled and flushed before proceeding; absent interceptor produces no such event."
+      }
     }
   ],
   "journal": [
@@ -3396,7 +3688,7 @@
     {
       "kind": "memory.tool-result",
       "writer": "Memory: the step loop's recorded tool results",
-      "sensitive": "Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it.",
+      "sensitive": "Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it; optional interception metadata includes the accepted rewritten input.",
       "fields": [
         {
           "name": "entry",
@@ -3420,7 +3712,7 @@
         },
         {
           "name": "body",
-          "type": "{ toolCallId, run, toolName, isError, encoded, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
+          "type": "{ toolCallId, run, toolName, isError, encoded, interception, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
           "required": true
         }
       ],
@@ -3449,6 +3741,11 @@
           "name": "encoded",
           "type": "unknown",
           "required": true
+        },
+        {
+          "name": "interception",
+          "type": "{ invocationId, effectiveInput }",
+          "required": false
         },
         {
           "name": "view",
@@ -3536,6 +3833,19 @@
                 "type": "boolean"
               },
               "encoded": {},
+              "interception": {
+                "type": "object",
+                "properties": {
+                  "invocationId": {
+                    "type": "string"
+                  },
+                  "effectiveInput": {}
+                },
+                "required": [
+                  "invocationId"
+                ],
+                "additionalProperties": true
+              },
               "view": {
                 "type": "string"
               },
@@ -5105,7 +5415,7 @@
         },
         {
           "name": "reason",
-          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\" | \"run-call-limit\" | \"tripped\" | \"concurrency\"",
+          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\" | \"run-call-limit\" | \"tripped\" | \"concurrency\" | \"intercepted\"",
           "required": true
         },
         {
@@ -5143,7 +5453,8 @@
               "tool-call-limit",
               "run-call-limit",
               "tripped",
-              "concurrency"
+              "concurrency",
+              "intercepted"
             ]
           },
           "message": {
@@ -6370,6 +6681,284 @@
             "additionalProperties": true
           }
         ]
+      }
+    },
+    {
+      "kind": "tool.intercepted",
+      "writer": "The registry's validated host decisions, published on the turn bus and flushed before handler side effects or final outcome delivery",
+      "sensitive": "Rewritten encoded arguments and host refusal text. Respond and Replace record only outcome kind; the final encoded answer stays in memory.tool-result.",
+      "fields": [
+        {
+          "name": "invocationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "toolCallId",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "run",
+          "type": "{ id, turn, ordinal } | null",
+          "required": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "source",
+          "type": "\"loop\" | \"direct\"",
+          "required": false
+        },
+        {
+          "name": "phase",
+          "type": "{ _tag, decision }",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "invocationId": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "turn": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "ordinal": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id",
+                  "turn",
+                  "ordinal"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "loop",
+              "direct"
+            ]
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Before"
+                    ]
+                  },
+                  "decision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Allow"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Deny"
+                            ]
+                          },
+                          "failure": {
+                            "type": "object",
+                            "properties": {
+                              "error": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "error",
+                              "message"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "failure"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Rewrite"
+                            ]
+                          },
+                          "input": {}
+                        },
+                        "required": [
+                          "_tag",
+                          "input"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Respond"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "Success",
+                              "Failure"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "kind"
+                        ],
+                        "additionalProperties": true
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "decision"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "After"
+                    ]
+                  },
+                  "decision": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Keep"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "Replace"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "Success",
+                              "Failure"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "kind"
+                        ],
+                        "additionalProperties": true
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "decision"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "invocationId",
+          "tool",
+          "run",
+          "step",
+          "phase"
+        ],
+        "additionalProperties": true
       }
     },
     {
@@ -7924,6 +8513,19 @@
                           "type": "boolean"
                         },
                         "encoded": {},
+                        "interception": {
+                          "type": "object",
+                          "properties": {
+                            "invocationId": {
+                              "type": "string"
+                            },
+                            "effectiveInput": {}
+                          },
+                          "required": [
+                            "invocationId"
+                          ],
+                          "additionalProperties": true
+                        },
                         "view": {
                           "type": "string"
                         },
@@ -8978,6 +9580,11 @@
       "code": "request.hook",
       "where": "the turn, before preparing a fresh model request",
       "meaning": "A host request-hook draft or patch is invalid, a patched tool choice is inactive, or the callback fails unexpectedly. Original turn errors and interruptions retain their identity."
+    },
+    {
+      "code": "tool.intercept",
+      "where": "the tool registry and its result-recording boundary",
+      "meaning": "An interceptor decision or encoded input/outcome is invalid, a callback fails unexpectedly, or invocation ownership is missing, mismatched or reused. Original turn errors and interruptions remain intact."
     },
     {
       "code": "memory.log",

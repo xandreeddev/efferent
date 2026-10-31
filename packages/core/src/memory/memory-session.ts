@@ -1,5 +1,9 @@
 import { Clock, Effect, Option, Ref, Semaphore } from "effect"
 import { elideMediaData, mediaSlotsOf, toolResultMedia } from "../domain/media.entity.functions.js"
+import { toolInterceptError } from "../domain/tool-interceptor.entity.functions.js"
+import { toolResultReceiptGuardOf, withToolResultReceiptGuard } from "../domain/tool-result-receipt.entity.functions.js"
+import { CurrentToolResultReceipt } from "../ports/tool-result-receipt.port.js"
+import type { ToolResultReceiptReservation } from "../ports/tool-result-receipt.port.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -164,6 +168,27 @@ export const openLogSession = Effect.fnUntraced(function* (
       }),
     })))
   const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.gen(function* () {
+    const current = yield* CurrentToolResultReceipt
+    const guard = Option.map(current, toolResultReceiptGuardOf)
+    const turn = currentTurnOf(yield* Ref.get(entries))
+    const collisions = Option.isNone(guard) ? [] : tail.flatMap((message) => message.role === "user" ? [] : message.content.filter((part) => {
+      if (part.type !== "tool-result") return false
+      const target = guard.value.target
+      return target.tool === part.toolName && target.toolCallId === part.toolCallId && target.step === step && Option.match(target.run, {
+        onNone: () => true,
+        onSome: (expected) => expected.id === runId && expected.turn === turn && (run === undefined || expected.ordinal === run),
+      })
+    }))
+    if (collisions.length > 1) return yield* Effect.fail(toolInterceptError({ operation: "duplicate result" }))
+    if (collisions.length > 0 && (Option.isNone(current) || current.value._tag !== "Record")) return yield* Effect.fail(toolInterceptError({ operation: "record authority" }))
+    const matches = collisions.filter((part) => part.type === "tool-result" && part.providerExecuted !== true)
+    const reservation: Option.Option<ToolResultReceiptReservation> = matches.length === 0 ? Option.none() : yield* Option.match(current, {
+      onNone: () => Effect.succeed(Option.none<ToolResultReceiptReservation>()),
+      onSome: (context) => context._tag === "Record"
+        ? context.recording.reserve(context.recording.guard.target).pipe(Effect.map(Option.some))
+        : Effect.fail(toolInterceptError({ operation: "record authority" })),
+    })
+    const operation = Effect.gen(function* () {
     // Persist the returned value before calling any host view or optional digester.
     const bodies = yield* Effect.forEach(tail, (message): Effect.Effect<ReadonlyArray<LogBody>> => message.role !== "tool"
       ? Effect.succeed([{ _tag: "Message", message, ...(run === undefined ? {} : { run }) }])
@@ -175,6 +200,9 @@ export const openLogSession = Effect.fnUntraced(function* (
             _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError,
             ...(run === undefined ? {} : { run }),
             encoded: part.output,
+            ...(part === matches[0] && Option.isSome(reservation) ? Option.match(reservation.value.metadata, {
+              onNone: () => ({}), onSome: (interception) => ({ interception }),
+            }) : {}),
             view: media.labels.length === 0 ? text : [text, ...media.labels].filter((line) => line.length > 0).join("\n"),
             viewVersion: "raw", subjects: [], artifacts: [], pinned: false,
             ...(media.slots.length === 0 ? {} : { media: media.slots }),
@@ -182,6 +210,11 @@ export const openLogSession = Effect.fnUntraced(function* (
           })))
       }, { concurrency: 1 }), { concurrency: 1 })
     const recorded = yield* record(bodies.flat(), step)
+    if (Option.isSome(reservation) && Option.isSome(guard)) {
+      const actual = recorded.find((entry) => entry.body._tag === "ToolResult" && entry.body.toolCallId === guard.value.target.toolCallId && entry.body.toolName === guard.value.target.tool)
+      if (actual === undefined) return yield* Effect.fail(toolInterceptError({ operation: "missing result ACK" }))
+      yield* reservation.value.recorded(actual.id)
+    }
     const all = yield* Ref.get(entries)
     const presentations = yield* Effect.forEach(recorded, (entry): Effect.Effect<ReadonlyArray<LogBody>> => {
       if (entry.body._tag !== "ToolResult") return Effect.succeed([])
@@ -205,6 +238,10 @@ export const openLogSession = Effect.fnUntraced(function* (
       entry.body._tag === "ToolResult" && onWrite.value({ tool: entry.body.toolName, chars: entry.body.view.length }))
     const digests = yield* digest(targets, views, "write", step)
     return [...shown, ...presented, ...digests]
+    })
+    return yield* withToolResultReceiptGuard(operation).pipe(Effect.onError(() => Option.match(reservation, {
+      onNone: () => Effect.void, onSome: (reserved) => reserved.close,
+    })))
   })
   const maintain = (signal: MaintainSignal) => Effect.gen(function* () {
     const original = yield* Ref.get(entries)

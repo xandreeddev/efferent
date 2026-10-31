@@ -1,4 +1,6 @@
 // domain
+export { ToolInterceptor } from "./ports/tool-interceptor.port.js"
+export { ToolInterceptIdentity, ToolInterceptBeforeInput, ToolInterceptAfterInput, ToolInterceptOutcome, BeforeToolDecision, AfterToolDecision, ToolInterceptOutcomeKind, ToolInterceptAudit, ToolResultInterception } from "./domain/tool-interceptor.entity.js"
 export { ToolChoice } from "./domain/tool-choice.entity.js"
 export { ModelRequestDraft, ModelRequestPatch, ModelRequestPreparation } from "./turn/model-request-hook.entity.js"
 export { ModelRequestHook } from "./ports/model-request-hook.port.js"
@@ -345,6 +347,7 @@ export {
   StepStartedEvent,
   StreamPartId,
   ToolCompletedEvent,
+  ToolInterceptedEvent,
   ToolProgressEvent,
   ToolStartedEvent,
   TransientTurnEvents,
