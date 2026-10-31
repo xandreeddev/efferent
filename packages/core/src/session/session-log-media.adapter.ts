@@ -27,7 +27,10 @@ interface EncodedMedia { readonly value: Schema.Json; readonly paths: ReadonlyAr
  * Cache bounds default to 32 entries and 32 MiB; either zero disables caching.
  * @public
  */
-export const withMediaStore = Effect.fnUntraced(function* (
+export const withMediaStore: (
+  inner: SessionLog["Service"],
+  options?: { readonly cacheEntries?: number; readonly cacheBytes?: number },
+) => Effect.Effect<SessionLog["Service"], SessionLogError, MediaStore> = Effect.fnUntraced(function* (
   inner: SessionLog["Service"], options: { readonly cacheEntries?: number; readonly cacheBytes?: number } = {},
 ): Effect.fn.Return<SessionLog["Service"], SessionLogError, MediaStore> {
   const config = yield* Schema.decodeUnknownEffect(MediaCacheOptions)(options).pipe(Effect.mapError((cause) => failed("store.encode", "media cache options did not decode", cause)))
