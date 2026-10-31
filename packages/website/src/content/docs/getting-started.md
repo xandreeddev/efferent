@@ -16,17 +16,17 @@ configurable plugins. The SDK composes them into one validated graph.
 Install the SDK and the plugins your application uses:
 
 ```sh
-npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
+npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions @xandreed/plugin-memory-window @xandreed/plugin-tool-discovery
 ```
 
 Install `effect` (4.0.7 or a later 4.x) and `@xandreed/core` beside them: the
-packages and your code share one copy of each. Releases after 0.14.0 declare
-both peer dependencies and the other packages by caret ranges, so other patch
-versions still install one copy of `effect` and of `@xandreed/core`, and
-versions that cannot share one are a peer conflict when you install, not a
-second copy.
+packages and your code share one copy of each. Distribution manifests declare
+both as peer dependencies and use caret ranges for other framework packages,
+so compatible patch versions share them; incompatible peer versions are
+reported during installation.
 
-All framework packages are published at `0.14.0` under npm's `latest` tag.
+This guide follows repository source, including unreleased additions. Choose
+the package versions and APIs available in the release you install.
 `@xandreed/plugin-models` needs Node 24.5 or newer.
 
 ## Compose
@@ -55,7 +55,7 @@ const reply = Effect.scoped(Effect.gen(function* () {
   const outcome = yield* agent.turn({
     turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: RunId.make(crypto.randomUUID()) },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
-  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) }))))
   return outcome.reply
 }))
 ```
@@ -74,8 +74,25 @@ cycles, ambiguous providers, and incompatible plugin API versions before use.
 Override a service through an explicit binding.
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
+`SessionLogFilesLive(path)` from `@xandreed/plugin-session-files` stores them
+in a directory on Node 24 and Bun. Its directory needs exclusive hard links and
+atomic renames; processes sharing it need clocks in step. A filesystem without
+hard links is refused with `store.open`. Verify a shared mount with the storage
+conformance/recovery kits before relying on its visibility and durability.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
-in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
+in a SQLite file on Bun. Any other store can implement the `SessionLog` port.
+See [SDK and sessions](/docs/concepts/harness/#sessions) for ownership,
+durable queued input, helper questions and restart.
+
+## Run as a child process
+
+`@xandreed/process-host` supplies a Node 24/Bun stdio binding. The host writes
+an entry module using `runProcessHost` and supplies its Agent, model, services
+and session setup. The parent can send messages or steers while a turn runs,
+answer helpers, cancel, ping and shut down. Progress is projected by default;
+full events are opt-in. The [process protocol guide](/docs/guides/process-protocol/)
+covers version negotiation, bounded input/output, durable identities and
+restart; the binding adds no provider or credential setup.
 
 ## Configuration
 
@@ -99,9 +116,11 @@ point the models plugin at any OpenAI-compatible endpoint.
 | `@xandreed/plugin-models` | Model routing and provider adapters |
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |
 | `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
-| `@xandreed/plugin-sessions` | Conversation sessions and the turn lifecycle |
+| `@xandreed/plugin-sessions` | Conversation sessions, durable queued input, the turn lifecycle and optional inbox execution |
+| `@xandreed/plugin-session-files` | Directory session store (Node 24 and Bun; requires hard links) |
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun) |
-| `@xandreed/plugin-tasks` | Background tasks |
+| `@xandreed/plugin-tasks` | Background helper tasks, durable questions and answer follow-ups |
+| `@xandreed/process-host` | Host-supplied agents over versioned, bounded stdio; signals and process shutdown |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
 | `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`), the [workspace tools](/docs/concepts/workspace) `read`, `write`, `edit`, `ls`, `find`, `grep` and `bash` (`workspaceToolsPlugin`), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`); Linux and macOS |
 | `@xandreed/plugin-telemetry` | Usage, cost and tool metrics per turn and OTLP/HTTP export of traces and metrics ([observability](/docs/concepts/observability/)) |

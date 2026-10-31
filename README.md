@@ -13,7 +13,7 @@ this repository's history.
 ## Install
 
 ```sh
-npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
+npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions @xandreed/plugin-memory-window @xandreed/plugin-tool-discovery
 ```
 
 Install `effect` (4.0.7 or a later 4.x) and `@xandreed/core` beside them: the
@@ -54,7 +54,7 @@ const reply = Effect.scoped(Effect.gen(function* () {
   const outcome = yield* agent.turn({
     turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: RunId.make(crypto.randomUUID()) },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
-  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) }))))
   return outcome.reply
 }))
 ```

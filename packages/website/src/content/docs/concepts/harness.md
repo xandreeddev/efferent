@@ -36,7 +36,7 @@ const reply = Effect.scoped(Effect.gen(function* () {
   const outcome = yield* agent.turn({
     turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: RunId.make(crypto.randomUUID()) },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
-  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) }))))
   return outcome.reply
 }))
 ```
@@ -121,7 +121,7 @@ turns' images are sent too (`inline`, the default) or shown as a label line
 (`none`). [Images](/docs/concepts/providers/#images) lists the routes that
 take them: the others get a label line in place of each image.
 
-The turn's stored end says how it ended: completed, partial or failed as
+The turn's stored end says how it ended: completed, partial, failed or waiting as
 `use` returned it; failed with the error's own code (a `HarnessError`'s),
 `turn.failed` (an error without a code) or `turn.defect`; or interrupted,
 with `turn.interrupted`. `turnEndingOf(exit)` from `@xandreed/core` gives
@@ -140,10 +140,10 @@ lists the framework's stored failure codes; a turn that fails with a
 host's or a plugin's error stores that error's code.
 
 Memory strategies use version 2 decisions. Summaries default to
-`summarizeAt: "turn-end"`: after each successful `turn.run`, including a partial
-return, before that call returns to the host. Choose `"step"` for pre-request
-timing. Failed or interrupted runs skip normal end maintenance. Summaries retain
-whole turns and protect the active admitted turn; end maintenance removes its
+`summarizeAt: "turn-end"`: after each successful non-waiting `turn.run`, including
+a partial return, before that call returns to the host. Choose `"step"` for
+pre-request timing. Waiting results and failed or interrupted loop effects skip
+normal end maintenance. Summaries retain whole turns and protect the active admitted turn; end maintenance removes its
 obsolete temporary step context from estimates.
 
 On a classified context overflow, the SDK can compact to a strictly smaller
@@ -195,8 +195,9 @@ and aggregate billed usage do not calibrate context. Missing evidence keeps the
 raw estimate. Stored estimates and version 1 replay remain unchanged.
 
 Manual compositions use `prepareRun(policy, options)` from `@xandreed/sdk`, run
-`loop.run(prepared.request)`, then execute the cached `prepared.afterRun` on
-success. `runTurnLoop` does this automatically; `stepRequestOf` stays a
+`loop.run(prepared.request)`, then execute the cached `prepared.afterRun` after
+a successful run that did not yield `waiting`. `runTurnLoop` does this
+automatically; `stepRequestOf` stays a
 preparation-only API. No extra scope service is required. A host can run the loop
 several times before choosing its turn reply; each run owns its maintenance.
 
@@ -223,6 +224,15 @@ whatever exporter the host provides around its program, such as `OtlpTelemetryLi
 turn's usage, cost and tool metrics (see [observability](/docs/concepts/observability/)).
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
+`SessionLogFilesLive(path)` from `@xandreed/plugin-session-files` stores them
+as immutable commit files in a directory on Node 24 and Bun. Its plugin,
+`sessionFilesPlugin`, provides the log and open admission; compose
+`sessionsPlugin` beside it for Sessions. The directory must support exclusive
+hard links and atomic renames. A mount without hard links is refused with
+`store.open`, and processes sharing it need clocks in step. Verify a shared
+mount's visibility and durability with the storage conformance/recovery kits;
+local crash tests do not certify every NFS or SMB configuration.
+
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
 them in a SQLite file on Bun, which records its schema version: opening it
 upgrades an older file, and a file a newer release wrote fails to open with
@@ -372,18 +382,30 @@ that remain open there. The [events guide](/docs/guides/events/) shows which
 subscription sees what, streams a turn to a client over SSE, and follows a
 session's journal from another request or process.
 
-A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
-a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`;
-the turn's origin is `task`. Its result lands in the parent's inbox once,
-and the parent answers it after the turn in flight. `agentTaskExecutor`
-from `@xandreed/sdk` runs the child's turn and the parent's reaction
-through the agent, with the `Tasks` that hands them over among the turns'
-services, so their `start_task` and `task_status` work (a host draining a
-parent through the executor's `react` provides its `Tasks` too); build
-`Tasks` beside the agent with it
-(`TasksLive(tasksDefaults).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`).
-See the framework guide's sessions section for the contract, the event
-vocabulary and the inbox protocol.
+A background task (`@xandreed/plugin-tasks`) runs in a child session, a fork of
+the conversation or a fresh spawn, through the host's `TaskRunner`. Its initial
+turn has origin `task`; later answers run as queued user turns in the same
+child. A final result reaches the parent's inbox once, and the parent reacts
+after its turn in flight.
+
+A helper can call `ask_parent` to store a question and yield `waiting`. This
+releases its writer and worker without a final task result. The waiting task
+still counts against `maxRunning`. The parent reads `TaskView.question` or
+`task_status` and answers with `answer_task`; hosts call
+`Tasks.answer(parent, taskId, { questionId, text })`. The accepted answer is
+stored before its exact `next` input is queued. A full inbox can return
+`{ accepted: true, enqueued: false }` for deferred delivery. Stable question
+IDs make exact retries safe; changing accepted content conflicts, and a
+duplicate answer cannot revive a finished task. Waiting turns are not resumed
+as interrupted user turns.
+
+`agentTaskExecutor` from `@xandreed/sdk` runs the child's turns and the parent's
+reactions through the agent, providing the same `Tasks`. With task tools
+enabled, the model can use `start_task`, `task_status`, `ask_parent`,
+`steer_task`, `answer_task` and `cancel_task`. Build `Tasks` beside the agent
+with `agentTaskExecutor(agent, { services })`; a host invoking the executor's
+`react` itself also provides that Tasks instance. The framework guide's
+sessions section describes task results, retry rules and durable outboxes.
 
 ### Automatic inbox execution
 
@@ -391,8 +413,19 @@ Queue user messages with `Sessions.enqueue`, choosing `delivery: "steer"`
 for a running turn or `"next"` for a separate user turn. `InboxDrainLive`
 from `@xandreed/plugin-sessions` runs explicit owner scopes after startup,
 local wakes and periodic sweeps. Build it beside the agent with SDK's
-`agentInboxRunner`, capturing the same Sessions instance. The runner uses
-`Agent.turn` on the prebegun writer; the drainer owns admission and ending.
+`agentInboxRunner`, capturing the same Sessions instance. For helper follow-ups,
+pass its provided InboxRunner service as `base` to `taskInboxRunner(base)`, then
+provide the returned layer with the drainer's same Sessions and Tasks.
+It recognizes task children from their durable session
+header and calls `Tasks.execute` on the exact admitted writer. The runner
+begins and ends no turn; the drainer owns admission and ending.
+
+The optional `InboxRunner.afterEnd` hook runs only after the end acknowledgment.
+It is advisory: a lost acknowledgment or process death can skip it, and a hook
+failure cannot reexecute input already consumed by that end. `taskInboxRunner`
+uses it to call `Tasks.reconcile(parent, { react: true })`, repairing durable
+outboxes and scheduling a notices-only parent reaction. Plain
+`reconcile(parent)` leaves draining to its caller.
 
 The default four fixed workers serialize each session and retry unfinished
 work with bounded backoff. `resume: { _tag: "Before" }` first resumes an
@@ -400,7 +433,31 @@ eligible interrupted user root, with the configurable message `Continue.`.
 `{ _tag: "Never" }` skips automatic resumption. `takeOver: true` asserts a
 previous holder is gone, only for an initial startup attempt. An intentional
 cancellation stops automatic resumption of that branch. Closing the scope
-stops the drainer. See the framework guide for a full composition example.
+stops the drainer.
+
+Default task reconciliation leaves an open asking writer alone. Only when the
+host knows the previous holder is dead may
+`Tasks.reconcile(parent, { takeOver: true })` normalize an abandoned waiting
+turn without executing the helper. Perform this exclusive startup repair
+before competing local task or drainer work. Reconcile can also start unrun
+tasks immediately, so a staged host must gate its supplied TaskRunner while it
+repairs state. Neither a waiting question nor a new process connection proves
+the old holder is gone. See the framework guide for the full composition.
+
+### Running as a child process
+
+`@xandreed/process-host` binds a host-supplied Agent or TurnRunner to bounded
+stdio NDJSON on Node 24 and Bun. The host writes an entry module that calls
+`runProcessHost`, supplies its model/services and creates sessions. It chooses
+the same Tasks and inbox-drain composition used for in-process execution.
+
+The parent negotiates the protocol, then can begin turns, push messages or
+steers at any time, answer helpers, cancel an exact turn, read activity and
+request shutdown. Progress defaults to a projection; full events are opt-in.
+Start/end frames follow actual logical-log commit acknowledgments for direct,
+queued and task execution. See the [process protocol guide](/docs/guides/process-protocol/)
+for the setup factory, identities, limits, signals, exit codes and restart
+contract.
 
 ### Busy signal and graceful shutdown
 

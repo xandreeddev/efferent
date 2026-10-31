@@ -445,8 +445,8 @@ the host's layer, the tools opened, `use`, the reply and the end. It carries
 `efferent.session.id`, `efferent.run.id`, `efferent.turn`,
 `gen_ai.conversation.id` (the session), `efferent.origin` (user, inbox or task)
 and, on a resume, `efferent.resumes` (the turn it resumes),
-and ends with `efferent.outcome` (completed, partial, failed or interrupted,
-`turnEndingOf` the turn's exit; a turn cancelled or reaped while it ran
+and ends with `efferent.outcome` (completed, partial, failed, waiting or
+interrupted, `turnEndingOf` the turn's exit; a turn cancelled or reaped while it ran
 shows as failed with `turn.closed`, its `TurnClosed`'s code), `efferent.failure.code` when the turn
 failed or was interrupted (`turn.interrupted`), and the turn's usage as
 `efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`:
@@ -619,7 +619,10 @@ price). `addUsage`, `sumUsage` and `zeroUsage` add usages up.
 
 ```ts
 const result = yield* agent.turn(input, (turn) => turn.run({}).pipe(
-  Effect.map((run) => ({ outcome: run.outcome, reply: Option.some(run.text) }))))
+  Effect.map((run) => ({
+    outcome: run.outcome,
+    reply: run.outcome === "waiting" ? Option.none() : Option.some(run.text),
+  }))))
 const cost = costOf(result.usage, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 })
 ```
 
@@ -1034,7 +1037,7 @@ inbox turns with it.
 
 | The turn | `reason` | `failure.code` |
 | --- | --- | --- |
-| returned an outcome | `completed`, `partial` or `failed`, as `use` returned | none |
+| returned an outcome | `completed`, `partial`, `failed` or `waiting`, as `use` returned | none |
 | failed with a `HarnessError`, or another tagged error with a string `code` (`AuthError`) | `failed` | the error's own code, with its message |
 | failed with a begin refusal, `TurnClosed`, `ReservedKind` or a `SessionLogError` | `failed` | the code its tag stands for (`TAGGED_CODES`: `session.busy`, `turn.closed`, `events.reserved`, `session.log`, ...), message `<_tag>: <message>`, its fields as JSON when it has none (a `SessionLogError`: its own message) |
 | failed with any other error, an untagged one with a `code` included | `failed` | `turn.failed`, message `<_tag>: <message>` (or the error as text) |
@@ -1291,10 +1294,11 @@ a new strategy rebuilds from the full-fidelity entries.
   system prompt and tool schemas leave of it at each step.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
-  runs after each successful `turn.run`, including a partial return, before
-  that call returns to its host. `summarizeAt: "step"` opts into pre-request
-  maintenance at turn start and steps. Failed or interrupted loop runs skip
-  normal end maintenance. It reads the `UtilityLlm` where its session
+  runs after `turn.run` succeeds with an outcome other than `waiting`, a partial
+  return included, before that call returns to its host. `summarizeAt: "step"`
+  opts into pre-request maintenance at turn start and steps. Failed or
+  interrupted loop effects and successful waiting results skip normal end
+  maintenance. It reads the `UtilityLlm` where its session
   is opened (the turn), so summaries run under the turn's budget, and fails
   with `memory.summary` without one. The summarizer is given the folded
   turns as a transcript of at most 120,000 characters (`digestTranscript`)
@@ -2372,8 +2376,9 @@ conversation)` builds the prompt-cache key.
 
 `prepareRun` returns a `PreparedRun` with `request` and a cached `afterRun`
 effect. A manual host runs `loop.run(prepared.request)`, then `prepared.afterRun`
-only on success. This shares the SDK lifecycle without another scope requirement;
-`runTurnLoop` performs those steps automatically and returns the same `RunResult`.
+only when the loop succeeds and its result's outcome is not `waiting`. This
+shares the SDK lifecycle without another scope requirement; `runTurnLoop`
+performs those steps automatically and returns the same `RunResult`.
 `stepRequestOf` remains the preparation-only API. End maintenance belongs to each
 loop run, so multiple or concurrent runs have their own accepted observations;
 it does not assume the host has chosen its final turn reply. The turn's durable
@@ -2708,6 +2713,76 @@ or an updated reader. Backups and physical exports include the media root.
 Removing a session never deletes shared blobs; automatic garbage collection is
 outside this interface. The session files layout remains unchanged.
 
+## Durable and steerable agents
+
+A long-running agent composes storage, turn execution and input delivery. The
+host supplies its model and services, creates sessions and chooses which work
+runs automatically. The same composition can run inside an application or
+behind the [process host](#process-host).
+
+Start with a persistent `SessionLog` and one shared `Sessions` service.
+`SessionLogFilesLive(path)` from `@xandreed/plugin-session-files` works on
+Node 24 and Bun; the directory backend needs the documented filesystem
+operations, including exclusive hard links. `Sessions` adds ownership, one
+open turn per session, durable input and recovery rules. `Agent.turn` or another
+`TurnRunner` executes admitted turns. Share those same Sessions and, when used,
+Tasks across the agent, task executor and inbox drainer. The
+[session contracts](#sessions-one-log-per-session) describe storage choices,
+format compatibility and ownership. The stored-format gate allows reading and
+listing newer payload formats while refusing writes and replay; backend layouts
+have separate version checks.
+
+Use `Sessions.enqueue(address, { id, userMessage, source, delivery })` to save
+input while a turn runs. An input ID names one immutable normalized message,
+source and delivery for its lifetime. `delivery: "steer"` makes it eligible
+between settled steps; a steer arriving after the final completion probe waits
+for a later turn. `delivery: "next"` makes it available for a separate queued
+turn. The enqueue acknowledgment proves durable acceptance. A taken steer has
+its own stored message and receipt, so replay retains it even if the process stops
+before the next model call. The optional `TurnInput.steering` effect carries
+in-memory text; use enqueue when the input must survive a restart.
+
+For automatic execution, compose `InboxDrainLive` for explicit owners with
+`agentInboxRunner`, using the shared Sessions. Its default `resume: Before`
+recovers eligible interrupted user work before taking queued input. A cancelled
+branch is not automatically resumed. Takeover remains the host's explicit
+assertion that the old holder is gone: `takeOver: true` fences its later writes
+but cannot undo tool side effects. See [resume and takeover](#resuming-a-turn).
+At exclusive startup, finish any required task reconciliation before enabling
+competing local work. Reconciliation can schedule pending tasks immediately,
+so staged recovery must also gate the supplied TaskRunner.
+
+Helpers use the same durable path. Compose `agentTaskExecutor` with the shared
+Tasks and Sessions. Build `agentInboxRunner`, then wrap its provided
+`InboxRunner` with `taskInboxRunner`.
+A helper's `ask_parent` stores a question and ends its current turn `waiting`,
+releasing its worker and writer while the nonterminal task still counts against
+`maxRunning`. `Tasks.answer(parent, taskId, { questionId, text })` stores an exact
+answer for the child's inbox and a later turn. `accepted: true, enqueued: false`
+can mean a durably deferred answer when the inbox is full; reconciliation repairs
+delivery.
+`InboxRunner.afterEnd` runs only after the end acknowledgment and is advisory:
+durable outboxes and reconciliation repair a missed handoff after a crash.
+The detailed helper contract below covers questions, steering and cancellation.
+
+Keep storage open through [graceful shutdown](#busy-signal-and-graceful-shutdown).
+Refuse new turns, let active execution finish within the configured
+budget, then interrupt remaining work and close its scopes. `inFlight` reports
+active work; `busy` also includes known queued backlog. Accepted input can stay
+durable while execution is idle, ready for the next process.
+
+`@xandreed/process-host` supplies the optional Node/Bun stdio binding. The
+host's entry calls `runProcessHost({ owners, setup })`, and its factory installs
+the supplied SessionLog and TurnRunner observers before building the shared
+runtime. A parent negotiates protocol version 1 with `hello`, then sends
+`begin`, `send`, `steer`, `answer`, `cancel`, `ping` and `shutdown`; hello confirms
+the version while setup completes. Progress defaults to a UI projection; full
+JSON event content is explicit. Lifecycle frames follow actual journal commit
+acknowledgments, and the journal and stable operation IDs remain recovery
+authority after a lost acknowledgment. The native edge handles signals and an
+independent hard deadline. See the [process protocol](process-protocol.md) for
+the final fields, bounds, exit codes and runnable subprocess example.
+
 ## Process host
 
 `@xandreed/process-host` runs a host-supplied agent as a child process on Node
@@ -2872,7 +2947,7 @@ from elsewhere drops them; the framework's turn holds its reply there),
 commit; it returns how many inbox items wait, and after a store failure a
 later end tries again, the drafts still held) and `closed` (completes when someone else closed the
 turn). A writer whose scope closes unended ends the turn, its held drafts
-stored, as its held reply implies (completed or partial), else as failed
+stored, as its held reply implies (completed, partial or waiting), else as failed
 (`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
 interrupted; a begin interrupted after its opening commit ends it as
 interrupted (`turn.interrupted`) too. An append the store fails, or whose
@@ -3035,7 +3110,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | --- | --- |
 | `turn.started` (`runId`, `key`, `origin`: user, inbox or task; `userMessage`, `command`, `claimed`, and `meta`, `resumes`, queued `input` and a task's `task` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
 | `turn.reply` | memory (`persistReply`), held for the turn's closing commit: stored right before its `turn.ended` |
-| `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
+| `turn.ended` (`reason`: completed, partial, failed, waiting, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.tool-presentation`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
 | `request.prepared` (V1 full header or V2 system/tool references, model and request controls) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
@@ -3043,7 +3118,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `model.called` (terminal physical attempt, actual model, purpose, reported usage and outcome) | the turn's recorder, appended and flushed before its bus notification |
 | `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
 | `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
-| `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
+| `task.started`, `task.questioned`, `task.answered`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
 | anything else | the host, through the writer or `transact` |
 
 Memory is rebuilt from `MEMORY_KINDS` by `entriesOfEvents`, which reads JSON
@@ -3072,8 +3147,8 @@ contents, and `admitted.claimed` holds the notices; queued user input is
 left for its own turn. With no notices, this begin fails with
 `NothingPending`.
 
-A notice is done when its turn ends completed, partial or cancelled. A
-failed or interrupted claim returns it until `inbox.attempts` (2) turns
+A notice is done when its turn ends completed, partial, waiting or cancelled.
+A failed or interrupted claim returns it until `inbox.attempts` (2) turns
 have tried and failed, then records `inbox.dropped`. A turn interrupted
 before it wrote anything through its writer (`append`, `write`, `transact`
 or `closing`) never tried its notices: they wait again with no attempt
@@ -3211,7 +3286,7 @@ executes work for explicit `owners`. Build it beside the agent with
 `agentInboxRunner` from `@xandreed/sdk`, using the same `Sessions` instance.
 The runner executes the borrowed writer through `Agent.turn`; the drainer
 begins and ends it. The default runner selects skills, runs the loop once,
-and preserves its completed, partial or failed outcome. A custom `use`
+and preserves its completed, partial, failed or waiting outcome. A custom `use`
 can choose the turn's execution.
 
 ```ts

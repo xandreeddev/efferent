@@ -9832,7 +9832,7 @@
       {
         "kind": "task.started",
         "where": "the parent session",
-        "when": "`Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it.",
+        "when": "`Tasks.start`: the task's instructions, mode, starter metadata and optional starting turn and trace parent. Exact retries retain their first committed ancestry; the child session is created with this start.",
         "schema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "type": "object",
@@ -9939,7 +9939,7 @@
       {
         "kind": "task.result",
         "where": "the child session",
-        "when": "Before the child's turn ends (or outside a turn when the host refused it): the outcome, reply and failure.",
+        "when": "A terminal task result, before its turn closes or outside a turn when admission refused execution. Waiting and retryable follow-ups produce no final result.",
         "schema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "type": "object",
@@ -10046,6 +10046,287 @@
           {
             "name": "taskId",
             "type": "string",
+            "required": true
+          }
+        ]
+      },
+      {
+        "kind": "task.questioned",
+        "where": "the child session",
+        "when": "`Tasks.ask`: the accepted question, its admitted input when present, and the exact notice outbox for the parent. The asking turn yields waiting; the task remains nonterminal.",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "question": {
+              "type": "object",
+              "properties": {
+                "questionId": {
+                  "type": "string",
+                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                  "minLength": 1
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "askedBy": {
+                  "type": "object",
+                  "properties": {
+                    "run": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "turn": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "turn",
+                        "ordinal"
+                      ],
+                      "additionalProperties": true
+                    },
+                    "step": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "run",
+                    "step"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "questionId",
+                "text",
+                "askedBy"
+              ],
+              "additionalProperties": true
+            },
+            "input": {
+              "type": "string",
+              "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+              "minLength": 1
+            },
+            "notice": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                  "minLength": 1
+                },
+                "source": {
+                  "type": "object"
+                },
+                "content": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "id",
+                "source",
+                "content"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "taskId",
+            "question",
+            "notice"
+          ],
+          "additionalProperties": true
+        },
+        "fields": [
+          {
+            "name": "taskId",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "question",
+            "type": "{ questionId, text, askedBy }",
+            "required": true
+          },
+          {
+            "name": "input",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "notice",
+            "type": "{ id, source, content }",
+            "required": true
+          }
+        ]
+      },
+      {
+        "kind": "task.answered",
+        "where": "the child session",
+        "when": "`Tasks.answer`: the immutable accepted answer and exact normalized queued input for a later child turn. A full inbox can defer delivery; reconciliation retries this outbox.",
+        "schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "questionId": {
+              "type": "string",
+              "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string"
+            },
+            "input": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                  "minLength": 1
+                },
+                "userMessage": {
+                  "$ref": "#/definitions/UserMessageEncoded"
+                },
+                "delivery": {
+                  "type": "string",
+                  "enum": [
+                    "steer",
+                    "next"
+                  ]
+                },
+                "source": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "userMessage",
+                "delivery",
+                "source"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "taskId",
+            "questionId",
+            "text",
+            "input"
+          ],
+          "additionalProperties": true,
+          "definitions": {
+            "UserMessageEncoded": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "attachments": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "media"
+                        ]
+                      },
+                      "mediaType": {
+                        "type": "string",
+                        "enum": [
+                          "image/png",
+                          "image/jpeg",
+                          "image/gif",
+                          "image/webp"
+                        ]
+                      },
+                      "data": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 5242880,
+                        "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                      },
+                      "fingerprint": {
+                        "type": "string"
+                      },
+                      "bytes": {
+                        "type": "integer",
+                        "maximum": 3932160,
+                        "exclusiveMinimum": 0
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "alt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "mediaType",
+                      "data",
+                      "fingerprint",
+                      "bytes"
+                    ],
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "fields": [
+          {
+            "name": "taskId",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "questionId",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "input",
+            "type": "{ id, userMessage, delivery, source }",
             "required": true
           }
         ]
