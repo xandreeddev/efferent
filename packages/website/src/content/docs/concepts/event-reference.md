@@ -383,6 +383,18 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 
 | Code | Where | Meaning |
 | --- | --- | --- |
+| `protocol.handshake` | `@xandreed/process-host` | The connection did not begin with hello before EOF or the handshake deadline. Setup has not run. |
+| `protocol.version` | `@xandreed/process-host` | The parent's hello requested an unsupported process protocol version. Setup has not run. |
+| `protocol.sequence` | `@xandreed/process-host` | A second hello or a duplicate outstanding request ID makes command ownership ambiguous; the connection stops. |
+| `protocol.invalid` | `@xandreed/process-host` | A command frame has invalid JSON, schema, UTF-8, framing or size; the connection stops. |
+| `host.busy` | `@xandreed/process-host` command response | The configured begin, short-command or control lane is full. This command performed no service operation and may be retried. |
+| `host.owner` | `@xandreed/process-host` command response | The addressed owner is outside the process host's configured owners; the command touched no session service. |
+| `host.stopping` | `@xandreed/process-host` command response | The process is stopping and refuses new command work. |
+| `host.unsupported` | `@xandreed/process-host` command response | The command needs an optional service the binding does not supply, such as Tasks for an answer. |
+| `host.command` | `@xandreed/process-host` command response | The addressed service refused the command. An optional frameworkCode preserves its classified framework failure without exporting raw error text. |
+| `host.setup` | `@xandreed/process-host` | The host-supplied setup factory failed after version negotiation; the connection stops. |
+| `host.runtime` | `@xandreed/process-host` | Host configuration, storage, lifecycle observation, command execution or shutdown failed. The original successful storage receipt remains successful if later observation fails. |
+| `host.peer` | `@xandreed/process-host` | The peer could not read, encode, write or flush the connection. The native hard deadline bounds stuck asynchronous teardown. |
 | `images.unavailable` | imageResizerPlugin activation | No configured image conversion tool is available through Bash. Install ImageMagick, libvips or sips, or provide another ImageResizer adapter. |
 | `turn.closed` | `Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`) | The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs. |
 | `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed). |

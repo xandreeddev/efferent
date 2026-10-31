@@ -37,6 +37,11 @@ const guides: ReadonlyArray<Guide> = [{
   page: "guides/events",
   title: "Events guide",
   description: "Stream a turn to a client, react to its tools, see its start and end, publish your own events, follow a session's journal from anywhere, and serve it all over HTTP.",
+}, {
+  source: "docs/process-protocol.md",
+  page: "guides/process-protocol",
+  title: "Process protocol",
+  description: "Bind a host-supplied agent to bounded stdio, push durable messages, steer or cancel turns, and preserve work across process restart.",
 }]
 
 /** Repository files with a page of their own on the website; any other file a guide links to is linked on GitHub. */

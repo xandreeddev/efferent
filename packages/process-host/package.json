@@ -1,0 +1,26 @@
+{
+  "name": "@xandreed/process-host",
+  "version": "0.14.0",
+  "engines": {
+    "node": ">=24",
+    "bun": ">=1.3.0"
+  },
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@xandreed/core": "workspace:*",
+    "effect": "4.0.7"
+  },
+  "devDependencies": {
+    "@xandreed/sdk": "workspace:*",
+    "@xandreed/plugin-agent-loop": "workspace:*",
+    "@xandreed/plugin-memory-window": "workspace:*",
+    "@xandreed/plugin-session-files": "workspace:*",
+    "@xandreed/plugin-sessions": "workspace:*",
+    "@xandreed/plugin-tasks": "workspace:*",
+    "@xandreed/plugin-tool-discovery": "workspace:*"
+  }
+}

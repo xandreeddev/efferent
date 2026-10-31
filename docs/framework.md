@@ -2708,6 +2708,34 @@ or an updated reader. Backups and physical exports include the media root.
 Removing a session never deletes shared blobs; automatic garbage collection is
 outside this interface. The session files layout remains unchanged.
 
+## Process host
+
+`@xandreed/process-host` runs a host-supplied agent as a child process on Node
+24 or Bun. The host writes its entry module and calls `runProcessHost`; it
+supplies the Agent/TurnRunner, model and services through a scoped setup
+factory. `serveProcess` offers the same command coordinator to an embedding
+host without taking ownership of native process exit.
+
+Protocol version 1 uses stdio NDJSON and a `hello` version handshake. A parent
+can begin a turn, enqueue a message or steer while it runs, answer a helper,
+cancel an exact turn, read activity and request shutdown. The host decides
+session creation, owners, storage, recovery and drainer composition. Use the
+same Sessions and Tasks for direct, queued and helper execution.
+
+Setup receives wrappers for its logical SessionLog and shared TurnRunner.
+Committed journal rows supply start/end frames for every turn owner, including
+task and inbox execution; scoped bus subscriptions supply progress. The default
+projection includes assistant text and tool/step status. Full event export is
+explicit and requires JSON-compatible content. The stream is connection-local;
+durable input IDs, keys and the journal remain recovery authority after a lost
+acknowledgment or process death.
+
+The peer bounds partial frames, native reads, pending writers and serialized
+frames. Graceful shutdown retains accepted queue entries; the native edge also
+keeps an independent hard timer and a second-signal exit path. See the
+[process protocol reference](process-protocol.md) for setup, fields, limits,
+exit codes and the real Node/Bun subprocess evidence.
+
 ## Sessions: one log per session
 
 A session is one conversation's append-only event log: every turn's

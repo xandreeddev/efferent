@@ -912,6 +912,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(helperReport.trim())
 }
+// The process host's real parent/child protocol, peer kit, signals and durable restart on both runtimes.
+await writeFile(join(consumer, "process-host-consumer.mjs"), await readFile(join(root, "scripts/process-host-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const processChild = Bun.spawn([binary, "process-host-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const processReport = await new Response(processChild.stdout).text()
+  const required = ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"]
+  if (await processChild.exited !== 0 || !processReport.includes(`process-host {"runtime":"${runtime} `) || required.some((name) => !processReport.includes(`"${name}":true`))) {
+    console.error(`the packed ${runtime} process host lost protocol responsiveness, peer conformance, bounded shutdown or durable restart evidence`); process.exit(1)
+  }
+  console.log(processReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

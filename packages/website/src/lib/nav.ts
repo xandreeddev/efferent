@@ -35,7 +35,10 @@ export const docsNav: DocGroup[] = [
   },
   {
     group: "Guides",
-    items: [{ slug: "guides/events", label: "Events" }],
+    items: [
+      { slug: "guides/events", label: "Events" },
+      { slug: "guides/process-protocol", label: "Process protocol" },
+    ],
   },
   {
     group: "Concepts",
