@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 14 adds `tool.intercepted`, the `intercepted` refusal reason,
+  loop/direct audit provenance, and optional result-scoped invocation and
+  rewritten-input metadata. Custom
+  registries rerun the extended `toolRegistryConformance` kit. Hosts enabling
+  `ToolInterceptor` use the registry's provided toolkit; rebuilding one over
+  bare handlers bypasses the required argument capture and fails with
+  `tool.intercept`. Existing calls without an interceptor keep their bytes.
+
 - Stored format 13 adds an optional accepted `hook` patch to request headers.
   Hosts may provide `ModelRequestHook` to customize system text, append host
   context, or select tool choice before request preparation. Existing requests
@@ -1093,6 +1101,13 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Optional `ToolInterceptor` supplies `Allow`, `Deny`, `Rewrite` or `Respond`
+  before a call and `Keep` or `Replace` after an actual handler outcome.
+  Callbacks receive detached encoded JSON; rewritten inputs are reauthorized,
+  synthetic responses still obey admission, and actual handler lifecycle and
+  breaker evidence remain intact. One final result is acknowledged before
+  presentation or digestion, with rewritten typed inputs available after reopen.
 
 - Optional per-request `ModelRequestHook.prepare` runs in the actual run and
   step context before reserves, memory maintenance and durable request writes.

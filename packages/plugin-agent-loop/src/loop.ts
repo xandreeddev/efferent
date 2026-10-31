@@ -2,14 +2,14 @@ import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
 import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
-import { foldStreamParts } from "@xandreed/core/internal"
+import { CurrentToolResultReceipt, foldStreamParts, makeToolResultReceipt, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, ModelOverflowEvidence, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
-import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
+import { plannedCallIdOf, responseModelOf, ToolCallId } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
@@ -558,8 +558,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const pollable: ReadonlySet<string> = new Set(options.pollableTools ?? [])
     const captureTraceContent = options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent))
     // The callbacks run with the caller's services except its step and tolerance (this loop's own win), under the span current where they are called.
-    const eventContext = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance)(replayableContext(yield* Effect.context<R>()))
-    const onEvent = (event: LoopEvent) => (options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext))
+    const eventContext = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentToolResultReceipt)(replayableContext(yield* Effect.context<R>()))
+    const onEvent = (event: LoopEvent) => withToolResultReceiptGuard(Effect.suspend(() => options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext)))
     // Resolve the toolkit's handlers once — they're stable across turns.
     const toolkit = yield* options.toolkit
 
@@ -844,8 +844,16 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // The returned array keeps call order for the standalone loop's buffer and decisions.
         const recordResult = (part: Response.AnyPart) =>
           (options.onTail?.(responseToAgentMessages([part]), state.turnIndex) ?? Effect.succeed([])).pipe(Effect.as(part))
+        const invoke = (call: Response.ToolCallPart<string, unknown>) => Effect.gen(function* () {
+          const receipt = yield* makeToolResultReceipt({ tool: call.name, toolCallId: ToolCallId.make(call.id), run: yield* CurrentAgentRun, step: state.turnIndex })
+          return yield* runCall(instrumented, call).pipe(
+            Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Offer", offer: receipt.offer })),
+            Effect.flatMap((part) => recordResult(part).pipe(Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Record", recording: receipt.recording })))),
+            Effect.ensuring(receipt.close),
+          )
+        })
         const results = yield* Match.valueTags(verdict, {
-          Whole: () => Effect.forEach(calls, (call) => runCall(instrumented, call).pipe(Effect.flatMap(recordResult)), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
+          Whole: () => Effect.forEach(calls, invoke, { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
           Cut: (cut) => Effect.forEach(calls, (call) => recordResult(cutResult(call, cut.reason)), { concurrency: 1 }),
         })
         const cut = verdict._tag === "Cut" ? Option.some(verdict.reason) : Option.none<CutReason>()

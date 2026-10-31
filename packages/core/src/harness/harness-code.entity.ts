@@ -92,6 +92,7 @@ export const HARNESS_CODES = [
   "tasks.encode",
   "tasks.kind",
   "tasks.lost",
+  "tool.intercept",
   "tools.duplicate",
   "tools.opened",
   "tools.unavailable",

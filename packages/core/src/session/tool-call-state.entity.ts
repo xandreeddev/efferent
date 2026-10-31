@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ToolResultInterception } from "../domain/tool-interceptor.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
@@ -27,7 +28,7 @@ export const ToolCallReturn = Schema.Struct({ invocationId: InvocationId, seq: S
 export type ToolCallReturn = typeof ToolCallReturn.Type
 
 /** A settled result as stored in memory, including a refused call's failed result. */
-export const ToolCallResult = Schema.Struct({ entry: EntryId, seq: Schema.Int, encoded: Schema.Unknown, isError: Schema.Boolean })
+export const ToolCallResult = Schema.Struct({ entry: EntryId, seq: Schema.Int, encoded: Schema.Unknown, isError: Schema.Boolean, interception: Schema.optionalKey(ToolResultInterception) })
 export type ToolCallResult = typeof ToolCallResult.Type
 
 /**

@@ -4,7 +4,7 @@ import {
   storedJson, turnModelCallsOf,
 } from "@xandreed/core"
 import type { ModelCallObserver, ModelCallRecorder, TurnError, TurnWriter } from "@xandreed/core"
-import { CurrentModelCallNotifications } from "@xandreed/core/internal"
+import { CurrentModelCallNotifications, CurrentToolResultReceipt } from "@xandreed/core/internal"
 import { ModelCallRecorderPhase } from "./model-call-recorder.entity.js"
 import type { ObservedModelCall } from "./model-call-recorder.entity.js"
 import { mergeModelCalls, modelCallKey } from "./model-call-recorder.entity.functions.js"
@@ -115,7 +115,7 @@ export const makeTurnModelCallRecorder = Effect.fnUntraced(function* (
       }))
     }),
     observe: Effect.fn("turn.observe_model_calls")(function* (listener) {
-      const observer: Observer = { listener, context: Context.omit(CurrentModelCallNotifications)(replayableContext(yield* Effect.context<never>())), seen: yield* Ref.make<ReadonlySet<string>>(new Set()) }
+      const observer: Observer = { listener, context: Context.omit(CurrentModelCallNotifications, CurrentToolResultReceipt)(replayableContext(yield* Effect.context<never>())), seen: yield* Ref.make<ReadonlySet<string>>(new Set()) }
       const current = yield* order.withPermits(1)(Effect.gen(function* () {
         yield* reconcile
         const current = yield* Ref.get(phase)

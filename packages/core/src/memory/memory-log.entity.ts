@@ -1,4 +1,5 @@
 import { Schema, SchemaTransformation } from "effect"
+import { ToolResultInterception } from "../domain/tool-interceptor.entity.js"
 import type { Option } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
@@ -140,6 +141,8 @@ export const LogBody = Schema.Union(
     isError: Schema.Boolean,
     /** Full fidelity: the tool's encoded result. */
     encoded: Schema.Unknown,
+    /** Accepted interception metadata for this result; original assistant arguments are unchanged. */
+    interception: Schema.optionalKey(ToolResultInterception),
     /** The exact text the model saw when the result was written. */
     view: Schema.String,
     viewVersion: Schema.String,

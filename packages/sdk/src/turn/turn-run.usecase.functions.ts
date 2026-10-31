@@ -54,6 +54,7 @@ import type {
 import {
   applyModelRequestHook,
   checkModelRequest,
+  CurrentToolResultReceipt,
   entriesSendingMedia,
   estimateTokens,
   markVolatileContext,
@@ -175,7 +176,7 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * @public
  */
 export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<PreparedRun, TurnError, P | TurnRunServices> {
-  const runServices = replayableContext(yield* Effect.context<P>())
+  const runServices = Context.omit(CurrentToolResultReceipt)(replayableContext(yield* Effect.context<P>()))
   const memory = yield* TurnMemory
   const prompt = yield* TurnPrompt
   const events = yield* TurnEvents

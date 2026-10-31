@@ -24,7 +24,7 @@ The package has three entries, each an `index.ts` of explicit named exports:
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
-| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, sdk |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -393,6 +393,27 @@ Anything that turns a log into text (search, transcripts, traces,
 fingerprints, estimates) goes through `elideMediaData` or
 `userMessageText`, never the base64.
 
+`ToolInterceptor` callbacks receive detached encoded JSON and return the
+tagged before/after decisions in `domain/tool-interceptor.entity.ts`.
+`tool.intercepted` journals each validated decision, including the replacement
+input for a rewrite, but carries only the outcome kind for synthetic answers.
+An audit proves a decision, not handler execution. Its optional `source`
+identifies a loop invocation only when the private lexical receipt owner
+was present; direct or older unqualified audits cannot supply that proof.
+`toolCallStatesOf` uses this evidence or a final result's invocation id to
+keep overlapping calls separate, retaining `Returned` while an after hook
+has not produced a raw answer.
+
+The private result receipt spans one call through its raw-result ACK.
+Only its owner may claim and ready it; reservation precedes the memory
+write permit, and the raw ACK marks it recorded before presentation work.
+Foreign callbacks inherit a guard without claim or recording authority.
+Matching reentry and duplicate result parts fail before taking the permit,
+including parts marked provider-executed. A final `ToolResult` may retain
+`interception` metadata with the invocation id and effective encoded input;
+`toolInputOf` uses that input (including explicit JSON null) for reopened
+views and digests without changing the assistant's original request.
+
 Text the model reads that no user typed uses the frames in
 `src/turn/model-text.ts`: `hostNote` for a note the host adds as a
 user-role message (`[Host note: …]`, never "system" or "source of
@@ -450,6 +471,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
 | Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact, `src/turn/model-request-hook.entity.functions.test.ts:26-32` |
 | Request-hook invalid-edge and foreign-failure reporting message (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:12` | exact, `src/turn/model-request-hook.entity.functions.test.ts:38-40` |
+| Tool-interceptor invalid-edge and foreign-failure reporting message (`toolInterceptError`) | `src/domain/tool-interceptor.entity.functions.ts:7` | exact, `src/domain/tool-interceptor.entity.test.ts:33` |
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |

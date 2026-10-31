@@ -224,7 +224,7 @@ describe("the reserved names", () => {
     expect(TURN_EVENT_NAMES).toEqual([
       "turn.started", "step.started", "tool.started", "tool.refused", "tool.progress", "tool.completed",
       "step.ended", "completion.evaluated", "skills.activated", "context.built", "decision.recorded",
-      "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host", "model.called",
+      "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host", "model.called", "tool.intercepted",
     ])
   })
   test("are the journal's kinds and every bus event's name, each once", () => {

@@ -30,6 +30,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 | `turn.ended` | no | Recorded elsewhere: memory's `turn.reply` and the session's own `turn.ended` |
 | `host` | no | Under its `name` |
 | `model.called` | no | Recorded elsewhere: the recorder's directly appended and flushed `model.called` fact |
+| `tool.intercepted` | no | `tool.intercepted` |
 
 ### `turn.started`
 
@@ -70,7 +71,7 @@ Published by the tool registry after admission, and flushed before waiting for e
 
 ### `tool.refused`
 
-Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), or a nested call would wait on occupied permits (`concurrency`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.
+Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), a nested call would wait on occupied permits (`concurrency`), or a validated host interceptor denied it (`intercepted`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.
 
 | Field | Type |
 | --- | --- |
@@ -79,7 +80,7 @@ Published by the tool registry when it refuses a call before the handler runs: t
 | `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `input` | `unknown` |
-| `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit" \| "run-call-limit" \| "tripped" \| "concurrency"` |
+| `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit" \| "run-call-limit" \| "tripped" \| "concurrency" \| "intercepted"` |
 | `message` | `string` |
 
 ### `tool.progress`
@@ -246,6 +247,20 @@ Published after the turn-owned model-call recorder durably appends and flushes o
 | `usage` | `{ _tag } \| { _tag, usage } \| { _tag, usage, reported }` |
 | `outcome` | `{ _tag } \| { _tag, failure }` |
 
+### `tool.intercepted`
+
+Published by the registry after a host interceptor decision and authored input or outcome decoding succeeds. Before records a validated host decision before effective-policy and budget checks, not proof of admission or execution. Optional source is loop only for a valid private loop-call owner; direct or absent source does not identify a requested root call. After describes Keep or Replace of the actual handler candidate; Respond and Replace record only outcome kind, with final encoded bytes stored once in memory. Rewrite input and Deny failure contain sensitive arguments or host text. Journaled and flushed before proceeding; absent interceptor produces no such event.
+
+| Field | Type |
+| --- | --- |
+| `invocationId` | `string` |
+| `tool` | `string` |
+| `toolCallId` | `string` (optional) |
+| `run` | `{ id, turn, ordinal } \| null` |
+| `step` | `integer` |
+| `source` | `"loop" \| "direct"` (optional) |
+| `phase` | `{ _tag, decision }` |
+
 ## Journal kinds
 
 Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.part`, historical `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
@@ -257,7 +272,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the combined step policy and optional host-hook context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.message` | Memory: the step loop's recorded messages; `TurnWriter.take` for queued steering, atomically with its receipt | User and assistant text, reasoning, tool call inputs, and a steer's images inline as base64. | `entry`, `runId`, `step`, `at`, `body` |
-| `memory.tool-result` | Memory: the step loop's recorded tool results | Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it. | `entry`, `runId`, `step`, `at`, `body` |
+| `memory.tool-result` | Memory: the step loop's recorded tool results | Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it; optional interception metadata includes the accepted rewritten input. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.digest` | Memory: a digester (`plugin-memory-digest`) | Tool output, digested. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.skills` | Memory: the tool registry's skill activations | None: skill and tool names. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.compaction` | Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`) | Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters). | `entry`, `runId`, `step`, `at`, `body` |
@@ -274,6 +289,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |
 | `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `run`, `message` |
 | `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration, request controls and optional accepted host-hook text remain in both. | `version`, `runId`, `run`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `stableMessages`, `tools`, `toolChoice`, `hook`, `model`, `cacheKey`, `callPolicy` |
+| `tool.intercepted` | The registry's validated host decisions, published on the turn bus and flushed before handler side effects or final outcome delivery | Rewritten encoded arguments and host refusal text. Respond and Replace record only outcome kind; the final encoded answer stays in memory.tool-result. | `invocationId`, `tool`, `toolCallId`, `run`, `step`, `source`, `phase` |
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
@@ -290,7 +306,7 @@ A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's
 | `memory.section` | `sectionId`: `string`, `version`: `string`, `text`: `string` |
 | `memory.step` | `step`: `integer`, `run`: `integer`, `text`: `string` |
 | `memory.message` | `message`: `{ role, content, providerOptions }`, `run`: `integer`, `inbox`: `string` |
-| `memory.tool-result` | `toolCallId`: `string`, `run`: `integer`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
+| `memory.tool-result` | `toolCallId`: `string`, `run`: `integer`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `interception`: `{ invocationId, effectiveInput }`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 | `memory.digest` | `entry`: `string`, `version`: `string`, `mode`: `"select" \| "summarize"`, `keep`: `Array<string>`, `text`: `string`, `digester`: `string`, `trigger`: `"write" \| "compaction"` |
 | `memory.skills` | `skills`: `Array<string>`, `tools`: `Array<string>`, `source`: `"always" \| "matcher" \| "load_skill" \| "host"`, `decision`: `string \| null` |
 | `memory.compaction` | `strategy`: `string`, `version`: `string`, `action`: `{ _tag, entries, texts } \| { _tag, entry, preview } \| { _tag, throughTurn, ledger } \| { _tag, keepFromTurn, summary } \| { _tag, entries, reason }` |
@@ -326,6 +342,7 @@ context.built
 decision.recorded
 stream.fallback
 request.prepared
+tool.intercepted
 turn.ended
 inbox.queued
 inbox.dropped
@@ -422,6 +439,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `request.model` | `@xandreed/plugin-models` | The selected model could not be resolved or described. |
 | `request.memory` | `replayModelRequest` | The memory events before a stored request did not decode. |
 | `request.hook` | the turn, before preparing a fresh model request | A host request-hook draft or patch is invalid, a patched tool choice is inactive, or the callback fails unexpectedly. Original turn errors and interruptions retain their identity. |
+| `tool.intercept` | the tool registry and its result-recording boundary | An interceptor decision or encoded input/outcome is invalid, a callback fails unexpectedly, or invocation ownership is missing, mismatched or reused. Original turn errors and interruptions remain intact. |
 | `memory.log` | the turn | Stored memory events did not decode, or memory could not be stored. |
 | `memory.digest` | `@xandreed/plugin-memory-digest` | The digester's model call failed or did not answer within `digestTimeoutMs`. It is logged, and the turn goes on: memory records no digest, and the tool result stays whole. |
 | `memory.summary` | `@xandreed/plugin-memory-summary` | The turn's services carry no `UtilityLlm`, and the turn fails when its memory opens; or the summarizer failed or did not answer within `summaryTimeoutMs`, which is logged: the turn goes on without a new summary, and its later steps do not ask again. |

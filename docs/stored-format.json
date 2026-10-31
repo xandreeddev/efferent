@@ -1,6 +1,6 @@
 {
-  "format": 13,
-  "fingerprint": "ccc1afe2b5bc56561d9073d26797d8e4d43a9d838204b63df9d7d2c09accaab2",
+  "format": 14,
+  "fingerprint": "4be4c798063bea23d4f73dfd5b6e30adf52119bb7382c9eed018b50926ba8c4b",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -16,11 +16,11 @@
     "journal memory.message": "a71375a92b30fb51741f08dc4238b512b050d5295d086b6ce6188490ec5ca51e",
     "journal memory.section": "62511ca5be1cff0fa2a8c4dc7f509f3621237df24882a5e8b4761e00c0e219b7",
     "journal memory.skills": "8c8871b99866a59efd5b79c1760664a8f869535ceec6fedbc2066fdef97a80f2",
-    "journal memory.snapshot": "01c5fadd63d665dfe115b976d5fb47d266bed1fec43175aaf6ed2725b602c84f",
+    "journal memory.snapshot": "a1d6f38dc7918d4478f86ee9becd02e91314ce9ace3e2645cd6c6230d00d818c",
     "journal memory.step": "30558108345a1d32f4d01c51452265f1217e741cd7a0ca884f29e2542b1375e3",
     "journal memory.system": "82e793d5ae8e7a0a6cb19cc8b61d719be5d868f9eb33e383d77ae23acdd838e0",
     "journal memory.tool-presentation": "dda56026f79b2528cfa86981b5d76751c871eed04d2b31ab48f70a5ca51dbf4a",
-    "journal memory.tool-result": "6ae7e5a35582af6a4b7bd42f489bc95712e01ab40778d4bef9a54972722f4264",
+    "journal memory.tool-result": "30d2482a5c2ea4afd74e7d8d236fb0680538e12bba17f25ab886406dec2cb5db",
     "journal model.called": "267bbf49e558c29268d0a0589fa7b20c5498d5988b82f10202ff20adab99c21c",
     "journal request.part": "8cffc30844ce2df04caa667567e0fde3fc0852baec901179bd66dfd66091fb95",
     "journal request.prepared": "577fa0c21c9662bf0e21a37c2b2fa7b8cd52025f0ec9bdf2d52caa9926ba6718",
@@ -29,7 +29,8 @@
     "journal step.usage": "1e13adffdf0e739803565455c25ba80f8e381dc0b5cab2c72f55d489ffd1b287",
     "journal stream.fallback": "a8df996294e170347e1f43b26251d9ada0be3ea01f75a5f0df31c37f3081a17e",
     "journal tool.completed": "15f66882180ac3acfb376c53da57d053a831671f6956f9ea958b02584d05e2c9",
-    "journal tool.refused": "e280635fe70cf43e6f93017bf3603d9cdb520e444653bc8770cc7cc8b397ca48",
+    "journal tool.intercepted": "06463567bd351a48cdb36ea7114e5fe19d3a80aabf6595fc6985eebf65d44906",
+    "journal tool.refused": "f1fb338103827be3fae543dea536565b05ce10667fa43b35b116f97beb636fc3",
     "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
     "journal turn.ended": "9ad790e35056a849ed7121f0d005e0312633732ac43f651e152ff00a71227c3e",
     "journal turn.reply": "e1cc10fb802d4c6169b1bd494f3777f5f9c506519a75faf36bcd307cd8fbe194",
@@ -92,6 +93,10 @@
     {
       "format": 13,
       "fingerprint": "ccc1afe2b5bc56561d9073d26797d8e4d43a9d838204b63df9d7d2c09accaab2"
+    },
+    {
+      "format": 14,
+      "fingerprint": "4be4c798063bea23d4f73dfd5b6e30adf52119bb7382c9eed018b50926ba8c4b"
     }
   ]
 }

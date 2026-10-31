@@ -1,5 +1,5 @@
 import { Tool, Toolkit } from "effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Match, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Match, Option, Ref, Result, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
   ActionPolicy,
   activationsOf,
@@ -29,7 +29,12 @@ import {
   resolveCapabilities,
   RunContext,
   ToolCallId,
+  ToolInterceptor,
+  ToolInterceptOutcome,
 } from "@xandreed/core"
+import { CurrentToolResultReceipt, toolInterceptError, withToolResultReceiptGuard } from "@xandreed/core/internal"
+import { afterToolIntercept, beforeToolIntercept, interceptedToolkit, toolInterceptBoundary, toolInterceptMutableJson, toolInterceptSnapshot } from "./tool-interceptor.adapter.js"
+import type { ToolInterceptCapture } from "./tool-interceptor.adapter.js"
 import { ToolPolicy } from "./tool-policy.entity.js"
 import { admitTool, breakerOf, concurrencyMessage, emptyToolAdmission, runCallLimitMessage, settleToolAdmission, trippedMessage } from "./tool-policy.entity.functions.js"
 import type {
@@ -48,6 +53,10 @@ import type {
   ToolRefusalReason,
   ToolView,
   ToolViews,
+  ToolInterceptAudit,
+  ToolInterceptIdentity,
+  ToolResultInterception,
+  BeforeToolDecision,
   TurnError,
   UserMessage,
 } from "@xandreed/core"
@@ -174,79 +183,81 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
   const catalog: CapabilityCatalog = yield* catalogOf(config.catalogVersion, [...capabilities, defineCapability({ id: "tool-discovery", version: "1", tools: own })])
   const byName = new Map(registered.map((entry) => [entry.tool.name, entry] as const))
   const skillsForTool = (tool: string) => skills.filter((skill) => skill.tools.includes(tool)).map((skill) => skill.id)
-  const decoded = (name: string, encoded: unknown): Effect.Effect<Option.Option<{ readonly entry: RegisteredTool; readonly result: unknown }>> =>
-    Option.match(Option.fromNullishOr(byName.get(name)), {
-      onNone: () => Effect.succeed(Option.none()),
-      onSome: (entry) => Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
-        Effect.map((result) => Option.some({ entry, result })),
-        Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is not digested`, error)),
-        Effect.orElseSucceed(() => Option.none()),
-      ),
-    })
+  const viewsFor = (services: Context.Context<never>): ToolViews => {
+    const decoded = (name: string, encoded: unknown, params: unknown): Effect.Effect<Option.Option<{ readonly entry: RegisteredTool; readonly result: unknown; readonly params: unknown }>> =>
+      Option.match(Option.fromNullishOr(byName.get(name)), {
+        onNone: () => Effect.succeed(Option.none()),
+        onSome: (entry) => Effect.gen(function* () {
+          const input = yield* Schema.isSchema(entry.tool.parametersSchema) ? Schema.decodeUnknownEffect(contextFree(entry.tool.parametersSchema))(params) : Effect.succeed(params)
+          const result = yield* Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded)
+          return Option.some({ entry, result, params: input })
+        }).pipe(
+          Effect.provide(services),
+          Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is not digested`, error).pipe(Effect.as(Option.none()))),
+        ),
+      })
 
-  const views: ToolViews = {
-    view: (name, encoded, params, isError) => {
-      const entry = byName.get(name)
-      const pinned = entry?.annotations.pinned ?? false
-      // The raw view never carries an image's base64 as text: the images go as images (a failed call's as none).
-      const slots = isError ? [] : selectedSlots(encoded, Option.none())
-      const raw: ToolView = {
-        text: rawText(elideMediaData(encoded)), version: "raw", subjects: [], artifacts: [], pinned,
-        ...(slots.length === 0 ? {} : { media: slots }),
-      }
-      if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
-      const view = entry.view.value
-      return Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
-        Effect.map((result): ToolView => {
-          const media = selectedSlots(encoded, Option.map(view.media, (select) => select(result, params)))
-          return {
-            text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
-            artifacts: view.artifacts(result, params), pinned,
-            ...(media.length === 0 ? {} : { media }),
-          }
-        }),
-        Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is shown raw`, error)),
-        Effect.orElseSucceed(() => raw),
-      )
-    },
-    compact: (name, encoded, params) => {
-      const view = Option.flatMap(Option.fromNullishOr(byName.get(name)), (entry) => entry.view)
-      const compact = Option.flatMap(view, (value) => value.compact)
-      const entry = byName.get(name)
-      return Option.isNone(compact) || entry === undefined ? Effect.succeed(Option.none())
-        : Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
-          Effect.map((result) => Option.some(compact.value(result, params))),
-          Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is not compacted`, error)),
-          Effect.orElseSucceed(() => Option.none<string>()),
-        )
-    },
-    digest: (name, encoded, params, userMessage) => decoded(name, encoded).pipe(Effect.map((found) => Option.flatMap(found, ({ entry, result }) =>
-      Option.flatMap(Option.flatMap(entry.view, (view) => Option.map(view.digest, (digest) => ({ view, digest }))), ({ view, digest }): Option.Option<DigestTask> => {
-        const source = view.render(result, params)
-        const base = { tool: name, version: digest.version, instructions: digest.instructions, userMessage, source }
-        if (digest._tag === "Summarize") {
-          const preserve = digest.preserve(result)
-          return Option.some({
-            ...base, mode: "summarize", items: [], preserve,
-            apply: (outcome) => Option.filter(outcome.summary, (summary) => summary.trim().length > 0 && preserve.every((id) => summary.includes(id))),
-          })
+    return {
+      view: (name, encoded, params, isError) => {
+        const entry = byName.get(name)
+        const pinned = entry?.annotations.pinned ?? false
+        // The raw view never carries an image's base64 as text: the images go as images (a failed call's as none).
+        const slots = isError ? [] : selectedSlots(encoded, Option.none())
+        const raw: ToolView = {
+          text: rawText(elideMediaData(encoded)), version: "raw", subjects: [], artifacts: [], pinned,
+          ...(slots.length === 0 ? {} : { media: slots }),
         }
-        const items = digest.items(result)
-        return items.length === 0 ? Option.none() : Option.some({
-          ...base, mode: "select", items, preserve: [],
-          apply: (outcome) => {
-            const keep = outcome.keep.filter((key) => items.some((item) => item.key === key))
-            return keep.length === 0 ? Option.none() : Option.some(digest.render(result, params, keep))
-          },
-        })
-      })))),
+        if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
+        const view = entry.view.value
+        return decoded(name, encoded, params).pipe(
+          Effect.map((found): ToolView => Option.match(found, { onNone: () => raw, onSome: ({ result, params }) => {
+            const media = selectedSlots(encoded, Option.map(view.media, (select) => select(result, params)))
+            return {
+              text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
+              artifacts: view.artifacts(result, params), pinned,
+              ...(media.length === 0 ? {} : { media }),
+            }
+          } })),
+        )
+      },
+      compact: (name, encoded, params) => {
+        const view = Option.flatMap(Option.fromNullishOr(byName.get(name)), (entry) => entry.view)
+        const compact = Option.flatMap(view, (value) => value.compact)
+        const entry = byName.get(name)
+        return Option.isNone(compact) || entry === undefined ? Effect.succeed(Option.none())
+          : decoded(name, encoded, params).pipe(
+            Effect.map((found) => Option.map(found, ({ result, params }) => compact.value(result, params))),
+          )
+      },
+      digest: (name, encoded, params, userMessage) => decoded(name, encoded, params).pipe(Effect.map((found) => Option.flatMap(found, ({ entry, result, params }) =>
+        Option.flatMap(Option.flatMap(entry.view, (view) => Option.map(view.digest, (digest) => ({ view, digest }))), ({ view, digest }): Option.Option<DigestTask> => {
+          const source = view.render(result, params)
+          const base = { tool: name, version: digest.version, instructions: digest.instructions, userMessage, source }
+          if (digest._tag === "Summarize") {
+            const preserve = digest.preserve(result)
+            return Option.some({
+              ...base, mode: "summarize", items: [], preserve,
+              apply: (outcome) => Option.filter(outcome.summary, (summary) => summary.trim().length > 0 && preserve.every((id) => summary.includes(id))),
+            })
+          }
+          const items = digest.items(result)
+          return items.length === 0 ? Option.none() : Option.some({
+            ...base, mode: "select", items, preserve: [],
+            apply: (outcome) => {
+              const keep = outcome.keep.filter((key) => items.some((item) => item.key === key))
+              return keep.length === 0 ? Option.none() : Option.some(digest.render(result, params, keep))
+            },
+          })
+        })))),
+    }
   }
+  const views = viewsFor(Context.omit(CurrentToolResultReceipt)(replayableContext(yield* Effect.context<never>())))
 
   const open = (session: MemorySession) => Effect.gen(function* () {
     const run = yield* RunContext
     // What the handlers run with: everything where the tools are opened, but the span there:
     // a call's spans nest under the step that makes it, a handler's under its `tool.*` span.
-    const runServices = Context.omit(CurrentAgentRun, CurrentAgentStep, HoldingToolGates)(replayableContext(yield* Effect.context<never>()))
+    const runServices = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(replayableContext(yield* Effect.context<never>()))
     // Every service a tool declares is here, or the run does not open: no handler finds one missing mid-turn.
     const missing = registered.flatMap((entry) => {
       const absent = (entry.requires ?? []).filter((key) => !runServices.mapUnsafe.has(key))
@@ -255,6 +266,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     if (missing.length > 0) return yield* Effect.fail(harness("requires.missing", missing.join("; ")))
     const matcher = yield* Effect.serviceOption(IntentMatcher)
     const policy = yield* Effect.serviceOption(ActionPolicy)
+    const interceptor = yield* Effect.serviceOption(ToolInterceptor)
     const grants = yield* Option.match(yield* Effect.serviceOption(PermissionGrants), {
       onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
       onSome: (service) => service.grants,
@@ -314,117 +326,194 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       return found.text
     })
 
-    const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"]) => (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
-      const name = entry.tool.name
-      const toolPolicy = Object.hasOwn(policies, name) ? policies[name] ?? {} : {}
-      const agentRun = yield* Effect.service(CurrentAgentRun)
-      const runKey = Option.match(agentRun, { onNone: () => "direct", onSome: (current) => canonicalJson([current.id, current.turn, current.ordinal]) })
-      const isOwn = own.includes(entry)
-      // The call's id first: a refused call has one too, and its `tool.refused` carries it.
-      const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
-      const invocationId = InvocationId.make(`${run.runId}:call:${sequence}`)
-      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
-      const toolCall = context.toolCallId === undefined ? {} : { toolCallId: ToolCallId.make(context.toolCallId) }
-      /** Publish the refusal, then fail the call with it: the model reads it as the call's result. */
-      const refuse = (reason: ToolRefusalReason, error: string, message: string) =>
-        run.events.publish({ _tag: "tool.refused", step, invocationId, ...toolCall, tool: name, input: params, reason, message }).pipe(
-          // A subscriber failure fails the turn, never the tool call (which the model would see).
-          Effect.orDie,
-          Effect.andThen(Effect.fail(failure(error, message))),
+    const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"], capture: Option.Option<ToolInterceptCapture> = Option.none()) => (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
+      const owner = Option.flatMap(capture, (value) => value.owner)
+      const metadata = yield* Ref.make(Option.none<ToolResultInterception>())
+      const operation = Effect.gen(function* () {
+        const name = entry.tool.name
+        const toolPolicy = Object.hasOwn(policies, name) ? policies[name] ?? {} : {}
+        const agentRun = yield* Effect.service(CurrentAgentRun)
+        const runKey = Option.match(agentRun, { onNone: () => "direct", onSome: (current) => canonicalJson([current.id, current.turn, current.ordinal]) })
+        const isOwn = own.includes(entry)
+        // The call's id first: a refused call has one too, and its `tool.refused` carries it.
+        const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
+        const invocationId = InvocationId.make(`${run.runId}:call:${sequence}`)
+        yield* Option.match(owner, { onNone: () => Effect.void, onSome: (owner) => owner.claim(invocationId).pipe(Effect.orDie) })
+        const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
+        const toolCall = context.toolCallId === undefined ? {} : { toolCallId: ToolCallId.make(context.toolCallId) }
+        const identity: ToolInterceptIdentity = { invocationId, tool: name, ...toolCall, run: agentRun, step }
+        const audit = (phase: ToolInterceptAudit) => run.events.publish({ _tag: "tool.intercepted", ...identity, phase, source: Option.isSome(owner) ? "loop" : "direct" }).pipe(Effect.andThen(run.flush), Effect.orDie)
+        const decode = (schema: Schema.Top, encoded: unknown) => toolInterceptBoundary(
+          // Authored codecs may mutate their input; accepted evidence stays frozen.
+          toolInterceptMutableJson(encoded).pipe(Effect.flatMap((input) => Schema.decodeUnknownEffect(contextFree(schema))(input)), Effect.provide(runServices), Effect.interruptible),
+        ).pipe(Effect.orDie)
+        const failureOutcome = (encoded: unknown) => decode(entry.tool.failureSchema, encoded).pipe(
+          Effect.flatMap((value) => isTurnError(value) ? Effect.die(value) : Effect.succeed(Option.some(Exit.fail(value)))),
         )
-      if (!isOwn && !(yield* SynchronizedRef.get(activated)).tools.includes(name)) {
-        const providers = skillsForTool(name)
-        return yield* refuse("inactive", "ToolInactive", providers.length === 0 ? `${name} is not available in this conversation`
-          : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`)
-      }
-      const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
-      if (missing.length > 0) return yield* refuse("forbidden", "PermissionDenied", `${name} requires ${missing.join(", ")}`)
-      const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
-      const denial = yield* authorized.pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
-      if (Option.isSome(denial)) return yield* refuse("denied", "PolicyDenied", denial.value.message)
-      const denied = yield* Ref.modify(admission, (state) => admitTool(state, runKey, name, toolPolicy, config.maxCallsPerRun, entry.annotations.maxCallsPerRun))
-      if (Option.isSome(denied)) {
-        const reason = denied.value
-        if (reason === "call-limit") return yield* refuse(reason, "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
-        if (reason === "tool-call-limit") return yield* refuse(reason, "ToolCallLimit", `${name} may be called at most ${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0) === 1 ? "once" : `${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0)} times`} per turn; use what its earlier calls returned`)
-        if (reason === "run-call-limit") return yield* refuse(reason, "ToolCallLimit", runCallLimitMessage(toolPolicy.maxCallsPerRun ?? 0))
-        return yield* refuse(reason, "ToolTripped", trippedMessage())
-      }
-      const labels = entry.annotations.labels
-      const stage = entry.annotations.stage
-      // A subscriber failure fails the turn, never the tool call (which the model would see).
-      yield* run.events.publish({ _tag: "tool.started", step, invocationId, ...toolCall, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
-      // The call is durable before its handler can perform any externally visible action.
-      yield* run.flush.pipe(Effect.orDie)
-      const started = yield* Clock.currentTimeMillis
-      // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
-      const call = Effect.suspend(() => handler(params)).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
-      const nested = yield* Effect.service(HoldingToolGates)
-      const take = (gate: Semaphore.Semaphore, permits: number) => nested ? gate.takeIfAvailable(permits) : gate.take(permits).pipe(Effect.as(true))
-      const acquire = (gate: Semaphore.Semaphore, permits: number) => Effect.acquireRelease(take(gate, permits), (taken) => taken ? gate.release(permits).pipe(Effect.asVoid) : Effect.void, { interruptible: true })
-      const guarded = Effect.scoped(Effect.gen(function* () {
-        const gate = toolGates.get(name) ?? Option.none<Semaphore.Semaphore>()
-        const toolTaken = yield* Option.match(gate, { onNone: () => Effect.succeed(true), onSome: (semaphore) => acquire(semaphore, 1) })
-        if (!toolTaken) return { _tag: "Busy" } as const
-        // Try-acquire ignores semaphore waiters. Keep writers' priority explicit
-        // across the free-before-wake gap, including nested synchronous fibers.
-        if (!entry.annotations.readOnly) yield* Effect.acquireRelease(
-          Ref.update(pendingWriters, (count) => count + 1), () => Ref.update(pendingWriters, (count) => count - 1),
-        )
-        const rwTaken = yield* entry.annotations.readOnly
-          ? Effect.acquireRelease(
-            (nested ? turnstile.withPermitsIfAvailable(1)(Ref.get(pendingWriters).pipe(Effect.flatMap((count) => count > 0 ? Effect.succeed(false) : readLane.takeIfAvailable(1)))).pipe(Effect.map((value) => Option.getOrElse(value, () => false)))
-              : turnstile.withPermits(1)(readLane.take(1)).pipe(Effect.as(true))),
-            (taken) => taken ? readLane.release(1).pipe(Effect.asVoid) : Effect.void,
-            { interruptible: true },
+        /** Publish the refusal, then fail the call with it: the model reads it as the call's result. */
+        const refuse = (reason: ToolRefusalReason, error: string, message: string, input: unknown = params) =>
+          run.events.publish({ _tag: "tool.refused", step, invocationId, ...toolCall, tool: name, input, reason, message }).pipe(
+            // A subscriber failure fails the turn, never the tool call (which the model would see).
+            Effect.orDie,
+            Effect.andThen(Effect.fail(failure(error, message))),
           )
-          : acquire(turnstile, 1).pipe(Effect.flatMap((taken) => !taken ? Effect.succeed(false) : Ref.get(pendingWriters).pipe(
-            Effect.flatMap((count) => nested && count > 1 ? Effect.succeed(false) : acquire(readLane, config.readConcurrency)),
-          )))
-        if (!rwTaken) return { _tag: "Busy" } as const
-        if (breakerOf(yield* Ref.get(admission), runKey, name)._tag === "Tripped") return { _tag: "Tripped" } as const
-        const exit = yield* Effect.exit(call.pipe(
-          Effect.provide(runServices), Effect.provideService(HoldingToolGates, true),
-          // Finalize the actual handler exit before releasing execution permits.
-          // Cancellation after that exit cannot erase a defect or a success reset.
-          Effect.onExit((exit) => {
-            const outcome = Exit.isSuccess(exit) ? "success" : exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect))
-              || exit.cause.reasons.some(Cause.isInterruptReason) ? "unrelated" : exit.cause.reasons.some(Cause.isDieReason) ? "defect" : "failure"
-            return Ref.update(admission, (state) => settleToolAdmission(state, runKey, name, toolPolicy, outcome))
+        if (!isOwn && !(yield* SynchronizedRef.get(activated)).tools.includes(name)) {
+          const providers = skillsForTool(name)
+          return yield* refuse("inactive", "ToolInactive", providers.length === 0 ? `${name} is not available in this conversation`
+            : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`)
+        }
+        const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
+        if (missing.length > 0) return yield* refuse("forbidden", "PermissionDenied", `${name} requires ${missing.join(", ")}`)
+        const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
+        const denial = yield* authorized.pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
+        if (Option.isSome(denial)) return yield* refuse("denied", "PolicyDenied", denial.value.message)
+        const before = yield* Option.match(interceptor, {
+          onNone: () => Effect.succeed(Option.none<BeforeToolDecision>()),
+          onSome: (service) => Option.match(capture, {
+            onNone: () => Effect.die(toolInterceptError({ tool: name })),
+            onSome: (captured) => beforeToolIntercept(service, { ...identity, input: captured.input }).pipe(Effect.map(Option.some), Effect.orDie),
           }),
-        ))
-        return { _tag: "Ran", exit } as const
-      }))
-      const execution = yield* guarded
-      const exit = yield* Match.valueTags(execution, {
-        Busy: () => refuse("concurrency", "ToolConcurrency", concurrencyMessage()),
-        Tripped: () => refuse("tripped", "ToolTripped", trippedMessage()),
-        Ran: ({ exit }) => Effect.succeed(exit),
+        })
+        const rewritten = Option.filter(before, (decision) => decision._tag === "Rewrite")
+        const effective = Option.isSome(rewritten)
+          ? yield* Schema.isSchema(entry.tool.parametersSchema) ? decode(entry.tool.parametersSchema, rewritten.value.input) : toolInterceptMutableJson(rewritten.value.input).pipe(Effect.orDie)
+          : params
+        const synthetic = yield* Option.match(before, {
+          onNone: () => Effect.succeed(Option.none<Exit.Exit<unknown, unknown>>()),
+          onSome: (decision) => Match.valueTags(decision, {
+            Allow: () => Effect.succeed(Option.none<Exit.Exit<unknown, unknown>>()),
+            Rewrite: () => Effect.succeed(Option.none<Exit.Exit<unknown, unknown>>()),
+            Deny: ({ failure }) => failureOutcome(failure),
+            Respond: ({ outcome }) => Match.valueTags(outcome, {
+              Success: ({ encoded }) => decode(entry.tool.successSchema, encoded).pipe(Effect.map((value) => Option.some(Exit.succeed(value)))),
+              Failure: ({ encoded }) => failureOutcome(encoded),
+            }),
+          }),
+        })
+        yield* Option.match(before, { onNone: () => Effect.void, onSome: (decision) => Effect.gen(function* () {
+          yield* Ref.set(metadata, Option.some({ invocationId, ...Option.match(rewritten, { onNone: () => ({}), onSome: ({ input }) => ({ effectiveInput: input }) }) }))
+          const projection: ToolInterceptAudit = { _tag: "Before", decision: Match.valueTags(decision, {
+            Allow: () => ({ _tag: "Allow" as const }), Deny: ({ failure }) => ({ _tag: "Deny" as const, failure }),
+            Rewrite: ({ input }) => ({ _tag: "Rewrite" as const, input }), Respond: ({ outcome }) => ({ _tag: "Respond" as const, kind: outcome._tag }),
+          }) }
+          yield* audit(projection)
+        }) })
+        if (Option.isSome(before) && before.value._tag === "Deny" && Option.isSome(synthetic)) {
+          yield* run.events.publish({ _tag: "tool.refused", step, invocationId, ...toolCall, tool: name, input: effective, reason: "intercepted", message: before.value.failure.message }).pipe(Effect.orDie)
+          return yield* synthetic.value
+        }
+        if (Option.isSome(rewritten) && Option.isSome(policy)) {
+          const rejected = yield* policy.value.authorize(name, effective).pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
+          if (Option.isSome(rejected)) return yield* refuse("denied", "PolicyDenied", rejected.value.message, effective)
+        }
+        const denied = yield* Ref.modify(admission, (state) => admitTool(state, runKey, name, toolPolicy, config.maxCallsPerRun, entry.annotations.maxCallsPerRun))
+        if (Option.isSome(denied)) {
+          const reason = denied.value
+          if (reason === "call-limit") return yield* refuse(reason, "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`, effective)
+          if (reason === "tool-call-limit") return yield* refuse(reason, "ToolCallLimit", `${name} may be called at most ${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0) === 1 ? "once" : `${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0)} times`} per turn; use what its earlier calls returned`, effective)
+          if (reason === "run-call-limit") return yield* refuse(reason, "ToolCallLimit", runCallLimitMessage(toolPolicy.maxCallsPerRun ?? 0), effective)
+          return yield* refuse(reason, "ToolTripped", trippedMessage(), effective)
+        }
+        const labels = entry.annotations.labels
+        const stage = entry.annotations.stage
+        // A subscriber failure fails the turn, never the tool call (which the model would see).
+        if (Option.isSome(synthetic)) return yield* synthetic.value
+        yield* run.events.publish({ _tag: "tool.started", step, invocationId, ...toolCall, tool: name, input: effective, labels, stage }).pipe(Effect.orDie)
+        // The call is durable before its handler can perform any externally visible action.
+        yield* run.flush.pipe(Effect.orDie)
+        const started = yield* Clock.currentTimeMillis
+        // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
+        const call = Effect.suspend(() => handler(effective)).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
+        const nested = yield* Effect.service(HoldingToolGates)
+        const take = (gate: Semaphore.Semaphore, permits: number) => nested ? gate.takeIfAvailable(permits) : gate.take(permits).pipe(Effect.as(true))
+        const acquire = (gate: Semaphore.Semaphore, permits: number) => Effect.acquireRelease(take(gate, permits), (taken) => taken ? gate.release(permits).pipe(Effect.asVoid) : Effect.void, { interruptible: true })
+        const guarded = Effect.scoped(Effect.gen(function* () {
+          const gate = toolGates.get(name) ?? Option.none<Semaphore.Semaphore>()
+          const toolTaken = yield* Option.match(gate, { onNone: () => Effect.succeed(true), onSome: (semaphore) => acquire(semaphore, 1) })
+          if (!toolTaken) return { _tag: "Busy" } as const
+          // Try-acquire ignores semaphore waiters. Keep writers' priority explicit
+          // across the free-before-wake gap, including nested synchronous fibers.
+          if (!entry.annotations.readOnly) yield* Effect.acquireRelease(
+            Ref.update(pendingWriters, (count) => count + 1), () => Ref.update(pendingWriters, (count) => count - 1),
+          )
+          const rwTaken = yield* entry.annotations.readOnly
+            ? Effect.acquireRelease(
+              (nested ? turnstile.withPermitsIfAvailable(1)(Ref.get(pendingWriters).pipe(Effect.flatMap((count) => count > 0 ? Effect.succeed(false) : readLane.takeIfAvailable(1)))).pipe(Effect.map((value) => Option.getOrElse(value, () => false)))
+                : turnstile.withPermits(1)(readLane.take(1)).pipe(Effect.as(true))),
+              (taken) => taken ? readLane.release(1).pipe(Effect.asVoid) : Effect.void,
+              { interruptible: true },
+            )
+            : acquire(turnstile, 1).pipe(Effect.flatMap((taken) => !taken ? Effect.succeed(false) : Ref.get(pendingWriters).pipe(
+              Effect.flatMap((count) => nested && count > 1 ? Effect.succeed(false) : acquire(readLane, config.readConcurrency)),
+            )))
+          if (!rwTaken) return { _tag: "Busy" } as const
+          if (breakerOf(yield* Ref.get(admission), runKey, name)._tag === "Tripped") return { _tag: "Tripped" } as const
+          const exit = yield* Effect.exit(call.pipe(
+            Effect.provide(runServices), Effect.provideService(HoldingToolGates, true),
+            // Finalize the actual handler exit before releasing execution permits.
+            // Cancellation after that exit cannot erase a defect or a success reset.
+            Effect.onExit((exit) => {
+              const outcome = Exit.isSuccess(exit) ? "success" : exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect) || Cause.isFailReason(reason) && isTurnError(reason.error))
+                || exit.cause.reasons.some(Cause.isInterruptReason) ? "unrelated" : exit.cause.reasons.some(Cause.isDieReason) ? "defect" : "failure"
+              return Ref.update(admission, (state) => settleToolAdmission(state, runKey, name, toolPolicy, outcome))
+            }),
+          ))
+          return { _tag: "Ran", exit } as const
+        }))
+        const execution = yield* guarded
+        const exit = yield* Match.valueTags(execution, {
+          Busy: () => refuse("concurrency", "ToolConcurrency", concurrencyMessage(), effective),
+          Tripped: () => refuse("tripped", "ToolTripped", trippedMessage(), effective),
+          Ran: ({ exit }) => Effect.succeed(exit),
+        })
+        if (Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason)) return yield* Effect.failCause(exit.cause)
+        const durationMs = (yield* Clock.currentTimeMillis) - started
+        const ok = Exit.isSuccess(exit)
+        // A defect reaches the model (and the journal, through `tool.completed`) as the first line of its message;
+        // its stack, with the host's paths, goes to the log only.
+        const value: unknown = Exit.isSuccess(exit) ? exit.value
+          : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(messagesOf(exit.cause)).slice(0, 300)}`))
+        // A TurnError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
+        // handler published (`tool.progress`, `skills.activated`), or the writer or the store failed load_skill's
+        // activation (`TurnClosed`, `SessionLogError`...). Like a failure on `tool.started`, it fails the turn once
+        // `tool.completed` is out, instead of reaching the model as a ToolDefect.
+        const turnFailure = Exit.isSuccess(exit) ? Option.none<TurnError>()
+          : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect) ? [reason.defect] : Cause.isFailReason(reason) && isTurnError(reason.error) ? [reason.error] : [])[0])
+        if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
+          yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
+        }
+        const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(
+          Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.logWarning(`${name} returned a value its own schema does not encode; it is recorded as returned`, error).pipe(Effect.as(value))),
+        )
+        const candidate = Option.isSome(interceptor) && Option.isNone(turnFailure)
+          ? Option.some(yield* toolInterceptSnapshot(ToolInterceptOutcome, ok ? { _tag: "Success", encoded } : { _tag: "Failure", encoded }).pipe(Effect.result)) : Option.none()
+        yield* run.events.publish({ _tag: "tool.completed", step, invocationId, ...toolCall, tool: name, input: effective, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
+        if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)
+        const accepted = yield* Option.match(candidate, {
+          onNone: () => Effect.succeed(Option.none<ToolInterceptOutcome>()),
+          onSome: (result) => Result.match(result, { onFailure: Effect.die, onSuccess: (value) => Effect.succeed(Option.some(value)) }),
+        })
+        if (Option.isSome(interceptor) && Option.isSome(capture) && Option.isSome(accepted)) {
+          const decision = yield* afterToolIntercept(interceptor.value, { ...identity, input: Option.isSome(rewritten) ? rewritten.value.input : capture.value.input, outcome: accepted.value }).pipe(Effect.orDie)
+          const replacement = yield* Match.valueTags(decision, {
+            Keep: () => Effect.succeed(Option.none<Exit.Exit<unknown, unknown>>()),
+            Replace: ({ outcome }) => Match.valueTags(outcome, {
+              Success: ({ encoded }) => decode(entry.tool.successSchema, encoded).pipe(Effect.map((value) => Option.some(Exit.succeed(value)))),
+              Failure: ({ encoded }) => failureOutcome(encoded),
+            }),
+          })
+          yield* audit({ _tag: "After", decision: Match.valueTags(decision, {
+            Keep: () => ({ _tag: "Keep" as const }), Replace: ({ outcome }) => ({ _tag: "Replace" as const, kind: outcome._tag }),
+          }) })
+          if (Option.isSome(replacement)) return yield* replacement.value
+        }
+        return yield* ok ? Effect.succeed(value) : Effect.fail(value)
       })
-      if (Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason)) return yield* Effect.failCause(exit.cause)
-      const durationMs = (yield* Clock.currentTimeMillis) - started
-      const ok = Exit.isSuccess(exit)
-      // A defect reaches the model (and the journal, through `tool.completed`) as the first line of its message;
-      // its stack, with the host's paths, goes to the log only.
-      const value: unknown = Exit.isSuccess(exit) ? exit.value
-        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(messagesOf(exit.cause)).slice(0, 300)}`))
-      // A TurnError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
-      // handler published (`tool.progress`, `skills.activated`), or the writer or the store failed load_skill's
-      // activation (`TurnClosed`, `SessionLogError`...). Like a failure on `tool.started`, it fails the turn once
-      // `tool.completed` is out, instead of reaching the model as a ToolDefect.
-      const turnFailure = Exit.isSuccess(exit) ? Option.none<TurnError>()
-        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect) ? [reason.defect] : [])[0])
-      if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
-        yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
-      }
-      const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(
-        Effect.tapError((error) => Effect.logWarning(`${name} returned a value its own schema does not encode; it is recorded as returned`, error)),
-        Effect.orElseSucceed(() => value),
-      )
-      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, ...toolCall, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
-      if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)
-      return yield* ok ? Effect.succeed(value) : Effect.fail(value)
-    }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
+      return yield* operation.pipe(Effect.onExit((exit) => {
+        const ordinary = Exit.isSuccess(exit) || exit.cause.reasons.length > 0 && exit.cause.reasons.every((reason) => Cause.isFailReason(reason) && !isTurnError(reason.error))
+        return !ordinary ? Effect.void : Option.match(owner, { onNone: () => Effect.void, onSome: (owner) => Ref.get(metadata).pipe(Effect.flatMap(owner.ready), Effect.orDie) })
+      }))
+    }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices), withToolResultReceiptGuard)
 
     const handlerOf = (entry: RegisteredTool): RegisteredTool["handler"] =>
       entry.tool.name === LoadSkill.name ? (params) => loadSkill(params as { readonly skills: ReadonlyArray<string> })
@@ -433,8 +522,14 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
 
     const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make(...registered.map((entry) => entry.tool))
     const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))]))).pipe(
-      Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, HoldingToolGates)(context)),
+      Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),
     )
+    const providedToolkit = Option.isNone(interceptor) ? toolkit : interceptedToolkit(toolkit, runServices, (name, capture) => {
+      const entry = byName.get(name)
+      return toolkit.toHandlers(entry === undefined ? {} : { [name]: wrap(entry, handlerOf(entry), Option.some(capture)) }).pipe(
+        Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),
+      )
+    })
 
     const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
     const candidates = skills.filter((skill) => !skill.always)
@@ -521,14 +616,14 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     const select = (userMessage: UserMessage) => match(userMessage).pipe(Effect.flatMap(apply))
 
     return {
-      toolkit,
+      toolkit: providedToolkit,
       handlers,
       active: SynchronizedRef.get(activated).pipe(Effect.map((held) => [...own.map((entry) => entry.tool.name), ...held.tools])),
       activate,
       match,
       apply,
       select,
-      views,
+      views: viewsFor(runServices),
       pollable: registered.filter((entry) => entry.annotations.pollable).map((entry) => entry.tool.name),
       skills,
     } satisfies RunTools
