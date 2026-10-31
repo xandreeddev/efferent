@@ -9,6 +9,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Fail with `SessionLogError` only for the store (the log's own, or stored data that does not decode: `session.state`, `session.decode`, its `cause` kept); `guarded` gives up as `SessionContended` after `retries` conflicts; a value of the plugin's own that does not encode, or an answer the log's contract rules out, is a defect (`Effect.orDie`, `Effect.die`).
 - Read a stored record's fields through core's `readStored` (`turn.ended`, `inbox.queued`), and look a turn up by its key or run through `readStoredKeys`, which decodes the keys alone, never the message and its images; never read `event.data.<field>` unchecked. A row that does not decode fails with `session.decode`.
 - Pass a known snapshot or fork ceiling as `SessionReadQuery.through` before reading event data. Filtering after a read is too late for a decorating store that hydrates blobs. Keep the final sequence filter as defense for custom backends, and never compare sequence numbers across sessions.
+- `SessionsState.memorySnapshot`, when present, identifies a `memory.snapshot` publication in that head's own session. Every state transition preserves it. The writer derives it from the final stamped draft offset inside each CAS attempt, before omitting unchanged state: the snapshot and pointer commit together, including after a rebase. A snapshot allocates no memory entry id.
+- `TurnWriter.memorySnapshot` reads a pointer before its own `turn.started`, or an ancestor pointer within that ancestor's fork ceiling. Read only the exact pointed row with `after`, `through`, kind and limit; an ineligible future pointer returns None before fetching its payload or media. A selected wrong-session pointer, missing/wrong row or invalid snapshot data fails with `SessionLogError` `session.decode`, its cause retained. An own overall head rejected during begin retains the existing `session.state` behavior. The SDK validates actual anchor/frontier memory rows and retained contents; this adapter validates their authorized lineage order. Existing full `history` and fresh durable `snapshot` reads retain their meanings.
 - Write a turn's events only through its writer (`makeTurnWriter`): one fiber in queue order, consecutive appends in one commit, the framework's reserved kinds refused unless marked (`ReservedKind`). The closing drafts a turn holds (`closing`, its reply) are stored only by the end's own commit, right before `turn.ended`: never by a flush, kept when an end is refused by the store, dropped by a close from elsewhere.
 - Keep the writer's state in its one phase (`WriterPhase`: open, ending, failed, closed, ended; open and ending carry the closing drafts): move it only by the pure transitions of `src/turn-writer.entity.functions.ts` under `Ref.modify`, then run what the transition planned (queue an item, commit the end, settle the callers). Never a `SynchronizedRef`: the consumer fiber latches failures while an admitter holds the admission permit, blocked on a full queue; the `admission` semaphore only orders admissions.
 - Raise the writer's failures as `TurnError`'s tags, never as a `HarnessError` of their codes: `TurnClosed` with its reason (`ended` for its own end or a closed scope), `ReservedKind`, `SessionContended`, the log's own `SessionLogError`; a `HarnessError` only for the writer's own state (`session.encode`, `session.state`) and a write that died (`session.defect`), with its `cause`. Match them with `Effect.catchTag`, never by code.
@@ -55,6 +57,7 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 | An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:557` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
 | `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:441` | exact, `src/sessions.adapter.test.ts:1314` |
 | Default user message when the inbox drainer resumes interrupted work: `Continue.` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact, `src/inbox-drain.entity.functions.test.ts:16` |
+| Invalid selected memory snapshot message, also used for an invalid snapshot publication | `src/memory-snapshot.adapter.ts:10` | exact, `src/memory-snapshot.adapter.test.ts:148` |
 
 ## Erasure files
 
@@ -69,6 +72,7 @@ None.
 | `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
 | `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, enqueue, deliver, selected drains, cancel, remove, reaping, change signals, `TurnActivity`, `TurnShutdown` |
 | `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
+| `src/memory-snapshot.adapter.ts` | checked snapshot publication pointers and exact eligible pointed-row reads across lineage |
 | `src/turn-writer.entity.ts` | the writer's phase (`WriterPhase`, with the closing drafts held) and how an end begins (`EndStep`) |
 | `src/turn-writer.entity.functions.ts` | the writer's transitions: admit, hold the closing drafts, begin, plan, settle and withdraw an end, latch, close, the scope's own ending |
 | `src/sessions-state.entity.ts` | config, ownership and the state kept in the head |
@@ -78,6 +82,7 @@ None.
 
 ## Tests
 
+- `src/memory-snapshot.adapter.test.ts`: atomic row/pointer publication with unchanged state, assigned offsets after CAS conflict, lifecycle and lease preservation, nested fork sequence overlap, future-media exclusion, selected corruption, invalid frontier, lost ACK identity and interrupted ACK waiters. The shipped Sessions kit checks the optional advertised snapshot capability and a careless reader that always returns None.
 - `src/waiting-input.adapter.test.ts`: honest storage failures, cached shutdown backlog, raw reads with invalid state, and interrupted-ACK wakes for enqueue/create/fork/remove.
 - `src/inbox-drain.adapter.test.ts` and `.entity.functions.test.ts`: discovery, concurrency, backoff, startup takeover, shutdown and cancellation. The shared `scripts/inbox-restart-consumer.fixture.mjs` runs real killed-tool and killed-take recovery on source Bun and packed Node/Bun.
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.

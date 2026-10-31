@@ -154,6 +154,18 @@ cannot break inherited history. Physical backups include the separate media
 root; old unwrapped typed readers need hydrated exports or an updated reader.
 Session deletion does not collect shared blobs.
 
+Stored format 12 adds optional render snapshots. The summary strategy publishes
+raw retained dependencies before the first kept turn, with compaction facts and
+an atomic head-state pointer. Cold opens verify and reuse the projection; late
+old pins restore full rendering. A fork never borrows a parent's snapshot
+published after its cutoff, even when that snapshot has an older anchor.
+Snapshots accelerate repeated rendering while the full archive remains eagerly
+loaded. Recall, maintenance, dispatch checks and historical replay keep complete
+history; this does not reduce initial archive or image hydration I/O. Custom
+writers may advertise `TurnWriter.memorySnapshot`, and log handles may provide
+`checkpoint.load/save`; omission preserves the full path. The framework guide
+and shipped `memorySnapshotConformance` kit describe the integrity contract.
+
 Accepted positive input counts can raise message estimates through
 `scaledTokens`, using the exact prepared message estimate and system/tool reserve.
 The SDK matches the actual selected model and run; helpers, discarded responses

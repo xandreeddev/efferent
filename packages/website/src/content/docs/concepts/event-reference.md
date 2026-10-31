@@ -280,6 +280,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `inbox.taken` | plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer | None: the input id and raw memory entry id; message and image bytes stay in memory.message. | `id`, `entry` |
 | `model.called` | The turn-owned model-call recorder, directly appended and flushed before notification | Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies. | `callId`, `attempt`, `purpose`, `method`, `model`, `runId`, `run`, `step`, `durationMs`, `usage`, `outcome` |
 | `request.part` | The turn, in the same append batch before a version 2 request header (`TurnMemory.prepareRequest`) | A system prompt (including system-mode step context) or one active tool declaration. Provider-tool argument values remain excluded. | `hash`, `part` |
+| `memory.snapshot` | Opted-in memory after a reducing summary and digest acknowledgments; the turn writer publishes its head pointer in the same commit | Copies of retained raw memory, including tool output, reasoning, host context, image values and compaction facts. Treat these copies like their original records and retain referenced media. | `version`, `strategy`, `anchor`, `through`, `entries` |
 
 A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.
 
@@ -331,6 +332,7 @@ inbox.dropped
 inbox.taken
 model.called
 request.part
+memory.snapshot
 tool.progress
 skills.activated
 assistant.message
@@ -428,7 +430,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `inbox.input-conflict` | `Sessions.enqueue` (`InputConflict`) | The input id already names another normalized message, delivery or source, or a legacy notice. Nothing was replaced or queued; retry with the original input or a new id. |
 | `session.state` | the turn writer (a `HarnessError`); plugin-sessions' `Sessions` (a `SessionLogError`) | The session's state, kept in its head, did not decode. |
 | `session.encode` | the turn writer | The writer's closing `turn.ended` did not encode. plugin-sessions' `Sessions` no longer raises it for a record or a state of its own since `SessionLogError` became storage only (it is a defect now); older journals may hold it. |
-| `session.decode` | `Sessions.begin` (a `SessionLogError`) | A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes. |
+| `session.decode` | `Sessions.begin` and selected memory checkpoint validation (a `SessionLogError`) | A stored turn did not decode during key/resume checks, or a selected memory snapshot has invalid identity, schema, frontier or retained contents. The pointed-record reader reports that the stored memory snapshot is invalid; other checkpoint decoders name the failed invariant. Malformed overall head state retains session.state. |
 | `turn.shutdown` | a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions` (`TurnShutdown.interrupt`) | The process shut down before the turn ended: the host's shutdown deadline passed (`shutdownGracefully`, `Agent.shutdown`, `AgentConfig.shutdown`) with the turn still running, and its end was stored while the log was still open. The turn is resumable, and its inbox items wait again with no attempt counted. |
 | `turn.time-limit` | a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions` | The turn ran past its time limit (the begin's `timeLimitMs`, else the Sessions' `turns.timeLimitMs`): its holder closed it, and its writer refuses every later write with `TurnClosed` of reason `timed-out`. The turn is resumable; its inbox items wait again, an attempt counted. |
 | `turn.takeover` | a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions` | A begin with `takeOver` closed the session's open turn, still held by another holder, which the host says is gone (a restarted process). The turn is resumable, and its inbox items wait again with no attempt counted. |

@@ -4,6 +4,7 @@ const draftOfTurnEvent
 const draftsOfEntries
 const encodeRequestPart
 const entriesSendingMedia
+const entryOfEvent
 const estimateTokens
 const extractUsage
 const foldStreamParts
@@ -12,6 +13,7 @@ const isVolatileContext
 const markVolatileContext
 const modelRequestHeaderOf
 const modelRequestTools
+const prepareMemorySnapshot
 const prepareRequestParts
 const randomUuid
 const readerOf

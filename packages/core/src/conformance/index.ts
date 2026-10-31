@@ -5,6 +5,8 @@
 export { ConformanceFailure } from "../conformance.entity.js"
 export type { ConformanceCheck } from "../conformance.entity.js"
 export { check } from "../conformance.functions.js"
+export { memorySnapshotConformance } from "../memory/memory-snapshot.conformance.js"
+export type { MemorySnapshotSubject } from "../memory/memory-snapshot.conformance.js"
 export { mediaStoreConformance } from "../media/media-store.conformance.js"
 export type { MediaStoreSubject } from "../media/media-store.conformance.js"
 export { requestHeaderConformance } from "../turn/request-header.conformance.js"

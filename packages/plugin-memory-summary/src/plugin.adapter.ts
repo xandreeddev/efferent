@@ -117,6 +117,7 @@ const policyWithAttempts = (
   attempt: Option.Option<Ref.Ref<SummaryAttempt>>,
 ): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
+  checkpoint: "render",
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: Option.none(),
   maintain: (input) => decide(config, summarize, attempt, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),

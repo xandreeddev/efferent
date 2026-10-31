@@ -20,4 +20,4 @@
  *
  * @public
  */
-export const STORED_FORMAT: number = 11
+export const STORED_FORMAT: number = 12

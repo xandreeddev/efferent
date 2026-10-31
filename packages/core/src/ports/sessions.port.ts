@@ -70,6 +70,8 @@ export interface TurnWriter {
    * With `after`, only this session's own events stored after that seq: the inherited history precedes them all.
    */
   readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, TurnError>
+  /** Optional atomic snapshot-pointer capability: the selected visible publication row, never a future fork row. */
+  readonly memorySnapshot?: Effect.Effect<Option.Option<SessionLogEvent>, TurnError>
   /** Fresh pending delivery:steer inputs in delivery order; never claims one or records a notice attempt. */
   readonly steers: Effect.Effect<ReadonlyArray<QueuedInput>, TurnError>
   /**

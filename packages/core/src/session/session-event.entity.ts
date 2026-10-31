@@ -170,7 +170,7 @@ export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued
  * the memory events: a host that redacts memory, or exports or streams
  * session events, handles it the same way.
  */
-export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS, "model.called", "request.part"]
+export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS, "model.called", "request.part", "memory.snapshot"]
 
 /**
  * Names only Efferent uses: a host event or a host record under one of

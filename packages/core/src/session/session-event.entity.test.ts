@@ -390,7 +390,7 @@ describe("stored events read by their kind", () => {
   const failed = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect)).then((result) => result._tag === "Failure")
 
   test("the kinds read back by their fields are the journal's, with the same schemas", () => {
-    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared", "model.called", "request.part"])
+    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared", "model.called", "request.part", "memory.snapshot"])
     expect(Object.entries(StoredData).every(([kind, schema]) => Option.contains(journalSchemaOf(kind), schema))).toBe(true)
   })
 

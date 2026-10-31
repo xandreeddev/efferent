@@ -856,6 +856,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(mediaReport.trim())
 }
+// Snapshots accelerate the actual memory build while archive reads and dispatch replay stay full.
+await writeFile(join(consumer, "memory-snapshot-consumer.mjs"), await readFile(join(root, "scripts/memory-snapshot-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const snapshotChild = Bun.spawn([binary, "memory-snapshot-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const snapshotReport = await new Response(snapshotChild.stdout).text()
+  const required = ["kitVerified", "snapshotPublishedVerified", "pointerAtomicVerified", "mediaSnapshotVerified", "coldProjectionVerified", "readOnlyReopenVerified", "archiveRecallVerified", "lateOverlayFallbackVerified", "oldAnchorFuturePublicationVerified", "forkCutoffVerified", "missingFutureMediaIgnored", "durablePointerBeforeAckVerified", "heldAckRecoveryVerified"]
+  if (await snapshotChild.exited !== 0 || !snapshotReport.includes(`memory-snapshot {"runtime":"${runtime}"`) || required.some((name) => !snapshotReport.includes(`"${name}":true`)) || (snapshotReport.match(/"projectionReuseVerified":true/g) ?? []).length !== 2 || (snapshotReport.match(/"projectedBuildReads":0/g) ?? []).length !== 2 || (snapshotReport.match(/"replayVerified":true/g) ?? []).length !== 4) {
+    console.error(`the packed ${runtime} snapshot journey lost projection reuse, archive recall, fork visibility or atomic recovery`); process.exit(1)
+  }
+  console.log(snapshotReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

@@ -53,7 +53,7 @@ describe("referenced request header schemas", () => {
   })
 
   test("request parts are reserved durable protocol facts without memory entries", async () => {
-    expect(JOURNAL_KINDS.at(-1)).toBe("request.part")
+    expect(JOURNAL_KINDS.indexOf("request.part")).toBe(JOURNAL_KINDS.indexOf("model.called") + 1)
     expect(RESERVED_KINDS.includes("request.part")).toBe(true)
     expect(MEMORY_KINDS.includes("request.part")).toBe(false)
     const stored = await Effect.runPromise(readStored("request.part", [system, tool]))

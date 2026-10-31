@@ -1355,6 +1355,48 @@ adapters may omit the new field. The shipped `requestHeaderConformance` checks
 resolution and strict prefix behavior. Stored format 10 adds this protocol;
 old session and request formats remain readable.
 
+**Render snapshots.** Stored format 12 adds optional `memory.snapshot` records.
+After an acknowledged reducing summary and its requested digests, the summary
+strategy can publish a snapshot together with a recognized head-state pointer in
+one atomic commit. Its anchor names the first kept turn's actual journal event;
+its frontier names the last represented memory event. Both use `{ session, seq }`
+cursors because sequence numbers belong to each session. The payload retains
+raw pre-anchor render dependencies and original compaction facts in order. The
+actual anchor-and-after tail supplies later entries once; snapshot rows allocate
+no memory entry IDs and never become model messages.
+
+A cold open verifies selected snapshot contents against the authoritative archive
+before reusing the smaller render projection. It preserves exact tool request/result
+associations, raw presentation/digest facts, signed content, image values and
+complete build metadata. A late pin of a previously omitted result or another
+unsupported dependency restores the full archive path. A valid strategy mismatch
+also uses full rendering; selected malformed snapshot records fail with
+`SessionLogError`, code `session.decode`. An invalid overall session head retains
+the established `session.state` failure.
+
+The head pointer names the actual publication row. A fork cannot use a later
+parent snapshot merely because its anchor predates the fork: publication and
+represented facts must both belong to the inherited prefix. A valid future pointer
+is declined before its row is fetched or its media hydrated. An absent or ineligible
+pointer uses full history; no read rewrites the archive.
+
+Snapshots accelerate repeated rendering and association work. The full archive
+stays eagerly loaded: `MemoryReader` recall, queries, subjects and transcripts,
+maintenance inputs, SDK dispatch verification and historical replay keep their
+existing complete-history behavior and error channels. Initial archive and media
+hydration I/O is unchanged. Request parts remain a separate dependency protocol.
+Retention and redaction treat snapshot copies as sensitive as their original
+memory records, including referenced media.
+
+Custom policies opt in with `MemoryPolicy.checkpoint: "render"` when their
+`LogHandle` supplies optional `checkpoint.load/save`. Load supplies a resolved
+`MemorySnapshotCandidate`; save resolves entry IDs to real durable journal cursors.
+The optional `TurnWriter.memorySnapshot` capability advertises bounded pointed-row
+reads and atomic pointer publication. Omitted capabilities preserve full rendering.
+`LogHandle.snapshot` retains its distinct fresh full-read meaning after an uncertain
+append acknowledgment. Rerun `sessionsConformance` for writer adapters and use the
+shipped `memorySnapshotConformance` kit for projection implementations.
+
 When using `withMediaStore`, hydrate physical event data before resolving parts
 or reconstructing a request. Request-part hashes continue to cover the original
 logical inline values. A bounded history read uses `SessionReadQuery.through`

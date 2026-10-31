@@ -1,10 +1,10 @@
 {
-  "format": 11,
-  "fingerprint": "8189c256b40703bee3f955de46f8257f4e97bb2ca1b720bd97ed36d2944ab0fc",
+  "format": 12,
+  "fingerprint": "d15d69aa1f3dd8fed5ba1a4305b94fc3a855849bbb2f9d78964a68ec268ef080",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
-    "SessionsState": "58428a85532aed0617e3750893b1f1b3b1744b175aaf606c656ab32f8398261e",
+    "SessionsState": "9cf8be5f29fcbcfd74468cdd4984bd47fb9b89b8693787f9db6a89d24a988b22",
     "journal completion.evaluated": "bb3fe8c6dcb0036767aa034056b0397adc718ea360eeb42b760e822bbe262447",
     "journal context.built": "620a71f94f3e10ae5142bf03cfd9f0e30f0ad7d30560b16e378a1966d6293d6c",
     "journal decision.recorded": "cb5c1383205a5ff82649c2feb3061298ac4dc7c86d6a1a5b2b2e93d448a5e7fd",
@@ -16,6 +16,7 @@
     "journal memory.message": "a71375a92b30fb51741f08dc4238b512b050d5295d086b6ce6188490ec5ca51e",
     "journal memory.section": "62511ca5be1cff0fa2a8c4dc7f509f3621237df24882a5e8b4761e00c0e219b7",
     "journal memory.skills": "8c8871b99866a59efd5b79c1760664a8f869535ceec6fedbc2066fdef97a80f2",
+    "journal memory.snapshot": "01c5fadd63d665dfe115b976d5fb47d266bed1fec43175aaf6ed2725b602c84f",
     "journal memory.step": "30558108345a1d32f4d01c51452265f1217e741cd7a0ca884f29e2542b1375e3",
     "journal memory.system": "82e793d5ae8e7a0a6cb19cc8b61d719be5d868f9eb33e383d77ae23acdd838e0",
     "journal memory.tool-presentation": "dda56026f79b2528cfa86981b5d76751c871eed04d2b31ab48f70a5ca51dbf4a",
@@ -83,6 +84,10 @@
     {
       "format": 11,
       "fingerprint": "8189c256b40703bee3f955de46f8257f4e97bb2ca1b720bd97ed36d2944ab0fc"
+    },
+    {
+      "format": 12,
+      "fingerprint": "d15d69aa1f3dd8fed5ba1a4305b94fc3a855849bbb2f9d78964a68ec268ef080"
     }
   ]
 }

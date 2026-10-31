@@ -39,6 +39,7 @@ import {
 import type { JsonObject, ModelCallPurpose, SessionAddress, TokenUsage, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
+import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
@@ -65,7 +66,8 @@ import { Agent } from "@xandreed/sdk"
  * the registry refuses and a compaction), an inbox item
  * whose turns fail until it is dropped, a background task that completes and
  * is delivered to the inbox, one that is cancelled before it runs, and a
- * queued steer atomically taken before a new turn's first provider step.
+ * queued steer atomically taken before a new turn's first provider step,
+ * and a reducing two-turn summary with an atomic render-snapshot pointer.
  */
 
 const root = join(import.meta.dir, "..")
@@ -331,12 +333,45 @@ const record = Effect.gen(function* () {
     return { outcome: result.outcome, reply: Option.some(result.text) } satisfies TurnOutcome
   }))
 
+  // An independent conversation keeps the earlier recording unchanged while
+  // producing the real summary strategy's protocol snapshot.
+  const snapshotAddress: SessionAddress = { id: ConversationId.make(fixedId(0x60ff)), owner: address.owner }
+  yield* sessions.create(snapshotAddress)
+  const summaryAgent = yield* Agent.define({
+    plugins: [{ plugin: memorySummaryPlugin, options: { triggerRatio: 0.5, cooldownTurns: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
+    turnServices: [LanguageModel.LanguageModel, UtilityLlm],
+    budgetTokens: 1_000,
+    limits: { streaming: false, maxSteps: 1 },
+  })
+  const summarizer = UtilityLlm.of({ complete: () => fixtureCompletion("Helper", {
+    inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+  }).pipe(Effect.as(new UtilityCompletion({ text: "Earlier snapshot fixture context.", usage: {
+    inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+  } }))) })
+  yield* Effect.forEach([
+    { run: "snapshot-fixture-1", reply: "Earlier fixture evidence ".repeat(180) },
+    { run: "snapshot-fixture-2", reply: "The checkpoint is ready." },
+  ], ({ run, reply }) => Effect.gen(function* () {
+    const model = yield* scripted([stop(reply)])
+    return yield* summaryAgent.turn({
+      turn: { session: snapshotAddress, runId: RunId.make(run), userMessage: new UserMessage({ text: `Inspect ${run}.` }) },
+      services: Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model), Context.add(UtilityLlm, summarizer)),
+    }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const done = yield* turn.run({})
+      return { outcome: done.outcome, reply: Option.some(done.text) }
+    }))
+  }), { concurrency: 1, discard: true })
+  if (!(yield* sessions.read(snapshotAddress)).some((event) => event.kind === "memory.snapshot")) {
+    return yield* Effect.die("the fixture summary did not publish a memory snapshot")
+  }
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }], journal)
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress], journal)
 }).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
 
 const sessions = await Effect.runPromise(record)

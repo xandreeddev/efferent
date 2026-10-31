@@ -10,6 +10,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 12 adds `memory.snapshot` render checkpoints and an optional
+  head-state pointer. Custom writers may advertise `TurnWriter.memorySnapshot`
+  when they atomically publish the pointer with each framework snapshot row;
+  rerun `sessionsConformance`. Custom log handles may provide
+  `checkpoint.load/save` with resolved entry IDs. Omission preserves full
+  rendering. The summary strategy opts in; other strategies are unchanged.
+  Archive readers, maintenance inputs and historical request replay remain full
+  and keep their existing error channels.
+
 - Stored format 11 adds optional physical media references. Compose
   `withMediaStore` over the session log and retain its `MediaStore` alongside
   physical journal backups; logical readers and replay still receive inline
@@ -1077,6 +1086,15 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Add durable render snapshots anchored at the first kept turn's actual journal
+  position, retaining raw render dependencies and original compaction facts in
+  order. Cold opens verify and reuse the projection; late old pins and incompatible
+  dependencies fall back to the full archive. The shipped `memorySnapshotConformance`
+  kit and properties verify complete context equality. Selected invalid snapshots
+  fail with `session.decode`; the pointed-record reader reports "The stored memory
+  snapshot is invalid." Malformed overall head state retains `session.state`. Snapshots
+  accelerate repeated rendering while the full archive stays eagerly loaded.
 
 - Add the content-addressed `MediaStore` port, memory adapter, shipped kit and
   `MediaStoreDirectoryLive` in the files plugin. `withMediaStore` durably stores

@@ -5,6 +5,7 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 ## Rules
 
 - The policy only decides: a `Summarize` action (`keepFromTurn`, `summary`) that core's `openLogSession` records; core's `handoffToMessage` is what shows the summary to the model.
+- The policy opts in with `checkpoint: "render"`. Core publishes a checkpoint only after an actually reducing summary and requested digests acknowledge, outside memory allocation and provider callbacks. A compatible durable checkpoint accelerates later rendering; the full archive and maintenance inputs remain complete. No extra summary call, initial archive I/O savings, deletion or strategy version change is implied. `src/plugin.adapter.test.ts` checks one checkpoint for one paid reducing summary.
 - An expected utility failure or `summaryTimeoutMs` timeout decides nothing: log `summary left out: …` and let the turn go on. Original recorder/storage `TurnError` defects stay hard and retain identity, including defects raised during timeout cancellation cleanup. A terminal Exit captured outside the helper's cleanup is checked before softening a timeout; the pinned timeout awaits that cleanup.
 - Each built-in opened session owns private tagged `Ready`/`Running`/`Failed` state. It declines concurrent or reentrant asks, remembers attempted prompt/frontier fingerprints for that session (including earlier frontiers revisited after a budget change), and prevents every later ask after a failed or timed-out call. It holds no lock while calling the provider. A new eligible frontier can be asked after an empty or nonreducing answer; the identical frontier cannot buy that answer repeatedly. Public `summaryPolicy` stays stateless and reusable across opened sessions; it owns the pure timing/reduction decisions, not the adapter's paid-attempt lifetime.
 - Use `scaledTokens` consistently for the trigger, kept tail and prospective summary. Append `Summarize` only when its rendered context is smaller. Keep the current admitted turn intact, even after one `Turn.run` returns.
@@ -31,9 +32,9 @@ All of it goes to the summarizer (the utility model), not to the agent's model.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact, `src/plugin.adapter.test.ts:55`; sdk compaction golden |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact, `src/plugin.adapter.test.ts:76`; sdk compaction golden |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact, `src/plugin.adapter.test.ts:59`; sdk compaction golden |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact, `src/plugin.adapter.test.ts:59`; sdk compaction golden |
 
 ## Erasure files
 
