@@ -518,47 +518,101 @@ other event is the same `InvalidRequestError` an HTTP 400 is.
 
 ## Provider errors and reasoning effort
 
-The routed model fails with effect/ai's `AiError`, its reason saying what
-went wrong. A rate limit (a 429), a server error, a transport failure or a
-timeout is retried three times with backoff, then sent once to the
-`fallbackModel` when one is set; anything else fails at once. A 429 whose
-`Retry-After` is over a minute counts as a daily quota and fails at once too.
+The routed model preserves effect/ai's `AiError` and concrete reason classes.
+`modelFailureOf(error)` (`@xandreed/core`) reads the semantic kind, including
+explicit provider evidence that refines the SDK's reason. It accepts native
+`AiError` values/reasons or response parts/content, without unwrapping a
+`HarnessError.cause`; use `harnessCodeOf` for a returned turn error. The step
+loop
+retains the provider error as `HarnessError.cause` and exposes these codes:
+
+| Kind | Turn failure code |
+|---|---|
+| `ContextOverflow` | `model.context-overflow` |
+| `Authentication` | `model.auth` |
+| `InvalidRequest` | `model.invalid-request` |
+| `RateLimit` | `model.rate-limit` |
+| `Quota` | `model.quota` |
+| `Transient` | `model.unavailable` |
+| `InvalidResponse` | `model.invalid-response` |
+| `Timeout` | `model.timeout` |
+| `Unknown` | `model.failed` |
+
+Context overflow, authentication, invalid requests, quota and invalid
+responses fail without retry or fallback. This includes the loop's usual
+pre-content stream-to-text fallback; the existing image-refusal path can
+still omit refused images and replan once. Rate limits, server/transport
+failures and timeouts retain three fast retries with backoff and the configured
+`fallbackModel` rung. The current policy declines retry and that fallback
+when `Retry-After` exceeds one minute; a long delay alone does not diagnose
+quota exhaustion. Unknown failures retain the existing retry heuristics.
+
 An attempt is cut after 300 s (`LLM_REQUEST_TIMEOUT_MS`), and a
 `generateText` or `generateObject` call has 600 s (`LLM_CALL_BUDGET_MS`) for
 all its attempts, their backoff and the fallback: no attempt starts after
 that, and one still running then is cut, failing with a message that names
-the budget and the attempts made. The step loop's tools run inside the call,
-and once it has started a tool the call is final: it is not retried, does not
-fall back, and neither bound applies, since another attempt would run the
-tools again; a tool bounds itself (a bash timeout, a task's deadline).
+the budget and the attempts made. A host using an SDK toolkit directly can
+run its handlers inside the routed call; once it does, the call is final,
+with no retry, fallback or provider timeout that could repeat the tool.
+The framework step loop waits for a whole response before running handlers.
+Each tool bounds its own work (a bash timeout, a task's deadline).
 
-A `streamText` call is cut after 300 s without a part instead, and the time
-a tool runs does not count: the step loop's tools run mid-stream, and the
-finish part waits for them (the bound counts the time no tool runs, to
-within a quarter of it). A stream is retried only before its first content
+A `streamText` call is cut after 300 s without a part instead. If a host's
+SDK toolkit runs handlers inside the stream, their time does not count
+toward that idle bound; activity is sampled every quarter of the bound
+(75 s with the default 300 s timeout). A stream is retried
+only before its first content
 part, within the same 600 s: no attempt starts after that, and one that has
 sent no content by then is cut. It has no fallback of its own: when a stream
-fails before any part arrives, the step loop falls back to `generateText`,
-a call with a budget of its own.
+fails before any part arrives without a known permanent semantic failure,
+the step loop can fall back to `generateText`, a call with a budget of its own.
 
-- An exhausted balance or quota is a `QuotaExhaustedError`: a 402, or an
-  error whose type or code names one (OpenCode's `CreditsError`, OpenAI's
-  `insufficient_quota`), at any status. It is not retried and does not fall
-  back. A plain 429 stays a `RateLimitError`, whatever its message says.
-- A credential the call cannot have (none stored, a refresh that failed) is
-  an `AuthenticationError`: not retried, no fallback.
+- Structured provider codes take precedence over generic gateway status.
+  Explicit billing/quota errors (such as OpenCode's `CreditsError` or
+  OpenAI's `insufficient_quota`) mean `Quota`; absent more specific evidence,
+  HTTP 402 does too. An ordinary HTTP 429 means `RateLimit`. Inspect the
+  semantic kind rather than expecting classification to replace the
+  original SDK reason class.
+- Missing credentials and authentication refusals mean `Authentication`.
+  Unsupported thinking, cache, schema and signature settings remain invalid
+  requests. A bare HTTP 413 means request bytes, not proven token-context
+  overflow. Only explicit context codes or narrow context-window evidence
+  refine it to `ContextOverflow`.
 - A response the provider got wrong (a body or stream chunk that is not
   JSON, `null`, or of the wrong shape, a subscription stream that broke off)
-  is an `InvalidResponseError`. The step loop does not answer it with a
+  means `InvalidResponse`. The step loop does not answer it with a
   corrective turn: those are for the model's own invalid output (an unknown
-  tool, tool arguments that do not parse).
+  tool, tool arguments that do not parse). Explicit protocol-failure stamps
+  take precedence over an SDK malformed-output reason.
 - On `openai-codex`, an `error` event before any other is answered as the
   HTTP endpoint answers it, with its status and error body: a server error
-  is a retried `InternalProviderError`, `insufficient_quota` a
-  `QuotaExhaustedError`. The server closing the socket normally ends the
+  means `Transient`, while `insufficient_quota` means `Quota`. The server
+  closing the socket normally ends the
   stream; a close before any event fails the call as a transport error. A
   conversation keeps its session id while the agent lives, for up to 1024
   conversations (past that, the one used least recently gets a new id).
+
+Efferent intercepts native Anthropic HTTP 200 `model_context_window_exceeded`
+and raw SSE overflow/error events before SDK finish normalization and
+framework tool admission. The cause retains raw response/event
+data, request id and known usage, with credentials omitted from the added
+request diagnostics. Framework tool handlers do not run for that failed
+step; already published stream deltas remain observable. Ordinary
+`max_tokens` still allows two bounded corrective requests before
+`loop.truncated`. An ordinary content-filter finish remains a cut, while a
+provider content-policy error means `InvalidRequest`. See the provider's
+[stop-reason reference](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)
+and [API error reference](https://platform.claude.com/docs/en/api/errors)
+for the raw distinctions, including byte-size 413 errors and errors after an
+SSE 200 response.
+
+The helpers `modelFailureCodeOf`, `stampPartFailure`, `stampResponseFailure`
+and `stampAiErrorFailure` preserve typed meaning for custom adapters. A
+custom `StepLoop` reruns `stepLoopConformance`, including `model-failures`,
+before upgrading. Writer and other `TurnError` tags remain intact;
+unclassified loop/callback failures still use `loop.failed`. Local HTTP and
+packed Node/Bun fixtures establish these control-flow and replay contracts,
+not live provider acceptance.
 
 The settings' `reasoningEffort` (unless the call pinned a policy of its own)
 reaches each route in the vocabulary it takes: `openai-codex` as it is;

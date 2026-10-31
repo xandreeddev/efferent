@@ -5,6 +5,7 @@ import { reasonOf } from "@xandreed/core"
 import type { CompletionUsage, StreamChunk, StreamToolCall } from "./chat-wire.entity.js"
 import { chunkErrorOf, decodeStreamChunk, decodeToolArguments, isQuotaExhausted } from "./chat-wire.entity.functions.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { classifyAiError } from "./provider-failure.entity.functions.js"
 
 /**
  * The OpenAI-compatible SSE wire → `@effect/ai` `StreamPartEncoded`s, as a
@@ -239,15 +240,16 @@ const applyChunk = (
   if (chunk.error !== undefined && chunk.error !== null) {
     const error = chunkErrorOf(chunk.error)
     return Effect.fail(
-      AiError.make({
+      classifyAiError(AiError.make({
         module: moduleName,
         method: "streamText",
         reason: isQuotaExhausted(Option.none(), error)
           ? new AiError.QuotaExhaustedError({ metadata: { [moduleName]: { ...Option.getOrElse(error, () => ({})) } } })
           : new AiError.UnknownError({
             description: `the stream carried an error chunk: ${JSON.stringify(chunk.error).slice(0, 500)}`,
+            metadata: { [moduleName]: { ...Option.getOrElse(error, () => ({})) } },
           }),
-      }),
+      }), "compat"),
     )
   }
   const choice = chunk.choices?.[0]

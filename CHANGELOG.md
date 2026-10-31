@@ -10,6 +10,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Model request failures now expose typed `model.*` codes instead of the
+  generic `loop.failed`; read a returned turn error's code with
+  `harnessCodeOf`. Adapters classify native errors or response parts/content
+  with `modelFailureOf` and map the kind with `modelFailureCodeOf`;
+  `modelFailureOf` does not unwrap a `HarnessError` cause. Concrete provider
+  error/reason classes and diagnostic evidence remain in the cause. A custom `StepLoop` reruns
+  `stepLoopConformance`, including `model-failures`, and handles semantic
+  failures before tool admission, malformed correction or output-cut
+  recovery. Writer `TurnError` failures keep their tags and codes;
+  unrelated unclassified failures still use `loop.failed`.
+
 - A custom memory strategy supplies `BuiltContext.stableMessages`, the
   rendered prefix before its volatile step-context tail, and reruns the
   memory conformance kit. Stored format 8 adds optional frozen prefix counts
@@ -1002,6 +1013,16 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Provider-neutral `ModelFailureKind`, failure stamps and helpers, with nine
+  published codes for context, authentication, invalid requests, rate limits,
+  quota, availability, invalid responses, timeouts and unknown failures.
+  Native HTTP 200 overflow stops and raw SSE failures retain their meaning
+  before SDK normalization; known permanent failures cause no duplicate
+  request, fallback or tool handler. Their causes preserve raw diagnostics
+  and known usage without request credentials. Ordinary output-limit cuts
+  retain bounded correctives. Local Agent and packed Node/Bun fixtures
+  verify failure codes, request replay and zero tool admission.
 
 - Per-model Messages prompt-cache policies: Auto and TopLevel with five-minute
   or one-hour lifetimes, and Off. Automatic breakpoints share the four slots

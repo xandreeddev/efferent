@@ -36,6 +36,9 @@ import { CurrentThinkingPrefixMismatch } from "../ports/thinking-binding.port.js
 import { THINKING_BINDING_BETA } from "./thinking-binding.entity.js"
 import type { ThinkingPrefixMismatch } from "./thinking-binding.entity.js"
 import { bindingFor, droppedInBody, droppedInMessageStart, firstEventData, mergeBetas } from "./thinking-binding.entity.functions.js"
+import { classifyAiError } from "./provider-failure.entity.functions.js"
+import { providerFailureProtocol, withAnthropicFailures, withOpenAiFailures } from "./provider-client.adapter.js"
+import type { ProviderFailureProtocol } from "./provider-failure.entity.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -95,6 +98,17 @@ const withStrippedVolatileContext = (model: LanguageModel.LanguageModel): Langua
   generateObject: ((options: PromptOptions) => model.generateObject(withoutVolatilePrompt(options) as never)) as never,
   streamText: ((options: PromptOptions) => model.streamText(withoutVolatilePrompt(options) as never)) as never,
 })
+
+/** Preserve typed provider semantics on every model method without altering responses. */
+const withProviderFailures = (model: LanguageModel.LanguageModel, protocol: ProviderFailureProtocol): LanguageModel.LanguageModel => {
+  const failure = (error: unknown) => AiError.isAiError(error) ? classifyAiError(error, protocol) : error
+  return {
+    ...model,
+    generateText: ((options: PromptOptions) => model.generateText(options as never).pipe(Effect.mapError(failure))) as never,
+    generateObject: ((options: PromptOptions) => model.generateObject(options as never).pipe(Effect.mapError(failure))) as never,
+    streamText: ((options: PromptOptions) => model.streamText(options as never).pipe(Stream.mapError(failure))) as never,
+  }
+}
 
 /**
  * Every request with `betas` added to its `anthropic-beta` header, after
@@ -575,7 +589,7 @@ const anthropicModel = (
       },
     }),
   })
-  const client = withCachePlanning(yield* AnthropicClient.make(options))
+  const client = withAnthropicFailures(withCachePlanning(yield* AnthropicClient.make(options)))
   const service = yield* AnthropicLanguageModel.make({ model: selection.modelId, config: wire as never }).pipe(Effect.provideService(AnthropicClient.AnthropicClient, client))
   const oauth = authentication._tag === "Subscription"
   return {
@@ -608,7 +622,7 @@ const responsesModel = (route: ResponsesRoute, { selection, model, key }: RouteC
       }
       return OpenAiClient.make({ apiKey: key, ...Option.match(route.apiUrl, { onNone: () => ({}), onSome: (apiUrl) => ({ apiUrl }) }) }).pipe(
         Effect.flatMap((client) =>
-          OpenAiLanguageModel.make({ model: selection.modelId, config }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
+          OpenAiLanguageModel.make({ model: selection.modelId, config }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, withOpenAiFailures(client))),
         ),
         Effect.map((svc) => ({ svc, settings: Option.some(config), prependClaudeCode: false })),
       )
@@ -689,12 +703,16 @@ export const buildProviderOver = (services: ProviderServices) => (
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
-  Effect.map((built) => ({
-    svc: describeModel(built.route === "anthropic" ? (built.images ? built.svc : withImageLabels(built.svc)) : withStrippedVolatileContext(built.images ? built.svc : withImageLabels(built.svc)), descriptorOf(selection, built)),
-    prependClaudeCode: built.prependClaudeCode,
-    images: built.images,
-    route: built.route,
-  })),
+  Effect.map((built) => {
+    const classified = withProviderFailures(built.svc, providerFailureProtocol(built.route))
+    const labeled = built.images ? classified : withImageLabels(classified)
+    return {
+      svc: describeModel(built.route === "anthropic" ? labeled : withStrippedVolatileContext(labeled), descriptorOf(selection, built)),
+      prependClaudeCode: built.prependClaudeCode,
+      images: built.images,
+      route: built.route,
+    }
+  }),
 )
 
 /**

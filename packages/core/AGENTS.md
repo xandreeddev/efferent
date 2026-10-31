@@ -146,6 +146,17 @@ tags; versions 1 and 2 still load. A `TurnRunner` (`Agent.turn`) fails a
 turn that cannot begin with its `TurnBeginError` as it is, never a
 `HarnessError` made from it (`turnConformance` checks `SessionBusy`).
 
+`ModelFailureKind` and `ModelFailureStamp` describe a model request's semantic
+failure under `ENGINE_KEY.failure`, independently of model, usage and request
+bookkeeping. `modelFailureOf` reads an explicit own stamp before neutral
+`AiError` reason fallback; it never searches provider prose, bodies or causes.
+Unstamped malformed-output and tool errors remain unclassified. Stamp helpers
+merge engine siblings, and `stampAiErrorFailure` copies each concrete reason
+through its constructor while retaining declared evidence; metadata-less
+reasons, including `NetworkError`, retain identity. `modelFailureCodeOf` names
+the published code and `modelFailureMessageOf` supplies the shared fixed
+reporting text. Provider evidence is interpreted in the models plugin.
+
 Session input contracts live in `src/session/sessions.entity.ts` and
 `src/ports/sessions.port.ts`: `QueuedInput` holds one normalized
 `UserMessage`, a stable `InboxItemId`, `InputDelivery` (`steer` or `next`)
@@ -301,16 +312,17 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
+| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:111-121` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
-| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:48-55` | exact, `src/internal/mapping.entity.functions.test.ts:384` |
+| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:49-56` | exact, `src/internal/mapping.entity.functions.test.ts:384` |
 | Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:409` |
 | The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:507-523` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
 | The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:467-499` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
 | A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:426-428` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:525-528` | exact, `src/memory/memory-log.entity.test.ts:444` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:525-528` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
 | A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:507-522` | exact, `src/memory/memory-log.entity.test.ts:616` |
 | Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:392`, `:406`, `:467-481` | exact, `src/memory/memory-log.entity.test.ts:605`, `:606`, `:607`, `:617` |
 

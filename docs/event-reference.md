@@ -375,7 +375,16 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `tools.opened` | `openTurnTools` | The turn's tools were opened twice. |
 | `tools.unavailable` | the turn's tools | The tools were used before `openTurnTools` opened them. |
 | `loop.model` | the step loop | The turn's services carry no `LanguageModel`. |
-| `loop.failed` | the step loop | The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause. |
+| `loop.failed` | the step loop | The loop failed with an unclassified error that is not a turn error or a typed model failure; the message is that error's message, without its tag (`messagesOf`), and the error is the cause. |
+| `model.auth` | the step loop | The model request failed authentication or authorization. The original error or failed response is kept as cause. |
+| `model.context-overflow` | the step loop | The model request exceeded the context window, established by an explicit failure stamp. No response tool handler runs; an ordinary output-token limit remains a truncated reply. |
+| `model.failed` | the step loop | A model request failed without a more specific semantic classification. The original error or failed response is kept as cause. |
+| `model.invalid-request` | the step loop | The model request was invalid or rejected by content policy. The original error or failed response is kept as cause. |
+| `model.invalid-response` | the step loop | The model returned a response incompatible with its protocol. This is distinct from correctable model-generated tool arguments. |
+| `model.quota` | the step loop | The model request exhausted available quota or billing capacity. The original error or failed response is kept as cause. |
+| `model.rate-limit` | the step loop | The model request was rate limited. The original error or failed response is kept as cause, including available retry timing. |
+| `model.timeout` | the step loop | The model request exceeded a request or call deadline, established by an explicit failure stamp. |
+| `model.unavailable` | the step loop | The model service or transport was temporarily unavailable. The original error or failed response is kept as cause. |
 | `loop.truncated` | the step loop, a run failing | The model's reply was cut short (its finish reason is not `stop`, `tool-calls` or `pause`; `unknown`, no finish reason given, cuts only a reply with tool calls the loop would run), and the run stops: a cut other than the output limit (`content-filter`, `error`, `other`, `unknown`), or more replies in a row cut at the output limit than the loop answers with correctives (2). The cut step is recorded, its status `truncated`, and none of its tool calls ran. `runLoop` fails with it as a `HarnessError`, and the step loop passes it on as it is. |
 | `request.encode` | the turn, before each provider call | The request header did not encode. |
 | `request.missing` | before each provider call | No stored `request.prepared` header for the step. |

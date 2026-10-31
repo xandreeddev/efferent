@@ -1,7 +1,8 @@
 import { AiError } from "effect/ai"
 import { HttpClientError } from "effect/http"
-import { Clock, Deferred, Duration, Effect, Predicate, Ref, Schedule, Stream } from "effect"
-import { CurrentEmptyResponseTolerance } from "@xandreed/core"
+import { Clock, Deferred, Duration, Effect, Option, Predicate, Ref, Schedule, Stream } from "effect"
+import { CurrentEmptyResponseTolerance, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
+import type { ModelFailureKind } from "@xandreed/core"
 
 /**
  * Transient-failure resilience for every routed LLM call — the survival
@@ -21,9 +22,8 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
  * - An exhausted balance or quota (`QuotaExhaustedError`) is PERMANENT:
  *   it fails fast and never reaches the fallback model.
  * - A 429 whose `Retry-After` exceeds {@link MAX_HONORED_RETRY_AFTER_MS} is
- *   a daily quota, not an outage — {@link classifyLlmError} calls it
- *   PERMANENT so it fails fast instead of burning retries into the same
- *   wall (the uncapped-Retry-After lesson: never park a run on a quota).
+ *   declined by the current local retry policy. It does not diagnose an
+ *   exhausted quota; the semantic failure remains a rate limit.
  *   The fast-retry schedule itself never sleeps on the header.
  *
  * The previous line's multi-phase patient ladder (30-minute interactive
@@ -92,12 +92,15 @@ const retryAfterMillis = (
   return Number.isNaN(at) ? undefined : Math.max(0, at - now)
 }
 
-/** A 429 whose wait exceeds the honored cap is a daily quota, not an outage. */
+/** The existing local retry policy declines waits beyond its cap; this does not prove exhausted quota. */
 const rateLimited = (waitMs: number | undefined): ErrorClass =>
   waitMs !== undefined && waitMs > MAX_HONORED_RETRY_AFTER_MS ? "permanent" : "transient"
 
 /** Whether `error` is worth a retry or a fallback; `now` (epoch millis) measures an HTTP-date `Retry-After`. */
 export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
+  const failure = modelFailureOf(error)
+  if (Option.exists(failure, (kind) => ["ContextOverflow", "Authentication", "InvalidRequest", "Quota", "InvalidResponse"].includes(kind))) return "permanent"
+  if (Option.exists(failure, (kind) => kind === "Transient" || kind === "Timeout")) return "transient"
   if (!AiError.isAiError(error)) {
     // A raw HTTP client's transport failure (the codex socket path).
     return HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError" ? "transient" : "permanent"
@@ -107,10 +110,12 @@ export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
   // 402, a 429 naming `insufficient_quota`): no retry or fallback fixes it.
   if (reason._tag === "QuotaExhaustedError") return "permanent"
   const response = "http" in reason ? reason.http?.response : undefined
+  if (Option.contains(failure, "RateLimit")) return rateLimited(response === undefined
+    ? reason._tag === "RateLimitError" && reason.retryAfter !== undefined ? Duration.toMillis(reason.retryAfter) : undefined
+    : retryAfterMillis(response.headers, now))
   if (response !== undefined) {
     if (response.status === 429) {
-      // Beyond the honored cap this is a daily quota — retrying in seconds
-      // hits the same wall; fail fast and let the caller change model.
+      // Preserve the existing bounded-wait policy without diagnosing exhausted quota.
       return rateLimited(retryAfterMillis(response.headers, now))
     }
     return response.status >= 500 ? "transient" : "permanent"
@@ -145,22 +150,24 @@ const fastRetries = Schedule.max([
   Schedule.recurs(3),
 ])
 
-const routerError = (method: string, description: string): AiError.AiError =>
-  AiError.make({ module: "Router", method, reason: new AiError.UnknownError({ description }) })
+const routerError = (method: string, description: string, kind: ModelFailureKind): AiError.AiError =>
+  stampAiErrorFailure(AiError.make({ module: "Router", method, reason: new AiError.UnknownError({ description }) }), kind)
 
 const timeoutError = (label: string, method: string, timeoutMs: number): AiError.AiError =>
-  routerError(method, `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`)
+  routerError(method, `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`, "Timeout")
 
 const budgetError = (label: string, method: string, budget: CallBudget, attempts: number): AiError.AiError =>
   routerError(
     method,
     `the ${label} call reached its ${budget.budgetMs / 1000}s budget after ${attempts} ${attempts === 1 ? "attempt" : "attempts"} and was cut off`,
+    "Timeout",
   )
 
 const emptyError = (label: string, method: string): AiError.AiError =>
   routerError(
     method,
     `${label} returned an empty response (no text, tool call, or reasoning) — treated as a transient provider failure`,
+    "Transient",
   )
 
 /** A part's `type`, "" for a value that has none: the router hands these
@@ -190,7 +197,7 @@ export const rejectEmptyResponse =
           ? effect
           : effect.pipe(
             Effect.filterOrFail(
-              (res) => res.content.some(isContentPart),
+              (res) => Option.isSome(modelFailureOf(res.content)) || res.content.some(isContentPart),
               () => emptyError(label, "generateText"),
             ),
           ),
@@ -324,7 +331,7 @@ export const retryableLlmStream =
         const attempts = yield* Ref.make(0)
         const guarded = stream.pipe(
           Stream.mapEffect((part) =>
-            isStreamContentPart(part)
+            (Option.isSome(modelFailureOf(part)) || isStreamContentPart(part))
               ? Deferred.succeed(contentSeen, undefined).pipe(Effect.as(part))
               : isFinishPart(part)
                 ? Deferred.isDone(contentSeen).pipe(

@@ -2,6 +2,7 @@ import { Array as Arr, Match, Option, Order, Schema } from "effect"
 import { Response } from "effect/ai"
 import type { Prompt } from "effect/ai"
 import { ENGINE_KEY, ResponseStamp } from "../domain/engine-stamp.entity.js"
+import { mergeEngineStamp } from "../domain/engine-stamp.entity.functions.js"
 import type { ToolCallSummary } from "../domain/tool-call-summary.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import { toolCallIdOf } from "../domain/run.entity.functions.js"
@@ -379,7 +380,7 @@ export const withUsageOnAssistant = (
     ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
   }
   return messages.map((m, i) =>
-    i !== at || m.role !== "assistant" ? m : { ...m, providerOptions: { ...m.providerOptions, [ENGINE_KEY]: stamp } },
+    i !== at || m.role !== "assistant" ? m : { ...m, providerOptions: mergeEngineStamp(m.providerOptions ?? {}, stamp) },
   )
 }
 

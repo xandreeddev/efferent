@@ -16,6 +16,8 @@ export {
 } from "./domain/message.entity.js"
 export { ENGINE_KEY, ResponseStamp } from "./domain/engine-stamp.entity.js"
 export { responseModelOf, stampPartModel, stampResponseModel } from "./domain/engine-stamp.entity.functions.js"
+export { ModelFailureKind, ModelFailureStamp } from "./domain/model-failure.entity.js"
+export { modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, stampAiErrorFailure, stampPartFailure, stampResponseFailure } from "./domain/model-failure.entity.functions.js"
 export {
   AttachmentRejected,
   AttachmentRejectedReason,

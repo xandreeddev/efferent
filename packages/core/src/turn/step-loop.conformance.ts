@@ -132,6 +132,8 @@ interface Scenario {
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
   readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
   readonly providerCall?: Effect.Effect<void>
+  /** A typed model failure, before a response or stream part arrives. */
+  readonly failure?: AiError.AiError
   /** Runs inside each probe handler, before it returns its result. */
   readonly handle?: (n: number) => Effect.Effect<void>
   /** Reject a record before it is stored, as a durable writer can. */
@@ -269,11 +271,12 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const stream = scenario.stream
   const model = yield* LanguageModel.make({
     generateText: (options) => called(options).pipe(
-      Effect.flatMap((index) => scenario.refuseFirst === true && index === 0
+      Effect.flatMap((index) => scenario.failure !== undefined ? Effect.fail(scenario.failure) : scenario.refuseFirst === true && index === 0
         ? Effect.fail(imageRefusal)
         : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])),
     ),
-    streamText: (options) => stream === undefined
+    streamText: (options) => scenario.failure !== undefined
+      ? Stream.unwrap(called(options).pipe(Effect.as(Stream.fail(scenario.failure)))) : stream === undefined
       ? Stream.die("the conformance provider does not stream")
       // One part per chunk, the fiber yielding on each, as a provider streams them over the wire: what a part
       // sets off (a tool handler that effect/ai's own resolution forks once the next part arrives) gets to
@@ -528,6 +531,29 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "typed model failures fail once before tools, recording, corrections or stream fallback",
+    run: Effect.gen(function* () {
+      const check = "model-failures"
+      const stamped = (reason: "length" | "tool-calls"): ReadonlyArray<Part> => probeCall("overflow-call", 1).map((part) => part.type === "finish"
+        ? { ...part, reason, metadata: { engine: { failure: "ContextOverflow" } } } : part)
+      const error = AiError.make({ module: "Conformance", method: "generateText", reason: new AiError.InvalidOutputError({ description: "protocol decode failed", metadata: { engine: { failure: "InvalidResponse" } } }) })
+      yield* Effect.forEach([
+        { scenario: { script: [stamped("length")] }, code: "model.context-overflow" },
+        { scenario: { script: [stamped("tool-calls")] }, code: "model.context-overflow" },
+        { scenario: { script: [stamped("length")], stream: [[{ type: "error", error: { detail: "opaque" }, metadata: { engine: { failure: "ContextOverflow" } } }]], streaming: true }, code: "model.context-overflow" },
+        { scenario: { script: [], failure: error, streaming: true }, code: "model.invalid-response" },
+      ] satisfies ReadonlyArray<{ readonly scenario: Scenario; readonly code: string }>, ({ scenario, code }) => Effect.gen(function* () {
+        const observed = yield* observeRun(loop, scenario)
+        yield* expect(check, failedWith(observed.result, code), `a semantic model failure ${endingOf(observed.result)}, expected ${code}`)
+        yield* expect(check, observed.providerCalls.length === 1 && observed.records.length === 0 && observed.steps.handled.length === 0, "a semantic failure dispatched again, persisted a response, or ran a handler")
+        yield* expect(check, statusesOf(observed.events).join() === "failed" && !observed.events.some((event) => event._tag === "stream.fallback" || event._tag === "completion.evaluated" || event._tag === "assistant.message"), "a semantic failure was corrected, completed or sent through stream fallback")
+        if (scenario.failure !== undefined) {
+          yield* expect(check, Result.isFailure(observed.result) && observed.result.failure._tag === "HarnessError" && observed.result.failure.cause === scenario.failure, "the typed model failure lost its original cause")
+        }
+      }), { concurrency: 1 })
+    }),
+  },
   {
     name: "honours custom degenerate-loop thresholds and explicit disabling without overriding the step cap",
     run: Effect.gen(function* () {
