@@ -482,7 +482,9 @@ services are still open: it retains queued input for restart, refuses every new 
 `shutdown`: `isShutdownRefusal`, a 503), waits until idle for the deadline
 less its reserve (2 s by default), using `queued: false`, then closes the turns still running as
 interrupted with the code `turn.shutdown`, their ends stored while the log
-is open, and waits out the reserve. Each such turn's body is interrupted
+is open, and waits out the reserve. Closing them counts in the reserve: a
+store that does not answer does not hold the report past the deadline.
+Each such turn's body is interrupted
 (`Agent.turn` races its writer closing) and it can be resumed at once by
 the next process. With `AgentConfig.shutdown`, closing the agent's scope
 runs it first:

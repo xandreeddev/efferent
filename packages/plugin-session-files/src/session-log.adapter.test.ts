@@ -1,15 +1,15 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Scope } from "effect"
 import { ConversationId, SessionLog } from "@xandreed/core"
 import { sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { LeaseExpired, RevisionConflict, SessionExists, SessionHeader, SessionLogError, SessionMissing } from "@xandreed/core"
 import { nodeFilesIo } from "./files-io.adapter.js"
 import type { FilesIo } from "./files-io.adapter.js"
 import { makeSessionLogFiles, SessionLogFilesLive } from "./session-log.adapter.js"
-import { revisionFile } from "./session-files.entity.functions.js"
+import { revisionFile, stagingName } from "./session-files.entity.functions.js"
 
 const directory = mkdtempSync(join(tmpdir(), "efferent-session-files-"))
 const scope = Effect.runSync(Scope.make())
@@ -152,4 +152,116 @@ describe("the directory", () => {
     })))
     expect([...outcomes].sort()).toEqual(["SessionExists", "succeeded"])
   })
+
+  test("a commit whose write runs past its notAfter publishes nothing: the lease is checked again right before the link", async () => {
+    const root = mkdtempSync(join(directory, "late-"))
+    const slow: FilesIo = { ...nodeFilesIo, create: (path, bytes) => /\/sessions\/[^/]+\/tmp\//.test(path) ? new Promise((resolve) => setTimeout(resolve, 60)).then(() => nodeFilesIo.create(path, bytes)) : nodeFilesIo.create(path, bytes) }
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const store = yield* makeSessionLogFiles(root, { io: slow })
+      const id = ConversationId.make(crypto.randomUUID())
+      const created = yield* store.create(header(id))
+      const late = yield* outcomeOf(store.commit(id, { expect: 0, notAfter: Option.some(created.now + 20), events: [note(1)], state: Option.none() }))
+      return { late, head: (yield* store.head(id)).revision, commits: readdirSync(join(root, "sessions", id, "commits")), tmp: readdirSync(join(root, "sessions", id, "tmp")) }
+    })))
+    expect(observed).toEqual({ late: "LeaseExpired", head: 0, commits: [], tmp: [] })
+  })
+
+  test("a child created while its parent is removed goes with the parent", async () => {
+    const root = mkdtempSync(join(directory, "orphan-"))
+    const parent = ConversationId.make(crypto.randomUUID())
+    const child = ConversationId.make(crypto.randomUUID())
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const renaming = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      // The remover stops right before it moves the parent away.
+      const remover = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, rename: (from, to) => from.endsWith(`/sessions/${parent}`)
+        ? (Effect.runFork(Deferred.succeed(renaming, undefined)), resumed.then(() => nodeFilesIo.rename(from, to)))
+        : nodeFilesIo.rename(from, to) } })
+      const creator = yield* makeSessionLogFiles(root)
+      yield* creator.create(header(parent))
+      const removing = yield* Effect.forkChild(remover.remove(parent))
+      yield* Deferred.await(renaming)
+      const created = yield* outcomeOf(creator.create({ ...header(child), parent: Option.some({ id: parent, through: 0, turnAtFork: 0 }) }))
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(removing)
+      const listed = yield* creator.list({ owner: "owner-files", limit: 10, before: Option.none(), parent: Option.some(parent) })
+      return { created, parent: yield* outcomeOf(creator.head(parent)), child: yield* outcomeOf(creator.head(child)), listed: listed.length }
+    })))
+    expect(observed).toEqual({ created: "succeeded", parent: "SessionMissing", child: "SessionMissing", listed: 0 })
+  })
+
+  test("a session removed while a read is under way is SessionMissing, and a listing leaves it out", async () => {
+    const root = mkdtempSync(join(directory, "removed-under-"))
+    const doomed = ConversationId.make(crypto.randomUUID())
+    const other = ConversationId.make(crypto.randomUUID())
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const reached = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      // The reader stops right before it lists the doomed session's commits.
+      const reader = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, list: (path) => path.endsWith(`${doomed}/commits`)
+        ? (Effect.runFork(Deferred.succeed(reached, undefined)), resumed.then(() => nodeFilesIo.list(path)))
+        : nodeFilesIo.list(path) } })
+      const remover = yield* makeSessionLogFiles(root)
+      yield* remover.create(header(doomed))
+      yield* remover.create(header(other))
+      const listing = yield* Effect.forkChild(Effect.result(reader.list({ owner: "owner-files", limit: 10, before: Option.none(), parent: Option.none() })))
+      yield* Deferred.await(reached)
+      yield* remover.remove(doomed)
+      yield* Deferred.succeed(release, undefined)
+      const listed = yield* Fiber.join(listing)
+      return { listed: listed._tag === "Success" ? listed.success.map((head) => head.header.id) : listed.failure._tag, head: yield* outcomeOf(reader.head(doomed)) }
+    })))
+    expect(observed).toEqual({ listed: [other], head: "SessionMissing" })
+  })
+
+  test("a handle that read a torn tail never sets aside the commit another writer published at that revision since", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { root, id, commits } = yield* withSession(2)
+      const tail = join(commits, revisionFile(2))
+      const whole = readFileSync(tail)
+      writeFileSync(tail, whole.subarray(0, whole.length - 20))
+      const moving = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      const gated = { first: true }
+      // This handle read the torn tail and stops right before it moves it aside.
+      const late = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, rename: (from, to) => to.includes("/quarantine/") && gated.first
+        ? (gated.first = false, Effect.runFork(Deferred.succeed(moving, undefined)), resumed.then(() => nodeFilesIo.rename(from, to)))
+        : nodeFilesIo.rename(from, to) } })
+      const reading = yield* Effect.forkChild(late.head(id))
+      yield* Deferred.await(moving)
+      // Meanwhile another handle sets the torn tail aside and a writer publishes revision 2 again.
+      const other = yield* makeSessionLogFiles(root)
+      const repaired = yield* other.head(id)
+      const again = yield* other.commit(id, { expect: repaired.revision, notAfter: Option.none(), events: [note(20)], state: Option.some({ n: 20 }) })
+      yield* Deferred.succeed(release, undefined)
+      const seen = yield* Fiber.join(reading)
+      const fresh = yield* makeSessionLogFiles(root)
+      const events = yield* fresh.read(id, everything)
+      return { repaired: repaired.revision, again: again.revision, seen: [seen.revision, seen.state], ns: events.map((event) => event.data["n"]), quarantined: readdirSync(join(root, "quarantine", id)).length }
+    })))
+    expect(observed).toEqual({ repaired: 1, again: 2, seen: [2, { n: 20 }], ns: [1, 20], quarantined: 1 })
+  })
+
+  test("an open sweeps what stopped creates and probes left in staging long ago, never a staging in flight", async () => {
+    const root = mkdtempSync(join(directory, "staging-"))
+    await Effect.runPromise(Effect.scoped(makeSessionLogFiles(root)))
+    const staging = join(root, "staging")
+    const old = stagingName(crypto.randomUUID(), 1_000, crypto.randomUUID())
+    mkdirSync(join(staging, old, "commits"), { recursive: true })
+    writeFileSync(join(staging, old, "header.json"), "{}")
+    const oldProbe = `${stagingName("link-probe", 1_000, crypto.randomUUID())}.linked`
+    writeFileSync(join(staging, oldProbe), "probe\n")
+    const oldMarker = stagingName("store.json", 1_000, crypto.randomUUID())
+    writeFileSync(join(staging, oldMarker), "{}")
+    const inFlight = stagingName(crypto.randomUUID(), Date.now(), crypto.randomUUID())
+    mkdirSync(join(staging, inFlight))
+    const earlier = `${crypto.randomUUID()}.${crypto.randomUUID()}`
+    mkdirSync(join(staging, earlier))
+    await Effect.runPromise(Effect.scoped(makeSessionLogFiles(root)))
+    expect(readdirSync(staging).sort()).toEqual([earlier, inFlight].sort())
+  })
 })
+

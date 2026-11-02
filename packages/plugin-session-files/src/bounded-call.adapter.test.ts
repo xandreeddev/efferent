@@ -120,3 +120,42 @@ test("logical admission expires without starting queued IO or disturbing answere
   expect(results.filter(result => result._tag === "Success")).toHaveLength(2)
   expect(results.filter(result => result._tag === "Failure" && result.failure._tag === "FileStoreStalled")).toHaveLength(4)
 })
+
+test("a hung native operation lowers the capacity by one: healthy calls queue for the free slot and all answer", async () => {
+  const hung = gate<number>()
+  const active = { count: 0, maximum: 0 }
+  const results = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const call = yield* makeBoundedFilesCall(60)
+    const first = yield* Effect.result(call("read", "hung", () => hung.promise))
+    expect(first._tag === "Failure" && first.failure._tag).toBe("FileStoreStalled")
+    yield* Effect.sleep(70)
+    // The probe heals the store, the hung operation still holding its slot.
+    expect(yield* call("read", "probe", () => Promise.resolve(0))).toBe(0)
+    return yield* Effect.forEach([1, 2, 3, 4], value => call("read", "healthy", () => new Promise<number>(resolve => {
+      active.count++
+      active.maximum = Math.max(active.maximum, active.count)
+      setTimeout(() => { active.count--; resolve(value) }, 5)
+    })), { concurrency: 4 })
+  })).pipe(Effect.ensuring(Effect.sync(() => hung.resolve(0))), Effect.timeout("2 seconds")))
+  expect(results).toEqual([1, 2, 3, 4])
+  expect(active.maximum).toBe(1)
+})
+
+test("a hung operation's slot comes back when it settles", async () => {
+  const hung = gate<number>()
+  const active = { count: 0, maximum: 0 }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const call = yield* makeBoundedFilesCall(60)
+    yield* Effect.result(call("read", "hung", () => hung.promise))
+    yield* Effect.sleep(70)
+    hung.resolve(1)
+    yield* Effect.sleep(1)
+    expect(yield* call("read", "probe", () => Promise.resolve(0))).toBe(0)
+    yield* Effect.forEach([1, 2, 3, 4], value => call("read", "healthy", () => new Promise<number>(resolve => {
+      active.count++
+      active.maximum = Math.max(active.maximum, active.count)
+      setTimeout(() => { active.count--; resolve(value) }, 5)
+    })), { concurrency: 4, discard: true })
+  })).pipe(Effect.timeout("2 seconds")))
+  expect(active.maximum).toBe(2)
+})

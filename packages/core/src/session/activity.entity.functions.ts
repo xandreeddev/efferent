@@ -1,4 +1,4 @@
-import { Duration, Effect, Option } from "effect"
+import { Clock, Duration, Effect, Exit, Fiber, Option } from "effect"
 import { DrainActivity, TaskActivity, TurnActivity, TurnShutdown, WaitingInput } from "../ports/activity.port.js"
 import type { ActiveTurn, ProcessActivity, ShutdownReport, TurnsInFlight, WaitingInputCount } from "./activity.entity.js"
 import type { SessionLogError } from "./session-log.entity.js"
@@ -114,9 +114,12 @@ export const DEFAULT_SHUTDOWN_DEADLINE: Duration.Input = "25 seconds"
  * (`awaitIdle`) for the deadline less its reserve, then close the turns
  * still running as interrupted with `turn.shutdown`, resumable
  * (`TurnShutdown.interrupt`), and wait out the reserve for their scopes to
- * close and the tasks they stop to end. It reads the current services: a
- * `Sessions` without `TurnShutdown` is waited for and never interrupted.
- * Then stop the host's own request fibers and close the services' scope.
+ * close and the tasks they stop to end. Closing the turns counts in the
+ * reserve: a store that does not answer within it does not hold the report
+ * back (the turns still closing are then the ones reported, and `left`
+ * counts them while they run). It reads the current services: a `Sessions`
+ * without `TurnShutdown` is waited for and never interrupted. Then stop the
+ * host's own request fibers and close the services' scope.
  */
 export const shutdownGracefully = Effect.fn("process.shutdown")(function* (options: ShutdownOptions) {
   const deadline = Math.max(0, Duration.toMillis(options.deadline))
@@ -125,8 +128,13 @@ export const shutdownGracefully = Effect.fn("process.shutdown")(function* (optio
   yield* Option.match(shutdown, { onNone: () => Effect.void, onSome: (stopping) => stopping.refuse })
   const waited = yield* awaitIdle({ queued: false, timeout: deadline - reserve })
   if (!waited.inFlight) return { idle: true, interrupted: [], left: waited } satisfies ShutdownReport
-  const interrupted = yield* Option.match(shutdown, { onNone: () => Effect.succeed<ReadonlyArray<ActiveTurn>>([]), onSome: (stopping) => stopping.interrupt })
-  const left = yield* awaitIdle({ queued: false, timeout: reserve })
+  const closingFrom = yield* Clock.currentTimeMillis
+  // Detached, so a reserve that runs out leaves it closing the turns rather than waiting for its stores to answer.
+  const closing = yield* Effect.forkDetach(Option.match(shutdown, { onNone: () => Effect.succeed<ReadonlyArray<ActiveTurn>>([]), onSome: (stopping) => stopping.interrupt }))
+  const closed = yield* Fiber.await(closing).pipe(Effect.timeoutOption(reserve))
+  const interrupted = Option.match(Option.flatMap(closed, Exit.getSuccess), { onNone: () => waited.openTurns, onSome: (turns) => turns })
+  const spent = (yield* Clock.currentTimeMillis) - closingFrom
+  const left = yield* awaitIdle({ queued: false, timeout: Math.max(0, reserve - spent) })
   yield* Effect.annotateCurrentSpan({ "efferent.shutdown.interrupted": interrupted.length, "efferent.shutdown.busy": left.busy })
   return { idle: false, interrupted, left } satisfies ShutdownReport
 })

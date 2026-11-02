@@ -5,7 +5,7 @@ import { ConversationId } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
 import { PublishNonce } from "./session-files.entity.js"
 import type { CommitRecord, StoreHealth } from "./session-files.entity.js"
-import { abandonCall, admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, tailVerdict } from "./session-files.entity.functions.js"
+import { abandonCall, admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isAbandonedStaging, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, sameBytes, stagedAtOf, stagingName, tailVerdict, trimCache } from "./session-files.entity.functions.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
 const record = (events: number, data: Record<string, unknown> = {}): CommitRecord => ({
@@ -106,3 +106,47 @@ describe("the store's health", () => {
     expect(afterCall(probing, false, 1_700)).toEqual({ _tag: "Stalled", since: 1_700, probing: false })
   })
 })
+
+describe("staging names", () => {
+  test("carry the time they were staged, so only what was staged long ago is judged abandoned", () => {
+    const unique = "8f2c1d4e-0000-4000-8000-000000000001"
+    const session = "00000000-0000-4000-8000-0000000000a1"
+    expect(stagedAtOf(stagingName(session, 1_000, unique))).toEqual(Option.some(1_000))
+    expect(stagedAtOf(`${stagingName("link-probe", 2_000, unique)}.linked`)).toEqual(Option.some(2_000))
+    expect(stagedAtOf(stagingName("store.json", 3_000, unique))).toEqual(Option.some(3_000))
+    // An earlier release's names carry no time: never swept.
+    expect(stagedAtOf(`${session}.${unique}`)).toEqual(Option.none())
+    expect(stagedAtOf(`link-probe.${unique}.linked`)).toEqual(Option.none())
+    expect(isAbandonedStaging(stagingName(session, 1_000, unique), 1_000 + 60_000, 60_000)).toBe(false)
+    expect(isAbandonedStaging(stagingName(session, 1_000, unique), 1_000 + 60_001, 60_000)).toBe(true)
+    expect(isAbandonedStaging(`${session}.${unique}`, Number.MAX_SAFE_INTEGER, 1)).toBe(false)
+  })
+
+  test("sameBytes compares contents", () => {
+    expect(sameBytes(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]))).toBe(true)
+    expect(sameBytes(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2]))).toBe(false)
+    expect(sameBytes(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4]))).toBe(false)
+  })
+})
+
+describe("a handle's cache", () => {
+  const entry = (revisions: ReadonlyArray<number>) => new Map(revisions.map((revision) => [revision, `meta ${revision}`] as const))
+  const trim = (entries: ReadonlyMap<string, ReadonlyMap<number, string>>, bounds: { readonly sessions: number; readonly metas: number }) =>
+    trimCache(entries, (metas) => metas.size, (metas, kept) => new Map([...metas].slice(metas.size - kept)), bounds)
+  const sizes = (entries: ReadonlyMap<string, ReadonlyMap<number, string>>) => [...entries].map(([key, metas]) => [key, metas.size])
+
+  test("drops the least recently used sessions past its session bound", () => {
+    expect([...trim(new Map([["a", entry([1])], ["b", entry([1])], ["c", entry([1])]]), { sessions: 2, metas: 100 }).keys()]).toEqual(["b", "c"])
+  })
+
+  test("drops the oldest sessions' metas past its meta bound, and the newest keeps its highest revisions when it alone is over", () => {
+    const entries = new Map([["a", entry([1, 2, 3])], ["b", entry([1, 2])], ["c", entry([1, 2, 3, 4])]])
+    expect(sizes(trim(entries, { sessions: 10, metas: 6 }))).toEqual([["a", 0], ["b", 2], ["c", 4]])
+    expect(sizes(trim(entries, { sessions: 10, metas: 5 }))).toEqual([["a", 0], ["b", 1], ["c", 4]])
+    expect(sizes(trim(entries, { sessions: 10, metas: 2 }))).toEqual([["a", 0], ["b", 0], ["c", 2]])
+    expect([...(trim(entries, { sessions: 10, metas: 2 }).get("c") ?? new Map()).keys()]).toEqual([3, 4])
+    // Within its bounds, the cache is as it was.
+    expect(trim(entries, { sessions: 10, metas: 9 })).toEqual(entries)
+  })
+})
+

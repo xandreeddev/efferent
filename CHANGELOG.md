@@ -1796,6 +1796,33 @@ Model-visible text (exact pins and the compaction golden updated):
   - Claude Mythos 5 and 5.1 have profiles with their Fable counterparts'
     controls; Mythos 5.1 binds thinking and gets `drop_block` by default.
 
+- `@xandreed/plugin-session-files`: a native call that never answers no
+  longer fails healthy calls. Its slot stays held until it settles (the
+  handle's capacity lowered by one meanwhile), and healthy calls queue for
+  the slot left within their admission deadline instead of failing with
+  `store.stalled`; a cooldown probe still never waits.
+- `@xandreed/plugin-session-files`: removing a session moves it away before
+  listing its children, so a child created meanwhile never outlives its
+  parent; a session removed while a `head`, `read`, `list` or `commit` reads
+  it is `SessionMissing` (left out of a listing), not `store.io`; a handle
+  that read a torn tail puts back a whole commit it moved by name (another
+  writer published that revision again after another handle set the torn one
+  aside); a commit's `notAfter` is checked again right before its link; an
+  open sweeps what stopped creates and link probes left in `staging/` (names
+  now carry their storage time; an earlier release's names are left alone);
+  and a handle caches at most 1,024 sessions and 65,536 commit first lines,
+  a read storing what it read once.
+- `@xandreed/plugin-sessions`: a begin whose opening commit fails with a
+  store error (a stalled write that may land later) lets the turn it planned
+  go, by its number and run id, so if it did land the next begin, delivery or
+  drain on the instance reaps it, instead of the session staying busy (until
+  the process exits, under process ownership). A turn's time limit stops when
+  the turn ends or is closed from elsewhere, not only when its scope closes.
+- `@xandreed/core`: `shutdownGracefully` counts closing the turns in the
+  reserve: a store that does not answer no longer holds the report past the
+  deadline (the turns still closing are reported as interrupted and counted
+  in `left`, and their closing goes on).
+
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued
   admission separately, prevent repeated cooldown probes from accumulating

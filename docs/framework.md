@@ -2922,17 +2922,26 @@ background tasks. Two layers split the work:
   no handle ever waits on a lock (a stopped process blocks nobody). A commit
   file ends with its length and CRC-32: one at a session's tail that is not
   whole is moved to `quarantine/` with its bytes kept and the commit before it
-  is the head; damage before the tail fails with `store.decode`. At most two
-  underlying file system promises are in flight per handle. Queued admission
-  and each native await have separate `stallMs` deadlines (10 s): one that
-  does not answer fails with `store.stalled`, and so does
-  every call after it until one, let through a `stallMs` later, answers (a
-  stalled commit's outcome is known once the head is read again). A timed-out
-  operation retains its physical slot until its original promise settles, so
-  cooldown probes cannot accumulate further pending work. Like the
-  SQLite log it stamps time with the caller's `Clock`. A directory whose
-  layout a newer release wrote fails to open with `store.version`; one
-  without hard links (some SMB mounts), with `store.open`.
+  is the head (a move that took another writer's whole commit of that
+  revision puts it back); damage before the tail fails with `store.decode`.
+  A commit's `notAfter` is checked again right before its link. Removing a
+  session moves it away first, then its children, so a child created
+  meanwhile never outlives it; a session removed while it is read is
+  `SessionMissing`. At most two underlying file system promises are in
+  flight per handle. Queued admission and each native await have separate
+  `stallMs` deadlines (10 s): one that does not answer fails with
+  `store.stalled`, and so does every call after it until one, let through a
+  `stallMs` later, answers (a stalled commit's outcome is known once the
+  head is read again; a begin whose opening commit failed so lets the turn
+  go, and the next begin reaps it if it landed). A timed-out operation
+  retains its slot until its original promise settles, so cooldown probes
+  cannot accumulate further pending work, and healthy calls queue for the
+  slot left rather than fail. An open sweeps what stopped creates and probes
+  left in `staging/`, and a handle caches a bounded number of sessions and
+  commit first lines. Like the SQLite log it stamps time with the caller's
+  `Clock`. A directory whose layout a newer release wrote fails to open with
+  `store.version`; one without hard links (some SMB mounts), with
+  `store.open`.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
@@ -3619,9 +3628,12 @@ still running, close those turns (`TurnShutdown.interrupt`) and wait out
 the reserve for their scopes to close and for the tasks they stop to end.
 `deadline` is the whole time from the call; `reserve` is the part kept for
 the last step (`DEFAULT_SHUTDOWN_RESERVE`, 2 s, and never more than the
-deadline). It returns a `ShutdownReport`: whether the process was `idle`
-in time, the turns it `interrupted`, and what was still in flight when it
-returned (`left`). Queued input remains durable for restart and may keep
+deadline). Closing the turns counts in the reserve: when their ends are
+not stored within it (a store that does not answer), the report returns
+on time and the closing goes on behind it. It returns a `ShutdownReport`:
+whether the process was `idle` in time, the turns it `interrupted` (the
+ones open when it began closing, if that outlasted the reserve), and what
+was still in flight when it returned (`left`). Queued input remains durable for restart and may keep
 `left.busy` true even when `idle` is true; `left.inFlight` identifies work
 still running. Shutdown uses cached queue knowledge and stays infallible. A
 `Sessions` without `TurnShutdown` is waited for and never interrupted.

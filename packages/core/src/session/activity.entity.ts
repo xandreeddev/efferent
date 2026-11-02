@@ -60,7 +60,8 @@ export type ProcessActivity = typeof ProcessActivity.Type
 /**
  * How a graceful shutdown went (`shutdownGracefully`): whether the process
  * had no work in flight before the deadline, the turns it then interrupted
- * (each ended `turn.shutdown`), and the final activity. left.busy may remain
+ * (each ended `turn.shutdown`; when closing them outlasted the reserve, the
+ * turns open as it began, still being closed), and the final activity. left.busy may remain
  * true because input is retained for the next process even when
  * left.inFlight is false. Queue counts are cached, without storage I/O.
  */

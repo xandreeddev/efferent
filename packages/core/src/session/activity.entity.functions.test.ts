@@ -234,6 +234,20 @@ describe("shutdownGracefully", () => {
     expect(yield* Fiber.join(shutting)).toEqual({ idle: false, interrupted: [turn(1, 0), turn(2, 5)], left: { ...idle, stopping: true } })
   })))
 
+  test("closing the turns counts in the reserve: a store that does not answer does not hold the report past the deadline", () => run(Effect.gen(function* () {
+    const { turns, provide } = yield* probes
+    yield* SubscriptionRef.set(turns, opened(turn(1, 0)))
+    const closing = yield* Ref.make(false)
+    // An interrupt whose end commits never answer, and cannot be cut.
+    const hung = TurnShutdown.of({ refuse: Effect.void, stopping: Effect.succeed(true), interrupt: Ref.set(closing, true).pipe(Effect.andThen(Effect.never), Effect.uninterruptible) })
+    const shutting = yield* Effect.forkChild(provide(shutdownGracefully({ deadline: "10 seconds", reserve: "3 seconds" }).pipe(Effect.provideService(TurnShutdown, hung))))
+    yield* TestClock.adjust("7 seconds")
+    expect(yield* Ref.get(closing)).toBe(true)
+    yield* TestClock.adjust("3 seconds")
+    const report = yield* Fiber.join(shutting)
+    expect([report.idle, report.interrupted, report.left.inFlight, report.left.openTurns]).toEqual([false, [turn(1, 0)], true, [turn(1, 0)]])
+  })))
+
   test("what is still in flight after the reserve is reported busy; without a TurnShutdown nothing is interrupted", () => run(Effect.gen(function* () {
     const { turns, provide } = yield* probes
     yield* SubscriptionRef.set(turns, opened(turn(1, 0)))
