@@ -81,6 +81,11 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "takeover-named", "tenure"])
   })
 
+  test("one over a log that ignores a commit's incarnation fails only the recreate check: a removed session's writer writes into the one created again", async () => {
+    const careless = SessionLog.of({ ...memoryLog, commit: (id, { incarnation: _incarnation, ...commit }) => memoryLog.commit(id, commit) })
+    expect(await failedChecks(sessionsConformance(subjectOver(careless)))).toEqual(["recreate"])
+  })
+
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
     const blind = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
@@ -194,7 +199,7 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "shutdown", "steering-closed", "takeover", "time-limit", "transact", "writer"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "recreate", "shutdown", "steering-closed", "takeover", "time-limit", "transact", "writer"])
   })
 
   test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check and the sealed one, whose held reply it stores early too", async () => {

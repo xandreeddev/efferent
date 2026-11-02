@@ -27,12 +27,12 @@ import type {
  * (the kit checks one).
  */
 export class SessionLog extends Context.Service<SessionLog, {
-  /** Create an empty session (seq 0, revision 0). A child's parent must exist. */
+  /** Create an empty session (seq 0, revision 0), as a new incarnation. A child's parent must exist. */
   readonly create: (header: SessionHeader) => Effect.Effect<SessionHead, SessionExists | SessionMissing | SessionLogError>
   readonly head: (id: ConversationId) => Effect.Effect<SessionHead, SessionMissing | SessionLogError>
   readonly list: (query: SessionListQuery) => Effect.Effect<ReadonlyArray<SessionHead>, SessionLogError>
   readonly read: (id: ConversationId, query: SessionReadQuery) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
-  /** Append events and/or replace the state, atomically, when the revision and the clock allow. */
+  /** Append events and/or replace the state, atomically, when the revision, the clock and the incarnation allow. */
   readonly commit: (id: ConversationId, commit: SessionCommit) => Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing | SessionLogError>
   /** Remove a session, its events and its children. Removing a missing session does nothing. */
   readonly remove: (id: ConversationId) => Effect.Effect<void, SessionLogError>

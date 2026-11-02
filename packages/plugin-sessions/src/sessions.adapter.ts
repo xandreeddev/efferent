@@ -326,7 +326,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       })
       return yield* Effect.uninterruptible(Effect.gen(function* () {
         const outcome = yield* Effect.result(log.commit(address.id, {
-          expect: head.revision, notAfter: Option.none(), events: planned.drafts, state,
+          expect: head.revision, notAfter: Option.none(), events: planned.drafts, state, incarnation: head.incarnation,
         }))
         if (outcome._tag === "Success") {
           yield* stored(planned.result)
@@ -711,7 +711,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       /** Completed once the writer's own commit leaves the turn closed (its end stored): the time limit stops then. */
       const ended = yield* Deferred.make<void>()
       const open = yield* makeTurnWriter({
-        log, config, instance, header: begun.head.header, admitted: begun.result.admitted, started,
+        log, config, instance, header: begun.head.header, incarnation: begun.head.incarnation, admitted: begun.result.admitted, started,
         position: { revision: committed.revision, seq: committed.seq, state: begun.result.next, storageAt: committed.at },
         wake: (before, after) => remember(address, after).pipe(
           Effect.andThen(wake(address.id, waitingChanged(before, after))),

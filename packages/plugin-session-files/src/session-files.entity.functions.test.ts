@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Option, Result } from "effect"
-import { ConversationId } from "@xandreed/core"
+import { ConversationId, SessionIncarnation } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
 import { PublishNonce } from "./session-files.entity.js"
 import type { CommitRecord, StoreHealth } from "./session-files.entity.js"
@@ -69,7 +69,7 @@ describe("names", () => {
 
 describe("page", () => {
   const head = (id: string, updatedAt: number): SessionHead => ({
-    header: { id: ConversationId.make(id), owner: "o", origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, seq: 0, revision: 0, state: {}, updatedAt, now: 0,
+    header: { id: ConversationId.make(id), owner: "o", origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, incarnation: SessionIncarnation.make(id), seq: 0, revision: 0, state: {}, updatedAt, now: 0,
   })
   const a = head("00000000-0000-4000-8000-00000000000a", 5)
   const b = head("00000000-0000-4000-8000-00000000000b", 5)

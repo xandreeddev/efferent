@@ -1,7 +1,8 @@
 import { Array as Arr, Clock, Effect, Layer, Option, Ref } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
-import { LeaseExpired, RevisionConflict, SessionExists, SessionLogError, SessionMissing } from "./session-log.entity.js"
+import { randomUuid } from "../internal/random-id.entity.functions.js"
+import { LeaseExpired, RevisionConflict, SessionExists, SessionIncarnation, SessionLogError, SessionMissing } from "./session-log.entity.js"
 import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "./session-log.entity.js"
 import { storedJson } from "./session-log.entity.functions.js"
 import { sessionAttributes } from "./sessions.entity.functions.js"
@@ -56,10 +57,13 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
 
   return SessionLog.of({
     create: Effect.fn("session_log.create")(function* (header) {
-      return yield* Effect.all([encoded(header.meta), now], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
+      return yield* Effect.all([encoded(header.meta), now, randomUuid], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at, minted]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
         if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
         if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
-        const head = { header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) }, seq: 0, revision: 0, state: {}, updatedAt: at }
+        const head = {
+          header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) },
+          incarnation: SessionIncarnation.make(minted), seq: 0, revision: 0, state: {}, updatedAt: at,
+        }
         return [Effect.succeed(copyHead(head, at)), new Map([...all, [header.id, { head, events: [] }]])]
       })), Effect.flatten)
     }, (effect, header) => onSession(effect, header.id)),
@@ -95,7 +99,8 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         now,
       ], { concurrency: 1 }).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
         const session = all.get(id)
-        if (session === undefined) return [Effect.fail(missing(id)), all]
+        // A session removed and created again under its id is another incarnation: missing to a writer of the one before.
+        if (session === undefined || (commit.incarnation !== undefined && commit.incarnation !== session.head.incarnation)) return [Effect.fail(missing(id)), all]
         if (session.head.revision !== commit.expect) {
           return [Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: session.head.revision })), all]
         }

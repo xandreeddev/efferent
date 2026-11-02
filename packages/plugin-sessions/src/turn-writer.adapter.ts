@@ -12,6 +12,7 @@ import type {
   RevisionConflict,
   SessionDraft,
   SessionHeader,
+  SessionIncarnation,
   SessionLog,
   SessionLogEvent,
   SessionMissing,
@@ -99,6 +100,8 @@ export interface TurnWriterInput {
   readonly config: SessionsConfig
   readonly instance: string
   readonly header: SessionHeader
+  /** The session's incarnation the turn began in: every commit names it, so a session removed and created again under its id gets nothing. */
+  readonly incarnation: SessionIncarnation
   readonly admitted: AdmittedTurn
   readonly started: SessionLogEvent
   /** The begin commit: the head after it. */
@@ -239,6 +242,8 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
    */
   const rebase = (seen: Position): Effect.Effect<void, TurnError> => Effect.gen(function* () {
     const head = yield* log.head(id).pipe(Effect.catchTag("SessionMissing", removed))
+    // A session created again under its id is not this turn's: its own was removed.
+    if (head.incarnation !== input.incarnation) return yield* removed()
     const format = yield* storedFormatOf(head).pipe(Effect.mapError((error) => new SessionLogError({ code: "session.state", message: error.message, cause: error })))
     if (isNewerFormat(format)) return yield* Effect.fail(new SessionLogError({ code: "session.version", message: `the session holds stored format ${format}, written by a newer release; this release reads up to ${STORED_FORMAT}` }))
     const state = yield* stateOf(head).pipe(Effect.mapError((error) => harnessError("session.state", error.message, error)))
@@ -276,7 +281,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
       const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error))))
       const store = Effect.gen(function* () {
-        const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: drafts, state })
+        const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: drafts, state, incarnation: input.incarnation })
         const localAt = yield* Clock.currentTimeMillis
         yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
         if (options.tried === true) yield* Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) }))

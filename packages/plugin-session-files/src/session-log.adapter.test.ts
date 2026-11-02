@@ -263,5 +263,57 @@ describe("the directory", () => {
     await Effect.runPromise(Effect.scoped(makeSessionLogFiles(root)))
     expect(readdirSync(staging).sort()).toEqual([earlier, inFlight].sort())
   })
+
+  test("a commit whose session is removed and created again under its id while it writes lands nowhere: SessionMissing when it names its incarnation, a conflict when it does not", async () => {
+    /** A stale writer stopped right before it writes its commit's temporary file, while another handle removes the session and creates it again. */
+    const recreatedWhileWriting = (named: boolean) => Effect.scoped(Effect.gen(function* () {
+      const root = mkdtempSync(join(directory, "recreated-"))
+      const id = ConversationId.make(crypto.randomUUID())
+      const writing = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      const gated = { armed: false }
+      const stale = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, create: (path, bytes) => gated.armed && /\/sessions\/[^/]+\/tmp\//.test(path)
+        ? (gated.armed = false, Effect.runFork(Deferred.succeed(writing, undefined)), resumed.then(() => nodeFilesIo.create(path, bytes)))
+        : nodeFilesIo.create(path, bytes) } })
+      const other = yield* makeSessionLogFiles(root)
+      const first = yield* stale.create(header(id))
+      yield* stale.commit(id, { expect: 0, notAfter: Option.none(), events: [note(1)], state: Option.none() })
+      gated.armed = true
+      const writer = yield* Effect.forkChild(outcomeOf(stale.commit(id, {
+        expect: 1, notAfter: Option.none(), events: [note(99)], state: Option.some({ stale: true }), ...(named ? { incarnation: first.incarnation } : {}),
+      })))
+      yield* Deferred.await(writing)
+      // The session created again reaches the revision the stale writer expects.
+      yield* other.remove(id)
+      yield* other.create(header(id))
+      yield* other.commit(id, { expect: 0, notAfter: Option.none(), events: [note(2)], state: Option.none() })
+      yield* Deferred.succeed(release, undefined)
+      const outcome = yield* Fiber.join(writer)
+      const events = yield* other.read(id, everything)
+      const head = yield* other.head(id)
+      return { outcome, ns: events.map((event) => event.data["n"]), head: [head.revision, head.state], tmp: readdirSync(join(root, "sessions", id, "tmp")) }
+    }))
+    const observed = await Effect.runPromise(Effect.all({ named: recreatedWhileWriting(true), unnamed: recreatedWhileWriting(false) }, { concurrency: 1 }))
+    expect(observed).toEqual({
+      named: { outcome: "SessionMissing", ns: [2], head: [1, {}], tmp: [] },
+      unnamed: { outcome: "RevisionConflict", ns: [2], head: [1, {}], tmp: [] },
+    })
+  })
+
+  test("a commit naming the incarnation it read, of a session removed and created again since, is SessionMissing before it writes", async () => {
+    const root = mkdtempSync(join(directory, "recreated-before-"))
+    const id = ConversationId.make(crypto.randomUUID())
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const [stale, other] = [yield* makeSessionLogFiles(root), yield* makeSessionLogFiles(root)]
+      const first = yield* stale.create(header(id))
+      yield* other.remove(id)
+      const again = yield* other.create(header(id))
+      const refused = yield* outcomeOf(stale.commit(id, { expect: 0, notAfter: Option.none(), events: [note(1)], state: Option.none(), incarnation: first.incarnation }))
+      const reopened = yield* makeSessionLogFiles(root)
+      return { refused, distinct: first.incarnation !== again.incarnation, stable: (yield* reopened.head(id)).incarnation === again.incarnation, seq: (yield* reopened.head(id)).seq }
+    })))
+    expect(observed).toEqual({ refused: "SessionMissing", distinct: true, stable: true, seq: 0 })
+  })
 })
 

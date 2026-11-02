@@ -2919,9 +2919,9 @@ message, memory, events and host records, the inbox, and the records of
 background tasks. Two layers split the work:
 
 - **`SessionLog`, the storage a host provides** (a core port). It is dumb on
-  purpose: per session a head (`header`, `seq`, `revision`, an opaque
-  `state` the sessions plugin owns, `updatedAt`, and `now`, the storage's
-  clock) and the events (`{ session, seq, turn, kind, at, data }`).
+  purpose: per session a head (`header`, `incarnation`, `seq`, `revision`,
+  an opaque `state` the sessions plugin owns, `updatedAt`, and `now`, the
+  storage's clock) and the events (`{ session, seq, turn, kind, at, data }`).
   `meta`, `state` and `data` are `JsonObject`s (`Schema.JsonObject`: every
   value is JSON), so a reader decodes them; a store writes them as JSON
   text, which drops an `undefined` field, and `storedJson` turns any object
@@ -2934,13 +2934,20 @@ background tasks. Two layers split the work:
   head again and retries at once, `Effect.retry({ times, while:
   isRevisionConflict })`) and, with `notAfter`, only while the
   storage's clock has not passed it; events get dense `seq`s and the
-  storage's time; a commit may carry state and no events. The storage's
+  storage's time; a commit may carry state and no events. Each create gives
+  the session a new `incarnation` (a session removed and created again under
+  its id has another), and a commit naming one (`incarnation`, as the
+  sessions plugin's every commit does) is `SessionMissing` to a session
+  created again since, nothing written, whatever its revision: a turn's
+  writer on another instance never writes into a session that replaced its
+  own (its next write fails `TurnClosed`, `removed`). The storage's
   clock is whatever the backend reads: the memory and SQLite logs read the
   committing process's Effect `Clock` (SQLite once it holds the write lock),
   so instances sharing them need clocks in step; a host's own store may read
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins, that data with an `undefined` field commits and
+  concurrent commits wins, that a commit naming a removed incarnation lands
+  nowhere, that data with an `undefined` field commits and
   reads back without it, and that an event as large as a message's images
   at their limit (`MEDIA_LIMITS.requestChars` base64 characters) comes back
   whole. `sessionLogRecoveryConformance({ open,
@@ -2948,7 +2955,9 @@ background tasks. Two layers split the work:
   reopening and interruption: `open` opens
   a new handle on the same data each time (scoped), and the kit checks that
   commits are there after closing and reopening, that two open handles see
-  each other's commits and race with one winner per revision, that an
+  each other's commits and race with one winner per revision, that a
+  session's incarnation is the same to every handle and after reopening,
+  that an
   interrupted commit is stored whole or not at all, and that a handle whose
   scope never closed blocks nobody; with `callerClock` (the backend stamps
   time with the caller's Effect `Clock`) a commit at exactly `notAfter` is
@@ -2970,7 +2979,8 @@ background tasks. Two layers split the work:
   (`PRAGMA user_version`): opening it applies the migrations it lacks, under
   the write lock, and a file a newer release wrote fails to open with code
   `store.version`, neither read nor written; a 0.14.0 file, without a
-  version, opens as it was.
+  version, opens as it was. Schema 2 gives each session its incarnation,
+  the sessions already there one each.
   `@xandreed/plugin-session-files` ships `SessionLogFilesLive(path)` and
   `makeSessionLogFiles(path)`, the log as files in a directory, on Node 24 and
   Bun, local or on a network mount (NFS): one immutable file per commit,
@@ -2981,7 +2991,9 @@ background tasks. Two layers split the work:
   whole is moved to `quarantine/` with its bytes kept and the commit before it
   is the head (a move that took another writer's whole commit of that
   revision puts it back); damage before the tail fails with `store.decode`.
-  A commit's `notAfter` is checked again right before its link. Removing a
+  A commit's `notAfter` is checked again right before its link, and so is
+  the session's header (its nonce is the incarnation): a session removed and
+  created again while a commit wrote its file gets nothing. Removing a
   session moves it away first, then its children, so a child created
   meanwhile never outlives it; a session removed while it is read is
   `SessionMissing`. At most two underlying file system promises are in

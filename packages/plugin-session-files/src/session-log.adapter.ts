@@ -9,6 +9,7 @@ import {
   reasonOf,
   RevisionConflict,
   SessionExists,
+  SessionIncarnation,
   SessionLog,
   SessionLogError,
   SessionMissing,
@@ -74,6 +75,7 @@ type Published =
   | { readonly _tag: "Taken" }
   | { readonly _tag: "Missing" }
   | { readonly _tag: "Expired"; readonly notAfter: number; readonly now: number }
+  | { readonly _tag: "Replaced" }
 
 /** What setting a torn tail aside came to: it is aside, or what was moved was another writer's whole commit, put back. */
 type SetAside = "aside" | "restored"
@@ -111,6 +113,9 @@ const storeError = (code: string, what: string) => (error: Failed): SessionLogEr
 })
 
 const decodeError = (what: string, detail: string) => new SessionLogError({ code: "store.decode", message: `${what} does not decode: ${detail}` })
+
+/** A session's incarnation: its header's nonce, which a session created again under its id never shares. */
+const incarnationOf = (header: HeaderRecord): SessionIncarnation => SessionIncarnation.make(header.nonce)
 
 /** The cache with `id`'s entry the most recently used, within the handle's bounds; an entry over them keeps its highest revisions' metas. */
 const cacheWith = (all: ReadonlyMap<string, Known>, id: string, entry: Known): ReadonlyMap<string, Known> =>
@@ -364,7 +369,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
 
   // A head's own copies: what a caller does with a returned header or state never reaches what this handle keeps.
   const headOf = (header: HeaderRecord, tail: Tail, now: number): SessionHead => ({
-    header: { ...header.header, meta: structuredClone(header.header.meta) }, seq: tail.seq, revision: tail.revision, state: structuredClone(tail.state), updatedAt: tail.at, now,
+    header: { ...header.header, meta: structuredClone(header.header.meta) }, incarnation: incarnationOf(header), seq: tail.seq, revision: tail.revision, state: structuredClone(tail.state), updatedAt: tail.at, now,
   })
 
   /** A commit's first line, which says what it holds, read from the file's start (the whole commit when the line is not whole there). */
@@ -555,6 +560,8 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
         Effect.mapError((error) => new SessionLogError({ code: "store.encode", message: `the data is not JSON: ${error.message}`, cause: error })),
       ), { concurrency: 1 })
       const { header, tail } = yield* current(id)
+      // A session removed and created again under its id is another incarnation: missing to a writer of the one before.
+      if (commit.incarnation !== undefined && commit.incarnation !== incarnationOf(header)) return yield* Effect.fail(new SessionMissing({ session: id }))
       if (tail.revision !== commit.expect) return yield* Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: tail.revision }))
       const at = yield* Clock.currentTimeMillis
       if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return yield* Effect.fail(new LeaseExpired({ session: id, notAfter: commit.notAfter.value, now: at }))
@@ -581,6 +588,14 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
           Effect.mapError(storeError("store.io", "write a commit")),
         )
         if (!written) return { _tag: "Missing" } satisfies Published
+        // The session's directory is still the incarnation read: the temporary file was written in the directory the
+        // link will publish into (a directory moved away never comes back), so one removed and created again under its
+        // id meanwhile gets nothing.
+        const same = yield* headerOf(id).pipe(Effect.map((found) => found.nonce === header.nonce), Effect.catchTag("SessionMissing", () => Effect.succeed(false)))
+        if (!same) {
+          yield* bestEffort("unlink", temporary, () => io.unlink(temporary))
+          return { _tag: "Replaced" } satisfies Published
+        }
         // The lease's end again, right before the link: a write that took past it publishes nothing.
         const linking = yield* Clock.currentTimeMillis
         if (Option.isSome(commit.notAfter) && linking > commit.notAfter.value) {
@@ -600,6 +615,10 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
         Taken: () => current(id).pipe(Effect.flatMap((after) => Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: after.tail.revision })))),
         Missing: () => Effect.fail(new SessionMissing({ session: id })),
         Expired: (expired) => Effect.fail(new LeaseExpired({ session: id, notAfter: expired.notAfter, now: expired.now })),
+        // Named, the incarnation is gone; unnamed, the commit was planned on a session since replaced: plan again.
+        Replaced: () => commit.incarnation !== undefined
+          ? Effect.fail(new SessionMissing({ session: id }))
+          : current(id).pipe(Effect.flatMap((after) => Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: after.tail.revision })))),
       })
     }, onSession),
 
