@@ -1,12 +1,20 @@
-import { Option, Result, Schema } from "effect"
+import { Array as Arr, Option, Result, Schema } from "effect"
 import { parseModelSelection } from "@xandreed/core"
-import type { ModelCallPolicy } from "@xandreed/core"
+import type { ModelCallPolicy, ReasoningEffortType } from "@xandreed/core"
 import { anthropicProfileOf } from "./provider-profile.entity.functions.js"
 import { AnthropicEffort, ModelSettings, ModelSettingsError, ModelThinking } from "./model-settings.entity.js"
 import type { ModelSettingsMap, ResolvedAnthropicSettings } from "./model-settings.entity.js"
 
 const error = (reason: ModelSettingsError["reason"], message: string) => new ModelSettingsError({ reason, message })
 const outputLimit = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+/** Anthropic's levels, lowest first. */
+const EFFORT_ORDER: ReadonlyArray<AnthropicEffort> = ["low", "medium", "high", "xhigh", "max"]
+/** The neutral vocabulary in Anthropic's: none is mapped to low by local adapter policy. */
+const nativeEffort = (value: ReasoningEffortType): AnthropicEffort => value === "none" ? "low" : value
+/** The highest supported level at or below the requested one; the lowest supported when every one is above it. */
+const nearestEffort = (requested: AnthropicEffort, supported: ReadonlyArray<AnthropicEffort>): Option.Option<AnthropicEffort> =>
+  Option.orElse(Arr.findLast(supported, (level) => EFFORT_ORDER.indexOf(level) <= EFFORT_ORDER.indexOf(requested)), () => Arr.head(supported))
+
 const displayed = (thinking: ModelThinking): ModelThinking => ModelThinking.match(thinking, {
   Adaptive: (value) => ({ ...value, display: value.display ?? "summarized" }),
   Budget: (value) => ({ ...value, display: value.display ?? "summarized" }),
@@ -32,11 +40,21 @@ export const resolveAnthropicSettings = (selection: string, settings: ModelSetti
   if (Option.exists(thinking, (value) => traits !== undefined && !traits.modes.includes(value._tag))) return Result.fail(error("Thinking", "the configured thinking mode is not supported by this Messages model"))
   const noEffort = traits?.source === "documented" && profile.efforts.length === 0
   if (noEffort && configured.effort !== undefined) return Result.fail(error("Effort", "this Messages model does not support per-model effort"))
-  // Generic call policies historically did not send effort to non-effort legacy models.
-  const requestedEffort = noEffort ? Option.none() : Option.orElse(Option.map(policy, (value) => value.effort), () => Option.orElse(Option.fromNullishOr(configured.effort), () => traits?.defaultEffort ?? Option.none()))
-  const effort = Option.map(requestedEffort, (value): AnthropicEffort => value === "none" ? "low" : value)
-  if (Option.exists(effort, (value) => !Schema.is(AnthropicEffort)(value) || (traits?.source === "documented" && !profile.efforts.includes(value)))) return Result.fail(error("Effort", "the configured effort is not supported by this Messages model"))
-  if (Option.exists(thinking, (value) => (value._tag === "Off" || value._tag === "BetweenTools") && Option.exists(traits?.reducedEfforts ?? Option.none(), (allowed) => Option.exists(effort, (level) => !allowed.includes(level))))) return Result.fail(error("Effort", "this reduced-thinking mode requires low, medium or high effort"))
+  // A documented model's levels, narrowed to its reduced levels when thinking is Off or BetweenTools; none: send what was asked.
+  const reduced = Option.exists(thinking, (value) => value._tag === "Off" || value._tag === "BetweenTools") ? traits?.reducedEfforts ?? Option.none() : Option.none<ReadonlyArray<AnthropicEffort>>()
+  const supported = traits?.source === "documented"
+    ? Option.some(EFFORT_ORDER.filter((level) => profile.efforts.includes(level) && Option.match(reduced, { onNone: () => true, onSome: (allowed) => allowed.includes(level) })))
+    : Option.none<ReadonlyArray<AnthropicEffort>>()
+  // A per-model effort is the host's static choice for this model: one the model refuses fails before any call.
+  const explicit = Option.map(Option.fromNullishOr(configured.effort), nativeEffort)
+  if (Option.exists(explicit, (level) => traits?.source === "documented" && !profile.efforts.includes(level))) return Result.fail(error("Effort", "the configured effort is not supported by this Messages model"))
+  if (Option.exists(explicit, (level) => Option.exists(reduced, (allowed) => !allowed.includes(level)))) return Result.fail(error("Effort", "this reduced-thinking mode requires low, medium or high effort"))
+  // A call policy's effort (or the persisted one it carries) is shared by every model: it follows this one, clamped to its nearest supported level.
+  const ambient = Option.map(Option.map(policy, (value) => value.effort), nativeEffort)
+  const effort: Option.Option<AnthropicEffort> = noEffort ? Option.none() : Option.orElse(
+    Option.flatMap(ambient, (level) => Option.match(supported, { onNone: () => Option.some(level), onSome: (levels) => nearestEffort(level, levels) })),
+    () => Option.orElse(explicit, () => traits?.defaultEffort ?? Option.none()),
+  )
   if (Option.exists(thinking, (value) => value._tag === "Budget" && value.budgetTokens >= output.success)) return Result.fail(error("Budget", "the thinking budget must be less than maxOutputTokens"))
   return Result.succeed({ selection, thinking, effort, maxOutputTokens: output.success, promptCache: configured.promptCache ?? { _tag: "Auto", ttl: "5m" }, ...(Object.keys(limits).length === 0 ? {} : { limits }) })
 }

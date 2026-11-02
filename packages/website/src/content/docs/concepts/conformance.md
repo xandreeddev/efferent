@@ -39,7 +39,7 @@ transports (see [render kits](#render-kits)).
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
 | `authStoreConformance(store, { refresh?, corrupt? })` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), `get` and `all` hand out every secret `Redacted`, holding the value that was set, an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated; with `refresh`, concurrent calls on one expired token send one token request and a `remove` during it sticks; with `corrupt`, damaged backing data fails every call with `auth.corrupt` | an `AuthStore` |
 | `settingsStoreConformance(store, { writable, corrupt? })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
-| `modelRequestConformance(subject?)` | one counter for mixed transport/status failures, permanent structured errors before status retries, execution-time policy overrides and total attempt limits | a request-policy subject over a supplied raw `HttpClient`, the first-party engine by default |
+| `modelRequestConformance(subject?)` | one counter for mixed transport/status failures, permanent structured errors before status retries, execution-time policy overrides and total attempt limits, a settled request never sent again after its headers time out, a lost successful body read as a transient failure | a request-policy subject over a supplied raw `HttpClient`, the first-party engine by default |
 | `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
 Every kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
@@ -918,9 +918,16 @@ The kit supplies scripted transports, with no network or credentials:
   fails once as InvalidRequest.
 - **dynamic-policy**: executions with different attempt limits obey their
   own Reference values.
+- **settled-headers**: a settled request whose headers never arrive waits
+  for the call's deadline, past `requestTimeoutMs`, and fails once as
+  Timeout: its headers come with the whole generation, so a second send
+  would generate it again.
+- **lost-body**: a successful response whose body loses its connection
+  fails its reader as Transient, never as a permanent invalid response.
 
-Careless subjects that send once, retry permanently, or capture/ignore the
-policy fail these checks. Request-engine tests additionally cover bounded
+Careless subjects that send once, retry permanently, capture/ignore the
+policy, resend a settled request or pass raw body failures through fail
+these checks. Request-engine tests additionally cover bounded
 reads, delays and scoped cancellation. The shared Agent HTTP fixture runs
 on source Bun and packed Node/Bun, checking fallback reservation, frozen
 step replay and exactly one durable tool execution. These tests establish

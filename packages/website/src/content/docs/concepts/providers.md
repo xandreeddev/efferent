@@ -84,6 +84,11 @@ const messages = { plugin: modelsPlugin, options: {
 These static Messages controls are captured when the models layer is built;
 the writable role/model choices remain in `SettingsStore`. A call policy's
 cap and effort win over per-model settings, followed by the model profile.
+A call policy's effort, the persisted `reasoningEffort` included, is shared by
+every model, so on a documented model it is clamped to the highest level the
+model supports at or below it (xhigh becomes high on Opus 4.6; max becomes
+high on Opus 4.5 and under Off or BetweenTools thinking) instead of failing.
+A per-model `effort` the model refuses fails before any call.
 Legacy Haiku 4.5 and Sonnet 4.5 ignore generic policy effort and reject explicit
 per-model effort because they support no effort control.
 Unknown/deployment aliases need an explicit `maxOutputTokens`; the SDK's
@@ -105,11 +110,12 @@ Budget is at least 1024 and smaller than the effective output cap.
 | Haiku 5.5 | Adaptive; Off at low/medium/high | medium |
 | Opus 5 | Adaptive; Off at low/medium/high | high |
 | Opus 4.7/4.8 | Off by default; Adaptive when selected | high |
+| Mythos 5 / 5.1 | as Fable 5 / 5.1 (5.1 binds its thinking) | high |
 
 These are static [model](https://platform.claude.com/docs/en/models/overview)
 and [thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
-documentation facts checked on 2026-10-31. Future Fable 5.x adaptive-only
-matching is local policy. Native xhigh/max effort values stay native; the
+documentation facts checked on 2026-10-31. Future Fable and Mythos 5.x
+adaptive-only matching is local policy. Native xhigh/max effort values stay native; the
 neutral none hint maps to low. Known older models accept manual budgets only
 where their profile documents support; unknown aliases may opt into budgets
 with explicit settings. Unsupported modes, effort, budgets and forced
@@ -158,7 +164,10 @@ For a Messages gateway that cannot accept cache fields, set endpoint
 caller controls and omits SDK-generated null cache fields. Application data
 and tool-schema properties named `cache_control` are preserved.
 
-Helper completions use the same per-model policy. These controls and tests
+Helper completions (`UtilityLlm`) place no automatic breakpoint, whatever the
+model's policy: a one-shot prompt is never read back, so a mark would only pay
+the cache-write premium. Caller controls are preserved and validated, as under
+Off. These controls and tests
 establish request behavior, not cache hits: live hits require a sufficiently
 large identical prefix and positive provider cache-read usage. Aggregate
 usage does not distinguish write lifetimes, so mixed-lifetime cost estimates
@@ -429,7 +438,11 @@ environment's `NO_PROXY`: a host that only the `noProxy` option or the
 loopback rule exempts still goes through a proxy set in the environment, so
 list such hosts in `NO_PROXY` on Bun. For the same reason `noProxy: "*"`
 leaves a proxy in the environment in force on Bun: set `NO_PROXY=*` there
-instead. On a runtime that is neither Node nor Bun, a proxy setting fails
+instead. Every managed Bun call, proxied or not, passes fetch's
+`timeout: false`: Bun's fetch otherwise cuts a pending header wait and an
+idle body read at 300 s by itself, before the request policy's bounds. An
+explicit `FetchHttpClient.Fetch` still takes precedence on the direct route.
+On a runtime that is neither Node nor Bun, a proxy setting fails
 `Agent.define` instead of being ignored.
 
 **The OpenAI subscription (`openai-codex`)** talks over a WebSocket. When the
@@ -574,9 +587,9 @@ const result = turn.run({}).pipe(Effect.provideService(CurrentModelRetryPolicy, 
 | Field | Default | Meaning |
 |---|---|---|
 | `maxAttempts` | `4` | Total physical sends, including the initial send and configured fallback |
-| `requestTimeoutMs` | `300_000` | Pending response-header wait |
+| `requestTimeoutMs` | `300_000` | A streamed request's pending response-header wait |
 | `bodyIdleTimeoutMs` | `300_000` | Each pending body read |
-| `totalTimeoutMs` | `600_000` | One logical call's shared deadline |
+| `totalTimeoutMs` | `600_000` | One logical call's shared deadline before handoff |
 | `retryAfterMaxMs` | `60_000` | Maximum honored server hint |
 | `backoff` | `{ initialMs: 1000, maxMs: 4000, jitter: 0.2 }` | Exponential delay, jittered and capped at `maxMs` |
 
@@ -594,7 +607,9 @@ the final slot is reserved for its single send: the default is three primary
 sends plus one fallback send. Without a fallback, or with an identical one,
 the primary has all four slots. `maxAttempts: 1` tries the primary once.
 Fallback requires an eligible uncommitted failure and remaining time; a
-permanent error or handed-off response never uses that reserved slot.
+permanent error or handed-off response never uses that reserved slot. The
+fallback sends at once: the primary's backoff and server hint belong to the
+primary's provider.
 
 Only transport failures and rejected statuses before successful response
 handoff can retry. Structured error evidence precedes status, so a 429 with
@@ -607,16 +622,24 @@ Discarded responses close before another send. One-shot stream and FormData
 bodies are not replayed automatically. OAuth refreshes and authorization-code
 exchanges are outside the model retry policy.
 
-`Retry-After` accepts integer seconds or an HTTP date. Invalid, negative and
-nonfinite hints are ignored; past dates mean zero. The policy sleeps for the
+The server hint is `retry-after-ms` (milliseconds) when present, then
+`Retry-After`: seconds (decimals accepted, as the provider SDKs read them)
+or an HTTP date. Invalid, negative and nonfinite hints are ignored; past
+dates mean zero. The policy sleeps for the
 greater of its jittered, capped backoff and the hint capped at
 `retryAfterMaxMs`, within the remaining deadline. A longer hint is shortened
 to that cap; it does not become a quota failure.
 
+A streamed request's pending headers wait at most `requestTimeoutMs`, within
+the deadline, and a timeout there can retry. A settled request's headers
+arrive only with the whole generation, so they wait for the call's deadline,
+and a timeout there is final rather than a second generation.
+
 After HTTP response handoff, an empty 200, body/SDK decode failure or SSE
-error is final at the transport boundary. Pending reads still have idle and
-overall bounds; a progressing stream can outlast the header timeout. The
-overall deadline is checked before later sends and reads. Owned timeouts
+error is final at the transport boundary. Each pending body read then has
+only its idle bound: a response that keeps arriving can outlast the call's
+deadline (the turn's time limit bounds it). A body that loses its connection
+fails as `Transient` (`model.unavailable`). Owned timeouts
 retain `model.timeout`, and cancellation interrupts waits and forwards abort
 to the underlying request. Tools and SDK callbacks are never wrapped in
 model retries or timeout wrappers. The framework loop waits for the whole
@@ -642,8 +665,9 @@ The request engine and attempt state are internal; no stored shape changes.
   overflow. Only explicit context codes or narrow context-window evidence
   refine it to `ContextOverflow`.
 - A response the provider got wrong (a body or stream chunk that is not
-  JSON, `null`, or of the wrong shape, a subscription stream that broke off)
-  means `InvalidResponse`. The step loop does not answer it with a
+  JSON, `null`, or of the wrong shape) means `InvalidResponse`. A successful
+  response whose body loses its connection (a reset, a socket that breaks
+  off) means `Transient`: the connection failed, not the provider's answer. The step loop does not answer it with a
   corrective turn: those are for the model's own invalid output (an unknown
   tool, tool arguments that do not parse). Explicit protocol-failure stamps
   take precedence over an SDK malformed-output reason.

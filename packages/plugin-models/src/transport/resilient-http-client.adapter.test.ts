@@ -7,6 +7,7 @@ import { ConversationId, TurnClosed, harnessError, modelFailureOf } from "@xandr
 import { modelRetryDefaults } from "../llm/model-retry-policy.entity.js"
 import { CurrentModelRequestCall, CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
 import { enterModelFallback, makeModelRequestCall, modelRequestSnapshot, resilientRequest } from "./resilient-http-client.adapter.js"
+import type { ResilientHttpResponse } from "./resilient-http-client.adapter.js"
 
 const policy = { ...modelRetryDefaults, requestTimeoutMs: 50, bodyIdleTimeoutMs: 50, totalTimeoutMs: 2000, backoff: { initialMs: 0, maxMs: 0, jitter: 0 } }
 const request = HttpClientRequest.post("https://fixture.invalid/messages").pipe(HttpClientRequest.bodyJsonUnsafe({ fixture: true }))
@@ -112,6 +113,44 @@ describe("bounded model HTTP requests", () => {
     }).pipe(Effect.provideService(CurrentModelRetryPolicy, policy)))
     expect(raw.sends).toEqual([1, 2, 3, 4])
     expect(observed).toEqual({ entered: true, text: "fallback", state: { _tag: "Committed", rung: "Fallback", attempts: 4 }, twice: false })
+  })
+
+  test("a distinct fallback sends at once, never waiting out the primary provider's Retry-After", async () => {
+    const at: Array<number> = []
+    const raw = HttpClient.make((request) => Effect.sync(() => {
+      at.push(Date.now())
+      return HttpClientResponse.fromWeb(request, at.length <= 3
+        ? new Response(JSON.stringify({ error: { type: "rate_limit_error", message: "fixture" } }), { status: 429, headers: { "retry-after": "5" } })
+        : new Response("fallback"))
+    }))
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const call = yield* makeModelRequestCall({ reserveFallback: true })
+      const first = yield* Effect.flip(resilientRequest(raw, request, { protocol: "anthropic" }).pipe(Effect.provideService(CurrentModelRequestCall, Option.some(call))))
+      const entered = yield* enterModelFallback(call, first)
+      const response = yield* resilientRequest(raw, request, { protocol: "openai" }).pipe(Effect.provideService(CurrentModelRequestCall, Option.some(call)))
+      return { entered, text: yield* response.text }
+    }).pipe(Effect.provideService(CurrentModelRetryPolicy, { ...policy, retryAfterMaxMs: 300 })))
+    expect(observed).toEqual({ entered: true, text: "fallback" })
+    const gaps = at.slice(1).map((value, index) => value - (at[index] ?? 0))
+    // The primary honoured its capped hint between its own sends; the fallback did not inherit it.
+    expect(gaps[0]).toBeGreaterThanOrEqual(280)
+    expect(gaps[1]).toBeGreaterThanOrEqual(280)
+    expect(gaps[2]).toBeLessThan(150)
+  })
+
+  test("retry-after-ms outranks retry-after on a rejected response", async () => {
+    const at: Array<number> = []
+    const raw = HttpClient.make((request) => Effect.sync(() => {
+      at.push(Date.now())
+      return HttpClientResponse.fromWeb(request, at.length === 1
+        ? new Response(JSON.stringify({ error: { type: "rate_limit_error", message: "fixture" } }), { status: 429, headers: { "retry-after-ms": "200", "retry-after": "30" } })
+        : new Response("ok"))
+    }))
+    const text = await Effect.runPromise(resilientRequest(raw, request, { protocol: "openai" }).pipe(Effect.flatMap((response) => response.text), Effect.provideService(CurrentModelRetryPolicy, { ...policy, retryAfterMaxMs: 5000 })))
+    expect(text).toBe("ok")
+    const gap = (at[1] ?? 0) - (at[0] ?? 0)
+    expect(gap).toBeGreaterThanOrEqual(180)
+    expect(gap).toBeLessThan(2000)
   })
 
   test("a callback failure replacing the exhausted transport failure cannot enter fallback", async () => {
@@ -380,14 +419,47 @@ describe("bounded model HTTP requests", () => {
     expect(sends).toEqual([1])
   })
 
-  test("a reset successful body is final after handoff", async () => {
+  test("a reset successful body is a final transient network failure after handoff, on every reader", async () => {
     const sends: Array<number> = []
     const raw = HttpClient.make((request) => Effect.sync(() => {
       sends.push(1)
       return HttpClientResponse.fromWeb(request, new Response(new ReadableStream({ start(controller) { controller.error(new Error("fixture successful body reset")) } })))
     }))
-    const failure = await Effect.runPromise(Effect.flip(resilientRequest(raw, request, { protocol: "compat" }).pipe(Effect.flatMap((response) => response.text))).pipe(Effect.provideService(CurrentModelRetryPolicy, policy)))
-    expect(HttpClientError.isHttpClientError(failure) && failure.reason._tag).toBe("DecodeError")
-    expect(sends).toEqual([1])
+    const failures = await Effect.runPromise(Effect.forEach([
+      (response: ResilientHttpResponse) => response.text,
+      (response: ResilientHttpResponse) => Stream.runDrain(response.stream),
+    ], (read) => Effect.flip(resilientRequest(raw, request, { protocol: "anthropic" }).pipe(Effect.flatMap(read))), { concurrency: 1 }).pipe(Effect.provideService(CurrentModelRetryPolicy, policy)))
+    failures.forEach((failure) => {
+      // A lost connection is not the provider's answer: never a permanent InvalidResponse.
+      expect(AiError.isAiError(failure) && failure.reason._tag).toBe("NetworkError")
+      expect(modelFailureOf(failure)).toEqual(Option.some("Transient"))
+    })
+    expect(sends).toEqual([1, 1])
+  })
+
+  test("a streamed body that keeps arriving outlasts the call's deadline; each read has only its idle bound", async () => {
+    const raw = HttpClient.make((request) => Effect.sync(() => HttpClientResponse.fromWeb(request, new Response(new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        controller.enqueue(new TextEncoder().encode("x"))
+      },
+    }, { highWaterMark: 0 })))))
+    const read = await Effect.runPromise(resilientRequest(raw, request, { protocol: "anthropic", settled: false }).pipe(
+      Effect.flatMap((response) => Stream.runCollect(Stream.take(response.stream, 12))),
+      Effect.map((pieces) => pieces.length),
+      Effect.provideService(CurrentModelRetryPolicy, { ...policy, bodyIdleTimeoutMs: 200, totalTimeoutMs: 150 }),
+    ))
+    expect(read).toBe(12)
+  })
+
+  test("a streamed request's pending headers have their own bound and are sent again", async () => {
+    const sends: Array<number> = []
+    const raw = HttpClient.make((request) => Effect.suspend(() => {
+      sends.push(1)
+      return sends.length === 1 ? Effect.never : Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok")))
+    }))
+    const text = await Effect.runPromise(resilientRequest(raw, request, { protocol: "anthropic", settled: false }).pipe(Effect.flatMap((response) => response.text), Effect.provideService(CurrentModelRetryPolicy, policy)))
+    expect(text).toBe("ok")
+    expect(sends).toEqual([1, 1])
   })
 })

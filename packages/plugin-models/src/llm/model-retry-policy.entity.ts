@@ -27,7 +27,7 @@ export type ModelRequestRung = typeof ModelRequestRung.Type
 
 /** Private attempt state, shared by one routed call and its distinct fallback. */
 export const ModelRequestState = Schema.Union([
-  Schema.TaggedStruct("Ready", { rung: ModelRequestRung, attempts: nonnegative, readyAt: Schema.optionalKey(nonnegative) }),
+  Schema.TaggedStruct("Ready", { rung: ModelRequestRung, attempts: nonnegative }),
   Schema.TaggedStruct("Sending", { rung: ModelRequestRung, attempts: positive }),
   Schema.TaggedStruct("Rejected", { rung: ModelRequestRung, attempts: positive, kind: ModelFailureKind, replayable: Schema.Boolean, retryAt: Schema.optionalKey(nonnegative) }),
   Schema.TaggedStruct("Committed", { rung: ModelRequestRung, attempts: positive }),

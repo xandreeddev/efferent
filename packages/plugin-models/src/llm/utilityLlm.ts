@@ -12,7 +12,8 @@ import { CurrentModelCallPurpose } from "../ports/model-call-completion.port.js"
  * The fast helper tier: one-shot completions on `fastModel ?? model`, at
  * `fastReasoningEffort ?? reasoningEffort` (the fast role, as
  * `roleModelView("fast")` reads it; a call policy the caller pinned wins).
- * No toolkit or loop; Messages uses the same per-model prompt-cache policy.
+ * No toolkit or loop; a Messages helper prompt carries no automatic cache
+ * breakpoint, since a one-shot prompt is never read back.
  * A helper completion cannot park a turn. Like the routed model, it reads
  * its provider services once, where it is built: over a `ModelsTransport`,
  * its calls go through it.

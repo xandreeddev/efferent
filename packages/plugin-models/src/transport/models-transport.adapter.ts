@@ -61,6 +61,17 @@ const throughProxy = (target: URL, proxy: Redacted.Redacted<string>, request: Pr
 /** No proxy anywhere: every call is the global fetch, read per call, and WebSockets connect directly. */
 const directTransport = ModelsTransport.of({ fetch: (input, init) => globalThis.fetch(input, init) })
 
+/**
+ * A Bun request with fetch's own timeout turned off. Bun's fetch cuts a
+ * pending header wait and an idle body read at 300 s by itself (`timeout`
+ * defaults on); the request policy owns those bounds, as the zero-timeout
+ * undici pools do on Node.
+ */
+const untimed = (init: RequestInit | undefined): RequestInit => ({ ...init, timeout: false } as RequestInit)
+
+/** Bun without a proxy setting: its native fetch (which still applies an environment proxy itself), untimed. */
+const bunDirectTransport = ModelsTransport.of({ fetch: (input, init) => globalThis.fetch(input, untimed(init)) })
+
 /** Why a WebSocket that a proxy applies to is refused. */
 const webSocketRefused = (target: URL, why: string) => new ProxyUnsupported({
   message: `${why}, so the WebSocket to ${target.host} is refused instead of connecting directly past the proxy`,
@@ -90,8 +101,8 @@ const refuseProxyAuthentication = (response: Response): Promise<Response> =>
  */
 const bunTransport = (config: ProxyConfig, version: string) => ModelsTransport.of({
   fetch: (input, init) => Option.match(Option.flatMap(targetOf(input), (target) => Option.map(proxyFor(target, config), (proxy) => [target, proxy] as const)), {
-    onNone: () => globalThis.fetch(input, init),
-    onSome: ([target, proxy]) => throughProxy(target, proxy, globalThis.fetch(input, { ...init, proxy: Redacted.value(proxy) }).then(refuseProxyAuthentication)),
+    onNone: () => globalThis.fetch(input, untimed(init)),
+    onSome: ([target, proxy]) => throughProxy(target, proxy, globalThis.fetch(input, { ...untimed(init), proxy: Redacted.value(proxy) }).then(refuseProxyAuthentication)),
   }),
   webSocketAgent: (target) => Option.match(proxyFor(target, config), {
     onNone: () => Effect.succeedNone,
@@ -215,20 +226,24 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
 })
 
 /**
- * A scoped transport context. Node always owns a direct zero-timeout Agent;
- * its exact instance is marked so an explicit host fetch may override it.
- * Actual proxy transports remain authoritative. Bun with no proxy uses its
- * native fetch. A proxy URL that cannot
+ * A scoped transport context. Node always owns a direct zero-timeout Agent,
+ * and Bun its native fetch untimed; that exact instance is marked so an
+ * explicit host fetch may override it. Actual proxy transports remain
+ * authoritative. A proxy URL that cannot
  * be used fails with `ProxyInvalid`; a runtime that is neither Node nor Bun
  * fails with `ProxyUnsupported` when a proxy applies. Its connection pools
  * close with the scope.
  */
+const managedDirect = (transport: Context.Service.Shape<typeof ModelsTransport>): Context.Context<never> =>
+  Context.make(ModelsTransport, transport).pipe(Context.add(CurrentManagedModelsTransport, Option.some(transport)))
+
 export const modelsTransportContextFor = Effect.fnUntraced(function* (options: HttpProxyOptions): Effect.fn.Return<Context.Context<never>, ProxyInvalid | ProxyUnsupported | Config.ConfigError, Scope.Scope> {
   const config = yield* Effect.fromResult(resolveProxy(options, yield* readEnvironment))
   const runtime = currentRuntime()
   if (!usesProxy(config)) {
     return yield* Match.value(runtime).pipe(
-      Match.tag("Node", () => Effect.map(nodeDirectTransport, (transport) => Context.make(ModelsTransport, transport).pipe(Context.add(CurrentManagedModelsTransport, Option.some(transport))))),
+      Match.tag("Node", () => Effect.map(nodeDirectTransport, managedDirect)),
+      Match.tag("Bun", () => Effect.succeed(managedDirect(bunDirectTransport))),
       Match.orElse(() => Effect.succeed(Context.empty())),
     )
   }
@@ -243,7 +258,7 @@ export const modelsTransportContextFor = Effect.fnUntraced(function* (options: H
   return Context.make(ModelsTransport, transport).pipe(Context.add(CurrentManagedModelsTransport, Option.none()))
 })
 
-/** The scoped transport when one is required; Bun without a proxy keeps native fetch. */
+/** The scoped transport: a proxy's, or the managed direct one on Node and Bun; none on another runtime without a proxy. */
 export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProxyOptions) {
   return Context.getOption(yield* modelsTransportContextFor(options), ModelsTransport)
 })
@@ -254,7 +269,8 @@ export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProx
  * `http_proxy` / `HTTP_PROXY` from the environment) for every call, except
  * loopback hosts and the `noProxy` / `NO_PROXY` hosts, which go direct (see
  * `resolveProxy`). Node always uses a scoped direct undici Agent with its
- * header/body timeouts disabled; Bun without a proxy keeps native fetch. A proxy URL that cannot
+ * header/body timeouts disabled; Bun uses its native fetch with fetch's own
+ * timeout turned off. A proxy URL that cannot
  * be used fails with `ProxyInvalid`; a runtime that is neither Node nor Bun
  * fails with `ProxyUnsupported` when a proxy applies. Its connection pools
  * close with the layer's scope. Hosts use it for the OAuth login helpers too:

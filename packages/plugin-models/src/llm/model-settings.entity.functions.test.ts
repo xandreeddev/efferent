@@ -122,6 +122,25 @@ describe("Messages settings resolve documented native controls", () => {
     expect(reason(resolve("claude-opus-4-6", { effort: "xhigh" }))).toBe("Effort")
   })
 
+  test("a call policy's effort follows the model: clamped to its nearest supported level, never a failure", () => {
+    const ambient = (model: string, effort: ReasoningEffortType, settings: Settings = {}) => resolve(model, settings, Option.some({ effort }))
+    // Opus 4.6 takes low, medium, high and max; Opus 4.5 low, medium and high.
+    expect(value(ambient("claude-opus-4-6", "xhigh")).effort).toEqual(Option.some("high"))
+    expect(value(ambient("claude-opus-4-6", "max")).effort).toEqual(Option.some("max"))
+    expect(value(ambient("claude-opus-4-5", "max")).effort).toEqual(Option.some("high"))
+    expect(value(ambient("claude-opus-4-5", "none")).effort).toEqual(Option.some("low"))
+    // Reduced thinking narrows the levels the policy is clamped into.
+    expect(value(ambient("claude-sonnet-5-5", "xhigh", { thinking: { _tag: "BetweenTools" } })).effort).toEqual(Option.some("high"))
+    expect(value(ambient("claude-haiku-5-5", "max", { thinking: { _tag: "Off" } })).effort).toEqual(Option.some("high"))
+    expect(value(ambient("claude-opus-5", "max", { thinking: { _tag: "Off" } })).effort).toEqual(Option.some("high"))
+    // A model without native effort still drops it; an unknown model is sent what was asked.
+    expect(value(ambient("claude-sonnet-4-5", "xhigh")).effort).toEqual(Option.none())
+    expect(value(resolve("deployment-alias", {}, Option.some({ effort: "xhigh", maxOutputTokens: 1024 }))).effort).toEqual(Option.some("xhigh"))
+    // The host's own per-model effort is static configuration: one the model refuses still fails, policy or not.
+    expect(reason(ambient("claude-opus-4-6", "high", { effort: "xhigh" }))).toBe("Effort")
+    expect(reason(ambient("claude-sonnet-5-5", "low", { thinking: { _tag: "BetweenTools" }, effort: "max" }))).toBe("Effort")
+  })
+
   test("legacy manual budgets require at least1024 and strictly less than the effective output cap", () => {
     expect(Schema.decodeUnknownOption(ModelSettings)({ thinking: { _tag: "Budget", budgetTokens: 1023 } })).toEqual(Option.none())
     expect(reason(resolve("claude-haiku-4-5", { thinking: { _tag: "Budget", budgetTokens: 1024 }, limits: { maxOutputTokens: 1024 } }))).toBe("Budget")

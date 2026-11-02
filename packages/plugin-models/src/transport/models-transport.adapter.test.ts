@@ -37,15 +37,27 @@ describe("ModelsTransportLive without a proxy", () => {
     expect(reply).toBe("target saw GET /plain")
   })
 
-  test("the plugin adds no transport when no proxy applies, nor on Bun when noProxy turns it off", async () => {
-    const found = (options: Parameters<typeof modelsTransportFor>[0], env: Record<string, string>) => Effect.runPromise(Effect.scoped(modelsTransportFor(options)).pipe(
-      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
-      Effect.map(Option.isSome),
-    ))
-    expect(await found({}, {})).toBe(false)
-    // On Node, `*` is a transport over undici's direct agent (scripts/proxy-consumer.fixture.mjs); Bun's fetch has no per-request way to stay direct.
-    expect(await found({ noProxy: "*" }, { HTTPS_PROXY: "http://proxy.example:3128" })).toBe(false)
-    expect(await found({}, { HTTPS_PROXY: "http://proxy.example:3128" })).toBe(true)
+  test("on Bun the plugin's managed transport is native fetch with fetch's own 300 s timeout turned off, proxied or not", async () => {
+    const found = (options: Parameters<typeof modelsTransportFor>[0], env: Record<string, string>) => Effect.runPromise(Effect.scoped(modelsTransportFor(options).pipe(
+      Effect.flatMap(Option.match({
+        onNone: () => Effect.succeed<ReadonlyArray<unknown>>(["no transport"]),
+        onSome: (transport) => Effect.promise(() => {
+          const sent: Array<unknown> = []
+          const original = globalThis.fetch
+          // Observe the init Bun's fetch is handed; the request itself is never sent.
+          globalThis.fetch = Object.assign((_input: string | URL | Request, init?: RequestInit) => {
+            sent.push(Reflect.get(init ?? {}, "timeout"))
+            return Promise.resolve(new Response("observed"))
+          }, { preconnect: original.preconnect })
+          return transport.fetch("https://models.invalid/v1/messages", { method: "POST" }).finally(() => { globalThis.fetch = original }).then((): ReadonlyArray<unknown> => sent)
+        }),
+      })),
+    )).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env }))))
+    // Bun's fetch would otherwise cut a settled generation's header wait (and an idle body) at 300 s and the policy would send it again.
+    expect(await found({}, {})).toEqual([false])
+    // Bun's fetch has no per-request way to stay direct past an environment proxy; `*` keeps the untimed native fetch.
+    expect(await found({ noProxy: "*" }, { HTTPS_PROXY: "http://proxy.example:3128" })).toEqual([false])
+    expect(await found({}, { HTTPS_PROXY: "http://proxy.example:3128" })).toEqual([false])
   })
 })
 

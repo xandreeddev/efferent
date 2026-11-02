@@ -20,6 +20,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   registries rerun `toolRegistryConformance` for its `nested-other-open`
   check.
 
+- `@xandreed/plugin-models` request policy: `requestTimeoutMs` now bounds a
+  streamed request's pending headers only. A settled request's headers wait
+  for `totalTimeoutMs`, and that timeout is final instead of a second
+  generation; after handoff each body read has only `bodyIdleTimeoutMs`. A
+  custom `ModelRequestSubject` reruns `modelRequestConformance`, which adds
+  `settled-headers` and `lost-body`. Compat's `beforeRequest` runs before every
+  physical send, retries included; `aroundRequest` still wraps the logical call
+  once. On Bun the plugin now provides a managed transport that passes fetch's
+  `timeout: false`; an explicit `FetchHttpClient.Fetch` still takes precedence.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1761,6 +1771,30 @@ Model-visible text (exact pins and the compaction golden updated):
   source declaring more than `maxSourcePixels` before any converter decodes
   it. Loop protection limits are decoded at `Agent.define` and per run, so an
   invalid policy fails before any provider call instead of inside the loop.
+
+- `@xandreed/plugin-models` model calls:
+  - A successful body that loses its connection (a reset, a socket that breaks
+    off) is a Transient failure (`model.unavailable`), not a permanent
+    `model.invalid-response`. A stalled stream on a model that binds thinking
+    reports `model.timeout`; its body is no longer re-wrapped and decoded as
+    an SDK failure.
+  - A settled request whose headers take longer than `requestTimeoutMs` is no
+    longer cut and sent again (a second generation). A response that keeps
+    arriving is no longer cut at the call's total deadline.
+  - A call policy's effort, including the persisted `reasoningEffort`, is
+    clamped to the nearest level a documented Messages model supports (xhigh
+    becomes high on Opus 4.6) instead of failing every call. An explicit
+    per-model `effort` the model refuses still fails before I/O.
+  - A configured fallback sends at once instead of waiting out the primary
+    provider's backoff and `Retry-After`. `retry-after-ms` and decimal
+    `retry-after` seconds are honoured, as the provider SDKs read them.
+  - Helper completions (`UtilityLlm`) place no automatic prompt-cache
+    breakpoint, so a one-shot helper prompt no longer pays the cache-write
+    premium.
+  - Bun's fetch no longer cuts managed calls at its own 300 s header and idle
+    timeouts.
+  - Claude Mythos 5 and 5.1 have profiles with their Fable counterparts'
+    controls; Mythos 5.1 binds thinking and gets `drop_block` by default.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued
