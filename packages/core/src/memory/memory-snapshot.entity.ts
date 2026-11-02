@@ -35,6 +35,8 @@ export const MemoryProjection = Schema.Union([
     anchorIndex: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     throughIndex: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     checkedThrough: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    /** The step-context placements whose first projected build matched the full archive's. */
+    verified: Schema.Array(Schema.Literals(["none", "tail"])),
   }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type MemoryProjection = typeof MemoryProjection.Type

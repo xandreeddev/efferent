@@ -20,9 +20,15 @@ export const makeMemoryCheckpoint = Effect.fnUntraced(function* (
   const gate = yield* Semaphore.make(1)
   const known = yield* Ref.make(Option.none<{ readonly entries: ReadonlyArray<LocatedEntry>; readonly cursor: number }>())
   const terminal = yield* Ref.make(Option.none<{ readonly key: string; readonly exit: Exit.Exit<void, TurnError> }>())
+  // The history before the turn, decoded once for both the load and every save.
+  const located = yield* Ref.make(Option.none<ReadonlyArray<LocatedEntry>>())
+  const historyLocated = Ref.get(located).pipe(Effect.flatMap(Option.match({
+    onNone: () => history.pipe(Effect.flatMap(locate), Effect.tap((entries) => Ref.set(located, Option.some(entries)))),
+    onSome: Effect.succeed,
+  })))
   const refresh = Effect.gen(function* () {
     const previous = yield* Option.match(yield* Ref.get(known), {
-      onNone: () => history.pipe(Effect.flatMap(locate), Effect.map((entries) => ({ entries, cursor: writer.started.seq - 1 }))),
+      onNone: () => historyLocated.pipe(Effect.map((entries) => ({ entries, cursor: writer.started.seq - 1 }))),
       onSome: Effect.succeed,
     })
     const own = (yield* writer.snapshot(MEMORY_KINDS, previous.cursor)).filter((event) => event.session === writer.started.session && event.seq > previous.cursor)
@@ -38,7 +44,7 @@ export const makeMemoryCheckpoint = Effect.fnUntraced(function* (
       if (row.kind !== "memory.snapshot") return yield* Effect.fail(invalid("selected memory snapshot has the wrong kind"))
       if (row.session === writer.started.session && row.seq >= writer.started.seq) return yield* Effect.fail(invalid("selected memory snapshot is outside this turn's history"))
       const data = yield* storedJson(row.data).pipe(Effect.flatMap(Schema.decodeUnknownEffect(MemorySnapshotData)), Effect.mapError((cause) => invalid("selected memory snapshot did not decode", cause)))
-      const all = yield* history.pipe(Effect.flatMap(locate))
+      const all = yield* historyLocated
       const publicationSession = all.findIndex(({ event }) => event.session === row.session)
       const before = (item: LocatedEntry, index: number) => item.event.session === row.session ? item.event.seq < row.seq : publicationSession >= 0 && index < publicationSession
       const anchor = all.findIndex(({ event }) => event.session === data.anchor.session && event.seq === data.anchor.seq)

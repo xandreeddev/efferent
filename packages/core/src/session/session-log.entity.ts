@@ -109,6 +109,12 @@ export const SessionReadQuery = Schema.Struct({
   through: Schema.optionalKey(Schema.Int),
   limit: Schema.OptionFromNullOr(Schema.Int),
   kinds: Schema.Array(Name),
+  /**
+   * `references`: the caller decodes only lookup keys, so a decorating store
+   * (`withMediaStore`) may leave stored media references in place instead of
+   * reading their bytes. A plain backend ignores it. Omission hydrates.
+   */
+  media: Schema.optionalKey(Schema.Literals(["hydrate", "references"])),
 })
 export type SessionReadQuery = typeof SessionReadQuery.Type
 

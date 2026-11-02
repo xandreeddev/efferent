@@ -6,7 +6,11 @@ import type { MediaHash, MediaStoreError } from "../domain/media-store.entity.js
  * Immutable blobs addressed by SHA-256 of decoded bytes, not media fingerprints
  * or occurrence labels. put accepts 1..MEDIA_LIMITS.imageBytes bytes, copies
  * before waiting and is idempotent. get returns an independent copy or None
- * for an absent hash; corrupt stored bytes fail rather than appearing absent.
+ * for an absent hash; corrupt stored bytes fail as `Corrupt` rather than
+ * appearing absent: get never returns bytes whose SHA-256 is not their key,
+ * so a caller need not hash them again. An adapter that cannot rule out
+ * damage verifies before answering; one on a platform with native crypto
+ * hashes with it.
  * Invalid inputs and backend failures are MediaStoreError values. Hashes name
  * content inside a trusted host store and grant no authorization by themselves.
  * mediaStoreConformance is the contract as runnable checks.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
 import { Base64 } from "effect/encoding"
-import { mediaFromBase64 } from "../domain/media.entity.functions.js"
+import { mediaFromBase64, UNAVAILABLE_MEDIA_DATA } from "../domain/media.entity.functions.js"
 import { mediaHashOf } from "../domain/media-store.entity.functions.js"
 import { MediaStoreError } from "../domain/media-store.entity.js"
 import { MediaStore } from "../ports/media-store.port.js"
@@ -210,27 +210,42 @@ describe("the media decorator preserves the SessionLog contract", () => {
   }))
 })
 
-test.each(["missing", "wrong-bytes", "invalid-metadata", "unavailable"] as const)("recognized %s media fails hard on a cold read", async (scenario) => {
+const imageAt = (data: unknown) => (data as { part: { tool: { parameters: { image: Record<string, unknown> } } } }).part.tool.parameters.image
+
+test.each(["missing", "corrupt", "wrong-bytes", "invalid-metadata", "unavailable"] as const)("a %s blob keeps its occurrence's label and the log readable; unavailable storage fails", async (scenario) => {
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const writer = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, store([], [])))
     yield* writer.create(header)
-    yield* writer.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }]))
+    const data = yield* partData
+    yield* writer.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }, { kind: "inbox.taken", turn: Option.some(1), data: { id: "input", entry: "turn:0" } }]))
     const bytes = yield* Schema.decodeUnknownEffect(Schema.Uint8ArrayFromBase64)(png)
     const raw = yield* inner.read(id, query)
     const envelope = yield* Schema.decodeUnknownEffect(MediaEnvelope)(raw[0]!.data)
     const payload = envelope["$efferent.media"]
     const value = Option.getOrThrow(replaceJsonAt(payload.value, ["part", "tool", "parameters", "image", "fingerprint"], "0".repeat(18)))
-    const data = scenario === "invalid-metadata" ? { "$efferent.media": { ...payload, value } } : raw[0]!.data
-    const source = { ...inner, read: () => Effect.succeed([{ ...raw[0]!, data }]) }
+    const stored = scenario === "invalid-metadata" ? { "$efferent.media": { ...payload, value } } : raw[0]!.data
+    const source = { ...inner, read: () => Effect.succeed([{ ...raw[0]!, data: stored }, raw[1]!]) }
     const reader = yield* withMediaStore(source).pipe(Effect.provideService(MediaStore, {
       put: (bytes) => Effect.succeed(mediaHashOf(bytes)),
       get: () => scenario === "unavailable" ? Effect.fail(new MediaStoreError({ reason: "Unavailable", message: "offline" }))
-        : Effect.succeed(scenario === "missing" ? Option.none() : Option.some(scenario === "wrong-bytes" ? new Uint8Array([1, 2, 3]) : bytes)),
+        : scenario === "corrupt" ? Effect.fail(new MediaStoreError({ reason: "Corrupt", message: "damaged" }))
+          : Effect.succeed(scenario === "missing" ? Option.none() : Option.some(scenario === "wrong-bytes" ? new Uint8Array([1, 2, 3]) : bytes)),
     }))
-    return yield* reader.read(id, query).pipe(Effect.result)
+    return { data, read: yield* reader.read(id, query).pipe(Effect.result) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
-  expect(result._tag === "Failure" && result.failure._tag === "SessionLogError" && result.failure.code).toBe(scenario === "unavailable" ? "store.io" : "store.decode")
+  if (scenario === "unavailable") {
+    expect(result.read._tag === "Failure" && result.read.failure._tag === "SessionLogError" && result.read.failure.code).toBe("store.io")
+    return
+  }
+  const rows = result.read._tag === "Success" ? result.read.success : []
+  expect(rows).toHaveLength(2)
+  const original = imageAt(result.data)
+  const restored = imageAt(rows[0]!.data)
+  expect(restored.data).toBe(UNAVAILABLE_MEDIA_DATA)
+  expect<unknown>({ ...restored, data: original.data, fingerprint: original.fingerprint }).toEqual(original)
+  expect(Option.isSome(Schema.decodeUnknownOption(RequestPartData)(rows[0]!.data))).toBe(true)
+  expect(rows[1]!.data).toEqual({ id: "input", entry: "turn:0" })
 })
 
 test.each(["duplicate", "ancestor", "missing", "array-string", "reference-extra"] as const)("malformed %s manifest fails before blob IO", async (scenario) => {
@@ -257,7 +272,7 @@ test.each(["duplicate", "ancestor", "missing", "array-string", "reference-extra"
   expect(gets).toHaveLength(0)
 })
 
-test("a cache hit still validates every occurrence's metadata against the bytes", async () => {
+test("a cache hit still checks every occurrence's metadata against the bytes", async () => {
   const gets: string[] = []
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
@@ -271,9 +286,11 @@ test("a cache hit still validates every occurrence's metadata against the bytes"
     const payload = envelope["$efferent.media"]
     const value = Option.getOrThrow(replaceJsonAt(payload.value, ["part", "tool", "parameters", "image", "bytes"], 1))
     const reader = yield* withMediaStore({ ...inner, read: () => Effect.succeed([raw[0]!, { ...raw[1]!, data: { "$efferent.media": { ...payload, value } } }]) }).pipe(Effect.provideService(MediaStore, base))
-    return yield* reader.read(id, query).pipe(Effect.result)
+    return { data, rows: yield* reader.read(id, query) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
-  expect(result._tag === "Failure" && result.failure._tag === "SessionLogError" && result.failure.code).toBe("store.decode")
+  expect(result.rows[0]!.data).toEqual(result.data)
+  expect(imageAt(result.rows[1]!.data).data).toBe(UNAVAILABLE_MEDIA_DATA)
+  expect(imageAt(result.rows[1]!.data).bytes).toBe(1)
   expect(gets).toHaveLength(1)
 })
 
@@ -288,11 +305,11 @@ test("the read upper bound excludes a future missing blob even if the backend ig
       put: (bytes) => Effect.succeed(mediaHashOf(bytes)), get: (hash) => Effect.sync(() => { gets.push(hash); return Option.none() }),
     }))
     const prefix = yield* reader.read(id, { ...query, through: 1 })
-    const full = yield* reader.read(id, query).pipe(Effect.result)
+    const full = yield* reader.read(id, query)
     return { prefix, full }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.prefix.map((row) => row.kind)).toEqual(["inbox.taken"])
-  expect(result.full._tag === "Failure" && result.full.failure._tag === "SessionLogError" && result.full.failure.code).toBe("store.decode")
+  expect(imageAt(result.full[1]!.data).data).toBe(UNAVAILABLE_MEDIA_DATA)
   expect(gets).toHaveLength(1)
 })
 
@@ -317,4 +334,41 @@ test.each([
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.every((rows) => rows.length === 1)).toBe(true)
   expect(gets).toHaveLength(expected)
+})
+
+test("rows without an envelope pass through untouched, even ones this release cannot decode", async () => {
+  const gets: string[] = []
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const inner = yield* SessionLog
+    const wrapped = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, store(gets, [])))
+    yield* inner.create(header)
+    // A newer release's header version, and an unreferenced damaged part body, written inline.
+    const rows = [
+      { kind: "request.prepared", turn: Option.some(1), data: { version: 3, runId: "r", run: 0, step: 0 } },
+      { kind: "request.part", turn: Option.some(1), data: { hash: "a".repeat(64), part: { _tag: "Future" } } },
+    ]
+    yield* inner.commit(id, commitOf(rows))
+    return { rows, all: yield* wrapped.read(id, query), parts: yield* wrapped.read(id, { ...query, kinds: ["request.part"] }) }
+  }).pipe(Effect.provide(SessionLogMemoryLive)))
+  expect(result.all.map((row) => row.data)).toEqual(result.rows.map((row) => row.data))
+  expect(result.parts.map((row) => row.data)).toEqual([result.rows[1]!.data])
+  expect(gets).toHaveLength(0)
+})
+
+test("a key-only read returns logical values with their references in place and reads no blob", async () => {
+  const gets: string[] = []
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const inner = yield* SessionLog
+    const wrapped = yield* withMediaStore(inner, { cacheEntries: 0 }).pipe(Effect.provideService(MediaStore, store(gets, [])))
+    yield* wrapped.create(header)
+    const data = yield* partData
+    yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }]))
+    const keyed = yield* wrapped.read(id, { ...query, media: "references" })
+    const hydrated = yield* wrapped.read(id, query)
+    return { data, keyed, hydrated }
+  }).pipe(Effect.provide(SessionLogMemoryLive)))
+  expect(imageAt(result.keyed[0]!.data).data).toMatchObject({ type: "media-reference", version: 1 })
+  expect<unknown>({ ...imageAt(result.keyed[0]!.data), data: imageAt(result.data).data }).toEqual(imageAt(result.data))
+  expect(result.hydrated[0]!.data).toEqual(result.data)
+  expect(gets).toHaveLength(1)
 })

@@ -86,6 +86,9 @@ const probeProjection = (session, runName, late) => Effect.gen(function* () {
     digestOnWrite: Option.none(), maintain: () => Effect.succeed({ actions: [], digest: [] }),
   }, { runId: RunId.make(runName) })
   install()
+  // A placement's first build checks the projection against one full render; later builds read only the projection.
+  yield* session.build(request)
+  touches.count = 0
   const built = yield* session.build(request)
   const projectedReads = touches.count
   touches.count = 0

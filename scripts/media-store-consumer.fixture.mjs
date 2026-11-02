@@ -12,9 +12,9 @@ import {
   canonicalJson, ConversationId, defineCapability, defineSkill, defineTool,
   describeModel, entriesOfEvents, Failure, frameworkDraft,
   InboxItemId, isMediaValue, journalSchemaOf, mediaFromBase64, mediaFromBytes,
-  mediaHashOf, MediaStore, MediaStoreMemoryLive, replayModelRequest, RunId,
+  mediaHashOf, mediaLabel, MediaStore, MediaStoreMemoryLive, replayModelRequest, RunId,
   RunOrdinal, SessionLog, Sessions, STORED_FORMAT, TurnAdmissionOpen, TurnMemory,
-  UserMessage, withMediaStore,
+  UNAVAILABLE_MEDIA_DATA, UserMessage, withMediaStore,
 } from "@xandreed/core"
 import { mediaStoreConformance, sessionLogConformance } from "@xandreed/core/conformance"
 import { prepareRequestParts, toolParametersSchema } from "@xandreed/core/internal"
@@ -216,20 +216,25 @@ const forks = (root) => Effect.scoped(Effect.gen(function* () {
   return { forkCutoffBeforeHydrationVerified: true, missingFutureIgnored: true, sharedBlobRetentionVerified: true, replayVerified: true }
 }))
 const integrity = (root) => Effect.scoped(Effect.gen(function* () {
+  const label = mediaLabel(imageA)
   for (const kind of ["missing", "corrupt"]) {
     const path = join(root, "media", "blobs", `${hashA}.bin`)
     if (kind === "missing") yield* Effect.tryPromise(() => unlink(path))
     else yield* Effect.tryPromise(() => writeFile(path, new Uint8Array([1, 2, 3])))
-    const { sessions } = yield* build(root)
+    const { sessions, log } = yield* build(root)
     const observed = []
-    const result = yield* Effect.result(runTurn(sessions, parent, `media-${kind}`, { observed, forbid: true }))
-    assert.equal(result._tag, "Failure")
-    assert.equal(observed.length, 0)
-    assert.equal(result.failure._tag, "SessionLogError", `${kind} media was not a typed storage failure`)
-    assert.equal(result.failure.code, "store.decode", `${kind} media was not the selected read failure`)
+    // A lost blob does not stop the session: the next turn runs, and the model sees that image as its label.
+    yield* runTurn(sessions, parent, `media-${kind}`, { observed, image: imageB })
+    const parts = (value) => typeof value === "object" && value !== null ? [value, ...Object.values(value).flatMap(parts)] : []
+    // Only the legacy turn written inline, before the store, still sends these bytes: its attachment and its tool image.
+    const sentA = parts(observed[0].prompt).filter((part) => part.type === "file" && part.data === pixel).map((part) => part.fileName)
+    assert.deepEqual(sentA.toSorted(), ["attachment.png", "tool.png"], `${kind} media bytes reached the model as an image`)
+    assert.ok(JSON.stringify(observed[0].prompt).includes(label), `${kind} media was not shown as its label`)
+    const events = yield* log.read(parent.id, query)
+    assert.ok(events.some((event) => event.kind === "turn.started" && event.data.userMessage.attachments?.[0]?.data === UNAVAILABLE_MEDIA_DATA), `${kind} media was not kept as its label`)
     yield* Effect.tryPromise(() => writeFile(path, bytesA))
   }
-  return { missingNoDispatchVerified: true, corruptNoDispatchVerified: true }
+  return { missingLabelVerified: true, corruptLabelVerified: true }
 }))
 const kits = (root) => Effect.scoped(Effect.gen(function* () {
   const memory = { open: () => Layer.build(MediaStoreMemoryLive).pipe(Effect.map((context) => Context.get(context, MediaStore))) }

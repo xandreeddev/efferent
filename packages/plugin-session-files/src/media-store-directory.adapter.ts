@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { join } from "node:path"
-import { Effect, Layer, Match, Option, Result, Schema } from "effect"
-import { errorCodeOf, MEDIA_LIMITS, MediaHash, mediaHashOf, MediaStore, MediaStoreBytes, MediaStoreError } from "@xandreed/core"
+import { Clock, Effect, Layer, Match, Option, Result, Schema } from "effect"
+import { errorCodeOf, MEDIA_LIMITS, MediaHash, MediaStore, MediaStoreBytes, MediaStoreError } from "@xandreed/core"
 import type { FilesIo } from "./files-io.adapter.js"
 import { nodeFilesIo } from "./files-io.adapter.js"
 import { makeBoundedFilesCall } from "./bounded-call.adapter.js"
@@ -24,6 +24,18 @@ const unavailable = (error: Failed): MediaStoreError => Match.valueTags(error, {
 const corrupt = () => new MediaStoreError({ reason: "Corrupt", message: "The stored media does not match its content key." })
 const equal = (left: Uint8Array, right: Uint8Array): boolean => left.length === right.length && left.every((byte, index) => byte === right[index])
 const stallBound = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2_147_483_647 }))
+/** The platform's SHA-256: the same key as core's pure `mediaHashOf`, at native speed. */
+const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex")
+/**
+ * How old a temporary file must be before a store opening sweeps it: a put
+ * publishes its file within a few bounded calls, so one this old was left by
+ * a process that stopped (an hour also covers clocks that disagree on a
+ * shared mount).
+ */
+const TEMPORARY_GRACE_MS = 60 * 60 * 1000
+/** When a temporary file was created, from its name (`<hash|marker>.<millis>.<uuid>[.tmp]`). */
+const createdAt = (name: string): Option.Option<number> => Option.map(
+  Option.fromNullishOr(/^(?:[0-9a-f]{64}|marker)\.(\d{1,16})\.[0-9a-f-]{36}(?:\.tmp)?$/.exec(name)?.[1]), Number)
 
 const makeDirectory = Effect.fnUntraced(function* (root: string, options?: MediaStoreDirectoryOptions) {
   const io = options?.io ?? nodeFilesIo
@@ -33,6 +45,7 @@ const makeDirectory = Effect.fnUntraced(function* (root: string, options?: Media
   const call = yield* makeBoundedFilesCall(stallMs)
   const blobs = join(root, "blobs")
   const temporary = join(root, "tmp")
+  const quarantine = join(root, "quarantine")
   const marker = join(root, "media-store.json")
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
@@ -55,9 +68,17 @@ const makeDirectory = Effect.fnUntraced(function* (root: string, options?: Media
       }),
     })
   })
-  yield* Effect.forEach([root, blobs, temporary], path => call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(Effect.mapError(unavailable))
+  yield* Effect.forEach([root, blobs, temporary, quarantine], path => call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(Effect.mapError(unavailable))
+  /** A fresh temporary path, its creation time in its name for a later opening's sweep. */
+  const temporaryPath = (prefix: string, suffix: string) => Clock.currentTimeMillis.pipe(Effect.map(now => join(temporary, `${prefix}.${now}.${randomUUID()}${suffix}`)))
+  // Files a stopped process left between create and publication: removed once they are surely abandoned.
+  yield* Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis
+    const names = yield* call("list", temporary, () => io.list(temporary))
+    yield* Effect.forEach(names.filter(name => Option.exists(createdAt(name), at => now - at > TEMPORARY_GRACE_MS)), name => clean(join(temporary, name)), { concurrency: 1, discard: true })
+  }).pipe(Effect.ignore({ log: "Debug", message: "The media directory's abandoned temporary files were not swept." }))
   if (!(yield* markerAt)) {
-    const path = join(temporary, `marker.${randomUUID()}`)
+    const path = yield* temporaryPath("marker", "")
     yield* Effect.gen(function* () {
       yield* call("create", path, () => io.create(path, encoder.encode(`${JSON.stringify({ layout: MEDIA_DIRECTORY_LAYOUT, algorithm: "sha256" })}\n`))).pipe(Effect.mapError(unavailable))
       yield* call("link", marker, () => io.link(path, marker)).pipe(
@@ -74,7 +95,7 @@ const makeDirectory = Effect.fnUntraced(function* (root: string, options?: Media
     onNone: () => Effect.succeed(Option.none<Uint8Array>()),
     onSome: raw => {
       const bytes = new Uint8Array(raw)
-      return bytes.length > 0 && bytes.length <= MEDIA_LIMITS.imageBytes && mediaHashOf(bytes) === hash
+      return bytes.length > 0 && bytes.length <= MEDIA_LIMITS.imageBytes && sha256(bytes) === hash
         ? Effect.succeed(Option.some(bytes)) : Effect.fail(corrupt())
     },
   })))
@@ -89,20 +110,29 @@ const makeDirectory = Effect.fnUntraced(function* (root: string, options?: Media
       const bytes = new Uint8Array(decoded.success)
       const checked = Schema.decodeUnknownResult(MediaStoreBytes)(bytes)
       if (Result.isFailure(checked)) return yield* Effect.fail(new MediaStoreError({ reason: "Invalid", message: "The media bytes are outside the store's bounds.", cause: checked.failure }))
-      const hash = mediaHashOf(bytes)
-      const existing = yield* blobAt(hash)
-      if (Option.isSome(existing)) {
-        if (!equal(existing.value, bytes)) return yield* Effect.fail(corrupt())
-        return hash
-      }
-      const path = join(temporary, `${hash}.${randomUUID()}.tmp`)
+      const hash = MediaHash.make(sha256(bytes))
       const final = join(blobs, `${hash}.bin`)
+      /** What the final file holds now: these bytes, nothing, or damaged bytes the put repairs. */
+      const presence = blobAt(hash).pipe(
+        Effect.map(found => Option.match(found, { onNone: () => "absent" as const, onSome: stored => equal(stored, bytes) ? "present" as const : "corrupt" as const })),
+        Effect.catchIf(failure => failure.reason === "Corrupt", () => Effect.succeed("corrupt" as const)),
+      )
+      /** Keep the damaged file as evidence beside the store, then replace it atomically with the good bytes. */
+      const repair = (path: string) => Effect.gen(function* () {
+        const kept = join(quarantine, `${hash}.${yield* Clock.currentTimeMillis}.${randomUUID()}.bin`)
+        yield* call("link", kept, () => io.link(final, kept)).pipe(Effect.catchIf(missing, () => Effect.void), Effect.mapError(unavailable))
+        yield* call("rename", final, () => io.rename(path, final)).pipe(Effect.mapError(unavailable))
+        yield* Effect.logWarning("A damaged media blob was replaced by the bytes put again; the damaged copy is in quarantine.").pipe(Effect.annotateLogs({ "efferent.media.hash": hash }))
+      })
+      const found = yield* presence
+      if (found === "present") return hash
+      const path = yield* temporaryPath(hash, ".tmp")
       yield* Effect.gen(function* () {
         yield* call("create", path, () => io.create(path, bytes)).pipe(Effect.mapError(unavailable))
-        yield* call("link", final, () => io.link(path, final)).pipe(Effect.catch(error => blobAt(hash).pipe(
+        yield* (found === "corrupt" ? repair(path) : call("link", final, () => io.link(path, final)).pipe(Effect.catch(error => presence.pipe(
           Effect.catchIf(failure => failure.reason === "Unavailable", () => Effect.fail(unavailable(error))),
-          Effect.flatMap(found => Option.isSome(found) && equal(found.value, bytes) ? Effect.void : Effect.fail(unavailable(error))),
-        )), Effect.ensuring(clean(path).pipe(Effect.interruptible)))
+          Effect.flatMap(now => now === "present" ? Effect.void : now === "corrupt" ? repair(path) : Effect.fail(unavailable(error))),
+        )))).pipe(Effect.ensuring(clean(path).pipe(Effect.interruptible)))
         yield* sync(blobs)
       })
       return hash
@@ -113,6 +143,8 @@ const makeDirectory = Effect.fnUntraced(function* (root: string, options?: Media
 /**
  * Immutable SHA-256 media blobs, published by exclusive hard link after file sync.
  * The independent root retains orphans; session removal never deletes blobs.
+ * Opening sweeps temporary files older than an hour; a put of bytes whose final
+ * file is damaged keeps that file in `quarantine/` and replaces it.
  * @public
  */
 export const MediaStoreDirectoryLive = (root: string, options?: MediaStoreDirectoryOptions) => Layer.effect(MediaStore, makeDirectory(root, options))

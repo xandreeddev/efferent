@@ -1,8 +1,9 @@
 import { Array as Arr, Effect, Option, Ref, Schema } from "effect"
 import { Base64 } from "effect/encoding"
 import { Media } from "../domain/media.entity.js"
+import { UNAVAILABLE_MEDIA_DATA } from "../domain/media.entity.functions.js"
 import { mediaHashOf } from "../domain/media-store.entity.functions.js"
-import type { MediaHash, MediaStoreError } from "../domain/media-store.entity.js"
+import type { MediaHash } from "../domain/media-store.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { MediaStore } from "../ports/media-store.port.js"
 import type { SessionLog } from "../ports/session-log.port.js"
@@ -13,14 +14,16 @@ import { storedJson } from "./session-log.entity.functions.js"
 import { MediaCacheOptions, MediaEnvelope, MediaReference } from "./media-reference.entity.js"
 import type { MediaDataPath } from "./media-reference.entity.js"
 import { canonicalMediaBytes, isJsonObject, jsonAt, rememberMedia, replaceJsonAt } from "./media-reference.entity.functions.js"
+import type { CheckedMedia } from "./media-reference.entity.functions.js"
 
 const failed = (code: string, message: string, cause?: unknown) => new SessionLogError({ code, message, ...(cause === undefined ? {} : { cause }) })
-const mediaFailure = (operation: "put" | "get", cause: MediaStoreError) => failed(operation === "get" && cause.reason !== "Unavailable" ? "store.decode" : "store.io", `stored media ${operation} failed`, cause)
 const logical = (kind: string, data: JsonObject, code: string) => Option.match(journalSchemaOf(kind), {
   onNone: () => Effect.void,
   onSome: (codec) => Schema.decodeUnknownEffect(codec)(data).pipe(Effect.asVoid, Effect.mapError((cause) => failed(code, "framework event data did not decode", cause))),
 })
 interface EncodedMedia { readonly value: Schema.Json; readonly paths: ReadonlyArray<MediaDataPath> }
+/** What one stored reference restores to: its checked bytes' base64, or none when the store lost or damaged them. */
+type Restored = Option.Option<string>
 
 /**
  * Store canonical media in known framework event data, preserving hydrated log semantics.
@@ -37,21 +40,33 @@ export const withMediaStore: (
   const entries = config.cacheEntries ?? 32
   const budget = config.cacheBytes ?? 32 * 1024 * 1024
   const store = yield* MediaStore
-  const cache = yield* Ref.make<ReadonlyMap<MediaHash, Uint8Array>>(new Map())
-  const remember = (hash: MediaHash, bytes: Uint8Array) => Ref.update(cache, (all) => rememberMedia(all, hash, bytes, entries, budget))
-  const load = Effect.fnUntraced(function* (hash: MediaHash) {
+  const cache = yield* Ref.make<ReadonlyMap<MediaHash, CheckedMedia>>(new Map())
+  const remember = (hash: MediaHash, checked: CheckedMedia) => Ref.update(cache, (all) => rememberMedia(all, hash, checked, entries, budget))
+  /**
+   * The store's own bytes for a reference. The port promises `get` never
+   * returns bytes whose SHA-256 is not their key, so they are not hashed
+   * again here; their type, size and fingerprint are checked against the
+   * occurrence's metadata once per cached blob.
+   */
+  const restore = Effect.fnUntraced(function* (hash: MediaHash, parent: Schema.JsonObject): Effect.fn.Return<Restored, SessionLogError> {
     const hit = yield* Ref.modify(cache, (all) => {
-      const bytes = all.get(hash)
-      return bytes === undefined ? [Option.none<Uint8Array>(), all] as const
-        : [Option.some(new Uint8Array(bytes)), rememberMedia(all, hash, bytes, entries, budget)] as const
+      const checked = all.get(hash)
+      return checked === undefined ? [Option.none<CheckedMedia>(), all] as const
+        : [Option.some(checked), rememberMedia(all, hash, checked, entries, budget)] as const
     })
-    if (Option.isSome(hit)) return hit.value
-    const found = yield* store.get(hash).pipe(Effect.mapError((cause) => mediaFailure("get", cause)))
-    if (Option.isNone(found)) return yield* Effect.fail(failed("store.decode", "stored media bytes are missing"))
-    const bytes = new Uint8Array(found.value)
-    if (mediaHashOf(bytes) !== hash) return yield* Effect.fail(failed("store.decode", "stored media bytes do not match their hash"))
-    yield* remember(hash, bytes)
-    return bytes
+    const matches = (checked: CheckedMedia) => parent.mediaType === checked.mediaType && parent.fingerprint === checked.fingerprint && parent.bytes === checked.bytes.length
+    if (Option.isSome(hit)) return matches(hit.value) ? Option.some(Base64.encode(hit.value.bytes)) : Option.none()
+    const found = yield* store.get(hash).pipe(
+      Effect.map(Option.map((bytes) => new Uint8Array(bytes))),
+      // Damaged bytes are lost bytes: the occurrence keeps its label, the rest of the log stays readable.
+      Effect.catchIf((error) => error.reason === "Corrupt", () => Effect.succeed(Option.none<Uint8Array>())),
+      Effect.mapError((cause) => failed(cause.reason === "Unavailable" ? "store.io" : "store.decode", "stored media get failed", cause)),
+    )
+    if (Option.isNone(found)) return Option.none()
+    const base64 = Base64.encode(found.value)
+    if (Option.isNone(yield* canonicalMediaBytes({ ...parent, data: base64 }))) return Option.none()
+    yield* remember(hash, { bytes: found.value, mediaType: String(parent.mediaType), fingerprint: String(parent.fingerprint) })
+    return Option.some(base64)
   })
   const encodeNode = Effect.fnUntraced(function* (value: Schema.Json, path: ReadonlyArray<string | number>): Effect.fn.Return<EncodedMedia, SessionLogError> {
     if (Array.isArray(value)) {
@@ -66,9 +81,9 @@ export const withMediaStore: (
     const paths = fields.flatMap(({ child }) => child.paths)
     if (Option.isNone(bytes)) return { value: object, paths }
     const hash = mediaHashOf(bytes.value)
-    const put = yield* store.put(new Uint8Array(bytes.value)).pipe(Effect.mapError((cause) => mediaFailure("put", cause)))
+    const put = yield* store.put(new Uint8Array(bytes.value)).pipe(Effect.mapError((cause) => failed("store.io", "stored media put failed", cause)))
     if (put !== hash) return yield* Effect.fail(failed("store.io", "stored media put returned a different hash"))
-    yield* remember(hash, bytes.value)
+    yield* remember(hash, { bytes: new Uint8Array(bytes.value), mediaType: String(value.mediaType), fingerprint: String(value.fingerprint) })
     const reference: MediaReference = { type: "media-reference", version: 1, hash }
     return { value: { ...object, data: reference }, paths: [...paths, [...path, "data"]] }
   })
@@ -80,28 +95,34 @@ export const withMediaStore: (
     const envelope: MediaEnvelope = { "$efferent.media": { version: 1, value: encoded.value, paths: encoded.paths } }
     return { ...draft, data: envelope }
   })
-  const hydrate = Effect.fnUntraced(function* (kind: string, data: JsonObject): Effect.fn.Return<JsonObject, SessionLogError> {
+  /** Restore each listed reference; a lost or damaged blob leaves its occurrence's label metadata with `UNAVAILABLE_MEDIA_DATA`. */
+  const hydrate = Effect.fnUntraced(function* (kind: string, data: JsonObject, media: "hydrate" | "references"): Effect.fn.Return<JsonObject, SessionLogError> {
+    // Only the framework's kinds were ever wrapped, and a payload without the exact
+    // envelope is returned untouched: this release decodes nothing else of a row.
     if (Option.isNone(journalSchemaOf(kind))) return data
-    const envelope = Schema.decodeUnknownOption(MediaEnvelope)(data)
-    if (Option.isNone(envelope)) {
-      yield* logical(kind, data, "store.decode")
-      return data
-    }
-    const payload = envelope.value["$efferent.media"]
-    const value = yield* Effect.reduce(payload.paths, () => payload.value, (current, path) => Effect.gen(function* () {
+    // A commit refuses a framework payload made of this one root key alone (it does not decode), so a
+    // root that is only it is an envelope: damaged, it fails rather than reaching a reader as data.
+    if (!Object.hasOwn(data, "$efferent.media") || Object.keys(data).length !== 1) return data
+    const payload = (yield* Schema.decodeUnknownEffect(MediaEnvelope)(data).pipe(Effect.mapError((cause) => failed("store.decode", "stored media envelope did not decode", cause))))["$efferent.media"]
+    // A key-only reader takes the logical value with its references in place, and no blob is read.
+    if (media === "references") return payload.value
+    return yield* Effect.reduce(payload.paths, () => payload.value, (current, path) => Effect.gen(function* () {
       const found = yield* Option.match(jsonAt(current, path.slice(0, -1)), { onNone: () => Effect.fail(failed("store.decode", "stored media path is absent")), onSome: Effect.succeed })
       const parent = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(found).pipe(Effect.mapError((cause) => failed("store.decode", "stored media parent is not an object", cause)))
       if (!Object.hasOwn(parent, "data")) return yield* Effect.fail(failed("store.decode", "stored media path has no own data field"))
       const ref = yield* Schema.decodeUnknownEffect(MediaReference)(parent.data).pipe(Effect.mapError((cause) => failed("store.decode", "stored media reference did not decode", cause)))
       yield* Schema.decodeUnknownEffect(Media)({ ...parent, data: "AA==" }).pipe(Effect.mapError((cause) => failed("store.decode", "stored media metadata did not decode", cause)))
-      const bytes = yield* load(ref.hash)
-      const base64 = Base64.encode(bytes)
-      if (Option.isNone(yield* canonicalMediaBytes({ ...parent, data: base64 }))) return yield* Effect.fail(failed("store.decode", "stored media metadata does not match its bytes"))
+      const restored = yield* restore(ref.hash, parent)
+      const base64 = yield* Option.match(restored, {
+        onSome: Effect.succeed,
+        onNone: () => Effect.logWarning("stored media bytes are missing or do not match their occurrence; the image is kept as its label").pipe(
+          Effect.annotateLogs({ "efferent.media.hash": ref.hash, "efferent.event.kind": kind }),
+          Effect.as(UNAVAILABLE_MEDIA_DATA),
+        ),
+      })
       const replaced = yield* Option.match(replaceJsonAt(current, path, base64), { onNone: () => Effect.fail(failed("store.decode", "stored media path could not be restored")), onSome: Effect.succeed })
       return yield* Schema.decodeUnknownEffect(Schema.JsonObject)(replaced).pipe(Effect.mapError((cause) => failed("store.decode", "stored media payload did not decode", cause)))
     }))
-    yield* logical(kind, value, "store.decode")
-    return value
   })
   return {
     ...inner,
@@ -111,7 +132,7 @@ export const withMediaStore: (
       // for excluded future rows. Snapshot rows before the first asynchronous get.
       const selected = found.filter((event) => query.through === undefined || event.seq <= query.through)
       const copied = yield* Effect.forEach(selected, (event) => storedJson(event.data).pipe(Effect.map((data) => ({ ...event, data })), Effect.mapError((cause) => failed("store.decode", "stored event data is not JSON", cause))), { concurrency: 1 })
-      return yield* Effect.forEach(copied, (event) => hydrate(event.kind, event.data).pipe(Effect.map((data) => ({ ...event, data }))), { concurrency: 1 })
+      return yield* Effect.forEach(copied, (event) => hydrate(event.kind, event.data, query.media ?? "hydrate").pipe(Effect.map((data) => ({ ...event, data }))), { concurrency: 1 })
     }),
     commit: Effect.fn("session_log.commit_media")(function* (id, input) {
       // Normalize ALL siblings and metadata before the first put can suspend.

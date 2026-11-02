@@ -60,6 +60,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   reruns `memoryConformance` (new checks `in-flight-exchange` and
   `call-order`).
 
+- `SessionReadQuery` gains optional `media: "hydrate" | "references"`. A plain
+  backend ignores it; `withMediaStore` returns references unread for
+  `references`, which the sessions plugin uses for a begin's key-only turn
+  lookups. Rerun `sessionLogConformance` (`read-references`). `MediaStore.get`
+  now promises never to return bytes whose SHA-256 is not their key (damage is
+  `Corrupt`), so `withMediaStore` no longer hashes them again; custom stores that
+  cannot rule out damage verify before answering. A missing or corrupt blob no
+  longer fails the read with `store.decode`: its occurrence keeps its metadata
+  with `UNAVAILABLE_MEDIA_DATA` (`mediaAvailable`), renders as its label line and
+  is never sent. `MediaStoreMemoryLive` is for in-memory logs only. The
+  `memorySnapshotConformance` subject's `validate` takes no render options,
+  `project` returns `mismatch`, and `MemoryProjection.Projected` carries
+  `verified`; retained facts unlike this release's selection use the full
+  archive instead of failing with `session.decode`.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1914,6 +1929,22 @@ Model-visible text (exact pins and the compaction golden updated):
   a session whose history holds them can move to a provider that checks its
   pairing keys (Anthropic's `^[a-zA-Z0-9_-]+$`). An id-less provider result
   pairs with the id-less call of its own tool, in order.
+
+- Media storage no longer slows or blocks a session as its images accumulate.
+  Core's pure SHA-256 updates typed arrays in place (about nine times faster),
+  the directory store hashes with the platform's SHA-256, the decorator no longer
+  hashes fetched bytes a second time, and a begin's turn lookups read no image.
+  One lost or damaged blob no longer makes every later begin of its session fail:
+  that image becomes its label line. The decorator returns rows without an
+  envelope untouched, so a newer release's or an unreferenced damaged row no
+  longer fails the whole read. The directory store sweeps abandoned temporary
+  files, repairs a damaged blob when its bytes are put again (keeping the damaged
+  copy in `quarantine/`), and its start reads continue after short reads.
+- Render snapshots no longer fail every open when their retained facts differ
+  from this release's selection (they use the full archive), copy replaced
+  summaries, out-of-view compaction text or cut runs' step contexts, or render
+  the archive four times at open: each step-context placement is checked once by
+  its first build, and the checkpoint bridge decodes its history once.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued

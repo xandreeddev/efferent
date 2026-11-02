@@ -16,6 +16,13 @@ export const canonicalMediaBytes = Effect.fnUntraced(function* (value: Schema.Js
   return Schema.decodeUnknownOption(Schema.Uint8ArrayFromBase64)(media.value.data)
 })
 
+/** What a hydration checked of one blob's bytes: an occurrence whose stored metadata matches reuses them unchecked. */
+export interface CheckedMedia {
+  readonly bytes: Uint8Array
+  readonly mediaType: string
+  readonly fingerprint: string
+}
+
 /** Only own fields and bounded array indices can be traversed by a manifest. */
 export const jsonAt = (root: Schema.Json, path: ReadonlyArray<string | number>): Option.Option<Schema.Json> => path.reduce((found, key) => Option.flatMap(found, (value) => {
   if (Array.isArray(value)) return typeof key === "number" && Number.isSafeInteger(key) && key >= 0 && key < value.length && Object.hasOwn(value, key) ? Option.some(value[key]!) : Option.none()
@@ -33,10 +40,10 @@ export const replaceJsonAt = (root: Schema.Json, path: MediaDataPath, value: Sch
 }
 
 /** Retain the newest entries that fit both independent budgets. */
-export const rememberMedia = (cache: ReadonlyMap<MediaHash, Uint8Array>, hash: MediaHash, bytes: Uint8Array, entries: number, budget: number): ReadonlyMap<MediaHash, Uint8Array> => {
-  if (entries === 0 || bytes.length > budget) return cache
-  const recent = [...cache].filter(([key]) => key !== hash).concat([[hash, new Uint8Array(bytes)]]).slice(-entries)
-  const excess = Math.max(0, recent.reduce((sum, [, data]) => sum + data.length, 0) - budget)
-  const dropped = recent.reduce((state, [, data]) => state.bytes < excess ? { count: state.count + 1, bytes: state.bytes + data.length } : state, { count: 0, bytes: 0 })
+export const rememberMedia = (cache: ReadonlyMap<MediaHash, CheckedMedia>, hash: MediaHash, checked: CheckedMedia, entries: number, budget: number): ReadonlyMap<MediaHash, CheckedMedia> => {
+  if (entries === 0 || checked.bytes.length > budget) return cache
+  const recent = [...cache].filter(([key]) => key !== hash).concat([[hash, checked]]).slice(-entries)
+  const excess = Math.max(0, recent.reduce((sum, [, data]) => sum + data.bytes.length, 0) - budget)
+  const dropped = recent.reduce((state, [, data]) => state.bytes < excess ? { count: state.count + 1, bytes: state.bytes + data.bytes.length } : state, { count: 0, bytes: 0 })
   return new Map(recent.slice(dropped.count))
 }

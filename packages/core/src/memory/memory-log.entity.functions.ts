@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Match, Option, Order, Predicate, Schema } from "effect"
-import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
+import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaAvailable, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolCallPart, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
@@ -223,10 +223,29 @@ const renderPlanOf = (stored: ReadonlyArray<LogEntry>, strategy: string): Render
   return { entries, applied, exchanges, kept, messageVisible, resultVisible }
 }
 
+/** The compaction whose summary or ledger a render shows as its preamble: the last of this strategy's that set the cut (`appliedCompactions`). */
+const preambleSourceOf = (entries: ReadonlyArray<LogEntry>, strategy: string): Option.Option<EntryId> =>
+  entries.reduce((state: { readonly cut: number; readonly source: Option.Option<EntryId> }, entry) => {
+    if (entry.body._tag !== "Compaction" || entry.body.strategy !== strategy) return state
+    const id = entry.id
+    return CompactionAction.match(entry.body.action, {
+      DropTurns: (action) => action.throughTurn < state.cut ? state : { cut: action.throughTurn, source: Option.some(id) },
+      Summarize: (action) => action.keepFromTurn - 1 < state.cut ? state : { cut: action.keepFromTurn - 1, source: Option.some(id) },
+      CompactViews: () => state,
+      Spill: () => state,
+      OmitMedia: () => state,
+    })
+  }, { cut: 0, source: Option.none() }).source
+
 /**
- * Raw facts before the first kept turn that the renderer still depends on.
- * The request dependency includes hidden mixed-pinning exchanges: it controls
- * result ordering even when the assistant message itself is not rendered.
+ * The facts before the first kept turn that a render of a kept run still
+ * reads, in their original order: results still shown, the requests that
+ * order them (hidden mixed-pinning exchanges included), their presentations
+ * and digests, and every compaction this strategy applies. Step contexts of
+ * cut runs are left out (a projection renders a cut current run from the full
+ * archive), and a compaction keeps only text a render can show: a summary or
+ * ledger a later one replaced, and views of entries left out, are emptied
+ * while the compaction itself stays (a build lists every applied one).
  */
 export const retainedMemoryPrefix = (stored: ReadonlyArray<LogEntry>, strategy: string): Option.Option<{
   readonly entries: ReadonlyArray<LogEntry>; readonly anchorIndex: number; readonly cutTurn: number
@@ -235,14 +254,27 @@ export const retainedMemoryPrefix = (stored: ReadonlyArray<LogEntry>, strategy: 
   const anchorIndex = stored.findIndex((entry) => entry.body._tag === "TurnStarted" && plan.kept(entry))
   if (anchorIndex <= 0) return Option.none()
   const results = plan.entries.filter(plan.resultVisible)
-  const dependencies = results.flatMap((entry) => Option.toArray(Option.map(requestForResult(plan.entries, entry), (request) => request.entry.id)))
-  const latestContexts = stored.slice(0, anchorIndex).reduce<ReadonlyMap<string, EntryId>>((all, entry) =>
-    entry.body._tag === "StepContext" ? new Map([...all, [canonicalJson([entry.runId, entry.body.run]), entry.id]]) : all, new Map())
-  const ids = new Set([...results.map((entry) => entry.id), ...dependencies, ...plan.applied.ids, ...latestContexts.values(),
+  const requestOf = requestResolverOf(plan.entries)
+  const dependencies = results.flatMap((entry) => Option.toArray(Option.map(requestOf(entry), (request) => request.entry.id)))
+  const ids = new Set([...results.map((entry) => entry.id), ...dependencies, ...plan.applied.ids,
     ...plan.entries.filter((entry) => entry.body._tag === "Message" && plan.messageVisible(entry)).map((entry) => entry.id)])
-  const retained = stored.slice(0, anchorIndex).filter((entry) => ids.has(entry.id) || plan.kept(entry) ||
+  const before = stored.slice(0, anchorIndex)
+  const kept = before.filter((entry) => ids.has(entry.id) || plan.kept(entry) ||
     ((entry.body._tag === "ToolPresentation" || entry.body._tag === "ToolDigest") && ids.has(entry.body.entry)))
-  return retained.length < anchorIndex ? Option.some({ entries: retained, anchorIndex, cutTurn: plan.applied.cutTurn }) : Option.none()
+  if (kept.length >= anchorIndex) return Option.none()
+  const keptIds = new Set(kept.map((entry) => entry.id))
+  const omitted = new Set(before.flatMap((entry) => keptIds.has(entry.id) ? [] : [entry.id]))
+  const preamble = preambleSourceOf(plan.entries, strategy)
+  const entries = kept.map((entry): LogEntry => entry.body._tag !== "Compaction" || entry.body.strategy !== strategy ? entry : {
+    ...entry, body: { ...entry.body, action: CompactionAction.match(entry.body.action, {
+      Summarize: (action): CompactionAction => Option.contains(preamble, entry.id) ? action : { ...action, summary: "" },
+      DropTurns: (action): CompactionAction => Option.contains(preamble, entry.id) ? action : { ...action, ledger: "" },
+      CompactViews: (action): CompactionAction => ({ ...action, texts: action.texts.map((text, index) => Option.exists(Option.fromNullishOr(action.entries[index]), (id) => omitted.has(id)) ? "" : text) }),
+      Spill: (action): CompactionAction => omitted.has(action.entry) ? { ...action, preview: "" } : action,
+      OmitMedia: (action): CompactionAction => action,
+    }) },
+  })
+  return Option.some({ entries, anchorIndex, cutTurn: plan.applied.cutTurn })
 }
 
 /** The exact preceding request whose identity orders this result in the render. */
@@ -266,9 +298,10 @@ const mediaPlan = (plan: RenderPlan, options: RenderOptions): MediaPlan => {
     const body = entry.body
     if (!kept(entry) || applied.omitted.has(entry.id)) return []
     const userMessage = userMessageIn(entry)
-    if (Option.isSome(userMessage)) return attachmentsOf(userMessage.value).map((media, index) => ({ key: imageKey(entry, index), media }))
+    // An image whose stored bytes are unavailable is never chosen: it stays its label line.
+    if (Option.isSome(userMessage)) return attachmentsOf(userMessage.value).flatMap((media, index) => mediaAvailable(media) ? [{ key: imageKey(entry, index), media }] : [])
     if (body._tag !== "ToolResult" || body.isError || applied.views.has(entry.id) || digests.has(entry.id)) return []
-    return (body.media ?? []).flatMap((slot, index) => Option.toArray(Option.map(mediaAt(body.encoded, slot), (media) => ({ key: imageKey(entry, index), media }))))
+    return (body.media ?? []).flatMap((slot, index) => Option.toArray(Option.map(Option.filter(mediaAt(body.encoded, slot), mediaAvailable), (media) => ({ key: imageKey(entry, index), media }))))
   }
   const maxImages = Math.min(options.media.maxImages, MEDIA_LIMITS.requestImages)
   const take = (choice: InlineChoice, group: ReadonlyArray<LogImage>): InlineChoice =>

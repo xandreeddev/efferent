@@ -295,18 +295,27 @@ that new phases preserve history and current results without requiring every
 strategy to summarize; its careless phase check is in
 `src/memory/memory-maintenance.conformance.test.ts`.
 
-`MemorySnapshotData` records a raw render prefix and actual lineage cursors;
+`MemorySnapshotData` records a retained render prefix and actual lineage cursors;
 `MemorySnapshotCandidate` resolves those cursors to memory entry IDs. The optional
 `LogHandle.checkpoint` and `TurnWriter.memorySnapshot` capabilities accelerate
 rendering only: keep the full archive, reader, maintenance input and replay path.
 `memory.snapshot` is a reserved protocol row, never a `LogBody` or a new `EntryId`.
-The shared renderer plan retains exact request dependencies, raw presentation and
-digest facts, applicable compactions and scoped step contexts in original order.
-`memorySnapshotConformance` checks selection, encoded-prefix integrity, render and
-media metadata, and safe full-history fallback; its self-tests exercise careless
-implementations. Selected corruption fails with `session.decode`; compatible
-snapshots project only after authoritative verification, while other strategies
-and newly needed omitted dependencies use the complete archive.
+`retainedMemoryPrefix` keeps exact request dependencies, raw presentation and
+digest facts and every applicable compaction in original order. It keeps no cut
+run's step context, and a compaction keeps only the text a render can show: a
+replaced summary or ledger, and views of omitted entries, are emptied while the
+compaction (and its id) stays. A snapshot so grows with the number of compactions,
+not with their text. `validateMemorySnapshot` fails with `session.decode` only for
+undecodable data or anchor/frontier entries the archive lacks; another strategy,
+or retained facts unlike this release's selection of the same prefix (an older
+rule, damage), log and use the full archive. `projectMemorySnapshot` falls back
+for newly needed omitted dependencies and for a render of a cut run's step
+context, and checks the first projected build of each step-context placement
+against one full render (`MemoryProjection.verified`): a mismatch logs and
+restores the archive. `memorySnapshotConformance` checks selection, cursor
+integrity and fallback for unlike facts, every option family, render
+verification and safe full-history fallback; its self-tests exercise careless
+implementations.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
@@ -316,16 +325,19 @@ supplies deterministic verification when a host chooses it.
 
 `MediaStore` holds immutable decoded bytes under `MediaHash`, their exact
 SHA-256, independently of labels and the existing noncryptographic media
-fingerprint. `mediaHashOf` hashes arbitrary byte windows; store operations
-accept only 1 through `MEDIA_LIMITS.imageBytes` bytes. `put` copies before
-waiting, repeated equal bytes reuse their key, and `get` returns a fresh
-copy or `None` for a missing blob. Invalid inputs, unavailable storage and
-corrupt content are distinct `MediaStoreError.reason` values. Hashes grant
-no authorization. `MediaStoreMemoryLive` owns its state per layer instance.
-`mediaStoreConformance` checks hash vectors, roundtrip, idempotence, missing
-values, both copy boundaries and byte bounds; careless self-tests cover each
-storage/copy promise. This port does not choose reference envelopes or remove
-blobs when a session is removed.
+fingerprint. `mediaHashOf` hashes arbitrary byte windows (core's pure SHA-256
+updates typed arrays in place; an adapter with native crypto uses it); store
+operations accept only 1 through `MEDIA_LIMITS.imageBytes` bytes. `put` copies
+before waiting, repeated equal bytes reuse their key, and `get` returns a fresh
+copy or `None` for a missing blob, never bytes whose SHA-256 is not their key
+(damage is `Corrupt`), so callers do not hash them again. Invalid inputs,
+unavailable storage and corrupt content are distinct `MediaStoreError.reason`
+values. Hashes grant no authorization. `MediaStoreMemoryLive` owns its state
+per layer instance: pair it only with an in-memory log, since a durable journal
+would outlive its blobs. `mediaStoreConformance` checks hash vectors,
+roundtrip, idempotence, missing values, both copy boundaries and byte bounds;
+careless self-tests cover each storage/copy promise. This port does not choose
+reference envelopes or remove blobs when a session is removed.
 
 `withMediaStore(inner, options?)` decorates a `SessionLog` using the supplied
 `MediaStore`. It offloads canonical Media only inside known framework event
@@ -333,18 +345,27 @@ data. Exact `MediaEnvelope` roots contain a manifest of own data paths, with
 `MediaReference` values at those paths; unlisted nested lookalikes remain
 ordinary JSON. All metadata and extras survive, so hydration restores request
 part hashes exactly. Invalid/noncanonical media-looking values stay inline.
-Unknown event kinds, session headers, metadata and state pass through. Copy
-the whole incoming commit before blob I/O, put every blob before committing,
+Unknown event kinds, session headers, metadata and state pass through, and so
+does every row without an envelope: a read decodes nothing else of a row, so a
+newer release's or a damaged payload reaches its reader as stored. Copy the
+whole incoming commit before blob I/O, put every blob before committing,
 preserve inner failures and uncertain ACKs, and verify physical commit echoes
 against immutable expected bytes. Echoes use the operation's logical snapshot
 without fresh blob reads. Apply `through` before hydration, including a
-defensive clip for older backends. Missing/corrupt selected references fail
-with `store.decode`; unavailable blob I/O uses `store.io`. The per-wrapper LRU
-owns byte copies, bounded by both `cacheEntries` (default 32) and `cacheBytes`
-(default 32 MiB); either zero disables caching. Options outside finite
-nonnegative safe integers fail with `store.encode`. A warm cache can mask later
-external blob corruption until eviction or reopen. The decorated SessionLog
-kit and corruption, literal JSON, copy, cache and ACK regressions are in
+defensive clip for older backends. `SessionReadQuery.media: "references"` (a
+key-only reader: the sessions plugin's turn lookups) returns envelope values
+with their references in place and reads no blob. A missing or `Corrupt` blob,
+or bytes unlike the occurrence's metadata, restore that occurrence with its
+stored metadata and `UNAVAILABLE_MEDIA_DATA` (logged): `renderLog` never
+chooses such an image, so it stays its label line, and the rest of the log
+reads. A malformed envelope fails with `store.decode`; unavailable blob I/O
+uses `store.io`. The per-wrapper LRU owns checked byte copies, bounded by both
+`cacheEntries` (default 32) and `cacheBytes` (default 32 MiB); either zero
+disables caching; a hit compares the occurrence's type, size and fingerprint.
+Options outside finite nonnegative safe integers fail with `store.encode`. A
+warm cache can mask later external blob corruption until eviction or reopen.
+The decorated SessionLog kit and corruption, pass-through, key-only, literal
+JSON, copy, cache and ACK regressions are in
 `src/session/session-log-media.adapter.test.ts`.
 
 `Sessions.waiting` is a bounded broadcast with an initial post-subscription
@@ -499,12 +520,12 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
 | The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:49-56` | exact, `src/internal/mapping.entity.functions.test.ts:402` |
 | Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:82` | exact, `src/memory/memory-log.entity.test.ts:409` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:586-602` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:546-578` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-635` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:579-611` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
 | A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:154-164` | exact, `src/memory/memory-log.entity.test.ts:426-428` |
-| An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:605-608` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
-| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:586-601` | exact, `src/memory/memory-log.entity.test.ts:622` |
-| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:471`, `:485`, `:546-560` | exact, `src/memory/memory-log.entity.test.ts:611`, `:612`, `:613`, `:623` |
+| An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:181-182` | exact, `src/domain/media.entity.test.ts:148-150` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:638-641` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-634` | exact, `src/memory/memory-log.entity.test.ts:622` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:504`, `:518`, `:579-593` | exact, `src/memory/memory-log.entity.test.ts:611`, `:612`, `:613`, `:623` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

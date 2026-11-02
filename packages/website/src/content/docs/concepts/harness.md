@@ -165,10 +165,12 @@ prompt content. The framework guide describes the resolver and its strict prefix
 and hash checks; `requestHeaderConformance` verifies custom resolvers.
 
 Stored format 11 adds optional media storage. Compose core's `withMediaStore`
-over the session log with `MediaStoreMemoryLive` or the files plugin's
-`MediaStoreDirectoryLive`. Canonical image bytes are stored once by SHA-256 before
-any reference commits; typed readers and replay receive the original inline
-values through a cache bounded by entries and bytes. This covers attachments,
+over the session log with the files plugin's `MediaStoreDirectoryLive`
+(`MediaStoreMemoryLive` only over an in-memory log: its blobs do not outlive the
+process). Canonical image bytes are stored once by SHA-256 before any reference
+commits; typed readers and replay receive the original inline values through a
+cache bounded by entries and bytes. A lost or damaged blob leaves that image as
+its label line and the session usable; a begin's key-only lookups read no image. This covers attachments,
 nested encoded results, command JSON, provider results and request parts while
 preserving occurrence labels and opaque JSON. Fork reads apply the inclusive
 `SessionReadQuery.through` ceiling before hydration, so invisible later blobs
@@ -177,9 +179,10 @@ root; old unwrapped typed readers need hydrated exports or an updated reader.
 Session deletion does not collect shared blobs.
 
 Stored format 12 adds optional render snapshots. The summary strategy publishes
-raw retained dependencies before the first kept turn, with compaction facts and
-an atomic head-state pointer. Cold opens verify and reuse the projection; late
-old pins restore full rendering. A fork never borrows a parent's snapshot
+the retained dependencies before the first kept turn, with compaction facts (only
+the text a render shows) and an atomic head-state pointer. Cold opens check and
+reuse the projection; late old pins, a snapshot unlike the archive's selection and
+a first build that renders otherwise restore full rendering. A fork never borrows a parent's snapshot
 published after its cutoff, even when that snapshot has an older anchor.
 Snapshots accelerate repeated rendering while the full archive remains eagerly
 loaded. Recall, maintenance, dispatch checks and historical replay keep complete

@@ -92,14 +92,19 @@ export const imageSizeOf = (bytes: Uint8Array, mediaType: ImageMediaType): Optio
 
 const hex8 = (value: number): string => value.toString(16).padStart(8, "0")
 
-/** FNV-1a and a multiply-xorshift lane over the bytes, then their length: a content hash, not a cryptographic one. */
+/**
+ * FNV-1a and a multiply-xorshift lane over the bytes, then their length: a
+ * content hash, not a cryptographic one. Both lanes run in one pass over an
+ * unsigned 32-bit state (each store truncates as `>>> 0` would).
+ */
 export const mediaFingerprintOf = (bytes: Uint8Array): MediaFingerprint => {
-  const fnv = bytes.reduce((hash, byte) => Math.imul(hash ^ byte, 0x01000193) >>> 0, 0x811c9dc5)
-  const mixed = bytes.reduce((hash, byte) => {
-    const product = Math.imul(hash ^ byte, 0x5bd1e995)
-    return (product ^ (product >>> 15)) >>> 0
-  }, 0x9747b28c)
-  return MediaFingerprint.make(`${hex8(fnv)}${hex8(mixed)}${bytes.length.toString(16)}`)
+  const lanes = Uint32Array.of(0x811c9dc5, 0x9747b28c)
+  bytes.forEach((byte) => {
+    lanes[0] = Math.imul(lanes[0]! ^ byte, 0x01000193)
+    const product = Math.imul(lanes[1]! ^ byte, 0x5bd1e995)
+    lanes[1] = product ^ (product >>> 15)
+  })
+  return MediaFingerprint.make(`${hex8(lanes[0]!)}${hex8(lanes[1]!)}${bytes.length.toString(16)}`)
 }
 
 const rejected = (reason: AttachmentRejectedReason, message: string) => new AttachmentRejected({ reason, message })
@@ -148,6 +153,19 @@ export const mediaFromBase64 = (data: string, description: MediaDescription = {}
     onSome: (bytes) => mediaFromBytes(bytes, description),
   })
 }
+
+/**
+ * The data an image keeps when a media store no longer holds its bytes (the
+ * blob is missing or corrupt): the base64 of a fixed note, never an image of
+ * any supported type. Its type, size, fingerprint, name and alt stay as
+ * stored, so a render shows its label line and never sends it.
+ *
+ * @public
+ */
+export const UNAVAILABLE_MEDIA_DATA = "ZWZmZXJlbnQ6IHN0b3JlZCBtZWRpYSBieXRlcyBhcmUgdW5hdmFpbGFibGU="
+
+/** Whether an image still carries its bytes (`UNAVAILABLE_MEDIA_DATA` stands for bytes a store lost). @public */
+export const mediaAvailable = (media: Pick<Media, "data">): boolean => media.data !== UNAVAILABLE_MEDIA_DATA
 
 /** An image checked again from its own data: type, size and fingerprint as its bytes give them; its name and alt kept. */
 export const normalizeMedia = (media: Media): Effect.Effect<Media, AttachmentRejected> =>

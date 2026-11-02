@@ -32,7 +32,7 @@ test("presentation overlays and checkpoint encoding retain raw interception iden
   const strategy = { id: MemoryStrategyId.make("summary"), version: "2" }
   const candidate = Option.getOrThrow(await Effect.runPromise(prepareMemorySnapshot(full, strategy)))
   const copied = await Effect.runPromise(Schema.encodeEffect(Schema.Array(LogEntry))(candidate.entries).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(LogEntry)))))
-  const phase = await Effect.runPromise(validateMemorySnapshot(full, { ...candidate, entries: copied }, strategy, memorySnapshotOptions()[0]!))
+  const phase = await Effect.runPromise(validateMemorySnapshot(full, { ...candidate, entries: copied }, strategy))
   const projected = projectMemorySnapshot(full, phase, memorySnapshotOptions()[0]!)
   expect(projected.phase._tag).toBe("Projected")
   const raw = projected.entries.find((entry) => entry.id === "r1:6")
