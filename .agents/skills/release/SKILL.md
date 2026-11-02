@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a release of the @xandreed/* framework packages, only on explicit maintainer sign-off — the shared version bump, CHANGELOG, journal fixture, docs:generate, build and verify, the publish dry run then --publish, and the v<version> tag that deploys the docs site. Read before any version bump, npm publish or release tag.
+description: Cut a release of the @xandreed/* framework packages, only on explicit maintainer sign-off — the shared version bump, CHANGELOG, journal fixture, docs:generate, build and verify, then `bun run release:publish`, which publishes to npm and pushes the v<version> tag that deploys the docs site. Read before any version bump, npm publish or release tag.
 ---
 
 # Cut a release
@@ -37,31 +37,48 @@ version and publish together under npm's `latest` tag.
 7. Run every gate (below), open the PR titled `release <version>` (skill
    `commit-style`) and merge it. Merging publishes nothing.
 
-## 2. Publish (**sign-off**)
+## 2. Publish and tag (**sign-off**)
 
-From a clean checkout of the merge commit (no changes, no untracked files):
+From a clean checkout of the merge commit (no changes, no untracked files),
+in an interactive terminal:
 
 ```sh
-bun install --frozen-lockfile
-bun run build:packages            # also writes .artifacts/packages/build.json
-bun run verify:packages
-bun run publish:packages          # dry run: every check, then npm publish --dry-run
-bun run publish:packages --publish
+bun run release:publish
 ```
 
-- Run the last line from an interactive terminal: npm asks for the second
-  factor there, and `npm whoami` must name the project's account.
+It runs, in order, each attached to the terminal, and stops at the first
+failure: `bun install --frozen-lockfile --ignore-scripts`,
+`bun run build:packages`, `bun run publish:packages` (the dry run: every
+check, then `npm publish --dry-run`) and `bun run publish:packages --publish`.
+Then it asks the registry for every package of the build and, only when all
+are there, creates the `v<version>` tag on HEAD and pushes it.
+
+- npm asks for the second factor in that terminal, and `npm whoami` must name
+  the project's account. The command refuses a stdin that is not a terminal.
+- `--verify` adds `bun run verify:packages` after the build. It takes minutes
+  and CI already ran it on the merge commit, so it is opt-in. `--dry-run`
+  stops after the publish dry run: nothing is uploaded or tagged.
+- Pushing a `v*` tag deploys the documentation site from that tag
+  (`.github/workflows/docs.yml`), so the one sign-off covers both. A tag
+  already on HEAD is kept; one on another commit refuses. Never move or
+  delete a pushed release tag.
 - A run that stopped part-way can be repeated from the same commit: versions
   already on the registry are skipped. Never publish from a commit whose
   version is partly on npm unless it is the commit those came from.
 
-## 3. Tag (**sign-off**)
+## Known traps
 
-- Only after the packages are on npm: tag the merge commit `v<version>` and
-  push the tag. Pushing a `v*` tag deploys the documentation site from that
-  tag (`.github/workflows/docs.yml`), so it needs the same sign-off as the
-  publish.
-- Never move or delete a pushed release tag.
+- A plain `bun install --frozen-lockfile` can exit 1 in a fresh checkout: the
+  docs site's `astro` pulls in an optional `sharp` whose install script falls
+  back to a node-gyp build and fails. Nothing published needs an install
+  script, hence `--ignore-scripts`.
+- npm can fail an upload with E409 "Cannot publish over previously staged
+  version" after retrying a request that went through: the version is on the
+  registry. After a failed `npm publish`, the script asks the registry for
+  about a minute and counts a version it finds as published.
+- The registry's CDN can answer 404 for a version published moments ago, even
+  cache-busted, so a rerun can upload it again and meet that E409. The same
+  check, before the tag too, waits it out.
 
 ## Gates before the release PR
 
@@ -79,5 +96,4 @@ bun run docs:generate && bun run --cwd packages/website check
 - [ ] Earlier-line npm versions checked
 - [ ] Journal fixture recorded for the new version
 - [ ] Gates green; `release <version>` PR merged
-- [ ] Dry run clean, then `--publish` from a clean checkout of the merge commit (sign-off)
-- [ ] `v<version>` tag pushed after npm has the packages (sign-off)
+- [ ] `bun run release:publish` from a clean checkout of the merge commit (sign-off): packages on npm, `v<version>` pushed

@@ -1,0 +1,25 @@
+/**
+ * The registry reads behind `bun run publish:packages` and `bun run release:publish`. What an
+ * answer means, and when to stop asking, are the pure functions in publish-plan.ts.
+ */
+import { Result } from "effect"
+import { confirmSchedule, confirmation, label, registry, registryAnswer } from "./publish-plan.js"
+import type { Confirmation, Versioned } from "./publish-plan.js"
+
+/** Whether the registry has `item`. Cache-busted, because the registry's CDN can keep serving a 404 for a version that was just published. */
+export const onRegistry = (item: Versioned): Promise<Result.Result<boolean, string>> =>
+  fetch(`${registry}/${item.name.replace("/", "%2f")}/${item.version}?cb=${Date.now()}`, { headers: { "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(30_000) }).then(
+    (response) => registryAnswer(item, response.status),
+    (error: unknown) => Result.fail(`the registry could not be reached for ${label(item)}: ${String(error)}`),
+  )
+
+/** A settled confirmation: the registry has the version, or it still does not after `confirmSchedule`. */
+export type Settled = Exclude<Confirmation, { readonly _tag: "Pending" }>
+
+/** Ask the registry for `item` now, then every `confirmSchedule.intervalMillis` until it has it or `confirmSchedule.attempts` answers say it does not (about a minute). */
+export const confirmOnRegistry = async (item: Versioned, answers: ReadonlyArray<Result.Result<boolean, string>> = []): Promise<Settled> => {
+  const verdict = confirmation(item, answers, confirmSchedule.attempts)
+  if (verdict._tag !== "Pending") return verdict
+  if (answers.length > 0) await Bun.sleep(confirmSchedule.intervalMillis)
+  return confirmOnRegistry(item, [...answers, await onRegistry(item)])
+}

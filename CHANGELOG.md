@@ -8,6 +8,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- `bun run release:publish` publishes a release in one command from a clean
+  checkout of its merge commit, in an interactive terminal: it installs
+  without lifecycle scripts (an optional dependency of the docs site can fail
+  its native build and the install with it), builds, runs the publish dry run
+  and the publish, then, once the registry has every package of the build,
+  creates the `v<version>` tag on HEAD and pushes it. It refuses a working
+  tree with changes, and a tag that names another commit. `--verify` adds
+  `verify:packages`, which CI already runs on the merge commit; `--dry-run`
+  stops before the upload.
+- `bun run publish:packages --publish` no longer stops on an upload npm
+  reports as failed but the registry has, as with E409 "Cannot publish over
+  previously staged version" after npm retried a request that went through:
+  it asks the registry for that version for up to about a minute, counts it
+  as published when it is there, and stops as before when it is not.
+
 ## 0.15.1 — 2026-11-02
 
 A host decides what one bad tool call in a reply costs: with
