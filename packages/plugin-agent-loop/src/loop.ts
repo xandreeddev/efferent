@@ -62,10 +62,10 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   readonly initialStep?: ReadonlyArray<{ readonly name: keyof Tools & string; readonly params: unknown }>
   /**
    * The run this is (`StepRequest.run`): the ids minted for a provider's
-   * id-less tool calls are `<turn>.<ordinal>.<step>:<tool>:<n>` and a planned
-   * batch's `<turn>.<ordinal>.planned:<n>`, distinct across a session's runs
-   * and turns. Without it they are `<step>:<tool>:<n>` and `planned:0:<n>`,
-   * which repeat from one run to the next.
+   * id-less tool calls are `call_<turn>_<ordinal>_<step>_<n>` and a planned
+   * batch's `call_<turn>_<ordinal>_p<n>`, distinct across a session's runs
+   * and turns. Without it they are `call_<step>_<n>` and `call_p<n>`, which
+   * repeat from one run to the next.
    */
   readonly run?: RunRef
   /** Host selection at a real provider boundary. Never called for initialStep.
@@ -161,6 +161,8 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * Incremental persistence: called with the assistant response before any
    * tool handler runs, then each final tool result as it returns (completion
    * order, without waiting for siblings), and synthetic correctives. A
+   * response cut short comes with its calls' `ReplyCut` answers in the same
+   * batch, since none of them runs. A
    * durable implementation stores each batch before returning, with
    * the step they belong to: a step's response and tool results are its
    * own, recorded before it settles; the loop's own messages (a malformed
@@ -613,13 +615,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         const callbackFailure = yield* Ref.make(Option.none<E>())
         const guardedCallback = <A>(callback: Effect.Effect<A, E>) => callback.pipe(Effect.tapError((error) => Ref.set(callbackFailure, Option.some(error))))
         // The step's tools, run by the loop once its response is whole (never by the model call), each
-        // between its tool_start and tool_end events.
+        // between its tool_start and tool_end events, which carry the call's id: the one its
+        // assistant_message and the tail pair it by (a call handled without one gets an execution id).
         const toolSequence = yield* Ref.make(0)
         const instrumented: Toolkit.WithHandler<Tools> = {
           tools: selectedTools,
           handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
             const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
-            const toolCallId = `execution:${state.turnIndex}:${sequence}`
+            const toolCallId = providerCallId ?? `execution:${state.turnIndex}:${sequence}`
             yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
             const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
             return results.pipe(
@@ -746,7 +749,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
               generateText: ({ span }) => Effect.sync(() => {
                 span.attribute("efferent.inference.synthetic", true)
                 return [...(options.initialStep ?? []).map((call, index) => ({
-                type: "tool-call" as const, id: options.run === undefined ? `planned:0:${index}` : plannedCallIdOf(options.run, index), name: call.name,
+                type: "tool-call" as const, id: options.run === undefined ? `call_p${index}` : plannedCallIdOf(options.run, index), name: call.name,
                 params: call.params, providerExecuted: false,
               })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]
               }),
@@ -829,9 +832,15 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         }
         // Store the assistant's complete request before any handler can run. Provider-executed
         // results stay inside that message. A killed process leaves the exact pending calls.
+        // A cut response's calls never run: their answers are stored with it, in the same record,
+        // so no reopened log shows a cut call without its result.
+        const answered = Match.valueTags(verdict, {
+          Whole: (): ReadonlyArray<Response.AnyPart> => [],
+          Cut: (cut) => calls.map((call) => cutResult(call, cut.reason)),
+        })
         const usage = extractUsage(outcome.usage, response)
         const model = responseModelOf(response)
-        const responseTail = planned ? responseToAgentMessages(response) : withUsageOnAssistant(responseToAgentMessages(response), usage, model)
+        const responseTail = planned ? responseToAgentMessages(response) : withUsageOnAssistant(responseToAgentMessages([...response, ...answered]), usage, model)
         const positions = yield* (planned
           ? options.onTail?.(responseTail, state.turnIndex)
           : options.onTail?.(responseTail, state.turnIndex, acceptedModelInputOf(outcome.usage, response))) ?? Effect.succeed([])
@@ -859,7 +868,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         })
         const results = yield* Match.valueTags(verdict, {
           Whole: () => Effect.forEach(calls, invoke, { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
-          Cut: (cut) => Effect.forEach(calls, (call) => recordResult(cutResult(call, cut.reason)), { concurrency: 1 }),
+          Cut: () => Effect.succeed(answered),
         })
         const cut = verdict._tag === "Cut" ? Option.some(verdict.reason) : Option.none<CutReason>()
         const content: ReadonlyArray<Response.AnyPart> = [...response, ...results]

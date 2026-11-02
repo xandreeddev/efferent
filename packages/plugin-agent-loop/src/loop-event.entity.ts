@@ -55,6 +55,7 @@ export type LoopEvent =
   | {
       readonly type: "tool_start"
       readonly turnIndex: number
+      /** The call's id, as `assistant_message.toolCalls` and the tail carry it: the provider's, or the one the loop minted for an id-less call. */
       readonly toolCallId: string
       readonly toolName: string
       readonly args: unknown
@@ -62,6 +63,7 @@ export type LoopEvent =
   | {
       readonly type: "tool_end"
       readonly turnIndex: number
+      /** The same id as the call's `tool_start`. */
       readonly toolCallId: string
       readonly toolName: string
       readonly args: unknown

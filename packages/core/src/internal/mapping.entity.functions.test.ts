@@ -55,12 +55,12 @@ describe("withToolCallIds", () => {
     ]
     const out = withToolCallIds(content, 7)
     expect(out.map((p) => p.type === "tool-call" || p.type === "tool-result" ? p.id : undefined)).toEqual([
-      "7:read:0",
+      "call_7_0",
       "prov_1",
-      "7:read:2",
-      "7:read:0",
+      "call_7_2",
+      "call_7_0",
       "prov_1",
-      "7:read:2",
+      "call_7_2",
     ])
     expect(content[0]?.id).toBe("")
   })
@@ -77,11 +77,29 @@ describe("withToolCallIds", () => {
     const idsOf = (turn: number, ordinal: number) => withToolCallIds(content, 1, { id: RunId.make("run-1"), turn, ordinal: RunOrdinal.make(ordinal) })
       .map((p) => p.type === "tool-call" || p.type === "tool-result" ? p.id : undefined)
     expect([idsOf(3, 0), idsOf(3, 1), idsOf(4, 0)]).toEqual([
-      ["3.0.1:read:0", "3.0.1:read:0"],
-      ["3.1.1:read:0", "3.1.1:read:0"],
-      ["4.0.1:read:0", "4.0.1:read:0"],
+      ["call_3_0_1_0", "call_3_0_1_0"],
+      ["call_3_1_1_0", "call_3_1_1_0"],
+      ["call_4_0_1_0", "call_4_0_1_0"],
     ])
-    expect(plannedCallIdOf({ id: RunId.make("run-1"), turn: 4, ordinal: RunOrdinal.make(1) }, 2)).toBe("4.1.planned:2")
+    expect(plannedCallIdOf({ id: RunId.make("run-1"), turn: 4, ordinal: RunOrdinal.make(1) }, 2)).toBe("call_4_1_p2")
+  })
+
+  test("a minted id is a pairing key every provider accepts: letters, digits and _ only, under 40 characters, whatever the tool's name", () => {
+    const long = "mcp__workspace.server__create_or_update_a_very_long_named_resource"
+    const run = { id: RunId.make("run-1"), turn: 123_456, ordinal: RunOrdinal.make(12) }
+    const ids = [
+      ...withToolCallIds([callPart("", long, {}), resultPart("", long, {})], 9_999, run),
+      ...withToolCallIds([callPart("", long, {})], 9_999),
+    ].flatMap((p) => p.type === "tool-call" || p.type === "tool-result" ? [p.id] : [])
+    expect([...ids, plannedCallIdOf(run, 99)].every((id) => /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 40)).toBe(true)
+  })
+
+  test("an id-less provider result answers the id-less call of its own tool, whatever calls come before it", () => {
+    const out = withToolCallIds([callPart("", "read", {}), callPart("", "search", {}, true), resultPart("", "search", {}, { providerExecuted: true }), resultPart("", "lone", {})], 2)
+    const calls = responseToolCalls(out)
+    const results = responseToolResults(out)
+    expect(results[0]?.id).toBe(calls[1]?.id)
+    expect(new Set([...calls.map((call) => call.id), results[1]?.id]).size).toBe(3)
   })
 })
 

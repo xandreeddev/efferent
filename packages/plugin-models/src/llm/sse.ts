@@ -19,9 +19,12 @@ import { classifyAiError } from "./provider-failure.entity.functions.js"
  * text/reasoning delta or a completed tool call — empty deltas emit nothing.
  * The retry gate (S2) and the engine fold (S3) both hinge on that.
  *
- * A DONE sentinel is concatenated after the wire lines so the flush (open
+ * An end marker is concatenated after the wire lines so the flush (open
  * chunk ends → accumulated tool calls → finish) runs even when the gateway
- * never sends `[DONE]`; a second sentinel is idempotent via `flushed`.
+ * never sends `[DONE]`; a second flush is idempotent via `flushed`. A body
+ * that ends with neither `[DONE]` nor a finish reason was cut off on the
+ * way (a dropped connection, a gateway that gave up): its finish is
+ * `unknown`, which the loop treats as a cut when the reply holds tool calls.
  *
  * Each chunk is decoded (`chat-wire.entity.ts`): a `data:` line that is no
  * chunk (not JSON, `null`, a field of the wrong type) fails the stream with
@@ -63,8 +66,12 @@ export const usageFromCompletion = (usage: CompletionUsage | null | undefined, r
 /** The finish reasons that cut a response short, as `@effect/ai` names them. */
 type WireCut = "length" | "content-filter" | "error" | "other"
 
-/** A wire response's finish reason: one that ended on its own (`stop`, `tool-calls`) or a cut. */
-export type WireFinishReason = "stop" | "tool-calls" | WireCut
+/**
+ * A wire response's finish reason: one that ended on its own (`stop`,
+ * `tool-calls`), a cut, or `unknown`: a stream that ended with neither a
+ * finish reason nor `[DONE]`, which may have been cut off anywhere.
+ */
+export type WireFinishReason = "stop" | "tool-calls" | WireCut | "unknown"
 
 /**
  * How a `finish_reason` word ends a response, read case-insensitively:
@@ -92,9 +99,10 @@ const namedReason = (raw: string | null | undefined): Option.Option<string> =>
  * The wire's `finish_reason` as `@effect/ai`'s finish reason, for the settled
  * and the streamed parser alike, decided before any tool call's arguments are
  * read. A response that ended on its own (a settling word, or no reason at
- * all, as on a stream that ended without one) finishes on `tool-calls` when
- * it holds tool calls, else on `stop`. A cut stays a cut whatever the
- * response holds, so the loop runs no call of a cut reply.
+ * all on a whole completion or a stream the server ended with `[DONE]`)
+ * finishes on `tool-calls` when it holds tool calls, else on `stop`. A cut
+ * stays a cut whatever the response holds, so the loop runs no call of a
+ * cut reply. A stream that ended with neither is the flush's `unknown`.
  */
 export const finishReasonFromWire = (raw: Option.Option<string>, hasToolCalls: boolean): WireFinishReason => {
   const end = Option.match(Option.flatMap(raw, namedReason), { onNone: () => "settled" as const, onSome: endOfWord })
@@ -105,9 +113,9 @@ export const finishReasonFromWire = (raw: Option.Option<string>, hasToolCalls: b
  * A tool call's params from its wire arguments, once the response's finish
  * reason is known. Arguments that do not parse fail a response that ended on
  * its own with the model's invalid output (`invalid`: the loop's corrective
- * path). A cut response's call is kept with params `{}`: its arguments may
- * end mid-JSON, and the loop answers each call of a cut reply as cut and
- * never runs it.
+ * path). A cut response's call, or an `unknown` one's, is kept with params
+ * `{}`: its arguments may end mid-JSON, and the loop answers each call of a
+ * cut reply as cut and never runs it.
  */
 export const toolCallParams = (
   args: string,
@@ -280,13 +288,16 @@ const applyChunk = (
 /** The end-of-stream flush: close open chunks, decide the finish reason,
  *  emit the accumulated tool calls (unparseable arguments are an invalid
  *  output — the loop's corrective path — unless the reply was cut:
- *  `toolCallParams`), then the finish with the folded usage. */
-const flush = (moduleName: string, reading: UsageReading, state: SseState): Effect.Effect<Emit, AiError.AiError> =>
+ *  `toolCallParams`), then the finish with the folded usage. A stream that
+ *  ended (`eof`) without naming a finish reason or sending `[DONE]` finishes
+ *  `unknown`: nothing says it was complete. */
+const flush = (moduleName: string, reading: UsageReading, state: SseState, end: "done" | "eof"): Effect.Effect<Emit, AiError.AiError> =>
   state.flushed
     ? Effect.succeed([state, []])
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
-        const reason = finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
+        const reason: WireFinishReason = end === "eof" && Option.isNone(closed.finishReason) ? "unknown"
+          : finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
         const toolParts = yield* Effect.forEach(closed.toolCalls, (call) =>
           toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
             malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
@@ -313,21 +324,25 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState): Effe
         ] as const
       })
 
-/** The wire sentinel; also injected once at end-of-stream so the flush never
- *  depends on the gateway actually sending it. */
+/** The wire's own end sentinel. */
 const DONE = "[DONE]"
+
+/** One `data:` payload of the wire, or the end of the body, injected once so the flush never depends on the gateway sending `[DONE]`. */
+type Payload = { readonly _tag: "Data"; readonly data: string } | { readonly _tag: "End" }
 
 const step = (
   moduleName: string,
   reading: UsageReading,
   state: SseState,
-  payload: string,
+  payload: Payload,
   attempt: Option.Option<ModelAttempt>,
   observeUsage?: (usage: unknown, final: boolean) => Effect.Effect<void>,
-): Effect.Effect<Emit, AiError.AiError | TurnError> =>
-  payload === DONE
-    ? Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => completeModelAttempt(value, { _tag: "Completed" }) }).pipe(Effect.andThen(flush(moduleName, reading, state)))
-    : decodeStreamChunk(moduleName, payload).pipe(
+): Effect.Effect<Emit, AiError.AiError | TurnError> => {
+  const ended = (end: "done" | "eof") =>
+    Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => completeModelAttempt(value, { _tag: "Completed" }) }).pipe(Effect.andThen(flush(moduleName, reading, state, end)))
+  return Match.valueTags(payload, {
+    End: () => ended("eof"),
+    Data: ({ data }) => data === DONE ? ended("done") : decodeStreamChunk(moduleName, data).pipe(
       Effect.tap((chunk) => {
         const final = Option.isSome(state.finishReason) || (chunk.choices ?? []).some((choice) => choice.finish_reason != null)
         return Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(value, chunk.usage, final, reading.reasoning ?? true) }).pipe(
@@ -335,7 +350,9 @@ const step = (
         )
       }),
       Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)),
-    )
+    ),
+  })
+}
 
 /** Parse a streaming chat-completions body into encoded stream parts. */
 export const sseStreamParts = (options: {
@@ -361,12 +378,12 @@ export const sseStreamParts = (options: {
     Stream.filterMap((line: string) => {
       const trimmed = line.trim()
       return trimmed.startsWith("data:")
-        ? Result.succeed(trimmed.slice("data:".length).trim())
+        ? Result.succeed<Payload>({ _tag: "Data", data: trimmed.slice("data:".length).trim() })
         : Result.fail(line)
     }),
-    Stream.concat(Stream.succeed(DONE)),
+    Stream.concat(Stream.succeed<Payload>({ _tag: "End" })),
     // Each step's parts are emitted one by one.
-    Stream.mapAccumEffect(() => initialState, (state, payload: string) =>
+    Stream.mapAccumEffect(() => initialState, (state, payload: Payload) =>
       step(options.moduleName, options.usage ?? {}, state, payload, options.attempt ?? Option.none(), options.observeUsage),
     ),
     Stream.onExit((exit) => Option.match(options.attempt ?? Option.none(), { onNone: () => Effect.void, onSome: (attempt) => completeModelAttempt(attempt, Exit.isSuccess(exit) ? { _tag: "Interrupted" } : modelOutcomeOfExit(exit)).pipe(Effect.catch((error) => Effect.die(error))) })),

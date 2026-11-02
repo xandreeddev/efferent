@@ -472,6 +472,11 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
     : [])
   yield* expect(check, answers.map((answer) => answer.call).join() === "cut1,cut2" && answers.every((answer) => answer.failed),
     `the cut reply's calls cut1, cut2 were answered ${JSON.stringify(answers)}, not with a failure each`)
+  // None of a cut reply's calls runs, so their answers are stored with it: no stop between two records leaves one unanswered.
+  const reply = observed.records.find((record) => record.step === 0 && record.tail.some((message) => message.role === "assistant"))
+  const answeredWith = (id: string) => reply?.tail.some((message) => message.role === "tool" && message.content.some((part) => part.toolCallId === id)) ?? false
+  yield* expect("cut-record", answeredWith("cut1") && answeredWith("cut2"),
+    `the cut reply was recorded as ${JSON.stringify(reply?.tail.map((message) => message.role) ?? [])}, without its calls' answers in the same record`)
   const ends = events.flatMap((event) => event._tag === "step.ended" && event.step === 0 ? [event] : [])
   const listed = ends.flatMap((event) => event.results.map((listedResult) => ({ entry: String(listedResult.entry), ok: listedResult.ok })))
   yield* expect(check, ends.map((event) => event.status).join() === "truncated"
@@ -513,8 +518,9 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * reason but `stop`, `tool-calls` and `pause`; `unknown`, the provider
  * giving none, only in a reply with tool calls to run) running none of its
  * tool calls, settled or streamed one part at a time (a call followed by
- * another part before the finish included), each answered by a recorded
- * failure that `step.ended` lists as not ok, its step ended `truncated` with
+ * another part before the finish included), each answered by a failure
+ * recorded with the reply itself (`cut-record`) that `step.ended` lists as
+ * not ok, its step ended `truncated` with
  * no `completion.evaluated` (`cut`, `cut-stream`), a reply cut at the output
  * limit answered with a corrective of the loop's, after its calls' results
  * in the next request and recorded under the next step, at most twice in a

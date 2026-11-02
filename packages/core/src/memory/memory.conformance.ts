@@ -85,7 +85,9 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
 /**
  * The ConversationMemory contract, as checks any strategy must pass: own
  * entry ids, a log that reads back exactly after a reopen, views and
- * artifacts kept, a pure build, the step context only when asked and only its own run's,
+ * artifacts kept, a pure build, a request's results in its calls' order,
+ * another run's call still without a result left out of a build (only the
+ * run's own or an ended turn's answered as interrupted), the step context only when asked and only its own run's,
  * append-only maintenance, a reference transcript without tool traffic, and
  * a message's images kept through a reopen and built (never with an empty
  * text part): the current turn's as image parts, an earlier turn's as image
@@ -175,6 +177,44 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const reopened = yield* open(log, "run-1")
       const runs = (yield* reopened.entries).flatMap((entry) => entry.body._tag === "Message" || entry.body._tag === "ToolResult" ? [entry.body.run] : [])
       yield* expect("run-ordinal", runs.length === 4 && runs.every((run, index) => run === (index < 2 ? firstRun : secondRun)), "the reopened calls lost or mixed their explicit run ordinals")
+    })),
+    check("a request's results build in the order of its calls, whatever order they were recorded in", "call-order", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("look both up")], 0)
+      const [first, second] = [ToolCallId.make("first-call"), ToolCallId.make("second-call")]
+      yield* session.recordTail([{ role: "assistant", content: [
+        { type: "tool-call", toolCallId: first, toolName: "lookup", input: { query: "alpha" } },
+        { type: "tool-call", toolCallId: second, toolName: "lookup", input: { query: "beta" } },
+      ] }], views, 0, firstRun)
+      // Concurrent calls are recorded as they return: the second returned first.
+      yield* session.recordTail([{ role: "tool", content: [{ type: "tool-result", toolCallId: second, toolName: "lookup", output: { id: "record-beta" }, isError: false }] }], views, 0, firstRun)
+      yield* session.recordTail([{ role: "tool", content: [{ type: "tool-result", toolCallId: first, toolName: "lookup", output: { id: "record-alpha" }, isError: false }] }], views, 0, firstRun)
+      const built = (yield* session.build({ stepContext: "tail", run: firstRun })).messages
+      const order = built.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])
+      yield* expect("call-order", order.join() === `${first},${second}`, `the results were built in the order ${order.join()}, not their calls'`)
+    })),
+    check("another run's call still without a result is in flight: left out of this run's builds, never answered as interrupted", "in-flight-exchange", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("find alpha")], 0)
+      // The turn's second run stored its request and is still running the call: no result yet.
+      yield* session.recordTail(toolTail.slice(0, 1), views, 0, secondRun)
+      const first = canonicalJson((yield* session.build({ stepContext: "tail", run: firstRun })).messages)
+      const own = canonicalJson((yield* session.build({ stepContext: "tail", run: secondRun })).messages)
+      yield* expect("in-flight-exchange", !first.includes(callId) && !first.includes("ToolInterrupted"),
+        "a build of the turn's first run showed the second run's running call, or answered it as interrupted")
+      yield* expect("in-flight-exchange", own.includes(callId) && own.includes("ToolInterrupted"),
+        "a build of the run that made the call did not answer its unrecorded result as interrupted")
+      yield* session.recordTail(toolTail.slice(1), views, 0, secondRun)
+      const answered = canonicalJson((yield* session.build({ stepContext: "tail", run: firstRun })).messages)
+      yield* expect("in-flight-exchange", answered.includes(callId) && answered.includes("record-alpha") && !answered.includes("ToolInterrupted"),
+        "once its result was recorded, the second run's exchange did not render in the first run's build")
+      const ended = ToolCallId.make("ended-call")
+      yield* session.recordTail([{ role: "assistant", content: [{ type: "tool-call", toolCallId: ended, toolName: "lookup", input: { query: "beta" } }] }], views, 1, secondRun)
+      const next = yield* open(log, "run-2")
+      yield* next.record([said("and beta")], 0)
+      const later = canonicalJson((yield* next.build({ stepContext: "tail", run: firstRun })).messages)
+      yield* expect("in-flight-exchange", later.includes(ended) && later.includes("ToolInterrupted"),
+        "a call an ended turn left without a result was not answered as interrupted")
     })),
     check("build is a pure fold of the log", "pure", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")

@@ -60,26 +60,33 @@ interface Applied {
   readonly omitted: ReadonlySet<string>
 }
 
-const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string): Applied =>
-  entries.reduce((applied: Applied, entry): Applied => {
-    if (entry.body._tag !== "Compaction") return applied
-    const ids = [...applied.ids, entry.id]
-    // Omitted images apply whatever strategy renders; the other actions only under their own.
-    const own = entry.body.strategy === strategy
-    return CompactionAction.match(entry.body.action, {
-      OmitMedia: (action): Applied => ({ ...applied, ids, omitted: new Set([...applied.omitted, ...action.entries.map(String)]) }),
-      CompactViews: (action): Applied => !own ? applied
-        : { ...applied, ids, views: new Map([...applied.views, ...action.entries.map((id, index) => [id, action.texts[index] ?? ""] as const)]) },
-      Spill: (action): Applied => !own ? applied : { ...applied, ids, views: new Map([...applied.views, [action.entry, action.preview]]) },
-      DropTurns: (action): Applied => !own ? applied : action.throughTurn < applied.cutTurn ? { ...applied, ids } : {
-        ...applied, ids, cutTurn: action.throughTurn,
-        preamble: Option.some({ role: "user", content: `${hostNote("earlier turns were condensed to free context.")}\n\n${action.ledger}` }),
-      },
-      Summarize: (action): Applied => !own ? applied : action.keepFromTurn - 1 < applied.cutTurn ? { ...applied, ids } : {
-        ...applied, ids, cutTurn: action.keepFromTurn - 1, preamble: Option.some(handoffToMessage(action.summary)),
-      },
-    })
-  }, { views: new Map(), cutTurn: 0, preamble: Option.none(), ids: [], omitted: new Set<string>() })
+const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string): Applied => {
+  // Omitted images apply whatever strategy renders; the other actions only under their own.
+  const applying = entries.flatMap((entry) => entry.body._tag === "Compaction" && (entry.body.action._tag === "OmitMedia" || entry.body.strategy === strategy)
+    ? [{ id: entry.id, action: entry.body.action }] : [])
+  // One pass each, so many compactions cost no copy per compaction; a later view of an entry wins.
+  const views = new Map(applying.flatMap(({ action }): ReadonlyArray<readonly [string, string]> => CompactionAction.match(action, {
+    CompactViews: (compact) => compact.entries.map((id, index) => [id, compact.texts[index] ?? ""] as const),
+    Spill: (spill) => [[spill.entry, spill.preview] as const],
+    OmitMedia: () => [],
+    DropTurns: () => [],
+    Summarize: () => [],
+  })))
+  const omitted = new Set(applying.flatMap(({ action }) => action._tag === "OmitMedia" ? action.entries.map(String) : []))
+  const cut = applying.reduce((current: Pick<Applied, "cutTurn" | "preamble">, { action }): Pick<Applied, "cutTurn" | "preamble"> => CompactionAction.match(action, {
+    OmitMedia: () => current,
+    CompactViews: () => current,
+    Spill: () => current,
+    DropTurns: (drop) => drop.throughTurn < current.cutTurn ? current : {
+      cutTurn: drop.throughTurn,
+      preamble: Option.some<AgentMessage>({ role: "user", content: `${hostNote("earlier turns were condensed to free context.")}\n\n${drop.ledger}` }),
+    },
+    Summarize: (summary) => summary.keepFromTurn - 1 < current.cutTurn ? current : {
+      cutTurn: summary.keepFromTurn - 1, preamble: Option.some(handoffToMessage(summary.summary)),
+    },
+  }), { cutTurn: 0, preamble: Option.none() })
+  return { views, ...cut, ids: applying.map(({ id }) => id), omitted }
+}
 
 /** The calls whose results are recorded on their own: a tool the provider ran has its result in the message itself. */
 const toolCallIds = (message: AgentMessage): ReadonlyArray<string> =>
@@ -91,13 +98,23 @@ const assistantText = (message: AgentMessage): Option.Option<string> => {
   return text.length === 0 ? Option.none() : Option.some(text)
 }
 
-const mergeToolMessages = (messages: ReadonlyArray<AgentMessage>): ReadonlyArray<AgentMessage> =>
-  messages.reduce((merged: ReadonlyArray<AgentMessage>, message) => {
-    const last = merged[merged.length - 1]
-    return last !== undefined && last.role === "tool" && message.role === "tool"
-      ? [...merged.slice(0, -1), { role: "tool", content: [...last.content, ...message.content] }]
-      : [...merged, message]
-  }, [])
+/**
+ * Consecutive tool messages as one: a lone tool message stays as it is, a run of them becomes one
+ * holding their results in order. Linear: one scan finds where each message's run starts.
+ */
+const mergeToolMessages = (messages: ReadonlyArray<AgentMessage>): ReadonlyArray<AgentMessage> => {
+  // `starts[i + 1]`: the index the run of tool messages holding message `i` starts at (its own outside a run).
+  const starts = Arr.scan(messages.map((message, index) => ({ tool: message.role === "tool", index })), { tool: false, start: -1 },
+    (previous, current) => current.tool && previous.tool ? previous : { tool: current.tool, start: current.index })
+  const startOf = (index: number): number => starts[index + 1]?.start ?? index
+  const runs = Arr.groupBy(messages.flatMap((message, index) => message.role === "tool" ? [{ start: startOf(index), message }] : []), (item) => String(item.start))
+  return messages.flatMap((message, index): ReadonlyArray<AgentMessage> => {
+    if (message.role !== "tool") return [message]
+    if (startOf(index) !== index) return []
+    const run = Object.hasOwn(runs, String(index)) ? runs[String(index)] ?? [] : []
+    return run.length <= 1 ? [message] : [{ role: "tool", content: run.flatMap((item) => item.message.role === "tool" ? item.message.content : []) }]
+  })
+}
 
 /** @public */
 export interface RenderOptions {
@@ -144,16 +161,6 @@ export const artifactLines = (artifacts: ReadonlyArray<ArtifactRef>, maxImages: 
     ...shown.map((artifact) => `- ${artifact.kind} ${artifact.id} (${artifact.mediaType})${Option.match(artifact.alt, { onNone: () => "", onSome: (alt) => `: ${alt}` })}`),
     ...(more > 0 ? [`- … ${more} more`] : []),
   ].join("\n")
-}
-
-/**
- * THE rebuild: a pure fold of the log into the messages the model sees.
- * Every strategy renders through this, differing only by the compaction
- * entries it recorded, so in-run and replayed requests are byte-identical.
- */
-interface RenderState {
-  readonly out: ReadonlyArray<AgentMessage>
-  readonly lastText: ReadonlyMap<number, string>
 }
 
 const userRoleMessage = (content: string): AgentMessage => ({ role: "user", content })
@@ -317,44 +324,68 @@ const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag:
   }
 }
 
-const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages" | "compactions"> => {
+/**
+ * The exchanges another run of the turn being rendered has in flight: its request is recorded and a
+ * call of it has no result yet. That run may still be running the call, so this render does not
+ * answer it as interrupted: the request and the results it has so far are left out until each call
+ * has its result. Once the turn has ended, a call still without one renders as `ToolInterrupted`.
+ */
+const inFlightOf = (plan: RenderPlan, options: RenderOptions): ReadonlySet<string> => new Set(plan.entries.flatMap((entry): ReadonlyArray<string> => {
+  const body = entry.body
+  if (body._tag !== "Message" || body.run === undefined || body.run === options.run || entry.turn !== options.currentTurn || entry.runId !== options.currentRun) return []
+  const results = plan.exchanges.results.get(entry.id) ?? []
+  const unanswered = toolCallIds(body.message).some((id) => !results.some((result) => result.body._tag === "ToolResult" && result.body.toolCallId === id))
+  return unanswered ? [entry.id, ...results.map((result) => result.id)] : []
+}))
+
+/** The render plan less what other runs of the turn have in flight (`inFlightOf`). */
+const visiblePlanOf = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): RenderPlan => {
   const plan = renderPlanOf(stored, options.strategy)
+  const inFlight = inFlightOf(plan, options)
+  return inFlight.size === 0 ? plan : {
+    ...plan,
+    kept: (entry) => !inFlight.has(entry.id) && plan.kept(entry),
+    messageVisible: (entry) => !inFlight.has(entry.id) && plan.messageVisible(entry),
+    resultVisible: (entry) => !inFlight.has(entry.id) && plan.resultVisible(entry),
+  }
+}
+
+/**
+ * THE rebuild: a pure fold of the log into the messages the model sees.
+ * Every strategy renders through this, differing only by the compaction
+ * entries it recorded, so in-run and replayed requests are byte-identical.
+ * Each pass over the log is linear: a long session's render grows with its length, never its square.
+ */
+const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages" | "compactions"> => {
+  const plan = visiblePlanOf(stored, options)
   const { entries, exchanges } = plan
   const { applied, digests, kept, inline } = mediaPlan(plan, options)
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) =>
     entry.body._tag === "StepContext" && entry.runId === options.currentRun && entry.body.run === options.run).slice(-1)
-  const initial: RenderState = { out: [], lastText: new Map() }
+  // Each turn's assistant texts in render order: a reply equal to the turn's last one before it is not shown again.
+  const texts = Arr.groupBy(exchanges.ordered.flatMap((entry, index) => entry.body._tag === "Message" && plan.messageVisible(entry)
+    ? Option.toArray(Option.map(assistantText(entry.body.message), (text) => ({ index, turn: entry.turn, text }))) : []), (item) => String(item.turn))
+  const lastTextBefore = (turn: number, index: number): Option.Option<string> => Option.map(
+    Arr.findLast(Object.hasOwn(texts, String(turn)) ? texts[String(turn)] ?? [] : [], (item) => item.index < index), (item) => item.text)
   // Every LogBody tag has its case: one this render shows nothing of says so, and a new tag does not compile until it is placed.
-  const body = exchanges.ordered.reduce((state: RenderState, entry): RenderState => LogBody.match(entry.body, {
-    SystemPrepared: () => state,
-    TurnStarted: (b) => kept(entry) ? { ...state, out: [...state.out, userMessageContent(entry, b.userMessage, inline)] } : state,
-    TurnContext: (b) => kept(entry) && (options.turnContext === "all" || entry.turn === options.currentTurn)
-      ? { ...state, out: [...state.out, userRoleMessage(b.text)] } : state,
-    Message: (b): RenderState => {
-      if (!plan.messageVisible(entry)) return state
-      const text = assistantText(b.message)
-      return {
-        out: [...state.out, Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
-        lastText: Option.match(text, { onNone: () => state.lastText, onSome: (value) => new Map([...state.lastText, [entry.turn, value]]) }),
-      }
-    },
-    ToolResult: (b): RenderState => {
-      if (!plan.resultVisible(entry)) return state
-      const text = applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view
-      const message: AgentMessage = { role: "tool", content: [toolResultPart(entry, b, text, options, inline)] }
-      return { ...state, out: [...state.out, message] }
-    },
-    ToolDigest: () => state,
-    ToolPresentation: () => state,
-    StepContext: () => state,
-    ToolsActivated: () => state,
-    Compaction: () => state,
-    TurnEnded: (b) => !options.replies || !kept(entry) ? state : Option.match(b.reply, {
-      onNone: () => state,
-      onSome: (reply): RenderState => reply.length === 0 || state.lastText.get(entry.turn) === reply ? state
-        : { ...state, out: [...state.out, assistantMessage(reply)] },
+  const body = exchanges.ordered.flatMap((entry, index): ReadonlyArray<AgentMessage> => LogBody.match(entry.body, {
+    SystemPrepared: () => [],
+    TurnStarted: (b) => kept(entry) ? [userMessageContent(entry, b.userMessage, inline)] : [],
+    TurnContext: (b) => kept(entry) && (options.turnContext === "all" || entry.turn === options.currentTurn) ? [userRoleMessage(b.text)] : [],
+    Message: (b) => !plan.messageVisible(entry) ? []
+      : [Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
+    ToolResult: (b): ReadonlyArray<AgentMessage> => !plan.resultVisible(entry) ? []
+      : [{ role: "tool", content: [toolResultPart(entry, b, applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view, options, inline)] }],
+    ToolDigest: () => [],
+    ToolPresentation: () => [],
+    StepContext: () => [],
+    ToolsActivated: () => [],
+    Compaction: () => [],
+    TurnEnded: (b) => !options.replies || !kept(entry) ? [] : Option.match(b.reply, {
+      onNone: () => [],
+      onSome: (reply) => reply.length === 0 || Option.contains(lastTextBefore(entry.turn, index), reply) ? [] : [assistantMessage(reply)],
     }),
-  }), initial).out
+  }))
   const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userRoleMessage(entry.body.text)] : [])
   const messages = mergeToolMessages(answerInterruptedCalls([...Option.toArray(applied.preamble), ...body, ...tail]))
   // The selected tail is one user message: repairs precede it and only tool messages merge.
@@ -370,7 +401,7 @@ export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOption
  * refused that request. Empty when the render sends no image.
  */
 export const entriesSendingMedia = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<EntryId> => {
-  const plan = renderPlanOf(entries, options.strategy)
+  const plan = visiblePlanOf(entries, options)
   const { imagesOf, inline } = mediaPlan(plan, options)
   return plan.entries.flatMap((entry) => imagesOf(entry).some((image) => inline.has(image.key)) ? [entry.id] : [])
 }
@@ -578,28 +609,29 @@ const interruptedToolResult = (call: ToolCallPart): ToolResultPart => ({
 
 /** Close an incomplete exchange before another message, or before the request ends. Never persist the repair. */
 const answerInterruptedCalls = (messages: ReadonlyArray<AgentMessage>): ReadonlyArray<AgentMessage> => {
-  interface Pending {
-    readonly out: ReadonlyArray<AgentMessage>
-    readonly calls: ReadonlyArray<ToolCallPart>
+  const none: ReadonlyArray<ToolCallPart> = []
+  // `unanswered[i]`: the calls still waiting for a result just before message `i` (one scan, linear).
+  const unanswered = Arr.scan(messages, none, (calls, message): ReadonlyArray<ToolCallPart> => Match.value(message).pipe(Match.discriminatorsExhaustive("role")({
+    assistant: (assistant) => assistant.content.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : []),
+    user: () => none,
+    tool: (tool) => calls.filter((call) => !tool.content.some((result) => result.toolCallId === call.toolCallId)),
+  })))
+  const repair = (index: number): ReadonlyArray<AgentMessage> => {
+    const calls = unanswered[index] ?? none
+    return calls.length === 0 ? [] : [{ role: "tool", content: calls.map(interruptedToolResult) }]
   }
-  const flush = (state: Pending): ReadonlyArray<AgentMessage> => state.calls.length === 0 ? state.out
-    : [...state.out, { role: "tool", content: state.calls.map(interruptedToolResult) }]
-  const state = messages.reduce((state: Pending, message): Pending => Match.value(message).pipe(Match.discriminatorsExhaustive("role")({
-    assistant: (message) => ({ out: [...flush(state), message], calls: message.content.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : []) }),
-    user: (message) => ({ out: [...flush(state), message], calls: [] }),
-    tool: (message) => ({ out: [...state.out, message], calls: state.calls.filter((call) => !message.content.some((result) => result.toolCallId === call.toolCallId)) }),
-  })), { out: [], calls: [] })
-  return flush(state)
+  return [...messages.flatMap((message, index) => message.role === "tool" ? [message] : [...repair(index), message]), ...repair(messages.length)]
 }
 
 /** Fold only the presentations contained in this prefix over earlier results; raw result and media bytes stay in their original entry. */
 export const presentedEntries = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<LogEntry> => {
   const positions = new Map(entries.flatMap((entry, index) => entry.body._tag === "ToolResult" ? [[entry.id, index] as const] : []))
-  const presentations = entries.reduce<ReadonlyMap<EntryId, Extract<LogBody, { readonly _tag: "ToolPresentation" }>>>((all, entry, index) => {
-    if (entry.body._tag !== "ToolPresentation") return all
+  // A presentation applies to a result recorded before it; the latest such one wins.
+  const presentations: ReadonlyMap<EntryId, Extract<LogBody, { readonly _tag: "ToolPresentation" }>> = new Map(entries.flatMap((entry, index) => {
+    if (entry.body._tag !== "ToolPresentation") return []
     const at = positions.get(entry.body.entry)
-    return at === undefined || at >= index ? all : new Map([...all, [entry.body.entry, entry.body]])
-  }, new Map())
+    return at === undefined || at >= index ? [] : [[entry.body.entry, entry.body] as const]
+  }))
   return entries.map((entry): LogEntry => {
     if (entry.body._tag !== "ToolResult") return entry
     const presentation = presentations.get(entry.id)
@@ -614,22 +646,51 @@ export const presentedEntries = (entries: ReadonlyArray<LogEntry>): ReadonlyArra
   })
 }
 
-/** Correlate by request identity before a provider pairing key is reused in another exchange. */
-const requestForResult = (entries: ReadonlyArray<LogEntry>, result: LogEntry): Option.Option<{ readonly entry: LogEntry; readonly input: unknown; readonly executable: boolean }> => {
-  if (result.body._tag !== "ToolResult") return Option.none()
-  const body = result.body
-  const position = entries.findIndex((entry) => entry.id === result.id)
-  const requests = entries.slice(0, Math.max(position, 0)).flatMap((entry) => {
-    const request = entry.body
-    return entry.runId === result.runId && entry.turn === result.turn && entry.step === result.step && request._tag === "Message" && request.message.role === "assistant"
-      ? request.message.content.flatMap((part) => part.type === "tool-call" && part.toolCallId === body.toolCallId && part.toolName === body.toolName
-        ? [{ entry, run: request.run, input: part.input, executable: part.providerExecuted !== true }] : [])
-      : []
-  })
-  const exact = body.run === undefined ? requests : requests.filter((request) => request.run === body.run)
-  const candidates = exact.length > 0 ? exact : requests.filter((request) => request.run === undefined)
-  return Option.fromNullishOr(candidates.at(-1))
+/** One tool call of an assistant request, where the log holds it. */
+interface ToolRequest {
+  readonly entry: LogEntry
+  readonly position: number
+  /** The call's place in its request: results render in this order, whatever order they returned in. */
+  readonly call: number
+  readonly run: RunOrdinal | undefined
+  readonly input: unknown
+  readonly executable: boolean
 }
+
+/** The identity a result names its request by: its run, turn, step, call id and tool. */
+const requestKeyOf = (runId: RunId, turn: number, step: number, toolCallId: string, toolName: string): string => JSON.stringify([runId, turn, step, toolCallId, toolName])
+
+/**
+ * Correlate by request identity before a provider pairing key is reused in another exchange: the
+ * latest matching call before the result, of the result's run ordinal when it names one (else of
+ * any run, falling back to requests without one). The log is indexed once, so resolving every
+ * result of a log is linear in its length.
+ */
+const requestResolverOf = (entries: ReadonlyArray<LogEntry>): (result: LogEntry) => Option.Option<ToolRequest> => {
+  const requests = Arr.groupBy(entries.flatMap((entry, position) => {
+    const body = entry.body
+    return body._tag === "Message" && body.message.role === "assistant"
+      ? body.message.content.flatMap((part, call) => part.type === "tool-call" ? [{
+        key: requestKeyOf(entry.runId, entry.turn, entry.step, part.toolCallId, part.toolName),
+        request: { entry, position, call, run: body.run, input: part.input, executable: part.providerExecuted !== true } satisfies ToolRequest,
+      }] : [])
+      : []
+  }), (item) => item.key)
+  // A result's position is that of the first entry holding its id.
+  const positions = new Map(Arr.reverse(entries.map((entry, position) => [entry.id, position] as const)))
+  return (result) => {
+    if (result.body._tag !== "ToolResult") return Option.none()
+    const body = result.body
+    const before = Math.max(positions.get(result.id) ?? -1, 0)
+    const key = requestKeyOf(result.runId, result.turn, result.step, body.toolCallId, body.toolName)
+    const matching = (Object.hasOwn(requests, key) ? requests[key] ?? [] : []).flatMap((item) => item.request.position < before ? [item.request] : [])
+    const exact = body.run === undefined ? matching : matching.filter((request) => request.run === body.run)
+    const candidates = exact.length > 0 ? exact : matching.filter((request) => request.run === undefined)
+    return Option.fromNullishOr(candidates.at(-1))
+  }
+}
+
+const requestForResult = (entries: ReadonlyArray<LogEntry>, result: LogEntry): Option.Option<ToolRequest> => requestResolverOf(entries)(result)
 
 /**
  * The latest preceding request input for a recorded result, matched by runId,
@@ -644,14 +705,22 @@ export const toolInputOf = (entries: ReadonlyArray<LogEntry>, result: LogEntry):
   result.body._tag === "ToolResult" && result.body.interception !== undefined && Object.hasOwn(result.body.interception, "effectiveInput")
     ? result.body.interception.effectiveInput : Option.match(requestForResult(entries, result), { onNone: () => ({}), onSome: (request) => request.input })
 
-/** Present interleaved run exchanges with each request's own results, retaining ordinary completion order within an exchange. */
+/** Results by the place of their calls in the request (a stable sort: log order among equals). */
+const byCall = Order.mapInput(Order.Number, (pair: { readonly call: number }) => pair.call)
+
+/**
+ * Present interleaved run exchanges with each request's own results, in the order of the request's
+ * calls: concurrent calls are recorded as they return, but a request renders the same whatever their
+ * timing, and a provider that pairs results by position pairs them right.
+ */
 const toolExchangesOf = (entries: ReadonlyArray<LogEntry>): {
   readonly ordered: ReadonlyArray<LogEntry>
   readonly results: ReadonlyMap<EntryId, ReadonlyArray<LogEntry>>
 } => {
-  const paired = entries.flatMap((result) => Option.toArray(Option.map(Option.filter(requestForResult(entries, result), (request) => request.executable), (request) => ({ result, request: request.entry }))))
-  const results = paired.reduce<ReadonlyMap<EntryId, ReadonlyArray<LogEntry>>>((all, pair) =>
-    new Map([...all, [pair.request.id, [...(all.get(pair.request.id) ?? []), pair.result]]]), new Map())
+  const requestOf = requestResolverOf(entries)
+  const paired = entries.flatMap((result) => Option.toArray(Option.map(Option.filter(requestOf(result), (request) => request.executable), (request) => ({ result, request: request.entry, call: request.call }))))
+  const results: ReadonlyMap<EntryId, ReadonlyArray<LogEntry>> = new Map(Object.values(Arr.groupBy(paired, (pair) => String(pair.request.id)))
+    .map((pairs) => [pairs[0].request.id, Arr.sort(pairs, byCall).map((pair) => pair.result)] as const))
   const moved = new Set(paired.map((pair) => pair.result.id))
   return { results, ordered: entries.flatMap((entry) => moved.has(entry.id) ? [] : [entry, ...(results.get(entry.id) ?? [])]) }
 }

@@ -120,6 +120,46 @@ describe("journey: durable tool results", () => {
     })))
   })
 
+  test("a run is never told that a concurrent run's call is interrupted while that call is still running", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { sessions, address } = yield* sessionsFor("00000000-0000-4000-8000-000000005512")
+      const alphaRunning = yield* Deferred.make<void>()
+      const betaAsked = yield* Deferred.make<void>()
+      // Alpha's handler runs until beta's request reaches the provider: beta is built while alpha's call is in flight.
+      const agent = yield* agentWith((n) => (n === 1 ? Deferred.succeed(alphaRunning, undefined).pipe(Effect.andThen(Deferred.await(betaAsked))) : Effect.void).pipe(Effect.as(n)))
+      const requests = yield* Ref.make<ReadonlyArray<string>>([])
+      const model = yield* LanguageModel.make({
+        generateText: (options) => {
+          const prompt = JSON.stringify(options.prompt.content)
+          const beta = prompt.includes("Run marker beta")
+          return Ref.update(requests, (all) => [...all, prompt]).pipe(
+            Effect.andThen(beta ? Deferred.succeed(betaAsked, undefined) : Effect.void),
+            Effect.as([...call(beta ? "beta-call" : "alpha-call", beta ? 2 : 1)]),
+          )
+        },
+        streamText: () => Stream.die("not scripted"),
+      })
+      yield* agent.turn({
+        turn: { session: address, userMessage: new UserMessage({ text: "run both probes" }), runId: RunId.make("in-flight-runs") },
+        services: Context.merge(Context.make(Sessions, sessions), Context.make(LanguageModel.LanguageModel, model)),
+      }, (turn) => Effect.gen(function* () {
+        yield* turn.tools.select(turn.userMessage)
+        yield* Effect.all(["alpha", "beta"].map((name) => turn.run({
+          step: () => (name === "beta" ? Deferred.await(alphaRunning) : Effect.void).pipe(
+            Effect.as({ context: Option.some(`Run marker ${name}`), toolChoice: Option.none() })),
+        })), { concurrency: 2 })
+        return { outcome: "partial" as const, reply: Option.none() }
+      }))
+      return { requests: yield* Ref.get(requests), entries: yield* entriesOfEvents(yield* sessions.read(address)) }
+    })))
+
+    const beta = observed.requests.find((prompt) => prompt.includes("Run marker beta")) ?? ""
+    expect(beta.length).toBeGreaterThan(0)
+    expect(beta).not.toContain("alpha-call")
+    expect(beta).not.toContain("ToolInterrupted")
+    expect(observed.entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [String(entry.body.toolCallId)] : []).toSorted()).toEqual(["alpha-call", "beta-call"])
+  })
+
   test("a raw commit whose acknowledgement fails remains on the failed step, and its entry id is never reused", async () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { sessions, address } = yield* sessionsFor("00000000-0000-4000-8000-000000005511")

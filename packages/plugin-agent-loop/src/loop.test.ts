@@ -1379,6 +1379,7 @@ describe("runLoop gates each response on its finish reason", () => {
   ) => Effect.runPromise(Effect.gen(function* () {
     const ran: Array<string> = []
     const log: Array<readonly [number, AgentMessage]> = []
+    const batches: Array<ReadonlyArray<string>> = []
     const settled: Array<string> = []
     const prompts: Array<ReadonlyArray<string>> = []
     const { events, onEvent } = collect()
@@ -1392,6 +1393,7 @@ describe("runLoop gates each response on its finish reason", () => {
       ...(options.isComplete === undefined ? {} : { isComplete: options.isComplete }),
       onTail: (tail, step) => Effect.sync(() => {
         log.push(...tail.map((message) => [step, message] as const))
+        batches.push(tail.map((message) => message.role))
         return [] as ReadonlyArray<number>
       }),
       onStepSettled: (step, status) => Effect.sync(() => void settled.push(`${step}:${status}`)),
@@ -1410,7 +1412,7 @@ describe("runLoop gates each response on its finish reason", () => {
       }),
     })
     const tail = Result.match(result, { onFailure: (): ReadonlyArray<AgentMessage> => [], onSuccess: (done) => done.newTail })
-    return { end, ran, log, tail, settled, events, prompts, roles: log.map(([step, message]) => [step, message.role] as const) }
+    return { end, ran, log, batches, tail, settled, events, prompts, roles: log.map(([step, message]) => [step, message.role] as const) }
   }))
 
   const echoCall = (id: string, params: unknown) => ({ type: "tool-call", id, name: "echo", params })
@@ -1429,14 +1431,26 @@ describe("runLoop gates each response on its finish reason", () => {
     expect(gate.ran).toEqual([])
     expect(toolStarts(gate.events)).toEqual([])
     expect(gate.settled).toEqual(["0:truncated", "1:completed"])
-    expect(gate.roles).toEqual([[0, "assistant"], [0, "tool"], [0, "tool"], [1, "user"], [1, "assistant"]])
+    expect(gate.roles).toEqual([[0, "assistant"], [0, "tool"], [1, "user"], [1, "assistant"]])
+    // The reply and the answers of its calls, which never run, are one record: no reopened log holds a cut call without its answer.
+    expect(gate.batches[0]).toEqual(["assistant", "tool"])
     expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
       echoResult("c1", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
-    ] }], [0, { role: "tool", content: [
       echoResult("c2", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
     ] }]])
     expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: "[Host note: your previous reply reached the output limit and was cut short, so the tool calls it made were not run: their results say so. Call the tools you still need again, fewer in one reply and with less text before them.]" }]])
     expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("tool_start and tool_end name each call by the id its assistant_message and the tail carry, the loop's minted one for an id-less call", async () => {
+    const gate = await gated((call) => call === 0 ? [echoCall("c1", { value: "a" }), echoCall("", { value: "b" }), finish("tool-calls")] : answers, { toolConcurrency: 1 })
+    const announced = gate.events.flatMap((event) => event.type === "assistant_message" ? event.toolCalls.map((call) => call.id) : [])
+    const ids = (type: "tool_start" | "tool_end") => gate.events.flatMap((event) => event.type === type ? [event.toolCallId] : [])
+    const recorded = toolMessages(gate.log).flatMap(([, message]) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])
+    expect(announced).toHaveLength(2)
+    expect(announced[0]).toBe("c1")
+    expect(announced[1]).not.toBe("")
+    expect([ids("tool_start"), ids("tool_end"), recorded]).toEqual([announced, announced, announced])
   })
 
   test("a reply in text cut at the output limit is asked to continue, and the run's text is that reply's followed by the next one's", async () => {
@@ -1580,9 +1594,9 @@ describe("runLoop gates each response on its finish reason", () => {
     expect(toolStarts(gate.events)).toEqual([])
     expect(gate.events.some((event) => event.type === "stream_fallback")).toBe(false)
     expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(gate.batches[0]).toEqual(["assistant", "tool"])
     expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
       echoResult("c1", replyCutFailure("length"), true),
-    ] }], [0, { role: "tool", content: [
       echoResult("c2", replyCutFailure("length"), true),
     ] }]])
     expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(true) }]])

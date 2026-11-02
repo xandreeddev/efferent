@@ -39,9 +39,10 @@ const notRun = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart 
  * with a corrective, however many come in a row; `unreset` counts the
  * replies cut at the output limit over the run, not in a row: a malformed
  * or a whole step between them restarts nothing. `batch-tail` records the
- * response and all results only after every handler returns.
+ * response and all results only after every handler returns. `cut-apart`
+ * records a cut reply, then each of its calls' answers on its own.
  */
-type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail" | "waiting"
+type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail" | "cut-apart" | "waiting"
 
 /**
  * The smallest loop that honours the StepLoop contract, written directly on
@@ -190,12 +191,14 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         _tag: "assistant.message", step: index, run, text: responseText(parts), reasoning: "", model: Option.none(),
         toolCalls: responseToolCalls(parts).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used, finishReason: response.finishReason,
       })
+      // A cut reply's calls never run: their answers are recorded with it.
+      const unrun = cut && !resolvedThrough ? calls.map(notRun) : []
       if (careless !== "batch-tail") {
-        yield* record(index, responseToAgentMessages(parts), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
+        yield* record(index, responseToAgentMessages(careless === "cut-apart" ? parts : [...parts, ...unrun]), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
         yield* publishAssistant
       }
-      const answers = resolvedThrough ? [] : cut ? calls.map(notRun) : yield* runCalls(calls, index)
-      if (cut && careless !== "batch-tail") yield* Effect.forEach(answers, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
+      const answers = resolvedThrough ? [] : cut ? unrun : yield* runCalls(calls, index)
+      if (careless === "cut-apart") yield* Effect.forEach(unrun, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
       const content: ReadonlyArray<Response.AnyPart> = [...parts, ...answers]
       if (careless === "batch-tail") {
         yield* record(index, responseToAgentMessages(content), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
@@ -355,6 +358,10 @@ describe("a loop careless with a reply cut short", () => {
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {
     expect(await failedChecks(minimalLoopOf("cuts-with-calls"))).toEqual(["accepted-input", "cut-fail", "cut-text", "malformed-limit"])
+  })
+
+  test("one that records a cut reply's answers apart from the reply fails cut-record", async () => {
+    expect(await failedChecks(minimalLoopOf("cut-apart"))).toEqual(["cut-record"])
   })
 
   test("one that ends the run at a paused reply with no calls fails pause", async () => {

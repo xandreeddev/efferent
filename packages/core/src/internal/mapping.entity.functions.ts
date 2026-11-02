@@ -199,12 +199,16 @@ export const toPromptMessages = (
  * id breaks durable UI identity (a live event and a later re-projection of
  * the same persisted message must compute the same key), so a deterministic
  * id is minted ONCE here, before the content fans out into events and
- * persisted messages: `<turn>.<ordinal>.<step>:<toolName>:<n>` for a step of
- * the run `run` (`toolCallIdOf`), distinct across the runs and turns of a
- * session; `<step>:<toolName>:<n>` without a run, which repeats from one run
- * to the next. `n` is the call's place among the step's calls. The Nth
- * id-less call and the Nth id-less result pair on the same `n`, so the
- * call ↔ result pairing stays valid. A non-empty provider id is left as-is.
+ * persisted messages: `call_<turn>_<ordinal>_<step>_<n>` for a step of the
+ * run `run` (`toolCallIdOf`), distinct across the runs and turns of a
+ * session; `call_<step>_<n>` without a run, which repeats from one run to
+ * the next. `n` is the call's place among the step's calls. Minted ids hold
+ * only letters, digits and `_`, short enough for every provider's pairing
+ * key, so a session that switches providers can send them back. An id-less
+ * result answers the id-less call of its tool it pairs with in order (the
+ * Nth such result of a tool, the Nth such call), so the call ↔ result
+ * pairing stays valid; one with no such call gets an id of its own. A
+ * non-empty provider id is left as-is.
  *
  * Pure: returns new part objects; the input is never mutated.
  */
@@ -213,7 +217,19 @@ export const withToolCallIds = (
   step: number,
   run?: RunRef,
 ): ReadonlyArray<Response.AnyPart> => {
-  const idOf = (tool: string, n: number) => run === undefined ? `${step}:${tool}:${n}` : toolCallIdOf(run, step, tool, n)
+  const idOf = (n: number) => run === undefined ? `call_${step}_${n}` : toolCallIdOf(run, step, n)
+  const calls = content.flatMap((part) => part.type === "tool-call" ? [part] : [])
+  const results = content.flatMap((part) => part.type === "tool-result" ? [part] : [])
+  const callIds = calls.map((call, n) => call.id === "" ? idOf(n) : call.id)
+  // Each tool's id-less calls, in order: its id-less results answer them in the same order.
+  const idless = Arr.groupBy(calls.flatMap((call, n) => call.id === "" ? [{ tool: call.name, id: callIds[n] ?? idOf(n) }] : []), (call) => call.tool)
+  const resultIds = results.map((result, n) => {
+    if (result.id !== "") return result.id
+    const order = results.slice(0, n).filter((earlier) => earlier.id === "" && earlier.name === result.name).length
+    const paired = Object.hasOwn(idless, result.name) ? idless[result.name]?.[order]?.id : undefined
+    // No id-less call of its tool to answer: an id past every call's, so it names no call.
+    return paired ?? idOf(calls.length + n)
+  })
   return content
     .reduce(
       (acc: { calls: number; results: number; out: ReadonlyArray<Response.AnyPart> }, part) => Match.value(part).pipe(
@@ -221,12 +237,12 @@ export const withToolCallIds = (
           "tool-call": (call) => ({
             calls: acc.calls + 1,
             results: acc.results,
-            out: [...acc.out, call.id === "" ? { ...call, id: idOf(call.name, acc.calls) } : call],
+            out: [...acc.out, call.id === "" ? { ...call, id: callIds[acc.calls] ?? idOf(acc.calls) } : call],
           }),
           "tool-result": (result) => ({
             calls: acc.calls,
             results: acc.results + 1,
-            out: [...acc.out, result.id === "" ? { ...result, id: idOf(result.name, acc.results) } : result],
+            out: [...acc.out, result.id === "" ? { ...result, id: resultIds[acc.results] ?? idOf(calls.length + acc.results) } : result],
           }),
         }),
         // Every other part passes through as it is.

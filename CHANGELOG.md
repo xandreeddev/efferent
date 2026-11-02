@@ -50,6 +50,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   rather than fail at once; a custom peer that refuses immediately fails it.
   No stored shape changes.
 
+- `toolCallIdOf` takes `(run, step, n)`: a minted tool-call id no longer
+  holds the tool's name. Minted ids are `call_<turn>_<ordinal>_<step>_<n>`
+  (`call_<turn>_<ordinal>_p<n>` for a planned batch, `call_<step>_<n>` and
+  `call_p<n>` without a run). Ids are opaque; ids stored by earlier releases
+  replay as stored. A custom `StepLoop` records a reply cut short together
+  with its calls' `ReplyCut` answers in one `record` and reruns
+  `stepLoopConformance` (new check `cut-record`); a custom memory strategy
+  reruns `memoryConformance` (new checks `in-flight-exchange` and
+  `call-order`).
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1872,6 +1882,39 @@ Model-visible text (exact pins and the compaction golden updated):
   LangSmith can price them. Package `AGENTS.md` model-text tables cite the
   lines that hold each text and its pin again.
 
+- A concurrent run of a turn is no longer told that another run's call is
+  interrupted while that call is still running: a request leaves out an
+  exchange of another run of the open turn until each of its calls has a
+  result. The run that made the call, and every request after the turn
+  ended, still answer a missing result with `ToolInterrupted`.
+- A request shows a tool request's results in the order of its calls,
+  whatever order the concurrent calls returned in (the journal still
+  records them as they return), so a request no longer depends on tool
+  timing and a provider that pairs results by position pairs them right.
+- Rendering memory is linear in the log's length: the passes that copied an
+  accumulated list or map per entry or per result (pairing results with
+  their requests, presentations, compactions, interrupted-call repair,
+  merging tool messages, replies) made a long session's every build
+  quadratic, about ten seconds for 25,600 entries; it now takes about a
+  tenth of a second, with byte-identical output.
+- `@xandreed/plugin-agent-loop`: a reply cut short is recorded together
+  with its calls' `ReplyCut` answers, so a process stopped between the two
+  no longer leaves cut calls that render as `ToolInterrupted` ("it may have
+  run") though they never could. `runLoop`'s `tool_start` and `tool_end`
+  events carry the call's id, the one its `assistant_message` and the tail
+  carry, instead of an execution id.
+- `@xandreed/plugin-models`: a streamed chat completion whose body ended
+  with neither a finish reason nor `[DONE]` (a dropped connection, a
+  gateway that gave up) finishes `unknown` instead of `stop` or
+  `tool-calls`: the loop runs none of its calls and fails the run with
+  `loop.truncated`, and a call whose arguments end mid-JSON is kept with
+  `{}`. A reply of text alone completes as before; `[DONE]` or a whole
+  completion without a finish reason still settles.
+- Minted tool-call ids hold only letters, digits and `_` and stay short, so
+  a session whose history holds them can move to a provider that checks its
+  pairing keys (Anthropic's `^[a-zA-Z0-9_-]+$`). An id-less provider result
+  pairs with the id-less call of its own tool, in order.
+
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued
   admission separately, prevent repeated cooldown probes from accumulating
@@ -1886,9 +1929,10 @@ Model-visible text (exact pins and the compaction golden updated):
   streamed, decides a response's finish reason from the wire's
   `finish_reason` before it decodes its tool calls' arguments, whatever the
   word's case: `stop`, `tool_calls`, `function_call`, `tool_use`,
-  `tool_call`, `end_turn`, `stop_sequence`, `eos` and none at all (`null`, or a stream that ended
-  without one) are `tool-calls` when the response holds tool calls, else
-  `stop`; `length` and `max_tokens` are `length`; `content_filter` is
+  `tool_call`, `end_turn`, `stop_sequence`, `eos` and none at all (`null`,
+  or a stream the server ended with `[DONE]`) are `tool-calls` when the
+  response holds tool calls, else `stop` (a stream that ended with neither
+  is `unknown`); `length` and `max_tokens` are `length`; `content_filter` is
   `content-filter`; `error` and `insufficient_system_resource` are
   `error`; any other word is `other`. A reply cut at `length` or by
   `content_filter` is no longer reported as `tool-calls` when it holds
@@ -2114,8 +2158,8 @@ Model-visible text (exact pins and the compaction golden updated):
   run's requests replay from their own header
   (`replayModelRequest(events, runId, step, run)`).
 - A provider that sends tool calls without ids gets ids distinct across a
-  session's runs and turns: `<turn>.<ordinal>.<step>:<tool>:<n>`, and
-  `<turn>.<ordinal>.planned:<n>` for a planned batch. Earlier sessions keep
+  session's runs and turns: `call_<turn>_<ordinal>_<step>_<n>`, and
+  `call_<turn>_<ordinal>_p<n>` for a planned batch. Earlier sessions keep
   their stored ids.
 - A process that stops between a turn's reply and its end no longer leaves
   an interrupted turn holding a completed reply.
