@@ -1,7 +1,7 @@
 import { Effect, Layer, Option, Path, Schema } from "effect"
 import { Bash, FileSystem, harnessError, ImageFitTarget, ImageInput, ImageResizeError, ImageResizer, imageSizeOf, mediaFromBytes, mergeOptions, sniffImageType } from "@xandreed/core"
 import type { BashResult } from "@xandreed/core"
-import { imageOpacityCommand, imageResizeCommand, imageToolProbe } from "./image-resizer.entity.functions.js"
+import { imageOpacityCommand, imageResizeCommand, imageToolProbe, privateDirectoryCommand, privateInputCommand, privately } from "./image-resizer.entity.functions.js"
 import { ImageResizerConfig, imageResizerDefaults, ImageResizeTool } from "./image-resizer.entity.js"
 import { bashEnvironment } from "./workspace-tools.entity.functions.js"
 import { workspaceToolsDefaults } from "./workspace-tools.entity.js"
@@ -40,16 +40,27 @@ const makeResizer = Effect.fnUntraced(function* (options: Partial<ImageResizerCo
     if (Option.isNone(size)) return yield* Effect.fail(resizeError("Unsupported", "the image header does not give its dimensions"))
     const original = size.value
     if (input.bytes.length <= bounds.maxBytes && Math.max(original.width, original.height) <= bounds.maxSide) return input.bytes
+    if (original.width * original.height > config.maxSourcePixels) {
+      return yield* Effect.fail(resizeError("Unsupported", `the source image declares ${original.width}x${original.height} pixels, more than the resizer's maxSourcePixels (${config.maxSourcePixels})`))
+    }
     return yield* Effect.scoped(Effect.gen(function* () {
       const nonce = yield* Effect.sync(() => crypto.randomUUID())
       const directory = path.join(temporary, `efferent-img-${nonce}`)
-      yield* Effect.acquireRelease(fs.mkdir(directory).pipe(Effect.mapError((cause) => resizeError("Failed", "the image conversion directory could not be created", cause))), () =>
-        fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: "Warn", message: "the image conversion temporary directory could not be removed" })))
-      const source = path.join(directory, "input.img")
-      yield* fs.write(source, input.bytes).pipe(Effect.mapError((cause) => resizeError("Failed", "the image conversion input could not be written", cause)))
+      // Registered before the directory exists, so an interrupted creation still cleans up; a missing directory is no failure.
+      yield* Effect.addFinalizer(() => fs.remove(directory, { recursive: true }).pipe(Effect.catch((error) => error.reason === "NotFound" ? Effect.void
+        : Effect.logWarning("the image conversion temporary directory could not be removed", error))))
+      // Private from the start: the directory 0700 and each file 0600, so other local users never read a workspace image.
+      const created = yield* bash.exec(privateDirectoryCommand(directory), { cwd: temporary, timeoutMs: Math.min(config.timeoutMs, 5_000), ...environment }).pipe(
+        Effect.mapError((cause) => resizeError("Failed", "the image conversion directory could not be created", cause)),
+      )
+      if (!succeeded(created)) return yield* Effect.fail(resizeError("Failed", "the image conversion directory could not be created", created))
+      const written = yield* bash.exec(privateInputCommand("input.img"), { cwd: directory, stdin: input.bytes, timeoutMs: config.timeoutMs, ...environment }).pipe(
+        Effect.mapError((cause) => resizeError("Failed", "the image conversion input could not be written", cause)),
+      )
+      if (!succeeded(written)) return yield* Effect.fail(resizeError("Failed", "the image conversion input could not be written", written))
       const convert = (side: number, jpeg: boolean) => Effect.gen(function* () {
         const output = path.join(directory, jpeg ? "output.jpg" : "output.png")
-        const result = yield* bash.exec(imageResizeCommand(tool, "input.img", jpeg ? "output.jpg" : "output.png", side, jpeg), { cwd: directory, timeoutMs: config.timeoutMs, ...environment }).pipe(
+        const result = yield* bash.exec(privately(imageResizeCommand(tool, "input.img", jpeg ? "output.jpg" : "output.png", side, jpeg)), { cwd: directory, timeoutMs: config.timeoutMs, ...environment }).pipe(
           Effect.mapError((cause) => resizeError("Failed", "the image conversion command could not run", cause)),
         )
         if (!succeeded(result)) return yield* Effect.fail(resizeError("Failed", result.termination === "timeout" ? "the image conversion command timed out" : "the image conversion command failed", result))

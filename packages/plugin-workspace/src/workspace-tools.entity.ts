@@ -65,8 +65,10 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  * - `lsEntries`, `findResults`, `grepMatches`: the most entries, paths and
  *   matching lines the model gets (a call may ask for fewer).
  * - `grepLineChars`: the displayed line width; builtin also cuts before matching.
- * - `grepEngine`: auto probes for rg once, falling back to builtin; ripgrep
- *   requires it. `grepTimeoutMs` bounds rg commands; the synchronous builtin
+ * - `grepEngine`: auto probes for rg once over this machine's pair
+ *   (`localSystemPlugin`'s FileSystem and Bash), falling back to builtin,
+ *   and selects builtin over any other pair; ripgrep requires rg over
+ *   whatever pair the host gives. `grepTimeoutMs` bounds rg commands; the synchronous builtin
  *   engine is not time-bounded. `grepIgnoreFiles` honours ignore files in rg
  *   only (false searches ignored files too).
  * - `maxFileBytes`: the largest file `read`, `edit` and `grep` load, and

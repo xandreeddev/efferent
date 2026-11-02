@@ -393,7 +393,8 @@
     "defaults": {
       "tool": "auto",
       "tempDir": null,
-      "timeoutMs": 30000
+      "timeoutMs": 30000,
+      "maxSourcePixels": 100000000
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -423,12 +424,18 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 600000
+        },
+        "maxSourcePixels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
         }
       },
       "required": [
         "tool",
         "tempDir",
-        "timeoutMs"
+        "timeoutMs",
+        "maxSourcePixels"
       ],
       "additionalProperties": true
     }

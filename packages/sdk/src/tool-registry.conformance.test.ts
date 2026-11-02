@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import type { Scope } from "effect"
 import type { Tool, Toolkit } from "effect/ai"
 import { Capabilities, RunContext, SessionEnvironment, ToolInterceptor, ToolRegistry } from "@xandreed/core"
@@ -44,6 +44,30 @@ describe("the ToolRegistry kit catches careless registries", () => {
   test("one that treats every tool as read-only fails the read-write lane check", async () => {
     const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities.map((capability) => ({ ...capability, tools: capability.tools.map((entry) => ({ ...entry, annotations: { ...entry.annotations, readOnly: true } })) })), limits)
     expect(await failedChecks(toolRegistryConformance(careless))).toEqual(["nested-writer-priority", "read-write-lanes"])
+  })
+  test("one that treats any call made inside a running handler as nested fails the other-open check", async () => {
+    // One marker for every open, as a registry that does not key its nested calls by the gates they could hold.
+    const Inside = Context.Reference<boolean>("zz/InsideAnyHandler", { defaultValue: () => false })
+    const global = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => Effect.gen(function* () {
+      const registry = yield* plugin(capabilities, limits)
+      const running = yield* Ref.make(0)
+      return ToolRegistry.of({
+        ...registry,
+        open: (session) => registry.open(session).pipe(Effect.flatMap((tools) => tools.toolkit.toHandlers(Object.fromEntries(Object.values(tools.toolkit.tools).map((tool) => {
+          const own: Tool.Handler<string> = tools.handlers.mapUnsafe.get(tool.id)
+          const handler = (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
+            const busy = (yield* Effect.service(Inside)) && (yield* Ref.get(running)) > 0
+            if (busy) return yield* Effect.fail({ error: "ToolConcurrency", message: "occupied" })
+            return yield* Effect.acquireUseRelease(Ref.update(running, (n) => n + 1), () => own.handler(params, context).pipe(
+              Effect.updateContext((input: Context.Context<never>) => Context.merge(own.context, input)),
+              Effect.provideService(Inside, true),
+            ), () => Ref.update(running, (n) => n - 1))
+          })
+          return [tool.name, handler]
+        }))).pipe(Effect.map((handlers) => ({ ...tools, handlers }))))),
+      })
+    })
+    expect(await failedChecks(toolRegistryConformance(global))).toEqual(["nested-other-open"])
   })
   test("one that ignores the writer's flush fails start and interception durability checks", async () => {
     const unflushed = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({

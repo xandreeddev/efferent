@@ -403,6 +403,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `turn.unended` | stored `turn.ended` failure | The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, and a turn that held a completed or partial reply ends as that reply implies, not with this code. |
 | `turn.lease` | stored `turn.ended` failure | The turn's holder stopped writing and another instance reaped it (reason interrupted). |
 | `turn.budget` | a run of the step loop (`turn.run`, `runTurnLoop`) | The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1. |
+| `turn.limits` | a run of the step loop (`turn.run`, `runTurnLoop`) | The run's merged loop limits (the policy's over the agent's) carry a `degenerate` policy or `malformedLimit` that does not decode. |
 | `config.budget` | `Agent.define` | The agent's `budgetTokens` is not an integer of at least 1. |
 | `turn.unstarted` | the turn's memory | Memory was asked to record, for the turn's number or to start a run, before the user's message was taken. |
 | `turn.persisted` | `TurnMemory.persistMessage` | The user's message was taken twice in one turn. |
@@ -414,6 +415,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `service.missing` | `Agent.turn` | A service the turn needs is not provided by the agent's plugins or the turn's services. |
 | `config.graph` | `Agent.define` | The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin), or the agent's turns would have no `ConversationMemory`, `ToolRegistry` or `StepLoop` (none from a plugin, `services` or `turnServices`). |
 | `config.profile` | `resolveGraph` | The configuration still carries `profile` or `profiles`, which the graph does not resolve: fold the selected profile's plugins, bindings and system into the configuration first. |
+| `config.limits` | `Agent.define` | The agent's `limits` carry a `degenerate` policy or `malformedLimit` that does not decode (`LoopProtection`). |
 | `config.options` | `Agent.define`, activating a plugin | A plugin's options did not decode with its schema. |
 | `plugin.activation` | activating a plugin (a session plugin's, every turn) | The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...). |
 | `plugin.defect` | activating a plugin (a session plugin's, every turn) | The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code). |

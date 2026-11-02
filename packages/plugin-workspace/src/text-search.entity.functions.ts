@@ -47,6 +47,16 @@ export const repeatsRepetition = (source: string): boolean =>
   }, { groups: [false], closedRepeating: false, nested: false }).nested
 
 /**
+ * The pattern, refused (`InvalidPattern`) when it holds a line break: `grep`
+ * matches one line at a time, so the builtin engine would find nothing and
+ * ripgrep, which reads its patterns one per line from stdin, would search
+ * for each line of it on its own. Both engines refuse it alike.
+ */
+export const singleLinePattern = (pattern: string): Result.Result<string, Failure> => /[\r\n]/.test(pattern)
+  ? Result.fail(failure("InvalidPattern", "the pattern contains a line break, but grep matches one line at a time; search for a single line of the text instead"))
+  : Result.succeed(pattern)
+
+/**
  * The expression `grep` matches with: the pattern as a JavaScript regular
  * expression, or, with `literal`, as plain text; `ignoreCase` ignores
  * case. Fails with `InvalidPattern` when the pattern does not compile, or

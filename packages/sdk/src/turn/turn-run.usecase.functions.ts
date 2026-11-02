@@ -13,6 +13,7 @@ import {
   formatModelSelection,
   freezeModelRequest,
   HarnessError,
+  LoopProtection,
   harnessDefectsAsFailures,
   isBudgetTokens,
   ModelCatalog,
@@ -192,6 +193,9 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   )
   const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
   const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
+  yield* Schema.decodeUnknownEffect(LoopProtection)(limits).pipe(
+    Effect.mapError((cause) => new HarnessError({ code: "turn.limits", message: "the run's limits carry a degenerate policy or malformedLimit that does not decode", cause })),
+  )
   const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
   if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
   const stepContext = policy.stepContext ?? "tail"

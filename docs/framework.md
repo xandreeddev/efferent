@@ -805,7 +805,10 @@ Pollable tools do not count. `limits.malformedLimit` defaults to 3: the third
 consecutive unusable reply fails the run, so at most two corrective replies
 are sent. Set it to 1 to fail on the first malformed reply. A cut reply and
 a malformed reply reset each other's streak. These policies never bypass
-`maxSteps`, and a final step appends no unread nudge or corrective.
+`maxSteps`, and a final step appends no unread nudge or corrective. Core's
+`LoopProtection` schema decodes both: `Agent.define` refuses its `limits`
+with `config.limits`, and a run refuses its merged limits (a turn policy's
+over the agent's) with `turn.limits` before any provider call.
 
 **The step's response.** A provider's response ends with a finish reason
 (`FinishReason`, effect/ai's list), which says whether it is whole: `stop`
@@ -1905,11 +1908,14 @@ Within each turn, read-only handlers share `readConcurrency` permits and
 writers exclude every other handler. A writer's turnstile prevents later
 readers overtaking it. Per-tool permits are acquired before these turn-local
 lanes. Nested tool calls inherit logical execution ancestry across toolkit
-fibers and acquire permits only when immediately available; otherwise they
-return `ToolConcurrency` with reason `concurrency`. In particular, recursive
-calls at a one-call concurrency limit and read-to-write upgrades refuse
-instead of deadlocking. No handler, policy hook or event subscriber bypasses
-the configured limits.
+fibers. A call made while a handler holds gates it could need, the same
+registry's per-tool permits or the same turn's lanes, acquires them only when
+immediately available; otherwise it returns `ToolConcurrency` with reason
+`concurrency`. In particular, recursive calls at a one-call concurrency limit
+and read-to-write upgrades refuse instead of deadlocking. A run of another
+agent, or of another turn's tools, inside a handler waits on its own lanes,
+and on another agent's per-tool permits, as any call does. No handler,
+policy hook or event subscriber bypasses the configured limits.
 
 The registry flushes `tool.started` before waiting for execution permits.
 It proves durable admission, rather than handler execution. A queued call
@@ -2095,7 +2101,12 @@ set it to `read` to refuse workspace changes. `roots` adds directories as
 The longest matching real root controls writes (`ReadOnly` when it permits
 only reads); a later root wins an equal-path tie. An extra root that cannot
 be opened as a directory is skipped and logged. `confine: false` disables
-these root and access restrictions. They apply to the six file tools;
+these root and access restrictions. A write is also refused when a read
+root matches it without regard to letter case (and a `protect` glob, when it
+matches without case), so a case-insensitive file system that keeps
+spellings, a Linux casefold directory or a FAT or SMB mount, cannot reach a
+read root or `.GIT/config` through another spelling; on a case-sensitive one
+this refuses rather than widens. They apply to the six file tools;
 `bash` remains unconfined. `write` and `edit` refuse the `protect`
 globs (`.git/**` and `.efferent/**` by default), relative to the workspace;
 they do not protect a writable extra root's own `.git` or `.efferent`
@@ -2113,12 +2124,17 @@ model's mistakes. They are not a security boundary: a path can change
 between the check and its use, and `bash` runs any command the host process
 may run, reading and writing anything it can reach.
 
-`grepEngine: "auto"` (the default) probes for `rg` once over the supplied
-`Bash` service and uses ripgrep when available. It runs on the same machine as
-that service, including a container. The FileSystem and Bash services must see
-the same file tree; choose `"builtin"` for an in-memory or different FileSystem.
-`grepEngine: "ripgrep"` refuses activation
-if the probe fails; `"builtin"` selects the synchronous JavaScript engine.
+`grepEngine: "auto"` (the default) uses ripgrep only over this machine's
+pair, `localFileSystem` and a `makeBash` shell (what `localSystemPlugin`
+provides), whose commands see the files the tools read: it probes for `rg`
+once and uses it when available. With any other pair (an in-memory
+FileSystem, a container's Bash, a wrapper around either) auto selects the
+builtin engine without probing. `grepEngine: "ripgrep"` runs `rg` over
+whatever pair the host supplies, which must see the same tree (a container
+whose FileSystem and Bash both run inside it), and refuses activation if the
+probe fails; `"builtin"` selects the synchronous JavaScript engine. Both
+engines refuse a pattern with a line break (`InvalidPattern`): grep matches
+one line at a time, and ripgrep would read each line of it as a pattern.
 Ripgrep uses its default regular-expression syntax (no lookaround or
 backreferences), receives patterns on stdin and runs with `grepTimeoutMs`
 (30 000 ms by default). It ignores ripgrep configuration files and, unless
@@ -2182,11 +2198,17 @@ returns an `ImageRejected` note with the existing smaller-copy guidance.
 The opt-in CLI plugin provides `ImageResizer` over the same `Bash` and
 `FileSystem` tree. `ImageResizerConfig` has `tool` (`auto`, `magick`,
 `convert`, `vips` or `sips`), `tempDir` (`null`, or an existing absolute
-POSIX directory) and `timeoutMs` (30 000, up to 600 000). Auto probes once,
+POSIX directory), `timeoutMs` (30 000, up to 600 000) and `maxSourcePixels`
+(below). Auto probes once,
 in that order (`vips` invokes `vipsthumbnail`); an explicit missing tool or
 no available tool fails activation with `images.unavailable`. It adds no
 native npm dependency. A null `tempDir` uses the Bash environment's
-`TMPDIR`, falling back to `/tmp`. Each fit uses its own scoped directory,
+`TMPDIR`, falling back to `/tmp`. `maxSourcePixels` (100 000 000 by
+default, at most 1 000 000 000) refuses, as `Unsupported`, a source whose
+header declares more pixels (width times height) before any converter
+decodes it, so a small file declaring a huge canvas cannot hold the host's
+memory or disk. Each fit uses its own scoped directory, created private
+(`0700`, its files `0600`, under `umask 077` whatever the host's) and
 removed after success, failure or interruption; the deadline covers the
 conversion attempts and cleanup follows interruption. Commands use
 `bashEnvironment`'s default allowlist over the host's `parentEnv` and run

@@ -150,6 +150,7 @@ const JournalCursor
 const JsonObject
 const LogBody
 const LogEntry
+const LoopProtection
 const MEDIA_LIMITS
 const MEMORY_KINDS
 const MalformedLimit
@@ -587,6 +588,7 @@ type JsonObject
 type KeyedKind
 type LogBody
 type LogEntry
+type LoopProtection
 type Media
 type MediaEnvelope
 type MediaFingerprint

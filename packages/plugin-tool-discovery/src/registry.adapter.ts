@@ -75,7 +75,11 @@ export interface DiscoveryConfig {
 
 // Toolkit forks handlers into child fibers: logical ancestry must survive that fork.
 // Captured opener services never replace the ancestry of the actual caller.
-const HoldingToolGates = Context.Reference<boolean>("@xandreed/plugin-tool-discovery/HoldingToolGates", { defaultValue: () => false })
+// It names the gates a running handler holds: its registry's (per-tool permits)
+// and its open's (the turn's lanes). A run of another registry or open inside a
+// handler waits on its own gates as any call does; only a call back into gates
+// its caller may hold acquires them without waiting.
+const HoldingToolGates = Context.Reference<ReadonlySet<symbol>>("@xandreed/plugin-tool-discovery/HoldingToolGates", { defaultValue: () => new Set<symbol>() })
 
 const failure = (error: string, message: string) => ({ error, message })
 const firstLine = (text: string): string => text.split("\n", 1)[0] ?? ""
@@ -170,6 +174,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
   const unknownPolicies = Object.keys(policies).filter((name) => !registered.some((entry) => entry.tool.name === name))
   if (unknownPolicies.length > 0) return yield* Effect.fail(harness("config.options", `Tool policy names unregistered tools: ${unknownPolicies.join(", ")}`))
   // Constructed once for this registry/agent, shared by every turn's open tools.
+  const registryGates = Symbol("tool-gates")
   const toolGates = new Map(yield* Effect.forEach(Object.entries(policies), ([name, policy]) =>
     policy.concurrency === undefined ? Effect.succeed([name, Option.none<Semaphore.Semaphore>()] as const)
       : Semaphore.make(policy.concurrency).pipe(Effect.map((gate) => [name, Option.some(gate)] as const)), { concurrency: 1 }))
@@ -282,6 +287,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     const readLane = yield* Semaphore.make(config.readConcurrency)
     const turnstile = yield* Semaphore.make(1)
     const pendingWriters = yield* Ref.make(0)
+    const openLanes = Symbol("turn-lanes")
 
     /**
      * Activate skills in one step: what is new is computed from the held set,
@@ -428,12 +434,15 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
         const started = yield* Clock.currentTimeMillis
         // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
         const call = Effect.suspend(() => handler(effective)).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
-        const nested = yield* Effect.service(HoldingToolGates)
-        const take = (gate: Semaphore.Semaphore, permits: number) => nested ? gate.takeIfAvailable(permits) : gate.take(permits).pipe(Effect.as(true))
-        const acquire = (gate: Semaphore.Semaphore, permits: number) => Effect.acquireRelease(take(gate, permits), (taken) => taken ? gate.release(permits).pipe(Effect.asVoid) : Effect.void, { interruptible: true })
+        const held = yield* Effect.service(HoldingToolGates)
+        // Nested only where the caller may hold the gate: this registry's permits, this open's lanes.
+        const nestedGate = held.has(registryGates)
+        const nested = held.has(openLanes)
+        const take = (gate: Semaphore.Semaphore, permits: number, inside: boolean) => inside ? gate.takeIfAvailable(permits) : gate.take(permits).pipe(Effect.as(true))
+        const acquire = (gate: Semaphore.Semaphore, permits: number, inside = nested) => Effect.acquireRelease(take(gate, permits, inside), (taken) => taken ? gate.release(permits).pipe(Effect.asVoid) : Effect.void, { interruptible: true })
         const guarded = Effect.scoped(Effect.gen(function* () {
           const gate = toolGates.get(name) ?? Option.none<Semaphore.Semaphore>()
-          const toolTaken = yield* Option.match(gate, { onNone: () => Effect.succeed(true), onSome: (semaphore) => acquire(semaphore, 1) })
+          const toolTaken = yield* Option.match(gate, { onNone: () => Effect.succeed(true), onSome: (semaphore) => acquire(semaphore, 1, nestedGate) })
           if (!toolTaken) return { _tag: "Busy" } as const
           // Try-acquire ignores semaphore waiters. Keep writers' priority explicit
           // across the free-before-wake gap, including nested synchronous fibers.
@@ -453,7 +462,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
           if (!rwTaken) return { _tag: "Busy" } as const
           if (breakerOf(yield* Ref.get(admission), runKey, name)._tag === "Tripped") return { _tag: "Tripped" } as const
           const exit = yield* Effect.exit(call.pipe(
-            Effect.provide(runServices), Effect.provideService(HoldingToolGates, true),
+            Effect.provide(runServices), Effect.provideService(HoldingToolGates, new Set([...held, registryGates, openLanes])),
             // Finalize the actual handler exit before releasing execution permits.
             // Cancellation after that exit cannot erase a defect or a success reset.
             Effect.onExit((exit) => {

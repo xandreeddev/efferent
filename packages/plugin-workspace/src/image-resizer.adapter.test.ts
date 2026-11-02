@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Stream } from "effect"
@@ -38,6 +38,45 @@ test.skipIf(!magick && !convert)("conversion removes its private directory after
   const corrupt = imageResizerPng(9000, 10).slice(0, 40)
   expect(yield* Effect.flip(resizer.fit({ bytes: corrupt, mediaType: "image/png" }, fitTarget()))).toMatchObject({ _tag: "ImageResizeError", reason: "Failed" })
   expect(yield* Effect.tryPromise(() => readdir(dir))).toEqual([])
+}))))
+
+test.skipIf(!magick && !convert)("the conversion directory and its files are private to the owner whatever the umask", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const dir = yield* temporary
+  const real = Context.get(yield* Layer.build(BashLive({ parentEnv: { ...process.env } })), Bash)
+  const modes: Array<string> = []
+  const modeOf = (path: string) => Effect.tryPromise(() => stat(path)).pipe(Effect.map((info) => (info.mode & 0o777).toString(8)))
+  // Watches the conversion itself: the directory and input exist before it, the output after it.
+  const watching = Bash.of({
+    ...real,
+    exec: (command, options) => command.includes("'-resize'") ? Effect.gen(function* () {
+      modes.push(yield* modeOf(options.cwd).pipe(Effect.orDie), yield* modeOf(join(options.cwd, "input.img")).pipe(Effect.orDie))
+      const result = yield* real.exec(`umask 022 && ${command}`, options)
+      modes.push(yield* modeOf(join(options.cwd, "output.png")).pipe(Effect.orDie))
+      return result
+    }) : real.exec(command.startsWith("umask 077 && ") ? `umask 022; ${command}` : command, options),
+  })
+  const resizer = Context.get(yield* Layer.build(ImageResizerCliLive({ tool, tempDir: dir }).pipe(
+    Layer.provide(Layer.merge(Layer.succeed(FileSystem, localFileSystem), Layer.succeed(Bash, watching))),
+  )), ImageResizer)
+  yield* resizer.fit({ bytes: imageResizerPng(400, 200), mediaType: "image/png" }, { maxBytes: 100_000, maxSide: 200 })
+  expect(modes).toEqual(["700", "600", "600"])
+  expect(yield* Effect.tryPromise(() => readdir(dir))).toEqual([])
+}))))
+
+test("a source declaring more than maxSourcePixels is refused before any converter runs", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const commands: Array<string> = []
+  const bash = Bash.of({ exec: (command) => Effect.sync(() => { commands.push(command); return ok }), stream: () => Stream.die("not used") })
+  const services = Layer.merge(Layer.succeed(FileSystem, localFileSystem), Layer.succeed(Bash, bash))
+  const resizerOf = (options: { readonly maxSourcePixels?: number }) => Layer.build(ImageResizerCliLive({ tool: "magick", tempDir: "/tmp", ...options }).pipe(Layer.provide(services))).pipe(Effect.map((context) => Context.get(context, ImageResizer)))
+  // A few bytes that declare a 100 000 x 100 000 canvas.
+  const bomb = new Uint8Array(imageResizerPng(9000, 10))
+  new DataView(bomb.buffer).setUint32(16, 100_000)
+  new DataView(bomb.buffer).setUint32(20, 100_000)
+  const refused = yield* Effect.flip((yield* resizerOf({})).fit({ bytes: bomb, mediaType: "image/png" }, fitTarget()))
+  const tight = yield* Effect.flip((yield* resizerOf({ maxSourcePixels: 50_000 })).fit({ bytes: imageResizerPng(9000, 10), mediaType: "image/png" }, fitTarget()))
+  expect(refused).toMatchObject({ _tag: "ImageResizeError", reason: "Unsupported", message: "the source image declares 100000x100000 pixels, more than the resizer's maxSourcePixels (100000000)" })
+  expect(tight).toMatchObject({ _tag: "ImageResizeError", reason: "Unsupported", message: "the source image declares 9000x10 pixels, more than the resizer's maxSourcePixels (50000)" })
+  expect(commands).toEqual(["'magick' '-version'", "'magick' '-version'"])
 }))))
 
 test.skipIf(!vips)("libvips also fits the side limit without enlarging the source", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

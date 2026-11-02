@@ -80,10 +80,29 @@ export const openWorkspace = Effect.fnUntraced(function* (path: Path.Path, optio
 /** Whether a real path is inside any root the file tools may read. */
 export const withinAnyRoot = (access: WorkspaceAccess, path: string): boolean => access.roots.some((root) => isWithin(root.root, path))
 
+/**
+ * A path as a case-insensitive file system compares it: its letters in one
+ * case and one Unicode normalization. Some file systems (a Linux casefold
+ * directory, a FAT or SMB mount) find a file under another spelling and
+ * keep the spelling a path was given in, through `realPath` too.
+ */
+const folded = (path: string): string => path.normalize("NFC").toLowerCase()
+
 /** The most specific real root controls access; a later explicit root wins an equal-path tie. */
-const rootOf = (access: WorkspaceAccess, path: string): Option.Option<AllowedRoot> => access.roots.reduce<Option.Option<AllowedRoot>>((selected, candidate) =>
-  isWithin(candidate.root, path) && Option.match(selected, { onNone: () => true, onSome: (current) => candidate.root.length >= current.root.length })
+const rootOf = (access: WorkspaceAccess, path: string, fold: (path: string) => string = (same) => same): Option.Option<AllowedRoot> => access.roots.reduce<Option.Option<AllowedRoot>>((selected, candidate) =>
+  isWithin(fold(candidate.root), fold(path)) && Option.match(selected, { onNone: () => true, onSome: (current) => candidate.root.length >= current.root.length })
     ? Option.some(candidate) : selected, Option.none())
+
+/**
+ * The read root that refuses a write, if any: the most specific real root
+ * when it is read-only, or, compared without letter case, the most specific
+ * one then. Folding only ever adds a refusal, so a write cannot reach a
+ * read root through another spelling on a case-insensitive file system; on
+ * a case-sensitive one, two directories differing only in case are treated
+ * alike, which refuses rather than widens.
+ */
+const readOnlyRootOf = (access: WorkspaceAccess, path: string): Option.Option<AllowedRoot> =>
+  Option.orElse(Option.filter(rootOf(access, path), (root) => root.access === "read"), () => Option.filter(rootOf(access, path, folded), (root) => root.access === "read"))
 
 /** How a path appears to the model: relative to the root (`.` for the root itself), or absolute outside it. */
 export const displayOf = (access: WorkspaceAccess, absolute: string): string => {
@@ -138,10 +157,9 @@ export const resolveTarget = Effect.fnUntraced(function* (access: WorkspaceAcces
       ? `${display} leads outside the workspace through a symbolic link`
       : `${display} leads outside the workspace and its allowed roots (${extras.join(", ")}) through a symbolic link`))
   }
-  const allowed = rootOf(access, path)
-  if (options.confine && options.intent === "write" && Option.exists(allowed, (root) => root.access === "read")) {
-    const root = Option.getOrThrow(allowed)
-    const place = root.root === access.root ? "the workspace root" : displayOf(access, root.root)
+  const readOnly = options.confine && options.intent === "write" ? readOnlyRootOf(access, path) : Option.none<AllowedRoot>()
+  if (Option.isSome(readOnly)) {
+    const place = readOnly.value.root === access.root ? "the workspace root" : displayOf(access, readOnly.value.root)
     return yield* Effect.fail(failure("ReadOnly", `${display} is under ${place}, which the workspace tools may read but not change`))
   }
   return { path, display }
@@ -153,10 +171,16 @@ export interface ProtectRule {
   readonly matches: (relative: string) => boolean
 }
 
-/** Compile `protect` globs (dot entries included); fails with the first pattern that does not compile. */
+/**
+ * Compile `protect` globs (dot entries included); fails with the first
+ * pattern that does not compile. A rule also matches a path that differs
+ * from it only in letter case, so a case-insensitive file system cannot
+ * reach a protected file (`.GIT/config`) through another spelling.
+ */
 export const compileProtect = (globs: ReadonlyArray<string>): Result.Result<ReadonlyArray<ProtectRule>, string> =>
-  Result.all(globs.map((glob) => Result.mapError(Result.map(compileGlob(glob, { dot: true }), (matcher): ProtectRule => ({ glob, matches: matcher.matches })),
-    (reason) => `protect glob ${glob} is not usable: ${reason}`)))
+  Result.all(globs.map((glob) => Result.mapError(Result.flatMap(compileGlob(glob, { dot: true }), (exact) => Result.map(compileGlob(folded(glob), { dot: true }),
+    (caseless): ProtectRule => ({ glob, matches: (relative) => exact.matches(relative) || caseless.matches(folded(relative)) }))),
+  (reason) => `protect glob ${glob} is not usable: ${reason}`)))
 
 /** A glob's segments, without the empty and `.` ones `compileGlob` ignores. */
 const segmentsOf = (glob: string): ReadonlyArray<string> => glob.split("/").filter((segment) => segment.length > 0 && segment !== ".")

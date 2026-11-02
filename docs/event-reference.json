@@ -9406,6 +9406,11 @@
       "meaning": "The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1."
     },
     {
+      "code": "turn.limits",
+      "where": "a run of the step loop (`turn.run`, `runTurnLoop`)",
+      "meaning": "The run's merged loop limits (the policy's over the agent's) carry a `degenerate` policy or `malformedLimit` that does not decode."
+    },
+    {
       "code": "config.budget",
       "where": "`Agent.define`",
       "meaning": "The agent's `budgetTokens` is not an integer of at least 1."
@@ -9459,6 +9464,11 @@
       "code": "config.profile",
       "where": "`resolveGraph`",
       "meaning": "The configuration still carries `profile` or `profiles`, which the graph does not resolve: fold the selected profile's plugins, bindings and system into the configuration first."
+    },
+    {
+      "code": "config.limits",
+      "where": "`Agent.define`",
+      "meaning": "The agent's `limits` carry a `degenerate` policy or `malformedLimit` that does not decode (`LoopProtection`)."
     },
     {
       "code": "config.options",
