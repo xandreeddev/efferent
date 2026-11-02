@@ -176,7 +176,9 @@ fingerprints and named approvals with rationales, and writes approved records se
 Applying labels to an app's dataset remains an app-owned, versioned operation.
 
 Writes use a temporary file followed by atomic rename, and a failed write removes its temporary
-file; each trial and grade is durable as it completes. While a trial runs, its transcript events
+file; each trial and grade is durable as it completes. A run file holds every trial but is
+written one trial at a time, so the trials together may outgrow the longest string the runtime
+builds (V8's is just under 512 MiB); the CLI reads such a file back in parts. While a trial runs, its transcript events
 are appended to `trials/<id>.events.jsonl`, one JSON line each (mode 0600); the file is removed
 once the settled trial is written, so one left behind belongs to a trial whose process died,
 and holds the events it recorded. Blocking gate failure exits with status 2.

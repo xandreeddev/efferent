@@ -485,6 +485,26 @@ test("fingerprints order object keys by code unit, so every locale hashes alike"
   expect(fingerprint({ a: { d: 2, C: 3 }, B: 1 })).toBe(createHash("sha256").update(canonical).digest("hex"))
 })
 
+test("a fingerprint hashes an array an element at a time, to the digest of the one string", () => {
+  // The digest as 0.15.1 made it: the JSON of the whole value, every object's keys in code-unit order.
+  const stable = (item: unknown): unknown => Array.isArray(item)
+    ? item.map(stable)
+    : item !== null && typeof item === "object"
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, stable(entry)]))
+      : item
+  const whole = (value: unknown) => createHash("sha256").update(new TextEncoder().encode(JSON.stringify(stable(value)))).digest("hex")
+  const values: ReadonlyArray<unknown> = [
+    { application: "app", trials: [{ b: 1, a: [1, { d: [], c: "é 😀 \u2028 \ud800" }] }, { "10": 1, "9": 2, z: undefined, f: () => 1 }, null, [], [[]]] },
+    // Members and elements with no JSON (undefined, a function, a hole), integer keys (which an object puts first) and nested arrays.
+    { trials: [], skipped: undefined, call: () => 0, "2": [3, , 4], "1": "x", nested: { list: [1, [2]] } },
+    [{ b: 1 }, undefined, () => 1, [1, [2]], , "x"],
+    Option.some({ b: [1, 2] }),
+    { only: [[1], [2]] },
+    {}, [], "text", 1, null, undefined, true,
+  ]
+  expect(values.map(fingerprint)).toEqual(values.map(whole))
+})
+
 test("ids are single segments, so trial files and grader keys cannot collide", async () => {
   expect(() => EvalId.make("suite/one")).toThrow()
   expect(() => EvalId.make("@acme/judge")).toThrow()
