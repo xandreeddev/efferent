@@ -118,12 +118,16 @@ export const openLogSession = Effect.fnUntraced(function* (
   })
   const strategy = { ...policy.strategy, id: MemoryStrategyId.make(policy.strategy.id) }
   const loaded = policy.checkpoint === "render" && log.checkpoint !== undefined ? yield* log.checkpoint.load : Option.none()
-  const projection = yield* Ref.make<MemoryProjection>(Option.isNone(loaded) ? { _tag: "Full" }
-    : yield* validateMemorySnapshot(stored, loaded.value, strategy, renderOptions(stored, "tail")))
+  const projection = yield* Ref.make<MemoryProjection>(Option.isNone(loaded) ? { _tag: "Full" } : yield* validateMemorySnapshot(stored, loaded.value, strategy))
   const projected = (all: ReadonlyArray<LogEntry>, options: RenderOptions) => Ref.modify(projection, (phase) => {
     const selected = projectMemorySnapshot(all, phase, options)
-    return [selected.entries, selected.phase] as const
-  })
+    return [selected, selected.phase] as const
+  }).pipe(
+    Effect.tap((selected) => selected.mismatch
+      ? Effect.logWarning("A memory snapshot's projected render differed from the full archive's; this turn renders from the full archive.")
+      : Effect.void),
+    Effect.map((selected) => selected.entries),
+  )
   // One record at a time: ids, the stored order and the session's order agree (a request is
   // rebuilt from the stored entries up to its build's last one). A failed acknowledgement
   // is reconciled from storage; a proven refusal takes no id, an uncertain write reserves it.

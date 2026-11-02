@@ -60,7 +60,7 @@ export const memorySnapshotFixture = (): ReadonlyArray<LogEntry> => [
   e(7, 2, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("complete") }),
 ]
 
-/** Supported option family, including old run contexts whose latest step text must survive. */
+/** Supported option family: renders of the kept run (r2) project, renders of the cut run (r1) use the archive. */
 export const memorySnapshotOptions = (): ReadonlyArray<RenderOptions> => ["current", "all"].flatMap((turnContext) => [false, true].flatMap((replies) =>
   [false, true].flatMap((digests) => ["none", "tail"].flatMap((stepContext) => [
     { mode: "none" as const, maxImages: 0, maxChars: 0 }, { mode: "inline" as const, maxImages: 1, maxChars: 100 }, { mode: "inline" as const, maxImages: 8, maxChars: 20_000_000 },
@@ -84,34 +84,52 @@ export const memorySnapshotConformance = (subject: MemorySnapshotSubject = { pre
     const saved = yield* candidate(subject, full)
     yield* expect("selection", saved.anchor === "r2:0" && saved.through === "r2:7", "anchor/frontier are not actual memory IDs")
     const ids = saved.entries.map((entry) => entry.id)
-    yield* expect("selection", ["r1:3", "r1:4", "r1:5", "r1:6", "r1:8", "r1:9", "r1:10", "r1:11", "r1:12", "r1:1", "r1:2"].every((id) => ids.some((entry) => entry === id)) && !ids.some((id) => id === "r1:7"), "pinned results, hidden requests or raw metadata were lost")
+    yield* expect("selection", ["r1:3", "r1:4", "r1:5", "r1:6", "r1:8", "r1:9", "r1:10", "r1:11", "r1:12"].every((id) => ids.some((entry) => entry === id)) && !ids.some((id) => id === "r1:7"), "pinned results, hidden requests or compaction facts were lost")
     yield* expect("selection", saved.entries.map((entry) => entry.id).join() === full.filter((entry) => ids.includes(entry.id)).map((entry) => entry.id).join(), "raw entries were regrouped")
     const raw = saved.entries.find((entry) => entry.id === "r1:6")
     yield* expect("selection", raw?.body._tag === "ToolResult" && !raw.body.pinned && raw.body.view === "raw a", "a presentation was flattened over the raw result")
   })),
-  check("selected malformed snapshots fail as session.decode", "integrity", () => Effect.gen(function* () {
+  check("undecodable cursors fail as session.decode; retained facts unlike the archive's use the full archive", "integrity", () => Effect.gen(function* () {
     const full = memorySnapshotFixture()
     const saved = yield* candidate(subject, full)
+    const missing: ReadonlyArray<MemorySnapshotCandidate> = [{ ...saved, anchor: EntryId.make("missing") }, { ...saved, through: EntryId.make("missing") }, { ...saved, anchor: EntryId.make("r1:3") }]
+    yield* Effect.forEach(missing, (value) => subject.validate(full, value, strategy).pipe(Effect.result, Effect.flatMap((result) =>
+      expect("integrity", result._tag === "Failure" && result.failure.code === "session.decode", "a snapshot whose anchor or frontier the archive does not hold was accepted"))), { concurrency: 1 })
     const altered: ReadonlyArray<MemorySnapshotCandidate> = [
       { ...saved, entries: saved.entries.slice(1) }, { ...saved, entries: [...saved.entries, saved.entries[0]!] },
-      { ...saved, entries: [...saved.entries].reverse() }, { ...saved, anchor: EntryId.make("missing") },
+      { ...saved, entries: [...saved.entries].reverse() },
       { ...saved, entries: saved.entries.map((entry) => entry.id === "r1:6" ? { ...entry, at: 42 } : entry) },
     ]
-    yield* Effect.forEach(altered, (value) => subject.validate(full, value, strategy, basic()).pipe(Effect.result, Effect.flatMap((result) =>
-      expect("integrity", result._tag === "Failure" && result.failure.code === "session.decode", "corrupt snapshot was accepted or silently fell back"))), { concurrency: 1 })
+    yield* Effect.forEach(altered, (value) => subject.validate(full, value, strategy).pipe(Effect.flatMap((phase) =>
+      expect("integrity", phase._tag === "Full", "retained facts unlike the archive's were projected"))), { concurrency: 1 })
   })),
   check("all supported render options preserve complete build and media metadata", "options", () => Effect.gen(function* () {
     const full = memorySnapshotFixture(), saved = yield* candidate(subject, full)
-    const phase = yield* subject.validate(full, saved, strategy, basic())
+    const phase = yield* subject.validate(full, saved, strategy)
     yield* expect("options", phase._tag === "Projected", "valid snapshot was not selected")
     yield* Effect.forEach(memorySnapshotOptions(), (options) => {
       const built = subject.project(full, phase, options)
-      return expect("options", built.phase._tag === "Projected" && built.entries.length < full.length && same(full, built.entries, options), "projection changed request bytes/metadata or bypassed reuse")
+      // A render of the cut run's step context is the archive's; every other render projects.
+      const cutRun = options.currentRun === "r1" && options.stepContext === "tail"
+      return expect("options", (cutRun ? built.phase._tag === "Full" : built.phase._tag === "Projected" && built.entries.length < full.length) && !built.mismatch && same(full, built.entries, options),
+        "projection changed request bytes/metadata, bypassed reuse or projected a cut run's step context")
+    }, { concurrency: 1 })
+  })),
+  check("a placement's first projected build that differs from the archive's restores the full archive", "render-verify", () => Effect.gen(function* () {
+    const full = memorySnapshotFixture(), saved = yield* candidate(subject, full)
+    const phase = yield* subject.validate(full, saved, strategy)
+    if (phase._tag !== "Projected") return yield* expect("render-verify", false, "valid snapshot was not selected")
+    // A selection that passed its archive check but renders otherwise (damage in memory, a projection bug).
+    const shown = { ...phase, candidate: { ...phase.candidate, entries: phase.candidate.entries.map((entry) => entry.id === "r1:8" && entry.body._tag === "ToolPresentation" ? { ...entry, body: { ...entry.body, view: "altered a" } } : entry) } }
+    yield* Effect.forEach(["tail", "none"] as const, (stepContext) => {
+      const options = { ...basic(), stepContext, digests: false, currentRun: RunId.make("r2") }
+      const result = subject.project(full, shown, options)
+      return expect("render-verify", result.phase._tag === "Full" && result.mismatch && same(full, result.entries, options), "a projection that renders otherwise was used")
     }, { concurrency: 1 })
   })),
   check("new old-entry dependencies use the full archive", "fallback", () => Effect.gen(function* () {
     const full = memorySnapshotFixture(), saved = yield* candidate(subject, full)
-    const phase = yield* subject.validate(full, saved, strategy, basic())
+    const phase = yield* subject.validate(full, saved, strategy)
     const late = e(8, 2, { _tag: "ToolPresentation", entry: EntryId.make("r1:7"), view: "late pin", viewVersion: "2", subjects: [], artifacts: [], pinned: true, media: [], mediaNotes: [] })
     const additions: ReadonlyArray<LogEntry> = [late,
       e(9, 2, { _tag: "ToolDigest", entry: EntryId.make("r1:7"), version: "1", mode: "summarize", keep: [], text: "late digest", digester: "fixture@1", trigger: "compaction" }),
@@ -124,9 +142,9 @@ export const memorySnapshotConformance = (subject: MemorySnapshotSubject = { pre
   })),
   check("valid other strategies and incompatible render requests use full history", "compatibility", () => Effect.gen(function* () {
     const full = memorySnapshotFixture(), saved = yield* candidate(subject, full)
-    const other = yield* subject.validate(full, saved, { ...strategy, version: "3" }, basic())
+    const other = yield* subject.validate(full, saved, { ...strategy, version: "3" })
     yield* expect("compatibility", other._tag === "Full", "a different strategy version reused the snapshot")
-    const phase = yield* subject.validate(full, saved, strategy, basic())
+    const phase = yield* subject.validate(full, saved, strategy)
     const options = { ...basic(), strategy: "other" }
     const result = subject.project(full, phase, options)
     yield* expect("compatibility", result.phase._tag === "Full" && same(full, result.entries, options), "a different renderer strategy reused the snapshot")

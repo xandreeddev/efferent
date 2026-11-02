@@ -2,7 +2,7 @@ import { Effect, Match, Option, Schema } from "effect"
 import { SessionLogError } from "../session/session-log.entity.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { LogEntry } from "./memory-log.entity.js"
-import { buildContext, canonicalJson, entriesSendingMedia, requestEntryOfResult, retainedMemoryPrefix } from "./memory-log.entity.functions.js"
+import { buildContext, canonicalJson, requestEntryOfResult, retainedMemoryPrefix } from "./memory-log.entity.functions.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import { MemorySnapshotCandidate } from "./memory-snapshot.entity.js"
 import type { MemoryProjection } from "./memory-snapshot.entity.js"
@@ -37,8 +37,16 @@ const sameEntries = Effect.fnUntraced(function* (left: ReadonlyArray<LogEntry>, 
   return canonicalJson(encoded[0]) === canonicalJson(encoded[1])
 })
 
-/** Validate the selected snapshot against authoritative raw facts before enabling reuse. */
-export const validateMemorySnapshot = Effect.fnUntraced(function* (entries: ReadonlyArray<LogEntry>, input: MemorySnapshotCandidate, strategy: MemorySnapshotCandidate["strategy"], options: RenderOptions): Effect.fn.Return<MemoryProjection, SessionLogError> {
+/**
+ * Check a selected snapshot against the authoritative archive before reuse.
+ * Undecodable data and anchor/frontier entries the archive does not hold fail
+ * with `session.decode`. Another strategy, or retained facts that differ from
+ * what this release keeps of the same prefix (an older release's selection, or
+ * damage), use the full archive: logged, never fatal, since the archive alone
+ * decides what a render shows. Render equality is checked lazily, by the first
+ * projected build of each step-context placement (`projectMemorySnapshot`).
+ */
+export const validateMemorySnapshot = Effect.fnUntraced(function* (entries: ReadonlyArray<LogEntry>, input: MemorySnapshotCandidate, strategy: MemorySnapshotCandidate["strategy"]): Effect.fn.Return<MemoryProjection, SessionLogError> {
   const candidate = yield* copyCandidate(input).pipe(Effect.mapError(invalid))
   const anchorIndex = entries.findIndex((entry) => entry.id === candidate.anchor)
   const throughIndex = entries.findIndex((entry) => entry.id === candidate.through)
@@ -46,42 +54,53 @@ export const validateMemorySnapshot = Effect.fnUntraced(function* (entries: Read
     entries.filter((entry) => entry.id === candidate.anchor || entry.id === candidate.through).length !== (candidate.anchor === candidate.through ? 1 : 2)) {
     return yield* Effect.fail(invalid({ anchor: candidate.anchor, through: candidate.through }))
   }
-  const prefix = entries.slice(0, throughIndex + 1)
-  const expected = retainedMemoryPrefix(prefix, candidate.strategy.id)
+  if (candidate.strategy.id !== strategy.id || candidate.strategy.version !== strategy.version) return full
+  const expected = retainedMemoryPrefix(entries.slice(0, throughIndex + 1), candidate.strategy.id)
   if (Option.isNone(expected) || expected.value.anchorIndex !== anchorIndex ||
     !(yield* sameEntries(candidate.entries, expected.value.entries).pipe(Effect.mapError(invalid)))) {
-    return yield* Effect.fail(invalid({ anchor: candidate.anchor, entries: candidate.entries }))
+    return yield* Effect.logWarning("The selected memory snapshot differs from the archive's retained facts; rendering uses the full archive.").pipe(
+      Effect.annotateLogs({ "efferent.memory.snapshot.anchor": candidate.anchor }), Effect.as(full))
   }
-  if (candidate.strategy.id !== strategy.id || candidate.strategy.version !== strategy.version) return full
-  const selected: MemoryProjection = { _tag: "Projected", candidate, anchorIndex, throughIndex, cutTurn: expected.value.cutTurn, checkedThrough: throughIndex }
-  const projected = projectMemorySnapshot(entries, selected, options)
-  if (projected.phase._tag === "Full") return full
-  // Verify both placements once on open. Repeated builds use the guarded prefix,
-  // rather than paying for a full archive render each time.
-  const equal = ["none", "tail"].every((stepContext) => {
-    const render: RenderOptions = { ...options, stepContext: stepContext === "none" ? "none" : "tail" }
-    return canonicalJson(buildContext(entries, render)) === canonicalJson(buildContext(projected.entries, render)) &&
-      canonicalJson(entriesSendingMedia(entries, render)) === canonicalJson(entriesSendingMedia(projected.entries, render))
-  })
-  return equal ? projected.phase : yield* Effect.fail(invalid({ anchor: candidate.anchor, reason: "render mismatch" }))
+  return { _tag: "Projected", candidate, anchorIndex, throughIndex, cutTurn: expected.value.cutTurn, checkedThrough: throughIndex, verified: [] }
 })
 
-/** A pure guarded projection; legitimate new dependencies restore the full archive. */
-export const projectMemorySnapshot = (entries: ReadonlyArray<LogEntry>, phase: MemoryProjection, options: RenderOptions): { readonly phase: MemoryProjection; readonly entries: ReadonlyArray<LogEntry> } => Match.value(phase).pipe(
-  Match.tag("Full", () => ({ phase: full, entries })),
-  Match.tag("Projected", (state) => {
+/** A projection's entries for one render, its next state, and whether a placement's first check found the render changed. */
+export interface ProjectedEntries {
+  readonly phase: MemoryProjection
+  readonly entries: ReadonlyArray<LogEntry>
+  /** True when the first projected build of this placement differed from the full archive's: the phase is now `Full`. */
+  readonly mismatch: boolean
+}
+
+/**
+ * A pure guarded projection; legitimate new dependencies, a render of a cut
+ * run's step context, or a first build per placement that does not match the
+ * full archive's, restore the full archive.
+ */
+export const projectMemorySnapshot = (entries: ReadonlyArray<LogEntry>, phase: MemoryProjection, options: RenderOptions): ProjectedEntries => Match.value(phase).pipe(
+  Match.tag("Full", (): ProjectedEntries => ({ phase: full, entries, mismatch: false })),
+  Match.tag("Projected", (state): ProjectedEntries => {
+    const archive: ProjectedEntries = { phase: full, entries, mismatch: false }
     if (options.strategy !== state.candidate.strategy.id || entries[state.anchorIndex]?.id !== state.candidate.anchor ||
-      entries[state.throughIndex]?.id !== state.candidate.through || entries.length <= state.checkedThrough) return { phase: full, entries }
+      entries[state.throughIndex]?.id !== state.candidate.through || entries.length <= state.checkedThrough) return archive
     const retained = new Set(state.candidate.entries.map((entry) => entry.id))
-    const omitted = new Set(entries.slice(0, state.anchorIndex).flatMap((entry) => retained.has(entry.id) ? [] : [entry.id]))
+    const omitted = entries.slice(0, state.anchorIndex).filter((entry) => !retained.has(entry.id))
+    // A snapshot keeps no cut run's step context: a render that shows one is the archive's.
+    if (options.stepContext === "tail" && omitted.some((entry) => entry.body._tag === "StepContext" && entry.runId === options.currentRun && entry.body.run === options.run)) return archive
+    const omittedIds = new Set(omitted.map((entry) => entry.id))
     const newEntries = entries.slice(state.checkedThrough + 1)
     const unsafe = newEntries.some((entry) => {
-      if ((entry.body._tag === "ToolPresentation" || entry.body._tag === "ToolDigest") && omitted.has(entry.body.entry)) return true
-      return entry.body._tag === "ToolResult" && Option.match(requestEntryOfResult(entries, entry), { onNone: () => false, onSome: (request) => omitted.has(request.id) })
+      if ((entry.body._tag === "ToolPresentation" || entry.body._tag === "ToolDigest") && omittedIds.has(entry.body.entry)) return true
+      return entry.body._tag === "ToolResult" && Option.match(requestEntryOfResult(entries, entry), { onNone: () => false, onSome: (request) => omittedIds.has(request.id) })
     })
-    if (unsafe) return { phase: full, entries }
-    const updated: MemoryProjection = { ...state, checkedThrough: entries.length - 1 }
-    return { phase: updated, entries: [...state.candidate.entries, ...entries.slice(state.anchorIndex)] }
+    if (unsafe) return archive
+    const projected = [...state.candidate.entries, ...entries.slice(state.anchorIndex)]
+    const checked = { ...state, checkedThrough: entries.length - 1 }
+    if (state.verified.includes(options.stepContext)) return { phase: checked, entries: projected, mismatch: false }
+    // This placement's first build: one full render here replaces every full render that would follow.
+    return canonicalJson(buildContext(entries, options)) === canonicalJson(buildContext(projected, options))
+      ? { phase: { ...checked, verified: [...state.verified, options.stepContext] }, entries: projected, mismatch: false }
+      : { ...archive, mismatch: true }
   }),
   Match.exhaustive,
 )

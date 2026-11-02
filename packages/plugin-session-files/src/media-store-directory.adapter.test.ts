@@ -82,7 +82,7 @@ test("a lost blob publication acknowledgment is settled from immutable bytes", a
   })))
 })
 
-test("corrupt and oversized final files fail closed without overwriting evidence", async () => {
+test("a damaged final file fails get; a put of its bytes keeps the damaged copy in quarantine and repairs it", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const root = yield* temporary()
     const lengths: number[] = []
@@ -92,14 +92,32 @@ test("corrupt and oversized final files fail closed without overwriting evidence
     const damaged = new Uint8Array([7])
     yield* Effect.tryPromise(() => writeFile(path, damaged))
     const read = yield* Effect.result(store.get(key))
-    const put = yield* Effect.result(store.put(input()))
     expect(read._tag === "Failure" && read.failure.reason).toBe("Corrupt")
-    expect(put._tag === "Failure" && put.failure.reason).toBe("Corrupt")
-    expect(new Uint8Array(yield* Effect.tryPromise(() => readFile(path)))).toEqual(damaged)
+    expect(yield* store.put(input())).toBe(key)
+    expect(new Uint8Array(yield* Effect.tryPromise(() => readFile(path)))).toEqual(input())
+    const kept = yield* Effect.tryPromise(() => readdir(join(root, "quarantine")))
+    expect(kept).toHaveLength(1)
+    expect(new Uint8Array(yield* Effect.tryPromise(() => readFile(join(root, "quarantine", kept[0]!))))).toEqual(damaged)
+    expect(Option.getOrThrow(yield* store.get(key))).toEqual(input())
+    expect(yield* Effect.tryPromise(() => readdir(join(root, "tmp")))).toEqual([])
     yield* Effect.tryPromise(() => writeFile(path, new Uint8Array(MEDIA_LIMITS.imageBytes + 1)))
     const large = yield* Effect.result(store.get(key))
     expect(large._tag === "Failure" && large.failure.reason).toBe("Corrupt")
-    expect(lengths).toEqual([MEDIA_LIMITS.imageBytes + 1, MEDIA_LIMITS.imageBytes + 1, MEDIA_LIMITS.imageBytes + 1])
+    expect(lengths.every((length) => length === MEDIA_LIMITS.imageBytes + 1)).toBe(true)
+  })))
+})
+
+test("opening sweeps temporary files a stopped process left and keeps recent or foreign ones", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const root = yield* temporary()
+    yield* open(root)
+    const hash = mediaHashOf(input())
+    const names = [`${hash}.0.00000000-0000-4000-8000-000000000001.tmp`, "marker.0.00000000-0000-4000-8000-000000000002",
+      `${hash}.9999999999999.00000000-0000-4000-8000-000000000003.tmp`, "someone-elses-file"]
+    yield* Effect.forEach(names, (name) => Effect.tryPromise(() => writeFile(join(root, "tmp", name), input())), { concurrency: 1, discard: true })
+    yield* open(root)
+    const left = yield* Effect.tryPromise(() => readdir(join(root, "tmp")))
+    expect(left.toSorted()).toEqual([names[2]!, names[3]!].toSorted())
   })))
 })
 

@@ -314,6 +314,7 @@ const TurnStartedData
 const TurnStartedEvent
 const TurnStartedKeys
 const TurnsInFlight
+const UNAVAILABLE_MEDIA_DATA
 const UsageBreakdown
 const UserContentPart
 const UserRoleMessage
@@ -373,6 +374,7 @@ const ledgerOf
 const makeMemoryFileSystem
 const makeTurnEvents
 const makeTurnTasks
+const mediaAvailable
 const mediaFromBase64
 const mediaFromBytes
 const mediaHashOf

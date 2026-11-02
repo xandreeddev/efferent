@@ -1457,19 +1457,28 @@ After an acknowledged reducing summary and its requested digests, the summary
 strategy can publish a snapshot together with a recognized head-state pointer in
 one atomic commit. Its anchor names the first kept turn's actual journal event;
 its frontier names the last represented memory event. Both use `{ session, seq }`
-cursors because sequence numbers belong to each session. The payload retains
-raw pre-anchor render dependencies and original compaction facts in order. The
-actual anchor-and-after tail supplies later entries once; snapshot rows allocate
-no memory entry IDs and never become model messages.
+cursors because sequence numbers belong to each session. The payload retains the
+pre-anchor facts a render of a kept run reads, in order: shown results, the
+requests that order them, their presentations and digests, and every applied
+compaction. It keeps no cut run's step context, and a compaction keeps only text
+a render can show (a replaced summary or ledger, and views of omitted entries,
+are emptied), so a snapshot grows with the number of compactions, not with their
+text. The actual anchor-and-after tail supplies later entries once; snapshot rows
+allocate no memory entry IDs and never become model messages.
 
-A cold open verifies selected snapshot contents against the authoritative archive
-before reusing the smaller render projection. It preserves exact tool request/result
-associations, raw presentation/digest facts, signed content, image values and
-complete build metadata. A late pin of a previously omitted result or another
-unsupported dependency restores the full archive path. A valid strategy mismatch
-also uses full rendering; selected malformed snapshot records fail with
-`SessionLogError`, code `session.decode`. An invalid overall session head retains
-the established `session.state` failure.
+A cold open checks the selected snapshot's retained facts against the
+authoritative archive's own selection of the same prefix before reusing the
+smaller render projection, and the first projected build of each step-context
+placement against one full render. It preserves exact tool request/result
+associations, presentation/digest facts, signed content, image values and
+complete build metadata. A late pin of a previously omitted result, a render of a
+cut run's step context or another unsupported dependency restores the full
+archive path. A strategy mismatch, retained facts unlike the archive's (an older
+release's selection rule, damage) or a first build that renders otherwise is
+logged and uses full rendering: the archive alone decides what a request shows.
+Undecodable snapshot records and anchors or frontiers the archive does not hold
+fail with `SessionLogError`, code `session.decode`. An invalid overall session
+head retains the established `session.state` failure.
 
 The head pointer names the actual publication row. A fork cannot use a later
 parent snapshot merely because its anchor predates the fork: publication and
@@ -1477,8 +1486,9 @@ represented facts must both belong to the inherited prefix. A valid future point
 is declined before its row is fetched or its media hydrated. An absent or ineligible
 pointer uses full history; no read rewrites the archive.
 
-Snapshots accelerate repeated rendering and association work. The full archive
-stays eagerly loaded: `MemoryReader` recall, queries, subjects and transcripts,
+Snapshots accelerate repeated rendering and association work: a turn pays one
+full selection at open and one full render per placement, then renders the
+projection. The full archive stays eagerly loaded: `MemoryReader` recall, queries, subjects and transcripts,
 maintenance inputs, SDK dispatch verification and historical replay keep their
 existing complete-history behavior and error channels. Initial archive and media
 hydration I/O is unchanged. Request parts remain a separate dependency protocol.
@@ -2715,10 +2725,15 @@ An `ArtifactRef` stays a reference by URL, a reference line in both modes.
 **Optional media storage.** `MediaStore` stores immutable bytes by their SHA-256
 `MediaHash`. Its `put` returns the content hash, and `get` returns an `Option`
 of copied bytes; absence is `None`, while invalid input, unavailable storage and
-corrupt content are typed `MediaStoreError`s. Both adapters accept one through
-`MEDIA_LIMITS.imageBytes` bytes. `MediaStoreMemoryLive` keeps them in memory;
-`MediaStoreDirectoryLive` from the files plugin publishes private immutable
-`blobs/<hash>.bin` files in a separate root with its own layout marker.
+corrupt content are typed `MediaStoreError`s. `get` never returns bytes whose
+SHA-256 is not their key, so its callers do not hash them again. Both adapters
+accept one through `MEDIA_LIMITS.imageBytes` bytes. `MediaStoreMemoryLive` keeps
+them in memory, for an in-memory log only: over a durable log its blobs would be
+gone after a restart. `MediaStoreDirectoryLive` from the files plugin publishes
+private immutable `blobs/<hash>.bin` files in a separate root with its own layout
+marker, hashes with the platform's SHA-256, sweeps temporary files a stopped
+process left once they are an hour old, and replaces a damaged blob when the same
+bytes are put again (the damaged copy is kept in `quarantine/`).
 
 Compose the decorator below the sessions layer:
 
@@ -2742,7 +2757,10 @@ values, before typed journal decoders, memory rendering and request hash checks.
 The per-wrapper LRU defaults to 32 entries and 32 MiB of decoded bytes. Both
 budgets are finite nonnegative integers; zero disables caching. A warm cache can
 serve previously verified immutable bytes despite later external file damage;
-a cold read or miss verifies the stored content again.
+a cold read or miss reads the store, which verifies its content. A reader that
+decodes lookup keys alone passes `SessionReadQuery.media: "references"`: the
+references stay in place and no blob is read. The sessions plugin reads a
+begin's turn lookups this way, so beginning a turn reads no image.
 
 The physical codec recursively covers known framework journal payloads, including
 attachments, queued input, command JSON, encoded tool values at any depth,
@@ -2755,9 +2773,16 @@ state and header metadata pass through unchanged.
 Physical data uses an exact versioned `$efferent.media` root envelope with a
 manifest of transformed data paths. Only those paths hydrate: an unlisted nested
 reference-shaped JSON value stays ordinary data. References have no inline data
-and never pass `isMediaValue`. Missing or corrupt selected blobs fail with
-`store.decode`, before model or tool dispatch. Hashes establish content
-consistency, not authorization or authentication of a rewritten journal.
+and never pass `isMediaValue`. A missing or corrupt blob, or bytes unlike the
+occurrence's metadata, restore that occurrence with its type, size, fingerprint,
+name and alt and `UNAVAILABLE_MEDIA_DATA` as its data (`mediaAvailable` is false),
+with a logged warning: a render shows it as its label line and never sends it,
+and the rest of the session reads and runs. A replayed request that sent the lost
+image diverges. Unavailable blob storage fails the read with `store.io`, and a
+malformed envelope with `store.decode`. Rows without an envelope are returned as
+stored: the decorator decodes no payload of its own on a read, so a newer
+release's or a damaged row reaches its typed reader unchanged. Hashes establish
+content consistency, not authorization or authentication of a rewritten journal.
 
 Stored format 11 registers this physical codec. Existing inline records stay
 readable; enabling the decorator does not rewrite them. Older unwrapped typed

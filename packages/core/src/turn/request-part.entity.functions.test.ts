@@ -4,7 +4,7 @@ import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { ModelRequestHeader, ProviderToolId } from "./model-request.entity.js"
 import type { ModelRequestTool } from "./model-request.entity.js"
-import { encodeRequestPart, prepareRequestParts, sha256Of } from "./request-part.entity.functions.js"
+import { encodeRequestPart, prepareRequestParts, sha256BytesOf, sha256Of } from "./request-part.entity.functions.js"
 
 const vectors = [
   { text: "", hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
@@ -19,6 +19,26 @@ const vectors = [
 ]
 test.each(vectors)("SHA-256 matches independent UTF-8 and block-boundary vector $hash", ({ text, hash }) => {
   expect(sha256Of(text)).toBe(hash)
+})
+
+// Independent vectors (a platform SHA-256) over every byte value and the largest image a media store holds.
+const pattern = (size: number, of: (index: number) => number) => Uint8Array.from({ length: size }, (_, index) => of(index))
+test.each([
+  { size: 1, hash: "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d" },
+  { size: 55, hash: "576a1bf8d4478657e6dc4af9398544765c2a92cde28478b019235cfed315fc09" },
+  { size: 56, hash: "9b20501dfd1d99161c257950f3444f3e49230c351c5c8e0943ef369f85f5205d" },
+  { size: 63, hash: "30b345906b493f06f69444b6521113511c242f30e29840462950035043682f1e" },
+  { size: 64, hash: "d8bc63b4fc1156e5e7d95a418b9bf54cd3174bedbc2db40f74895349b229b3c0" },
+  { size: 65, hash: "1ee23b0fbcaecc1aff4a9e8f1645f35ab2c8e13609cd73b68df8b5e3f63ce073" },
+  { size: 119, hash: "7a6589821178918ca8d9edaba5abfc1e9b2669564f4469b66885379c1530b2c8" },
+  { size: 120, hash: "655250427d56b1b0eeb8497d21428704273458a01772d6881b65c0abac0f8a98" },
+  { size: 1000, hash: "89f4ff56a25dd1db06a4ce6033603775d705fb96f30f8693733fef602a1ca532" },
+])("SHA-256 of $size binary bytes matches the platform digest", ({ size, hash }) => {
+  expect(sha256BytesOf(pattern(size, (index) => (index * 7) & 255))).toBe(hash)
+})
+
+test("SHA-256 of the largest storable image matches the platform digest", () => {
+  expect(sha256BytesOf(pattern(3_932_160, (index) => index % 251))).toBe("fc0b9cc56eee135365cf2263e5febc47ae1f43315f0ce2c2738bf6b0f6919be1")
 })
 
 const tool: ModelRequestTool = { name: "find", description: "Search", parameters: { b: 2, a: { z: 1 } }, provider: Option.none() }

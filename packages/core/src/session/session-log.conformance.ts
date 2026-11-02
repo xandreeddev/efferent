@@ -194,6 +194,18 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       yield* expect("read-through", (yield* log.read(id, { after: 3, through: 3, limit: Option.none(), kinds: [] })).length === 0, "a closed range returned events")
       yield* expect("read-through", (yield* log.read(id, { after: 0, through: 0, limit: Option.none(), kinds: [] })).length === 0, "an empty prefix returned events")
     })),
+    check("a key-only read (media: references) selects the same events with the same data", "read-references", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      yield* log.create(headerOf(id, owner))
+      yield* log.commit(id, { expect: 0, ...noEvents, events: ["a", "b", "a"].map((kind, n) => draft(kind, { n, nested: { kept: [n, "value"] } })) })
+      const rows = (events: ReadonlyArray<{ readonly seq: number; readonly kind: string; readonly data: unknown }>) => JSON.stringify(events.map((event) => [event.seq, event.kind, event.data]))
+      const queries = [{ after: 0, limit: Option.none<number>(), kinds: [] }, { after: 1, through: 3, limit: Option.some(1), kinds: ["a"] }]
+      yield* Effect.forEach(queries, (query) => Effect.gen(function* () {
+        const hydrated = yield* log.read(id, query)
+        const keyed = yield* log.read(id, { ...query, media: "references" })
+        yield* expect("read-references", hydrated.length > 0 && rows(keyed) === rows(hydrated), "a key-only read changed which events or what data were returned")
+      }), { concurrency: 1, discard: true })
+    })),
     check("a listing holds the owner's top-level sessions, newest first, before the cursor", "list", (owner) => Effect.gen(function* () {
       const [first, second, third] = [yield* freshId, yield* freshId, yield* freshId]
       yield* log.create(headerOf(first, owner))

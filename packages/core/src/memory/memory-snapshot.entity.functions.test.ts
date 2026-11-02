@@ -9,6 +9,7 @@ import { buildContext, canonicalJson, entriesSendingMedia } from "./memory-log.e
 import { memorySnapshotFixture, memorySnapshotOptions } from "./memory-snapshot.conformance.js"
 import { prepareMemorySnapshot, projectMemorySnapshot, validateMemorySnapshot } from "./memory-snapshot.entity.functions.js"
 import { MemorySnapshotCandidate, MemoryStrategyId } from "./memory-snapshot.entity.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 
 const strategy = { id: MemoryStrategyId.make("summary"), version: "2" }
 const options = memorySnapshotOptions()
@@ -40,14 +41,14 @@ test("canonical encoded equality preserves Option wire values, signatures and op
   // Simulate a disk decoder rather than comparing runtime Option internals.
   const encoded = await Effect.runPromise(Schema.encodeEffect(MemorySnapshotCandidate)(candidate))
   const decoded = await Effect.runPromise(Schema.decodeUnknownEffect(MemorySnapshotCandidate)(JSON.parse(JSON.stringify(encoded))))
-  const phase = await Effect.runPromise(validateMemorySnapshot(full, decoded, strategy, basic))
+  const phase = await Effect.runPromise(validateMemorySnapshot(full, decoded, strategy))
   expect(phase._tag).toBe("Projected")
   same(full, projectMemorySnapshot(full, phase, basic).entries)
 })
 
 test("a compatible append keeps projection, a new old request dependency restores full history", async () => {
   const full = memorySnapshotFixture(), candidate = await selected(full)
-  const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy, basic))
+  const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy))
   const ordinary = row("r2:later", 2, 2, { _tag: "Message", run: RunOrdinal.make(0), message: { role: "assistant", content: [{ type: "text", text: "later" }] } })
   const appended = [...full, ordinary]
   const projected = projectMemorySnapshot(appended, phase, basic)
@@ -64,7 +65,7 @@ test("a compatible append keeps projection, a new old request dependency restore
 
 test("a shorter or replaced archive cannot reuse its previously checked offsets", async () => {
   const full = memorySnapshotFixture(), candidate = await selected(full)
-  const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy, basic))
+  const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy))
   expect(projectMemorySnapshot(full.slice(0, -1), phase, basic).phase._tag).toBe("Full")
   expect(projectMemorySnapshot(full.map((entry) => entry.id === candidate.anchor ? { ...entry, id: EntryId.make("replacement") } : entry), phase, basic).phase._tag).toBe("Full")
 })
@@ -98,12 +99,51 @@ test("generated interleaved raw journals preserve every build field and media ch
     await Effect.runPromise(Schema.encodeEffect(Schema.Array(LogEntry))(full))
     const candidate = await selected(full)
     const at = options[option]!
-    const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy, at))
+    const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy))
     expect(phase._tag).toBe("Projected")
     const projected = projectMemorySnapshot(full, phase, at)
-    expect(projected.entries.length).toBeLessThan(full.length)
+    // A render of the cut run's step context uses the archive; every other render projects.
+    expect(projected.mismatch).toBe(false)
+    if (!(at.currentRun === "r1" && at.stepContext === "tail")) expect(projected.entries.length).toBeLessThan(full.length)
     same(full, projected.entries, at)
     const appended = [...full, ...tail.map((text, index) => row(`r2:tail:${index}`, 2, index + 2, { _tag: "StepContext", run: RunOrdinal.make(index % 2), step: index + 2, text }))]
     same(appended, projectMemorySnapshot(appended, phase, at).entries, at)
   }), { numRuns: 100, seed: 230023 })
+})
+
+test("a snapshot an earlier selection rule wrote renders from the full archive instead of failing the open", async () => {
+  const full = memorySnapshotFixture(), candidate = await selected(full)
+  // The rule before this one also kept every cut run's latest step context.
+  const older = { ...candidate, entries: full.filter((entry) => entry.body._tag === "StepContext" && entry.turn === 1 || candidate.entries.some((kept) => kept.id === entry.id)) }
+  expect(older.entries.length).toBeGreaterThan(candidate.entries.length)
+  const phase = await Effect.runPromise(validateMemorySnapshot(full, older, strategy))
+  expect(phase._tag).toBe("Full")
+  same(full, projectMemorySnapshot(full, phase, basic).entries)
+})
+
+/** A long conversation: each turn is summarized again and records a long step context. */
+const longHistory = (turns: number): ReadonlyArray<LogEntry> => Array.from({ length: turns }, (_, index) => index + 1).flatMap((turn) => [
+  row(`r${turn}:0`, turn, 0, { _tag: "TurnStarted", userMessage: new UserMessage({ text: `user ${turn}` }) }),
+  row(`r${turn}:1`, turn, 0, { _tag: "StepContext", step: 0, run: RunOrdinal.make(0), text: `context ${turn} ${"x".repeat(400)}` }),
+  row(`r${turn}:2`, turn, 0, { _tag: "Message", run: RunOrdinal.make(0), message: { role: "assistant", content: [{ type: "text", text: `reply ${turn}` }] } }),
+  ...(turn > 1 ? [row(`r${turn}:3`, turn, 0, { _tag: "Compaction", strategy: "summary", version: "2", action: { _tag: "Summarize", keepFromTurn: turn, summary: `summary through ${turn - 1} ${"s".repeat(2000)}` } })] : []),
+])
+
+test("a snapshot keeps neither replaced summaries' text nor cut runs' step contexts, and still renders the archive's request", async () => {
+  const sizes = await Promise.all([20, 80].map(async (turns) => {
+    const full = longHistory(turns), candidate = await selected(full)
+    expect(candidate.entries.some((entry) => entry.body._tag === "StepContext")).toBe(false)
+    // Every applied compaction stays (a build lists them); only the one whose summary is shown keeps its text.
+    expect(candidate.entries.filter((entry) => entry.body._tag === "Compaction")).toHaveLength(turns - 2)
+    expect(candidate.entries.every((entry) => entry.body._tag !== "Compaction" || entry.body.action._tag !== "Summarize" || entry.body.action.summary === "")).toBe(true)
+    const phase = await Effect.runPromise(validateMemorySnapshot(full, candidate, strategy))
+    const at = { ...basic, currentTurn: turns, currentRun: RunId.make(`r${turns}`), stepContext: "tail" as const }
+    const projected = projectMemorySnapshot(full, phase, at)
+    expect(projected.phase._tag).toBe("Projected")
+    same(full, projected.entries, at)
+    return JSON.stringify(candidate.entries).length
+  }))
+  // Four times the turns: the payload grows by the compactions' small ids, not by their summaries or contexts.
+  expect(sizes[1]!).toBeLessThan(25_000)
+  expect(sizes[1]! / sizes[0]!).toBeLessThan(5)
 })

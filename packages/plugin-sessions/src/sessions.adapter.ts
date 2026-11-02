@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Deferred, Effect, Equal, Exit, HashMap, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Equal, Exit, HashMap, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, Struct, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -38,6 +38,7 @@ import {
   turnEndedOf,
   turnEndingOf,
   turnStartedDraft,
+  TurnStartedData,
   turnStartedOf,
   turnAttributes,
   TurnShutdown,
@@ -179,6 +180,9 @@ interface Known {
  * ownership the schema refuses (a keep-alive slower than half the lease)
  * fails the layer with `config.options`.
  */
+/** What a resume's check reads of a `turn.started`: its origin and the turn it resumed, never the message and its images. */
+const decodeResumeKeys = Schema.decodeUnknownEffect(TurnStartedData.mapFields(Struct.pick(["origin", "resumes"])))
+
 export const SessionsLive = (config: SessionsConfig, options?: { readonly liveness?: ProcessLiveness }): Layer.Layer<Sessions | TurnActivity | TurnShutdown | WaitingInput, HarnessError, SessionLog | TurnAdmission> => Layer.effectContext(Effect.gen(function* () {
   yield* Schema.decodeUnknownEffect(Ownership)(config.ownership).pipe(
     Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: "@xandreed/plugin-sessions", message: `ownership: ${error.message}` })))
@@ -363,8 +367,19 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
 
-  /** A session's own `turn.started` events. */
-  const startsOf = (id: ConversationId, through?: number) => log.read(id, { after: 0, ...(through === undefined ? {} : { through }), limit: Option.none(), kinds: ["turn.started"] })
+  /**
+   * A session's own `turn.started` events, for lookups that decode their keys
+   * alone: a media-storing log leaves the messages' images as references.
+   */
+  const startsOf = (id: ConversationId, through?: number) => log.read(id, { after: 0, ...(through === undefined ? {} : { through }), limit: Option.none(), kinds: ["turn.started"], media: "references" })
+
+  /** One `turn.started` a lookup found, read again whole, its images included. */
+  const startedWhole = (id: ConversationId, found: SessionLogEvent) => log.read(id, { after: found.seq - 1, through: found.seq, limit: Option.some(1), kinds: ["turn.started"] }).pipe(
+    Effect.flatMap((events) => Option.match(Option.fromNullishOr(events.find((event) => event.seq === found.seq)), {
+      onNone: () => Effect.fail(new SessionLogError({ code: "session.decode", message: "a turn.started a lookup found is no longer stored" })),
+      onSome: (event) => turnStartedOf(event).pipe(Effect.mapError(storage("session.decode"))),
+    })),
+  )
 
   /** Of these `turn.started` events (their keys decoded, never the message), the turn begun with `key`, and what it was begun with. */
   const keyIn = (starts: ReadonlyArray<SessionLogEvent>, key: string) => readStoredKeys("turn.started", starts).pipe(
@@ -404,12 +419,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * ended (when it was), for a resume's check; `reapedNow`, a turn this
    * commit closes as interrupted, counts as ended so.
    */
-  const turnsOf = (id: ConversationId, reapedNow: Option.Option<number>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"] }).pipe(
+  const turnsOf = (id: ConversationId, reapedNow: Option.Option<number>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"], media: "references" }).pipe(
     Effect.flatMap((events) => Effect.gen(function* () {
       const numbered = (event: SessionLogEvent) => Option.getOrElse(event.turn, () => 0)
       const endings = new Map(yield* Effect.forEach(events.filter((event) => event.kind === "turn.ended"), (event) =>
         turnEndedOf(event).pipe(Effect.map((ended) => [numbered(event), ended.reason] as const)), { concurrency: 1 }))
-      return yield* Effect.forEach(events.filter((event) => event.kind === "turn.started"), (event) => turnStartedOf(event).pipe(Effect.map((started): ResumableTurn => ({
+      return yield* Effect.forEach(events.filter((event) => event.kind === "turn.started"), (event) => decodeResumeKeys(event.data).pipe(Effect.map((started): ResumableTurn => ({
         turn: numbered(event),
         origin: started.origin,
         resumes: Option.fromNullishOr(started.resumes),
@@ -559,7 +574,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           const brought = asked.userMessage.value
           const previous = yield* keyIn(starts, key)
           if (Option.isSome(previous)) {
-            const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
+            const started = yield* startedWhole(address.id, previous.value.event)
             // The key's fingerprint is the message, the command, the turn resumed and the task, never `meta`: a retry with other metadata is the same turn.
             const same = sameUserMessage(started.userMessage, brought) && canonicalJson(started.command) === canonicalJson(asked.command)
               && Equal.equals(Option.fromNullishOr(started.resumes), resumes)

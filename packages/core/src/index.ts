@@ -42,12 +42,14 @@ export {
   elideMediaData,
   IMAGE_TOKEN_ESTIMATE,
   isMediaValue,
+  mediaAvailable,
   mediaFromBase64,
   mediaFromBytes,
   mediaLabel,
   mediaSlotsOf,
   sniffImageType,
   toolResultMedia,
+  UNAVAILABLE_MEDIA_DATA,
 } from "./domain/media.entity.functions.js"
 export type { MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
 export { MediaHash, MediaStoreBytes, MediaStoreError } from "./domain/media-store.entity.js"

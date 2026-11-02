@@ -143,6 +143,10 @@ test("build uses the loaded projection until an uncertain append restores the fu
       load: Effect.succeed(Option.some(prepared)), save: () => Effect.void,
     } }, policy, { runId: run })
     Object.defineProperty(old.body, "message", { configurable: true, get: () => { touched.push(1); return message } })
+    // A placement's first build checks the projection against one full render; later builds read only the projection.
+    yield* session.build({ stepContext: "none", run: ordinal })
+    const verificationReads = touched.length
+    touched.length = 0
     const projected = yield* session.build({ stepContext: "none", run: ordinal })
     const projectionReads = touched.length
     buildContext(full, options)
@@ -150,8 +154,9 @@ test("build uses the loaded projection until an uncertain append restores the fu
     touched.length = 0
     const failed = yield* session.record([{ _tag: "Message", message: { role: "user", content: "new" } }], 0).pipe(Effect.result)
     yield* session.build({ stepContext: "none", run: ordinal })
-    return { projected, projectionReads, controlReads, fallbackReads: touched.length, failed, original }
+    return { projected, verificationReads, projectionReads, controlReads, fallbackReads: touched.length, failed, original }
   }))
+  expect(result.verificationReads).toBeGreaterThan(0)
   expect(result.projectionReads).toBe(0)
   expect(result.controlReads).toBeGreaterThan(0)
   expect(result.fallbackReads).toBeGreaterThan(0)

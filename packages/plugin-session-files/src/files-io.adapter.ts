@@ -18,7 +18,7 @@ export interface FilesIo {
   readonly link: (from: string, to: string) => Promise<void>
   readonly rename: (from: string, to: string) => Promise<void>
   readonly read: (path: string) => Promise<Uint8Array>
-  /** The file's first bytes, up to `length`. */
+  /** The file's first bytes, up to `length` (all of them when the file is that long, however many reads it takes). */
   readonly readStart: (path: string, length: number) => Promise<Uint8Array>
   readonly list: (path: string) => Promise<ReadonlyArray<string>>
   /** Whether the path exists; a missing one answers false, any other failure rejects. */
@@ -31,6 +31,17 @@ export interface FilesIo {
 }
 
 const missing = (error: unknown): boolean => Option.contains(errorCodeOf(error), "ENOENT")
+
+/** One positioned read: it may answer fewer bytes than asked (an interrupted call, a network or FUSE mount). */
+export type ReadAt = (buffer: Uint8Array, offset: number, length: number, position: number) => Promise<{ readonly bytesRead: number }>
+
+/** The first `length` bytes of a file, reading again after a short answer until the buffer is full or the file ends. */
+export const readFully = (read: ReadAt, length: number): Promise<Uint8Array> => {
+  const buffer = new Uint8Array(length)
+  const from = (offset: number): Promise<number> => offset >= length ? Promise.resolve(offset)
+    : read(buffer, offset, length - offset, offset).then(({ bytesRead }) => bytesRead === 0 ? offset : from(offset + bytesRead))
+  return from(0).then((filled) => buffer.subarray(0, filled))
+}
 
 /**
  * The store's calls on the local machine's file system (`node:fs/promises`), on Node and Bun.
@@ -46,8 +57,8 @@ export const nodeFilesIo: FilesIo = {
   link: (from, to) => link(from, to),
   rename: (from, to) => rename(from, to),
   read: (path) => readFile(path),
-  readStart: (path, length) => open(path, "r").then((handle) => handle.read(new Uint8Array(length), 0, length, 0).then(
-    ({ bytesRead, buffer }) => handle.close().then(() => buffer.subarray(0, bytesRead)),
+  readStart: (path, length) => open(path, "r").then((handle) => readFully((buffer, offset, size, position) => handle.read(buffer, offset, size, position), length).then(
+    (bytes) => handle.close().then(() => bytes),
     (error: unknown) => handle.close().then(() => Promise.reject(error), () => Promise.reject(error)),
   )),
   list: (path) => readdir(path),

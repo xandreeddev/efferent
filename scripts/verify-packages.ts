@@ -862,7 +862,7 @@ await writeFile(join(consumer, "media-store-consumer.mjs"), await readFile(join(
 for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   const mediaChild = Bun.spawn([binary, "media-store-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
   const mediaReport = await new Response(mediaChild.stdout).text()
-  const required = ["kitsVerified", "dedupVerified", "coverageVerified", "logicalHashReplayVerified", "legacyInlineVerified", "literalExtrasVerified", "coldRestartVerified", "noRewriteVerified", "forkCutoffBeforeHydrationVerified", "missingFutureIgnored", "sharedBlobRetentionVerified", "missingNoDispatchVerified", "corruptNoDispatchVerified", "durableBeforeAckVerified", "heldAckRestartVerified"]
+  const required = ["kitsVerified", "dedupVerified", "coverageVerified", "logicalHashReplayVerified", "legacyInlineVerified", "literalExtrasVerified", "coldRestartVerified", "noRewriteVerified", "forkCutoffBeforeHydrationVerified", "missingFutureIgnored", "sharedBlobRetentionVerified", "missingLabelVerified", "corruptLabelVerified", "durableBeforeAckVerified", "heldAckRestartVerified"]
   if (await mediaChild.exited !== 0 || !mediaReport.includes(`media-store {"runtime":"${runtime}"`) || required.some((name) => !mediaReport.includes(`"${name}":true`)) || (mediaReport.match(/"publicationVerified":true/g) ?? []).length !== 2 || (mediaReport.match(/"recoveredVerified":true/g) ?? []).length !== 3) {
     console.error(`the packed ${runtime} media-store journey lost immutable blobs, logical replay or process recovery`); process.exit(1)
   }
