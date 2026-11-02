@@ -8,6 +8,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.15.1 — 2026-11-02
+
+A host decides what one bad tool call in a reply costs: with
+`limits.invalidCalls: "answer"`, a call to a tool the step does not have, or
+with parameters that do not decode, is answered alone and the reply's other
+calls run. The tool contracts and skill text the model sees can be
+fingerprinted again from the package roots.
+
 ### Added
 
 - `LoopLimits.invalidCalls` (`InvalidCallPolicy`, core): what a whole
