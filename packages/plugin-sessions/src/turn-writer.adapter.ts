@@ -103,8 +103,8 @@ export interface TurnWriterInput {
   readonly started: SessionLogEvent
   /** The begin commit: the head after it. */
   readonly position: { readonly revision: number; readonly seq: number; readonly state: SessionsState; readonly storageAt: number }
-  /** Signal followers on this instance after each commit. */
-  readonly wake: (state: SessionsState) => Effect.Effect<void>
+  /** Signal followers on this instance after each commit, given the state before and after it. */
+  readonly wake: (before: SessionsState, after: SessionsState) => Effect.Effect<void>
 }
 
 /** The writer, and how the sessions service closes it from outside (a cancel or removal on this instance). */
@@ -272,7 +272,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
         const localAt = yield* Clock.currentTimeMillis
         yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
         if (options.tried === true) yield* Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) }))
-        yield* input.wake(next)
+        yield* input.wake(at.state, next)
         return { result: decided.result, events: committed.events }
       })
       // A successful take cannot lose its attempt mark between the durable ACK and bookkeeping.

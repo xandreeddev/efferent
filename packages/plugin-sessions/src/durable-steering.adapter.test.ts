@@ -7,7 +7,7 @@ import { sessionsDefaults } from "./sessions-state.entity.js"
 import { stateJson, stateOf } from "./sessions-state.entity.functions.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
-const config = { ...sessionsDefaults, ownership: { mode: "lease" as const, ttlMs: 60_000, renew: "on-commit" as const }, inbox: { maxPending: 20, attempts: 1 } }
+const config = { ...sessionsDefaults, ownership: { mode: "lease" as const, ttlMs: 60_000, renew: "on-commit" as const }, inbox: { ...sessionsDefaults.inbox, maxPending: 20, attempts: 1 } }
 const instance = (log: Log) => Layer.build(SessionsLive(config).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))).pipe(Effect.map((context) => Context.get(context, Sessions)))
 const session: SessionAddress = { id: ConversationId.make("00000000-0000-4000-8000-000000007121"), owner: "durable-steering-test" }
 const complete = { reason: "completed" as const, failure: Option.none() }

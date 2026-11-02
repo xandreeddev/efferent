@@ -30,6 +30,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   once. On Bun the plugin now provides a managed transport that passes fetch's
   `timeout: false`; an explicit `FetchHttpClient.Fetch` still takes precedence.
 
+- `BeginTurn.takeOver` also accepts a named turn, `{ turn, runId }`, which
+  takes over only that open turn; a custom `Sessions` handles the object form
+  and its drain passes `takeOver` to its first turn only (kit checks
+  `takeover-named`, `drain-takeover`). `SessionsConfig.inbox` adds the
+  required `recentSessions` (256 in `sessionsDefaults`; spread the defaults).
+  `InboxDrainConfig` adds `attempts` (3). `Sessions.waiting` signals only
+  commits that change an inbox or an open turn. The drainer's default resume
+  message is now a host note.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1822,6 +1831,20 @@ Model-visible text (exact pins and the compaction golden updated):
   reserve: a store that does not answer no longer holds the report past the
   deadline (the turns still closing are reported as interrupted and counted
   in `left`, and their closing goes on).
+
+- The inbox drainer no longer retries one failing input forever ahead of the
+  rest: after `attempts` failed or partial runs, or a run stopped by its time
+  limit or the host, it parks the input (still queued, never dropped) and runs
+  later input. It resumes an interrupted turn only when its holder was gone or
+  an earlier process left it, never after a time limit or an in-process
+  interruption, and its startup takeover names the turn the sweep saw, never
+  one begun since or held by this instance. A runner that interrupts itself
+  counts an attempt. A turn's own writes no longer wake a full rescan, and a
+  rescan reads only sessions that changed. `WaitingInput` keeps a bounded set
+  of quiet sessions in a persistent map instead of copying every session ever
+  observed on each read. `Agent.activity` and `Agent.shutdown` count the
+  caller's `DrainActivity`, and `Sessions.drain`'s takeover no longer closes a
+  turn begun between its own turns.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued

@@ -428,12 +428,18 @@ outboxes and scheduling a notices-only parent reaction. Plain
 `reconcile(parent)` leaves draining to its caller.
 
 The default four fixed workers serialize each session and retry unfinished
-work with bounded backoff. `resume: { _tag: "Before" }` first resumes an
-eligible interrupted user root, with the configurable message `Continue.`.
-`{ _tag: "Never" }` skips automatic resumption. `takeOver: true` asserts a
-previous holder is gone, only for an initial startup attempt. An intentional
-cancellation stops automatic resumption of that branch. Closing the scope
-stops the drainer.
+work with bounded backoff. After `attempts` (3) failed or partial runs of one
+queued input, or a run stopped by its time limit or by the host in this
+process, the drainer parks it: the input stays queued, never dropped, and
+later input runs; the host runs it with `BeginTurn.Queued`.
+`resume: { _tag: "Before" }` first resumes an interrupted user root whose
+holder was gone (a lease, a takeover, a shutdown, or an earlier process),
+with a configurable host note as the message. `{ _tag: "Never" }` skips
+automatic resumption. `takeOver: true` asserts a previous holder is gone, only
+for an initial startup attempt, and closes only the open turn that sweep saw,
+never one begun since or held by this instance. An intentional cancellation,
+a time limit or a host's interruption stops automatic resumption of that
+branch. Closing the scope stops the drainer.
 
 Default task reconciliation leaves an open asking writer alone. Only when the
 host knows the previous holder is dead may

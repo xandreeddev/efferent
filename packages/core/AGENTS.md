@@ -342,7 +342,11 @@ kit and corruption, literal JSON, copy, cache and ACK regressions are in
 `src/session/session-log-media.adapter.test.ts`.
 
 `Sessions.waiting` is a bounded broadcast with an initial post-subscription
-signal. `InboxRunner` executes exactly its borrowed writer and preserves
+signal, then local commits that change an inbox or an open turn (a turn's own
+appends signal nothing). `BeginTurn.takeOver` is `true` or a named turn
+(`{ turn, runId }`), which takes over only while that turn is the open one;
+`drain`'s `takeOver` applies to its first turn only. The kit checks both
+(`takeover-named`, `drain-takeover`). `InboxRunner` executes exactly its borrowed writer and preserves
 outcomes/errors, waiting included, without beginning or ending it. Its optional
 `afterEnd` runs interruptibly after an end ACK and is advisory: durable outboxes
 and reconciliation repair work skipped by a lost ACK or process death.

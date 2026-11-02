@@ -155,7 +155,10 @@ export interface Agent {
    * runtime services see it: the `TurnActivity` of a runtime-scoped
    * sessions plugin in its graph (or one in `services`), and the
    * `TaskActivity` of a task runner in `services` (`InProcessTaskRunnerLive`
-   * built into them), owner-observed `WaitingInput`, and active `DrainActivity`.
+   * built into them), owner-observed `WaitingInput`, and active `DrainActivity`:
+   * an inbox drainer (`InboxDrainLive`) runs the agent, so it is built beside
+   * it and never in its runtime, and the `DrainActivity` provided where this
+   * is read counts instead (so does `shutdown`'s).
    * Queue storage failures remain SessionLogError. A missing probe counts nothing: a Sessions
    * the host passes only in a turn's services is not seen here (read
    * `processActivity` with the host's own services instead).
@@ -490,9 +493,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     return yield* admitted.pipe(Effect.annotateLogs(turnAttributes(writer.admitted)), measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
   }))) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
-  // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
-  const runtimeProbes = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.updateContext((current: Context.Context<never>) =>
-    Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(runtime))))
+  // The probes are the runtime's alone, wherever this is read (a turn's own services hold others), but
+  // the inbox drainer's: it is built beside the agent (it runs the agent), so it is never in the runtime,
+  // and the caller's `DrainActivity` (`InboxDrainLive`'s, provided where this is read) counts instead.
+  const runtimeProbes = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.updateContext((current: Context.Context<never>) => {
+    const probes = Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(runtime))
+    const drains = Option.orElse(Context.getOption(runtime, DrainActivity), () => Context.getOption(current, DrainActivity))
+    return Option.match(drains, { onNone: () => probes, onSome: (probe) => Context.add(probes, DrainActivity, probe) })
+  }))
   const activity = runtimeProbes(processActivity)
   const shutdown = (options?: ShutdownOptions) => runtimeProbes(shutdownGracefully(options ?? config.shutdown ?? { deadline: DEFAULT_SHUTDOWN_DEADLINE })).pipe(
     Effect.tap((report) => report.left.inFlight

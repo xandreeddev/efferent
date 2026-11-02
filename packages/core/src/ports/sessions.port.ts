@@ -143,8 +143,11 @@ export interface TurnWriter {
 export class Sessions extends Context.Service<Sessions, {
   /**
    * Instance-wide broadcast rescan signal: an initial signal after each
-   * subscription, then local commits. Slow subscribers coalesce signals.
-   * Payloads carry no addresses or authority; foreign commits need a sweep.
+   * subscription, then local commits that change what a drainer acts on
+   * (an inbox item added, claimed, released, taken or done; a turn opened
+   * or closed; a session created or removed). A turn's own appends signal
+   * nothing. Slow subscribers coalesce signals. Payloads carry no addresses
+   * or authority; foreign commits need a sweep.
    */
   readonly waiting: Stream.Stream<void>
   readonly create: (input: {
@@ -267,10 +270,11 @@ export class Sessions extends Context.Service<Sessions, {
    * error's code (`turnEndingOf`, a `TurnError` carried as a defect
    * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has
    * none. A `run` that interrupts itself counts an attempt for the items it
-   * took, even when it wrote nothing. With `takeOver`, each turn begins as
-   * `BeginTurn`'s `takeOver` says: a turn left open by a holder the host
-   * knows is gone is closed at once (`turn.takeover`) instead of waiting
-   * for its lease. With `timeLimitMs`, each turn may run that long
+   * took, even when it wrote nothing. With `takeOver`, the drain's first
+   * turn begins as `BeginTurn`'s `takeOver` says: a turn left open by a
+   * holder the host knows is gone is closed at once (`turn.takeover`)
+   * instead of waiting for its lease. Its later turns never take over: a
+   * turn begun between them is live work, and the drain stops at it. With `timeLimitMs`, each turn may run that long
    * (`BeginTurn`'s `timeLimitMs`), its `run` interrupted past it.
    */
   readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number; readonly take?: "all" | "inputs" | "notices" }) =>

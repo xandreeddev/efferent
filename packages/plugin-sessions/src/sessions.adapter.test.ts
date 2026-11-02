@@ -1296,7 +1296,7 @@ describe("the inbox", () => {
   })))
 
   test("a full inbox refuses more", () => withLog((log) => Effect.gen(function* () {
-    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, inbox: { maxPending: 2, attempts: 2 } })
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, inbox: { ...sessionsDefaults.inbox, maxPending: 2, attempts: 2 } })
     const address = yield* created(sessions!)
     yield* sessions!.deliver(address, item("t1"))
     yield* sessions!.deliver(address, item("t2"))

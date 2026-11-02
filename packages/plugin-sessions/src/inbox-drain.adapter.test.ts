@@ -1,22 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import {
   ConversationId, DrainActivity, EntryId, InboxItemId, InboxRunner, RunId, Sessions, SessionMissing,
   HarnessError, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen, TurnDuplicate, TurnShutdown, turnStartedDraft, UserMessage,
 } from "@xandreed/core"
-import type { BeginTurn, OpenTurn, QueuedInput, SessionAddress, SessionLogEvent, SessionView, TurnWriter } from "@xandreed/core"
+import type { BeginTurn, OpenTurn, QueuedInput, SessionAddress, SessionLogEvent, SessionView, TurnOutcome, TurnWriter } from "@xandreed/core"
 import { InboxDrainLive } from "./inbox-drain.adapter.js"
 import type { InboxDrainOptions } from "./inbox-drain.entity.js"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
 
-const real = Effect.gen(function* () {
+const realOf = (turns = sessionsDefaults.turns) => Effect.gen(function* () {
   const log = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
-  const instance = () => Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 600_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))
+  const instance = () => Layer.build(SessionsLive({ ...sessionsDefaults, turns, ownership: { mode: "lease", ttlMs: 600_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))
   const context = yield* instance()
-  return { context, sessions: Context.get(context, Sessions), other: () => instance().pipe(Effect.map(Context.get(Sessions))) }
+  return { log, context, sessions: Context.get(context, Sessions), other: () => instance().pipe(Effect.map(Context.get(Sessions))) }
 })
+const real = realOf()
 type Real = Effect.Success<typeof real>
 const start = (subject: Real, runner: Context.Service.Shape<typeof InboxRunner>, options: InboxDrainOptions, sessions = subject.sessions) =>
   Layer.build(InboxDrainLive(options)).pipe(Effect.provide(Context.add(Context.add(subject.context, Sessions, sessions), InboxRunner, runner)), Effect.map(Context.get(DrainActivity)))
@@ -301,7 +302,7 @@ describe("InboxDrainLive over real Sessions", () => {
     expect(yield* subject.sessions.read(address, { kinds: ["inbox.dropped"] })).toHaveLength(0)
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
 
-  test("a duplicate caused by another failed claim preserves input backoff and consumes startup takeover authority", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("a duplicate caused by another failed claim preserves input backoff, and startup takes over nothing when no turn was open", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const subject = yield* real
     const address = yield* create(subject.sessions, 5641)
     yield* subject.sessions.enqueue(address, queued("raced-input"))
@@ -328,7 +329,7 @@ describe("InboxDrainLive over real Sessions", () => {
     expect(yield* Ref.get(calls)).toBe(0)
     yield* TestClock.adjust("1 millis")
     expect(yield* eventually(Ref.get(calls), (n) => n === 1)).toBe(1)
-    expect((yield* Ref.get(begun)).map((input) => input.takeOver ?? false)).toEqual([true, false])
+    expect((yield* Ref.get(begun)).map((input) => input.takeOver ?? false)).toEqual([false, false])
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
 
   test("a foreign holder does not reset backoff for the same unacknowledged input", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -342,7 +343,7 @@ describe("InboxDrainLive over real Sessions", () => {
       Effect.map((count) => ({ outcome: count >= 3 ? "completed" as const : "partial" as const, reply: Option.none() })),
     ) })
     const activity = yield* start(subject, runner, { owners: [address.owner], concurrency: 1, resume: { _tag: "Never" },
-      sweepIntervalMs: 1, backoff: { initialMs: 10, maxMs: 100 } })
+      sweepIntervalMs: 1, backoff: { initialMs: 10, maxMs: 100 }, attempts: 10 })
     expect((yield* eventually(subject.sessions.read(address, { kinds: ["turn.ended"] }), (events) => events.length === 1))).toHaveLength(1)
     yield* activity.idle
     const held = yield* foreign.begin(address, { _tag: "Queued", input: input.id, runId: RunId.make("foreign-retry-holder") })
@@ -368,7 +369,9 @@ describe("InboxDrainLive over real Sessions", () => {
   test("startup takeover resumes the oldest interrupted root before queued input and a failed resume retries without takeover", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const subject = yield* real
     const address = yield* create(subject.sessions, 5650)
-    const old = yield* subject.sessions.begin(address, { _tag: "User", runId: RunId.make("old-holder"), key: "old", command: {}, userMessage: new UserMessage({ text: "unfinished" }) })
+    // Held by an earlier process's instance, whose lease has not run out yet.
+    const previous = yield* subject.other()
+    const old = yield* previous.begin(address, { _tag: "User", runId: RunId.make("old-holder"), key: "old", command: {}, userMessage: new UserMessage({ text: "unfinished" }) })
     yield* subject.sessions.enqueue(address, queued("after-root"))
     const begun = yield* Ref.make<ReadonlyArray<BeginTurn>>([])
     const seen = yield* Ref.make<ReadonlyArray<string>>([])
@@ -377,12 +380,14 @@ describe("InboxDrainLive over real Sessions", () => {
       ? Effect.fail(new HarnessError({ code: "memory.log", message: "resume failed" })) : Effect.succeed({ outcome: "completed", reply: Option.none() }))) })
     yield* start(subject, runner, { owners: [address.owner], concurrency: 1, takeOver: true, backoff: { initialMs: 10, maxMs: 10 } }, wrapped)
     yield* eventually(subject.sessions.read(address, { kinds: ["turn.ended"] }), (events) => events.length === 2)
-    expect((yield* old.closed).reason).toBe("interrupted")
+    // The earlier process's writer is fenced at its next write.
+    const fenced = yield* old.append([{ kind: "host.late", data: {} }]).pipe(Effect.andThen(old.flush), Effect.flip)
+    expect(fenced).toMatchObject({ _tag: "TurnClosed", reason: "interrupted" })
     expect(yield* Ref.get(seen)).toEqual(["1:none"])
     yield* TestClock.adjust("10 millis")
     const events = yield* eventually(subject.sessions.read(address, { kinds: ["turn.ended"] }), (events) => events.length === 4)
     expect(yield* Ref.get(seen)).toEqual(["1:none", "1:none", "none:after-root"])
-    expect((yield* Ref.get(begun)).map((input) => input.takeOver ?? false)).toEqual([true, false, false])
+    expect((yield* Ref.get(begun)).map((input) => input.takeOver ?? false)).toEqual([{ turn: 1, runId: RunId.make("old-holder") }, false, false])
     expect(events.map((event) => event.data.reason)).toEqual(["interrupted", "failed", "completed", "completed"])
     expect((yield* subject.sessions.get(address)).pending).toBe(0)
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
@@ -445,4 +450,143 @@ describe("InboxDrainLive over real Sessions", () => {
     expect(yield* subject.sessions.read(address, { kinds: ["turn.started"] })).toHaveLength(2)
     expect((yield* subject.sessions.get(address)).pending).toBe(0)
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+})
+
+const completes = { outcome: "completed" as const, reply: Option.none() }
+
+describe("InboxDrainLive recovery policy", () => {
+  test.each(["failed", "partial"] as const)("a queued input that keeps ending %s is parked after the attempt limit: it stays queued and later input runs", (outcome) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5700 + (outcome === "failed" ? 0 : 1))
+    yield* subject.sessions.enqueue(address, queued("poison"))
+    yield* subject.sessions.enqueue(address, queued("later"))
+    const seen = yield* Ref.make<ReadonlyArray<string>>([])
+    const poisoned: Effect.Effect<TurnOutcome, HarnessError> = outcome === "failed"
+      ? Effect.fail(new HarnessError({ code: "model.invalid-request", message: "a permanent refusal" })) : Effect.succeed({ outcome: "partial", reply: Option.none() })
+    const runner = InboxRunner.of({ run: (writer) => Ref.update(seen, (all) => [...all, writer.admitted.userMessage.text]).pipe(
+      Effect.andThen(writer.admitted.userMessage.text !== "poison" ? Effect.succeed<TurnOutcome>(completes) : poisoned)) })
+    const activity = yield* start(subject, runner, { owners: [address.owner], concurrency: 1, sweepIntervalMs: 5, backoff: { initialMs: 1, maxMs: 5 } })
+    yield* Effect.forEach(Array.from({ length: 20 }), () => TestClock.adjust("5 millis").pipe(Effect.andThen(activity.idle)), { concurrency: 1, discard: true })
+    expect(yield* Ref.get(seen)).toEqual(["poison", "poison", "poison", "later"])
+    expect((yield* subject.sessions.get(address)).pending).toBe(1)
+    expect(yield* subject.sessions.read(address, { kinds: ["inbox.dropped"] })).toHaveLength(0)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("a turn its time limit stopped is neither resumed nor run again: its input is parked and later input runs", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* realOf({ timeLimitMs: 40 })
+    const address = yield* create(subject.sessions, 5710)
+    yield* subject.sessions.enqueue(address, queued("too-long"))
+    yield* subject.sessions.enqueue(address, queued("after-limit"))
+    const seen = yield* Ref.make<ReadonlyArray<string>>([])
+    const runner = InboxRunner.of({ run: (writer) => Ref.update(seen, (all) => [...all, writer.admitted.userMessage.text]).pipe(
+      Effect.andThen(writer.admitted.userMessage.text === "too-long" ? Effect.never : Effect.succeed(completes))) })
+    const activity = yield* start(subject, runner, { owners: [address.owner], concurrency: 1, sweepIntervalMs: 5, backoff: { initialMs: 1, maxMs: 5 } })
+    yield* Effect.forEach(Array.from({ length: 40 }), () => TestClock.adjust("5 millis").pipe(Effect.andThen(Effect.yieldNow)), { concurrency: 1, discard: true })
+    yield* activity.idle
+    expect(yield* Ref.get(seen)).toEqual(["too-long", "after-limit"])
+    const ended = yield* subject.sessions.read(address, { kinds: ["turn.ended"] })
+    expect(ended.map((event) => event.data.reason)).toEqual(["interrupted", "completed"])
+    expect((yield* subject.sessions.get(address)).pending).toBe(1)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("a direct turn the host interrupts in this process is not resumed; one an earlier process left interrupted is, with the host note", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const earlier = yield* create(subject.sessions, 5720)
+    const previous = yield* subject.other()
+    const left = yield* previous.begin(earlier, { _tag: "User", runId: RunId.make("left-by-earlier"), key: "left", command: {}, userMessage: new UserMessage({ text: "before the restart" }) })
+    yield* left.end({ reason: "interrupted", failure: Option.some({ code: "turn.interrupted", message: "the turn was interrupted" }) })
+    const seen = yield* Ref.make<ReadonlyArray<string>>([])
+    const runner = InboxRunner.of({ run: (writer) => Ref.update(seen, (all) => [...all, `${writer.admitted.session.id}:${writer.admitted.userMessage.text}`]).pipe(Effect.as(completes)) })
+    const activity = yield* start(subject, runner, { owners: [earlier.owner], concurrency: 1, sweepIntervalMs: 5 })
+    yield* eventually(Ref.get(seen), (all) => all.length === 1)
+    yield* activity.idle
+    expect(yield* Ref.get(seen)).toEqual([`${earlier.id}:[Host note: The previous turn stopped before it finished. Continue it.]`])
+    const live = yield* create(subject.sessions, 5721)
+    const stopped = yield* Effect.scoped(subject.sessions.begin(live, { _tag: "User", runId: RunId.make("host-stopped"), key: "stopped", command: {}, userMessage: new UserMessage({ text: "stop me" }) })
+      .pipe(Effect.andThen(Effect.never))).pipe(Effect.forkChild)
+    yield* eventually(subject.sessions.get(live), (view) => Option.isSome(view.open))
+    yield* Fiber.interrupt(stopped)
+    yield* Effect.forEach(Array.from({ length: 20 }), () => TestClock.adjust("5 millis").pipe(Effect.andThen(activity.idle)), { concurrency: 1, discard: true })
+    expect((yield* subject.sessions.read(live, { kinds: ["turn.ended"] })).map((event) => event.data.reason)).toEqual(["interrupted"])
+    expect(yield* Ref.get(seen)).toHaveLength(1)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("startup takeover never closes a turn this instance holds", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5730)
+    const own = yield* subject.sessions.begin(address, { _tag: "User", runId: RunId.make("own-live"), key: "own", command: {}, userMessage: new UserMessage({ text: "mine" }) })
+    yield* subject.sessions.enqueue(address, queued("waits-for-own"))
+    const scanned = yield* Deferred.make<void>()
+    const calls = yield* Ref.make(0)
+    const wrapped = Sessions.of({ ...subject.sessions, read: (address, query) => subject.sessions.read(address, query).pipe(Effect.tap(() => Deferred.succeed(scanned, undefined))) })
+    yield* start(subject, InboxRunner.of({ run: () => Ref.update(calls, (n) => n + 1).pipe(Effect.as(completes)) }), { owners: [address.owner], concurrency: 1, takeOver: true, sweepIntervalMs: 10 }, wrapped)
+    yield* Deferred.await(scanned)
+    yield* TestClock.adjust("50 millis")
+    expect(yield* Ref.get(calls)).toBe(0)
+    yield* own.append([{ kind: "host.still-mine", data: {} }])
+    yield* own.flush
+    yield* own.end({ reason: "completed", failure: Option.none() })
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("startup takeover names the turn the sweep saw: a turn begun before the attempt is left alone", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5740)
+    const previous = yield* subject.other()
+    const seenOpen = yield* previous.begin(address, { _tag: "User", runId: RunId.make("seen-open"), key: "seen", command: {}, userMessage: new UserMessage({ text: "seen at startup" }) })
+    const live = yield* Ref.make(Option.none<TurnWriter>())
+    const scope = yield* Effect.scope
+    const begun = yield* Ref.make<ReadonlyArray<BeginTurn>>([])
+    // Between the startup sweep and the attempt's begin, the seen turn ends and its process begins another.
+    const wrapped = Sessions.of({ ...subject.sessions, begin: (address, input) => Ref.updateAndGet(begun, (all) => [...all, input]).pipe(Effect.flatMap((all) => all.length !== 1 ? Effect.void
+      : seenOpen.end({ reason: "completed", failure: Option.none() }).pipe(
+        Effect.andThen(previous.begin(address, { _tag: "User", runId: RunId.make("begun-since"), key: "since", command: {}, userMessage: new UserMessage({ text: "live work" }) })),
+        Effect.flatMap((writer) => Ref.set(live, Option.some(writer))), Effect.provideService(Scope.Scope, scope), Effect.orDie)),
+      Effect.andThen(subject.sessions.begin(address, input))) })
+    const calls = yield* Ref.make(0)
+    yield* start(subject, InboxRunner.of({ run: () => Ref.update(calls, (n) => n + 1).pipe(Effect.as(completes)) }), { owners: [address.owner], concurrency: 1, takeOver: true, sweepIntervalMs: 10, backoff: { initialMs: 10, maxMs: 10 } }, wrapped)
+    yield* eventually(Ref.get(begun), (all) => all.length === 1)
+    yield* Effect.forEach(Array.from({ length: 10 }), () => TestClock.adjust("10 millis"), { concurrency: 1, discard: true })
+    expect((yield* Ref.get(begun))[0]?.takeOver).toEqual({ turn: 1, runId: RunId.make("seen-open") })
+    expect(yield* Ref.get(calls)).toBe(0)
+    const writer = Option.getOrThrow(yield* Ref.get(live))
+    yield* writer.append([{ kind: "host.still-live", data: {} }])
+    yield* writer.flush
+    expect(Option.map((yield* subject.sessions.get(address)).open, (open) => open.runId)).toEqual(Option.some(RunId.make("begun-since")))
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("a notice whose runner interrupts itself counts an attempt and is dropped after the inbox's attempts", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5750)
+    yield* subject.sessions.deliver(address, { id: InboxItemId.make("self-stop"), source: {}, content: "a notice" })
+    const runs = yield* Ref.make(0)
+    const activity = yield* start(subject, InboxRunner.of({ run: () => Ref.update(runs, (n) => n + 1).pipe(Effect.andThen(Effect.interrupt)) }),
+      { owners: [address.owner], concurrency: 1, sweepIntervalMs: 5, backoff: { initialMs: 1, maxMs: 5 } })
+    yield* Effect.forEach(Array.from({ length: 20 }), () => TestClock.adjust("5 millis").pipe(Effect.andThen(activity.idle)), { concurrency: 1, discard: true })
+    expect(yield* Ref.get(runs)).toBe(sessionsDefaults.inbox.attempts)
+    expect(yield* subject.sessions.read(address, { kinds: ["inbox.dropped"] })).toHaveLength(1)
+    expect((yield* subject.sessions.get(address)).pending).toBe(0)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("a turn's own writes wake no rescan, and a rescan reads only the sessions that changed", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const addresses = yield* Effect.forEach(Array.from({ length: 20 }, (_, n) => n), (n) => create(subject.sessions, 5760 + n), { concurrency: 1 })
+    const reads = yield* Ref.make(0)
+    const counted = Sessions.of({ ...subject.sessions, read: (address, query) => Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(subject.sessions.read(address, query))) })
+    const scanned = yield* Deferred.make<void>()
+    const activity = yield* start(subject, InboxRunner.of({ run: () => Effect.succeed(completes) }), { owners: [addresses[0]!.owner], sweepIntervalMs: 3_600_000 },
+      Sessions.of({ ...counted, list: (query) => subject.sessions.list(query).pipe(Effect.tap(() => Deferred.succeed(scanned, undefined))) }))
+    yield* Deferred.await(scanned)
+    yield* eventually(Ref.get(reads), (n) => n === 20)
+    yield* activity.idle
+    const before = yield* Ref.get(reads)
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* subject.sessions.begin(addresses[0]!, { _tag: "User", runId: RunId.make("busy-turn"), key: "busy", command: {}, userMessage: new UserMessage({ text: "many writes" }) })
+      yield* Effect.forEach(Array.from({ length: 30 }, (_, n) => n), (n) => writer.append([{ kind: "host.note", data: { n } }]).pipe(Effect.andThen(writer.flush), Effect.andThen(Effect.yieldNow)), { concurrency: 1, discard: true })
+      yield* writer.end({ reason: "completed", failure: Option.none() })
+    }))
+    yield* Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+    yield* activity.idle
+    expect(before).toBe(20)
+    expect((yield* Ref.get(reads)) - before).toBeLessThanOrEqual(2)
+  })).pipe(Effect.timeout("3 seconds"))))
 })
