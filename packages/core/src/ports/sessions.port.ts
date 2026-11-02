@@ -126,6 +126,23 @@ export interface TurnWriter {
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, TurnError>
   /** Completes when someone else closed the turn (never with `ended`); never when it ends by `end`. */
   readonly closed: Effect.Effect<TurnClosed>
+  /**
+   * Optional capability: seal the turn once its reply is held (`closing`)
+   * and final. The held reply must imply a completed or partial ending
+   * (`replyEndingOf`); otherwise nothing is sealed and the answer is none.
+   * Sealing stores, in its own commit, that the open turn is sealed with that
+   * ending and the closing drafts held then (the reply's), so whoever closes
+   * it while it is still open ends it so, with that reply, instead of
+   * interrupting it: its own `end` whatever ending it is given, its scope's
+   * end, a cancel, its time limit and a shutdown on this instance (each
+   * storing the closing drafts still held), and a cancel elsewhere, a reap
+   * or a takeover once its holder is gone (each storing the drafts sealed;
+   * what the holder held only after the seal is lost). Writes are admitted
+   * until the end. The answer, when
+   * sealed, completes once someone else stored that end, so the work the
+   * turn does after its reply can stop.
+   */
+  readonly seal?: Effect.Effect<Option.Option<Effect.Effect<void>>, TurnError>
 }
 
 /**

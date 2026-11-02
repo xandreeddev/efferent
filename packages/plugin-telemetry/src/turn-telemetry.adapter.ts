@@ -28,9 +28,10 @@ const isRecorded = TurnEvent.isAnyOf(RECORDED)
  * `efferent.model.called` events and running cost for all priced calls,
  * including helpers and discarded outcomes, with unknown/partial/unpriced
  * coverage. Prior durable calls affect the span without incrementing global
- * metrics again. A turn with no ledger uses selected-response legacy facts
- * when the recorder closes; manual composition without observation keeps the
- * existing inline path. A host-planned step 0 creates no billed model call.
+ * metrics again. When the recorder closes, each selected response of a loop
+ * step no `Loop` call was recorded for (a loop model outside the models
+ * plugin, an older journal) is billed from its legacy facts; manual
+ * composition without observation keeps the existing inline path. A host-planned step 0 creates no billed model call.
  * Recording never fails the turn.
  *
  * @public
@@ -43,7 +44,8 @@ export const TurnTelemetryLive = (options: Partial<TelemetryOptions> = {}): Laye
     const recorder = yield* CurrentModelCallRecorder
     const span: Option.Option<Tracer.Span> = config.spanEvents ? yield* Effect.option(Effect.currentSpan) : Option.none()
     const spent = yield* Ref.make(0)
-    const ledger = yield* Ref.make(false)
+    // The loop steps a `Loop` call was recorded for: their selected responses are billed by the call.
+    const ledgered = yield* Ref.make<ReadonlySet<string>>(new Set())
     const coverage = yield* Ref.make({ calls: 0, unknown: 0, partial: 0, unpriced: 0 })
 
     /** Write to the captured span, if there is one, at the clock's current time. */
@@ -67,7 +69,10 @@ export const TurnTelemetryLive = (options: Partial<TelemetryOptions> = {}): Laye
       })
     })
     const called = (data: ModelCallData, info: { readonly replayed: boolean }) => Effect.gen(function* () {
-      yield* Ref.set(ledger, true)
+      if (data.purpose === "Loop") yield* Option.match(Option.all([data.run, data.step]), {
+        onNone: () => Effect.void,
+        onSome: ([ordinal, step]) => Ref.update(ledgered, (keys) => new Set([...keys, `${ordinal}:${step}`])),
+      })
       const model = Option.map(data.model, formatModelSelection)
       const usage = ModelCallUsage.match(data.usage, { Unknown: () => Option.none<TokenUsage>(), Known: ({ usage }) => Option.some(usage), Partial: ({ usage }) => Option.some(usage) })
       const cost = Option.flatMap(usage, (value) => responseCost(config.prices, model, value))
@@ -145,6 +150,9 @@ export const TurnTelemetryLive = (options: Partial<TelemetryOptions> = {}): Laye
     yield* events.subscribe((event) => isRecorded(event) ? Option.some(event) : Option.none(), record)
     yield* recorder.observe?.({
       called,
-      closed: (legacy) => Ref.get(ledger).pipe(Effect.flatMap((hasCalls) => hasCalls ? Effect.void : Effect.forEach(legacy, (fact) => account(fact.model, fact.usage, fact.replayed), { concurrency: 1, discard: true }))),
+      closed: (legacy) => Ref.get(ledgered).pipe(Effect.flatMap((keys) => Effect.forEach(
+        legacy.filter((fact) => !keys.has(`${fact.run}:${fact.step}`)),
+        (fact) => account(fact.model, fact.usage, fact.replayed), { concurrency: 1, discard: true },
+      ))),
     }) ?? Effect.void
   }))

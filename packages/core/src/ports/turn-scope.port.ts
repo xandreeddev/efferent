@@ -12,6 +12,7 @@ import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { ModelRequestHeader } from "../turn/model-request.entity.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import type { TurnError } from "../session/sessions.entity.js"
+import type { MemoryObservation } from "../memory/memory-maintenance.entity.js"
 
 /*
  * The turn as services. `TurnLive(input)` provides them, with RunContext,
@@ -99,6 +100,31 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
    * published again); any other later call does nothing.
    */
   readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, TurnError>
+  /**
+   * Hold the work to run after the turn's reply (`afterReply`): a run's
+   * memory maintenance once its loop accepted a response. The latest call
+   * replaces an earlier one; what a replaced or never run work left is
+   * maintained at the next run's start.
+   */
+  readonly deferAfterReply: (work: Effect.Effect<void, TurnError>) => Effect.Effect<void>
+  /**
+   * Once a completed or partial reply is recorded and its reactions drained:
+   * seal the turn (`TurnWriter.seal`), then run the work `deferAfterReply`
+   * holds, once. Nothing it meets can cost the reply: a failure is logged
+   * and skipped, but a writer's (the store's, a fence's, a close's) stays
+   * hard; an interruption, or the turn's sealed end stored by someone else,
+   * stops the work only. A writer that cannot seal skips the work, left to
+   * the next run's start.
+   */
+  readonly afterReply: Effect.Effect<void, TurnError>
+  /**
+   * The last selected response stored before the calling run (the previous
+   * turn's or an earlier run's of this one), as accepted-input evidence: its
+   * model, reported input (`step.usage`) and the request estimate and
+   * reserve its step's `context.built` froze. None when it has no usable
+   * input or model.
+   */
+  readonly acceptedBefore: Effect.Effect<Option.Option<MemoryObservation>, TurnError>
 }>()("efferent/TurnMemory") {}
 
 /** The turn's tools: registry-opened once, then shared by the loop, the host and RunContext.activate. */

@@ -29,10 +29,11 @@ export type ClosingDrafts = typeof ClosingDrafts.Type
  * - `Open`: admits writes; `tried` once the turn wrote anything (only then has
  *   it tried the inbox items it took), `attempted` the last ending whose commit
  *   ran and was not stored (the scope's own end tries it again), `closing`
- *   the drafts held for the end's commit.
+ *   the drafts held for the end's commit, `sealed` the ending its final reply
+ *   sealed (`TurnWriter.seal`): every end of the turn then stores that one.
  * - `Ending`: an end is under way, and admission is sealed; `attempted` is the
  *   one before it, kept for when this end is never queued; `closing` what its
- *   commit stores before `turn.ended`.
+ *   commit stores before `turn.ended`; `sealed` kept for an end that is not stored.
  * - `Failed`: a write failed (the store, contention, a defect): every later one
  *   fails with that `error`, and the closing drafts are dropped.
  * - `Closed`: closed elsewhere (`cancelled`, `interrupted`, `removed`), or its
@@ -41,8 +42,8 @@ export type ClosingDrafts = typeof ClosingDrafts.Type
  * - `Ended`: its end is stored, and left `pending` inbox items waiting.
  */
 export const WriterPhase = Schema.Union([
-  Schema.TaggedStruct("Open", { tried: Schema.Boolean, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts }),
-  Schema.TaggedStruct("Ending", { tried: Schema.Boolean, ending: TurnEnding, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts }),
+  Schema.TaggedStruct("Open", { tried: Schema.Boolean, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts, sealed: Schema.OptionFromNullOr(TurnEnding) }),
+  Schema.TaggedStruct("Ending", { tried: Schema.Boolean, ending: TurnEnding, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts, sealed: Schema.OptionFromNullOr(TurnEnding) }),
   Schema.TaggedStruct("Failed", { error: WriterFailure }),
   Schema.TaggedStruct("Closed", { reason: TurnClosedReason }),
   Schema.TaggedStruct("Ended", { pending: Schema.Int }),

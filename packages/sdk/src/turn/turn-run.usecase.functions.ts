@@ -67,7 +67,7 @@ import {
 } from "@xandreed/core/internal"
 import { TurnObservation } from "./turn-observation.entity.js"
 import { matchingObservation, observeAcceptedInput } from "./turn-observation.entity.functions.js"
-import { tighterOverflowBudget } from "./turn-overflow.entity.functions.js"
+import { tighterOverflowBudget, windowBound } from "./turn-overflow.entity.functions.js"
 
 /** What a step's plan decided before it built the context: the model choice, the system prompt, the directive. */
 interface StepDecision {
@@ -103,12 +103,6 @@ const MEDIA_REJECTION_CHARS = 500
  * @public
  */
 export type TurnRunServices = TurnMemory | TurnToolbox | TurnPrompt | TurnEvents | TurnTasks
-
-/** A prepared request and its once-only maintenance after a successful loop return. @public */
-export interface PreparedRun {
-  readonly request: StepRequest
-  readonly afterRun: Effect.Effect<void, TurnError>
-}
 
 const defaultLimits: LoopLimits = { maxSteps: 50, toolConcurrency: 1, streaming: true, requireCompletion: false }
 const defaultBudgetTokens = 64_000
@@ -168,16 +162,20 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * model call will read, `CurrentPromptCacheKey` and `CurrentModelCallPolicy`
  * where the loop dispatches, so a loop that does not provide the request's
  * `cacheKey` and `callPolicy` (`StepLoopReferences`) fails with
- * `request.diverged` before the provider is called. The returned `afterRun`
- * is cached and runs advisory maintenance once after a successful loop return,
- * with this run's last accepted input and the durable context, without its
- * obsolete StepContext. Manual hosts call it after `StepLoop.run(request)`;
- * `runTurnLoop` does so for completed and partial results. It needs no extra
- * scope and keeps helper recorder failures as their original `TurnError`.
+ * `request.diverged` before the provider is called. Each accepted response
+ * hands the run's memory maintenance to `TurnMemory.deferAfterReply`: the
+ * turn runs it once its reply is final and sealed (`TurnMemory.afterReply`,
+ * from `finishTurn`), on the run's last accepted input, so nothing it meets
+ * can cost the reply. The run's start (`turn-start`) is its safety net,
+ * calibrated by the last stored selected response (`acceptedBefore`): what
+ * a cut or never sealed maintenance left is maintained there. A step's
+ * ceiling is the run's input ceiling, lowered to the resolved model's
+ * catalog window less its output cap (the call policy's `maxOutputTokens`,
+ * else the catalog's) when a `ModelCatalog` knows that window.
  *
  * @public
  */
-export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<PreparedRun, TurnError, P | TurnRunServices> {
+export const stepRequestOf = Effect.fnUntraced(function* <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<StepRequest, TurnError, P | TurnRunServices> {
   const runServices = Context.omit(CurrentToolResultReceipt)(replayableContext(yield* Effect.context<P>()))
   const memory = yield* TurnMemory
   const prompt = yield* TurnPrompt
@@ -207,7 +205,12 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   })
   yield* inRun(prompt.turnSections)
   const renderScope = { run: run.ordinal, stepContext: stepContext === "tail" ? "tail" as const : "none" as const }
-  yield* inRun(session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views, render: renderScope }))
+  // The run's start is the safety net of the maintenance after a reply: calibrated by the last stored selected response.
+  const before = yield* memory.acceptedBefore
+  yield* inRun(session.maintain({
+    phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views, render: renderScope,
+    ...Option.match(before, { onNone: () => ({}), onSome: (observed) => ({ observed }) }),
+  }))
 
   // The step planned last, and what its build sent: the refusal names that build's images. `replanning`
   // is the step `onMediaRejected` refused, once: only its next plan keeps the model choice, system
@@ -220,6 +223,20 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   const recoveryClaims = yield* Ref.make<ReadonlyMap<number, Deferred.Deferred<boolean, TurnError>>>(new Map())
   const inputCeiling = yield* Ref.make(budget)
   const observed = yield* Ref.make<TurnObservation>({ observed: Option.none(), usage: Option.none(), baseReservedTokens: Option.none() })
+  // Each model's known input bound (window less output cap), read from the catalog once per run.
+  const windows = yield* Ref.make<ReadonlyMap<string, Option.Option<number>>>(new Map())
+  const windowBoundOf = (identity: Option.Option<ModelSelection>): Effect.Effect<Option.Option<number>> => Option.match(identity, {
+    onNone: () => Effect.succeed(Option.none<number>()),
+    onSome: (selection) => Effect.gen(function* () {
+      const key = formatModelSelection(selection)
+      const known = (yield* Ref.get(windows)).get(key)
+      if (known !== undefined) return known
+      const catalog = yield* Option.match(Context.getOption(runServices, ModelCatalog), { onNone: () => Effect.succeed([]), onSome: (service) => service.list })
+      const bound = windowBound(Option.fromNullishOr(catalog.find((entry) => entry.selection === key)?.limits), callPolicy)
+      yield* Ref.update(windows, (all) => new Map([...all, [key, bound]]))
+      return bound
+    }),
+  })
   const recoveryOutcome = Effect.fnUntraced(function* (done: Deferred.Deferred<boolean, TurnError>): Effect.fn.Return<boolean, TurnError> {
     if (!(yield* Deferred.isDone(done))) return false
     const terminal = yield* Deferred.await(done).pipe(Effect.interruptible, Effect.exit)
@@ -248,7 +265,7 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
       yield* Ref.set(planned, ready)
       return ready.value.outgoing
     }
-    const ceiling = yield* Ref.get(inputCeiling)
+    const runCeiling = yield* Ref.get(inputCeiling)
     const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
     const { choice, system, directive, hook } = Option.isSome(again) ? again.value.decision : yield* decide(info)
     const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
@@ -256,10 +273,9 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     const toolTokens = schemaTokens(tools, info.activeTools)
     const reserved = estimateTokens(finalSystem) + toolTokens
     const baseReserved = estimateTokens(system) + toolTokens
-    if (ceiling <= reserved) {
-      return yield* Effect.fail(failure("context.budget",
-        `The system prompt and tool schemas take ${reserved} tokens, all of the ${ceiling}-token context budget: raise budgetTokens or offer fewer tools`))
-    }
+    const noRoom = (ceiling: number) => failure("context.budget",
+      `The system prompt and tool schemas take ${reserved} tokens, all of the ${ceiling}-token context budget: raise budgetTokens or offer fewer tools`)
+    if (runCeiling <= reserved) return yield* Effect.fail(noRoom(runCeiling))
     // Resolve once before maintenance so only matching selected evidence applies.
     const model = Option.isSome(again) ? again.value.model : yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
       onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),
@@ -267,6 +283,9 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     })
     const descriptor = yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf })
     const identity = Option.flatMap(descriptor, (value) => parseModelSelection(`${value.provider}:${value.model}`))
+    // A budget above the model's known window would overflow every run's first request.
+    const ceiling = Option.match(yield* windowBoundOf(identity), { onNone: () => runCeiling, onSome: (bound) => Math.min(runCeiling, bound) })
+    if (ceiling <= reserved) return yield* Effect.fail(noRoom(ceiling))
     const prior = matchingObservation(identity, (yield* Ref.get(observed)).observed)
     yield* session.maintain({
       phase: "step", lastUsage: info.lastUsage, budgetTokens: ceiling - reserved, views: tools.views, render: renderScope,
@@ -350,7 +369,8 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
         Effect.mapError((cause) => new HarnessError({ code: "request.diverged", message: "accepted model input did not encode", cause })),
       )
       const recorded = yield* session.recordTail(tail, tools.views, step, run.ordinal)
-      yield* Option.match(candidate, { onNone: () => Effect.void, onSome: (state) => Ref.set(observed, state) })
+      // An accepted response makes this run's maintenance the work after the turn's reply.
+      yield* Option.match(candidate, { onNone: () => Effect.void, onSome: (state) => Ref.set(observed, state).pipe(Effect.andThen(memory.deferAfterReply(afterRun))) })
       return recorded
     }).pipe(
       Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(step)),
@@ -447,24 +467,24 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     callPolicy,
     captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
   }
+  // The run's maintenance after the turn's reply (`TurnMemory.afterReply`), on its last accepted input:
+  // the durable context without its obsolete StepContext, the accepted step's base reserve, the tightened ceiling.
   const maintenance = inRun(harnessDefectsAsFailures(Effect.gen(function* () {
     // The existing fresh snapshot flushes queued step metadata before a helper.
     yield* memory.requestSnapshot
     const last = yield* Ref.get(planned)
     const accepted = yield* Ref.get(observed)
-    const evidence = accepted.observed
     const reserve = Option.orElse(accepted.baseReservedTokens, () => Option.map(last, (plan) => plan.baseReservedTokens))
     const remaining = (yield* Ref.get(inputCeiling)) - Option.getOrElse(reserve, () => 0)
     yield* session.maintain({
       phase: "turn-end", lastUsage: accepted.usage, budgetTokens: Math.max(1, remaining), views: tools.views,
       render: { run: run.ordinal, stepContext: "none" },
-      ...Option.match(evidence, { onNone: () => ({}), onSome: (observed) => ({ observed }) }),
+      ...Option.match(accepted.observed, { onNone: () => ({}), onSome: (observed) => ({ observed }) }),
     })
   })))
-  // Effect.cached deliberately retries interruptions. This turn-owned terminal
-  // latch retains every exit, while arbitrary maintenance remains interruptible.
+  // Once only, whoever asks: a latch retains its first exit, while the maintenance itself stays interruptible.
   const terminal = yield* Ref.make(Option.none<Deferred.Deferred<void, TurnError>>())
-  const afterRun = Effect.uninterruptible(Effect.gen(function* () {
+  const afterRun: Effect.Effect<void, TurnError> = Effect.uninterruptible(Effect.gen(function* () {
     const fresh = yield* Deferred.make<void, TurnError>()
     const previous = yield* Ref.modify(terminal, (existing) => [existing, Option.orElse(existing, () => Option.some(fresh))] as const)
     if (Option.isSome(previous)) return yield* Deferred.await(previous.value).pipe(Effect.interruptible)
@@ -472,21 +492,18 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     yield* Deferred.done(fresh, exit)
     return yield* exit
   }))
-  return { request, afterRun }
+  return request
 })
 
-/** Prepare a request only; manual hosts use prepareRun for its afterRun lifecycle. @public */
-export const stepRequestOf = <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, TurnError, P | TurnRunServices> =>
-  prepareRun(policy, options).pipe(Effect.map((prepared) => prepared.request))
-
 /**
- * One run of the turn: yield first when waiting; otherwise prepare, StepLoop,
- * then cached maintenance on successful completed/partial work. Waiting skips
- * normal end maintenance, so yielding cannot trigger another helper model call.
+ * One run of the turn: yield first when waiting; otherwise `stepRequestOf`,
+ * then the StepLoop. Nothing runs after the loop returns: its result goes
+ * straight back to the host, and the run's maintenance waits for the turn's
+ * sealed reply (`TurnMemory.afterReply`).
  *
  * @public
  */
 export const runTurnLoop = <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, TurnError, P | TurnRunServices | StepLoop> =>
   (options.waiting ?? Effect.succeed(false)).pipe(Effect.flatMap((waiting) => waiting
     ? Effect.succeed<RunResult>({ outcome: "waiting", reason: "waiting", text: "", steps: 0, usage: zeroUsage })
-    : prepareRun(policy, options).pipe(Effect.flatMap(({ request, afterRun }) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request).pipe(Effect.tap((result) => result.outcome === "waiting" ? Effect.void : afterRun))))))))
+    : stepRequestOf(policy, options).pipe(Effect.flatMap((request) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request)))))))

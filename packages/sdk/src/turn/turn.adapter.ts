@@ -54,6 +54,8 @@ import { ReplyStep } from "./turn-phase.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
 import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import { makeTurnModelCallRecorder } from "./model-call-recorder.adapter.js"
+import { acceptedInputOf } from "./turn-observation.entity.functions.js"
+import { isWriterCause } from "./turn-after-reply.entity.functions.js"
 import { makeMemoryCheckpoint } from "./memory-checkpoint.adapter.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
@@ -131,7 +133,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   yield* events.subscribe(
     (event) => event._tag === "assistant.message" ? Option.some(event) : Option.none(),
     (step) => Ref.update(usage, (total) => addUsage(total, step.usage)).pipe(
-      Effect.andThen(modelCalls.legacy({ model: step.model, usage: step.usage, replayed: false })),
+      Effect.andThen(modelCalls.legacy({ model: step.model, usage: step.usage, run: step.run, step: step.step, replayed: false })),
     ),
   )
   const phase = yield* Ref.make<TurnPhase>({ _tag: "Waiting", early: [] })
@@ -297,6 +299,8 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     Taken: () => Effect.void,
     Replied: () => Effect.fail(failure("turn.closed", "The turn's reply is recorded: no steering is accepted after it")),
   })))
+  /** The latest finished run's post-reply work (its memory maintenance), run once by `afterReply`. */
+  const afterReplyWork = yield* Ref.make(Option.none<Effect.Effect<void, TurnError>>())
   const turnMemory = TurnMemory.of({
     ...reader,
     strategy: session.strategy,
@@ -329,6 +333,26 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       onSome: (number) => Effect.succeed(number),
     }))),
     startRun: transition(startRun(admitted.runId)),
+    deferAfterReply: (work) => Ref.set(afterReplyWork, Option.some(work)),
+    afterReply: Effect.gen(function* () {
+      const work = yield* Ref.getAndSet(afterReplyWork, Option.none())
+      // A writer that cannot seal leaves the work to the next run's start: a close meanwhile would cost the reply.
+      if (Option.isNone(work) || writer.seal === undefined) return
+      const sealed = yield* writer.seal
+      if (Option.isNone(sealed)) return
+      // Someone else storing the sealed end stops the work; nothing it meets can cost the reply.
+      yield* work.value.pipe(
+        Effect.raceFirst(sealed.value),
+        Effect.catchCause((cause) => isWriterCause(cause) ? Effect.failCause(cause)
+          : Effect.logWarning("the work after the turn's reply did not finish; the next run's start maintains what it left", cause)),
+      )
+    }).pipe(Effect.withSpan("turn.after_reply")),
+    acceptedBefore: Effect.gen(function* () {
+      // The last own turn's start bounds the read: an older turn cannot hold the last selected response.
+      const starts = (yield* historicalRows).filter((event) => event.session === admitted.session.id && event.kind === "turn.started")
+      const after = Option.match(Option.fromNullishOr(starts.at(-1)), { onNone: () => writer.started.seq - 1, onSome: (last) => last.seq - 1 })
+      return acceptedInputOf(yield* writer.snapshot(["step.usage", "context.built"], after))
+    }),
     persistMessage: Effect.gen(function* () {
       yield* transition(claim)
       const number = admitted.turn

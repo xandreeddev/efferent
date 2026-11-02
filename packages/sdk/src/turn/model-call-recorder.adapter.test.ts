@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope } from "effect"
 import {
-  ConversationMemory, CurrentModelCallRecorder, frameworkDraft, harnessCodeOf, HarnessError,
+  ConversationId, ConversationMemory, CurrentModelCallRecorder, frameworkDraft, harnessCodeOf, HarnessError,
   ModelCallData, ModelCallId, openLogSession, RunId, RunOrdinal, StepUsageData, storedJson, ToolCallId, ToolRegistry,
 } from "@xandreed/core"
 import type { MemoryPolicy, ModelCallRecorder, SessionLogEvent, TurnError } from "@xandreed/core"
@@ -32,8 +32,8 @@ const subject: ModelCallRecorderSubject = {
     yield* Effect.forEach(seed.calls, (call) => Schema.encodeEffect(ModelCallData)(call).pipe(
       Effect.flatMap(storedJson), Effect.flatMap((data) => recorded.writer.append([frameworkDraft("model.called", data)])),
     ), { concurrency: 1 })
-    yield* Effect.forEach(seed.legacy, (usage, step) => Schema.encodeEffect(StepUsageData)({
-      step, run: RunOrdinal.make(0), model: usage.model, usage: usage.usage, finishReason: "stop",
+    yield* Effect.forEach(seed.legacy, (usage) => Schema.encodeEffect(StepUsageData)({
+      step: usage.step, run: usage.run, model: usage.model, usage: usage.usage, finishReason: "stop",
     }).pipe(Effect.flatMap(storedJson), Effect.flatMap((data) => recorded.writer.append([frameworkDraft("step.usage", data)]))), { concurrency: 1 })
     const failure = yield* Ref.make(Option.none<TurnError>())
     const writer = { ...recorded.writer, flush: Ref.getAndSet(failure, Option.none()).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Effect.fail }))) }
@@ -58,6 +58,27 @@ const call = (key: string): ModelCallData => ({
 
 describe("TurnLive model-call recorder", () => {
   modelCallRecorderConformance(subject).forEach((check) => test(check.name, () => Effect.runPromise(check.run)))
+
+  test("the recorder reads only the turn's own rows, never the whole session", async () => {
+    const reads = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      // An earlier turn's call stays out of this turn's ledger and out of what is read.
+      const earlier = yield* Schema.encodeEffect(ModelCallData)({ ...call("earlier-turn"), callId: ModelCallId.make("earlier-turn") }).pipe(Effect.flatMap(storedJson))
+      const history: ReadonlyArray<SessionLogEvent> = [{ session: ConversationId.make("00000000-0000-4000-8000-00000000abcd"), turn: Option.some(1), kind: "model.called", seq: 1, at: 0, data: earlier }]
+      const recorded = yield* recordingTurnWriter({ runId: RunId.make("own-rows"), text: "hello", turn: 2, history })
+      const seen = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
+      const writer = { ...recorded.writer, snapshot: (kinds: ReadonlyArray<string>, after?: number) => (kinds.includes("model.called") ? Ref.update(seen, (all) => [...all, Option.fromNullishOr(after)]) : Effect.void).pipe(
+        Effect.andThen(recorded.writer.snapshot(kinds, after))) }
+      const owner = yield* Scope.make()
+      const context = yield* Layer.buildWithScope(TurnLive({ turn: writer }).pipe(Layer.provide(services)), owner)
+      const recorder = Context.get(context, CurrentModelCallRecorder)
+      yield* recorder.observe?.({ called: () => Effect.void, closed: () => Effect.void }) ?? Effect.void
+      yield* recorder.record(call("own-call"))
+      yield* Scope.close(owner, Exit.void)
+      return { seen: yield* Ref.get(seen), started: writer.started.seq }
+    })))
+    expect(reads.seen.length).toBeGreaterThanOrEqual(3)
+    expect(reads.seen.every((after) => Option.contains(after, reads.started))).toBe(true)
+  })
 
   test("billing observers retain the current invocation guard without replaying captured receipt authority", async () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {

@@ -1,7 +1,7 @@
 import { Effect, Option, Schema, Struct } from "effect"
 import { RunId } from "../domain/run.entity.js"
 import { ModelCallData, ModelCallUsage } from "../domain/model-call.entity.js"
-import { sumUsage } from "../domain/token-usage.entity.functions.js"
+import { addUsage, sumUsage } from "../domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
@@ -301,16 +301,28 @@ const uniqueModelCalls = Schema.Array(ModelCallData).check(Schema.makeFilter((ca
   new Set(calls.map((call) => JSON.stringify([call.callId, call.attempt]))).size === calls.length
     ? true : "duplicate model call attempt"))
 
+/** The loop step a call or a selected response belongs to. */
+const loopStepKey = (run: number, step: number): string => `${run}:${step}`
+
 /**
- * Observed Known/Partial usage subtotals. ANY ledger suppresses selected usage,
- * including Unknown-only/known-zero ledgers; no ledger falls back to turnUsageOf.
- * Read turnModelCallsOf for coverage: this subtotal is not an exact provider bill.
+ * Observed Known/Partial usage subtotals of every recorded call, plus the
+ * selected usage (`step.usage`) of each loop step no `Loop` call was
+ * recorded for: a call's ledger, Unknown-only included, stands for its own
+ * step and nothing else, so a loop model outside the models plugin still
+ * counts beside recorded helpers. With no ledger at all this is
+ * `turnUsageOf`. Read turnModelCallsOf for coverage: this subtotal is not an
+ * exact provider bill.
  *
  * @public
  */
 export const turnBilledUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number): Effect.Effect<TokenUsage, Schema.SchemaError> =>
-  turnModelCallsOf(events, turn).pipe(Effect.flatMap((calls) => calls.length === 0 ? turnUsageOf(events, turn)
-    : Schema.encodeEffect(ModelCallUsage.cases.Known.fields.usage)(sumUsage(calls.flatMap((call) => call.usage._tag === "Unknown" ? [] : [call.usage.usage])))))
+  turnModelCallsOf(events, turn).pipe(Effect.flatMap((calls) => calls.length === 0 ? turnUsageOf(events, turn) : Effect.gen(function* () {
+    const ledgered = new Set(calls.flatMap((call) => call.purpose === "Loop"
+      ? Option.toArray(Option.map(Option.all([call.run, call.step]), ([run, step]) => loopStepKey(run, step))) : []))
+    const selected = yield* readStored("step.usage", events.filter((event) => Option.contains(event.turn, turn)))
+    const observed = yield* Schema.encodeEffect(ModelCallUsage.cases.Known.fields.usage)(sumUsage(calls.flatMap((call) => call.usage._tag === "Unknown" ? [] : [call.usage.usage])))
+    return addUsage(observed, sumUsage(selected.flatMap(({ data }) => ledgered.has(loopStepKey(data.run, data.step)) ? [] : [data.usage])))
+  })))
 
 /**
  * The stored form of one bus event of turn `turn`: its name and encoded

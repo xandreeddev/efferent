@@ -31,10 +31,12 @@ export const makeTurnModelCallRecorder = Effect.fnUntraced(function* (
   writer: TurnWriter,
   publish: (data: ModelCallData) => Effect.Effect<void, TurnError>,
 ) {
-  const before = yield* writer.snapshot(["model.called", "step.usage"])
+  // Only this turn's rows matter: read what was stored after its start, never the whole session.
+  const ownRows = (kinds: ReadonlyArray<string>) => writer.snapshot(kinds, writer.started.seq)
+  const before = yield* ownRows(["model.called", "step.usage"])
   const seededCalls = yield* turnModelCallsOf(before, writer.admitted.turn).pipe(Effect.mapError((cause) => invalid("the turn's model-call ledger did not decode", cause)))
   const seededLegacy = yield* readStored("step.usage", before.filter((event) => Option.contains(event.turn, writer.admitted.turn))).pipe(
-    Effect.map((records): ReadonlyArray<ModelCallLegacyUsage> => records.map(({ data }) => ({ model: data.model, usage: data.usage, replayed: true }))),
+    Effect.map((records): ReadonlyArray<ModelCallLegacyUsage> => records.map(({ data }) => ({ model: data.model, usage: data.usage, run: data.run, step: data.step, replayed: true }))),
     Effect.mapError((cause) => invalid("the turn's selected usage did not decode", cause)),
   )
   const originalKeys = new Set(seededCalls.map(modelCallKey))
@@ -52,7 +54,7 @@ export const makeTurnModelCallRecorder = Effect.fnUntraced(function* (
   ) : Effect.void), Effect.interruptible, Effect.ignoreCause({ log: "Warn", message: "a model-call billing observer failed" }))
   const deliverAll = (listeners: ReadonlyArray<Observer>, calls: ReadonlyArray<ObservedModelCall>) => Effect.forEach(listeners, (observer) =>
     Effect.forEach(calls, (call) => deliver(observer, call), { concurrency: 1, discard: true }), { concurrency: 1, discard: true })
-  const reconcile = writer.snapshot(["model.called"]).pipe(
+  const reconcile = ownRows(["model.called"]).pipe(
     Effect.flatMap((events) => turnModelCallsOf(events, writer.admitted.turn)),
     Effect.flatMap((calls) => Ref.update(phase, (current) => mergeModelCalls(current, calls.map((data) => ({ data, replayed: originalKeys.has(modelCallKey(data)) }))))),
     Effect.ignoreCause({ log: "Warn", message: "the model-call billing snapshot could not be refreshed" }),

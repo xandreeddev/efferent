@@ -228,8 +228,11 @@ in `RECORDED_ELSEWHERE` to avoid a second bus write, and appended to reserved
 journal kinds. Stored format 9 adds its payload; old request headers and
 memory fingerprints remain unchanged. `turnModelCallsOf` rejects malformed
 and duplicate keys even when identical. `turnBilledUsageOf` sums ledger
-Known/Partial subtotals when ANY call exists; Unknown-only and Known-zero
-ledgers never fall back. Only no ledger uses legacy `turnUsageOf`. Preserve
+Known/Partial subtotals plus the `step.usage` of every loop step (run ordinal,
+step) no `Loop` call names; a step's Unknown or Known-zero `Loop` call still
+stands for that step, and a helper call never hides a loop step it did not
+record. No ledger at all is `turnUsageOf`. `ModelCallLegacyUsage` carries its
+run and step for the same per-step choice in billing observers. Preserve
 selected TurnResult/RunContext usage. Raw calls expose coverage; terminal-only
 records cannot recover a SIGKILL gap or establish an exact provider bill.
 
@@ -280,10 +283,14 @@ reconciliation before another allocation. Keep that contract in
 separate commits, or call memory from inside a queued writer decision.
 
 `MaintainSignal` accepts `turn-start`, `step`, `turn-end` and `overflow`.
-Its optional `render` scope names the calling run ordinal and tail placement;
-the sdk always supplies it. Turn-end always renders with no `StepContext`,
-while older callers that omit the scope keep latest-run/tail behavior for
-their existing phases. Never remove the durable step context: an earlier
+`turn-end` comes only after the turn's reply is final and sealed
+(`TurnMemory.afterReply`, `TurnWriter.seal`), so nothing it meets can cost
+the reply; `turn-start` is its safety net, observing the last durable
+selected response (`TurnMemory.acceptedBefore`). Its optional `render` scope
+names the calling run ordinal and tail placement; the sdk always supplies
+it. Turn-end always renders with no `StepContext`, while older callers that
+omit the scope keep latest-run/tail behavior for their existing phases.
+Never remove the durable step context: an earlier
 request's cut and saved recipe still need it. Transcript defaults are unchanged.
 `MemoryObservation` is runtime accepted-input evidence for the same actual
 model. `scaledTokens` only raises message estimates, subtracts the measured

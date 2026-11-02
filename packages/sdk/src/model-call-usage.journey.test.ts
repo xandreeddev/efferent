@@ -88,7 +88,7 @@ test("journey: bootstrap and late helpers persist while two runs retain exact co
   expect(observed.events.findIndex((event) => event.kind === "model.called")).toBeLessThan(observed.events.findIndex((event) => event.kind === "memory.system"))
 })
 
-test("journey: afterRun helper is durable before the final reply and turn-owner closing helper", async () => {
+test("journey: the post-reply helper runs after the host replies, in the turn, after the turn-owner closing helper and before the end", async () => {
   const phases: string[] = []
   const endInput: { messages: number; step: Option.Option<number>; run: Option.Option<number> }[] = []
   const afterPolicy: MemoryPolicy = { ...memoryPolicy, maintain: ({ entries, signal }) => Effect.gen(function* () {
@@ -123,12 +123,40 @@ test("journey: afterRun helper is durable before the final reply and turn-owner 
     const events = yield* sessions.read(session)
     return { result, calls: yield* turnModelCallsOf(events, 1), billed: yield* turnBilledUsageOf(events, 1), events }
   })))
-  expect(phases).toEqual(["turn-start", "step", "turn-end", "reply"])
+  expect(phases).toEqual(["turn-start", "step", "reply", "turn-end"])
   expect(endInput).toEqual([{ messages: 1, step: Option.none(), run: Option.some(0) }])
   expect(observed.calls.map((call) => [String(call.callId), Option.getOrNull(call.run), Option.getOrNull(call.step)])).toEqual([
-    ["loop:0", 0, 0], ["after-run:0", 0, null], ["closing:outside", null, null],
+    ["loop:0", 0, 0], ["closing:outside", null, null], ["after-run:0", 0, null],
   ])
   expect(observed.result.usage.totalTokens).toBe(12)
   expect(observed.billed.totalTokens).toBe(36)
   expect(observed.events.findIndex((event) => event.kind === "model.called" && event.data.callId === "after-run:0")).toBeLessThan(observed.events.findIndex((event) => event.kind === "turn.ended"))
+})
+
+test("journey: a loop model outside the ledger stays billed beside a recorded helper", async () => {
+  const helperPolicy: MemoryPolicy = { ...memoryPolicy, maintain: ({ signal }) => (signal.phase === "turn-start"
+    ? completion("summary", "Helper").pipe(Effect.orDie) : Effect.void).pipe(Effect.as({ actions: [], digest: [] })) }
+  const helperMemory = definePlugin({
+    id: "fixture/helper-memory", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [ConversationMemory],
+    layer: () => Layer.succeed(ConversationMemory, { strategy: helperPolicy.strategy, open: (input) => openLogSession(input.log, helperPolicy, { runId: input.runId }) }),
+  })
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const session = { owner: "fixture", id: ConversationId.make("00000000-0000-4000-8000-00000000001a") }
+    yield* sessions.create(session)
+    const agent = yield* Agent.define({ plugins: [helperMemory, toolDiscoveryPlugin, stepLoopPlugin],
+      turnServices: [LanguageModel.LanguageModel, Sessions], limits: { streaming: false, maxSteps: 1 } })
+    // The host's own model: it records no call, only the selected response's usage.
+    const scripted = yield* LanguageModel.make({ generateText: () => Effect.succeed([
+      { type: "text", text: "finished" },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 7 }, outputTokens: { total: 3 } }, metadata: { [ENGINE_KEY]: { model: "host:loop" } } },
+    ]), streamText: () => Stream.die("not scripted") })
+    yield* agent.turn({ turn: { session, runId: RunId.make("host-loop"), userMessage: new UserMessage({ text: "hello" }) },
+      services: Context.make(LanguageModel.LanguageModel, scripted).pipe(Context.add(Sessions, sessions)) },
+    (current) => current.run({}).pipe(Effect.flatMap((result) => current.reply(result.text))))
+    const events = yield* sessions.read(session)
+    return { selected: yield* turnUsageOf(events, 1), billed: yield* turnBilledUsageOf(events, 1) }
+  })))
+  expect(observed.selected.totalTokens).toBe(10)
+  expect(observed.billed.totalTokens).toBe(10 + usage.totalTokens)
 })

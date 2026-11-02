@@ -93,7 +93,11 @@ const logFailure = (message: string) => <A, E, R>(effect: Effect.Effect<A, E, R>
  * reply waits for the turn's closing commit, so when any of it fails (or
  * the drain is cut) the reply is downgraded to failed before the failure
  * goes on: the end stores a failed reply, never a completed one beside a
- * failed or interrupted end. Runs where interruption is masked.
+ * failed or interrupted end. A completed or partial reply that got this far
+ * is final: `TurnMemory.afterReply` seals it, then runs the work after the
+ * reply (memory maintenance) with `restore`'s interruptibility, where an
+ * interruption cuts that work only and the turn still ends with its reply.
+ * Runs where interruption is masked.
  */
 const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
   const memory = yield* TurnMemory
@@ -103,9 +107,14 @@ const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, 
     yield* (yield* RunContext).flush
     return yield* drained
   }))
-  if (Exit.isSuccess(finished)) return
-  yield* memory.persistReply(failed).pipe(logFailure("the turn's reply was not downgraded to failed"))
-  return yield* Effect.failCause(finished.cause)
+  if (Exit.isFailure(finished)) {
+    yield* memory.persistReply(failed).pipe(logFailure("the turn's reply was not downgraded to failed"))
+    return yield* Effect.failCause(finished.cause)
+  }
+  if (outcome.outcome !== "completed" && outcome.outcome !== "partial") return
+  const after = yield* Effect.exit(restore(memory.afterReply))
+  // An interruption cut the work after the sealed reply, nothing else: the turn ends with its reply.
+  if (Exit.isFailure(after) && !Cause.hasInterruptsOnly(after.cause)) return yield* Effect.failCause(after.cause)
 })
 
 /**

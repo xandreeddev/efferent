@@ -1,6 +1,6 @@
 # @xandreed/plugin-memory-summary
 
-Summarizing conversation memory: a `ConversationMemory` with the window strategy's full-fidelity log and render, which folds older whole turns into one recorded summary (the previous summary included). Normal summaries run at `summarizeAt` (`turn-end` by default, `step` for pre-request timing); overflow can force an eligible reduction. The summarizer is the `UtilityLlm` of the turn that opens the session. Node 24 and Bun; layer `plugin-memory-summary` in `foundry.config.ts` (imports core only).
+Summarizing conversation memory: a `ConversationMemory` with the window strategy's full-fidelity log and render, which folds older whole turns into one recorded summary (the previous summary included). Normal summaries run at `summarizeAt`: `turn-end` by default (after the reply is final and sealed, on the run's reported input, with the next run's start as the safety net for a summary that could not finish), `step` for pre-request timing; overflow can force an eligible reduction. The summarizer is the `UtilityLlm` of the turn that opens the session. Node 24 and Bun; layer `plugin-memory-summary` in `foundry.config.ts` (imports core only).
 
 ## Rules
 

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { Context, Effect, Layer, Metric, Option, Ref, Tracer } from "effect"
 import {
   CurrentModelCallRecorder, makeTurnEvents, ModelCallId, ModelId, ModelSelection,
-  ProviderId, RunContext, tokenUsage, TurnEvents,
+  ProviderId, RunContext, RunId, RunOrdinal, tokenUsage, TurnEvents,
 } from "@xandreed/core"
 import type { ModelCallData, ModelCallLegacyUsage, ModelCallObserver, ModelCallRecorder } from "@xandreed/core"
 import { capturingTracer, valueIn } from "./scripted-turn.testing.js"
@@ -18,7 +18,11 @@ const call = (name: string, observed: ModelCallData["usage"] = { _tag: "Known", 
   runId: Option.none(), run: Option.none(), step: Option.none(), durationMs: 1,
   usage: observed, outcome: { _tag: "Completed" },
 })
-const legacy = (replayed: boolean): ModelCallLegacyUsage => ({ model: Option.some(model), usage, replayed })
+const legacy = (replayed: boolean, step = 0): ModelCallLegacyUsage => ({ model: Option.some(model), usage, run: RunOrdinal.make(0), step, replayed })
+/** A loop call of run 0's `step`: it bills that step, whose selected response it supersedes. */
+const loopCall = (name: string, step: number, observed: ModelCallData["usage"] = { _tag: "Known", usage }): ModelCallData => ({
+  ...call(name, observed), purpose: "Loop", runId: Option.some(RunId.make("run")), run: Option.some(RunOrdinal.make(0)), step: Option.some(step),
+})
 const billing = async (
   bootstrap: ReadonlyArray<{ readonly data: ModelCallData; readonly replayed: boolean }>,
   live: ReadonlyArray<ModelCallData>,
@@ -48,7 +52,7 @@ const cost = (registry: Metric.MetricRegistry) => Effect.runPromise(valueIn(regi
 
 test("billing includes prior/bootstrap/late calls on the span and only fresh calls in global metrics", async () => {
   const partial = call("late-partial", { _tag: "Partial", usage: tokenUsage({ inputTokens: 12, outputTokens: 0 }), reported: ["inputTokens"] })
-  const { registry, span } = await billing([{ data: call("prior"), replayed: true }, { data: call("bootstrap"), replayed: false }], [partial], [legacy(true), legacy(false)])
+  const { registry, span } = await billing([{ data: loopCall("prior", 0), replayed: true }, { data: loopCall("bootstrap", 1), replayed: false }], [partial], [legacy(true, 0), legacy(false, 1)])
   expect(await cost(registry)).toBeCloseTo(62 / 1_000_000, 12)
   expect(span.attributes.get("efferent.cost")).toBeCloseTo(112 / 1_000_000, 12)
   expect(span.attributes.get("efferent.model.calls")).toBe(3)
@@ -57,14 +61,14 @@ test("billing includes prior/bootstrap/late calls on the span and only fresh cal
   expect((await Effect.runPromise(valueIn(registry, TelemetryMetrics.tokens, { "efferent.model": model, "efferent.token.kind": "input" }))).count).toBe(52)
 })
 
-test("an Unknown-only ledger suppresses legacy prices and exposes missing coverage", async () => {
-  const { registry, span } = await billing([], [call("unknown", { _tag: "Unknown" })], [legacy(false)])
+test("an Unknown loop call suppresses its own step's legacy price and exposes missing coverage", async () => {
+  const { registry, span } = await billing([], [loopCall("unknown", 0, { _tag: "Unknown" })], [legacy(false)])
   expect(await cost(registry)).toBe(0)
   expect(span.attributes.has("efferent.cost")).toBe(false)
   expect(span.attributes.get("efferent.model.calls.unknown")).toBe(1)
   expect(span.attributes.get("efferent.model.calls.unpriced")).toBe(0)
   expect((await Effect.runPromise(valueIn(registry, TelemetryMetrics.modelCalls, {
-    "efferent.model": model, "efferent.call.purpose": "Helper", "efferent.call.outcome": "Completed",
+    "efferent.model": model, "efferent.call.purpose": "Loop", "efferent.call.outcome": "Completed",
     "efferent.usage.coverage": "Unknown", "efferent.cost.priced": "true",
   }))).count).toBe(1)
 })
@@ -82,4 +86,12 @@ test("legacy fallback includes prior selected usage on the span without counting
   expect(await cost(registry)).toBeCloseTo(50 / 1_000_000, 12)
   expect(span.attributes.get("efferent.cost")).toBeCloseTo(100 / 1_000_000, 12)
   expect(span.events).toEqual([])
+})
+
+test("a recorded helper never suppresses the selected usage of a loop step no call was recorded for", async () => {
+  // A loop model outside the models plugin beside a recorded helper: both are billed.
+  const { registry, span } = await billing([], [call("summary-helper")], [legacy(false, 0), legacy(false, 1)])
+  expect(await cost(registry)).toBeCloseTo(150 / 1_000_000, 12)
+  expect(span.attributes.get("efferent.cost")).toBeCloseTo(150 / 1_000_000, 12)
+  expect((await Effect.runPromise(valueIn(registry, TelemetryMetrics.tokens, { "efferent.model": model, "efferent.token.kind": "input" }))).count).toBe(120)
 })

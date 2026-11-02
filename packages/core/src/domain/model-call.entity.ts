@@ -59,10 +59,13 @@ export const ModelCallData = Schema.Struct({
   && (Option.isNone(call.step) || Option.isSome(call.run)) ? true : "model call run and step correlation must agree"))
 export type ModelCallData = typeof ModelCallData.Type
 
-/** Selected-response fallback facts for a turn without any model-call ledger. @public */
+/** One selected response's usage: billing's fallback for a loop step no `Loop` call was recorded for. @public */
 export const ModelCallLegacyUsage = Schema.Struct({
   model: Schema.OptionFromNullOr(Schema.String),
   usage: TokenUsage,
+  /** The loop step it answered: its run's ordinal and its step. */
+  run: RunOrdinal,
+  step: Count,
   /** Already durable before the observing TurnLive was built. */
   replayed: Schema.Boolean,
 })

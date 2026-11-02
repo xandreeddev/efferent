@@ -321,9 +321,10 @@ one rate, so mixed-lifetime cost is approximate.
 `TurnResult.usage` and selected step/run span totals keep their existing
 meaning: the responses received by the step loop. The billed ledger is read
 with `turnModelCallsOf(events, turn)` and `turnBilledUsageOf(events, turn)`.
-The latter sums reported `Known` and `Partial` usage. Any ledger fact,
-including `Unknown` or known zero, suppresses legacy selected-usage fallback.
-Only a turn without any call facts uses its `step.usage` records for billing.
+The latter sums reported `Known` and `Partial` usage, plus the `step.usage`
+of each loop step no `Loop` call was recorded for. A step's `Loop` call,
+including `Unknown` or known zero, stands for that step only: a recorded
+helper never hides the selected usage of a loop model outside the ledger.
 
 **Lifetime and coverage.** `TurnLive` owns billing observation through memory
 bootstrap, tools and late helper/finalizer work, even after the telemetry

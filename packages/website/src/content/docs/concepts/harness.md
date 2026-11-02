@@ -140,11 +140,22 @@ lists the framework's stored failure codes; a turn that fails with a
 host's or a plugin's error stores that error's code.
 
 Memory strategies use version 2 decisions. Summaries default to
-`summarizeAt: "turn-end"`: after each successful non-waiting `turn.run`, including
-a partial return, before that call returns to the host. Choose `"step"` for
-pre-request timing. Waiting results and failed or interrupted loop effects skip
-normal end maintenance. Summaries retain whole turns and protect the active admitted turn; end maintenance removes its
-obsolete temporary step context from estimates.
+`summarizeAt: "turn-end"`: after the turn's completed or partial reply is
+recorded and sealed, still inside the turn, billed by it and calibrated by its
+last run's reported input. Nothing that happens then can cost the reply or make
+a resume ask the model again: a failing summary is logged and skipped, and a
+cancel, a time limit or a shutdown stops the summary only, the turn ending
+`completed` with its reply. A process death meanwhile ends the turn `completed`
+with its reply once it is reaped: the seal keeps the reply in the session's
+state.
+Each run's start is the safety net for what a cut summary left, calibrated by
+the last stored response. Choose `"step"` to consider one before each step's
+request instead. Summaries retain whole turns and protect the active admitted
+turn; end maintenance removes its obsolete temporary step context from
+estimates.
+When a `ModelCatalog` knows the model's window, a step's ceiling is lowered to
+that window less its output cap, so a `budgetTokens` above it does not
+overflow every run's first request.
 
 On a classified context overflow, the SDK can compact to a strictly smaller
 request and resend once per step. Recovery uses the existing `budgetTokens`
@@ -193,16 +204,17 @@ and shipped `memorySnapshotConformance` kit describe the integrity contract.
 
 Accepted positive input counts can raise message estimates through
 `scaledTokens`, using the exact prepared message estimate and system/tool reserve.
-The SDK matches the actual selected model and run; helpers, discarded responses
-and aggregate billed usage do not calibrate context. Missing evidence keeps the
+The SDK matches the actual selected model and run, and a run's start uses the
+last stored selected response before it; helpers, discarded responses and
+aggregate billed usage do not calibrate context. Missing evidence keeps the
 raw estimate. Stored estimates and version 1 replay remain unchanged.
 
-Manual compositions use `prepareRun(policy, options)` from `@xandreed/sdk`, run
-`loop.run(prepared.request)`, then execute the cached `prepared.afterRun` after
-a successful run that did not yield `waiting`. `runTurnLoop` does this
-automatically; `stepRequestOf` stays a
-preparation-only API. No extra scope service is required. A host can run the loop
-several times before choosing its turn reply; each run owns its maintenance.
+Manual compositions use `stepRequestOf(policy, options)` from `@xandreed/sdk`,
+then run `loop.run(request)`: the same lifecycle as `runTurnLoop`, with nothing
+to call after the loop. The request hands its run's maintenance to the turn,
+which runs it after the sealed reply. A host can run the loop several times
+before choosing its turn reply; the latest run is maintained after the reply,
+and each run's start maintains what an earlier one left.
 
 Each admitted turn runs under an `agent.turn` span carrying
 `efferent.session.id`, `efferent.run.id` and `efferent.turn`, which every

@@ -103,15 +103,28 @@ export interface MemoryReader {
 
 /** @public */
 export interface MaintainSignal {
+  /**
+   * `turn-start` before a run's first request (it also maintains what an
+   * earlier reply left when its own maintenance was cut), `step` before each
+   * step's request, `turn-end` after the turn's reply is final and sealed
+   * (nothing that happens then can cost the reply), `overflow` to recover a
+   * request the provider refused as too long.
+   */
   readonly phase: "turn-start" | "step" | "turn-end" | "overflow"
-  /** Accepted input for the same actual model, not aggregate billing or run usage. */
+  /**
+   * Accepted input for the same actual model, not aggregate billing or run
+   * usage: the run's last accepted response at `step`, `turn-end` and
+   * `overflow`; at `turn-start`, the last durable selected response before
+   * this run (its `step.usage` and `context.built`), so calibration carries
+   * across runs and turns.
+   */
   readonly observed?: MemoryObservation
   /** The calling run's projection; omitted by older hosts. Turn-end always omits step context. */
   readonly render?: Pick<MemoryRenderRecipe, "run" | "stepContext">
   readonly lastUsage: Option.Option<TokenUsage>
   /**
    * Tokens available to the messages, at least 1: at `step`, what the system
-   * prompt and the active tool schemas leave of the run's budget; at
+   * prompt and the active tool schemas leave of the step's ceiling; at
    * `turn-start`, the run's whole budget (nothing is built yet). Turn-end
    * and overflow targets are advisory; strategies may return safe reductions
    * even when an irreducible current tail remains above the target.

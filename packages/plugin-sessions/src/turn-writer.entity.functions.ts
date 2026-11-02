@@ -3,6 +3,7 @@ import { replyEndingOf } from "@xandreed/core"
 import type { TurnClosed, TurnEnding, TurnError } from "@xandreed/core"
 import { WriterPhase } from "./turn-writer.entity.js"
 import type { ClosedBy, ClosingDrafts, EndStep, WriterStopped } from "./turn-writer.entity.js"
+import type { SealedTurn } from "./sessions-state.entity.js"
 
 /*
  * The writer's transitions: pure decisions over its phase. Each returns the
@@ -15,7 +16,7 @@ import type { ClosedBy, ClosingDrafts, EndStep, WriterStopped } from "./turn-wri
 const sealed: WriterStopped = { _tag: "Closed", reason: "ended" }
 
 /** A writer as its turn begins: open, nothing written, no end attempted, nothing held for its end. */
-export const opened: WriterPhase = { _tag: "Open", tried: false, attempted: Option.none(), closing: [] }
+export const opened: WriterPhase = { _tag: "Open", tried: false, attempted: Option.none(), closing: [], sealed: Option.none() }
 
 const isStopped = WriterPhase.isAnyOf(["Failed", "Closed"])
 const isLive = WriterPhase.isAnyOf(["Open", "Ending"])
@@ -56,13 +57,14 @@ export const hold = (phase: WriterPhase, closing: ClosingDrafts): Result.Result<
 })
 
 /**
- * An end asks to begin. An open writer starts one with `ending`, sealing
- * admission until it settles, its commit to store the drafts held; an end
- * under way is shared; a stored one answers with what it left pending; a
- * stopped writer refuses it.
+ * An end asks to begin. An open writer starts one with `ending` (the sealed
+ * ending instead, once a final reply sealed the turn), sealing admission
+ * until it settles, its commit to store the drafts held; an end under way is
+ * shared; a stored one answers with what it left pending; a stopped writer
+ * refuses it.
  */
 export const beginEnd = (phase: WriterPhase, ending: TurnEnding): Result.Result<EndStep, WriterStopped> => WriterPhase.match(phase, {
-  Open: (open) => Result.succeed<EndStep>({ _tag: "Start", phase: { _tag: "Ending", tried: open.tried, ending, attempted: open.attempted, closing: open.closing } }),
+  Open: (open) => Result.succeed<EndStep>({ _tag: "Start", phase: { _tag: "Ending", tried: open.tried, ending: Option.getOrElse(open.sealed, () => ending), attempted: open.attempted, closing: open.closing, sealed: open.sealed } }),
   Ending: () => Result.succeed<EndStep>({ _tag: "Share" }),
   Failed: (failed) => Result.fail(failed),
   Closed: (closed) => Result.fail(closed),
@@ -75,7 +77,7 @@ export const beginEnd = (phase: WriterPhase, ending: TurnEnding): Result.Result<
  * the attempt before it stays the one the scope's own end tries again.
  */
 export const withdrawEnd = (phase: WriterPhase): WriterPhase =>
-  WriterPhase.guards.Ending(phase) ? { _tag: "Open", tried: phase.tried, attempted: phase.attempted, closing: phase.closing } : phase
+  WriterPhase.guards.Ending(phase) ? { _tag: "Open", tried: phase.tried, attempted: phase.attempted, closing: phase.closing, sealed: phase.sealed } : phase
 
 /** What an end's commit plans from: whether the turn tried the inbox items it took, and the drafts it stores before `turn.ended`. */
 export interface EndPlan {
@@ -108,7 +110,7 @@ export const endSettled = (phase: WriterPhase, exit: Exit.Exit<{ readonly pendin
   Open: (open): WriterPhase => Exit.isSuccess(exit) ? { _tag: "Ended", pending: exit.value.pending } : open,
   Ending: (ending): WriterPhase => Exit.isSuccess(exit) ? { _tag: "Ended", pending: exit.value.pending } : Option.match(Option.filter(Exit.findErrorOption(exit), isClosed), {
     onSome: (closed) => ({ _tag: "Closed", reason: closed.reason }),
-    onNone: () => ({ _tag: "Open", tried: ending.tried, attempted: Option.some(ending.ending), closing: ending.closing }),
+    onNone: () => ({ _tag: "Open", tried: ending.tried, attempted: Option.some(ending.ending), closing: ending.closing, sealed: ending.sealed }),
   }),
   Failed: (failed) => failed,
   Closed: (closed) => closed,
@@ -137,15 +139,46 @@ export const unended = (exit: Exit.Exit<unknown, unknown>): TurnEnding => Exit.h
 
 /**
  * What the scope's own end stores when the scope closes: an open writer's
- * last attempted ending (one not stored is stored again), else the ending
+ * sealed ending, else its last attempted ending (one not stored is stored again), else the ending
  * its held reply implies (`replyEndingOf`: completed or partial), else
  * `unended`'s; an ending writer's ending under way. A stopped or ended
  * writer has none: the first refuses its end, the second stored it.
  */
 export const scopeEnding = (phase: WriterPhase, exit: Exit.Exit<unknown, unknown>): Option.Option<TurnEnding> => WriterPhase.match(phase, {
-  Open: (open) => Option.some(open.attempted.pipe(Option.orElse(() => replyEndingOf(open.closing)), Option.getOrElse(() => unended(exit)))),
+  Open: (open) => Option.some(open.sealed.pipe(Option.orElse(() => open.attempted), Option.orElse(() => replyEndingOf(open.closing)), Option.getOrElse(() => unended(exit)))),
   Ending: (ending) => Option.some(ending.ending),
   Failed: () => Option.none(),
   Closed: () => Option.none(),
   Ended: () => Option.none(),
 })
+
+/**
+ * The turn's final reply seals it with `ending` (`TurnWriter.seal`): only an
+ * open writer is sealed (a second seal keeps the first); an ending or ended
+ * one refuses it as `ended`, a stopped one with its own refusal.
+ */
+export const sealWith = (phase: WriterPhase, ending: TurnEnding): Result.Result<WriterPhase, WriterStopped> => WriterPhase.match(phase, {
+  Open: (open) => Result.succeed<WriterPhase>(Option.isSome(open.sealed) ? open : { ...open, sealed: Option.some(ending) }),
+  Ending: () => Result.fail(sealed),
+  Failed: (failed) => Result.fail(failed),
+  Closed: (closed) => Result.fail(closed),
+  Ended: () => Result.fail(sealed),
+})
+
+/** The ending a live writer's final reply sealed, if it is sealed. */
+export const sealedEnding = (phase: WriterPhase): Option.Option<TurnEnding> =>
+  WriterPhase.guards.Open(phase) || WriterPhase.guards.Ending(phase) ? phase.sealed : Option.none()
+
+/**
+ * What the held reply seals, when it can: the ending it implies (completed or
+ * partial, never failed) and the closing drafts held with it, which a close
+ * elsewhere stores for the holder. A memory snapshot is left out: its row
+ * needs the head pointer only the holder's own commit publishes.
+ */
+export const sealable = (phase: WriterPhase): Option.Option<SealedTurn> =>
+  WriterPhase.guards.Open(phase)
+    ? Option.map(
+      Option.filter(replyEndingOf(phase.closing), (ending) => ending.reason === "completed" || ending.reason === "partial"),
+      (ending): SealedTurn => ({ ending, closing: phase.closing.filter((draft) => draft.kind !== "memory.snapshot").map((draft) => ({ kind: draft.kind, data: draft.data })) }),
+    )
+    : Option.none()

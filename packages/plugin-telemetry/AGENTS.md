@@ -31,10 +31,12 @@ on Node and Bun in `bun run verify:packages`).
   price is available; unknown usage and unpriced models never imply a free bill.
   A replayed durable call contributes to the turn span but does not increment
   global token/cost/call metrics again. Fresh bootstrap calls do increment them.
-- `assistant.message` remains step narrative. If ANY ledger call is observed,
-  even Unknown or Known0, it suppresses selected-response billing. When the
-  recorder closes with no ledger, exact per-model legacy selected facts provide
-  fallback; prior durable facts affect span cost only. Manual composition with
+- `assistant.message` remains step narrative. A `Loop` call observed for a
+  loop step (its run ordinal and step), even Unknown or Known0, suppresses
+  that step's selected-response billing and no other. When the recorder
+  closes, the exact per-model legacy selected facts of every other loop step
+  (a loop model outside the models plugin beside recorded helpers, an older
+  journal) are billed; prior durable facts affect span cost only. Manual composition with
   a recorder lacking `observe` retains the existing caller-scoped legacy path.
   `efferent.model.called` span events retain reported usage/outcome/correlation;
   span attributes expose unknown, partial and unpriced coverage. Selected turn

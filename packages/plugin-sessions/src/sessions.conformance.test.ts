@@ -197,7 +197,7 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "shutdown", "steering-closed", "takeover", "time-limit", "transact", "writer"])
   })
 
-  test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check", async () => {
+  test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check and the sealed one, whose held reply it stores early too", async () => {
     const eager = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
       sessions: Sessions.of({
@@ -208,7 +208,21 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, eager)))).toEqual(["closing"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, eager)))).toEqual(["closing", "sealed"])
+  })
+
+  test("one whose turn writers answer a seal without storing or keeping it fails only the sealed check", async () => {
+    const forgetful = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer): TurnWriter => ({
+          ...writer,
+          seal: Effect.succeed(Option.some(Effect.never)),
+        }))),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["sealed"])
   })
 
   test("one that begins a reused run id's turn under a new one fails only the run-id check", async () => {
@@ -305,12 +319,12 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, everyTurn)))).toEqual(["drain-takeover"])
   })
 
-  test("one whose begin ignores the turn's own time limit fails only the time-limit check", async () => {
+  test("one whose begin ignores the turn's own time limit fails only the time-limit check and the sealed one, whose time limit it ignores too", async () => {
     const unbounded = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, timeLimitMs: 86_400_000 }) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unbounded)))).toEqual(["time-limit"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unbounded)))).toEqual(["sealed", "time-limit"])
   })
 
   test("one whose enqueue acknowledges without storing fails every queued-input and steering check", async () => {

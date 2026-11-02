@@ -11,7 +11,7 @@ import { Metric } from "effect"
  * |---|---|---|
  * | `efferent.llm.calls` | `efferent.model`, `efferent.call.purpose`, `efferent.call.outcome`, `efferent.usage.coverage`, `efferent.cost.priced` | fresh terminal physical attempts; coverage is Unknown, Known or Partial, priced means the host supplied a rate |
  * | `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | tokens of each response, by billed kind (`input`, `cache_read`, `cache_write`, `reasoning`, `output`; they sum to the response's total) |
- * | `efferent.llm.cost` | `efferent.model` | reported cost of fresh priced calls, including helpers and discarded outcomes; legacy responses only without a ledger |
+ * | `efferent.llm.cost` | `efferent.model` | reported cost of fresh priced calls, including helpers and discarded outcomes; a selected response's only for a loop step no call was recorded for |
  * | `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended (`completed`, `failed`, `cancelled`, `malformed`: a response the model could not form, answered with a corrective turn, or `truncated`: a response cut short, none of whose tool calls ran) |
  * | `efferent.tool.calls` | `efferent.tool`, `efferent.ok` | tool calls whose handler ran, by result |
  * | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time in milliseconds, from `tool.started` to the handler's exit |

@@ -808,19 +808,19 @@ if (await recorderBun.exited !== 0 || !recorderBunReport.includes('model-call-re
   console.error("the packed Bun model-call recorder failed its public conformance kit"); process.exit(1)
 }
 console.log(recorderBunReport.trim())
-// Accepted request input calibrates maintenance after the loop; manual
-// composition shares that lifecycle without another scope requirement.
+// Maintenance runs after the turn's sealed reply on the run's reported input;
+// a manual composition shares that lifecycle.
 await writeFile(join(consumer, "memory-maintenance-consumer.mjs"), await readFile(join(root, "scripts/memory-maintenance-consumer.fixture.mjs"), "utf8"))
 const maintenanceNode = Bun.spawn(["node", "memory-maintenance-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const maintenanceNodeReport = await new Response(maintenanceNode.stdout).text()
-if (await maintenanceNode.exited !== 0 || !maintenanceNodeReport.includes('memory-maintenance {"runtime":"Node","summaries":1,"manualAfterRun":1,"maintenanceVerified":true}')) {
-  console.error("the packed Node maintenance lifecycle lost accepted input, timing or manual completion"); process.exit(1)
+if (await maintenanceNode.exited !== 0 || !maintenanceNodeReport.includes('memory-maintenance {"runtime":"Node","summaries":1,"manualAfterReply":1,"maintenanceVerified":true}')) {
+  console.error("the packed Node maintenance lifecycle lost accepted input, timing or the manual run's sealed reply"); process.exit(1)
 }
 console.log(maintenanceNodeReport.trim())
 const maintenanceBun = Bun.spawn(["bun", "memory-maintenance-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const maintenanceBunReport = await new Response(maintenanceBun.stdout).text()
-if (await maintenanceBun.exited !== 0 || !maintenanceBunReport.includes('memory-maintenance {"runtime":"Bun","summaries":1,"manualAfterRun":1,"maintenanceVerified":true}')) {
-  console.error("the packed Bun maintenance lifecycle lost accepted input, timing or manual completion"); process.exit(1)
+if (await maintenanceBun.exited !== 0 || !maintenanceBunReport.includes('memory-maintenance {"runtime":"Bun","summaries":1,"manualAfterReply":1,"maintenanceVerified":true}')) {
+  console.error("the packed Bun maintenance lifecycle lost accepted input, timing or the manual run's sealed reply"); process.exit(1)
 }
 console.log(maintenanceBunReport.trim())
 // Recovery sends one provably smaller same-step request, preserves actual route

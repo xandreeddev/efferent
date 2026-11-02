@@ -6,7 +6,11 @@ import type { TurnError } from "../session/sessions.entity.js"
 export interface ModelCallObserver {
   /** Bootstrap and future durable calls, once per key for this observer. */
   readonly called: (data: ModelCallData, info: { readonly replayed: boolean }) => Effect.Effect<void>
-  /** Once at owner close, after helper/finalizer work; use legacy only with no calls. */
+  /**
+   * Once at owner close, after helper/finalizer work: every selected
+   * response of the turn. Bill one only when no `Loop` call names its run
+   * and step (`turnBilledUsageOf` does the same).
+   */
   readonly closed: (legacy: ReadonlyArray<ModelCallLegacyUsage>) => Effect.Effect<void>
 }
 
