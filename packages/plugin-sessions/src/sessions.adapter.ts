@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Deferred, Effect, Equal, Exit, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Equal, Exit, HashMap, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -70,7 +70,7 @@ import type {
   WaitingInputCount,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, withFormat } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged, withFormat } from "./sessions-state.entity.functions.js"
 import type { Holder, ReleasedTurn } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
@@ -157,6 +157,12 @@ interface InFlight {
   readonly beginning: number
 }
 
+/** The sessions `WaitingInput` refreshes: those with queued input waiting, and the most recent quiet ones (oldest first). */
+interface Known {
+  readonly waiting: HashMap.HashMap<ConversationId, { readonly address: SessionAddress; readonly pending: number }>
+  readonly quiet: ReadonlyArray<SessionAddress>
+}
+
 /**
  * Sessions over a SessionLog. The state (turns, the open turn, the title,
  * the inbox) is kept in the head and changed only by guarded commits, with
@@ -214,14 +220,29 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    */
   const followers = yield* RcMap.make({ lookup: (_: ConversationId) => Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown) })
   const waitingHub = yield* Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown)
-  const known = yield* Ref.make<ReadonlyMap<ConversationId, { readonly address: SessionAddress; readonly pending: number }>>(new Map())
-  const observe = (address: SessionAddress) => Ref.update(known, (all) => all.get(address.id)?.address.owner === address.owner
-    ? all : new Map([...all, [address.id, { address, pending: 0 }]]))
-  const remember = (address: SessionAddress, state: SessionsState) => Ref.update(known, (all) => new Map([...all, [address.id, {
-    address, pending: pendingOf(state).filter((slot) => slot.delivery !== undefined).length,
-  }]]))
-  const forget = (address: SessionAddress) => Ref.update(known, (all) => all.get(address.id)?.address.owner === address.owner
-    ? new Map([...all].filter(([id]) => id !== address.id)) : all)
+  /**
+   * What `WaitingInput` refreshes: every owner-checked session last seen
+   * with queued input waiting, and the `inbox.recentSessions` observed most
+   * recently without any (oldest dropped first), so a foreign enqueue into a
+   * session in use is seen without reading every session ever observed.
+   */
+  const known = yield* Ref.make<Known>({ waiting: HashMap.empty(), quiet: [] })
+  const recent = (quiet: ReadonlyArray<SessionAddress>, address: SessionAddress): ReadonlyArray<SessionAddress> => {
+    const kept = [...quiet.filter((seen) => seen.id !== address.id), address]
+    return kept.slice(Math.max(0, kept.length - config.inbox.recentSessions))
+  }
+  const observe = (address: SessionAddress) => Ref.update(known, (now): Known => Option.exists(HashMap.get(now.waiting, address.id), (seen) => seen.address.owner === address.owner)
+    ? now : { ...now, quiet: recent(now.quiet, address) })
+  const remember = (address: SessionAddress, state: SessionsState) => Ref.update(known, (now): Known => {
+    const pending = pendingOf(state).filter((slot) => slot.delivery !== undefined).length
+    return pending > 0
+      ? { waiting: HashMap.set(now.waiting, address.id, { address, pending }), quiet: now.quiet.filter((seen) => seen.id !== address.id) }
+      : { waiting: HashMap.remove(now.waiting, address.id), quiet: recent(now.quiet, address) }
+  })
+  const forget = (address: SessionAddress) => Ref.update(known, (now): Known => ({
+    waiting: Option.exists(HashMap.get(now.waiting, address.id), (seen) => seen.address.owner === address.owner) ? HashMap.remove(now.waiting, address.id) : now.waiting,
+    quiet: now.quiet.filter((seen) => seen.id !== address.id || seen.owner !== address.owner),
+  }))
   /** The writer this instance holds per session, for a local cancel or removal. */
   const writers = yield* Ref.make(new Map<string, OpenWriter & { readonly turn: number }>())
   const inFlight = yield* SubscriptionRef.make<InFlight>({ held: new Map(), beginning: 0 })
@@ -230,11 +251,16 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const refuseIfStopping = (address: SessionAddress) => Ref.get(stopping).pipe(Effect.flatMap((now) => now === "running" ? Effect.void : Effect.fail(shutdownRefusal(address.id))))
   const heldKey = (id: string, turn: number) => `${id}:${turn}`
   const beginSettled = SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning - 1 }))
-  /** Signal session followers and every local inbox drainer. */
-  const wake = (id: ConversationId) => RcMap.getOption(followers, id).pipe(
+  /**
+   * Signal the session's followers after any commit, and every local inbox
+   * drainer and waiting-input probe (`waiting`) only after one that changed
+   * the open turn or the inbox (`waitingChanged`), or created or removed a
+   * session: a turn's own appends wake no rescan.
+   */
+  const wake = (id: ConversationId, waiting: boolean) => RcMap.getOption(followers, id).pipe(
     Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (hub) => PubSub.publish(hub, undefined).pipe(Effect.asVoid) })),
     Effect.scoped,
-    Effect.andThen(PubSub.publish(waitingHub, undefined)),
+    Effect.andThen(waiting ? PubSub.publish(waitingHub, undefined) : Effect.void),
     Effect.asVoid,
   )
   const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
@@ -296,8 +322,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         if (outcome._tag === "Success") {
           yield* stored(planned.result)
           yield* Option.match(planned.next, { onNone: () => Effect.void, onSome: (after) => forgetClosed(address.id, after) })
-          yield* remember(address, Option.getOrElse(next, () => current))
-          yield* wake(address.id)
+          const after = Option.getOrElse(next, () => current)
+          yield* remember(address, after)
+          yield* wake(address.id, waitingChanged(held, after))
           return { result: planned.result, head, committed: Option.some(outcome.success) }
         }
         const error = outcome.failure
@@ -319,10 +346,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * with code `turn.takeover`, and no attempt is counted: the items it took
    * were not the reason it stopped.
    */
-  const reaped = (head: SessionHead, state: SessionsState, takeOver = false) => Effect.gen(function* () {
-    if (Option.isNone(state.open) || (!takeOver && Option.isSome(yield* heldTurn(head, state, holder)))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
+  const reaped = (head: SessionHead, state: SessionsState, takeOver: NonNullable<BeginTurn["takeOver"]> = false) => Effect.gen(function* () {
+    const applies = Option.exists(state.open, (open) => typeof takeOver === "boolean" ? takeOver : open.turn === takeOver.turn && open.runId === takeOver.runId)
+    if (Option.isNone(state.open) || (!applies && Option.isSome(yield* heldTurn(head, state, holder)))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
     const turn = state.open.value.turn
-    const taken = takeOver && Option.isSome(yield* heldTurn(head, state, holder))
+    const taken = applies && Option.isSome(yield* heldTurn(head, state, holder))
     // A reaped turn counts as an attempt: its holder may have stopped on the items. One taken over does not.
     const after = closedState(state, "interrupted", config.inbox.attempts, !taken)
     const closing = yield* turnEndedDraft(turn, {
@@ -631,9 +659,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const open = yield* makeTurnWriter({
         log, config, instance, header: begun.head.header, admitted: begun.result.admitted, started,
         position: { revision: committed.revision, seq: committed.seq, state: begun.result.next, storageAt: committed.at },
-        wake: (state) => remember(address, state).pipe(
-          Effect.andThen(wake(address.id)),
-          Effect.andThen(Option.exists(state.open, (still) => still.turn === turn && still.runId === runId) ? Effect.void : Deferred.succeed(ended, undefined)),
+        wake: (before, after) => remember(address, after).pipe(
+          Effect.andThen(wake(address.id, waitingChanged(before, after))),
+          Effect.andThen(Option.exists(after.open, (still) => still.turn === turn && still.runId === runId) ? Effect.void : Deferred.succeed(ended, undefined)),
         ),
       }, scope)
       yield* Ref.set(unowned, Option.none())
@@ -752,18 +780,24 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const selected = (slot: SessionsState["inbox"][number]): boolean => take === "all" || (take === "inputs" ? slot.delivery !== undefined : slot.delivery === undefined)
     const hasWaiting = owned(address).pipe(Effect.flatMap((head) => stateOf(head).pipe(Effect.mapError(storage("session.state")))),
       Effect.map((state) => pendingOf(state).some(selected)))
-    /** What each inbox turn is begun with besides its run id and `meta`: written only when given. */
-    const begun = {
-      ...(options?.takeOver === true ? { takeOver: true } : {}),
+    /**
+     * What an inbox turn is begun with besides its run id and `meta`, written
+     * only when given: `takeOver` for the first turn alone, the one that
+     * replaces the holder the host knows is gone. A turn opened between the
+     * drain's own turns is someone's live work, never taken over.
+     */
+    const begunWith = (first: boolean) => ({
+      ...(first && options?.takeOver === true ? { takeOver: true } : {}),
       ...(options?.timeLimitMs === undefined ? {} : { timeLimitMs: options.timeLimitMs }),
-    }
+    })
     /** One inbox turn, if one opens: then whether items still wait after it. */
-    const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
+    const once = (first: boolean): Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> => Effect.scoped(Effect.gen(function* () {
       const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
+      const begun = begunWith(first)
       const head = yield* owned(address)
       const state = yield* stateOf(head).pipe(Effect.mapError(storage("session.state")))
       const held = yield* heldTurn(head, state, holder)
-      const available = Option.isNone(held) || options?.takeOver === true ? state.inbox : pendingOf(state)
+      const available = Option.isNone(held) || begun.takeOver === true ? state.inbox : pendingOf(state)
       const candidate = available.find(selected)
       if (candidate === undefined) return Option.none<boolean>()
       const input: BeginTurn = candidate.delivery === undefined ? { _tag: "Inbox", runId, ...begun, ...(meta === undefined ? {} : { meta }) }
@@ -807,7 +841,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }),
     )
     const loop = (turns: number): Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> =>
-      turns >= maxTurns ? Effect.succeed({ turns }) : once.pipe(Effect.flatMap(Option.match({
+      turns >= maxTurns ? Effect.succeed({ turns }) : once(turns === 0).pipe(Effect.flatMap(Option.match({
         onNone: () => Effect.succeed({ turns }),
         onSome: (more) => more ? loop(turns + 1) : Effect.succeed({ turns: turns + 1 }),
       })))
@@ -822,10 +856,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     idle: SubscriptionRef.changes(inFlight).pipe(Stream.filter((now) => now.held.size === 0 && now.beginning === 0), Stream.take(1), Stream.runDrain),
   })
 
-  const cached = Ref.get(known).pipe(Effect.map((all): ReadonlyArray<WaitingInputCount> => [...all.values()]
+  const cached = Ref.get(known).pipe(Effect.map((now): ReadonlyArray<WaitingInputCount> => HashMap.toValues(now.waiting)
     .filter((item) => item.pending > 0).map(({ address, pending }) => ({ session: address.id, pending }))))
   const current = Effect.gen(function* () {
-    const addresses = [...(yield* Ref.get(known)).values()].map(({ address }) => address)
+    const now = yield* Ref.get(known)
+    const addresses = [...HashMap.toValues(now.waiting).map(({ address }) => address), ...now.quiet]
     return (yield* Effect.forEach(addresses, (address) => owned(address).pipe(
       Effect.flatMap(stateFrom),
       Effect.map((state): ReadonlyArray<WaitingInputCount> => {
@@ -854,7 +889,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         createdAt: yield* Clock.currentTimeMillis, meta: input.meta ?? {}, parent: Option.none(),
       }).pipe(
         Effect.catchTag("SessionMissing", Effect.die),
-        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id)))),
+        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
         Effect.uninterruptible,
       )
       return yield* viewFrom(head)
@@ -873,7 +908,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           turnAtFork: Option.match(last, { onNone: () => 0, onSome: (event) => Option.getOrElse(event.turn, () => 0) }),
         }),
       }).pipe(
-        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id)))),
+        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
         Effect.uninterruptible,
       )
       return yield* viewFrom(head)
@@ -898,7 +933,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
         yield* forget(address)
         yield* closeLocal(address.id, "removed", Option.none())
-        yield* wake(address.id)
+        yield* wake(address.id, true)
       }))
     }, onSession),
     read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap(() => log.read(address.id, {

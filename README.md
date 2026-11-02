@@ -185,7 +185,8 @@ background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
 in flight. `Sessions.enqueue` saves user input durably; `delivery: "steer"`
 adds each message before a step's next request, with an atomic inbox
 acknowledgment. `InboxDrainLive` with `agentInboxRunner` runs owner-scoped
-queued work and resumes interrupted roots. `agent.activity` (and
+queued work, resumes roots whose holder was gone and parks input that keeps
+failing. `agent.activity` (and
 `processActivity`, `awaitIdle`) reports running work and known queued input
 for a `/ping`, and `agent.shutdown()`
 stops its turns within a deadline on a SIGTERM, those still running ended

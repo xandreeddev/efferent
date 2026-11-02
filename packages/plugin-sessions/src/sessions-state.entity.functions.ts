@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Equivalence, Option, Schema } from "effect"
 import { InboxDroppedData, InboxQueuedData, STORED_FORMAT } from "@xandreed/core"
 import type { InboxItem, InboxItemId, JsonObject, OpenTurn, QueuedInput, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
@@ -131,6 +131,22 @@ export const heldTurn = (head: SessionHead, state: State, holder: Holder): Effec
 const openTurnOf = (held: HeldTurn): OpenTurn => ({
   turn: held.turn, runId: held.runId, key: held.key, origin: held.origin, holder: held.holder, expiresAt: held.expiresAt,
 })
+
+const sameTurn = Option.makeEquivalence(Equivalence.Number)
+
+/**
+ * Whether a commit changed what an inbox drainer or a waiting-input probe
+ * acts on: the open turn (begun, ended, reaped, taken over) or an inbox slot
+ * (added, claimed, released, counted, taken, done). A write that only
+ * appends a turn's events or renews its lease changes neither.
+ */
+export const waitingChanged = (before: State, after: State): boolean =>
+  !sameTurn(Option.map(before.open, (open) => open.turn), Option.map(after.open, (open) => open.turn))
+  || before.inbox.length !== after.inbox.length
+  || before.inbox.some((slot, index) => {
+    const other = after.inbox[index]
+    return other === undefined || other.id !== slot.id || other.attempts !== slot.attempts || other.delivery !== slot.delivery || !sameTurn(other.claimedBy, slot.claimedBy)
+  })
 
 /** Inbox items waiting for a turn. */
 export const pendingOf = (state: State): ReadonlyArray<InboxSlot> => state.inbox.filter((slot) => Option.isNone(slot.claimedBy))

@@ -122,14 +122,20 @@ describe("Agent.activity", () => {
     expect(yield* agent.activity).toEqual({ ...idle, waiting: [{ session: session.id, pending: 1 }], queuedInput: 1, busy: true })
   }))))
 
-  test("runtime queue and drain probes count, while caller probes stay outside Agent.activity", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("runtime queue and drain probes count; a caller's queue probe stays outside Agent.activity, while the caller's drainer counts", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const queue = WaitingInput.of({ current: Effect.succeed(pending), cached: Effect.succeed(pending), idle: Effect.never })
     const draining = DrainActivity.of({ running: Effect.succeed(1), idle: Effect.never })
     const services = Context.make(WaitingInput, queue).pipe(Context.add(DrainActivity, draining))
     const own = yield* define({ services })
     expect(yield* own.activity).toEqual({ ...idle, waiting: pending, queuedInput: 2, inFlight: true, busy: true })
+    // The runtime's drain probe wins over the caller's.
+    expect(yield* own.activity.pipe(Effect.provide(Context.make(DrainActivity, DrainActivity.of({ running: Effect.succeed(0), idle: Effect.void }))))).toMatchObject({ inFlight: true })
     const isolated = yield* define()
-    expect(yield* isolated.activity.pipe(Effect.provide(services))).toEqual(idle)
+    expect(yield* isolated.activity.pipe(Effect.provide(Context.make(WaitingInput, queue)))).toEqual(idle)
+    // An inbox drainer is built beside the agent (it runs the agent), never in its runtime: the caller's counts.
+    expect(yield* isolated.activity.pipe(Effect.provide(services))).toEqual({ ...idle, inFlight: true, busy: true })
+    // Its shutdown waits for that drainer's attempt instead of reporting idle at once.
+    expect(yield* isolated.shutdown({ deadline: "20 millis", reserve: "10 millis" }).pipe(Effect.provide(Context.make(DrainActivity, draining)))).toMatchObject({ idle: false, left: { inFlight: true } })
     expect(yield* processActivity.pipe(Effect.provide(services))).toEqual({ ...idle, waiting: pending, queuedInput: 2, inFlight: true, busy: true })
   }))))
 

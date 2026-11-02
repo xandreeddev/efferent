@@ -126,10 +126,13 @@ const TaskOf = Schema.optionalKey(TaskRef)
  * held is reaped as any begin reaps it (`turn.lease`). A holder still
  * running is fenced at its next write (`TurnClosed`), but what it did
  * before is not undone. Without it, a turn still held makes the begin
- * `SessionBusy`. Input only: never stored, and not part of the key's
- * fingerprint.
+ * `SessionBusy`. `true` takes over whichever turn is open when the opening
+ * commit is planned; `{ turn, runId }` takes over only that turn, the one
+ * the host saw and knows is abandoned: any other open turn still held (one
+ * begun since) makes the begin `SessionBusy`, as without it. Input only:
+ * never stored, and not part of the key's fingerprint.
  */
-const TakeOver = Schema.optionalKey(Schema.Boolean)
+const TakeOver = Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Struct({ turn: Schema.Int, runId: RunId })]))
 
 /**
  * How long the turn may run, in milliseconds from when its writer is handed

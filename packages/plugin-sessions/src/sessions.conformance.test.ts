@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Match, Option, PubSub, Schema, Stream } from "e
 import { TestClock } from "effect/testing"
 import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
-import type { BeginTurn, JsonObject, SessionAddress, TurnError, TurnWriter } from "@xandreed/core"
+import type { BeginTurn, JsonObject, SessionAddress, SessionContended, SessionLogError, SessionMissing, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -78,7 +78,7 @@ describe("the Sessions kit catches careless backends", () => {
         ),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "tenure"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "takeover-named", "tenure"])
   })
 
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
@@ -281,7 +281,28 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, takeOver: false }) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, waiting)))).toEqual(["takeover"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, waiting)))).toEqual(["takeover", "takeover-named"])
+  })
+
+  test("one that takes over whatever is open when a takeover names a turn fails only the named-takeover check", async () => {
+    const blanket = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, typeof input.takeOver === "object" ? { ...input, takeOver: true } : input) }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, blanket)))).toEqual(["takeover-named"])
+  })
+
+  test("one whose drain takes over before every turn, not only its first, fails only the drain takeover check", async () => {
+    const everyTurn = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({ ...instance.sessions, drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: Parameters<typeof instance.sessions.drain>[2]) => {
+        const limit = options?.maxTurns ?? 3
+        const each = (turns: number): Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> => turns >= limit ? Effect.succeed({ turns })
+          : instance.sessions.drain(address, run, { ...options, maxTurns: 1 }).pipe(Effect.flatMap((once) => once.turns === 0 ? Effect.succeed({ turns }) : each(turns + 1)))
+        return options?.takeOver === true ? each(0) : instance.sessions.drain(address, run, options)
+      } }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, everyTurn)))).toEqual(["drain-takeover"])
   })
 
   test("one whose begin ignores the turn's own time limit fails only the time-limit check", async () => {
@@ -297,7 +318,7 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, enqueue: () => Effect.succeed({ enqueued: false, pending: 0 }) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "queued-waiting", "steering-closed", "steering-pending", "steering-race", "steering-take", "waiting", "waiting-input"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "drain-takeover", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "queued-waiting", "steering-closed", "steering-pending", "steering-race", "steering-take", "waiting", "waiting-input"])
   })
 
   test("one that silently accepts another payload under an input id fails only input-conflict", async () => {

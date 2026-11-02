@@ -185,7 +185,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * drain with nothing to take and reaped by the next begin; a begin with
  * `takeOver` closing a turn still held elsewhere at once (`turn.takeover`,
  * no attempt counted), resuming it, fencing its old writer and closing the
- * instance's own; a write renewing
+ * instance's own; a takeover naming a turn closing only that one (another
+ * held turn makes it `SessionBusy`); a drain's `takeOver` used for its first
+ * turn only, never over a turn begun between its turns; a write renewing
  * the lease from that write; with `processOwned`, a turn whose process
  * stopped reaped, one whose process runs held, and a leased turn held by
  * a process-owned instance within its lease (a turn is judged as it was
@@ -701,9 +703,11 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting-input", !(yield* settles(waiting)), "idle completed with an unclaimed queued user input")
       const answering = yield* producer.sessions.begin(address, fromQueue("observed-next", "observed-completion"))
       yield* answering.end(completed)
-      // This observer receives no local commit: its probe must also poll foreign changes.
-      yield* subject.advance(10_000)
-      yield* expect("waiting-input", yield* settles(waiting), "idle did not observe another instance's acknowledgement")
+      // This observer receives no local commit: its probe must also poll foreign changes. A store with real IO
+      // may need more than one poll to read the change, so the clock moves on a few times; one that never polls never settles.
+      const polled = (rounds: number): Effect.Effect<boolean> => subject.advance(10_000).pipe(Effect.andThen(settles(waiting)),
+        Effect.flatMap((done) => done || rounds <= 1 ? Effect.succeed(done) : polled(rounds - 1)))
+      yield* expect("waiting-input", yield* polled(20), "idle did not observe another instance's acknowledgement")
       yield* shows(0, "acknowledgement with a notice remaining")
       yield* observer.sessions.get(hidden)
       const visible = yield* positive
@@ -1176,6 +1180,50 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* Effect.scoped(successor.sessions.begin(third, { ...say("again"), takeOver: true }).pipe(Effect.flatMap((writer) => writer.end(completed))))
       const closed = yield* own.closed
       yield* expect("takeover", closed.reason === "interrupted" && closed.turn === 1, `the instance's own writer taken over was closed as ${closed.reason}`)
+    })),
+
+    scoped("a takeOver naming a turn closes only that turn: another turn still held, begun since or of another run, makes the begin SessionBusy", "takeover-named", (owner) => Effect.gen(function* () {
+      const [stopped, successor] = [yield* leased(), yield* leased()]
+      const address = yield* created(stopped.sessions, owner)
+      const earlier = yield* stopped.sessions.begin(address, say("seen abandoned"))
+      yield* earlier.end(completed)
+      // The host saw turn 1 and knows its holder is gone; turn 2 was begun since, and is someone's live work.
+      const live = yield* stopped.sessions.begin(address, say("live since"))
+      const stale = yield* refusal(successor.sessions, address, { ...say("stale takeover"), takeOver: { turn: earlier.admitted.turn, runId: earlier.admitted.runId } })
+      yield* expect("takeover-named", stale === "SessionBusy", `a takeover naming turn 1 over a held turn 2 gave ${stale}`)
+      const otherRun = yield* refusal(successor.sessions, address, { ...say("other run"), takeOver: { turn: live.admitted.turn, runId: RunId.make("run-not-the-live-one") } })
+      yield* expect("takeover-named", otherRun === "SessionBusy", `a takeover naming turn 2 of another run gave ${otherRun}`)
+      const untouched = yield* writeRefused(live)
+      yield* expect("takeover-named", untouched === "stored", `the live holder's write after refused takeovers gave ${untouched}`)
+      const taking = yield* successor.sessions.begin(address, { ...say("named takeover"), takeOver: { turn: live.admitted.turn, runId: live.admitted.runId } })
+      yield* expect("takeover-named", taking.admitted.turn === 3, `the named takeover opened turn ${taking.admitted.turn}`)
+      const taken = endings(yield* successor.sessions.read(address, { kinds: ["turn.ended"] }))
+      yield* expect("takeover-named", taken === "1:completed:none,2:interrupted:turn.takeover", `the turns ended as ${taken}`)
+    })),
+
+    scoped("a drain with takeOver takes over for its first turn only: a turn begun between its turns is live work, and the drain stops at it", "drain-takeover", (owner) => Effect.gen(function* () {
+      const scope = yield* Effect.scope
+      const [stopped, other] = [yield* leased(), yield* leased()]
+      const address = yield* created(stopped.sessions, owner)
+      const admitted = yield* Ref.make(0)
+      const between = yield* Ref.make(Option.none<TurnWriter>())
+      // The drain's second turn is admitted only once another instance has begun its own turn on the session.
+      const interleaving = TurnAdmission.of({ admit: (_turn, open) => Ref.updateAndGet(admitted, (count) => count + 1).pipe(
+        Effect.flatMap((count) => count !== 2 ? Effect.void : other.sessions.begin(address, say("live between drain turns")).pipe(
+          Effect.flatMap((writer) => Ref.set(between, Option.some(writer))), Scope.provide(scope), Effect.orDie)),
+        Effect.andThen(open),
+      ) })
+      const draining = yield* leased(LONG, interleaving)
+      yield* stopped.sessions.enqueue(address, queued("drain-takeover-first"))
+      yield* stopped.sessions.enqueue(address, queued("drain-takeover-second"))
+      yield* stopped.sessions.begin(address, say("abandoned holder"))
+      const drained = yield* draining.sessions.drain(address, () => Effect.void, { takeOver: true })
+      const live = yield* Ref.get(between)
+      yield* expect("drain-takeover", drained.turns === 1 && Option.isSome(live), `the drain ran ${drained.turns} turns`)
+      const written = Option.isSome(live) ? yield* writeRefused(live.value) : "no live turn"
+      yield* expect("drain-takeover", written === "stored", `the turn begun between the drain's turns was taken over: its write gave ${written}`)
+      const ended = endings(yield* draining.sessions.read(address, { kinds: ["turn.ended"] }))
+      yield* expect("drain-takeover", ended === "1:interrupted:turn.takeover,2:completed:none", `the turns ended as ${ended}`)
     })),
 
     scoped("a write renews the lease: a turn written to within its lease is held for a lease from that write, then reaped", "lease-renewal", (owner) => Effect.gen(function* () {

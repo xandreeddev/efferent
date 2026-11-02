@@ -2788,8 +2788,10 @@ in-memory text; use enqueue when the input must survive a restart.
 
 For automatic execution, compose `InboxDrainLive` for explicit owners with
 `agentInboxRunner`, using the shared Sessions. Its default `resume: Before`
-recovers eligible interrupted user work before taking queued input. A cancelled
-branch is not automatically resumed. Takeover remains the host's explicit
+recovers interrupted user work whose holder was gone (a lease that ran out, a
+takeover, a shutdown, or an interruption an earlier process left) before taking
+queued input. A cancelled branch, a turn its time limit stopped and a turn the
+host interrupted in this process are not automatically resumed. Takeover remains the host's explicit
 assertion that the old holder is gone: `takeOver: true` fences its later writes
 but cannot undo tool side effects. See [resume and takeover](#resuming-a-turn).
 At exclusive startup, finish any required task reconciliation before enabling
@@ -3366,22 +3368,41 @@ const activity = yield* processActivity.pipe(Effect.provide(draining))
 Keep this layer's scope open while the host accepts input. It performs a
 startup sweep, consumes `Sessions.waiting`, and sweeps every second for
 foreign-process commits. That stream broadcasts a post-subscription signal
-and coalesced local commits without disclosing an address. Discovery pages
-through each owner's sessions and their children. Four fixed workers by
-default run at most one attempt per session, with fair turns between
-sessions. Busy, refused or unfinished work retries with bounded exponential
-backoff (250 ms to 30 s); unrelated wakes preserve that deadline. Input is
-never discarded because execution failed repeatedly.
+and coalesced local commits that changed an open turn or an inbox (a turn's
+own appends signal nothing), without disclosing an address. Discovery pages
+through each owner's sessions and their children, and reads the queue history
+only of sessions whose sequence number or open turn changed since the last
+scan. Four fixed workers by default run at most one attempt per session, with
+fair turns between sessions. Busy, refused or unfinished work retries with
+bounded exponential backoff (250 ms to 30 s); unrelated wakes preserve that
+deadline.
+
+Input is never discarded, but the drainer stops retrying it: after
+`attempts` (3) runs of one queued input that failed or ended partial, or after
+a run of it was stopped deliberately (its time limit, or the host interrupting
+it in this process), the input is parked. It stays queued and counted as
+queued input, and later input of the session runs instead. A host runs a
+parked input explicitly with `BeginTurn.Queued` (its completion or a cancel of
+that turn acknowledges it). A warning is logged when the drainer parks one.
 
 `resume: { _tag: "Before" }` is the default: finish the oldest eligible
-interrupted user root before starting queued work, with `Continue.` as the
-resume message. Supply `userMessage` to change it, or select
-`{ _tag: "Never" }` for queued work only. An intentional cancellation stops
-automatic resumption of that branch. `takeOver` defaults to false; true
-asserts the previous holder is gone and grants takeover only to an initial
-startup attempt, never to a later retry or newly discovered session. Scope
-closure stops the drainer's fibers. A provided `TurnShutdown` stops new
-attempts when the host starts shutting down.
+interrupted user root before starting queued work, with a host note
+(`[Host note: The previous turn stopped before it finished. Continue it.]`)
+as the resume message. Supply `userMessage` to change it, or select
+`{ _tag: "Never" }` for queued work only. A root is resumed only when the
+latest user turn's holder was gone (open with no live holder, or closed with
+`turn.lease`, `turn.takeover` or `turn.shutdown`), when it was interrupted
+before the startup sweep saw the session (an earlier process stopped), or
+when the latest turn is a failed resume of it, at most `attempts` failed
+resumes. An intentional cancellation, a time limit or an interruption by the
+host in this process stops automatic resumption of that branch. `takeOver`
+defaults to false; true asserts the previous holder is gone and grants a
+takeover only to an initial startup attempt, never to a later retry or a
+newly discovered session. That takeover names the open turn the startup
+sweep saw (`BeginTurn.takeOver: { turn, runId }`): a turn begun since, or one
+this instance holds, is never closed. Scope closure stops the drainer's
+fibers. A provided `TurnShutdown` stops new attempts when the host starts
+shutting down.
 
 **Background tasks** (`@xandreed/plugin-tasks`). A task runs in a
 child session, a fork of the conversation or an empty spawn, whose id is the
@@ -3595,10 +3616,14 @@ what this process has in flight and stop it:
 unclaimed queued user inputs in sessions this instance has observed, plus
 cached knowledge and an idle wait. Notices do not count. Reading, getting,
 creating or listing a session establishes that knowledge; it does not
-enumerate other owners. Its idle wait polls foreign changes at
+enumerate other owners. It refreshes every session last seen with input
+waiting and the `inbox.recentSessions` (256) observed most recently without
+any, never every session ever observed. Its idle wait polls foreign changes at
 `inbox.pollIntervalMs` (100 ms by default). `InboxDrainLive` supplies
 `DrainActivity`, which counts active attempts from admission through end,
-excluding scans and backoff.
+excluding scans and backoff. The drainer is built beside the agent, so
+`Agent.activity` and `Agent.shutdown` count the `DrainActivity` provided
+where they are called (the agent's runtime never holds one).
 
 `processActivity` reads available probes into `ProcessActivity`:
 `{ openTurns, beginningTurns, runningTasks, waiting, queuedInput, inFlight,
@@ -3768,7 +3793,12 @@ as any begin reaps it (`turn.lease`). The framework does not judge whether
 the holder is really gone: that is the host's word. A holder still running
 is fenced at its next write, which fails with `TurnClosed` (`interrupted`)
 and stores nothing (on the taking instance, its writer is closed at once);
-what it did before, a tool's side effects included, is not undone.
+what it did before, a tool's side effects included, is not undone. `true`
+takes over whichever turn is open when the opening commit is planned. To take
+over only the turn the host saw abandoned, name it: `BeginTurn.takeOver:
+{ turn, runId }` closes that turn, and any other open turn still held (one
+begun since) makes the begin `SessionBusy`. A drain's `takeOver` applies to
+its first turn only: a turn begun between its turns is someone's live work.
 
 **What is durable after a cancel or an interrupt** is what the turn's
 writer committed before the turn was closed:

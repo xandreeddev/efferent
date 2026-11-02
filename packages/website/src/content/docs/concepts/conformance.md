@@ -314,6 +314,12 @@ The checks:
 - **drain-take**: inputs and notices are selected separately, queued
   messages stay separate and in order, input delivered during a turn is
   drained next, and a busy session or unknown input consumes nothing.
+- **drain-takeover**: a drain's `takeOver` closes the abandoned turn for its
+  first turn only; a turn another instance begins between the drain's turns
+  stays open and writable, and the drain stops at it.
+- **takeover-named**: a takeover naming `{ turn, runId }` closes only that
+  turn; naming an ended turn, or the open turn with another run id, over a
+  held turn is `SessionBusy` and leaves the holder writing.
 - **queued-race**: separate instances enqueue an id once, preserve
   distinct concurrent inputs, and claim one input to at most one turn.
 - **queued-admission**: the host sees the actual initial and retry keys
@@ -356,17 +362,20 @@ The checks:
 The kit's own tests run it against careless wrappers of `SessionsLive`: a
 `begin` that cancels the open turn instead of refusing it fails `busy`,
 `duplicate`, `lease`, `lease-renewal`, `process`, `queued-race`, `race`,
-`resume`, `takeover` and `tenure`; a
+`resume`, `takeover`, `takeover-named` and `tenure`; a
 `TurnActivity` that always reads idle fails `activity`; a `begin` that drops
 `meta` fails `meta` and `queued-admission`; leases that writes do not renew
 (`renew: "none"`) fail `lease-renewal`; writers that take the framework's kinds from anyone fail
 `transact`; a `begin` that opens a reused run id's turn under a new one
 fails `run-id`; a `begin` that opens a task's turn as a user's fails
 `task`. An enqueue that acknowledges without storing fails all seven
-queued-input checks and all four steering checks. Silently accepting conflicting payloads fails
+queued-input checks, all four steering checks and `drain-takeover`. Silently accepting conflicting payloads fails
 `input-conflict`; losing admitted input provenance fails `queued-input`,
 `queued-resume` and `queued-retry` (losing it only on explicit user resumes
 fails `queued-resume`); ignoring the drain selection fails `drain-take`.
+A `begin` that takes over whatever is open when a takeover names a turn
+fails `takeover-named`; a drain that takes over before every turn fails
+`drain-takeover`.
 A writer blind to pending steers fails `steering-pending`, `steering-race`
 and `steering-closed`; a take that reports success without storing fails
 `steering-take`, `steering-race` and `steering-closed`; recording messages

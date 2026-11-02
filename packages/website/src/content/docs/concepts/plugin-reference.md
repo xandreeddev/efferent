@@ -178,7 +178,8 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
   "inbox": {
     "maxPending": 20,
     "attempts": 2,
-    "pollIntervalMs": 100
+    "pollIntervalMs": 100,
+    "recentSessions": 256
   },
   "writer": {
     "capacity": 1024,
@@ -283,6 +284,11 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
           "minimum": 1,
           "maximum": 60000
         },
+        "recentSessions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
         "attempts": {
           "type": "integer",
           "minimum": 1,
@@ -291,6 +297,7 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
       },
       "required": [
         "maxPending",
+        "recentSessions",
         "attempts"
       ],
       "additionalProperties": true
