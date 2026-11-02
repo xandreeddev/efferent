@@ -15,7 +15,8 @@ The [version 1 fixture](https://github.com/xandreeddev/efferent/blob/main/packag
 contains every command, event and progress variant. Later decoders continue to
 decode it. The [shared subprocess journey](https://github.com/xandreeddev/efferent/blob/main/scripts/process-host-consumer.fixture.mjs)
 runs against source Bun and packed Node/Bun packages, with independent journal
-reads, SIGTERM, SIGKILL, retained inputs and actual blocked native output.
+reads, a steer reaching the running turn's next model call, SIGTERM, SIGKILL,
+retained inputs, a closed stdout and actual blocked native output.
 
 ## Host entry
 
@@ -92,7 +93,7 @@ session command can touch its services.
 | `begin` | `session`, `runId`, `userMessage`; optional `key`, `command`, `meta`, `resumes`, `takeOver`, `timeLimitMs` | `begin.result` is the real TurnRunner result after its owned turn returns. Begin refusals produce a command error. |
 | `send` | `session`, `input:{id,userMessage,source}` | `queued` acknowledges `Sessions.enqueue` with delivery `next`. |
 | `steer` | Same input as send | `queued` acknowledges delivery `steer`; the next eligible step takes it, or it remains for a later turn. |
-| `answer` | `parent`, `taskId`, `questionId`, `text` | `answered` preserves `Tasks.answer`'s `accepted:true` and `enqueued`. |
+| `answer` | `parent`, `taskId`, `questionId`, `text` | `answered` preserves `Tasks.answer`'s `accepted:true` and `enqueued`. A refusal is a `host.command` error whose `frameworkCode` says why: `task.missing`, `task.conflict`, `task.inactive` or `task.question-unknown`. |
 | `cancel` | `session`, `turn` | `cancelled` reports exact-turn cancellation and pending count. |
 | `ping` | None | `pong` carries actual ProcessActivity. |
 | `shutdown` | Optional `deadlineMs` within the host maximum | One graceful shutdown emits its report and flushes output. |
@@ -158,11 +159,13 @@ provider failure text are omitted.
 `events:"full"` exports every non-lifecycle TurnEvent through its encoded JSON
 shape. This includes structured tool results and their question IDs, which a
 host rendering helper questions can use for `answer`. Full export snapshots
-data without inherited JSON hooks, validates strict JSON and fails with an
-owned error for unsupported values such as BigInt, cycles or functions. A
-non-JSON decoded tool result can therefore require projection mode. Native
-codec limits can reject extremely deep objects. Values are never silently
-clipped into a different event.
+data without inherited JSON hooks and validates strict JSON. An event whose
+content is not JSON (a BigInt, NaN, a cycle, a function, a class instance such
+as a Date) is sent as its projection instead, labelled `progress.mode:
+"projection"`, or omitted when it has no projection; the host logs a warning
+on stderr and the connection stays up. Native codec limits can reject
+extremely deep objects. Values are never silently clipped into a different
+event.
 
 ## Bounds and shutdown
 
@@ -178,10 +181,14 @@ clipped into a different event.
 | `hardDeadlineMs` on runProcessHost | 30,000 from the first stopping trigger |
 
 The peer pulls input with one bounded partial frame and native chunk, without
-a command queue. Pending writers reserve finite slots before encoding; one
-writer snapshots and serializes at a time. Flush waits for all accepted native
-write acknowledgments, including callers paused before taking the serial
-permit. The first output failure remains visible to later sends and flush.
+a command queue. A writer reserves one of `maxPendingWrites` slots before
+encoding: when every slot is taken it waits for one to free, for at most
+`writeTimeoutMs`, and only then fails with `Capacity`, so a burst of events
+from many concurrent turns is backpressure rather than a failure. One writer
+snapshots and serializes at a time. Flush waits for all accepted native write
+acknowledgments, including callers paused before taking the serial permit; a
+writer still waiting for a slot is not yet accepted. The first output failure
+remains visible to later sends and flush, and disposal wakes waiting writers.
 Schema serialization materializes one host event before checking its encoded
 size, so a very large host object can temporarily exceed the frame byte budget.
 The limit bounds accepted frames and owned input accumulation, rather than
@@ -203,11 +210,18 @@ can SIGKILL synchronously blocked code.
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | Explicit shutdown or clean EOF, after successful flush |
+| 0 | Explicit shutdown or clean EOF, after successful flush (see the Bun note below) |
 | 1 | Configuration, setup, runtime, storage or output failure |
 | 2 | Malformed input, handshake, version or sequencing failure |
 | 124 | Independent hard deadline |
 | 130 / 143 | SIGINT / SIGTERM, including a successfully handled first signal |
+
+A flush acknowledges the native writes, not the parent's reads. On Node a write
+to a stdout pipe whose parent end is closed fails (`EPIPE`) and the host exits 1.
+Bun 1.3 reports such a write as successful, so under Bun a host whose parent
+closed its end of stdout and then its stdin exits 0 after a shutdown frame
+nobody read. On either runtime a gone parent is noticed by stdin EOF, and the
+parent determines delivery from the frames it actually read.
 
 `serveProcess` returns a typed result/error and leaves native exit to its caller.
 The process protocol version is independent of stored journal format. This

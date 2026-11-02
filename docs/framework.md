@@ -546,8 +546,10 @@ An artificial model operation used to run a planned tool batch carries
 
 `LangSmithTelemetryLive` from `@xandreed/plugin-telemetry` binds the existing
 OTLP exporter to LangSmith without another SDK. Its key is `Redacted`; choose
-one project or registered agent/environment, and override the complete
-`tracesUrl` for another region or self-hosted service. The layer exports traces;
+one project or registered agent/environment, add `workspaceId` (LangSmith's
+`X-Tenant-Id`) for a key linked to several workspaces, and override the complete
+`tracesUrl` for another region or self-hosted service. LLM runs name their
+priced model in `langsmith.metadata.ls_model_name`. The layer exports traces;
 compose generic OTLP metrics separately. Native model operations own inference
 usage, while agent, engine and routing wrappers remain chains. Missing usage
 stays absent; selected-turn totals and the billing ledger retain their separate
@@ -3516,7 +3518,12 @@ An answer commits `task.answered` in the child before enqueueing its exact
 normalized, framed `QueuedInput` with delivery `next`. A full inbox returns
 `{ accepted: true, enqueued: false }`; reconciliation retries delivery from the
 stored payload. Retrying an accepted question or answer preserves its immutable
-content; changed content under the same identity raises `TaskConflict`. An exact
+content; changed content under the same identity raises `TaskConflict`. An
+answer under an id that no pending question has fails `TaskControlRefused` with
+reason `unknown-question`, and `answer_task` tells the model to read the pending
+question's id from `task_status`. `harnessCodeOf` gives each refusal reason its
+own code (`task.inactive`, `task.waiting`, `task.question-limit`,
+`task.question-unknown`, `task.context`; `TAGGED_REASON_CODES`). An exact
 answer retry after the task has finished cannot revive it. Waiting acknowledges
 only the input admitted to that turn, so an early answer remains for a separate
 follow-up. Waiting turns cannot be resumed as interrupted user turns.

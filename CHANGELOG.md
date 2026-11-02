@@ -39,6 +39,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   commits that change an inbox or an open turn. The drainer's default resume
   message is now a host note.
 
+- `TaskControlRefused.reason` adds `unknown-question`: `Tasks.answer` under an
+  id no pending question has now fails with it instead of `question`, and
+  exhaustive matches on the reason handle it. `harnessCodeOf` gives
+  `TaskMissing` `task.missing`, `TaskConflict` `task.conflict` (`TAGGED_CODES`)
+  and each `TaskControlRefused` reason its own code (`TAGGED_REASON_CODES`), so
+  a process-host `answer` refusal carries a `frameworkCode`. Custom `Tasks`
+  rerun the extended `answer` conformance check. The `ProcessPeer` kit's
+  `writer-capacity` check now requires an excess writer to wait for a slot
+  rather than fail at once; a custom peer that refuses immediately fails it.
+  No stored shape changes.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1845,6 +1856,21 @@ Model-visible text (exact pins and the compaction golden updated):
   observed on each read. `Agent.activity` and `Agent.shutdown` count the
   caller's `DrainActivity`, and `Sessions.drain`'s takeover no longer closes a
   turn begun between its own turns.
+
+- `answer_task` under a wrong or stale question id told the parent model to
+  "ask one question per turn"; it now gets its own pinned refusal pointing it
+  at `task_status`. `@xandreed/process-host` no longer stops on a burst of more
+  than `maxPendingWrites` concurrent events (a writer waits for a free slot for
+  at most `writeTimeoutMs`) or, in full event mode, on one event that is not
+  JSON (it is sent as its labelled projection with a warning); peer disposal
+  reports `Closed` to interrupted writers. The protocol reference states that
+  Bun reports writes to a closed stdout as successful (exit 0) where Node exits
+  1, and the real subprocess journey pins both runtimes and checks that a steer
+  reaches the running turn's next model call. LangSmith export can select a
+  workspace for a multi-workspace key (`workspaceId`, LangSmith's
+  `X-Tenant-Id`), and LLM runs carry `langsmith.metadata.ls_model_name` so
+  LangSmith can price them. Package `AGENTS.md` model-text tables cite the
+  lines that hold each text and its pin again.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued

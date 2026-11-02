@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Readable, Writable } from "node:stream"
-import { Context, Effect, Fiber, Layer, MutableRef, Option, Result, Stream } from "effect"
+import { Context, Effect, Exit, Fiber, Layer, MutableRef, Option, Result, Scope, Stream } from "effect"
 import { ConversationId, RunId } from "@xandreed/core"
 import fc from "fast-check"
 import { ProcessPeer } from "./ports/process-peer.port.js"
@@ -59,7 +59,7 @@ test("rejects BOM on the first or a later frame", async () => {
   })), { concurrency: 1 }))
 })
 
-test("accepted writes survive caller interruption and keep later writers unencoded", async () => {
+test("accepted writes survive caller interruption; a writer waiting for a slot stays unencoded and an interrupted wait takes no slot", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const fixture = yield* stdioPeerSubject.open({ holdWrites: true, maxPendingWrites: 2 })
     const first = yield* fixture.peer.send(hello()).pipe(Effect.forkScoped)
@@ -68,10 +68,12 @@ test("accepted writes survive caller interruption and keep later writers unencod
     const secondEvent: ProcessEvent = { _tag: "hello", get requestId() { reads.current += 1; return ProcessRequestId.make("second") }, protocolVersion: 1 }
     const second = yield* fixture.peer.send(secondEvent).pipe(Effect.forkScoped)
     yield* Effect.yieldNow
-    const rejectedEvent: ProcessEvent = { _tag: "hello", get requestId() { reads.current += 1; return ProcessRequestId.make("excess") }, protocolVersion: 1 }
-    const rejected = yield* Effect.result(fixture.peer.send(rejectedEvent))
-    expect(Result.isFailure(rejected) && rejected.failure.reason).toBe("Capacity")
+    const waitingEvent: ProcessEvent = { _tag: "hello", get requestId() { reads.current += 1; return ProcessRequestId.make("excess") }, protocolVersion: 1 }
+    const waiting = yield* Effect.result(fixture.peer.send(waitingEvent)).pipe(Effect.forkScoped)
+    yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+    expect(waiting.pollUnsafe()).toBeUndefined()
     expect(reads.current).toBe(0)
+    yield* Fiber.interrupt(waiting)
     yield* Fiber.interrupt(first)
     const flush = yield* fixture.peer.flush.pipe(Effect.forkScoped)
     yield* Effect.yieldNow
@@ -81,7 +83,47 @@ test("accepted writes survive caller interruption and keep later writers unencod
     yield* Fiber.join(flush)
     expect(reads.current).toBeGreaterThan(0)
     expect((yield* fixture.writes).length).toBe(2)
+    yield* fixture.peer.send(hello("after")).pipe(Effect.andThen(fixture.peer.send(hello("again"))))
+    expect((yield* fixture.writes).length).toBe(4)
   })))
+})
+
+test("a writer beyond capacity waits for a free slot and is written in turn", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const fixture = yield* stdioPeerSubject.open({ holdWrites: true, maxPendingWrites: 1, writeTimeoutMs: 60_000 })
+    const sends = yield* Effect.forEach(["one", "two", "three"], (id) => fixture.peer.send(hello(id)).pipe(Effect.forkScoped), { concurrency: 1 })
+    yield* eventually(fixture.writes, (all) => all.length === 1)
+    yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+    expect(sends.map((fiber) => fiber.pollUnsafe() === undefined)).toEqual([true, true, true])
+    expect((yield* fixture.writes).length).toBe(1)
+    yield* fixture.releaseWrites
+    yield* Effect.forEach(sends, Fiber.join, { concurrency: 1, discard: true })
+    yield* fixture.peer.flush
+    expect((yield* fixture.writes).map((chunk) => new TextDecoder().decode(chunk)).join("").split("\n").filter((line) => line.length > 0).length).toBe(3)
+  })))
+})
+
+test("a writer waiting for a slot fails within the write timeout when output stalls, and peer disposal wakes it", async () => {
+  const stalled = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const fixture = yield* stdioPeerSubject.open({ holdWrites: true, maxPendingWrites: 1, writeTimeoutMs: 30 })
+    const held = yield* Effect.result(fixture.peer.send(hello("held"))).pipe(Effect.forkScoped)
+    yield* eventually(fixture.writes, (all) => all.length === 1)
+    const waited = yield* Effect.result(fixture.peer.send(hello("waiting")))
+    yield* Fiber.join(held)
+    return waited
+  })))
+  expect(Result.isFailure(stalled) && ["Capacity", "WriteTimeout"].includes(stalled.failure.reason)).toBe(true)
+  const disposed = await Effect.runPromise(Effect.gen(function*() {
+    const scope = yield* Scope.make()
+    const fixture = yield* stdioPeerSubject.open({ holdWrites: true, maxPendingWrites: 1, writeTimeoutMs: 60_000 }).pipe(Scope.provide(scope))
+    yield* fixture.peer.send(hello("held")).pipe(Effect.forkIn(scope))
+    yield* eventually(fixture.writes, (all) => all.length === 1)
+    const waiting = yield* Effect.result(fixture.peer.send(hello("waiting"))).pipe(Effect.forkDetach)
+    yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+    yield* Scope.close(scope, Exit.void)
+    return yield* Fiber.join(waiting).pipe(Effect.timeoutOption(5_000))
+  }))
+  expect(Option.exists(disposed, (result) => Result.isFailure(result) && result.failure.reason === "Closed")).toBe(true)
 })
 
 class ManualWriter extends Writable {

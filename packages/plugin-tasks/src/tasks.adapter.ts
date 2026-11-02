@@ -192,7 +192,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         ? { drafts: [], result: { answered: previous, terminal } }
         : yield* Effect.fail(new TaskConflict({ session: parent.id, taskId }))
       if (terminal) return yield* Effect.fail(refusal(parent, taskId, "inactive"))
-      if (!Option.exists(outstandingOf(records), (question) => question.questionId === input.questionId)) return yield* Effect.fail(refusal(parent, taskId, "question"))
+      if (!Option.exists(outstandingOf(records), (question) => question.questionId === input.questionId)) return yield* Effect.fail(refusal(parent, taskId, "unknown-question"))
       return { drafts: [{ kind: TASK_ANSWERED, data }], result: { answered, terminal: false } }
     })).pipe(Effect.catchTag("ReservedKind", reservedIsDefect))
     if (decided.result.terminal) return { accepted: true as const, enqueued: false }

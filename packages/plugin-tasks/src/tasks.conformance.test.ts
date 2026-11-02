@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option, Tracer } from "effect"
-import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRefused, TaskRunner, Tasks, TurnAdmissionOpen, TurnRefused, TurnShutdown } from "@xandreed/core"
+import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskControlRefused, TaskExecutor, TaskRefused, TaskRunner, Tasks, TurnAdmissionOpen, TurnRefused, TurnShutdown } from "@xandreed/core"
 import { taskRunnerConformance, tasksConformance } from "@xandreed/core/conformance"
 import type { ConformanceCheck, TasksDependencies, TasksFixture } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -112,6 +112,14 @@ describe("the Tasks kit catches careless backends", () => {
   test("one whose answer accepts without enqueueing fails the answer check", async () => {
     const checks = tasksConformance(careless(() => ({ answer: () => Effect.succeed({ accepted: true, enqueued: false }) })))
       .filter((check) => check.name.startsWith("an answer queues"))
+    expect(await failedChecks(checks)).toEqual(["answer"])
+  }, 30_000)
+
+  test("one that refuses an unknown question id as the one-question limit fails the answer check", async () => {
+    const checks = tasksConformance(careless((tasks) => ({ answer: (parent, taskId, input) => tasks.answer(parent, taskId, input).pipe(Effect.mapError((error) =>
+      error._tag === "TaskControlRefused" && error.reason === "unknown-question"
+        ? new TaskControlRefused({ session: error.session, taskId: error.taskId, reason: "question", message: "Ask one question per turn and wait for its answer before asking another" })
+        : error)) }))).filter((check) => check.name.startsWith("an answer queues"))
     expect(await failedChecks(checks)).toEqual(["answer"])
   }, 30_000)
 

@@ -58,11 +58,11 @@ The three entries name each export, and `quality/exports-have-consumers` checks 
 | Text | Source | Pinned by |
 |---|---|---|
 | Shared canonical descriptions for native model and policy failures, and HTTP fallbacks when provider diagnostic text is absent (`modelFailureMessageOf`) | `packages/core/src/domain/model-failure.entity.functions.ts:138-148`, used by `src/llm/provider-client.adapter.ts:42` and `src/transport/resilient-http-client.adapter.ts:41-44`, `:82`, `:124`, `:159`, `:180`, `:249` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:97` |
-| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:204`, called at `src/llm/router.ts:142`) | exact, `src/llm/providers.test.ts:294` |
+| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:205`, called at `src/llm/router.ts:142`) | exact, `src/llm/providers.test.ts:294` |
 | Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:63` | exact, `src/llm/providers.test.ts:75`, `src/llm/openAiCodex.test.ts:40-47` |
-| Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:156-167`, `:282-298` | exact, `src/llm/compat.test.ts:445-446`, `:451-452`, `:466-470`, `:533`, `:540-541`; `src/llm/providers.test.ts:233` |
-| File label (`[file omitted: <type>, <name>]`, the name when the part has one) for any file part but an inline image, an image by URL included; an inline image uses core's `mediaLabel` | `src/llm/compat.ts:134` | exact, `src/llm/compat.test.ts:466-472` |
-| Image captions: `Images returned by <tool> (call <id>):`, `[the images this call returned follow]`, `The user's message:` | `src/llm/compat.ts:237`, `:242`, `:191` | exact, `src/llm/compat.test.ts:506-513` (first two), `:526-529` (the third); `src/llm/providers.test.ts:238-240` |
+| Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:161-172`, `:287-303` | exact, `src/llm/compat.test.ts:445-446`, `:451-452`, `:466-470`, `:533`, `:540-541`; `src/llm/providers.test.ts:233` |
+| File label (`[file omitted: <type>, <name>]`, the name when the part has one) for any file part but an inline image, an image by URL included; an inline image uses core's `mediaLabel` | `src/llm/compat.ts:138-139` | exact, `src/llm/compat.test.ts:466-472` |
+| Image captions: `Images returned by <tool> (call <id>):`, `[the images this call returned follow]`, `The user's message:` | `src/llm/compat.ts:242`, `:247`, `:196` | exact, `src/llm/compat.test.ts:506-513` (first two), `:526-529` (the third); `src/llm/providers.test.ts:238-240` |
 
 ## Erasure files
 

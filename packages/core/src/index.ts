@@ -221,7 +221,7 @@ export { HarnessError, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from 
 export type { PartialOptions, Plugin, TypedPlugin } from "./harness/plugin.entity.js"
 export { isHarnessError, mergeOptions, provideDeclared } from "./harness/plugin.entity.functions.js"
 export type { ServiceKeys } from "./harness/plugin.entity.functions.js"
-export { HARNESS_CODES, HarnessCode, TAGGED_CODES } from "./harness/harness-code.entity.js"
+export { HARNESS_CODES, HarnessCode, TAGGED_CODES, TAGGED_REASON_CODES } from "./harness/harness-code.entity.js"
 export { harnessCodeOf, harnessError } from "./harness/harness-code.entity.functions.js"
 export { definePlugin } from "./harness/plugin.adapter.js"
 export { CapabilitiesLive, stackPlugins } from "./harness/plugin-stack.adapter.js"

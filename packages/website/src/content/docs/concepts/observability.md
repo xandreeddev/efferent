@@ -148,19 +148,25 @@ Effect.runFork(program.pipe(Effect.provide(tracing)))
 
 For an agent workspace, use `{ _tag: "Agent", agentId: "support-agent",
 environment: "production" }` instead. The target selects the documented
-exclusive addressing headers. `tracesUrl` is a complete signal URL, used
-verbatim, and defaults to `https://api.smith.langchain.com/otel/v1/traces`.
+exclusive addressing headers. A key linked to several workspaces also needs
+`workspaceId`, sent as LangSmith's `X-Tenant-Id` header. `tracesUrl` is a
+complete signal URL, used verbatim, and defaults to
+`https://api.smith.langchain.com/otel/v1/traces`.
 See [LangSmith's OTLP reference](https://docs.langchain.com/langsmith/trace-with-opentelemetry)
 for registered agents, regions and self-hosted endpoints.
 
 The layer exports traces only. `LangSmithTelemetryHttpLive` takes the host's
 `HttpClient`; both layers share the existing `flushTelemetry` contract. Resource,
 protocol, compression, interval and shutdown options follow the generic exporter.
+LangSmith documents OTLP over protobuf, the default; `http/json` relies on the
+OTLP recommendation that servers accept JSON, and suits local collectors.
 Invalid configuration fails with `config.options` without disclosing the key.
 
 Real native Effect AI operations become LLM runs. Tool invocations become tool
 runs; engine, routing and agent wrappers remain chains, with no duplicate
-inference usage. Planned tool batches are chains. Explicit host inference spans
+inference usage. Planned tool batches are chains. An LLM run carries the model
+that answered (else the one requested) as `langsmith.metadata.ls_model_name`,
+the metadata LangSmith prices runs by, unless the host set it. Explicit host inference spans
 can own a boundary instead of their native children. Custom host models that
 do not annotate their actual span keep unknown usage; the exporter never fills
 it from aggregate turn counters. The framework's billing ledger remains the

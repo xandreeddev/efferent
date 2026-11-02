@@ -379,7 +379,7 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 
 `HARNESS_CODES` (from `@xandreed/core`; `HarnessCode` is its schema) lists every code the framework's packages raise or store: the begin codes above, the task failure codes below and these. The list is published: a code in it is never renamed or removed, only added, and the generator fails on a code a package raises that the list does not hold. A host's and a third-party plugin's own codes are not in it (`HarnessError.code` is any string).
 
-A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` gives for the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). Most codes are a `HarnessError`'s; a tag (`TAGGED_CODES`: a begin refusal, `TurnClosed`, `ReservedKind`, `SessionContended`) stands for its own. A `SessionLogError` carries a store's (`store.*`, and the sessions and tasks plugins' storage codes), and a turn that fails with one stores `session.log`; an `AuthError` or a `SettingsError` carries its own.
+A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` gives for the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). Most codes are a `HarnessError`'s; a tag (`TAGGED_CODES`: a begin refusal, `TurnClosed`, `ReservedKind`, `SessionContended`, `TaskMissing`, `TaskConflict`) stands for its own, and a `TaskControlRefused` for its reason's (`TAGGED_REASON_CODES`). A `SessionLogError` carries a store's (`store.*`, and the sessions and tasks plugins' storage codes), and a turn that fails with one stores `session.log`; an `AuthError` or a `SettingsError` carries its own.
 
 | Code | Where | Meaning |
 | --- | --- | --- |
@@ -586,3 +586,10 @@ The `code` of a task result's `failure`, or of a task's status, besides any `Har
 | `task.deadline` | a task's result or the parent's reaction | The task runner's deadline cut the work. |
 | `task.lost` | a task's status | The task's turn stopped without a result. |
 | `task.removed` | a task's status | The task's session was removed with its parent. |
+| `task.missing` | a `TaskMissing` (`Tasks` controls; a process-host answer's frameworkCode) | The parent started no task under this id. |
+| `task.conflict` | a `TaskConflict` (`Tasks.start`, `ask`, `answer`) | This task id, question id or answer was already stored with different content; the stored one stands. |
+| `task.inactive` | a `TaskControlRefused` of reason `inactive` | The task finished or was cancelled; the control changed nothing. |
+| `task.waiting` | a `TaskControlRefused` of reason `waiting` | The task waits for an answer to its question; steering is refused until it is answered. |
+| `task.question-limit` | a `TaskControlRefused` of reason `question` | The asking turn already asked, or a question is outstanding: one new question per turn, one outstanding per task. |
+| `task.question-unknown` | a `TaskControlRefused` of reason `unknown-question` | No pending question of the task has the answered id; read the task's status for its pending question. |
+| `task.context` | a `TaskControlRefused` of reason `context` | The question was not asked from the task's current turn, run and step. |

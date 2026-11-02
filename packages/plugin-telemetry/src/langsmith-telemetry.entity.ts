@@ -6,6 +6,9 @@ import { OtlpCompression, OtlpProtocol } from "./otlp-telemetry.entity.js"
 export const LangSmithAgentId = Schema.String.check(Schema.isPattern(/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?![\s\S])/)).pipe(Schema.brand("LangSmithAgentId"))
 export type LangSmithAgentId = typeof LangSmithAgentId.Type
 
+/** A LangSmith workspace id, sent as its `X-Tenant-Id` header. */
+export const LangSmithWorkspaceId = Schema.String.check(Schema.isPattern(/^\S+(?![\s\S])/)).pipe(Schema.brand("LangSmithWorkspaceId"))
+
 /** The environment selected in an agent-based LangSmith workspace. @public */
 export const LangSmithEnvironment = Schema.Literals(["local", "development", "staging", "production"])
 export type LangSmithEnvironment = typeof LangSmithEnvironment.Type
@@ -21,11 +24,22 @@ export type LangSmithTarget = typeof LangSmithTarget.Type
 export interface LangSmithTelemetryOptions {
   readonly apiKey: Redacted.Redacted<string>
   readonly target: typeof LangSmithTarget.Encoded
+  /**
+   * The workspace to trace into, sent as LangSmith's documented `X-Tenant-Id`
+   * header. Required by LangSmith when the API key is linked to several
+   * workspaces; a key scoped to one workspace needs none.
+   */
+  readonly workspaceId?: string
   /** A complete traces URL, used verbatim; defaults to the US SaaS /otel/v1/traces endpoint. */
   readonly tracesUrl?: string
   readonly serviceName?: string
   readonly serviceVersion?: string
   readonly resourceAttributes?: Readonly<Record<string, string>>
+  /**
+   * The OTLP payload encoding, `http/protobuf` by default. LangSmith documents
+   * OTLP/HTTP with protobuf; `http/json` relies on the OTLP specification's
+   * recommendation that servers accept JSON and is meant for local collectors.
+   */
   readonly protocol?: OtlpProtocol
   readonly compression?: OtlpCompression
   readonly exportInterval?: Duration.Input
@@ -36,6 +50,7 @@ export interface LangSmithTelemetryOptions {
 export const LangSmithTelemetryInput = Schema.Struct({
   apiKey: Schema.Redacted(Schema.String.check(Schema.isPattern(/^\S+(?![\s\S])/)), { disallowJsonEncode: true }),
   target: LangSmithTarget,
+  workspaceId: Schema.optionalKey(LangSmithWorkspaceId),
   tracesUrl: Schema.optionalKey(Schema.Trimmed.check(Schema.isNonEmpty())),
   serviceName: Schema.optionalKey(Schema.NonEmptyString),
   serviceVersion: Schema.optionalKey(Schema.NonEmptyString),

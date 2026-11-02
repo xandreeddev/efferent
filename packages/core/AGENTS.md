@@ -483,7 +483,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
+| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:97` |
 | Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
 | Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact, `src/turn/model-request-hook.entity.functions.test.ts:26-32` |
 | Request-hook invalid-edge and foreign-failure reporting message (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:12` | exact, `src/turn/model-request-hook.entity.functions.test.ts:38-40` |

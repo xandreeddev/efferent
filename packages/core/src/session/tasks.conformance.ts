@@ -429,7 +429,7 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
         "the early answer removed waiting from its old writer, allowed another question or was consumed by the asking turn")
     })),
 
-    scoped("an answer queues one follow-up on a borrowed writer and stays idempotent after the task completes", "answer", (owner) => Effect.gen(function* () {
+    scoped("an answer queues one follow-up on a borrowed writer, refuses an unknown question id and stays idempotent after the task completes", "answer", (owner) => Effect.gen(function* () {
       const seen = yield* Ref.make(Option.none<TurnWriter>())
       const h = yield* harness(owner, (writer, _task, _controls, tasks) => writer.admitted.origin === "task"
         ? tasks.ask(writer, questionOf(writer)).pipe(Effect.orDie, Effect.as({ outcome: "waiting" as const, reply: Option.none() }))
@@ -437,6 +437,10 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       const task = yield* h.tasks.start(h.parent, { instructions: "ask before resolving", mode: "spawn" })
       yield* h.idle("answer")
       const input = { questionId: TaskQuestionId.make("helper-question"), text: "Use the primary source." }
+      const unknown = yield* Effect.result(h.tasks.answer(h.parent, task.taskId, { ...input, questionId: TaskQuestionId.make("never-asked") }))
+      yield* expect("answer", unknown._tag === "Failure" && unknown.failure._tag === "TaskControlRefused" && unknown.failure.reason === "unknown-question"
+        && (yield* h.sessions.get({ id: task.child, owner })).pending === 0,
+      "an answer to a question id that is not pending was accepted, queued, or refused as something other than an unknown question")
       const first = yield* h.tasks.answer(h.parent, task.taskId, input)
       const duplicate = yield* h.tasks.answer(h.parent, task.taskId, input)
       const conflict = yield* Effect.result(h.tasks.answer(h.parent, task.taskId, { ...input, text: "Use another source." }))
