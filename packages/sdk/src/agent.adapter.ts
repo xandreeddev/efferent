@@ -102,7 +102,7 @@ export interface AgentConfig {
   readonly workspace?: string
   /**
    * Defaults for every run; a turn's policy overrides them. Its loop
-   * protection (`degenerate`, `malformedLimit`) is decoded here
+   * protection (`degenerate`, `malformedLimit`, `invalidCalls`) is decoded here
    * (`config.limits`), and a run's merged limits again (`turn.limits`).
    */
   readonly limits?: Partial<LoopLimits>
@@ -326,7 +326,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   }
   // A bad loop policy fails here, not inside the first turn's loop.
   yield* Schema.decodeUnknownEffect(LoopProtection)(config.limits ?? {}).pipe(
-    Effect.mapError((cause) => new HarnessError({ code: "config.limits", message: "the agent's limits carry a degenerate policy or malformedLimit that does not decode", cause })),
+    Effect.mapError((cause) => new HarnessError({ code: "config.limits", message: "the agent's limits carry a degenerate policy, malformedLimit or invalidCalls that does not decode", cause })),
   )
   const parent = yield* Effect.scope
   const entries = config.plugins.map(entryOf)

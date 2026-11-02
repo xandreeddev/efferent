@@ -144,6 +144,7 @@ const InboxItemId
 const InboxQueuedData
 const InboxTakenData
 const InputDelivery
+const InvalidCallPolicy
 const InvocationId
 const JOURNAL_KINDS
 const JournalCursor
@@ -434,6 +435,7 @@ const stampPartModel
 const stampResponseFailure
 const stampResponseModel
 const storedJson
+const strictJsonSchema
 const subscribeAll
 const sumUsage
 const tokenUsage
@@ -441,6 +443,7 @@ const toolCallIdOf
 const toolCallStatesOf
 const toolInputOf
 const toolInputsOf
+const toolParametersSchema
 const toolResultMedia
 const traceParentOf
 const turnAttributes
@@ -586,6 +589,7 @@ type InboxItemId
 type InboxQueuedData
 type InboxTakenData
 type InputDelivery
+type InvalidCallPolicy
 type InvocationId
 type JournalCursor
 type JsonObject

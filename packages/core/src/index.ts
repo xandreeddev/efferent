@@ -236,7 +236,7 @@ export { PromptId, PromptProvenance } from "./domain/prompt-provenance.entity.js
 export { CurrentPromptProvenance } from "./loop/promptProvenance.js"
 
 export { CurrentAgentRun, CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
-export { DegeneratePolicy, LoopProtection, MalformedLimit } from "./domain/loop-limits.entity.js"
+export { DegeneratePolicy, InvalidCallPolicy, LoopProtection, MalformedLimit } from "./domain/loop-limits.entity.js"
 export type { ToolInvocation } from "./loop/stepContext.js"
 
 export { CandidateId, DecisionId, DecisionRecord } from "./decision-record.entity.js"
@@ -427,6 +427,7 @@ export { collectSkillFiles, readSkillFiles, skillIssuesText, skillsFromFiles } f
 // declares (`scripts/api-snapshot.ts`).
 import * as glob from "./internal/glob.entity.functions.js"
 import * as mapping from "./internal/mapping.entity.functions.js"
+import * as toolSchema from "./internal/tool-schema.entity.functions.js"
 
 export const compileGlob: typeof glob.compileGlob = glob.compileGlob
 /** @public */
@@ -437,6 +438,20 @@ export interface GlobMatchOptions extends glob.GlobMatchOptions {}
 export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
 /** @public */
 export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
+/**
+ * A tool's parameters as the model sees them, in the model-facing JSON Schema
+ * form: a host fingerprints the tool contracts it sends, to version them.
+ *
+ * @public
+ */
+export const toolParametersSchema: typeof toolSchema.toolParametersSchema = toolSchema.toolParametersSchema
+/**
+ * Any schema in the model-facing JSON Schema form tool parameters take: a
+ * host fingerprints the contracts it sends beside its tools, to version them.
+ *
+ * @public
+ */
+export const strictJsonSchema: typeof toolSchema.strictJsonSchema = toolSchema.strictJsonSchema
 
 export { ImageResizer } from "./ports/image-resizer.port.js"
 export { ImageInput, ImageFitTarget, ImageResizeReason, ImageResizeError } from "./domain/image-resize.entity.js"

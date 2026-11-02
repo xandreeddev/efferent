@@ -3,7 +3,7 @@ import { Tool } from "effect/ai"
 import { Effect, Option, Schema, SchemaGetter } from "effect"
 import { FinishReason } from "@xandreed/core"
 import type { ResponseVerdict } from "./response-gate.entity.js"
-import { lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { callRejections, isRejectedCall, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 
 describe("verdictOf: whether a response may run its tool calls", () => {
   /** Each reason's verdict for a response that holds calls the loop would run, and for one that holds none. */
@@ -80,6 +80,22 @@ describe("malformedCall: the first call of a whole response the loop will not ru
     expect(await checked([{ name: "echo", params: { value: "a" } }, { name: "external", params: { query: "b" } }], tools)).toEqual(Option.none())
     expect(await checked([], tools)).toEqual(Option.none())
   })
+
+  test("callRejections checks every call, in call order; a repeated id is one the loop cannot answer alone", async () => {
+    const checks = await Effect.runPromise(callRejections([
+      { id: "a", name: "echo", params: { value: "ok" } },
+      { id: "b", name: "missing", params: {} },
+      { id: "c", name: "echo", params: { value: 7 } },
+      { id: "a", name: "echo", params: { value: "again" } },
+    ], tools))
+    expect(checks).toEqual([
+      Option.none(),
+      Option.some({ _tag: "NotFound", toolName: "missing" }),
+      Option.some({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }),
+      Option.some({ _tag: "DuplicateId", toolName: "echo" }),
+    ])
+    expect(checks.map((check) => Option.exists(check, isRejectedCall))).toEqual([false, true, true, false])
+  })
 })
 
 describe("the gate's text, exactly as the model and the host read it", () => {
@@ -94,6 +110,25 @@ describe("the gate's text, exactly as the model and the host read it", () => {
   test("lengthCorrective: after a reply cut at the output limit, with tool calls in it and without", () => {
     expect(lengthCorrective(true)).toBe("[Host note: your previous reply reached the output limit and was cut short, so the tool calls it made were not run: their results say so. Call the tools you still need again, fewer in one reply and with less text before them.]")
     expect(lengthCorrective(false)).toBe("[Host note: your previous reply reached the output limit and was cut short. Continue from where it stopped, in replies short enough to finish.]")
+  })
+
+  test("rejectedCallFailure: a whole reply's call answered instead of run, under invalidCalls answer", () => {
+    expect(rejectedCallFailure({ _tag: "NotFound", toolName: "not_a_tool" }, ["echo", "external"])).toEqual({
+      error: "ToolNotFound",
+      message: "This call was not run: it names a tool you do not have; the name follows, as you wrote it. The tools you can call are: echo, external.\n\n<tool-name>\nnot_a_tool\n</tool-name>",
+    })
+    expect(rejectedCallFailure({ _tag: "NotFound", toolName: "not_a_tool" }, [])).toEqual({
+      error: "ToolNotFound",
+      message: "This call was not run: it names a tool you do not have; the name follows, as you wrote it. You can call no tools now.\n\n<tool-name>\nnot_a_tool\n</tool-name>",
+    })
+    expect(rejectedCallFailure({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }, ["echo"])).toEqual({
+      error: "InvalidParameters",
+      message: "This call was not run: its parameters do not match the schema of echo; what did not match follows, and it may quote your call. Call echo again with its parameters as its schema gives them if you still need it.\n\n<parameter-errors>\nExpected string\n  at [\"value\"]\n</parameter-errors>",
+    })
+    // What the model wrote is clipped to QUOTE_CHARS, the counted marker included.
+    expect(QUOTE_CHARS).toBe(600)
+    const long = rejectedCallFailure({ _tag: "NotFound", toolName: "x".repeat(712) }, ["echo"])
+    expect(long.message).toBe(`This call was not run: it names a tool you do not have; the name follows, as you wrote it. The tools you can call are: echo.\n\n<tool-name>\n${"x".repeat(573)}\n[… 139 characters clipped]\n</tool-name>`)
   })
 
   test("truncatedMessage: why the run stopped, for the host", () => {

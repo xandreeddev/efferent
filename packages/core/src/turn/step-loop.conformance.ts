@@ -66,6 +66,12 @@ const malformedCall = (id: string): ReadonlyArray<Part> => [
   { type: "tool-call", id, name: "no_such_tool", params: {}, providerExecuted: false },
   { type: "finish", reason: "tool-calls", usage },
 ]
+/** A whole reply calling `probe` (`id`, with `n`) and a tool that does not exist (`missing`). */
+const probeAndMissing = (id: string, n: number, missing: string): ReadonlyArray<Part> => [
+  { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
+  { type: "tool-call", id: missing, name: "no_such_tool", params: {}, providerExecuted: false },
+  { type: "finish", reason: "tool-calls", usage },
+]
 
 type StreamPart = Response.StreamPartEncoded
 /** Anthropic's thinking metadata: the signature of a thinking block, the data of a redacted one. */
@@ -128,6 +134,7 @@ const withUsage = (reply: ReadonlyArray<Part>, value: ReturnType<typeof billed>)
 interface Scenario {
   readonly degenerate?: LoopLimits["degenerate"]
   readonly malformedLimit?: number
+  readonly invalidCalls?: LoopLimits["invalidCalls"]
   readonly script: ReadonlyArray<ReadonlyArray<Part>>
   readonly initial?: InitialBatch
   readonly toolChoice?: ToolChoice
@@ -364,6 +371,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       maxSteps: scenario.maxSteps ?? 6, toolConcurrency: scenario.toolConcurrency ?? 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false,
       ...(scenario.degenerate === undefined ? {} : { degenerate: scenario.degenerate }),
       ...(scenario.malformedLimit === undefined ? {} : { malformedLimit: scenario.malformedLimit }),
+      ...(scenario.invalidCalls === undefined ? {} : { invalidCalls: scenario.invalidCalls }),
     },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
@@ -1051,6 +1059,24 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         `step 0 ended ${JSON.stringify(endsOf(0))}, step 1 ${JSON.stringify(endsOf(1))}`)
       yield* expect("malformed", indexOf(events, "completion.evaluated", 0) < 0 && result.outcome === "completed" && result.text === "done",
         `the malformed step's completion was ${indexOf(events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated; the run ${result.outcome} with ${JSON.stringify(result.text)}`)
+    }),
+  },
+  {
+    name: "under invalidCalls answer, a whole reply's call to a tool the step does not have is answered in the reply's own record, its other call runs, and the step completes",
+    run: Effect.gen(function* () {
+      const observed = yield* observe(loop, { invalidCalls: "answer", script: [probeAndMissing("ok1", 7, "m1"), textReply("done")] })
+      const { events, recorded, result, steps } = observed
+      const endsOf = (step: number) => events.flatMap((event) => event._tag === "step.ended" && event.step === step ? [event.status] : [])
+      const results = recorded.flatMap((entry) => entry.step === 0 && entry.body._tag === "ToolResult" ? [`${String(entry.body.toolCallId)}:${entry.body.isError ? "failed" : "ok"}`] : [])
+      yield* expect("invalid-calls", steps.handled.length === 1 && endsOf(0).join() === "completed"
+        && results.length === 2 && results.includes("ok1:ok") && results.includes("m1:failed"),
+        `the probe handler ran ${steps.handled.length} times and step 0 ended ${JSON.stringify(endsOf(0))} with the results ${JSON.stringify(results)}, not once and completed, with ok1 ok and m1 answered as failed`)
+      yield* expect("invalid-calls", result.outcome === "completed" && result.text === "done", `the run ${result.outcome} with ${JSON.stringify(result.text)}`)
+      // The answered call never runs, so its answer is stored with the reply: no stop between two records leaves it unanswered.
+      const reply = observed.records.find((record) => record.step === 0 && record.tail.some((message) => message.role === "assistant"))
+      const answered = reply?.tail.some((message) => message.role === "tool" && message.content.some((part) => part.toolCallId === "m1")) ?? false
+      yield* expect("invalid-calls-record", answered,
+        `the reply was recorded as ${JSON.stringify(reply?.tail.map((message) => message.role) ?? [])}, without the answer to its call m1 in the same record`)
     }),
   },
   {
