@@ -174,7 +174,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * framework's turn wrote them (`frameworkDraft`); `changes` signalling a
  * follower after its own session's commits only, the signals it did not
  * take merged into one; cancel and removal closing
- * the writer, a write after a cancel, a reap or a stopped holder refused as
+ * the writer, a writer of a session removed and created again under its id
+ * (on another instance) writing nothing into the new one, its next write
+ * `TurnClosed` (`removed`), a write after a cancel, a reap or a stopped holder refused as
  * `TurnClosed` with its reason (a writer must raise these tags, not a
  * `HarnessError` of their codes), and
  * a turn nobody holds any more reaped alike by a cancel or a delivery,
@@ -836,6 +838,22 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("remove", closed.reason === "removed", `the open turn's writer was closed as ${closed.reason}`)
       const gone = [yield* Effect.flip(sessions.get(address)), yield* Effect.flip(sessions.get({ id: child.header.id, owner })), yield* Effect.flip(sessions.remove(address))]
       yield* expect("remove", gone.every((error) => error._tag === "SessionMissing"), `after the removal the session, its child and a second removal gave ${gone.map((error) => error._tag).join()}`)
+    })),
+
+    scoped("a turn's writer of a session removed and created again under its id writes nothing into the new one: its next write is refused as TurnClosed (removed)", "recreate", (owner) => Effect.gen(function* () {
+      const [{ sessions: first }, { sessions: second }] = [yield* leased(), yield* leased()]
+      const address = yield* created(first, owner)
+      const stale = yield* first.begin(address, say("before"))
+      yield* second.remove(address)
+      yield* second.create({ owner, id: address.id })
+      // The session created again reaches the revision the stale writer expects, by the same begin.
+      const fresh = yield* second.begin(address, say("after"))
+      const late = yield* writeRefused(stale)
+      yield* expect("recreate", late === "TurnClosed:removed", `a write of the removed session's turn, after the session was created again, gave ${late}`)
+      yield* fresh.end(completed)
+      const kinds = (yield* second.read(address)).map((event) => event.kind)
+      yield* expect("recreate", !kinds.includes("conformance.late") && endings(yield* second.read(address)) === "1:completed:none",
+        `the removed session's turn wrote into the one created again: ${kinds.join()}`)
     })),
 
     scoped("the inbox: an item is delivered once per id, taken by one inbox turn, waits for the open turn, comes back when its turn is interrupted from outside, and is done when its turn is cancelled", "inbox", (owner) => Effect.gen(function* () {

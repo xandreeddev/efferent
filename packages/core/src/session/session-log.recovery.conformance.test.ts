@@ -78,7 +78,7 @@ const rowByRow = (log: Log, rows: Ref.Ref<ReadonlyArray<SessionLogEvent>>): Log 
 describe("the recovery kit catches backends that lose or hide writes", () => {
   test("a backend that buffers writes until close fails the checks with two handles open and the unclosed handle", async () => {
     const store = Effect.runSync(Ref.make<ReadonlyArray<Write>>([]))
-    expect(await failedChecks({ open: bufferedUntilClose(store), callerClock: true })).toEqual(["cross-handle", "cross-handle-race", "unclosed-handle"])
+    expect(await failedChecks({ open: bufferedUntilClose(store), callerClock: true })).toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "unclosed-handle"])
   })
 
   test("a backend that writes a commit row by row fails only the interrupted commit, with part of a commit stored", async () => {
@@ -92,7 +92,13 @@ describe("the recovery kit catches backends that lose or hide writes", () => {
 
   test("a store per open (a new SessionLogMemoryLive each time) fails every check that opens the store again", async () => {
     expect(await failedChecks({ open: memoryLog, callerClock: true }))
-      .toEqual(["cross-handle", "cross-handle-race", "interrupted-commit", "reopen", "reopen-twice", "unclosed-handle"])
+      .toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "interrupted-commit", "reopen", "reopen-twice", "unclosed-handle"])
+  })
+
+  test("a backend that ignores a commit's incarnation fails only the cross-handle incarnation check", async () => {
+    const log = Effect.runSync(memoryLog)
+    const careless = SessionLog.of({ ...log, commit: (id, { incarnation: _incarnation, ...commit }) => log.commit(id, commit) })
+    expect(await failedChecks({ open: Effect.succeed(careless), callerClock: true })).toEqual(["cross-handle-incarnation"])
   })
 
   test("the expiry boundary is checked only when the backend stamps with the caller's clock", () => {

@@ -13,6 +13,7 @@ import {
   LeaseExpired,
   RevisionConflict,
   SessionExists,
+  SessionIncarnation,
   SessionLog,
   SessionLogError,
   SessionMissing,
@@ -38,6 +39,8 @@ const HeadRow = Schema.Struct({
   revision: Schema.Int,
   state: JsonColumn,
   updated_at: Schema.Number,
+  /** Empty for a row a release without schema 2 wrote into a file this release migrated (it fences nothing). */
+  incarnation: SessionIncarnation,
 })
 
 /** A `session_log_events` row, decoded like `HeadRow`. */
@@ -104,10 +107,20 @@ const SCHEMA_V1 = `
   `
 
 /**
+ * Schema 2: each session's incarnation, which a session removed and created
+ * again under its id does not share (`SessionCommit.incarnation`). The
+ * sessions already there get one each. Shipped: never edit it.
+ */
+const SCHEMA_V2 = `
+    ALTER TABLE session_heads ADD COLUMN incarnation TEXT NOT NULL DEFAULT '';
+    UPDATE session_heads SET incarnation = lower(hex(randomblob(16))) WHERE incarnation = '';
+  `
+
+/**
  * The schema, in order: entry n takes a file from `user_version` n to n + 1.
  * A shipped entry never changes; a change to the tables adds one.
  */
-const MIGRATIONS: ReadonlyArray<string> = [SCHEMA_V1]
+const MIGRATIONS: ReadonlyArray<string> = [SCHEMA_V1, SCHEMA_V2]
 
 /** What opening found: a version this release reads (the file is now at its last schema), or a newer one, left alone. */
 type Migrated =
@@ -177,6 +190,7 @@ const headOf = (row: typeof HeadRow.Type, now: number): SessionHead => ({
       id: row.parent_id, through: row.parent_through ?? 0, turnAtFork: row.turn_at_fork ?? 0,
     }),
   },
+  incarnation: row.incarnation,
   seq: row.seq,
   revision: row.revision,
   state: row.state,
@@ -198,8 +212,9 @@ type Outcome =
 /**
  * The authoritative session journal in one SQLite file: `session_heads`
  * and `session_log_events`. Removal cascades to events and children. A commit is one
- * IMMEDIATE transaction that checks the revision and the clock before it
- * writes. The clock is the caller's Effect `Clock`, read once the transaction
+ * IMMEDIATE transaction that checks the revision, the clock and the
+ * session's incarnation (a column each session gets when it is created)
+ * before it writes. The clock is the caller's Effect `Clock`, read once the transaction
  * holds the write lock: a commit that waited for another connection past its
  * `notAfter` is refused, and events carry the time they were committed. A
  * call waits for another connection's lock without blocking the thread, for
@@ -218,13 +233,14 @@ export const makeSessionLogSqlite = Effect.fnUntraced(function* (path: string): 
 
   const log = SessionLog.of({
     create: Effect.fn("session_log.create")(function* (header: SessionHeader) {
+      const incarnation = crypto.randomUUID()
       const { outcome, now } = yield* Clock.clockWith((clock) => operation(() => db.transaction(() => {
         const now = clock.currentTimeMillisUnsafe()
         if (headRow(header.id) !== null) return { outcome: "exists" as const, now }
         if (Option.isSome(header.parent) && headRow(header.parent.value.id) === null) return { outcome: "orphan" as const, now }
         const parent = Option.getOrNull(header.parent)
-        db.query("INSERT INTO session_heads (id, owner, origin, created_at, meta, parent_id, parent_through, turn_at_fork, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(header.id, header.owner, header.origin, header.createdAt, JSON.stringify(header.meta), parent?.id ?? null, parent?.through ?? null, parent?.turnAtFork ?? null, now)
+        db.query("INSERT INTO session_heads (id, owner, origin, created_at, meta, parent_id, parent_through, turn_at_fork, updated_at, incarnation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(header.id, header.owner, header.origin, header.createdAt, JSON.stringify(header.meta), parent?.id ?? null, parent?.through ?? null, parent?.turnAtFork ?? null, now, incarnation)
         return { outcome: "created" as const, now }
       }).immediate()))
       if (outcome === "exists") return yield* Effect.fail(new SessionExists({ session: header.id }))
@@ -268,8 +284,9 @@ export const makeSessionLogSqlite = Effect.fnUntraced(function* (path: string): 
       const outcome = yield* Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
         // The time is read under the write lock: a commit that waited for it is judged, and stamped, when it writes.
         const at = clock.currentTimeMillisUnsafe()
-        const head = db.query<{ readonly seq: number; readonly revision: number }, [string]>("SELECT seq, revision FROM session_heads WHERE id = ?").get(id)
-        if (head === null) return { _tag: "Missing" }
+        const head = db.query<{ readonly seq: number; readonly revision: number; readonly incarnation: string }, [string]>("SELECT seq, revision, incarnation FROM session_heads WHERE id = ?").get(id)
+        // A session removed and created again under its id is another incarnation: missing to a writer of the one before.
+        if (head === null || (commit.incarnation !== undefined && commit.incarnation !== head.incarnation)) return { _tag: "Missing" }
         if (head.revision !== commit.expect) return { _tag: "Conflict", actual: head.revision }
         if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return { _tag: "Expired", at }
         const events = Arr.zip(commit.events, data).map(([draft, stored], index): SessionLogEvent => ({

@@ -353,8 +353,9 @@ data. Exact `MediaEnvelope` roots contain a manifest of own data paths, with
 ordinary JSON. All metadata and extras survive, so hydration restores request
 part hashes exactly. Invalid/noncanonical media-looking values stay inline.
 Unknown event kinds, session headers, metadata and state pass through, and so
-does every row without an envelope: a read decodes nothing else of a row, so a
-newer release's or a damaged payload reaches its reader as stored. Copy the
+do a commit's `incarnation` and every row without an envelope: a read decodes
+nothing else of a row, so a newer release's or a damaged payload reaches its
+reader as stored. Copy the
 whole incoming commit before blob I/O, put every blob before committing,
 preserve inner failures and uncertain ACKs, and verify physical commit echoes
 against immutable expected bytes. Echoes use the operation's logical snapshot
@@ -374,6 +375,12 @@ warm cache can mask later external blob corruption until eviction or reopen.
 The decorated SessionLog kit and corruption, pass-through, key-only, literal
 JSON, copy, cache and ACK regressions are in
 `src/session/session-log-media.adapter.test.ts`.
+
+A `SessionLog` gives each create a new `SessionHead.incarnation`, stable for
+that session's life to every handle, and refuses a commit naming another
+(`SessionCommit.incarnation`) with `SessionMissing`, nothing written, in the
+same atomic step as its revision check (`sessionLogConformance` check
+`incarnation`). Callers that commit name the incarnation they read.
 
 `Sessions.waiting` is a bounded broadcast with an initial post-subscription
 signal, then local commits that change an inbox or an open turn (a turn's own

@@ -10,6 +10,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- `SessionLog`: `SessionHead` gains a required `incarnation`
+  (`SessionIncarnation`), which a store gives each session at its create,
+  stable for that session's life to every handle; a session removed and
+  created again under its id gets another. `SessionCommit` gains an optional
+  `incarnation`: a commit naming one fails with `SessionMissing`, nothing
+  written, unless the session is still that incarnation, checked in the same
+  atomic step as the revision. A host's own `SessionLog` mints one at
+  `create`, returns it in every head and checks it in `commit`; rerun
+  `sessionLogConformance` (new check `incarnation`) and `sessionsConformance`
+  (new check `recreate`). A decorator passes `incarnation` through. Commits
+  that name none behave as before. `@xandreed/plugin-session-sqlite` moves
+  its files to schema 2 when it opens them (`user_version` 2: an
+  `incarnation` column, a random one for each session already there); a
+  release that reads only schema 1 then refuses the file with
+  `store.version`. The file store's incarnation is its header's existing
+  nonce: no layout change, and no stored format change.
+
 - A whole `ImageResizerConfig` adds `maxSourcePixels: 100_000_000` (or
   spreads `imageResizerDefaults`). `grepEngine: "auto"` now uses ripgrep only
   over `localSystemPlugin`'s own `FileSystem` and `Bash`; a host whose other
@@ -1822,6 +1839,15 @@ Model-visible text (exact pins and the compaction golden updated):
   `error`, never a host's code.
 
 ### Fixed
+
+- A turn's writer on one instance no longer writes into a session another
+  instance removed and created again under the same id. Its commits matched
+  the new session's revision and landed there, its turn's events and its
+  state over the new session's. The sessions plugin now names the session's
+  incarnation in every commit, and the stale writer's next write fails
+  `TurnClosed` (`removed`). The file store also reads the session's header
+  again right before it links a commit, so a session replaced while the
+  commit wrote its file gets nothing.
 
 - Host policy for tools and the workspace. Tool discovery keys its
   nested-call marker to the gates a running handler can hold (its registry's

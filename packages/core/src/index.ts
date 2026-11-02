@@ -118,6 +118,7 @@ export {
   SessionExists,
   SessionHead,
   SessionHeader,
+  SessionIncarnation,
   SessionLineage,
   SessionListCursor,
   SessionListQuery,

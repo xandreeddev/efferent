@@ -97,7 +97,7 @@ const { sessions } = await Effect.runPromise(Schema.decodeUnknownEffect(JournalF
 const lastSeq = (events: ReadonlyArray<SessionLogEvent>) => events.reduce((last, event) => Math.max(last, event.seq), 0)
 
 describe("the SQLite file's schema version (user_version)", () => {
-  test("a file 0.14.0 wrote, without a version, opens as it was: its sessions read back whole, the next commit lands, and it ends at schema 1 with a new file's tables", async () => {
+  test("a file 0.14.0 wrote, without a version, opens as it was: its sessions read back whole, the next commit lands, and it ends at schema 2 with a new file's tables", async () => {
     const path = join(directory, "written-by-0.14.0.db")
     const opened = await Effect.runPromise(Effect.gen(function* () {
       // The file as 0.14.0 left it: WAL, its tables, user_version 0, the fixture's sessions and events.
@@ -134,14 +134,17 @@ describe("the SQLite file's schema version (user_version)", () => {
     expect(opened.before).toBe(0)
     expect(opened.read.back.map(({ head }) => [head.header, head.seq])).toEqual(sessions.map(({ header, events }) => [header, lastSeq(events)]))
     expect(opened.read.back.map(({ events }) => events)).toEqual(sessions.map(({ events }) => events))
+    // Schema 2 gave each session 0.14.0 stored an incarnation of its own.
+    const incarnations = opened.read.back.map(({ head }) => head.incarnation)
+    expect(incarnations.every((incarnation) => incarnation.length > 0) && new Set(incarnations).size === incarnations.length).toBe(true)
     expect(opened.read.committed).toBe(lastSeq(sessions[0]?.events ?? []) + 1)
-    expect(opened.after.version).toBe(1)
+    expect(opened.after.version).toBe(2)
     expect(opened.after.tables).toEqual(opened.fresh)
   })
 
-  test("a new file is at schema 1", async () => {
+  test("a new file is at schema 2", async () => {
     const version = await Effect.runPromise(Effect.scoped(openSessionDatabase(join(directory, "new.db")).pipe(Effect.map(userVersion))))
-    expect(version).toBe(1)
+    expect(version).toBe(2)
   })
 
   test("a file a newer release wrote fails to open with store.version, and is left as it was", async () => {
@@ -151,11 +154,11 @@ describe("the SQLite file's schema version (user_version)", () => {
       const log = yield* makeSessionLogSqlite(path)
       yield* log.create({ id, owner: "owner-newer", origin: "user", createdAt: 1_767_225_600_000, meta: {}, parent: Option.none() })
     })))
-    await Effect.runPromise(Effect.scoped(rawDatabase(path).pipe(Effect.map((db) => db.exec("PRAGMA user_version = 2;")))))
+    await Effect.runPromise(Effect.scoped(rawDatabase(path).pipe(Effect.map((db) => db.exec("PRAGMA user_version = 3;")))))
     const bytes = await Bun.file(path).bytes()
     const error = await Effect.runPromise(Effect.flip(Effect.scoped(makeSessionLogSqlite(path))))
     expect([error._tag, error.code, error.message]).toEqual([
-      "SessionLogError", "store.version", "the session database is at schema 2, written by a newer release; this release reads up to schema 1",
+      "SessionLogError", "store.version", "the session database is at schema 3, written by a newer release; this release reads up to schema 2",
     ])
     expect(await Bun.file(path).bytes()).toEqual(bytes)
   })

@@ -46,9 +46,20 @@ export const SessionHeader = Schema.Struct({
 })
 export type SessionHeader = typeof SessionHeader.Type
 
-/** A session's head: the header, the last sequence number, the revision and the plugin's state. */
+/**
+ * Which life of a session a head belongs to: the store gives a new one each
+ * time it creates a session, so a session removed and created again under
+ * its id is another incarnation. Stable for that life, whichever handle or
+ * process reads it. A commit that names one (`SessionCommit.incarnation`)
+ * lands only in that incarnation.
+ */
+export const SessionIncarnation = Schema.String.pipe(Schema.brand("SessionIncarnation"))
+export type SessionIncarnation = typeof SessionIncarnation.Type
+
+/** A session's head: the header, its incarnation, the last sequence number, the revision and the plugin's state. */
 export const SessionHead = Schema.Struct({
   header: SessionHeader,
+  incarnation: SessionIncarnation,
   /** The last event's sequence number; 0 before any event. */
   seq: Schema.Int,
   /** Bumped by exactly one on every commit, events or not. */
@@ -81,15 +92,19 @@ export const SessionLogEvent = Schema.Struct({
 export type SessionLogEvent = typeof SessionLogEvent.Type
 
 /**
- * One atomic commit: accepted only while the head's revision is `expect`
- * and the storage clock is at most `notAfter` (when given). `state`, when
- * given, replaces the head's state; `events` may be empty.
+ * One atomic commit: accepted only while the head's revision is `expect`,
+ * the storage clock is at most `notAfter` (when given) and the session is
+ * still the `incarnation` the writer read (when given: one removed and
+ * created again under its id is `SessionMissing` to it, and nothing is
+ * written, whatever its revision). `state`, when given, replaces the head's
+ * state; `events` may be empty.
  */
 export const SessionCommit = Schema.Struct({
   expect: Schema.Int,
   notAfter: Schema.OptionFromNullOr(Schema.Number),
   events: Schema.Array(SessionDraft),
   state: Schema.OptionFromNullOr(JsonObject),
+  incarnation: Schema.optionalKey(SessionIncarnation),
 })
 export type SessionCommit = typeof SessionCommit.Type
 

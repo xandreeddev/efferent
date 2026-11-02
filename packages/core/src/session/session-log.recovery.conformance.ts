@@ -80,7 +80,9 @@ const increment = (log: Log, id: ConversationId, by: string, n: number): Effect.
  * interruptions, as checks: commits survive closing and opening again
  * (twice); two open handles see each other's commits and race by
  * compare-and-swap with exactly one winner per revision and no lost or
- * doubled event; an interrupted commit is stored whole or not at all, and has
+ * doubled event; a session's incarnation is the same to every handle and
+ * after reopening, and one removed and created again through another handle
+ * refuses a commit naming the one before; an interrupted commit is stored whole or not at all, and has
  * settled by the time the interrupt returns (a backend whose write can land
  * after its caller stops waiting, such as a request already sent to a
  * server, makes that write uninterruptible); a handle whose scope never
@@ -146,6 +148,21 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       yield* expect("cross-handle", stale._tag === "RevisionConflict" && stale.actual === 2, `a stale commit gave ${stale._tag}`)
       const listing = yield* b.list({ owner, limit: 10, before: Option.none(), parent: Option.none() })
       yield* expect("cross-handle", listing.length === 1 && listing[0]?.revision === 2, "the other handle does not list the session as it is")
+    })),
+    recovery("a session's incarnation is the same to every handle and after reopening; through another handle, one removed and created again is refused to a commit naming the one before", "cross-handle-incarnation", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      const [a, b] = [yield* subject.open, yield* subject.open]
+      const created = yield* a.create(headerOf(id, owner))
+      const reopened = yield* Effect.scoped(subject.open.pipe(Effect.flatMap((log) => log.head(id))))
+      yield* expect("cross-handle-incarnation", (yield* b.head(id)).incarnation === created.incarnation && reopened.incarnation === created.incarnation,
+        "another handle or a reopened store reads another incarnation of the same session")
+      yield* b.remove(id)
+      const again = yield* b.create(headerOf(id, owner))
+      const stale = yield* Effect.flip(a.commit(id, { expect: 0, ...noState, events: [draft("stale", {})], incarnation: created.incarnation }))
+      yield* expect("cross-handle-incarnation", stale._tag === "SessionMissing" && again.incarnation !== created.incarnation,
+        `a commit naming the removed incarnation, through the first handle, gave ${stale._tag}`)
+      const landed = yield* a.commit(id, { expect: 0, ...noState, events: [draft("fresh", {})], incarnation: again.incarnation })
+      yield* expect("cross-handle-incarnation", landed.revision === 1 && (yield* seen(b, id)).events.map((event) => event.kind).join() === "fresh", "a commit naming the new incarnation did not land alone")
     })),
     recovery("of compare-and-swap commits racing through two handles, exactly one wins each revision, and none is lost or stored twice", "cross-handle-race", (owner) => Effect.gen(function* () {
       const id = yield* freshId

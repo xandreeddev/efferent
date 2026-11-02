@@ -229,6 +229,7 @@ const SessionCommitted
 const SessionDraft
 const SessionHead
 const SessionHeader
+const SessionIncarnation
 const SessionLineage
 const SessionListCursor
 const SessionListQuery
@@ -663,6 +664,7 @@ type SessionCommitted
 type SessionDraft
 type SessionHead
 type SessionHeader
+type SessionIncarnation
 type SessionLineage
 type SessionListCursor
 type SessionListQuery

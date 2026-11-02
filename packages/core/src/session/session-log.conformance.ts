@@ -32,8 +32,10 @@ const keepsUnset = (value: unknown): boolean =>
  * numbers, one revision per commit, compare-and-swap, the `notAfter` clock
  * check, JSON kept by value, an event as large as a turn's images may make
  * it (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and
- * kind, listing order, children and their removal. Every check uses fresh
- * ids and a fresh owner, so the kit is safe on a shared database.
+ * kind, listing order, children and their removal, and incarnations (a
+ * commit naming a session removed and created again under its id lands
+ * nowhere). Every check uses fresh ids and a fresh owner, so the kit is safe
+ * on a shared database.
  */
 export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck> => {
   return [
@@ -250,6 +252,23 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
         yield* Effect.flip(log.commit(id, { expect: 0, ...noEvents, events: [draft("a", {})] })),
       ]
       yield* expect("missing", errors.every((error) => error._tag === "SessionMissing"), `got ${errors.map((error) => error._tag).join()}`)
+    })),
+    check("a session removed and created again under its id is another incarnation: a commit naming the one before is SessionMissing and writes nothing, whatever its revision", "incarnation", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      const first = yield* log.create(headerOf(id, owner))
+      yield* expect("incarnation", (yield* log.head(id)).incarnation === first.incarnation, "the head's incarnation is not the one its create gave")
+      yield* log.commit(id, { expect: 0, ...noEvents, events: [draft("before", {})], incarnation: first.incarnation })
+      yield* log.remove(id)
+      const again = yield* log.create(headerOf(id, owner))
+      yield* expect("incarnation", again.incarnation !== first.incarnation, "a session created again kept the incarnation of the one removed")
+      // The new incarnation reaches the revision the removed one was at: only the incarnation tells them apart.
+      yield* log.commit(id, { expect: 0, ...noEvents, events: [draft("after", {})], incarnation: again.incarnation })
+      const stale = yield* Effect.flip(log.commit(id, { expect: 1, notAfter: Option.none(), events: [draft("stale", {})], state: Option.some({ stale: true }), incarnation: first.incarnation }))
+      yield* expect("incarnation", stale._tag === "SessionMissing", `a commit naming the removed incarnation gave ${stale._tag}`)
+      const head = yield* log.head(id)
+      const kinds = (yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })).map((event) => event.kind).join()
+      yield* expect("incarnation", head.revision === 1 && head.incarnation === again.incarnation && canonicalJson(head.state) === "{}" && kinds === "after",
+        `the commit naming the removed incarnation wrote: revision ${head.revision}, events ${kinds}`)
     })),
   ]
 }
