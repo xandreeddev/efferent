@@ -23,7 +23,7 @@ versions still install one copy of `effect` and of `@xandreed/core`, and
 versions that cannot share one are a peer conflict when you install, not a
 second copy.
 
-Workspace packages share version `0.14.0`. The [Unreleased changelog](CHANGELOG.md#unreleased)
+Workspace packages share version `0.15.0`. The [Unreleased changelog](CHANGELOG.md#unreleased)
 describes changes in this checkout for the next release.
 `@xandreed/plugin-models` needs Node 24.5 or newer.
 The historical `efferent` npm package is a different release line.

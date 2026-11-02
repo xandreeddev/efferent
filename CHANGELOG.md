@@ -8,6 +8,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.15.0 — 2026-11-02
+
+Agents that outlive their process and take direction while they work: a
+durable session store in a plain directory on Node and Bun, explicit
+takeover, a versioned stored format, shutdown deadlines and turn time limits,
+tool calls stored before they run, durable steering and a self-draining input
+queue, helpers that ask their parent and wait for the answer, and a versioned
+stdio process host. Model calls gain Anthropic Messages gateways with
+per-model thinking and cache controls, one HTTP retry policy with typed
+failures, usage for every attempt, responses cut short that run no tool, and
+compaction after the reply on reported usage. Hosts set the environment,
+file roots, per-tool limits, a request hook and a tool interceptor; grep runs
+on ripgrep and images fit through host converters; traces go to LangSmith.
+21 packages: `@xandreed/process-host` and `@xandreed/plugin-session-files`
+are new.
+
 ### Migration
 
 - `SessionLog`: `SessionHead` gains a required `incarnation`
