@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import {
-  ConversationId, DrainActivity, EntryId, InboxItemId, InboxRunner, RunId, Sessions, SessionMissing,
+  ConversationId, DrainActivity, EntryId, frameworkDraft, InboxItemId, InboxRunner, RunId, Sessions, SessionMissing,
   HarnessError, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen, TurnDuplicate, TurnShutdown, turnStartedDraft, UserMessage,
 } from "@xandreed/core"
 import type { BeginTurn, OpenTurn, QueuedInput, SessionAddress, SessionLogEvent, SessionView, TurnOutcome, TurnWriter } from "@xandreed/core"
@@ -389,6 +389,32 @@ describe("InboxDrainLive over real Sessions", () => {
     expect(yield* Ref.get(seen)).toEqual(["1:none", "1:none", "none:after-root"])
     expect((yield* Ref.get(begun)).map((input) => input.takeOver ?? false)).toEqual([{ turn: 1, runId: RunId.make("old-holder") }, false, false])
     expect(events.map((event) => event.data.reason)).toEqual(["interrupted", "failed", "completed", "completed"])
+    expect((yield* subject.sessions.get(address)).pending).toBe(0)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("a turn its final reply sealed before its holder went is never resumed: startup stores it completed with that reply, then runs queued input", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5655)
+    // Held by an earlier process's instance, which sealed its reply, then stopped during the work after it.
+    const previous = yield* subject.other()
+    const old = yield* previous.begin(address, { _tag: "User", runId: RunId.make("sealed-holder"), key: "sealed", command: {}, userMessage: new UserMessage({ text: "answered" }) })
+    yield* old.closing([frameworkDraft("turn.reply", { entry: "sealed-holder:1", runId: "sealed-holder", step: 0, at: 0, body: { outcome: "completed", reply: "the sealed answer" } })])
+    expect(Option.isSome(yield* (old.seal ?? Effect.succeedNone))).toBe(true)
+    yield* subject.sessions.enqueue(address, queued("after-sealed"))
+    const begun = yield* Ref.make<ReadonlyArray<BeginTurn>>([])
+    const seen = yield* Ref.make<ReadonlyArray<string>>([])
+    const wrapped = Sessions.of({ ...subject.sessions, begin: (address, input) => Ref.update(begun, (all) => [...all, input]).pipe(Effect.andThen(subject.sessions.begin(address, input))) })
+    const runner = InboxRunner.of({ run: (writer) => Ref.update(seen, (all) => [...all, `${writer.admitted.resumes ?? "none"}:${writer.admitted.input?.id ?? "none"}`]).pipe(Effect.as({ outcome: "completed", reply: Option.none() })) })
+    const activity = yield* start(subject, runner, { owners: [address.owner], concurrency: 1, takeOver: true, backoff: { initialMs: 10, maxMs: 10 } }, wrapped)
+    yield* eventually(subject.sessions.read(address, { kinds: ["turn.ended"] }), (events) => events.length === 2)
+    yield* activity.idle
+    const ended = yield* subject.sessions.read(address, { kinds: ["turn.ended"] })
+    const replies = yield* subject.sessions.read(address, { kinds: ["turn.reply"] })
+    // One resume asked (the startup takeover), refused as finished once its begin stored the sealed turn; no runner ever saw it.
+    expect((yield* Ref.get(begun)).map((input) => input._tag === "User" ? `resume:${input.resumes}` : input._tag)).toEqual(["resume:1", "Queued"])
+    expect(yield* Ref.get(seen)).toEqual(["none:after-sealed"])
+    expect(ended.map((event) => event.data.reason)).toEqual(["completed", "completed"])
+    expect(replies.map((event) => event.data["body"])).toEqual([{ outcome: "completed", reply: "the sealed answer" }])
     expect((yield* subject.sessions.get(address)).pending).toBe(0)
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
 

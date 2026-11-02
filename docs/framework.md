@@ -669,9 +669,12 @@ Where the counts appear:
   model attempt, including helpers and discarded or failed calls, in journal
   order. Malformed facts and duplicate `(callId, attempt)` keys fail decoding.
 - `turnBilledUsageOf(events, turn)`: the sum of reported `Known` and `Partial`
-  call usage. Any `model.called` fact selects this ledger, even if all usage
-  is `Unknown` or an explicitly reported zero. Only turns with no call facts
-  fall back to `turnUsageOf`; the two sources are never added together.
+  call usage, plus the `step.usage` of each loop step (run ordinal and step)
+  no `Loop` call was recorded for. A step's `Loop` call bills that step, even
+  if its usage is `Unknown` or an explicitly reported zero, and its selected
+  response is never added again; a recorded helper never hides a loop step it
+  did not record (a loop model outside the models plugin). A turn with no
+  call facts is `turnUsageOf`.
 - Spans: the `engine.turn` span of each provider step carries the call's
   usage under the OpenTelemetry GenAI names: `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`,
@@ -1328,11 +1331,19 @@ a new strategy rebuilds from the full-fidelity entries.
   system prompt and tool schemas leave of it at each step.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
-  runs after `turn.run` succeeds with an outcome other than `waiting`, a partial
-  return included, before that call returns to its host. `summarizeAt: "step"`
-  opts into pre-request maintenance at turn start and steps. Failed or
-  interrupted loop effects and successful waiting results skip normal end
-  maintenance. It reads the `UtilityLlm` where its session
+  considers one after the turn's reply: once a completed or partial reply is
+  recorded and its reactions drained, the turn seals it (`TurnWriter.seal`)
+  and maintains its last run, still inside the turn, billed by its call
+  recorder and calibrated by that run's reported input. Nothing it meets can
+  cost the reply: a failure is logged and skipped, and a cancel, a time
+  limit or a shutdown stops the summary only, the turn ending `completed`
+  with its reply. A process death meanwhile leaves the turn sealed, its reply
+  kept with the seal: whoever closes it later (a reap, a takeover) ends it
+  `completed` with that reply, and it is not resumed, so the model is not
+  asked again. Each run's start (`turn-start`) is the safety net for what a cut or
+  skipped summary left, calibrated by the last stored selected response.
+  `summarizeAt: "step"` considers one before each step's request instead of
+  after the reply. It reads the `UtilityLlm` where its session
   is opened (the turn), so summaries run under the turn's budget, and fails
   with `memory.summary` without one. The summarizer is given the folded
   turns as a transcript of at most 120,000 characters (`digestTranscript`)
@@ -1346,8 +1357,9 @@ a new strategy rebuilds from the full-fidelity entries.
   turn.
 
 Both strategies use version 2 decisions. `MaintainSignal.phase` is `turn-start`,
-`step`, `turn-end` or `overflow`; `overflow` is a force-maintenance input for a
-caller that owns recovery. End and overflow window maintenance returns safe
+`step`, `turn-end` or `overflow`; `turn-end` comes after the turn's reply is
+final and sealed, and `overflow` is a force-maintenance input for a caller
+that owns recovery. End and overflow window maintenance returns safe
 reductions even when the active turn alone cannot fit. Normal step/start fitting
 still fails with `context.budget` when irreducible. Summaries keep whole-turn
 boundaries and never summarize away the active admitted turn. Successful-summary
@@ -1366,7 +1378,11 @@ and system/tool reserve. SDK evidence is captured after the accepted response's
 tail is durable, including an empty tail, and stays separate from billing facts.
 Tool-result/corrective writes preserve it; an accepted response without usable
 evidence clears it. A fallback model's evidence cannot calibrate a different
-primary model. New runs and reopened sessions start without calibration.
+primary model. A run's start (`turn-start`) is calibrated by the last selected
+response stored before it (the previous turn's or an earlier run's of this
+one, a reopened session's too): its `step.usage` with a model and a positive input, and the estimate and
+reserve its step's `context.built` froze; the run's steps and its `turn-end`
+by its own accepted responses.
 
 `scaledTokens(estimate, observed)` keeps a message estimate at least as large as
 its raw value. For frozen messages 1,000, reserves 200 and reported input 1,500,
@@ -2429,24 +2445,29 @@ the cause: the failed reply recorded, its reactions drained interruptibly
 and for ten seconds at most, a failure of that finishing logged; on success
 it returns the `TurnResult`, the outcome with `RunContext.usage`; on failure
 it puts the usage so far on the current span), `turnOf(options)`
-(the `Turn` a host's code gets), `prepareRun(policy, options)`,
-`stepRequestOf(policy, options)` and `runTurnLoop(policy, options)` for one run
+(the `Turn` a host's code gets), `stepRequestOf(policy, options)` and
+`runTurnLoop(policy, options)` for one run
 of the step loop (over the
 `TurnRunServices`), and `traceTurn(writer, { spanMeta })` (its options a
 `TurnTraceOptions`; the turn's `agent.turn` span around everything after the
 begin, see traces and metrics). `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key.
 
-`prepareRun` returns a `PreparedRun` with `request` and a cached `afterRun`
-effect. A manual host runs `loop.run(prepared.request)`, then `prepared.afterRun`
-only when the loop succeeds and its result's outcome is not `waiting`. This
-shares the SDK lifecycle without another scope requirement; `runTurnLoop`
-performs those steps automatically and returns the same `RunResult`.
-`stepRequestOf` remains the preparation-only API. End maintenance belongs to each
-loop run, so multiple or concurrent runs have their own accepted observations;
-it does not assume the host has chosen its final turn reply. The turn's durable
-recorder stays open through summary helpers and finalizers, keeping their billed
-usage separate from selected run/turn totals. The standalone public `runLoop`
+`stepRequestOf` maintains the run's start (`turn-start`, calibrated by the last
+stored selected response) and hands each accepted response's maintenance to
+`TurnMemory.deferAfterReply`, so a manual host that runs `loop.run(request)`
+itself gets the same lifecycle as `runTurnLoop`, which adds nothing after the
+loop: the `RunResult` goes straight back to the host. The latest run's
+maintenance (`turn-end`) runs once the turn's completed or partial reply is
+recorded, drained and sealed (`TurnMemory.afterReply`, from `finishTurn`);
+an earlier run's, a waiting or failed turn's, or one a writer without `seal`
+cannot protect, is left to the next run's start. Each step's ceiling is
+the run's input ceiling, lowered to the resolved model's catalog window less
+its output cap (the call policy's `maxOutputTokens`, else the catalog's) when
+a `ModelCatalog` knows that window, so a `budgetTokens` above the window does
+not overflow every run's first request. The turn's durable recorder stays
+open through summary helpers and finalizers, keeping their billed usage
+separate from selected run/turn totals. The standalone public `runLoop`
 compact callback retains its existing signature and ordering before steering.
 
 `Agent.turn` is, in order:
@@ -3035,7 +3056,20 @@ from elsewhere drops them; the framework's turn holds its reply there),
 `end` (the closing
 commit; it returns how many inbox items wait, and after a store failure a
 later end tries again, the drafts still held) and `closed` (completes when someone else closed the
-turn). A writer whose scope closes unended ends the turn, its held drafts
+turn). The optional `seal` stores, in the session's head state, the ending
+a held completed or partial reply implies and the closing drafts held then
+(the reply's records; a held memory snapshot stays the holder's), before
+the work the turn does after its reply: from then on every close (a cancel,
+a time limit, a shutdown, an own end that fails, a reaped lease or a
+takeover) ends the turn so, `completed` or `partial`, never interrupted or
+failed, and such a turn is not resumable. A close in this process stores
+the drafts still held with that end; a close that is not the holder's (a
+reap after a process death, a takeover, a cancel from another instance)
+stores the sealed drafts, so the reply is stored either way, and loses only
+what the holder held after the seal (the summary it was writing). The reply
+stays in the head state until the turn ends. It answers none when
+nothing sealable is held, else an effect that completes once someone else
+stored that end. A writer whose scope closes unended ends the turn, its held drafts
 stored, as its held reply implies (completed, partial or waiting), else as failed
 (`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
 interrupted; a begin interrupted after its opening commit ends it as
@@ -3568,9 +3602,9 @@ turn. `TaskExecutor.turn` receives an optional `{ waiting }` control;
 `agentTaskExecutor` forwards it to every `turn.run` through `TurnInput.waiting`.
 The loop checks before work and after a successful settled step, before
 completion, joining background tasks, taking more steers or another model call.
-An actual failed or interrupted step keeps its failure. A waiting loop skips
-normal end-of-run memory maintenance. Manual hosts using `prepareRun` own its
-preparation and explicit `afterRun` lifecycle.
+An actual failed or interrupted step keeps its failure. An already waiting
+run skips preparation, and with it the run's start maintenance; a waiting
+turn's reply is not followed by maintenance either.
 
 `Tasks.steer(parent, taskId, input)` accepts the same normalized user messages and
 attachments as the inbox and assigns delivery `steer`. An unanswered helper
@@ -3763,7 +3797,8 @@ scope, and `SessionsLive` holds no finalizer over it: closing the services
 without a shutdown first does not stop that turn, it closes the log under
 it (`SessionLogSqliteLive` closes its database). A turn still running when
 its log closes cannot store its end: the next process reaps it as
-interrupted with `turn.lease`, under a lease once the lease runs out (until
+interrupted with `turn.lease` (as `completed` or `partial`, not resumable,
+when its reply was sealed, see `TurnWriter.seal`), under a lease once the lease runs out (until
 then a begin on that session fails with `SessionBusy`, unless it takes the
 session over), under process ownership at the first touch after the
 process is gone. Build the task runner on top of the sessions with
@@ -3790,7 +3825,11 @@ way), and earlier resumes of turn `n` that failed, were cancelled or were
 interrupted, so a resume that did not complete can be tried again (see
 keys, below). A turn reaped because its holder stopped (`turn.lease`)
 counts as interrupted, including one the resuming begin reaps itself, and
-so does one taken over (`turn.takeover`, below).
+so does one taken over (`turn.takeover`, below), unless its reply was
+sealed: it then ended as that reply, and is `finished`. A begin that is
+refused (a resume of such a turn) reaps it in a commit of its own, so the
+turn and its reply are stored even then, and the inbox drainer, whose
+resume of an abandoned root is refused so, goes on to the next queued work.
 Otherwise the begin fails with `NotResumable` (`session`, `turn` and a
 `reason`) and opens nothing: `missing` (no such turn in this session's own
 log; a fork's inherited turns are its parent's), `inbox` (an inbox turn),

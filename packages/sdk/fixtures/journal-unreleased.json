@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 16,
+  "storedFormat": 17,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -3790,6 +3790,83 @@
           "session": "00000000-0000-4000-8000-0000000060ff",
           "seq": 16,
           "turn": 2,
+          "kind": "model.called",
+          "at": 1767225600000,
+          "data": {
+            "callId": "00000000-0000-4000-8000-00000000010f",
+            "attempt": 1,
+            "purpose": "Helper",
+            "method": "Text",
+            "model": null,
+            "runId": "snapshot-fixture-2",
+            "run": 0,
+            "step": null,
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 1,
+                "totalTokens": 2,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-0000000060ff",
+          "seq": 17,
+          "turn": 2,
+          "kind": "memory.compaction",
+          "at": 1767225600000,
+          "data": {
+            "entry": "snapshot-fixture-2:1",
+            "runId": "snapshot-fixture-2",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "strategy": "summary",
+              "version": "2",
+              "action": {
+                "_tag": "Summarize",
+                "keepFromTurn": 2,
+                "summary": "Earlier snapshot fixture context."
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-0000000060ff",
+          "seq": 18,
+          "turn": 2,
+          "kind": "memory.snapshot",
+          "at": 1767225600000,
+          "data": {
+            "version": 1,
+            "strategy": {
+              "id": "summary",
+              "version": "2"
+            },
+            "anchor": {
+              "session": "00000000-0000-4000-8000-0000000060ff",
+              "seq": 15
+            },
+            "through": {
+              "session": "00000000-0000-4000-8000-0000000060ff",
+              "seq": 17
+            },
+            "entries": []
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-0000000060ff",
+          "seq": 19,
+          "turn": 2,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
@@ -3803,7 +3880,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 17,
+          "seq": 20,
           "turn": 2,
           "kind": "context.built",
           "at": 1767225600000,
@@ -3813,12 +3890,12 @@
             "run": 0,
             "strategy": "summary",
             "strategyVersion": "2",
-            "fingerprint": "cb7433a012d2",
+            "fingerprint": "ef8466f21f8",
             "systemFingerprint": "811c9dc50",
-            "estimatedTokens": 1606,
+            "estimatedTokens": 168,
             "reservedTokens": 100,
             "budgetTokens": 1000,
-            "compactions": 0,
+            "compactions": 1,
             "activeTools": [
               "load_skill"
             ]
@@ -3826,7 +3903,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 18,
+          "seq": 21,
           "turn": 2,
           "kind": "request.prepared",
           "at": 1767225600000,
@@ -3852,9 +3929,9 @@
                 "maxChars": 20000000
               }
             },
-            "through": "snapshot-fixture-2:0",
-            "contextFingerprint": "cb7433a012d2",
-            "stableMessages": 3,
+            "through": "snapshot-fixture-2:1",
+            "contextFingerprint": "ef8466f21f8",
+            "stableMessages": 2,
             "tools": [
               "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d"
             ],
@@ -3866,12 +3943,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 19,
+          "seq": 22,
           "turn": 2,
           "kind": "model.called",
           "at": 1767225600000,
           "data": {
-            "callId": "00000000-0000-4000-8000-00000000010f",
+            "callId": "00000000-0000-4000-8000-000000000110",
             "attempt": 1,
             "purpose": "Loop",
             "method": "Text",
@@ -3898,12 +3975,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 20,
+          "seq": 23,
           "turn": 2,
           "kind": "memory.message",
           "at": 1767225600000,
           "data": {
-            "entry": "snapshot-fixture-2:1",
+            "entry": "snapshot-fixture-2:2",
             "runId": "snapshot-fixture-2",
             "step": 0,
             "at": 1767225600000,
@@ -3933,7 +4010,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 21,
+          "seq": 24,
           "turn": 2,
           "kind": "step.usage",
           "at": 1767225600000,
@@ -3954,7 +4031,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 22,
+          "seq": 25,
           "turn": 2,
           "kind": "step.ended",
           "at": 1767225600000,
@@ -3967,7 +4044,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 23,
+          "seq": 26,
           "turn": 2,
           "kind": "completion.evaluated",
           "at": 1767225600000,
@@ -3979,83 +4056,6 @@
               "awaiting": [],
               "facts": {}
             }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 24,
-          "turn": 2,
-          "kind": "model.called",
-          "at": 1767225600000,
-          "data": {
-            "callId": "00000000-0000-4000-8000-000000000110",
-            "attempt": 1,
-            "purpose": "Helper",
-            "method": "Text",
-            "model": null,
-            "runId": "snapshot-fixture-2",
-            "run": 0,
-            "step": null,
-            "durationMs": 0,
-            "usage": {
-              "_tag": "Known",
-              "usage": {
-                "inputTokens": 1,
-                "outputTokens": 1,
-                "totalTokens": 2,
-                "cacheReadTokens": 0,
-                "cacheWriteTokens": 0,
-                "reasoningTokens": 0
-              }
-            },
-            "outcome": {
-              "_tag": "Completed"
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 25,
-          "turn": 2,
-          "kind": "memory.compaction",
-          "at": 1767225600000,
-          "data": {
-            "entry": "snapshot-fixture-2:2",
-            "runId": "snapshot-fixture-2",
-            "step": 0,
-            "at": 1767225600000,
-            "body": {
-              "strategy": "summary",
-              "version": "2",
-              "action": {
-                "_tag": "Summarize",
-                "keepFromTurn": 2,
-                "summary": "Earlier snapshot fixture context."
-              }
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 26,
-          "turn": 2,
-          "kind": "memory.snapshot",
-          "at": 1767225600000,
-          "data": {
-            "version": 1,
-            "strategy": {
-              "id": "summary",
-              "version": "2"
-            },
-            "anchor": {
-              "session": "00000000-0000-4000-8000-0000000060ff",
-              "seq": 15
-            },
-            "through": {
-              "session": "00000000-0000-4000-8000-0000000060ff",
-              "seq": 25
-            },
-            "entries": []
           }
         },
         {

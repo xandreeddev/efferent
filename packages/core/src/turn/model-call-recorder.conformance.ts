@@ -5,6 +5,7 @@ import { check, expect } from "../conformance.functions.js"
 import { ModelCallData, ModelCallId } from "../domain/model-call.entity.js"
 import type { ModelCallLegacyUsage } from "../domain/model-call.entity.js"
 import { ModelId, ModelSelection, ProviderId } from "../domain/model-selection.entity.js"
+import { RunOrdinal } from "../domain/run.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import type { ModelCallRecorder } from "../ports/model-call-recorder.port.js"
 import { SessionLogError } from "../session/session-log.entity.js"
@@ -89,7 +90,7 @@ export const modelCallRecorderConformance = (subject: ModelCallRecorderSubject):
     yield* expect("observer-bootstrap", JSON.stringify(yield* Ref.get(seen)) === JSON.stringify([[old.callId, true], [fresh.callId, false], ["live-call", false]]), "bootstrap/live observation lost provenance or delivered a key more than once")
   }))),
   check("an observer survives its registration scope and closes with exact legacy facts", "observer-lifetime", () => Effect.scoped(Effect.gen(function* () {
-    const legacy: ReadonlyArray<ModelCallLegacyUsage> = [{ model: Option.some("old:model"), usage: zeroUsage, replayed: true }]
+    const legacy: ReadonlyArray<ModelCallLegacyUsage> = [{ model: Option.some("old:model"), usage: zeroUsage, run: RunOrdinal.make(0), step: 0, replayed: true }]
     const fixture = yield* subject.open({ calls: [], legacy })
     const calls = yield* Ref.make(0)
     const closed = yield* Ref.make<ReadonlyArray<ReadonlyArray<ModelCallLegacyUsage>>>([])

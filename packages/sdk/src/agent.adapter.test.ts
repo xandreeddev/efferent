@@ -795,7 +795,7 @@ describe("Agent.turn", () => {
     // then settlement reads the tail: three incremental reads per step.
     expect(reads.slice(0, 9).map((read) => read.step)).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2].map(Option.some))
     expect(reads.slice(0, 9).map((read) => read.headers)).toEqual([[], [0], [], [], [1], [], [], [2], []])
-    // Normal post-run maintenance takes one fresh snapshot with no active step.
+    // The maintenance after the sealed reply takes one fresh snapshot with no active step.
     expect(reads[9]?.step).toEqual(Option.none())
     expect(reads[9]?.count).toBe(0)
     expect(reads).toHaveLength(10)

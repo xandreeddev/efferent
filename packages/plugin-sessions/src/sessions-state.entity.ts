@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Effect, Option } from "effect"
-import { InboxQueuedData, InputDelivery, JournalCursor, OpenTurn } from "@xandreed/core"
+import { InboxQueuedData, InputDelivery, JournalCursor, JsonObject, OpenTurn, TurnEnding } from "@xandreed/core"
 
 /*
  * The sessions plugin's own state, kept in the session head's `state` under
@@ -29,8 +29,25 @@ export type InboxSlot = typeof InboxSlot.Type
 export const HolderProcess = Schema.Struct({ host: Schema.String, pid: Schema.Int, startedAt: Schema.Number })
 export type HolderProcess = typeof HolderProcess.Type
 
-/** The open turn as kept: under a lease, when it ends (`expiresAt`); under process ownership, none, and where its holder runs (none when an older version, or a runtime without a process, wrote it). */
-export const HeldTurn = Schema.Struct({ ...OpenTurn.fields, process: Schema.OptionFromOptionalKey(HolderProcess) })
+/**
+ * What a turn's final reply sealed (`TurnWriter.seal`): the ending that reply
+ * implies, and the closing drafts its writer held then (the reply's records),
+ * which a close that does not go through that writer (a reap, a takeover, a
+ * close from another instance) stores before `turn.ended`, as the holder's
+ * own end would have.
+ */
+export const SealedTurn = Schema.Struct({ ending: TurnEnding, closing: Schema.Array(Schema.Struct({ kind: Schema.String, data: JsonObject })) })
+export type SealedTurn = typeof SealedTurn.Type
+
+/**
+ * The open turn as kept: under a lease, when it ends (`expiresAt`); under
+ * process ownership, none, and where its holder runs (none when an older
+ * version, or a runtime without a process, wrote it); `sealed`, what its
+ * final reply sealed, which whoever closes the turn stores instead of
+ * interrupting it (absent when unsealed, and in states an earlier release
+ * wrote).
+ */
+export const HeldTurn = Schema.Struct({ ...OpenTurn.fields, process: Schema.OptionFromOptionalKey(HolderProcess), sealed: Schema.OptionFromOptionalKey(SealedTurn) })
 export type HeldTurn = typeof HeldTurn.Type
 
 export const SessionsState = Schema.Struct({

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Result } from "effect"
 import { ConversationId, frameworkDraft, HarnessError, SessionLogError, TurnClosed } from "@xandreed/core"
 import type { TurnEnding, TurnError } from "@xandreed/core"
-import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, stopped, withdrawEnd } from "./turn-writer.entity.functions.js"
+import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, sealable, sealedEnding, sealWith, stopped, withdrawEnd } from "./turn-writer.entity.functions.js"
 import type { EndPlan } from "./turn-writer.entity.functions.js"
 import type { ClosingDrafts, EndStep, WriterPhase, WriterStopped } from "./turn-writer.entity.js"
 
@@ -18,10 +18,10 @@ const answer = replied("completed")
 
 // One phase of each kind; `retrying` is open after an end the store refused, `ending` began after it.
 const open: WriterPhase = opened
-const openTried: WriterPhase = { _tag: "Open", tried: true, attempted: Option.none(), closing: [] }
-const answered: WriterPhase = { _tag: "Open", tried: true, attempted: Option.none(), closing: answer }
-const retrying: WriterPhase = { _tag: "Open", tried: true, attempted: Option.some(hostFailed), closing: answer }
-const ending: WriterPhase = { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer }
+const openTried: WriterPhase = { _tag: "Open", tried: true, attempted: Option.none(), closing: [], sealed: Option.none() }
+const answered: WriterPhase = { _tag: "Open", tried: true, attempted: Option.none(), closing: answer, sealed: Option.none() }
+const retrying: WriterPhase = { _tag: "Open", tried: true, attempted: Option.some(hostFailed), closing: answer, sealed: Option.none() }
+const ending: WriterPhase = { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer, sealed: Option.none() }
 const failed: WriterStopped = { _tag: "Failed", error: busy }
 const cancelled: WriterStopped = { _tag: "Closed", reason: "cancelled" }
 const ended: WriterPhase = { _tag: "Ended", pending: 2 }
@@ -58,8 +58,8 @@ describe("the writer's phase", () => {
 
   test("an end starts on an open writer, keeping the attempt before it and the drafts held; while one is under way it is shared, once stored it is answered, and a stopped writer refuses it", () => {
     const rows: ReadonlyArray<readonly [WriterPhase, Result.Result<EndStep, WriterStopped>]> = [
-      [open, Result.succeed({ _tag: "Start", phase: { _tag: "Ending", tried: false, ending: completed, attempted: Option.none(), closing: [] } })],
-      [retrying, Result.succeed({ _tag: "Start", phase: { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer } })],
+      [open, Result.succeed({ _tag: "Start", phase: { _tag: "Ending", tried: false, ending: completed, attempted: Option.none(), closing: [], sealed: Option.none() } })],
+      [retrying, Result.succeed({ _tag: "Start", phase: { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer, sealed: Option.none() } })],
       [ending, Result.succeed({ _tag: "Share" })],
       [failed, Result.fail(failed)],
       [cancelled, Result.fail(cancelled)],
@@ -69,7 +69,7 @@ describe("the writer's phase", () => {
   })
 
   test("an end's commit settles the writer: stored it has ended, refused as closed it is closed (its drafts dropped), refused otherwise it is open again with that ending attempted and its drafts held", () => {
-    const reopened: WriterPhase = { _tag: "Open", tried: true, attempted: Option.some(completed), closing: answer }
+    const reopened: WriterPhase = { _tag: "Open", tried: true, attempted: Option.some(completed), closing: answer, sealed: Option.none() }
     const rows: ReadonlyArray<readonly [WriterPhase, Exit.Exit<{ readonly pending: number }, TurnError>, WriterPhase]> = [
       [ending, Exit.succeed({ pending: 1 }), { _tag: "Ended", pending: 1 }],
       [ending, Exit.fail(cancelledElsewhere), cancelled],
@@ -158,5 +158,30 @@ describe("the writer's phase", () => {
       [ended, Exit.void, Option.none()],
     ]
     expect(rows.map(([phase, exit]) => scopeEnding(phase, exit))).toEqual(rows.map(([, , expected]) => expected))
+  })
+})
+
+describe("a turn sealed by its final reply", () => {
+  const sealedAnswer: WriterPhase = { _tag: "Open", tried: true, attempted: Option.some(hostFailed), closing: answer, sealed: Option.some(completed) }
+  test("only a held completed or partial reply can seal it, with the drafts held, once, and only while the writer is open", () => {
+    // The state keeps the drafts as data: kind and payload.
+    const kept = answer.map((draft) => ({ kind: draft.kind, data: draft.data }))
+    expect([open, answered, ending, sealedAnswer].map(sealable)).toEqual([Option.none(), Option.some({ ending: completed, closing: kept }), Option.none(), Option.some({ ending: completed, closing: kept })])
+    expect(sealable({ ...answered, closing: replied("failed") })).toEqual(Option.none())
+    // A held memory snapshot stays the holder's: its row needs the pointer only its own commit publishes.
+    const snapshot = { kind: "memory.snapshot", data: { anchor: 1 } }
+    expect(sealable({ ...answered, closing: [...answer, snapshot] })).toEqual(Option.some({ ending: completed, closing: kept }))
+    expect(sealWith(answered, completed)).toEqual(Result.succeed({ ...answered, sealed: Option.some(completed) }))
+    expect(sealWith(sealedAnswer, hostFailed)).toEqual(Result.succeed(sealedAnswer))
+    expect([ending, failed, cancelled, ended].map((phase) => sealWith(phase, completed))).toEqual([Result.fail(sealed), Result.fail(failed), Result.fail(cancelled), Result.fail(sealed)])
+  })
+  test("every end stores the sealed ending: one begun with another ending, a retried one and the scope's", () => {
+    const started = beginEnd(sealedAnswer, hostFailed)
+    expect(started).toEqual(Result.succeed({ _tag: "Start", phase: { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer, sealed: Option.some(completed) } }))
+    const begun: WriterPhase = { _tag: "Ending", tried: true, ending: completed, attempted: Option.some(hostFailed), closing: answer, sealed: Option.some(completed) }
+    expect(endSettled(begun, Exit.fail(busy))).toEqual({ ...sealedAnswer, attempted: Option.some(completed) })
+    expect(withdrawEnd(begun)).toEqual(sealedAnswer)
+    expect(scopeEnding(sealedAnswer, Exit.interrupt())).toEqual(Option.some(completed))
+    expect([sealedAnswer, begun, answered, ended].map(sealedEnding)).toEqual([Option.some(completed), Option.some(completed), Option.none(), Option.none()])
   })
 })

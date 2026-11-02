@@ -11,7 +11,7 @@ import {
 import type { MaintainSignal, MemoryPolicy, RunTools, StepPlan, StepRequest, ToolViews, TurnWriter } from "@xandreed/core"
 import { estimateTokens, toPromptMessages } from "@xandreed/core/internal"
 import { openTurnTools } from "./turn-lifecycle.usecase.functions.js"
-import { prepareRun } from "./turn-run.usecase.functions.js"
+import { stepRequestOf } from "./turn-run.usecase.functions.js"
 import type { TurnRunServices } from "./turn-run.usecase.functions.js"
 import { TurnLive } from "./turn.adapter.js"
 import { recordingTurnWriter } from "./testing.js"
@@ -59,10 +59,9 @@ test.each(["tail", "system"] as const)("hook controls precede the sole %s contex
   const calls: unknown[] = []
   const signals: MaintainSignal[] = []
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const prepared = yield* prepareRun({ stepContext: placement, step: () => Effect.succeed({ context: Option.some("policy context"), toolChoice: Option.some("required") }) }, { budgetTokens: 10000 })
-    const plan = yield* prepared.request.plan(info(0))
-    yield* dispatch(prepared.request, 0, plan)
-    yield* prepared.afterRun
+    const prepared = yield* stepRequestOf({ stepContext: placement, step: () => Effect.succeed({ context: Option.some("policy context"), toolChoice: Option.some("required") }) }, { budgetTokens: 10000 })
+    const plan = yield* prepared.plan(info(0))
+    yield* dispatch(prepared, 0, plan)
     return { plan, headers: yield* headers, entries: yield* (yield* TurnMemory).session.entries }
   }), { maintain: ({ signal }) => Effect.sync(() => { signals.push(signal); return nothing }) }).pipe(Effect.provideService(ModelRequestHook, {
     prepare: (draft) => Effect.gen(function* () {
@@ -81,15 +80,14 @@ test.each(["tail", "system"] as const)("hook controls precede the sole %s contex
   expect(result.headers[0]?.toolChoice).toBe("auto")
   expect(result.headers[0]?.stableMessages).toBe(result.plan.messages.length - (placement === "tail" ? 1 : 0))
   expect(signals.find((signal) => signal.phase === "step")?.budgetTokens).toBe(10000 - estimateTokens(result.plan.system))
-  expect(signals.at(-1)?.budgetTokens).toBe(10000 - estimateTokens("patched base"))
 })
 
 test("no hook and an accepted empty patch preserve model bytes without a fabricated context", async () => {
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const first = yield* prepareRun({})
-    const plain = yield* first.request.plan(info(0))
-    const second = yield* prepareRun({})
-    const empty = yield* second.request.plan(info(0)).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.succeed({}) }))
+    const first = yield* stepRequestOf({})
+    const plain = yield* first.plan(info(0))
+    const second = yield* stepRequestOf({})
+    const empty = yield* second.plan(info(0)).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.succeed({}) }))
     return { plain, empty, headers: yield* headers, entries: yield* (yield* TurnMemory).session.entries }
   })))
   expect(result.empty.system).toBe(result.plain.system)
@@ -104,8 +102,8 @@ test("a returned patch is detached before a held context acknowledgment", async 
     const entered = yield* Deferred.make<void>()
     const release = yield* Deferred.make<void>()
     return yield* setup(Effect.gen(function* () {
-      const prepared = yield* prepareRun({})
-      const pending = yield* prepared.request.plan(info(0)).pipe(Effect.forkChild)
+      const prepared = yield* stepRequestOf({})
+      const pending = yield* prepared.plan(info(0)).pipe(Effect.forkChild)
       yield* Deferred.await(entered)
       patch.system = "mutated base"; patch.context = "mutated context"
       const before = yield* headers
@@ -122,16 +120,16 @@ test("a returned patch is detached before a held context acknowledgment", async 
 test.each(["memory.step", "request.prepared"])("%s acknowledgment failures retain their original error", async (kind) => {
   const failure = new SessionLogError({ code: "store.io", message: "fixture acknowledgment failed" })
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const prepared = yield* prepareRun({})
-    return yield* prepared.request.plan(info(0)).pipe(Effect.result)
+    const prepared = yield* stepRequestOf({})
+    return yield* prepared.plan(info(0)).pipe(Effect.result)
   }), { writer: (writer) => ({ ...writer, append: (drafts) => writer.append(drafts).pipe(Effect.andThen(drafts.some((draft) => draft.kind === kind) ? Effect.fail(failure) : Effect.void)) }) }).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.succeed({ context: "hook" }) })))
   expect(result._tag === "Failure" && result.failure).toBe(failure)
 })
 
 test("an inactive patch choice fails before context or header publication", async () => {
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const prepared = yield* prepareRun({})
-    const result = yield* prepared.request.plan(info(0)).pipe(Effect.result)
+    const prepared = yield* stepRequestOf({})
+    const result = yield* prepared.plan(info(0)).pipe(Effect.result)
     return { result, headers: yield* headers, entries: yield* (yield* TurnMemory).session.entries }
   })).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.succeed({ context: "never recorded", toolChoice: { tool: "inactive" } }) })))
   expect(result.result._tag === "Failure" && harnessCodeOf(result.result.failure)).toEqual(Option.some("request.hook"))
@@ -143,8 +141,8 @@ test("a held hook remains interruptible without publishing context or a header",
   const result = await Effect.runPromise(Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
     return yield* setup(Effect.gen(function* () {
-      const prepared = yield* prepareRun({})
-      const pending = yield* prepared.request.plan(info(0)).pipe(Effect.forkChild)
+      const prepared = yield* stepRequestOf({})
+      const pending = yield* prepared.plan(info(0)).pipe(Effect.forkChild)
       yield* Deferred.await(entered)
       yield* Fiber.interrupt(pending)
       const exit = yield* Fiber.await(pending)
@@ -158,12 +156,12 @@ test("a held hook remains interruptible without publishing context or a header",
 test("overflow reuses the hook patch and combined context in its reduced V2 header", async () => {
   const calls: number[] = []
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const prepared = yield* prepareRun({ step: () => Effect.succeed({ context: Option.some("policy"), toolChoice: Option.none() }) }, { budgetTokens: 10000 })
-    const first = yield* prepared.request.plan(info(0))
-    yield* dispatch(prepared.request, 0, first)
-    const retry = yield* prepared.request.onContextOverflow!(0)
-    const second = yield* prepared.request.plan(info(0))
-    yield* dispatch(prepared.request, 0, second)
+    const prepared = yield* stepRequestOf({ step: () => Effect.succeed({ context: Option.some("policy"), toolChoice: Option.none() }) }, { budgetTokens: 10000 })
+    const first = yield* prepared.plan(info(0))
+    yield* dispatch(prepared, 0, first)
+    const retry = yield* prepared.onContextOverflow!(0)
+    const second = yield* prepared.plan(info(0))
+    yield* dispatch(prepared, 0, second)
     return { retry, first, second, headers: yield* headers, entries: yield* (yield* TurnMemory).session.entries }
   }), { maintain: ({ signal }) => Effect.succeed(signal.phase === "overflow" ? { actions: [{ _tag: "DropTurns", throughTurn: 1, ledger: "old history retained" }], digest: [] } : nothing) }).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.sync(() => { calls.push(1); return { system: `hook ${calls.length}`, context: `context ${calls.length}` } }) })))
   expect(result.retry).toBe(true)
@@ -178,12 +176,12 @@ test("media replanning reuses the decision while a fresh next step calls the hoo
   const calls: number[] = []
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
     const pixel = yield* mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1kAAAAASUVORK5CYII=")
-    const prepared = yield* prepareRun({})
+    const prepared = yield* stepRequestOf({})
     yield* (yield* TurnMemory).session.record([{ _tag: "Message", run: RunOrdinal.make(0), inbox: InboxItemId.make("fixture-image"), message: userRoleMessageOf(new UserMessage({ text: "look", attachments: [pixel] })) }], 0)
-    yield* prepared.request.plan(info(0))
-    const retry = yield* prepared.request.onMediaRejected("fixture image refusal")
-    const second = yield* prepared.request.plan(info(0))
-    yield* prepared.request.plan(info(1))
+    yield* prepared.plan(info(0))
+    const retry = yield* prepared.onMediaRejected("fixture image refusal")
+    const second = yield* prepared.plan(info(0))
+    yield* prepared.plan(info(1))
     return { retry, second, headers: yield* headers, entries: yield* (yield* TurnMemory).session.entries }
   })).pipe(Effect.provideService(ModelRequestHook, { prepare: () => Effect.sync(() => { calls.push(1); return { system: `hook ${calls.length}`, context: `context ${calls.length}` } }) })))
   expect(result.retry).toBe(true)
@@ -196,9 +194,9 @@ test("media replanning reuses the decision while a fresh next step calls the hoo
 test("concurrent runs bind their actual run and step in the captured hook", async () => {
   const seen: unknown[] = []
   const result = await Effect.runPromise(setup(Effect.gen(function* () {
-    const first = yield* prepareRun({})
-    const second = yield* prepareRun({})
-    yield* Effect.all([first.request.plan(info(0)), second.request.plan(info(2))], { concurrency: 2 })
+    const first = yield* stepRequestOf({})
+    const second = yield* stepRequestOf({})
+    yield* Effect.all([first.plan(info(0)), second.plan(info(2))], { concurrency: 2 })
     return yield* headers
   })).pipe(Effect.provideService(ModelRequestHook, { prepare: (draft) => Effect.gen(function* () {
     seen.push([draft.run.ordinal, draft.step, Option.map(yield* CurrentAgentRun, (run) => run.ordinal), yield* CurrentAgentStep])

@@ -12,7 +12,7 @@ import type { MaintainSignal, MemoryPolicy, ModelLimits, RunTools, StepPlan, Ste
 import { estimateTokens, modelRequestHeaderOf, reconstructModelRequest, toPromptMessages } from "@xandreed/core/internal"
 import { TurnLive } from "./turn.adapter.js"
 import { openTurnTools } from "./turn-lifecycle.usecase.functions.js"
-import { prepareRun } from "./turn-run.usecase.functions.js"
+import { stepRequestOf } from "./turn-run.usecase.functions.js"
 import type { TurnRunServices } from "./turn-run.usecase.functions.js"
 import { recordingTurnWriter } from "./testing.js"
 
@@ -54,14 +54,13 @@ test("overflow recovery freezes one smaller same-step request without reevaluati
   const signals: MaintainSignal[] = []
   const result = await Effect.runPromise(setup((input) => { signals.push(input.signal); return compact(input) }, Effect.gen(function* () {
     const memory = yield* TurnMemory
-    const prepared = yield* prepareRun({ model: () => Effect.sync(() => { calls.push("model"); return Option.none() }), step: () => Effect.sync(() => { calls.push("step"); return { context: Option.some("current context"), toolChoice: Option.none() } }) }, { budgetTokens: 10000, cacheKey: Option.some("frozen-key") }).pipe(Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 200 })))
-    const first = yield* prepared.request.plan(info(0))
-    yield* dispatch(prepared.request, 0, first)
-    const retried = yield* recover(prepared.request, 0)
-    const second = yield* prepared.request.plan(info(0))
-    yield* dispatch(prepared.request, 0, second)
-    const duplicate = yield* recover(prepared.request, 0)
-    yield* prepared.afterRun
+    const prepared = yield* stepRequestOf({ model: () => Effect.sync(() => { calls.push("model"); return Option.none() }), step: () => Effect.sync(() => { calls.push("step"); return { context: Option.some("current context"), toolChoice: Option.none() } }) }, { budgetTokens: 10000, cacheKey: Option.some("frozen-key") }).pipe(Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 200 })))
+    const first = yield* prepared.plan(info(0))
+    yield* dispatch(prepared, 0, first)
+    const retried = yield* recover(prepared, 0)
+    const second = yield* prepared.plan(info(0))
+    yield* dispatch(prepared, 0, second)
+    const duplicate = yield* recover(prepared, 0)
     const snapshot = yield* memory.requestSnapshot
     const materialized = yield* Effect.forEach(snapshot.requests, (header) => resolveRequestHeader(snapshot.requestEvents ?? snapshot.requests, header), { concurrency: 1 })
     return { retried, duplicate, first, second, headers: snapshot.requests, materialized, entries: yield* memory.session.entries }
@@ -72,7 +71,7 @@ test("overflow recovery freezes one smaller same-step request without reevaluati
   expect(result.headers).toHaveLength(2)
   expect(result.second.system).toBe(result.first.system)
   expect(JSON.stringify(result.second.messages).length).toBeLessThan(JSON.stringify(result.first.messages).length)
-  expect(signals.map((signal) => signal.phase)).toEqual(["turn-start", "step", "overflow", "turn-end"])
+  expect(signals.map((signal) => signal.phase)).toEqual(["turn-start", "step", "overflow"])
   expect(result.entries.filter((entry) => entry.body._tag === "StepContext")).toHaveLength(1)
   expect(result.headers.map(({ data }) => data.version)).toEqual([2, 2])
   const controls = result.materialized.map((header) => [header.system, Option.getOrNull(header.model), Option.getOrNull(header.cacheKey), Option.getOrNull(header.callPolicy), header.tools, header.toolChoice])
@@ -82,9 +81,9 @@ test("overflow recovery freezes one smaller same-step request without reevaluati
 
 test.each(["unchanged", "too-small-reduction"] as const)("overflow declines %s without preparing another header", async (mode) => {
   const result = await Effect.runPromise(setup(({ signal }) => Effect.succeed(signal.phase === "overflow" && mode === "too-small-reduction" ? { actions: [{ _tag: "DropTurns", throughTurn: 1, ledger: "almost all old text ".repeat(180) }], digest: [] } : nothing), Effect.gen(function* () {
-    const prepared = yield* prepareRun({}, { budgetTokens: 10000 })
-    yield* dispatch(prepared.request, 0, yield* prepared.request.plan(info(0)))
-    return { retry: yield* recover(prepared.request, 0), headers: (yield* (yield* TurnMemory).requestSnapshot).requests }
+    const prepared = yield* stepRequestOf({}, { budgetTokens: 10000 })
+    yield* dispatch(prepared, 0, yield* prepared.plan(info(0)))
+    return { retry: yield* recover(prepared, 0), headers: (yield* (yield* TurnMemory).requestSnapshot).requests }
   })))
   expect(result.retry).toBe(false)
   expect(result.headers).toHaveLength(1)
@@ -93,7 +92,7 @@ test.each(["unchanged", "too-small-reduction"] as const)("overflow declines %s w
 test("overflow without a validated dispatch declines before maintenance", async () => {
   const phases: string[] = []
   const retry = await Effect.runPromise(setup(({ signal }) => Effect.sync(() => { phases.push(signal.phase); return nothing }), Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* request.plan(info(0))
     return yield* recover(request, 0)
   })))
@@ -106,12 +105,12 @@ test("overflow uses the dispatched cut and reserve despite an unsent lookahead",
   const result = await Effect.runPromise(setup((input) => { signals.push(input.signal); return compact(input) }, Effect.gen(function* () {
     const prompt = yield* TurnPrompt
     const model = yield* LanguageModel.LanguageModel
-    const prepared = yield* prepareRun({ model: (step) => Effect.succeed(Option.some({ model, variant: Option.some(step.stepIndex === 0 ? "short" : "long") })) }, { budgetTokens: 10000 }).pipe(Effect.provideService(TurnPrompt, { ...prompt, system: (variant) => Effect.succeed(Option.contains(variant, "long") ? "unsent ".repeat(200) : "fixed base") }))
-    const first = yield* prepared.request.plan(info(0))
-    yield* prepared.request.plan(info(1))
-    yield* dispatch(prepared.request, 0, first)
-    const retry = yield* recover(prepared.request, 0)
-    const second = yield* prepared.request.plan(info(0))
+    const prepared = yield* stepRequestOf({ model: (step) => Effect.succeed(Option.some({ model, variant: Option.some(step.stepIndex === 0 ? "short" : "long") })) }, { budgetTokens: 10000 }).pipe(Effect.provideService(TurnPrompt, { ...prompt, system: (variant) => Effect.succeed(Option.contains(variant, "long") ? "unsent ".repeat(200) : "fixed base") }))
+    const first = yield* prepared.plan(info(0))
+    yield* prepared.plan(info(1))
+    yield* dispatch(prepared, 0, first)
+    const retry = yield* recover(prepared, 0)
+    const second = yield* prepared.plan(info(0))
     return { retry, second }
   })))
   expect(result.retry).toBe(true)
@@ -123,7 +122,7 @@ test("actual fallback identity chooses its catalog window without inventing a se
   const signals: MaintainSignal[] = []
   const fallback = new ModelSelection({ provider: ProviderId.make("fallback"), modelId: selected.modelId })
   const result = await Effect.runPromise(setup((input) => { signals.push(input.signal); return compact(input) }, Effect.gen(function* () {
-    const { request } = yield* prepareRun({}, { budgetTokens: 10000 })
+    const request = yield* stepRequestOf({}, { budgetTokens: 10000 })
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return yield* recover(request, 0, { model: fallback, limits: {} })
   })).pipe(Effect.provideService(ModelCatalog, { list: Effect.succeed([
@@ -137,19 +136,17 @@ test("actual fallback identity chooses its catalog window without inventing a se
 test("effective attempted C-output bounds messages, reserving system once", async () => {
   const signals: MaintainSignal[] = []
   const result = await Effect.runPromise(setup(({ signal }) => { signals.push(signal); return Effect.succeed(signal.phase === "overflow" ? { actions: [{ _tag: "DropTurns", throughTurn: 2, ledger: "small" }], digest: [] } : nothing) }, Effect.gen(function* () {
-    const { request, afterRun } = yield* prepareRun({}, { budgetTokens: 10000 })
+    const request = yield* stepRequestOf({}, { budgetTokens: 10000 })
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     const retry = yield* recover(request, 0, evidence({ contextWindow: 2000, maxOutputTokens: 1000 }))
     const plan = yield* request.plan(info(0))
     yield* dispatch(request, 0, plan)
     yield* request.record(0, [], { model: Option.some(selected), inputTokens: Option.none() })
-    yield* afterRun
     return retry
   })))
   expect(result).toBe(true)
   const target = Math.floor(0.8 * (1000 - estimateTokens("fixed base")))
   expect(signals.find((signal) => signal.phase === "overflow")?.budgetTokens).toBe(target)
-  expect(signals.at(-1)?.budgetTokens).toBe(target)
 })
 
 test("recovery proof uses one frozen matching scale for both failed and reduced M", async () => {
@@ -157,7 +154,7 @@ test("recovery proof uses one frozen matching scale for both failed and reduced 
   const signals: MaintainSignal[] = []
   const result = await Effect.runPromise(setup((input) => { signals.push(input.signal); return compact(input) }, Effect.gen(function* () {
     yield* (yield* TurnEvents).subscribe((event) => event._tag === "context.built" ? Option.some(event.estimatedTokens) : Option.none(), (tokens) => Effect.sync(() => { measurements.push(tokens) }))
-    const { request } = yield* prepareRun({}, { budgetTokens: 10000 })
+    const request = yield* stepRequestOf({}, { budgetTokens: 10000 })
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     yield* request.record(0, [], { model: Option.some(selected), inputTokens: Option.some(2 * measurements[0]! + estimateTokens("fixed base")) })
     yield* dispatch(request, 1, yield* request.plan(info(1)))
@@ -177,7 +174,7 @@ test("an arrival during maintenance that offsets reduction declines the resend",
   }), Effect.gen(function* () {
     const memory = yield* TurnMemory
     sessions.push(memory.session)
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return { retry: yield* recover(request, 0), headers: (yield* memory.requestSnapshot).requests }
   })))
@@ -192,7 +189,7 @@ test("pending and reentrant recovery declines promptly without duplicate helper 
     nested.push(yield* recover(requests[0]!, 0).pipe(Effect.orDie))
     return yield* compact(input)
   }), Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     requests.push(request)
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return yield* recover(request, 0)
@@ -212,7 +209,7 @@ test("a recovery recorder defect remains the original sticky hard failure", asyn
       durationMs: 1, usage: { _tag: "Known", usage: zeroUsage }, outcome: { _tag: "Completed" } }).pipe(Effect.orDie)
     return nothing
   }), Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return [yield* recover(request, 0).pipe(Effect.result), yield* recover(request, 0).pipe(Effect.result)]
   }), (writer) => ({ ...writer, append: (drafts) => drafts.some((draft) => draft.kind === "model.called") ? Effect.fail(failure) : writer.append(drafts) })))
@@ -224,7 +221,7 @@ test("a failed retry-header ACK is hard and sticky, with no second append or rei
   const failure = new HarnessError({ code: "memory.log", message: "retry header ACK failed" })
   const writes: number[] = []
   const result = await Effect.runPromise(setup(compact, Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return [yield* recover(request, 0).pipe(Effect.result), yield* recover(request, 0).pipe(Effect.result)]
   }), (writer) => ({ ...writer, append: (drafts) => {
@@ -247,7 +244,7 @@ test("interrupted recovery is terminal and a duplicate pending call declines", a
       yield* Deferred.succeed(entered, undefined)
       return yield* Effect.never
     }), Effect.gen(function* () {
-      const { request } = yield* prepareRun({})
+      const request = yield* stepRequestOf({})
       yield* dispatch(request, 0, yield* request.plan(info(0)))
       const first = yield* recover(request, 0).pipe(Effect.forkChild)
       yield* Deferred.await(entered)
@@ -270,23 +267,23 @@ test("total input ceiling shrinks across steps, while concurrent preparations re
     overflows.push(1)
     return Effect.succeed({ actions: [{ _tag: "DropTurns", throughTurn: overflows.length === 1 ? 1 : 2, ledger: "small" }], digest: [] })
   }, Effect.gen(function* () {
-    const first = yield* prepareRun({}, { budgetTokens: 10000 })
-    const second = yield* prepareRun({}, { budgetTokens: 9000 })
-    yield* dispatch(first.request, 0, yield* first.request.plan(info(0)))
-    const one = yield* recover(first.request, 0)
-    yield* dispatch(first.request, 0, yield* first.request.plan(info(0)))
-    yield* dispatch(first.request, 1, yield* first.request.plan(info(1)))
-    const two = yield* recover(first.request, 1)
-    yield* first.afterRun
-    yield* second.afterRun
+    const first = yield* stepRequestOf({}, { budgetTokens: 10000 })
+    const second = yield* stepRequestOf({}, { budgetTokens: 9000 })
+    yield* dispatch(first, 0, yield* first.plan(info(0)))
+    const one = yield* recover(first, 0)
+    yield* dispatch(first, 0, yield* first.plan(info(0)))
+    yield* dispatch(first, 1, yield* first.plan(info(1)))
+    const two = yield* recover(first, 1)
+    yield* second.plan(info(0))
     return { one, two }
   })))
   expect(result).toEqual({ one: true, two: true })
   const targets = signals.filter((signal) => signal.phase === "overflow").map((signal) => signal.budgetTokens)
   expect(targets[1]!).toBeLessThan(targets[0]!)
-  const ends = signals.filter((signal) => signal.phase === "turn-end")
-  expect(ends[0]!.budgetTokens).toBeLessThan(3000)
-  expect(ends[1]!.budgetTokens).toBe(9000)
+  // The second preparation's ceiling never shrank: its first step still has its whole budget.
+  const steps = signals.filter((signal) => signal.phase === "step").map((signal) => signal.budgetTokens)
+  expect(steps.at(-1)).toBe(9000 - estimateTokens("fixed base"))
+  expect(steps[1]!).toBeLessThan(steps[0]!)
 })
 
 test("interrupting a retry-header ACK retains its terminal outcome without another header or helper", async () => {
@@ -295,7 +292,7 @@ test("interrupting a retry-header ACK retains its terminal outcome without anoth
   const result = await Effect.runPromise(Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
     return yield* setup((input) => { if (input.signal.phase === "overflow") calls.push(1); return compact(input) }, Effect.gen(function* () {
-      const { request } = yield* prepareRun({})
+      const request = yield* stepRequestOf({})
       yield* dispatch(request, 0, yield* request.plan(info(0)))
       const first = yield* recover(request, 0).pipe(Effect.forkChild)
       yield* Deferred.await(entered)
@@ -322,7 +319,7 @@ test("context.built arrival after proof stays outside the frozen retry candidate
       built.push(1)
       if (built.length === 2) yield* memory.session.record([{ _tag: "Message", message: { role: "user", content: "late candidate arrival" } }], event.step)
     }))
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     expect(yield* recover(request, 0)).toBe(true)
     const retry = yield* request.plan(info(0))
@@ -337,7 +334,7 @@ test("context.built arrival after proof stays outside the frozen retry candidate
 test("a compaction writer failure is hard even when its code is context.budget", async () => {
   const failure = new HarnessError({ code: "context.budget", message: "writer refused the compaction" })
   const result = await Effect.runPromise(setup(compact, Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return yield* recover(request, 0).pipe(Effect.result)
   }), (writer) => ({ ...writer, append: (drafts) => drafts.some((draft) => draft.kind === "memory.compaction") ? Effect.fail(failure) : writer.append(drafts) })))
@@ -346,31 +343,30 @@ test("a compaction writer failure is hard even when its code is context.budget",
 
 test("custom models without overflow evidence still use bounded recovery without a catalog", async () => {
   const retry = await Effect.runPromise(setup(compact, Effect.gen(function* () {
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     return yield* (request.onContextOverflow?.(0) ?? Effect.succeed(false))
   })))
   expect(retry).toBe(true)
 })
 
-test("overflow preserves system StepContext while afterRun releases only its obsolete reserve", async () => {
+test("overflow preserves system StepContext and reserves it once", async () => {
   const signals: MaintainSignal[] = []
   const text = "current context ".repeat(30)
   const result = await Effect.runPromise(setup((input) => { signals.push(input.signal); return compact(input) }, Effect.gen(function* () {
-    const { request, afterRun } = yield* prepareRun({ stepContext: "system", step: () => Effect.succeed({ context: Option.some(text), toolChoice: Option.none() }) })
+    const request = yield* stepRequestOf({ stepContext: "system", step: () => Effect.succeed({ context: Option.some(text), toolChoice: Option.none() }) })
     const first = yield* request.plan(info(0))
     yield* dispatch(request, 0, first)
     const retry = yield* recover(request, 0)
     const next = yield* request.plan(info(0))
     yield* dispatch(request, 0, next)
     yield* request.record(0, [], { model: Option.some(selected), inputTokens: Option.none() })
-    yield* afterRun
     return { retry, first, next }
   })))
   expect(result.retry).toBe(true)
   expect(result.next.system).toBe(`fixed base\n\n${text}`)
   const target = signals.find((signal) => signal.phase === "overflow")!.budgetTokens
-  expect(signals.at(-1)!.budgetTokens).toBe(target + estimateTokens(result.first.system) - estimateTokens("fixed base"))
+  expect(target).toBeLessThan(10_000 - estimateTokens(result.first.system))
 })
 
 test("lost retry-header ACK remains sticky after a reconciled dispatch without a private plan", async () => {
@@ -379,7 +375,7 @@ test("lost retry-header ACK remains sticky after a reconciled dispatch without a
   const result = await Effect.runPromise(setup(compact, Effect.gen(function* () {
     const memory = yield* TurnMemory
     const model = yield* LanguageModel.LanguageModel
-    const { request } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     const first = yield* recover(request, 0).pipe(Effect.result)
     const snapshot = yield* memory.requestSnapshot

@@ -202,7 +202,11 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * its writer closed, and resumed by another instance; a turn past its time
  * limit (`timeLimitMs`) closed by its holder as interrupted with
  * `turn.time-limit`, its writer's `TurnClosed` `timed-out`, and resumed, a
- * turn within its limit left open; and, for an instance
+ * turn within its limit left open; for a writer with `seal`, a turn sealed by
+ * its final reply ending as it sealed, that reply stored, whoever closes it
+ * (a cancel and its time limit on its instance; its own end with any
+ * ending; a reap once its holder is gone, by any begin, a refused one
+ * included) and never resumed; and, for an instance
  * with a `TurnActivity`, its activity agreeing with what is open, per
  * session and turn, a begin counting from the moment it is asked for (an
  * instance without either passes that check unchecked).
@@ -587,6 +591,62 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const fourth = kindsOf(yield* ofTurn(4))
       yield* expect("closing", fourth === "turn.started@4,turn.ended@4" && cancelled === "TurnClosed:cancelled",
         `a cancelled turn stored ${fourth}, and a hold after the cancel gave ${cancelled}`)
+    })),
+
+    scoped("a turn sealed by its final reply ends as it sealed, with that reply, whoever closes it: a cancel and its time limit here, its own end with any ending, a reap once its holder is gone; one with no final reply is not sealed", "sealed", (owner) => Effect.gen(function* () {
+      const [steady, holder, other] = [yield* leased(), yield* leased(SHORT), yield* leased(SHORT)]
+      const sealOf = (writer: TurnWriter) => Option.match(Option.fromNullishOr(writer.seal), { onNone: () => Effect.succeedNone, onSome: (seal) => seal })
+      const probe = yield* created(steady.sessions, owner)
+      // A writer without the capability has nothing to check.
+      if (Option.isNone(yield* Effect.scoped(steady.sessions.begin(probe, say("probe")).pipe(Effect.map((writer) => Option.fromNullishOr(writer.seal)))))) return
+      const answering = (input: BeginTurn) => [frameworkDraft("turn.reply", { entry: `${input.runId}:1`, runId: input.runId, step: 0, at: 0, body: { outcome: "completed", reply: "done" } })]
+      const sealedWriter = (sessions: Service, address: SessionAddress, input: BeginTurn) => Effect.gen(function* () {
+        const writer = yield* sessions.begin(address, input)
+        yield* writer.closing(answering(input))
+        return { writer, waiter: yield* sealOf(writer) }
+      })
+      const storedOf = (sessions: Service, address: SessionAddress) => Effect.all([sessions.read(address, { kinds: ["turn.ended"] }).pipe(Effect.map(endings)),
+        sessions.read(address, { kinds: ["turn.reply"] }).pipe(Effect.map((all) => all.map(turnOf).join()))], { concurrency: 1 }).pipe(Effect.map((both) => both.join(" | ")))
+      // Nothing final to seal: no reply held.
+      const bare = yield* created(steady.sessions, owner)
+      const unsealed = yield* Effect.scoped(steady.sessions.begin(bare, say("no reply")).pipe(Effect.flatMap(sealOf)))
+      yield* expect("sealed", Option.isNone(unsealed), "a turn holding no final reply was sealed")
+      // A cancel here: the sealed end with the reply it held, the seal's waiter told, and the turn's own end after it answered.
+      const cancelled = yield* created(steady.sessions, owner)
+      const viaCancel = yield* Effect.scoped(Effect.gen(function* () {
+        const { writer, waiter } = yield* sealedWriter(steady.sessions, cancelled, say("cancel me"))
+        const answer = yield* steady.sessions.cancel(cancelled, 1)
+        const told = yield* Option.match(waiter, { onNone: () => Effect.succeed(false), onSome: (wait) => Effect.forkChild(wait).pipe(Effect.flatMap((fiber) => settles(fiber, 2_000))) })
+        const ended = yield* answerOf(writer.end({ reason: "failed", failure: Option.some({ code: "conformance.late", message: "too late" }) }))
+        return { sealed: Option.isSome(waiter), cancelled: answer.cancelled, told, ended }
+      }))
+      const cancelEnd = yield* storedOf(steady.sessions, cancelled)
+      yield* expect("sealed", viaCancel.sealed && viaCancel.cancelled && viaCancel.told && viaCancel.ended === "done" && cancelEnd === "1:completed:none | 1",
+        `a cancel of a sealed turn answered ${canonicalJson(viaCancel)} and stored ${cancelEnd}`)
+      // Its own end with another ending: still the sealed one.
+      const own = yield* created(steady.sessions, owner)
+      yield* Effect.scoped(sealedWriter(steady.sessions, own, say("end me")).pipe(Effect.flatMap(({ writer }) =>
+        writer.end({ reason: "failed", failure: Option.some({ code: "conformance.host", message: "the host failed after its reply" }) }))))
+      const ownEnd = yield* storedOf(steady.sessions, own)
+      yield* expect("sealed", ownEnd === "1:completed:none | 1", `a sealed turn's own failed end stored ${ownEnd}`)
+      // Its time limit here: the sealed end with its reply, not turn.time-limit.
+      const limited = yield* created(steady.sessions, owner)
+      const scope = yield* scopeOfCheck
+      yield* sealedWriter(steady.sessions, limited, { ...say("bounded"), timeLimitMs: SHORT }).pipe(Scope.provide(scope))
+      yield* subject.advance(SHORT)
+      const limitEnd = yield* eventually(storedOf(steady.sessions, limited).pipe(Effect.catch((error) => Effect.succeed(` | unread (${error._tag})`))), (now) => !now.startsWith(" |"), 2_000)
+      yield* expect("sealed", limitEnd === "1:completed:none | 1", `a sealed turn past its time limit stored ${limitEnd}`)
+      // Its holder gone (its lease ran out): a begin reaps it as sealed, with the reply it sealed, even a begin then refused
+      // (a resume of it: it is finished), so the refusal does not leave it open for the next begin to refuse again.
+      const abandoned = yield* created(holder.sessions, owner)
+      yield* sealedWriter(holder.sessions, abandoned, say("abandoned")).pipe(Scope.provide(scope))
+      yield* subject.advance(SHORT * 2)
+      const resumed = yield* refusal(other.sessions, abandoned, resume(1))
+      const reaped = yield* storedOf(other.sessions, abandoned)
+      const reply = canonicalJson((yield* other.sessions.read(abandoned, { kinds: ["turn.reply"] })).map((event) => event.data["body"]))
+      const next = yield* other.sessions.begin(abandoned, say("after"))
+      yield* expect("sealed", next.admitted.turn === 2 && reaped === "1:completed:none | 1" && reply === canonicalJson([{ outcome: "completed", reply: "done" }]) && resumed.startsWith("NotResumable"),
+        `resuming the abandoned sealed turn gave ${resumed}, after which it stored ${reaped} with replies ${reply}, and the next begin opened turn ${next.admitted.turn}`)
     })),
 
     scoped("transact records outside a turn, and the framework's kinds are refused: as ReservedKind there, and to a turn's writer unless the framework's turn wrote them", "transact", (owner) => Effect.gen(function* () {

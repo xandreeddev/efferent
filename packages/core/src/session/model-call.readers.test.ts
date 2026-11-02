@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import { ModelCallData, ModelCallId } from "../domain/model-call.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { entriesOfEvents, turnBilledUsageOf, turnModelCallsOf, turnUsageOf } from "./session-event.entity.functions.js"
 import type { SessionLogEvent } from "./session-log.entity.js"
@@ -10,6 +11,9 @@ const usage = { ...zeroUsage, inputTokens: 10, outputTokens: 2, totalTokens: 12 
 const call = (id: string, counts: ModelCallData["usage"]): ModelCallData => ({ callId: ModelCallId.make(id), attempt: 1,
   purpose: "Helper", method: "Text", model: Option.none(), runId: Option.none(), run: Option.none(), step: Option.none(), durationMs: 1,
   usage: counts, outcome: { _tag: "Completed" } })
+/** A loop call of run `run`'s `step`: it bills that step, superseding its selected response. */
+const loop = (id: string, counts: ModelCallData["usage"], run = 0, step = 0): ModelCallData => ({ ...call(id, counts),
+  purpose: "Loop", runId: Option.some(RunId.make("run")), run: Option.some(RunOrdinal.make(run)), step: Option.some(step) })
 const event = (kind: string, data: SessionLogEvent["data"], seq = 1, turn = 4): SessionLogEvent => ({
   session: ConversationId.make("00000000-0000-4000-8000-000000008888"), turn: Option.some(turn), kind, seq, at: 0, data,
 })
@@ -17,7 +21,7 @@ const recorded = (data: ModelCallData, seq = 1, turn = 4) => Schema.encodeEffect
 const legacy = event("step.usage", { step: 0, run: 0, model: "legacy:model", usage })
 
 test("billed usage selects ledger facts, including helpers and partial failed attempts, without selected-response double counting", async () => {
-  const events = [legacy, await Effect.runPromise(recorded(call("known", { _tag: "Known", usage }))),
+  const events = [legacy, await Effect.runPromise(recorded(loop("known", { _tag: "Known", usage }))),
     await Effect.runPromise(recorded({ ...call("partial", { _tag: "Partial", usage: { ...zeroUsage, inputTokens: 3, totalTokens: 3 }, reported: ["inputTokens"] }), outcome: { _tag: "Interrupted" } }, 2)),
     await Effect.runPromise(recorded(call("other-turn", { _tag: "Known", usage }), 3, 5))]
   expect(await Effect.runPromise(turnBilledUsageOf(events, 4))).toEqual({ ...usage, inputTokens: 13, totalTokens: 15 })
@@ -26,10 +30,14 @@ test("billed usage selects ledger facts, including helpers and partial failed at
   expect(await Effect.runPromise(entriesOfEvents(events.filter((row) => row.kind === "model.called")))).toEqual([])
 })
 
-test("Unknown-only and Known-zero ledgers suppress even malformed legacy selected usage", async () => {
+test("an Unknown or Known-zero loop call suppresses its own step's selected usage and no other step's", async () => {
   await Promise.all([{ _tag: "Unknown" } as const, { _tag: "Known", usage: zeroUsage } as const].map(async (counts) => {
-    const events = [event("step.usage", { malformed: true }), await Effect.runPromise(recorded(call("coverage", counts)))]
+    const events = [legacy, await Effect.runPromise(recorded(loop("coverage", counts)))]
     expect(await Effect.runPromise(turnBilledUsageOf(events, 4))).toEqual(zeroUsage)
+    const other = [legacy, await Effect.runPromise(recorded(loop("coverage", counts, 0, 1)))]
+    expect(await Effect.runPromise(turnBilledUsageOf(other, 4))).toEqual(usage)
+    const rerun = [legacy, await Effect.runPromise(recorded(loop("coverage", counts, 1, 0)))]
+    expect(await Effect.runPromise(turnBilledUsageOf(rerun, 4))).toEqual(usage)
   }))
   expect(await Effect.runPromise(turnBilledUsageOf([legacy], 4))).toEqual(usage)
   expect(await Effect.runPromise(turnBilledUsageOf([], 4))).toEqual(zeroUsage)
@@ -48,4 +56,11 @@ test("a ledger subtotal cannot overflow into an unsafe billed count", async () =
   const huge = { ...zeroUsage, inputTokens: Number.MAX_SAFE_INTEGER, totalTokens: Number.MAX_SAFE_INTEGER }
   const rows = await Promise.all(["one", "two"].map((id) => Effect.runPromise(recorded(call(id, { _tag: "Known", usage: huge })))))
   expect((await Effect.runPromise(Effect.result(turnBilledUsageOf(rows, 4))))._tag).toBe("Failure")
+})
+
+test("a recorded helper never hides a loop step's selected usage it did not record", async () => {
+  // A loop model outside the models plugin (no Loop call) beside a summary helper the plugin recorded.
+  const events = [legacy, await Effect.runPromise(recorded(call("summary", { _tag: "Known", usage })))]
+  expect(await Effect.runPromise(turnBilledUsageOf(events, 4))).toEqual({ ...usage, inputTokens: 20, outputTokens: 4, totalTokens: 24 })
+  expect(await Effect.runPromise(turnUsageOf(events, 4))).toEqual(usage)
 })

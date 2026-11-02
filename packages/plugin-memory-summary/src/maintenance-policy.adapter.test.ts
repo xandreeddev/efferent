@@ -22,13 +22,13 @@ const openBuiltIn = (summarize: (prompt: string) => Effect.Effect<string, Harnes
   ) })))
 })
 
-test("default summaries wait until turn-end and step mode remains a timing opt-in", async () => {
+test("default summaries run at turn-end, with the next run's start as their safety net; step mode is a timing opt-in", async () => {
   const calls: number[] = []
   const policy = summaryPolicy(memorySummaryDefaults, () => Effect.sync(() => { calls.push(1); return "summary" }))
-  expect((await Effect.runPromise(policy.maintain(input(policy, history, { ...signal, phase: "turn-start" })))).actions).toEqual([])
   expect((await Effect.runPromise(policy.maintain(input(policy, history, { ...signal, phase: "step" })))).actions).toEqual([])
   expect(calls).toHaveLength(0)
   expect((await Effect.runPromise(policy.maintain(input(policy)))).actions).toHaveLength(1)
+  expect((await Effect.runPromise(policy.maintain(input(policy, history, { ...signal, phase: "turn-start" })))).actions).toHaveLength(1)
   const legacy = summaryPolicy({ ...memorySummaryDefaults, summarizeAt: "step" }, () => Effect.succeed("summary"))
   expect((await Effect.runPromise(legacy.maintain(input(legacy, history, { ...signal, phase: "step" })))).actions).toHaveLength(1)
 })

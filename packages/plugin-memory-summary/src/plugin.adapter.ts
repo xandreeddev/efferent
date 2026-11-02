@@ -19,7 +19,13 @@ import { claimSummary, settleSummary } from "./summary-attempt.entity.functions.
 
 /** @public */
 export const MemorySummaryConfig = Schema.Struct({
-  /** Normal summary timing; overflow can force a summary independently. */
+  /**
+   * Normal summary timing. `turn-end`: after the turn's reply is final and
+   * sealed, triggered on the run's reported input, and again at the next
+   * run's start for what such a summary could not finish (cut, failed, or a
+   * reply that was never sealed). `step`: before every request instead.
+   * Overflow can force a summary either way.
+   */
   summarizeAt: Schema.Literals(["step", "turn-end"]),
   /** Summarize once the rendered messages pass this share of the budget. */
   triggerRatio: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0.1, maximum: 1 }))),
@@ -130,7 +136,8 @@ const decide = (
   { entries, signal, turn, runId, render }: Parameters<MemoryPolicy["maintain"]>[0],
 ): Effect.Effect<ReadonlyArray<CompactionAction>, HarnessError> => Effect.gen(function* () {
     const force = signal.phase === "overflow"
-    const normal = config.summarizeAt === "turn-end" ? signal.phase === "turn-end" : signal.phase === "turn-start" || signal.phase === "step"
+    // The run's start is the safety net of end timing: a summary its reply's end left undone is done there.
+    const normal = signal.phase === "turn-start" || (config.summarizeAt === "turn-end" ? signal.phase === "turn-end" : signal.phase === "step")
     if (!force && !normal) return []
     const tokens = (candidate: ReadonlyArray<LogEntry>) => scaledTokens(estimateMessageTokens(render(candidate)), Option.fromNullishOr(signal.observed))
     const before = tokens(entries)

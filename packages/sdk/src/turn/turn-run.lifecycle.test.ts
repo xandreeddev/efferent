@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test"
 import { LanguageModel, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Cause, Deferred, Effect, Fiber, Layer, Option, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect"
 import type { Scope } from "effect"
 import {
-  ConversationMemory, CurrentAgentRun, CurrentAgentStep, describeModel, ENGINE_KEY,
-  HarnessError, ModelCallId, ModelId, ModelSelection, openLogSession, ProviderId, recordCompletion, RunId, RunOrdinal,
-  StepLoop, tokenUsage, TurnEvents, TurnMemory, TurnPrompt, zeroUsage,
+  ConversationMemory, CurrentModelCallPolicy, describeModel, ENGINE_KEY, harnessCodeOf,
+  HarnessError, ModelCatalog, ModelId, ModelSelection, openLogSession, ProviderId, RunId, RunOrdinal,
+  StepLoop, tokenUsage, TurnEvents, TurnMemory, zeroUsage,
 } from "@xandreed/core"
 import type { AgentMessage, MaintainSignal, MemoryPolicy, RunResult, RunTools, ToolViews, TurnWriter } from "@xandreed/core"
 import { estimateTokens } from "@xandreed/core/internal"
@@ -14,7 +14,7 @@ import { ToolRegistry } from "@xandreed/core"
 import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
 import { openTurnTools } from "./turn-lifecycle.usecase.functions.js"
-import { prepareRun, runTurnLoop, stepRequestOf } from "./turn-run.usecase.functions.js"
+import { runTurnLoop, stepRequestOf } from "./turn-run.usecase.functions.js"
 
 const views: ToolViews = {
   view: () => Effect.succeed({ text: "", version: "1", subjects: [], artifacts: [], pinned: false }),
@@ -58,18 +58,29 @@ const setup = <A, E>(
   }).pipe(Effect.provide(TurnLive({ turn: decorateWriter(recorded.writer), system: "fixed base" })), Effect.provide(services))
 }))
 
-test.each([false, true])("successful completed/partial run maintains after the loop (%p)", async (partial) => {
+test.each([false, true])("a completed or partial run maintains nothing after its loop returns (%p)", async (partial) => {
   const phases: string[] = []
-  const signals: MaintainSignal[] = []
   const returned = await Effect.runPromise(setup((input) => Effect.sync(() => {
-    signals.push(input.signal); phases.push(input.signal.phase); return { actions: [], digest: [] }
+    phases.push(input.signal.phase); return { actions: [], digest: [] }
   }), { id: "test", version: "1", run: () => Effect.sync(() => { phases.push("loop"); return partial ? { ...result, outcome: "partial", reason: "step-cap" } as const : result }) }, runTurnLoop({}, { budgetTokens: 3000 })))
-  expect(phases).toEqual(["turn-start", "loop", "turn-end"])
+  // The reply goes straight back to the host: nothing can hold it up, fail it or leave it unrecorded.
+  expect(phases).toEqual(["turn-start", "loop"])
   expect(returned.outcome).toBe(partial ? "partial" : "completed")
-  expect(signals.at(-1)?.render).toEqual({ run: RunOrdinal.make(0), stepContext: "none" })
 })
 
-test("a failed loop preserves its failure and skips normal after-run maintenance", async () => {
+test("what a run left is maintained at the next run's start, with that run's scope", async () => {
+  const signals: MaintainSignal[] = []
+  await Effect.runPromise(setup((input) => Effect.sync(() => { signals.push(input.signal); return { actions: [], digest: [] } }),
+    { id: "test", version: "1", run: () => Effect.succeed(result) }, Effect.gen(function* () {
+      yield* runTurnLoop({}, { budgetTokens: 3000 })
+      yield* runTurnLoop({}, { budgetTokens: 3000 })
+    })))
+  expect(signals.map((signal) => [signal.phase, signal.render?.run, signal.budgetTokens])).toEqual([
+    ["turn-start", RunOrdinal.make(0), 3000], ["turn-start", RunOrdinal.make(1), 3000],
+  ])
+})
+
+test("a failed loop preserves its failure", async () => {
   const phases: string[] = []
   const failure = new HarnessError({ code: "loop.failed", message: "fixture loop failed" })
   const exit = await Effect.runPromise(setup((input) => Effect.sync(() => { phases.push(input.signal.phase); return { actions: [], digest: [] } }),
@@ -78,7 +89,7 @@ test("a failed loop preserves its failure and skips normal after-run maintenance
   expect(phases).toEqual(["turn-start"])
 })
 
-test("a waiting run skips end maintenance and an already waiting run skips preparation", async () => {
+test("a waiting run returns its result and an already waiting run skips preparation", async () => {
   const phases: string[] = []
   const returned = await Effect.runPromise(setup((input) => Effect.sync(() => {
     phases.push(input.signal.phase)
@@ -97,7 +108,7 @@ test("a waiting run skips end maintenance and an already waiting run skips prepa
   ])
 })
 
-test("stepRequestOf remains preparation-only", async () => {
+test("stepRequestOf maintains the run's start, so a manual composition keeps its summaries", async () => {
   const phases: string[] = []
   await Effect.runPromise(setup((input) => Effect.sync(() => { phases.push(input.signal.phase); return { actions: [], digest: [] } }),
     { id: "test", version: "1", run: () => Effect.die("not called") }, stepRequestOf({})))
@@ -111,7 +122,6 @@ test("a system StepContext is reserved in the actual request before maintenance"
     id: "test", version: "1", run: (request) => request.plan({ stepIndex: 0, activeTools: [], lastUsage: Option.none() }).pipe(Effect.as(result)),
   }, runTurnLoop({ stepContext: "system", step: () => Effect.succeed({ context: Option.some(text), toolChoice: Option.none() }) }, { budgetTokens: 3000 })))
   expect(signals.find((signal) => signal.phase === "step")?.budgetTokens).toBe(3000 - estimateTokens(`fixed base\n\n${text}`))
-  expect(signals.at(-1)?.budgetTokens).toBe(3000 - estimateTokens("fixed base"))
 })
 
 const selected = new ModelSelection({ provider: ProviderId.make("fixture"), modelId: ModelId.make("primary") })
@@ -120,113 +130,38 @@ const stamped: AgentMessage = { role: "assistant", content: [{ type: "text", tex
 const info = (stepIndex: number) => ({ stepIndex, activeTools: [], lastUsage: Option.none() })
 const unusedLoop: StepLoop["Service"] = { id: "test", version: "1", run: () => Effect.die("not called") }
 const track = (signals: MaintainSignal[]): MemoryPolicy["maintain"] => ({ signal }) => Effect.sync(() => { signals.push(signal); return { actions: [], digest: [] } })
+const catalog = (limits: { readonly contextWindow?: number; readonly maxOutputTokens?: number }) => ModelCatalog.of({
+  list: Effect.succeed([{ selection: "fixture:primary", provider: "fixture", credential: "api_key", input: ["text"], limits }]),
+})
 
-test("manual prepareRun returns a cached, scope-free afterRun with exact run correlation", async () => {
+test.each([
+  ["a known window below the budget lowers the step's ceiling", { contextWindow: 2000, maxOutputTokens: 500 }, Option.none(), 1500],
+  ["the call policy's output cap wins over the catalog's", { contextWindow: 2000, maxOutputTokens: 500 }, Option.some({ effort: "low", maxOutputTokens: 200 } as const), 1800],
+  ["a window above the budget leaves the budget", { contextWindow: 200_000, maxOutputTokens: 500 }, Option.none(), 3000],
+  ["an unknown window leaves the budget", { maxOutputTokens: 500 }, Option.none(), 3000],
+] as const)("%s", async (_, limits, policy, ceiling) => {
   const signals: MaintainSignal[] = []
-  const correlation: unknown[] = []
-  await Effect.runPromise(setup(({ signal }) => Effect.gen(function* () {
-    signals.push(signal)
-    correlation.push([Option.getOrNull(yield* CurrentAgentRun)?.ordinal, Option.getOrNull(yield* CurrentAgentStep)])
-    return { actions: [], digest: [] }
-  }), unusedLoop, Effect.gen(function* () {
-    const prepared = yield* prepareRun({}, { budgetTokens: 3000 })
-    yield* Effect.all([prepared.afterRun, prepared.afterRun], { concurrency: 2 })
-    yield* prepared.afterRun
-  })))
-  expect(signals.map((signal) => signal.phase)).toEqual(["turn-start", "turn-end"])
-  expect(signals[1]?.budgetTokens).toBe(3000)
-  expect(correlation).toEqual([[0, null], [0, null]])
-})
-
-test("interrupting the first afterRun caller retains that terminal outcome without rerunning maintenance", async () => {
-  const calls: number[] = []
-  const returned = await Effect.runPromise(Effect.gen(function* () {
-    const entered = yield* Deferred.make<void>()
-    return yield* setup(({ signal }) => signal.phase !== "turn-end" ? Effect.succeed({ actions: [], digest: [] }) : Effect.gen(function* () {
-      calls.push(1)
-      if (calls.length === 1) {
-        yield* Deferred.succeed(entered, undefined)
-        return yield* Effect.never
-      }
-      return { actions: [], digest: [] }
-    }), unusedLoop, Effect.gen(function* () {
-      const prepared = yield* prepareRun({})
-      const first = yield* prepared.afterRun.pipe(Effect.forkChild)
-      yield* Deferred.await(entered)
-      yield* Fiber.interrupt(first)
-      return yield* prepared.afterRun.pipe(Effect.exit)
-    }))
-  }))
-  expect(calls).toHaveLength(1)
-  expect(returned._tag === "Failure" && Cause.hasInterrupts(returned.cause)).toBe(true)
-})
-
-test("interrupting a joining afterRun caller leaves the original maintenance and result intact", async () => {
-  const calls: number[] = []
-  await Effect.runPromise(Effect.gen(function* () {
-    const entered = yield* Deferred.make<void>()
-    const release = yield* Deferred.make<void>()
-    yield* setup(({ signal }) => signal.phase !== "turn-end" ? Effect.succeed({ actions: [], digest: [] }) : Effect.gen(function* () {
-      calls.push(1)
-      yield* Deferred.succeed(entered, undefined)
-      yield* Deferred.await(release)
-      return { actions: [], digest: [] }
-    }), unusedLoop, Effect.gen(function* () {
-      const prepared = yield* prepareRun({})
-      const owner = yield* prepared.afterRun.pipe(Effect.forkChild)
-      yield* Deferred.await(entered)
-      const joining = yield* prepared.afterRun.pipe(Effect.forkChild)
-      yield* Effect.yieldNow
-      yield* Fiber.interrupt(joining)
-      yield* Deferred.succeed(release, undefined)
-      yield* Fiber.join(owner)
-      yield* prepared.afterRun
-    }))
-  }))
-  expect(calls).toHaveLength(1)
-})
-
-test.each([true, false])("afterRun uses the accepted step reserve despite an unsent lookahead plan (usable=%p)", async (usable) => {
-  const signals: MaintainSignal[] = []
-  const short = "short base"
-  const long = "long base ".repeat(100)
+  const built: number[] = []
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
-    const prompt = yield* TurnPrompt
-    const service = yield* LanguageModel.make({ generateText: () => Effect.succeed([]), streamText: () => Stream.empty })
-    const model = describeModel(service, { provider: "fixture", model: "primary", settings: {} })
-    const prepared = yield* prepareRun({ model: (info) => Effect.succeed(Option.some({ model, variant: Option.some(info.stepIndex === 0 ? "short" : "long") })) }, { budgetTokens: 3000 }).pipe(
-      Effect.provideService(TurnPrompt, { ...prompt, system: (variant) => Effect.succeed(Option.contains(variant, "long") ? long : short) }),
-    )
-    yield* prepared.request.plan(info(0))
-    yield* prepared.request.record(0, [], { ...accepted, inputTokens: usable ? accepted.inputTokens : Option.none() })
-    yield* prepared.request.plan(info(1))
-    yield* prepared.afterRun
-  })))
-  expect(signals.at(-1)?.budgetTokens).toBe(3000 - estimateTokens(short))
-  expect(signals.at(-1)?.observed?.reservedTokens).toBe(usable ? estimateTokens(short) : undefined)
+    const bus = yield* TurnEvents
+    yield* bus.subscribe((event) => event._tag === "context.built" ? Option.some(event.budgetTokens) : Option.none(), (budget) => Effect.sync(() => { built.push(budget) }))
+    const request = yield* stepRequestOf({}, { budgetTokens: 3000 }).pipe(Effect.provideService(CurrentModelCallPolicy, policy))
+    yield* request.plan(info(0))
+    yield* request.plan(info(1))
+  })).pipe(Effect.provideService(ModelCatalog, catalog(limits))))
+  expect(signals.filter((signal) => signal.phase === "step").map((signal) => signal.budgetTokens)).toEqual([ceiling - estimateTokens("fixed base"), ceiling - estimateTokens("fixed base")])
+  expect(built).toEqual([ceiling, ceiling])
 })
 
-test("afterRun takes the writer's fresh durable snapshot before advisory maintenance", async () => {
-  const order: string[] = []
-  await Effect.runPromise(setup(({ signal }) => Effect.sync(() => {
-    if (signal.phase === "turn-end") order.push("maintain")
-    return { actions: [], digest: [] }
-  }), unusedLoop, Effect.gen(function* () {
-    const prepared = yield* prepareRun({})
-    order.length = 0
-    yield* prepared.afterRun
-  }), (writer) => ({ ...writer, snapshot: (kinds, after) => Effect.sync(() => { order.push("snapshot"); }).pipe(Effect.andThen(writer.snapshot(kinds, after))) })))
-  // Recorder-owner closure also snapshots after this body returns.
-  expect(order.slice(0, 2)).toEqual(["snapshot", "maintain"])
+test("a known window leaving no room for the system prompt fails the step with context.budget", async () => {
+  const exit = await Effect.runPromise(setup(track([]), unusedLoop, Effect.gen(function* () {
+    const request = yield* stepRequestOf({}, { budgetTokens: 3000 })
+    return yield* request.plan(info(0)).pipe(Effect.result)
+  })).pipe(Effect.provideService(ModelCatalog, catalog({ contextWindow: 600, maxOutputTokens: 598 }))))
+  expect(exit._tag === "Failure" && Option.getOrNull(harnessCodeOf(exit.failure))).toBe("context.budget")
 })
 
-test("an interrupted loop skips afterRun", async () => {
-  const signals: MaintainSignal[] = []
-  await Effect.runPromise(setup(track(signals), { ...unusedLoop, run: () => Effect.interrupt }, runTurnLoop({}).pipe(Effect.exit)))
-  expect(signals.map((signal) => signal.phase)).toEqual(["turn-start"])
-})
-
-test("accepted input uses the frozen pre-reaction message estimate and preserves last step usage", async () => {
+test("accepted input uses the frozen pre-reaction message estimate", async () => {
   const signals: MaintainSignal[] = []
   const built: { estimatedTokens: number; reservedTokens: number }[] = []
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
@@ -236,52 +171,44 @@ test("accepted input uses the frozen pre-reaction message estimate and preserves
       built.push(event)
       yield* memory.session.record([{ _tag: "Message", run: event.run, message: { role: "user", content: "concurrent arrival ".repeat(200) } }], event.step)
     }))
-    const prepared = yield* prepareRun({}, { budgetTokens: 5000 })
-    yield* prepared.request.plan(info(0))
-    yield* prepared.request.record(0, [stamped], accepted)
-    yield* prepared.request.record(0, [{ role: "user", content: "ordinary omitted write" }])
-    yield* prepared.request.plan(info(1))
-    yield* prepared.afterRun
+    const request = yield* stepRequestOf({}, { budgetTokens: 5000 })
+    yield* request.plan(info(0))
+    yield* request.record(0, [stamped], accepted)
+    yield* request.record(0, [{ role: "user", content: "ordinary omitted write" }])
+    yield* request.plan(info(1))
   })))
   const next = signals.filter((signal) => signal.phase === "step")[1]
   expect(next?.observed).toEqual({ model: selected, inputTokens: 1500, estimatedTokens: built[0]!.estimatedTokens, reservedTokens: built[0]!.reservedTokens })
-  expect(signals.at(-1)?.observed).toEqual(next?.observed)
-  expect(Option.getOrNull(signals.at(-1)?.lastUsage ?? Option.none())).toEqual(tokenUsage({ inputTokens: 1500, outputTokens: 4 }))
   expect(built[1]!.estimatedTokens).toBeGreaterThan(built[0]!.estimatedTokens)
 })
 
 test("supplied unusable input clears calibration, while an empty accepted tail still calibrates", async () => {
   const signals: MaintainSignal[] = []
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
-    const { request, afterRun } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* request.plan(info(0))
     yield* request.record(0, [], accepted)
     yield* request.plan(info(1))
     yield* request.record(1, [], { model: Option.some(selected), inputTokens: Option.none() })
     yield* request.plan(info(2))
-    yield* afterRun
   })))
   const steps = signals.filter((signal) => signal.phase === "step")
   expect(steps[1]?.observed?.inputTokens).toBe(1500)
   expect(steps[2]?.observed).toBeUndefined()
-  expect(signals.at(-1)?.observed).toBeUndefined()
 })
 
-test("fallback observation is advisory afterRun but cannot calibrate a later primary", async () => {
+test("a fallback observation cannot calibrate a later primary", async () => {
   const signals: MaintainSignal[] = []
   const fallback = new ModelSelection({ provider: ProviderId.make("fallback"), modelId: selected.modelId })
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
-    const { request, afterRun } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* request.plan(info(0))
     yield* request.record(1, [], accepted)
     yield* request.plan(info(1))
     yield* request.record(1, [], { ...accepted, model: Option.some(fallback) })
     yield* request.plan(info(2))
-    yield* afterRun
   })))
   expect(signals.filter((signal) => signal.phase === "step").every((signal) => signal.observed === undefined)).toBe(true)
-  expect(signals.at(-1)?.observed?.model).toEqual(fallback)
-  expect(signals.at(-1)?.observed?.inputTokens).toBe(1500)
 })
 
 test("a later selected fallback can use its own accepted calibration", async () => {
@@ -290,7 +217,7 @@ test("a later selected fallback can use its own accepted calibration", async () 
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
     const service = yield* LanguageModel.make({ generateText: () => Effect.succeed([]), streamText: () => Stream.die("not called") })
     const chosen = describeModel(service, { provider: "fallback", model: "primary", settings: {} })
-    const { request } = yield* prepareRun({ model: (info) => Effect.succeed(info.stepIndex === 2 ? Option.some({ model: chosen, variant: Option.none() }) : Option.none()) })
+    const request = yield* stepRequestOf({ model: (info) => Effect.succeed(info.stepIndex === 2 ? Option.some({ model: chosen, variant: Option.none() }) : Option.none()) })
     yield* request.plan(info(0))
     yield* request.record(0, [], { ...accepted, model: Option.some(fallback) })
     yield* request.plan(info(1))
@@ -307,7 +234,7 @@ test("accepted metadata is snapshotted before a held durable tail ACK", async ()
     const entered = yield* Deferred.make<void>()
     const release = yield* Deferred.make<void>()
     yield* setup(track(signals), unusedLoop, Effect.gen(function* () {
-      const { request, afterRun } = yield* prepareRun({})
+      const request = yield* stepRequestOf({})
       yield* request.plan(info(0))
       const fact = { ...accepted }
       const recording = yield* request.record(0, [stamped], fact).pipe(Effect.forkChild)
@@ -315,7 +242,7 @@ test("accepted metadata is snapshotted before a held durable tail ACK", async ()
       fact.inputTokens = Option.some(9999)
       yield* Deferred.succeed(release, undefined)
       yield* Fiber.join(recording)
-      yield* afterRun
+      yield* request.plan(info(1))
     }), (writer) => ({ ...writer, append: (drafts) => drafts.some((draft) => draft.kind === "memory.message")
       ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(writer.append(drafts)))
       : writer.append(drafts) }))
@@ -327,45 +254,72 @@ test("failed tail ACK cannot publish accepted calibration", async () => {
   const signals: MaintainSignal[] = []
   const failure = new HarnessError({ code: "memory.log", message: "held tail ACK failed" })
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
-    const { request, afterRun } = yield* prepareRun({})
+    const request = yield* stepRequestOf({})
     yield* request.plan(info(0))
     const recorded = yield* request.record(0, [stamped], accepted).pipe(Effect.result)
     expect(recorded._tag === "Failure" && recorded.failure).toBe(failure)
-    yield* afterRun
+    yield* request.plan(info(1))
   }), (writer) => ({ ...writer, append: (drafts) => drafts.some((draft) => draft.kind === "memory.message") ? Effect.fail(failure) : writer.append(drafts) })))
   expect(signals.at(-1)?.observed).toBeUndefined()
-  expect(Option.isNone(signals.at(-1)?.lastUsage ?? Option.none())).toBe(true)
 })
 
-test("independent concurrent preparations keep their measurement and once-only maintenance", async () => {
+test("independent concurrent preparations keep their own measurement", async () => {
   const signals: MaintainSignal[] = []
   await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
-    const first = yield* prepareRun({}, { budgetTokens: 3000 })
-    const second = yield* prepareRun({}, { budgetTokens: 4000 })
-    yield* Effect.all([first.request.plan(info(0)), second.request.plan(info(0))], { concurrency: 2 })
-    yield* first.request.record(0, [], accepted)
-    yield* Effect.all([first.afterRun, second.afterRun, first.afterRun], { concurrency: 3 })
+    const first = yield* stepRequestOf({}, { budgetTokens: 3000 })
+    const second = yield* stepRequestOf({}, { budgetTokens: 4000 })
+    yield* Effect.all([first.plan(info(0)), second.plan(info(0))], { concurrency: 2 })
+    yield* first.record(0, [], accepted)
+    yield* Effect.all([first.plan(info(1)), second.plan(info(1))], { concurrency: 2 })
   })))
-  const ends = signals.filter((signal) => signal.phase === "turn-end").toSorted((a, b) => (a.render?.run ?? 0) - (b.render?.run ?? 0))
-  expect(ends.map((signal) => [signal.render?.run, signal.budgetTokens, signal.observed?.inputTokens])).toEqual([[0, 3000 - estimateTokens("fixed base"), 1500], [1, 4000 - estimateTokens("fixed base"), undefined]])
+  const later = signals.filter((signal) => signal.phase === "step").slice(2).toSorted((a, b) => (a.render?.run ?? 0) - (b.render?.run ?? 0))
+  expect(later.map((signal) => [signal.render?.run, signal.budgetTokens, signal.observed?.inputTokens])).toEqual([[0, 3000 - estimateTokens("fixed base"), 1500], [1, 4000 - estimateTokens("fixed base"), undefined]])
 })
 
-test("manual afterRun restores the original recorder defect as a sticky TurnError", async () => {
-  const failure = new HarnessError({ code: "memory.log", message: "recorder ACK failed" })
-  const helpers: string[] = []
-  const errors = await Effect.runPromise(setup(({ signal }) => signal.phase === "turn-end"
-    ? Effect.gen(function* () {
-      helpers.push("helper")
-      const run = yield* CurrentAgentRun
-      yield* recordCompletion({ callId: ModelCallId.make("after-run-helper"), attempt: 1, purpose: "Helper", method: "Text", model: Option.some(selected),
-        runId: Option.map(run, (run) => run.id), run: Option.map(run, (run) => run.ordinal), step: Option.none(), durationMs: 1,
-        usage: { _tag: "Known", usage: zeroUsage }, outcome: { _tag: "Completed" } }).pipe(Effect.orDie)
-      return { actions: [], digest: [] }
-    })
-    : Effect.succeed({ actions: [], digest: [] }), unusedLoop, Effect.gen(function* () {
-    const prepared = yield* prepareRun({})
-    return yield* Effect.all([prepared.afterRun.pipe(Effect.result), prepared.afterRun.pipe(Effect.result)], { concurrency: 2 })
-  }), (writer) => ({ ...writer, append: (drafts) => drafts.some((draft) => draft.kind === "model.called") ? Effect.fail(failure) : writer.append(drafts) })))
-  expect(helpers).toEqual(["helper"])
-  expect(errors.map((error) => error._tag === "Failure" && error.failure)).toEqual([failure, failure])
+/** A writer that can seal: its seal answers at once, and no one else ever ends the turn. */
+const sealing = (writer: TurnWriter): TurnWriter => ({ ...writer, seal: Effect.succeed(Option.some(Effect.never)) })
+
+test("an accepted response hands the run's maintenance to the sealed reply, once, on its accepted input and base reserve", async () => {
+  const signals: MaintainSignal[] = []
+  const text = "volatile context ".repeat(30)
+  await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
+    const memory = yield* TurnMemory
+    const request = yield* stepRequestOf({ stepContext: "system", step: () => Effect.succeed({ context: Option.some(text), toolChoice: Option.none() }) }, { budgetTokens: 3000 })
+    yield* request.plan(info(0))
+    yield* request.record(0, [stamped], accepted)
+    yield* memory.afterReply
+    yield* memory.afterReply
+  }), sealing))
+  const ends = signals.filter((signal) => signal.phase === "turn-end")
+  expect(ends).toHaveLength(1)
+  expect(ends[0]?.budgetTokens).toBe(3000 - estimateTokens("fixed base"))
+  expect(ends[0]?.observed?.inputTokens).toBe(1500)
+  expect(ends[0]?.render).toEqual({ run: RunOrdinal.make(0), stepContext: "none" })
+  expect(Option.getOrNull(ends[0]?.lastUsage ?? Option.none())).toEqual(tokenUsage({ inputTokens: 1500, outputTokens: 4 }))
+})
+
+test("a writer that cannot seal leaves the run's maintenance to the next run's start", async () => {
+  const signals: MaintainSignal[] = []
+  await Effect.runPromise(setup(track(signals), unusedLoop, Effect.gen(function* () {
+    const memory = yield* TurnMemory
+    const request = yield* stepRequestOf({})
+    yield* request.plan(info(0))
+    yield* request.record(0, [stamped], accepted)
+    yield* memory.afterReply
+  })))
+  expect(signals.map((signal) => signal.phase)).toEqual(["turn-start", "step"])
+})
+
+test("after the sealed reply an ordinary maintenance failure is skipped, a writer's stays hard", async () => {
+  const writerFailure = new HarnessError({ code: "session.defect", message: "the writer died" })
+  const results = await Promise.all([new HarnessError({ code: "memory.summary", message: "the summarizer failed" }), writerFailure].map((error) =>
+    Effect.runPromise(setup(({ signal }) => signal.phase === "turn-end" ? Effect.fail(error) : Effect.succeed({ actions: [], digest: [] }), unusedLoop, Effect.gen(function* () {
+      const memory = yield* TurnMemory
+      const request = yield* stepRequestOf({})
+      yield* request.plan(info(0))
+      yield* request.record(0, [stamped], accepted)
+      return yield* memory.afterReply.pipe(Effect.result)
+    }), sealing))))
+  expect(results[0]?._tag).toBe("Success")
+  expect(results[1]?._tag === "Failure" && results[1].failure).toBe(writerFailure)
 })

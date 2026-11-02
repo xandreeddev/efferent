@@ -65,6 +65,7 @@ import type {
   SessionView,
   TaskRef,
   TurnDraft,
+  TurnEnding,
   TurnFailure,
   TurnOrigin,
   TurnWriter,
@@ -74,7 +75,7 @@ import { processLiveness } from "./process-liveness.adapter.js"
 import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged, withFormat } from "./sessions-state.entity.functions.js"
 import type { Holder, ReleasedTurn } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
-import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
+import type { HeldTurn, ProcessLiveness, SealedTurn, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { makeTurnWriter } from "./turn-writer.adapter.js"
 import type { OpenWriter } from "./turn-writer.adapter.js"
 import type { ClosedBy } from "./turn-writer.entity.js"
@@ -108,6 +109,10 @@ const droppedDrafts = (ids: ReadonlyArray<InboxItemId>, turn: number): Effect.Ef
     Effect.map((data): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data })),
     Effect.orDie,
   ), { concurrency: 1 })
+
+/** The reply drafts a sealed turn's state keeps, stored in turn `turn` before its `turn.ended` by a close that is not its holder's. */
+const sealedDrafts = (sealed: Option.Option<SealedTurn>, turn: number): ReadonlyArray<SessionDraft> =>
+  Option.match(sealed, { onNone: () => [], onSome: (seal) => seal.closing.map((draft) => ({ kind: draft.kind, turn: Option.some(turn), data: draft.data })) })
 
 const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
   drafts.map((draft) => ({ kind: draft.kind, turn: Option.none(), data: draft.data }))
@@ -352,20 +357,45 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    */
   const reaped = (head: SessionHead, state: SessionsState, takeOver: NonNullable<BeginTurn["takeOver"]> = false) => Effect.gen(function* () {
     const applies = Option.exists(state.open, (open) => typeof takeOver === "boolean" ? takeOver : open.turn === takeOver.turn && open.runId === takeOver.runId)
-    if (Option.isNone(state.open) || (!applies && Option.isSome(yield* heldTurn(head, state, holder)))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
+    if (Option.isNone(state.open) || (!applies && Option.isSome(yield* heldTurn(head, state, holder)))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>(), closedAs: Option.none<TurnEnding["reason"]>() }
     const turn = state.open.value.turn
     const taken = applies && Option.isSome(yield* heldTurn(head, state, holder))
+    // A sealed turn's reply was final before its holder went: it ends as sealed, its reply stored, never interrupted.
+    const sealed = state.open.value.sealed
+    const ending = Option.match(sealed, {
+      onSome: (seal) => seal.ending,
+      onNone: (): TurnEnding => ({
+        reason: "interrupted",
+        failure: Option.some(taken
+          ? { code: "turn.takeover", message: "a new holder took the session over" }
+          : { code: "turn.lease", message: "the turn's holder stopped writing" }),
+      }),
+    })
     // A reaped turn counts as an attempt: its holder may have stopped on the items. One taken over does not.
-    const after = closedState(state, "interrupted", config.inbox.attempts, !taken)
-    const closing = yield* turnEndedDraft(turn, {
-      reason: "interrupted",
-      failure: Option.some(taken
-        ? { code: "turn.takeover", message: "a new holder took the session over" }
-        : { code: "turn.lease", message: "the turn's holder stopped writing" }),
-    }).pipe(Effect.orDie)
+    const after = closedState(state, ending.reason, config.inbox.attempts, !taken)
+    const closing = yield* turnEndedDraft(turn, ending).pipe(Effect.orDie)
     const dropped = yield* droppedDrafts(after.dropped, turn)
-    return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
+    return { drafts: [...sealedDrafts(sealed, turn), closing, ...dropped], state: after.state, closed: Option.some(turn), closedAs: Option.some(ending.reason) }
   })
+
+  /**
+   * Close the open turn as `reaped` would, in a commit of its own, when its
+   * final reply sealed it: a refused begin does this after its plan, so a
+   * sealed turn its holder left is stored as it sealed (its reply with it)
+   * whatever the begin decided. Its refusal (the turn it resumes is that
+   * sealed one, finished; its queued input that turn already answered)
+   * drops the plan's reap with it, and would leave the turn open for the
+   * next begin to refuse again. Any other open turn is left to the next
+   * opening plan.
+   */
+  const reapSealed = (address: SessionAddress, takeOver: NonNullable<BeginTurn["takeOver"]>) => guarded(address, (head, stored) => Effect.gen(function* () {
+    if (!Option.exists(stored.open, (open) => Option.isSome(open.sealed))) return { drafts: [], next: Option.none<SessionsState>(), result: Option.none<number>() }
+    const reap = yield* reaped(head, stored, takeOver)
+    return Option.isSome(reap.closed) ? { drafts: reap.drafts, next: Option.some(reap.state), result: reap.closed } : { drafts: [], next: Option.none<SessionsState>(), result: Option.none<number>() }
+  })).pipe(
+    // Taken over here, as an opening commit's reap would: this instance's writer of it, if any, is closed at once.
+    Effect.flatMap((done) => Option.match(done.result, { onNone: () => Effect.void, onSome: (taken) => closeLocal(address.id, "interrupted", Option.some(taken)) })),
+  )
 
   /**
    * A session's own `turn.started` events, for lookups that decode their keys
@@ -419,7 +449,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * ended (when it was), for a resume's check; `reapedNow`, a turn this
    * commit closes as interrupted, counts as ended so.
    */
-  const turnsOf = (id: ConversationId, reapedNow: Option.Option<number>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"], media: "references" }).pipe(
+  const turnsOf = (id: ConversationId, reapedNow: Option.Option<{ readonly turn: number; readonly reason: TurnEnding["reason"] }>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"], media: "references" }).pipe(
     Effect.flatMap((events) => Effect.gen(function* () {
       const numbered = (event: SessionLogEvent) => Option.getOrElse(event.turn, () => 0)
       const endings = new Map(yield* Effect.forEach(events.filter((event) => event.kind === "turn.ended"), (event) =>
@@ -428,7 +458,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         turn: numbered(event),
         origin: started.origin,
         resumes: Option.fromNullishOr(started.resumes),
-        ended: Option.contains(reapedNow, numbered(event)) ? Option.some("interrupted") : Option.fromNullishOr(endings.get(numbered(event))),
+        // A turn reaped in this very commit ends as its reap stores it: interrupted, or as its final reply sealed it.
+        ended: Option.match(Option.filter(reapedNow, (reaped) => reaped.turn === numbered(event)), {
+          onSome: (reaped) => Option.some(reaped.reason),
+          onNone: () => Option.fromNullishOr(endings.get(numbered(event))),
+        }),
       }))), { concurrency: 1 })
     }).pipe(Effect.mapError(storage("session.decode")))),
   )
@@ -599,7 +633,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         }
         // A resume is checked in the commit that opens it, against the turns as stored (a turn reaped by this commit is interrupted).
         if (Option.isSome(resumes)) {
-          const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, reap.closed))
+          const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, Option.all({ turn: reap.closed, reason: reap.closedAs })))
           if (Option.isSome(refusal)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: resumes.value, reason: refusal.value }))
         }
         // An inbox turn takes every item waiting, and its message is theirs.
@@ -614,6 +648,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           turn, runId: input.runId, key, origin, holder: instance,
           expiresAt: ownership.mode === "lease" ? Option.some(head.now + ownership.ttlMs) : Option.none(),
           process: ownership.mode === "process" ? holder.process : Option.none(),
+          sealed: Option.none(),
         }
         const next: SessionsState = {
           ...state,
@@ -645,6 +680,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           onNone: () => Effect.void,
           onSome: (turn) => letGo(address.id, turn, input.runId),
         })))),
+        // A refused begin drops its plan's reap with it: a sealed turn its holder left is closed in a commit of its own, its reply stored.
+        Effect.tapError(() => reapSealed(address, input.takeOver ?? false).pipe(
+          Effect.ignore({ log: "Warn", message: "a sealed turn its holder left was not reaped after a refused begin; the next begin reaps it" }),
+        )),
       )))
       // The opening plan always commits `turn.started`, last: neither can happen unless the log broke its contract.
       const committed = yield* Option.match(begun.committed, {
@@ -736,16 +775,32 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * and the outcome does not depend on which came first. The writer's
    * `TurnClosed` gives `closedBy`.
    */
-  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean; readonly closedBy: ClosedBy }) => guarded(address, (head, stored) => Effect.gen(function* () {
-    const reap = yield* reaped(head, stored)
-    const state = reap.state
-    if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { closed: false, pending: pendingOf(state).length } }
-    if (!Option.exists(state.open, (open) => open.turn === turn)) return { drafts: [], next: Option.none<SessionsState>(), result: { closed: false, pending: pendingOf(state).length } }
-    const after = closedState(state, ending.reason, config.inbox.attempts, ending.tried)
-    const closing = yield* turnEndedDraft(turn, { reason: ending.reason, failure: ending.failure }).pipe(Effect.orDie)
-    const dropped = yield* droppedDrafts(after.dropped, turn)
-    return { drafts: [closing, ...dropped], next: Option.some(after.state), result: { closed: true, pending: pendingOf(after.state).length } }
-  })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(address.id, ending.closedBy, Option.some(turn)) : Effect.void), Effect.map((done) => done.result))
+  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean; readonly closedBy: ClosedBy }) => endSealedLocal(address.id, turn).pipe(Effect.flatMap(Option.match({
+    // A sealed turn held here ends through its own writer: its held reply and drafts with its sealed ending.
+    onSome: (stored) => Effect.succeed({ closed: true, pending: stored.pending }),
+    onNone: () => guarded(address, (head, stored) => Effect.gen(function* () {
+      const reap = yield* reaped(head, stored)
+      const state = reap.state
+      if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { closed: false, pending: pendingOf(state).length } }
+      if (!Option.exists(state.open, (open) => open.turn === turn)) return { drafts: [], next: Option.none<SessionsState>(), result: { closed: false, pending: pendingOf(state).length } }
+      // One sealed elsewhere (or whose writer could not store its end) ends as sealed, with the reply it sealed.
+      const sealed = Option.flatMap(state.open, (open) => open.sealed)
+      const closing: TurnEnding = Option.match(sealed, { onSome: (seal) => seal.ending, onNone: () => ({ reason: ending.reason, failure: ending.failure }) })
+      const after = closedState(state, closing.reason, config.inbox.attempts, ending.tried)
+      const draft = yield* turnEndedDraft(turn, closing).pipe(Effect.orDie)
+      const dropped = yield* droppedDrafts(after.dropped, turn)
+      return { drafts: [...sealedDrafts(sealed, turn), draft, ...dropped], next: Option.some(after.state), result: { closed: true, pending: pendingOf(after.state).length } }
+    })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(address.id, ending.closedBy, Option.some(turn)) : Effect.void), Effect.map((done) => done.result)),
+  })))
+
+  /** End a sealed turn this instance holds through its own writer; none when it holds no sealed writer of it, or that end was not stored. */
+  const endSealedLocal = (id: string, turn: number) => Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.filter(Option.fromNullishOr(all.get(id)), (open) => open.turn === turn), {
+    onNone: () => Effect.succeedNone,
+    onSome: (open) => open.endSealed.pipe(
+      Effect.tapError((error) => Effect.logWarning("a sealed turn's own end was not stored; its sealed state ends it instead", error)),
+      Effect.orElseSucceed(() => Option.none<{ readonly pending: number }>()),
+    ),
+  })))
 
   /**
    * Close a turn this instance holds as interrupted with `failure`, an

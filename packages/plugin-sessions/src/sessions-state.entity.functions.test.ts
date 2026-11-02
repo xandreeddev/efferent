@@ -7,7 +7,7 @@ import type { SessionsState } from "./sessions-state.entity.js"
 
 const held = (delivery?: "steer" | "next"): SessionsState => ({
   v: 1, turns: 1, title: Option.none(),
-  open: Option.some({ turn: 1, runId: RunId.make("queued-state"), key: "input:one", origin: "user", holder: "holder", expiresAt: Option.none(), process: Option.none() }),
+  open: Option.some({ turn: 1, runId: RunId.make("queued-state"), key: "input:one", origin: "user", holder: "holder", expiresAt: Option.none(), process: Option.none(), sealed: Option.none() }),
   inbox: [{ id: InboxItemId.make("one"), attempts: 10, claimedBy: Option.some(1), ...(delivery === undefined ? {} : { delivery }) }],
 })
 

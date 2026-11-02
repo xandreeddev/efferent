@@ -14,7 +14,7 @@ import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent, prepareRun } from "@xandreed/sdk"
+import { Agent, stepRequestOf } from "@xandreed/sdk"
 
 const selection = (label) => Option.getOrThrow(parseModelSelection(label))
 const counts = (input, output = 1) => ({ inputTokens: input, outputTokens: output, totalTokens: input + output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })
@@ -63,7 +63,7 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     return new UtilityCompletion({ text: "Earlier checkpoint preserved.", usage: counts(7, 3), model: selection("scripted:summary") })
   }) })
   const model = yield* scripted(seen, [
-    { text: "older-evidence ".repeat(180), input: 400 },
+    { text: "older-evidence ".repeat(100), input: 5 },
     { text: "second checkpoint", input: 2_000 },
     { text: "third checkpoint", input: 600 },
   ])
@@ -102,8 +102,8 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const headers = yield* readStored("request.prepared", all)
   yield* Effect.forEach(headers, ({ data }) => replayModelRequest(all, data.runId, data.step, data.run), { concurrency: 1, discard: true })
 
-  // A host using the public pieces gets the same completion lifecycle,
-  // without another Scope requirement or a second maintenance invocation.
+  // A host composing the run from the public pieces gets the same lifecycle:
+  // its accepted response hands the maintenance to the turn's sealed reply, once.
   const signals = []
   const temporary = `temporary system checkpoint ${"x".repeat(800)}`
   const policy = {
@@ -133,17 +133,15 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     turn: { session: manualAddress, runId: RunId.make("manual-maintenance"), userMessage: new UserMessage({ text: "inspect manual composition" }) },
     services: Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, manualModel)),
   }, () => Effect.gen(function* () {
-    const prepared = yield* prepareRun({
+    const request = yield* stepRequestOf({
       stepContext: "system", step: () => Effect.succeed({ context: Option.some(temporary), toolChoice: Option.none() }),
     }, { limits: { streaming: false, maxSteps: 1 } })
-    const done = yield* (yield* StepLoop).run(prepared.request)
-    assert.equal(signals.filter((signal) => signal.phase === "turn-end").length, 0)
-    yield* prepared.afterRun
-    yield* prepared.afterRun
+    const done = yield* (yield* StepLoop).run(request)
+    assert.equal(signals.filter((signal) => signal.phase === "turn-end").length, 0, "maintenance ran before the reply was sealed")
     return { outcome: done.outcome, reply: Option.some(done.text) }
   }))
   const endings = signals.filter((signal) => signal.phase === "turn-end")
-  assert.equal(endings.length, 1, "manual afterRun was not cached once")
+  assert.equal(endings.length, 1, "the manual run's maintenance did not run once after its sealed reply")
   const end = endings[0]
   const step = signals.find((signal) => signal.phase === "step")
   assert.equal(end.render.stepContext, "none")
@@ -152,6 +150,6 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   assert.ok(end.budgetTokens > step.budgetTokens, "obsolete system StepContext remained reserved at turn-end")
   assert.equal(JSON.stringify(end.messages).includes(temporary), false)
   assert.equal(JSON.stringify(step.messages).includes(temporary), false, "system StepContext was counted again in messages")
-  return { runtime: typeof Bun === "undefined" ? "Node" : "Bun", summaries: helperPrompts.length, manualAfterRun: endings.length, maintenanceVerified: true }
+  return { runtime: typeof Bun === "undefined" ? "Node" : "Bun", summaries: helperPrompts.length, manualAfterReply: endings.length, maintenanceVerified: true }
 })).pipe(Effect.timeout("20 seconds")))
 console.log(`memory-maintenance ${JSON.stringify(report)}`)

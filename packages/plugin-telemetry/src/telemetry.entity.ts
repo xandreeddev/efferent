@@ -5,8 +5,8 @@ import { ModelPrice } from "@xandreed/core"
  * What the telemetry plugin records for each turn it sees.
  * - `prices`: a model's prices (per million tokens, in the host's currency,
  *   usually USD), keyed by each recorded call's actual
- *   `"<provider>:<modelId>"` selection (legacy selected responses when a
- *   turn has no call ledger). A response from an unpriced model, or with no model (a
+ *   `"<provider>:<modelId>"` selection (a selected response's, for a loop
+ *   step no call was recorded for). A response from an unpriced model, or with no model (a
  *   `LanguageModel` the models plugin did not route), has no cost.
  * - `metricAttributes`: constant attributes added to every metric the
  *   plugin records, such as `deployment.environment`. Keep them few and

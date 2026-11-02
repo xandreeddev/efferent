@@ -75,6 +75,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `verified`; retained facts unlike this release's selection use the full
   archive instead of failing with `session.decode`.
 
+- Stored format 17 adds the optional sealed reply of an open turn to the
+  session's head state (`HeldTurn.sealed`: its ending and the reply's closing
+  drafts). `TurnWriter.seal` is a new optional capability: it stores them
+  before the turn's work after its reply, and every later close (a cancel, a
+  time limit, a shutdown, an own end that fails, a reap, a takeover) ends the
+  turn with that ending and stores that reply, never interrupted or failed,
+  and not resumable. A begin refused while such a turn's holder is gone reaps
+  it in a commit of its own, so a refused resume of it still stores it and
+  the inbox drainer never retries resuming it. A custom writer without `seal` keeps
+  working, its turns skipping the work after the reply; one with it reruns
+  `sessionsConformance` (the new `sealed` check). Heads written before
+  format 17 read as unsealed.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -142,15 +155,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   carries the actual failed route and known limits; existing failure stamps
   still decode. Stored format 9 and selected usage remain unchanged.
 
-- Memory strategies now use version 2 decisions. The summary strategy defaults
-  to `summarizeAt: "turn-end"`, after each successful loop run; choose `"step"`
-  for pre-request timing. Maintenance accepts optional model-matched input
+- Memory strategies now use version 2 decisions. `MaintainSignal.phase` adds
+  `turn-end`, after the turn's reply is final and sealed, and `overflow`. The
+  summary strategy defaults to `summarizeAt: "turn-end"`, with each run's
+  start as its safety net; choose `"step"` to consider one before each step's
+  request instead. Maintenance accepts optional model-matched input
   observations and explicit run/render scope, with conservative `scaledTokens`.
   Custom loops forward optional `AcceptedModelInput` through the third argument
   of `StepRequest.record`; rerun the step-loop and memory kits. Manual SDK
-  compositions use `prepareRun`, then `loop.run(request)`, then the cached
-  `afterRun` effect; `stepRequestOf` remains preparation-only. Selected usage
+  compositions use `stepRequestOf`, then `loop.run(request)`: the request
+  hands its run's maintenance to the turn, which runs it after the sealed
+  reply. A custom `TurnMemory` implements `deferAfterReply`, `afterReply` and
+  `acceptedBefore`. A step's ceiling is lowered to the model's `ModelCatalog`
+  window less its output cap when that is below the budget. Selected usage
   and stored format 9 remain unchanged, and version 1 requests still replay.
+
+- Event kinds newly reserved since 0.14.0: `memory.tool-presentation`,
+  `tool.intercepted`, `inbox.taken`, `model.called`, `request.part` and
+  `memory.snapshot`. 0.14.0 let a host event (`defineHostEvent`) take one of
+  these names, journaled under it as its kind. Its writes now fail with
+  `ReservedKind` (`events.reserved`), and rows a 0.14.0 session stored under
+  one are read as that framework kind, whose readers reject them (a
+  `model.called` row fails `turnModelCallsOf` and billing for its turn).
+  Rename such an event before upgrading; stored rows are not migrated.
 
 - Restore the 0.14.0 journal fixture from its release tag and retain newer
   format 9 replay coverage in a separate unreleased fixture. The journal recorder
@@ -160,8 +187,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Stored format 9 adds `model.called` terminal facts for model attempts,
   including retries, helpers and discarded responses. `turnModelCallsOf`
   exposes actual selections and unknown/partial/final reported usage;
-  `turnBilledUsageOf` sums reported subtotals and uses legacy selected usage
-  only when no ledger facts exist. Selected turn/run usage is unchanged.
+  `turnBilledUsageOf` sums reported subtotals plus the selected usage of each
+  loop step no `Loop` call was recorded for (`ModelCallLegacyUsage` carries
+  its run and step). Selected turn/run usage is unchanged.
   Custom model adapters can use `recordCompletion` with the turn's
   `CurrentModelCallRecorder`; durable recording failures stop dispatch and
   preserve their original `TurnError`. `UtilityCompletion.model` is optional
@@ -1945,6 +1973,26 @@ Model-visible text (exact pins and the compaction golden updated):
   summaries, out-of-view compaction text or cut runs' step contexts, or render
   the archive four times at open: each step-context placement is checked once by
   its first build, and the checkpoint bridge decodes its history once.
+
+- Memory maintenance after a run can no longer cost its reply. Summaries ran
+  after a run's loop and before the turn's end, so a cancel, a time limit, a
+  shutdown (whose default deadline is shorter than the summary timeout) or a
+  process death during a slow summary stored the turn interrupted with no
+  reply, and the resume asked the model again; a failing maintenance failed
+  the completed turn. The run's maintenance now runs after the turn's reply is
+  recorded and sealed, still inside the turn and billed by it, on the run's
+  reported input: an ordinary failure is logged and skipped, and a cancel, a
+  time limit or a shutdown stops the maintenance only, the turn ending
+  `completed` with its reply. A process death meanwhile ends the turn
+  `completed` with its reply when it is reaped or taken over (the seal keeps
+  the reply in the session's state), and it is not resumed. A run's start maintains what a cut
+  or skipped maintenance left, calibrated by the last stored selected
+  response, and hosts composing with `stepRequestOf` get their summaries
+  again. Billed usage keeps a loop model outside the ledger beside recorded
+  helpers (any call used to hide every selected response), the call recorder
+  reads only its own turn's rows instead of the whole session at every turn,
+  and a `budgetTokens` above a catalogued model window no longer overflows
+  every run's first request.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued

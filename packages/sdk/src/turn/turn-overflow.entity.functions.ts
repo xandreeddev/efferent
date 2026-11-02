@@ -1,5 +1,5 @@
 import { Option, Schema } from "effect"
-import type { ModelLimits } from "@xandreed/core"
+import type { ModelCallPolicy, ModelLimits } from "@xandreed/core"
 import { OverflowBudget } from "./turn-overflow.entity.js"
 
 const positive = (value: number | undefined): Option.Option<number> =>
@@ -16,4 +16,15 @@ export const tighterOverflowBudget = (previous: number, reserved: number, failed
   return messages > 0 && messages < failedComparable && reserved + messages < previous
     ? Schema.decodeUnknownOption(OverflowBudget)({ inputCeiling: reserved + messages, messageBudget: messages })
     : Option.none()
+}
+
+/**
+ * A model's known input bound before any request: its catalog window less
+ * the output the request will reserve (the call policy's cap, else the
+ * catalog's). None without a known window or when nothing would remain.
+ */
+export const windowBound = (limits: Option.Option<ModelLimits>, policy: Option.Option<ModelCallPolicy>): Option.Option<number> => {
+  const context = Option.flatMap(limits, (value) => positive(value.contextWindow))
+  const output = Option.orElse(Option.flatMap(policy, (value) => positive(value.maxOutputTokens)), () => Option.flatMap(limits, (value) => positive(value.maxOutputTokens)))
+  return Option.filter(Option.map(context, (window) => window - Option.getOrElse(output, () => 0)), (bound) => bound > 0)
 }

@@ -1,10 +1,10 @@
 {
-  "format": 16,
-  "fingerprint": "f8dd00e3fbd848c63c3802f9d896c2c8a599ae522c11b82f6d19bb405da370d4",
+  "format": 17,
+  "fingerprint": "28c842f59e32fd0554bcdd3fe33d65a5cf775ccef54d732a92f206e7a23578b5",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
-    "SessionsState": "9cf8be5f29fcbcfd74468cdd4984bd47fb9b89b8693787f9db6a89d24a988b22",
+    "SessionsState": "5cd992f81bd3493b0bfed566f2bc91c7d0db399dc96e68ba7c218d2081d775c8",
     "journal completion.evaluated": "bb3fe8c6dcb0036767aa034056b0397adc718ea360eeb42b760e822bbe262447",
     "journal context.built": "620a71f94f3e10ae5142bf03cfd9f0e30f0ad7d30560b16e378a1966d6293d6c",
     "journal decision.recorded": "cb5c1383205a5ff82649c2feb3061298ac4dc7c86d6a1a5b2b2e93d448a5e7fd",
@@ -107,6 +107,10 @@
     {
       "format": 16,
       "fingerprint": "f8dd00e3fbd848c63c3802f9d896c2c8a599ae522c11b82f6d19bb405da370d4"
+    },
+    {
+      "format": 17,
+      "fingerprint": "28c842f59e32fd0554bcdd3fe33d65a5cf775ccef54d732a92f206e7a23578b5"
     }
   ]
 }

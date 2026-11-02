@@ -24,7 +24,7 @@ import type {
 import type { Context } from "effect"
 import { closedState, droppedData, isNewerFormat, pendingOf, stateJson, stateOf, storedFormatOf, withFormat } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
-import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
+import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, sealable, sealedEnding, sealWith, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
 import { EndStep, WriterPhase } from "./turn-writer.entity.js"
 import type { ClosedBy, WriterStopped } from "./turn-writer.entity.js"
 import { readMemorySnapshot, snapshotState } from "./memory-snapshot.adapter.js"
@@ -116,6 +116,12 @@ export interface OpenWriter {
   readonly markTried: Effect.Effect<void>
   /** A held reply's outcome, before the closing commit; a drain preserves a partial reply. */
   readonly replyEnding: Effect.Effect<Option.Option<TurnEnding>>
+  /**
+   * End a sealed turn through this writer (a close on this instance of a
+   * turn whose final reply sealed it): its held drafts and sealed ending, in
+   * the turn's own end, then the seal's waiters told. None when it is not sealed.
+   */
+  readonly endSealed: Effect.Effect<Option.Option<Stored>, TurnError>
 }
 
 /**
@@ -160,6 +166,8 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   /** Every queued caller's refusal, until its item settles: what a close fails. */
   const waiting = yield* Ref.make(HashSet.empty<(error: TurnError) => Effect.Effect<void>>())
   const closed = yield* Deferred.make<TurnClosed>()
+  /** Completes once a close on this instance stored the sealed turn's end: what `seal` hands its caller. */
+  const sealedEnd = yield* Deferred.make<void>()
   const cursor = yield* Ref.make<Cursor>({ position: { ...input.position, localAt: yield* Clock.currentTimeMillis }, foreign: [] })
 
   const closedAs = (reason: TurnClosed["reason"]) => new TurnClosed({ session: id, turn: admitted.turn, reason })
@@ -408,7 +416,8 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       const [step, last] = yield* transition((current) => Result.map(beginEnd(current.phase, value), (step) =>
         [[step, current.end] as const, EndStep.guards.Start(step) ? { phase: step.phase, end: Option.some(done) } : current] as const))
       return yield* EndStep.match(step, {
-        Start: () => restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(value)).pipe(Effect.flatMap((exit) => settleEnd(done, exit)), underCaller(caller)) })).pipe(
+        // The ending the phase began: a sealed turn's own, whatever this end was given.
+        Start: (start) => restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(WriterPhase.guards.Ending(start.phase) ? start.phase.ending : value)).pipe(Effect.flatMap((exit) => settleEnd(done, exit)), underCaller(caller)) })).pipe(
           Effect.onInterrupt(() => withdraw(done)),
           Effect.as(Deferred.await(done)),
         ),
@@ -521,6 +530,29 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     return result.result
   }), false)
 
+  /**
+   * Seal the turn with the ending its held final reply implies: one commit
+   * stores that ending and the reply's held drafts in the open turn's state,
+   * so a reap or a close elsewhere also stores them, then every end here
+   * stores that ending.
+   */
+  const seal: Effect.Effect<Option.Option<Effect.Effect<void>>, TurnError> = inOrder(Effect.gen(function* () {
+    const now = yield* phaseNow
+    if (Option.isSome(sealedEnding(now))) return Option.some(Deferred.await(sealedEnd))
+    const sealing = sealable(now)
+    if (Option.isNone(sealing)) return Option.none()
+    yield* commitPlan((at) => Effect.succeed<Plan<void>>({
+      drafts: [], next: { ...at.state, open: Option.map(at.state.open, (open) => ({ ...open, sealed: sealing })) }, result: undefined,
+    }), { renew: true })
+    yield* transition((current) => Result.map(sealWith(current.phase, sealing.value.ending), (next) => [undefined, { ...current, phase: next }] as const))
+    return Option.some(Deferred.await(sealedEnd))
+  }), false).pipe(Effect.withSpan("turn_writer.seal", { attributes: ids }))
+
+  const endSealed: Effect.Effect<Option.Option<Stored>, TurnError> = phaseNow.pipe(Effect.flatMap((now) => Option.match(sealedEnding(now), {
+    onNone: () => Effect.succeedNone,
+    onSome: (ending) => end(ending).pipe(Effect.tap(() => Deferred.succeed(sealedEnd, undefined)), Effect.map(Option.some)),
+  })))
+
   const writer: TurnWriter = {
     admitted,
     started: input.started,
@@ -553,6 +585,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       Result.map(hold(current.phase, drafts), (next) => [undefined, { ...current, phase: next }] as const)))),
     end,
     closed: Deferred.await(closed),
+    seal,
   }
   return {
     writer,
@@ -563,6 +596,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       Open: (open) => replyEndingOf(open.closing), Ending: (ending) => Option.some(ending.ending),
       Failed: () => Option.none(), Closed: () => Option.none(), Ended: () => Option.none(),
     }))),
+    endSealed,
   }
 })
 
