@@ -42,7 +42,8 @@ describe("compatible request policy", () => {
     expect(result.text).toBe("finished")
     expect(attempts).toHaveLength(3)
     expect(new Set(attempts).size).toBe(1)
-    expect(hooks).toEqual(["before", "around:200:Fixture Ready:retained"])
+    // Admission runs before every physical send; the accounting boundary sees the final response once.
+    expect(hooks).toEqual(["before", "before", "before", "around:200:Fixture Ready:retained"])
   })
 
   test("uses the explicit call-local Fetch reference when no fetchImpl is configured", async () => {
@@ -58,7 +59,7 @@ describe("compatible request policy", () => {
     expect(calls).toEqual([config.chatUrl])
   })
 
-  test("a late canceled attempt cannot overwrite the successful response metadata", async () => {
+  test("a late canceled streamed attempt cannot overwrite the successful response metadata", async () => {
     const headers: string[] = []
     const signals: Array<AbortSignal | null | undefined> = []
     const first: Array<(response: Response) => void> = []
@@ -81,16 +82,18 @@ describe("compatible request policy", () => {
           headers.push(`${value.statusText}:${value.headers.get("x-fixture")}`)
         }))),
       })
-      const running = yield* Effect.forkChild(model.generateText({ prompt: "hello" }))
+      // A stream's pending headers have their own bound, so the first send is abandoned and sent again.
+      const running = yield* Effect.forkChild(Stream.runCollect(model.streamText({ prompt: "hello" })))
       // The second body is being read, so its headers and metadata arrived.
       yield* Deferred.await(reading)
       expect(signals[0]?.aborted).toBe(true)
       first[0]!(new Response("discarded", { status: 503, statusText: "Stale first attempt" }))
       // Let the ignored first promise settle before completing the second body.
       yield* Effect.tryPromise(() => Promise.resolve())
-      body[0]!.enqueue(new TextEncoder().encode(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "finished" } }] })))
+      body[0]!.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "finished" } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`))
       body[0]!.close()
-      return (yield* Fiber.join(running)).text
+      const parts = yield* Fiber.join(running)
+      return parts.flatMap((part) => part.type === "text-delta" ? [part.delta] : []).join("")
     }).pipe(
       Effect.provideService(CurrentModelRetryPolicy, { ...policy, maxAttempts: 2, requestTimeoutMs: 25, bodyIdleTimeoutMs: 500, totalTimeoutMs: 1000 }),
       Effect.timeout("2 seconds"),
@@ -98,6 +101,27 @@ describe("compatible request policy", () => {
     expect(text).toBe("finished")
     expect(signals).toHaveLength(2)
     expect(headers).toEqual(["Final second attempt:second"])
+  })
+
+  test("a settled request's headers wait for the call's deadline, then fail once without a second generation", async () => {
+    const sends: number[] = []
+    const aborted: number[] = []
+    const started = Date.now()
+    const outcome = await Effect.runPromise(Effect.gen(function* () {
+      const model = yield* makeCompatLanguageModel({
+        ...config, fetchImpl: (_input, init) => new Promise<Response>((_resolve, reject) => {
+          sends.push(1)
+          init?.signal?.addEventListener("abort", () => { aborted.push(1); reject(new Error("fixture abort")) }, { once: true })
+        }),
+      })
+      return yield* model.generateText({ prompt: "hello" }).pipe(Effect.exit)
+    }).pipe(Effect.provideService(CurrentModelRetryPolicy, { ...policy, maxAttempts: 3, requestTimeoutMs: 25, totalTimeoutMs: 250 }), Effect.timeoutOption("1 second")))
+    expect(Option.isSome(outcome)).toBe(true)
+    if (Option.isSome(outcome) && Exit.isFailure(outcome.value)) expect(modelFailureOf(Cause.squash(outcome.value.cause))).toEqual(Option.some("Timeout"))
+    // The settled response's headers come with the whole generation: never cut at requestTimeoutMs and sent again.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(240)
+    expect(sends).toEqual([1])
+    expect(aborted).toEqual([1])
   })
 
   test("bounds pending fetch headers and aborts the actual request", async () => {

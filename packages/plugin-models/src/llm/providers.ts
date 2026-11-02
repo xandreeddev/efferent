@@ -29,6 +29,7 @@ import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.por
 import { CurrentManagedModelsTransport, ModelsTransport } from "../ports/models-transport.port.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { CurrentModelSettings } from "../ports/model-settings.port.js"
+import { CurrentModelCallPurpose } from "../ports/model-call-completion.port.js"
 import { ModelSettingsError, ModelThinking } from "./model-settings.entity.js"
 import type { ModelSettingsMap, ResolvedAnthropicSettings } from "./model-settings.entity.js"
 import { resolveAnthropicSettings, validateAnthropicRequest } from "./model-settings.entity.functions.js"
@@ -40,7 +41,7 @@ import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { providerFailureProtocol, withAnthropicFailures, withOpenAiFailures } from "./provider-client.adapter.js"
 import type { ProviderFailureProtocol } from "./provider-failure.entity.js"
 import { retainModelAttempt } from "./model-completion.adapter.js"
-import { resilientHttpClient, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
+import { observedResponse, resilientHttpClient, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -164,15 +165,15 @@ const reportDropped = (label: string) => (reasons: ReadonlyArray<string>): Effec
       })
 
 /**
- * A body stream that, as it passes through unchanged, reads its first event
- * and reports the thinking blocks the provider dropped (its
- * `message_start`). Nothing is held beyond that first event.
+ * An observer of a body stream's bytes as they pass through unchanged: it
+ * reads the first event and reports the thinking blocks the provider dropped
+ * (its `message_start`). Nothing is held beyond that first event.
  */
-const peekedFirstEvent = <E>(body: Stream.Stream<Uint8Array, E>, report: (reasons: ReadonlyArray<string>) => Effect.Effect<void>) => Effect.gen(function* () {
+const firstEventObserver = (report: (reasons: ReadonlyArray<string>) => Effect.Effect<void>) => Effect.gen(function* () {
   const decoder = new TextDecoder()
   // The text before the first event's end while it has not come whole; none once it was read.
   const pending = yield* Ref.make(Option.some(""))
-  const read = (bytes: Uint8Array) => Ref.modify(pending, (seen): [Option.Option<string>, Option.Option<string>] => Option.match(seen, {
+  return (bytes: Uint8Array) => Ref.modify(pending, (seen): [Option.Option<string>, Option.Option<string>] => Option.match(seen, {
     onNone: () => [Option.none(), Option.none()],
     onSome: (before) => {
       const text = before + decoder.decode(bytes, { stream: true })
@@ -180,21 +181,21 @@ const peekedFirstEvent = <E>(body: Stream.Stream<Uint8Array, E>, report: (reason
       return Option.isSome(first) ? [first, Option.none()] : [Option.none(), Option.some(text)]
     },
   })).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (data) => report(droppedInMessageStart(data)) })))
-  return yield* body.pipe(Stream.tap(read), Stream.toReadableStreamEffect())
 })
 
 /**
  * The client with each response's `input_transformations` read and the
  * dropped thinking blocks reported (`reportDropped`): a settled body read
- * whole and handed on as it was, a stream peeked at its first event as it
- * passes. A body that does not say what it changed reports nothing, and
- * the report never fails a call.
+ * whole and handed on as it was, a stream observed at its first event as it
+ * passes, still the guarded response (`observedResponse`), so its read
+ * failures keep their kinds. A body that does not say what it changed
+ * reports nothing, and the report never fails a call.
  */
 const reportingDroppedThinking = (label: string) => (client: HttpClient.HttpClient): HttpClient.HttpClient =>
   HttpClient.transformResponse(client, Effect.flatMap((response) => {
     const rebuilt = (body: BodyInit) => retainModelAttempt(response, HttpClientResponse.fromWeb(response.request, new Response(body, { status: response.status, headers: new Headers(Object.entries(response.headers)) })))
     return (response.headers["content-type"] ?? "").includes("text/event-stream")
-      ? Effect.map(peekedFirstEvent(response.stream, reportDropped(label)), rebuilt)
+      ? firstEventObserver(reportDropped(label)).pipe(Effect.flatMap((observe) => observedResponse(response, observe)), Effect.map((observed) => observed as never))
       : response.text.pipe(Effect.tap((text) => reportDropped(label)(droppedInBody(text))), Effect.map(rebuilt))
   }))
 
@@ -541,14 +542,15 @@ const pinnedAnthropicNativeJson = (model: Schema.Json | undefined): boolean =>
 
 /** Validate request-dependent controls before the SDK can send a request. Owned model fields keep their resolved precedence. */
 const withAnthropicSettings = (model: LanguageModel.LanguageModel, resolved: ResolvedAnthropicSettings, wire: Schema.JsonObject, binding: boolean, capability: boolean): LanguageModel.LanguageModel => {
-  const prepare = (options: PromptOptions, object = false) => Effect.flatMap(Effect.serviceOption(AnthropicLanguageModel.Config), (ambient) => {
+  const prepare = (options: PromptOptions, object = false) => Effect.flatMap(Effect.all([Effect.serviceOption(AnthropicLanguageModel.Config), Effect.service(CurrentModelCallPurpose)], { concurrency: 1 }), ([ambient, purpose]) => {
     // Absence is owned too: unsupported effort and unconfigured unknown
     // thinking must not reappear through the SDK's later context merge.
     const { thinking: _thinking, output_config: _outputConfig, ...unowned } = Option.getOrElse(ambient, (): typeof AnthropicLanguageModel.Config.Service => ({}))
     const nativeJson = unowned.structuredOutputs ?? pinnedAnthropicNativeJson(wire["model"])
     return Effect.fromResult(validateAnthropicRequest(resolved, { forcedTool: forcedTool(options.toolChoice) || (object && !nativeJson), binding })).pipe(
       Effect.mapError(modelSettingsFailure),
-      Effect.map(() => ({ config: { ...unowned, ...wire }, ...prepareCachePrompt(options, resolved.promptCache, capability) })),
+      // A helper completion is one-shot: an automatic breakpoint would only pay the cache-write premium.
+      Effect.map(() => ({ config: { ...unowned, ...wire }, ...prepareCachePrompt(options, purpose === "Helper" ? { _tag: "Off" } : resolved.promptCache, capability) })),
     )
   })
   return {

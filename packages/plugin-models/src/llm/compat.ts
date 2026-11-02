@@ -86,10 +86,14 @@ export interface CompatConfig {
   readonly images?: boolean
   /** The fetch requests go through (the models plugin supplies its chosen transport); otherwise uses the call-local FetchHttpClient.Fetch reference. */
   readonly fetchImpl?: ModelsFetch
-  /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
+  /** Host-owned admission (e.g. reserve a worst-case cost) before every
+   * physical send: the first and each retry the request policy makes. A
+   * failure ends the call without that send. */
   readonly beforeRequest?: (body: Readonly<Record<string, unknown>>) => Effect.Effect<void, AiError.AiError>
-  /** Per-call accounting/resource boundary. Non-streaming responses are fully
-   * buffered inside request so interruption also aborts body consumption. */
+  /** Per-call accounting/resource boundary around the whole logical call,
+   * its retries included: it sees the final response or failure once.
+   * Non-streaming responses are fully buffered inside request so
+   * interruption also aborts body consumption. */
   readonly aroundRequest?: (body: Readonly<Record<string, unknown>>, request: Effect.Effect<Response, AiError.AiError>) => Effect.Effect<Response, AiError.AiError>
 }
 
@@ -471,7 +475,7 @@ const postChat = (
         ...(config.apiKey === undefined || config.apiKey.length === 0 ? {} : { authorization: `Bearer ${config.apiKey}` }),
       }),
       HttpClientRequest.bodyJsonUnsafe(body),
-    ), { protocol: "compat" }).pipe(Effect.provideService(FetchHttpClient.Fetch, trackedFetch))
+    ), { protocol: "compat", settled: buffered, ...(config.beforeRequest === undefined ? {} : { beforeSend: config.beforeRequest(body) }) }).pipe(Effect.provideService(FetchHttpClient.Fetch, trackedFetch))
     // Buffer settled calls within the public accounting hook. Streaming calls
     // expose a new Web body backed only by the guarded reader, never its source.
     const content = buffered ? yield* response.arrayBuffer : yield* Stream.toReadableStreamEffect(response.stream)
@@ -490,7 +494,7 @@ const postChat = (
       catch: (error) => aiUnknown(config.moduleName, method, error),
     })
   }).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(aiUnknown(config.moduleName, method, error))))
-  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(send), Effect.tap((response) => Effect.sync(() => { selected.response = response })))
+  const request = send.pipe(Effect.tap((response) => Effect.sync(() => { selected.response = response })))
   const guarded = request.pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)))
   return config.aroundRequest === undefined ? guarded : config.aroundRequest(body, guarded).pipe(Effect.map((returned) => selected.response === undefined ? returned : retainModelAttempt(selected.response, returned)))
 }

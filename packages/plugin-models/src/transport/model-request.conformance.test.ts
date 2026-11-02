@@ -6,11 +6,13 @@ describe("the model HTTP request contract", () => {
   test("documents its checks and rejects a careless pass-through transport", async () => {
     const careless = modelRequestConformance({ request: (client, request) => client.execute(request) })
     const failures = await Effect.runPromise(Effect.forEach(careless, (check) => Effect.result(check.run), { concurrency: 1 }))
-    expect(failures.map((result) => result._tag)).toEqual(["Failure", "Failure", "Failure"])
+    expect(failures.map((result) => result._tag)).toEqual(["Failure", "Failure", "Failure", "Failure", "Failure"])
     expect(careless.map((check) => check.name)).toEqual([
       "uses one counter for transport failures and rejected statuses",
       "classifies a structured permanent error before retrying its status",
       "reads a call's policy at execution and obeys its total attempt limit",
+      "never sends a settled request again after its pending headers time out",
+      "reads a successful body that loses its connection as a transient failure",
     ])
   })
   modelRequestConformance().forEach((check) => test(check.name, async () => { await Effect.runPromise(check.run) }))

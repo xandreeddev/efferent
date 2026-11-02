@@ -539,7 +539,7 @@ const { ModelCatalog } = await import("@xandreed/core")
 const { modelCatalogConformance } = await import("@xandreed/core/conformance")
 const { authStoreConformance, modelRequestConformance, settingsStoreConformance } = await import("@xandreed/plugin-models/conformance")
 const modelRequestChecks = await runKit("ModelRequest", modelRequestConformance())
-if (modelRequestChecks !== 3) { console.error("the packed default request-policy kit did not run all three checks"); process.exit(1) }
+if (modelRequestChecks !== 5) { console.error("the packed default request-policy kit did not run all five checks"); process.exit(1) }
 const { AuthStore, ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport, SettingsStore } = await import("@xandreed/plugin-models")
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
 const { dirname } = await import("node:path")

@@ -45,15 +45,16 @@ const GOOGLE_CHAT: Route = { _tag: "compat", moduleName: "Google", chatUrl: GOOG
 
 /**
  * The Claude models that bind thinking to the conversation's prefix: Fable
- * from 5.1, Opus, Sonnet and Haiku from 5.5, and every later version of the
- * four families (`claude-<family>-<major>-<minor>`, with or without a date).
+ * and Mythos from 5.1, Opus, Sonnet and Haiku from 5.5, and every later
+ * version of the five families (`claude-<family>-<major>-<minor>`, with or
+ * without a date).
  */
 const bindsThinkingToPrefix = (id: string): boolean => {
-  const version = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
+  const version = /^claude-(fable|mythos|opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
   if (version === null) return false
   const [, family, major, minor] = version
   const at = Number(major) * 100 + Number(minor ?? 0)
-  return at >= (family === "fable" ? 501 : 505)
+  return at >= (family === "fable" || family === "mythos" ? 501 : 505)
 }
 
 /** Static documentation, checked 2026-10-31: thinking/effort tables and each model's overview. */
@@ -65,6 +66,9 @@ const controls = (modes: AnthropicModelTraits["modes"], defaultThinking: Anthrop
 const knownAnthropic: Readonly<Record<string, Omit<ModelProfile, "id">>> = {
   "claude-fable-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(true)) },
   "claude-fable-5-1": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(false)) },
+  // Mythos shares its Fable counterpart's capabilities and request surface.
+  "claude-mythos-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(true)) },
+  "claude-mythos-5-1": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(false)) },
   "claude-opus-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("medium"), Option.some(false)) },
   "claude-sonnet-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "BetweenTools"], Option.some(adaptive), Option.some("high"), Option.some(false), Option.some(["low", "medium", "high"])) },
   "claude-haiku-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "Off"], Option.some(adaptive), Option.some("medium"), Option.some(true), Option.some(["low", "medium", "high"])) },
@@ -84,8 +88,8 @@ export const anthropicProfileOf = (modelId: string): ModelProfile => {
   const base = modelId.replace(/-\d{8}$/, "")
   const known = Object.hasOwn(knownAnthropic, base) ? knownAnthropic[base] : undefined
   if (known !== undefined) return { id: modelId, ...known }
-  // The approved future Fable5.x rule is local policy, not documentation of an unreleased model's caps.
-  if (/^claude-fable-5(?:-\d{1,2})?$/.test(base)) return {
+  // The approved future Fable and Mythos 5.x rule is local policy, not documentation of an unreleased model's caps.
+  if (/^claude-(?:fable|mythos)-5(?:-\d{1,2})?$/.test(base)) return {
     id: modelId, images: true, efforts: [], bindsThinking: bindsThinkingToPrefix(modelId), anthropic: {
       source: "family-policy", modes: ["Adaptive"], defaultThinking: Option.some(adaptive), defaultEffort: Option.none(), forcedTools: Option.none(), reducedEfforts: Option.none(),
     },

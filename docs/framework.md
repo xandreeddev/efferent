@@ -88,8 +88,14 @@ controls: tagged `thinking`, native `effort`, and `limits` (`contextWindow`,
 `maxOutputTokens`). It is captured when the models layer is built, separately
 from the writable role selections in `SettingsStore`. A call policy takes
 precedence over model settings, then the documented profile supplies defaults.
-Legacy Haiku 4.5 and Sonnet 4.5 ignore generic policy effort and reject
-explicit per-model effort because those profiles support no effort control.
+A call policy's effort (the persisted `reasoningEffort` included) is shared by
+every model, so it follows the model: a documented model gets the highest
+level it supports at or below the requested one (xhigh becomes high on Opus
+4.6; max becomes high on Opus 4.5, and under Off or BetweenTools thinking),
+never a failure. A per-model `effort` is the host's static choice for that
+model: one the model refuses fails before any call. Legacy Haiku 4.5 and
+Sonnet 4.5 ignore generic policy effort and reject explicit per-model effort
+because those profiles support no effort control.
 `max_tokens` always comes from that resolution. Unknown or deployment aliases
 need an explicit output cap; their undocumented limits are omitted from the
 catalog. `ModelCatalogEntry.limits` is provider-neutral metadata, not a measured
@@ -115,7 +121,9 @@ const messages = { plugin: modelsPlugin, options: {
 ```
 
 The static profiles include Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5
-with documented 1M context and 128K output limits. Supported Adaptive and
+with documented 1M context and 128K output limits, and the Mythos models with
+their Fable counterparts' controls (Mythos 5.1, like Fable 5.1, binds its
+thinking to the conversation). Supported Adaptive and
 Budget thinking default to `display: "summarized"`. Fable 5.x and Opus 5.5
 stay adaptive; Sonnet 5.5 supports `BetweenTools` at low/medium/high effort;
 Haiku 5.5 and Opus 5 support `Off` at those efforts. Opus 4.7/4.8 default
@@ -127,8 +135,8 @@ preserved; neutral none maps to low on this route. Unsupported combinations
 and forced-tool choices are refused before a network call. The profiles and
 constraints follow the [model](https://platform.claude.com/docs/en/models/overview)
 and [thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
-documentation checked on 2026-10-31; family rules for future Fable 5.x IDs are
-local policy. The pinned client keeps `2023-06-01` as its default API version;
+documentation checked on 2026-10-31; family rules for future Fable and
+Mythos 5.x IDs are local policy. The pinned client keeps `2023-06-01` as its default API version;
 setting `apiVersion` changes the header. A host transport can add a required
 workspace header. Fake-server tests verify bytes and control flow; live
 provider acceptance requires configured credentials and versioned evidence.
@@ -163,7 +171,10 @@ For a Messages gateway that cannot accept cache fields, set endpoint
 caller controls and omits SDK-generated null cache fields. Application data
 and tool-schema properties named `cache_control` are preserved.
 
-Helper completions use the same per-model policy. These controls and tests
+Helper completions (`UtilityLlm`) place no automatic breakpoint, whatever the
+model's policy: a one-shot prompt is never read back, so a mark would only pay
+the cache-write premium; caller controls are still preserved and validated,
+as under Off. These controls and tests
 establish request behavior, not cache hits: live hits require a sufficiently
 large identical prefix and positive provider cache-read usage. Aggregate
 usage does not distinguish write lifetimes, so mixed-lifetime cost estimates
@@ -269,9 +280,9 @@ It is not an `EngineSettings` key or a models-plugin option.
 | Field | Default |
 |---|---|
 | `maxAttempts` | `4`, initial send included |
-| `requestTimeoutMs` | `300_000`, pending response headers |
+| `requestTimeoutMs` | `300_000`, a streamed request's pending response headers |
 | `bodyIdleTimeoutMs` | `300_000`, each pending body read |
-| `totalTimeoutMs` | `600_000`, shared logical-call deadline |
+| `totalTimeoutMs` | `600_000`, shared logical-call deadline before handoff |
 | `retryAfterMaxMs` | `60_000` |
 | `backoff` | `{ initialMs: 1000, maxMs: 4000, jitter: 0.2 }` |
 
@@ -281,7 +292,9 @@ two attempts, the final slot is reserved for its single send: the default
 allows three primary sends and one fallback send. An absent or identical
 fallback leaves all four slots for the primary; `maxAttempts: 1` sends only
 the primary. Permanent failures and handed-off responses never use the
-reserved fallback slot. One-shot stream and FormData bodies are not replayed.
+reserved fallback slot. The fallback sends at once: the primary's backoff and
+`Retry-After` belong to its provider. One-shot stream and FormData bodies are
+not replayed.
 
 Retries happen only before a successful HTTP response is handed to its
 consumer. An HTTP 200 empty response, SDK decoding failure or SSE failure
@@ -290,14 +303,21 @@ a 64 KiB ceiling and read bounds. HTTP refusals created at this boundary use
 `AiError.module: "Models"` and method `request`, retaining bounded provider
 descriptions and raw HTTP evidence. Already typed errors keep their provenance.
 The policy sleeps for the greater of the
-capped, jittered exponential backoff and capped `Retry-After` hint, within
-the remaining deadline. Hints accept integer seconds or an HTTP date;
-invalid or negative hints are ignored and past dates mean zero.
+capped, jittered exponential backoff and capped server hint, within the
+remaining deadline. The hint is `retry-after-ms` (milliseconds) when present,
+then `retry-after`: seconds (decimals accepted, as the provider SDKs read
+them) or an HTTP date; invalid or negative hints are ignored and past dates
+mean zero.
 
-Headers and pending body reads are bounded by their timeout and the remaining
-logical-call deadline. A progressing stream may outlast the header timeout;
-the total deadline still bounds its reads. Owned timeouts preserve
-`model.timeout`. Cancellation interrupts waits and forwards abort to the
+A streamed request's pending headers are bounded by `requestTimeoutMs` and
+the remaining deadline, and a timeout there can retry. A settled request's
+headers arrive only with the whole generation, so they wait for the call's
+deadline, and a timeout there is final instead of a second generation. After
+handoff each pending body read has only its idle bound: a response that keeps
+arriving may outlast the call's deadline, and the turn's time limit bounds
+the whole of it. A handed-off body that loses its connection fails its reader
+with a transient network failure (`model.unavailable`), never a permanent
+invalid response. Owned timeouts preserve `model.timeout`. Cancellation interrupts waits and forwards abort to the
 underlying request. Tools and callbacks are outside model retries and timeout
 wrappers; the framework loop runs handlers after the whole response. The
 loop's existing pre-content stream-to-settled fallback starts a fresh logical
@@ -320,11 +340,13 @@ model provides the transport's fetch as `FetchHttpClient.Fetch` innermost on
 every call, so an ambient one cannot route a call past the proxy. Without a
 proxy, managed Node calls still use a scoped undici Agent. Header and body
 timeouts are zero on that Agent and the proxy target and CONNECT pools; Effect's
-request policy owns those bounds. The global dispatcher is unchanged.
+request policy owns those bounds. The global dispatcher is unchanged. Managed
+Bun calls, proxied or not, pass fetch's `timeout: false`: Bun's fetch would
+otherwise cut a pending header wait and an idle body read at 300 s by itself.
 An explicitly provided `FetchHttpClient.Fetch`, even the global fetch itself,
 is preserved on the managed direct route. A proxy or explicit `ModelsTransport`
 stays authoritative; a host's opaque dispatcher settings remain the host's.
-Bun keeps its native fetch/proxy behavior. A host gives its own transport
+Bun keeps its native proxy behavior. A host gives its own transport
 through `Agent.define({ services })`.
 See the website's providers page, "Proxy".
 

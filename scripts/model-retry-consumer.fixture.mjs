@@ -147,7 +147,8 @@ const scenarios = [
   { name: "structured-429-invalid-request-is-permanent", mode: "permanent", status: 429, errorType: "invalid_request_error", calls: 1, fallback: "distinct", code: "model.invalid-request" },
   { name: "structured-402-auth-is-permanent", mode: "permanent", status: 402, errorType: "authentication_error", calls: 1, fallback: "distinct", code: "model.auth" },
   { name: "bare-413-is-not-context", mode: "permanent", status: 413, calls: 1, fallback: "distinct", code: "model.invalid-request" },
-  { name: "pending-headers-timeout", mode: "headers", calls: 1, policy: { maxAttempts: 1, requestTimeoutMs: 80 }, code: "model.timeout" },
+  // A settled response's headers come with the whole generation: they wait for the call's deadline, past requestTimeoutMs, and are never sent again.
+  { name: "settled-pending-headers-wait-for-deadline", mode: "headers", calls: 1, policy: { requestTimeoutMs: 80, totalTimeoutMs: 400 }, code: "model.timeout" },
   { name: "successful-headers-stalled-body-timeout", mode: "body", calls: 1, fallback: "distinct", policy: { bodyIdleTimeoutMs: 80 }, code: "model.timeout" },
   { name: "partial-sse-idle-timeout", mode: "sse-idle", calls: 1, streaming: true, policy: { bodyIdleTimeoutMs: 80 }, code: "model.timeout" },
   { name: "progressing-sse-outlives-header-timeout", mode: "sse-progress", calls: 1, streaming: true, policy: { requestTimeoutMs: 80, bodyIdleTimeoutMs: 120 } },

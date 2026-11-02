@@ -45,4 +45,20 @@ export const modelRequestConformance = (subject: ModelRequestSubject = { request
     const three = yield* run(3)
     yield* expect("dynamic-policy", one === 1 && three === 3, "a call ignored its policy or repeated beyond its total attempt cap")
   })),
+  check("never sends a settled request again after its pending headers time out", "settled-headers", () => Effect.gen(function* () {
+    // A settled response's headers come with the whole generation: a second send would generate (and bill) it again.
+    const sends = yield* Ref.make(0)
+    const client = HttpClient.make(() => Ref.update(sends, (n) => n + 1).pipe(Effect.andThen(Effect.never)))
+    const result = yield* subject.request(client, request, { protocol: "anthropic" }).pipe(
+      Effect.provideService(CurrentModelRetryPolicy, { ...policy, requestTimeoutMs: 50, totalTimeoutMs: 300 }),
+      Effect.exit, Effect.timeoutOption("2 seconds"),
+    )
+    const timedOut = Option.exists(result, (exit) => Exit.isFailure(exit) && Option.contains(modelFailureOf(exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error), "Timeout"))
+    yield* expect("settled-headers", timedOut && (yield* Ref.get(sends)) === 1, "a settled request was cut before its deadline and sent again, or never timed out")
+  })),
+  check("reads a successful body that loses its connection as a transient failure", "lost-body", () => Effect.gen(function* () {
+    const client = HttpClient.make((request) => Effect.sync(() => HttpClientResponse.fromWeb(request, new Response(new ReadableStream({ start(controller) { controller.error(new Error("conformance connection reset")) } })))))
+    const result = yield* subject.request(client, request, { protocol: "anthropic" }).pipe(Effect.flatMap((reply) => reply.text), Effect.exit, Effect.provideService(CurrentModelRetryPolicy, policy))
+    yield* expect("lost-body", Exit.isFailure(result) && Option.contains(modelFailureOf(result.cause.reasons.find((reason) => reason._tag === "Fail")?.error), "Transient"), "a lost connection after handoff became a permanent or unclassified failure")
+  })),
 ]

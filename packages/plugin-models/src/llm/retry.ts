@@ -4,7 +4,7 @@ import { Effect, Option, Predicate, Stream } from "effect"
 import { CurrentEmptyResponseTolerance, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import { modelRetryDefaults } from "./model-retry-policy.entity.js"
 
-/** Default request/header bound; configure CurrentModelRetryPolicy per call. @public */
+/** Default bound on a streamed request's pending headers; configure CurrentModelRetryPolicy per call. @public */
 export const LLM_REQUEST_TIMEOUT_MS = modelRetryDefaults.requestTimeoutMs
 /** Default total request budget, shared with a configured fallback. @public */
 export const LLM_CALL_BUDGET_MS = modelRetryDefaults.totalTimeoutMs
