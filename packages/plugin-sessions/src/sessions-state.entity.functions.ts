@@ -68,8 +68,18 @@ export interface Holder {
   readonly liveness: ProcessLiveness
   /** This process, as a process-owned turn records it (none where the runtime has no process to name). */
   readonly process: Option.Option<HolderProcess>
-  /** The turn of the session this instance let go of unended (its closing commit was not stored), if any. */
-  readonly released: (session: string) => Effect.Effect<Option.Option<number>>
+  /**
+   * The turns of the session this instance let go of unended (a closing
+   * commit was not stored, or an opening commit's outcome is unknown), by
+   * their number and run.
+   */
+  readonly released: (session: string) => Effect.Effect<ReadonlyArray<ReleasedTurn>>
+}
+
+/** A turn an instance let go of: its number and its run id (a number alone may name a later turn that opened instead). */
+export interface ReleasedTurn {
+  readonly turn: number
+  readonly runId: string
 }
 
 /**
@@ -111,7 +121,8 @@ export const heldTurn = (head: SessionHead, state: State, holder: Holder): Effec
   Option.match(state.open, {
     onNone: () => Effect.succeed(Option.none()),
     onSome: (open) => holder.released(head.header.id).pipe(
-      Effect.flatMap((released) => isHeld(open, head.now, holder, open.holder === holder.instance && Option.contains(released, open.turn))),
+      Effect.flatMap((released) => isHeld(open, head.now, holder, open.holder === holder.instance
+        && released.some((gone) => gone.turn === open.turn && gone.runId === open.runId))),
       Effect.map((held) => held ? Option.some(open) : Option.none()),
     ),
   })

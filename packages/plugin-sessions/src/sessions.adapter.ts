@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Effect, Equal, Exit, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Equal, Exit, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -71,7 +71,7 @@ import type {
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
 import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, withFormat } from "./sessions-state.entity.functions.js"
-import type { Holder } from "./sessions-state.entity.functions.js"
+import type { Holder, ReleasedTurn } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { makeTurnWriter } from "./turn-writer.adapter.js"
@@ -181,22 +181,30 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const ownership = config.ownership
   const instance = yield* Effect.sync(() => crypto.randomUUID())
   const liveness = options?.liveness ?? processLiveness
-  /** Per session, the turn this instance's writer let go of without storing its end: held by nobody from then on. */
-  const released = yield* Ref.make<ReadonlyMap<string, number>>(new Map())
+  /** Per session, the turn this instance let go of without storing its end (or not knowing whether it opened): held by nobody from then on. */
+  const released = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<ReleasedTurn>>>(new Map())
   const holder: Holder = {
     instance,
     liveness,
     // Named whatever this instance's ownership: a turn another took under process ownership is judged by its process.
     process: yield* liveness.current,
-    released: (session) => Ref.get(released).pipe(Effect.map((all) => Option.fromNullishOr(all.get(session)))),
+    released: (session) => Ref.get(released).pipe(Effect.map((all) => all.get(session) ?? [])),
   }
   /** Let go of a turn this instance opened whose end was not stored, so the next begin, deliver or drain here reaps it. */
-  const letGo = (id: string, turn: number) => Ref.update(released, (all) => new Map([...all, [id, turn]]))
-  /** Forget a turn let go of once a commit leaves the session without it open. */
-  const forgetClosed = (id: string, next: SessionsState) => Ref.update(released, (all) => Option.match(Option.fromNullishOr(all.get(id)), {
-    onNone: () => all,
-    onSome: (turn) => Option.exists(next.open, (open) => open.turn === turn) ? all : new Map([...all].filter(([session]) => session !== id)),
-  }))
+  const isReleased = (gone: ReleasedTurn, open: { readonly turn: number; readonly runId: string }) => gone.turn === open.turn && gone.runId === open.runId
+  /** The session's let-go turns kept by `keep`, the session forgotten when none is left. */
+  const keepReleased = (id: string, keep: (gone: ReleasedTurn) => boolean) => Ref.update(released, (all) => {
+    const kept = (all.get(id) ?? []).filter(keep)
+    return kept.length === 0 ? new Map([...all].filter(([session]) => session !== id)) : new Map([...all, [id, kept]])
+  })
+  const letGo = (id: string, turn: number, runId: string) => Ref.update(released, (all) => {
+    const before = (all.get(id) ?? []).filter((gone) => !isReleased(gone, { turn, runId }))
+    return new Map([...all, [id, [...before, { turn, runId }]]])
+  })
+  /** Forget the turns let go of once a commit leaves the session without them open. */
+  const forgetClosed = (id: string, next: SessionsState) => keepReleased(id, (gone) => Option.exists(next.open, (open) => isReleased(gone, open)))
+  /** Forget a turn let go of that this instance has now opened, holding its writer: an earlier begin of it did not store its opening. */
+  const forgetOpened = (id: string, turn: number, runId: string) => keepReleased(id, (gone) => !isReleased(gone, { turn, runId }))
   /**
    * Per followed session, one hub of change signals: sliding with room for
    * one, so a follower that does not pull holds one signal however many
@@ -463,7 +471,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
   })).pipe(
     Effect.timeout("10 seconds"),
-    Effect.tapError(() => letGo(address.id, admitted.turn)),
+    Effect.tapError(() => letGo(address.id, admitted.turn, admitted.runId)),
     Effect.ignore({ log: "Warn", message: "a turn whose begin was cut was not closed; this instance lets it go, for the next begin to reap" }),
     Effect.annotateLogs(turnAttributes(admitted)),
   )
@@ -488,6 +496,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: unnumbered.value, reason: "missing" }))
     /** The turn the opening commit stored, until its writer is handed over. */
     const unowned = yield* Ref.make(Option.none<AdmittedTurn>())
+    /** The turn the last opening plan would open: let go of when its commit fails, as the store may have stored it all the same. */
+    const planned = yield* Ref.make(Option.none<number>())
     yield* SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning + 1 }))
     yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.void,
@@ -505,6 +515,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const toAdmit = { session: address, origin, runId: input.runId, key, meta, ...resuming, ...tasked, ...linked }
       // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
       const begun = yield* restore(admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
+        yield* Ref.set(planned, Option.none())
         yield* refuseIfStopping(address)
         const reap = yield* reaped(head, stored, input.takeOver ?? false)
         const state = reap.state
@@ -582,8 +593,16 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           session: address, turn, runId: input.runId, key, origin, userMessage,
           command: asked.command, claimed, meta, ...resuming, ...tasked, ...inputData,
         }
+        yield* Ref.set(planned, Option.some(turn))
         return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next, tookOver: reap.closed } }
-      }), (opened) => Ref.set(unowned, Option.some(opened.admitted)))))
+      }), (opened) => Ref.set(unowned, Option.some(opened.admitted)).pipe(Effect.andThen(forgetOpened(address.id, opened.admitted.turn, opened.admitted.runId)))).pipe(
+        // A store failure leaves the opening commit's outcome unknown (a stalled write may land later): the turn it would
+        // open is let go of, so that if it did land, the next begin, deliver or drain here reaps it instead of finding it held.
+        Effect.tapErrorTag("SessionLogError", () => Ref.get(planned).pipe(Effect.flatMap(Option.match({
+          onNone: () => Effect.void,
+          onSome: (turn) => letGo(address.id, turn, input.runId),
+        })))),
+      )))
       // The opening plan always commits `turn.started`, last: neither can happen unless the log broke its contract.
       const committed = yield* Option.match(begun.committed, {
         onNone: () => Effect.die(new Error("the opening commit of a turn committed nothing")),
@@ -600,16 +619,22 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // turn open in the head under this instance: let it go, so it is not held here until the process exits.
       const letGoUnended = Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.fromNullishOr(all.get(address.id)), {
         onNone: () => Effect.void,
-        onSome: (open) => open.turn !== turn ? Effect.void : open.ended.pipe(Effect.flatMap((ended) => ended ? Effect.void : letGo(address.id, turn))),
+        onSome: (open) => open.turn !== turn ? Effect.void : open.ended.pipe(Effect.flatMap((ended) => ended ? Effect.void : letGo(address.id, turn, open.writer.admitted.runId))),
       })))
       // Runs after the writer's own finalizers (last added, first run): the turn counts until its end is stored.
       yield* Effect.addFinalizer(() => letGoUnended.pipe(
         Effect.andThen(Ref.update(writers, (all) => new Map([...all].filter(([id, open]) => id !== address.id || open.turn !== turn)))),
         Effect.andThen(SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, held: new Map([...now.held].filter(([key]) => key !== heldKey(address.id, turn))) })))))
+      const runId = begun.result.admitted.runId
+      /** Completed once the writer's own commit leaves the turn closed (its end stored): the time limit stops then. */
+      const ended = yield* Deferred.make<void>()
       const open = yield* makeTurnWriter({
         log, config, instance, header: begun.head.header, admitted: begun.result.admitted, started,
         position: { revision: committed.revision, seq: committed.seq, state: begun.result.next, storageAt: committed.at },
-        wake: (state) => remember(address, state).pipe(Effect.andThen(wake(address.id))),
+        wake: (state) => remember(address, state).pipe(
+          Effect.andThen(wake(address.id)),
+          Effect.andThen(Option.exists(state.open, (still) => still.turn === turn && still.runId === runId) ? Effect.void : Deferred.succeed(ended, undefined)),
+        ),
       }, scope)
       yield* Ref.set(unowned, Option.none())
       yield* Ref.update(writers, (all) => new Map([...all, [address.id, { ...open, turn }]]))
@@ -619,14 +644,15 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         held: new Map([...now.held, [heldKey(address.id, turn), { session: address.id, turn, since }]]),
         beginning: now.beginning - 1,
       }))
-      // The turn's time limit runs in its scope, from now: the scope's close stops it.
+      // The turn's time limit runs from now, until the turn ends, is closed from elsewhere, or its scope closes.
       const limitMs = input.timeLimitMs ?? config.turns.timeLimitMs
-      yield* Effect.forkIn(Effect.sleep(limitMs).pipe(
-        Effect.andThen(closeForTimeLimit(address, turn, limitMs)),
+      const over = Effect.raceFirst(Deferred.await(ended), open.writer.closed.pipe(Effect.asVoid))
+      yield* Effect.forkIn(Effect.raceFirst(Effect.sleep(limitMs).pipe(Effect.as(true)), over.pipe(Effect.as(false))).pipe(
+        Effect.flatMap((due) => due ? closeForTimeLimit(address, turn, runId, limitMs) : Effect.void),
         Effect.annotateLogs(turnAttributes(begun.result.admitted)),
       ), scope)
       // Its opening commit landed before a shutdown that is now interrupting: it is closed as the others were.
-      if ((yield* Ref.get(stopping)) === "interrupting") yield* closeForShutdown(address, turn)
+      if ((yield* Ref.get(stopping)) === "interrupting") yield* closeForShutdown(address, turn, runId)
       return open
     }).pipe(Effect.onExit((exit) => Exit.isSuccess(exit) ? Effect.void
       // A begin that committed no turn stops counting now; one that did, once its scope has closed it.
@@ -684,25 +710,25 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * the store answers, so its body stops; an end not stored is logged, and
    * the turn is let go of, for the next begin or process to reap.
    */
-  const interruptHeld = (address: SessionAddress, turn: number, failure: TurnFailure, tried: boolean, closedBy: ClosedBy) =>
+  const interruptHeld = (address: SessionAddress, turn: number, runId: string, failure: TurnFailure, tried: boolean, closedBy: ClosedBy) =>
     closeOpen(address, turn, { reason: "interrupted", failure: Option.some(failure), tried, closedBy }).pipe(
       Effect.asVoid,
-      Effect.tapError(() => letGo(address.id, turn).pipe(Effect.andThen(closeLocal(address.id, closedBy, Option.some(turn))))),
+      Effect.tapError(() => letGo(address.id, turn, runId).pipe(Effect.andThen(closeLocal(address.id, closedBy, Option.some(turn))))),
       Effect.ignore({ log: "Warn", message: `a turn closed with ${failure.code} did not store its end; this instance lets it go, for the next begin or process to reap` }),
       Effect.annotateLogs(sessionAttributes(address.id)),
     )
 
   /** Close a turn this instance holds for a shutdown: `turn.shutdown`, no attempt counted (the items it took were not why it stopped). */
-  const closeForShutdown = (address: SessionAddress, turn: number) =>
-    interruptHeld(address, turn, { code: "turn.shutdown", message: "the process shut down before the turn ended" }, false, "interrupted")
+  const closeForShutdown = (address: SessionAddress, turn: number, runId: string) =>
+    interruptHeld(address, turn, runId, { code: "turn.shutdown", message: "the process shut down before the turn ended" }, false, "interrupted")
 
   /**
    * Close a turn this instance holds once it ran `limitMs`: `turn.time-limit`,
    * an attempt counted (the items it took may be why it ran so long), its
    * writer's `TurnClosed` `timed-out`.
    */
-  const closeForTimeLimit = (address: SessionAddress, turn: number, limitMs: number) =>
-    interruptHeld(address, turn, { code: "turn.time-limit", message: `the turn ran past its time limit of ${limitMs} ms` }, true, "timed-out")
+  const closeForTimeLimit = (address: SessionAddress, turn: number, runId: string, limitMs: number) =>
+    interruptHeld(address, turn, runId, { code: "turn.time-limit", message: `the turn ran past its time limit of ${limitMs} ms` }, true, "timed-out")
 
   const shutdown = TurnShutdown.of({
     refuse: Ref.update(stopping, (now) => now === "running" ? "refusing" : now),
@@ -713,8 +739,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const all = yield* Ref.get(writers)
       // The turns held now whose writer this instance still has: one whose scope is closing ended already.
       const open = held.flatMap((active) => Option.toArray(Option.filter(Option.fromNullishOr(all.get(active.session)), (writer) => writer.turn === active.turn))
-        .map((writer) => ({ active, address: writer.writer.admitted.session })))
-      yield* Effect.forEach(open, ({ active, address }) => closeForShutdown(address, active.turn), { concurrency: 4, discard: true })
+        .map((writer) => ({ active, address: writer.writer.admitted.session, runId: writer.writer.admitted.runId })))
+      yield* Effect.forEach(open, ({ active, address, runId }) => closeForShutdown(address, active.turn, runId), { concurrency: 4, discard: true })
       return open.map(({ active }) => active)
     }),
   })

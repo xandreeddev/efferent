@@ -36,6 +36,58 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Whether a name under `sessions/` is a session's directory: its id. Anything else (an editor's file, a network file system's `.nfs…`) is not read. */
 export const isSessionDirectory = (name: string): boolean => UUID.test(name)
 
+/** A name in `staging/` for what `prefix` names, staged at storage time `now` (`<prefix>.<now>.<unique>`), so a later open can tell its age. */
+export const stagingName = (prefix: string, now: number, unique: string): string => `${prefix}.${now}.${unique}`
+
+/** The storage time a name in `staging/` was staged at; none for a name that does not carry one (an earlier release's). */
+export const stagedAtOf = (name: string): Option.Option<number> => {
+  const match = /\.(\d+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.linked)?$/i.exec(name)
+  return match === null ? Option.none() : Option.some(Number(match[1]))
+}
+
+/**
+ * Whether a name in `staging/` was left by a create, an open or a probe that
+ * stopped half way: it was staged more than `ageMs` before `now`. A name
+ * without its time is never judged abandoned.
+ */
+export const isAbandonedStaging = (name: string, now: number, ageMs: number): boolean =>
+  Option.exists(stagedAtOf(name), (at) => now - at > ageMs)
+
+/** Whether two files hold the same bytes. */
+export const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.length === right.length && left.every((byte, index) => byte === right[index])
+
+/* ── a handle's cache ── */
+
+/**
+ * A handle's cache bounds: how many sessions it remembers, and how many
+ * commit first lines (`CommitMeta`) it keeps across them.
+ */
+export const CACHE_BOUNDS = { sessions: 1_024, metas: 65_536 } as const
+
+/**
+ * The cache within its bounds: entries in order of use (the least recently
+ * used first), the oldest dropped past `bounds.sessions`; then the oldest
+ * entries' metas dropped (`shrink(entry, kept)`, `size` counting them) until
+ * at most `bounds.metas` are kept, the newest entry keeping its highest
+ * revisions when it alone is over.
+ */
+export const trimCache = <K, V>(
+  entries: ReadonlyMap<K, V>,
+  size: (entry: V) => number,
+  shrink: (entry: V, kept: number) => V,
+  bounds: { readonly sessions: number; readonly metas: number },
+): ReadonlyMap<K, V> => {
+  const kept = [...entries].slice(Math.max(0, entries.size - bounds.sessions))
+  const total = kept.reduce((sum, [, entry]) => sum + size(entry), 0)
+  return new Map(kept.reduce<{ readonly over: number; readonly out: Array<readonly [K, V]> }>((acc, [key, entry]) => {
+    const own = size(entry)
+    const drop = Math.min(own, acc.over)
+    acc.out.push([key, drop === 0 ? entry : shrink(entry, own - drop)])
+    return { over: acc.over - drop, out: acc.out }
+  }, { over: Math.max(0, total - bounds.metas), out: [] }).out)
+}
+
 /* ── records ── */
 
 const encoder = new TextEncoder()

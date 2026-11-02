@@ -13,11 +13,19 @@ import { ConversationId, JsonObject, SessionHeader } from "@xandreed/core"
  *                                           `CommitState`, one `CommitEvent` per event, `CommitTrailer`)
  *   sessions/<id>/tmp/                      commits being written, before their link
  *   staging/, trash/                        sessions being created or removed
+ *                                           (a name in staging/ carries the time it was staged)
  *   quarantine/<id>/                        torn tails, kept as they were found
  */
 
 /** The version of the directory's layout; a later one is refused (`store.version`). Shipped: change it only with a migration. */
 export const FILES_LAYOUT = 1
+
+/**
+ * How long something stays in `staging/` before an open sweeps it as left
+ * by a create, an open or a link probe that stopped half way: an hour, and
+ * never less than 16 stall bounds (more than the longest staging takes).
+ */
+export const STAGING_SWEEP_MS = 3_600_000
 
 /** `store.json`: the layout the directory holds. */
 export const StoreMarker = Schema.Struct({ layout: Schema.Int })

@@ -4,12 +4,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
+import { ConversationId, RunId, SessionLog, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnShutdown, UserMessage, WaitingInput } from "@xandreed/core"
 import type { JsonObject, SessionAddress } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
+import { nodeFilesIo } from "./files-io.adapter.js"
 import { SessionLogFilesLive } from "./session-log.adapter.js"
 
 /*
@@ -59,3 +60,31 @@ describe("SessionsLive over the file log, two handles on one directory, conforms
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }, 30_000))
 })
+
+describe("SessionsLive over the file log, when a turn's opening commit stalls", () => {
+  test("and lands after its begin failed with store.stalled, the session is not left busy: the next begin on the instance reaps the turn", async () => {
+    const root = mkdtempSync(join(directory, "stalled-open-"))
+    const slow = { on: false }
+    // A link that answers after the stall bound, and lands then.
+    const io = { ...nodeFilesIo, link: (from: string, to: string) => slow.on && to.endsWith(".jsonl")
+      ? new Promise<void>((resolve, reject) => setTimeout(() => nodeFilesIo.link(from, to).then(resolve, reject), 300))
+      : nodeFilesIo.link(from, to) }
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const log = Context.get(yield* Layer.build(SessionLogFilesLive(root, { io, stallMs: 100 })), SessionLog)
+      const sessions = Context.get(yield* Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))), Sessions)
+      const address = { owner: "owner-stalled", id: ConversationId.make(crypto.randomUUID()) }
+      yield* sessions.create(address)
+      slow.on = true
+      const say = (key: string) => ({ _tag: "User" as const, runId: RunId.make(`run-${key}`), key, command: {}, userMessage: new UserMessage({ text: key }) })
+      const first = yield* Effect.result(Effect.scoped(sessions.begin(address, say("first"))))
+      slow.on = false
+      // The link lands, and the store's stall latch lets a call through again.
+      yield* Effect.sleep(400)
+      const second = yield* Effect.result(Effect.scoped(sessions.begin(address, say("second")).pipe(Effect.flatMap((writer) => writer.end({ reason: "completed", failure: Option.none() })))))
+      const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data["reason"]])
+      return { first: first._tag === "Failure" ? `${first.failure._tag}:${first.failure._tag === "SessionLogError" ? first.failure.code : ""}` : "begun", second: second._tag, ended }
+    })))
+    expect(observed).toEqual({ first: "SessionLogError:store.stalled", second: "Success", ended: [[1, "interrupted"], [2, "completed"]] })
+  }, 10_000)
+})
+
