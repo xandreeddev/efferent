@@ -197,9 +197,9 @@
           "run": 0,
           "strategy": "window",
           "strategyVersion": "2",
-          "fingerprint": "fc3faf1ab0d",
+          "fingerprint": "677ca670b09",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 942,
+          "estimatedTokens": 941,
           "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -218,9 +218,9 @@
           "run": 0,
           "strategy": "window",
           "strategyVersion": "2",
-          "fingerprint": "3ea0ef47ca2",
+          "fingerprint": "4f529971c9e",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 1077,
+          "estimatedTokens": 1076,
           "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -836,7 +836,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "4.0.planned:0",
+                "id": "call_4_0_p0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
@@ -852,7 +852,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "4.0.planned:0",
+                "id": "call_4_0_p0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
@@ -1143,7 +1143,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "4.0.planned:0",
+                "id": "call_4_0_p0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
@@ -1159,7 +1159,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "4.0.planned:0",
+                "id": "call_4_0_p0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
@@ -1949,7 +1949,7 @@
           "content": [
             {
               "type": "tool-call",
-              "toolCallId": "4.0.planned:0",
+              "toolCallId": "call_4_0_p0",
               "toolName": "lookup",
               "input": {
                 "query": "gamma"
@@ -1969,7 +1969,7 @@
       "at": 1767225600000,
       "body": {
         "_tag": "ToolResult",
-        "toolCallId": "4.0.planned:0",
+        "toolCallId": "call_4_0_p0",
         "run": 0,
         "toolName": "lookup",
         "isError": false,

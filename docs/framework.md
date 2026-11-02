@@ -910,15 +910,19 @@ carried, the run's text includes the carried text.
 reason from the wire's `finish_reason` before it decodes its tool calls'
 arguments. The word is read whatever its case: `stop`, `tool_calls`,
 `function_call`, `tool_use`, `tool_call`, `end_turn`, `stop_sequence` and `eos`, or none at all
-(`null`, or a stream that ended without one), mean the response ended on
-its own, `tool-calls` when it holds tool calls and `stop` when it does not;
-`length` and `max_tokens` are `length`; `content_filter` is
-`content-filter`; `error` and `insufficient_system_resource` are `error`;
-any other word is `other`. In a cut response, a tool call whose arguments
-do not parse is kept, with `{}` as its parameters, since the loop runs none
-of a cut reply's calls; in a whole one, such arguments still fail the
-response with an `InvalidOutputError`, which the loop answers as a
-malformed response.
+(`null`, on a whole completion or a stream the server ended with
+`[DONE]`), mean the response ended on its own, `tool-calls` when it holds
+tool calls and `stop` when it does not; `length` and `max_tokens` are
+`length`; `content_filter` is `content-filter`; `error` and
+`insufficient_system_resource` are `error`; any other word is `other`. A
+stream whose body ended with neither a finish reason nor `[DONE]` (a
+dropped connection, a gateway that gave up) is `unknown`: nothing says it
+was complete, so the loop runs none of its calls and fails the run with
+`loop.truncated`, while a reply of text alone completes as before. In a cut
+or `unknown` response, a tool call whose arguments do not parse is kept,
+with `{}` as its parameters, since the loop runs none of a cut reply's
+calls; in a whole one, such arguments still fail the response with an
+`InvalidOutputError`, which the loop answers as a malformed response.
 
 The callbacks run with the caller's services and fail with its error:
 `RunLoopOptions<Tools, E, R>`. A callback's failure fails the step it runs
@@ -1141,9 +1145,12 @@ carry it as `run`; a record written before runs were counted reads 0. A
 run's request shows that run's own step context, never an earlier run's,
 and each run's requests rebuild from their own headers. The ids the loop
 mints for a provider's tool calls that come without one are
-`<turn>.<ordinal>.<step>:<tool>:<n>` (`toolCallIdOf`), and those of a
-host-planned batch `<turn>.<ordinal>.planned:<n>` (`plannedCallIdOf`), so
-they differ across the runs and turns of a session.
+`call_<turn>_<ordinal>_<step>_<n>` (`toolCallIdOf`), and those of a
+host-planned batch `call_<turn>_<ordinal>_p<n>` (`plannedCallIdOf`), so
+they differ across the runs and turns of a session. They hold only letters,
+digits and `_` and stay short, so every provider accepts them as pairing
+keys when a session moves to another one; ids stored by earlier releases
+(`<turn>.<ordinal>.<step>:<tool>:<n>`) replay as they were stored.
 
 **Host request hooks.** Provide `ModelRequestHook` from `@xandreed/core` in
 the turn's services to customize a fresh prepared model request. Its
@@ -3832,6 +3839,12 @@ sees. For each non-provider call with no recorded result, memory renders a
 failed `ToolInterrupted` result in the resumed request. It says the call
 may have run and to check the current state before deciding whether to call
 it again. This repair is only rendered, never stored as an actual result.
+While a turn is still open, another of its runs may be running a call it
+has no result for yet: a concurrent run's request leaves that exchange out
+until each of its calls has a result, so no run is told that a running call
+was interrupted; the run that made the call, and any request after the turn
+ended, answer a missing result with `ToolInterrupted`. A request shows its
+calls' results in the order of the calls, whatever order they returned in.
 What a tool did is not undone: a tool with side effects makes them safe to
 repeat, for example keyed by its input.
 

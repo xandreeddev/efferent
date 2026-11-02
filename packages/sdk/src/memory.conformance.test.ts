@@ -90,6 +90,7 @@ test("the memory kit rejects a session that runs a tool view before storing the 
   expect(failures.flat()).toEqual(["raw-result-durable"])
 })
 
+// Without the run ordinal a build cannot tell another run's call in flight from one the turn left unanswered.
 test("the memory kit rejects a session that drops the run ordinal from recorded responses and results", async () => {
   const forgetful = ConversationMemory.of({
     strategy: rollingPolicy.strategy,
@@ -100,7 +101,7 @@ test("the memory kit rejects a session that drops the run ordinal from recorded 
   })
   const failures = await Effect.runPromise(Effect.forEach(memoryConformance(forgetful), (check) =>
     Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
-  expect(failures.flat()).toEqual(["run-ordinal"])
+  expect(failures.flat()).toEqual(["run-ordinal", "in-flight-exchange"])
 })
 
 test("the memory kit rejects a session that ignores the alternate commit", async () => {
@@ -131,6 +132,24 @@ test("the memory kit rejects a session that erases the inbox user's provenance",
   const failures = await Effect.runPromise(Effect.forEach(memoryConformance(careless), (check) =>
     Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
   expect(failures.flat()).toEqual(["inbox-intent"])
+})
+
+test("the memory kit rejects a session that builds results in the order they were recorded, not their calls'", async () => {
+  const careless = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      build: (options) => Effect.all([session.build(options), session.entries], { concurrency: 1 }).pipe(Effect.map(([built, entries]) => {
+        // Completion order: each tool message's results as the log holds them.
+        const recorded = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [String(entry.body.toolCallId)] : [])
+        return { ...built, messages: built.messages.map((message) => message.role !== "tool" ? message
+          : { ...message, content: message.content.toSorted((left, right) => recorded.indexOf(String(left.toolCallId)) - recorded.indexOf(String(right.toolCallId))) }) }
+      })),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(careless), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["call-order"])
 })
 
 test.each(["all-stable", "negative", "overflow"] as const)("the memory kit rejects a %s stable prefix", async (mistake) => {

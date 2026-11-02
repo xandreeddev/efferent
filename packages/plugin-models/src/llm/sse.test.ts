@@ -197,8 +197,9 @@ describe("sseStreamParts", () => {
       ["recitation", false, ["other"]],
       ["null", true, ["tool-calls"]],
       ["null", false, ["stop"]],
-      ["undefined", true, ["tool-calls"]],
-      ["undefined", false, ["stop"]],
+      // No finish reason and no [DONE]: nothing says the reply was complete.
+      ["undefined", true, ["unknown"]],
+      ["undefined", false, ["unknown"]],
       ["", true, ["tool-calls"]],
       ["", false, ["stop"]],
     ])
@@ -285,6 +286,23 @@ describe("sseStreamParts", () => {
       { type: "reasoning-end", id: "reasoning-1" },
       { type: "finish", reason: "stop", usage: zeroUsage },
     ])
+  })
+
+  test("a body cut off with neither a finish reason nor [DONE] ends unknown, its calls kept; [DONE] without a finish reason still settles", async () => {
+    const calls = [
+      `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"write","arguments":"{\\"path\\":\\"a.txt\\"}"}}]}}]}`,
+      `{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2","function":{"name":"write","arguments":"{\\"path\\":\\"b"}}]}}]}`,
+    ]
+    const cutOff = await collect(wire(...calls))
+    expect(cutOff).toEqual([
+      { type: "tool-call", id: "c1", name: "write", params: { path: "a.txt" } },
+      { type: "tool-call", id: "c2", name: "write", params: {} },
+      { type: "finish", reason: "unknown", usage: zeroUsage },
+    ])
+    const textCutOff = await collect(wire(`{"choices":[{"delta":{"content":"half a sen"}}]}`))
+    expect(textCutOff.slice(-1)).toEqual([{ type: "finish", reason: "unknown", usage: zeroUsage }])
+    const done = await collect(wire(calls[0]!, `[DONE]`))
+    expect(done.slice(-1)).toEqual([{ type: "finish", reason: "tool-calls", usage: zeroUsage }])
   })
 
   test("a server [DONE] plus the injected sentinel flush exactly once", async () => {
@@ -424,10 +442,10 @@ describe("sseStreamParts", () => {
   test("unparseable arguments in a stream that ended on its own still fail with the model's invalid output", async () => {
     const call = `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"echo","arguments":"{\\"value\\":\\"h"}}]}}]}`
     const endings = ["stop", "tool_calls", "end_turn"].map((reason) => wire(call, `{"choices":[{"delta":{},"finish_reason":"${reason}"}]}`, `[DONE]`))
-    const failures = await Promise.all([...endings, wire(call)].map(failureOf))
+    // A body cut off with neither a finish reason nor [DONE] is no reply that ended on its own: its call is kept, the finish unknown.
+    const failures = await Promise.all(endings.map(failureOf))
     const invalid = { _tag: "InvalidOutputError", description: "tool call echo carried unparseable JSON arguments" }
     expect(failures.map((failure) => [failure.module, failure.method])).toEqual([
-      ["Test", "streamText"],
       ["Test", "streamText"],
       ["Test", "streamText"],
       ["Test", "streamText"],

@@ -554,11 +554,17 @@ describe("rendering interleaved run exchanges", () => {
     expect(rendered([entries[0]!, entries[2]!, entries[1]!, entries[3]!])).toEqual(rendered(entries))
   })
 
-  test("a prefix repairs only the other run's absent result", () => {
-    const shown = rendered([request(0, 0), request(1, 1), result(2, 0)])
-    expect(shown.flatMap((message) => message.role === "tool" ? message.content.map((part) => part.output) : [])).toEqual([
-      "result 0", { error: "ToolInterrupted", message: "This call has no recorded result. It may have run before the turn stopped. Check the current state before deciding whether to call it again." },
+  test("another run's exchange still waiting for its result is left out of this run's render; its own run answers it as interrupted", () => {
+    const prefix = [request(0, 0), request(1, 1), result(2, 0)]
+    const outputs = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) => message.role === "tool" ? message.content.map((part) => part.output) : [])
+    expect(rendered(prefix)).toEqual([
+      (prefix[0]!.body as Extract<LogBody, { _tag: "Message" }>).message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("shared"), toolName: "lookup", isError: false, output: "result 0" }] },
     ])
+    const interrupted = { error: "ToolInterrupted", message: "This call has no recorded result. It may have run before the turn stopped. Check the current state before deciding whether to call it again." }
+    expect(outputs(renderLog(prefix, { ...options(1, { mode: "none", maxImages: 0, maxChars: 0 }), run: RunOrdinal.make(1) }))).toEqual(["result 0", interrupted])
+    // Once the turn has ended, a later turn's render answers the missing result whichever run made the call.
+    expect(outputs(renderLog([...prefix, started(2, "next", [])], options(2, { mode: "none", maxImages: 0, maxChars: 0 })))).toEqual(["result 0", interrupted])
   })
 })
 
