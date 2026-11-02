@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
 import { Context, Effect, Option, Schema, Stream } from "effect"
 import type { Scope } from "effect"
+import { spawnSync } from "node:child_process"
 import { Bash, FileSystem, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
 import type { BashEvent, BashOptions, BashResult } from "@xandreed/core"
+import { BashLive } from "./bash.adapter.js"
+import { localFileSystem } from "./file-system.adapter.js"
 import { workspaceTools } from "./workspace-tools.adapter.js"
 import { GrepResult, workspaceToolsDefaults } from "./workspace-tools.entity.js"
 import type { WorkspaceToolsConfig } from "./workspace-tools.entity.js"
@@ -13,6 +16,7 @@ const chunk = (text: string, stream: "stdout" | "stderr" = "stdout"): BashEvent 
 const hit = (line: number, path = "a.txt") => JSON.stringify({ type: "match", data: { path: { text: path }, lines: { text: "hit\n" }, line_number: line } }) + "\n"
 const result = (code: number): BashResult => ({ stdout: "ripgrep 15.2.0", stderr: "", exitCode: Option.some(code), signal: Option.none(), termination: "exit", durationMs: 1 })
 const scoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(effect))
+const hasRg = spawnSync("rg", ["--version"]).status === 0
 
 const bench = (stream: Stream.Stream<BashEvent>, config: Partial<WorkspaceToolsConfig> = {}, probe = 0) => Effect.gen(function* () {
   const commands: Array<{ command: string; options: BashOptions }> = []
@@ -22,14 +26,14 @@ const bench = (stream: Stream.Stream<BashEvent>, config: Partial<WorkspaceToolsC
     stream: (command, options) => { commands.push({ command, options }); return stream },
   })
   const fs = yield* makeMemoryFileSystem({ "/work/a.txt": "hit\n" })
-  const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["grep"], ...config }).pipe(Effect.provideService(Bash, bash))
+  const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["grep"], grepEngine: "ripgrep", ...config }).pipe(Effect.provideService(Bash, bash))
   const tool = capability.tools[0]!
   const services = Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/work" }), Context.add(Bash, bash))
   const call = (params: unknown) => tool.handler(params).pipe(Effect.provide(services))
   return { commands, probes, tool, call, capability }
 })
 
-test("auto probes once; rg declares Bash and receives the pattern only on stdin with host environment", async () => {
+test("ripgrep probes once; rg declares Bash and receives the pattern only on stdin with host environment", async () => {
   const seen = await scoped(Effect.gen(function* () {
     const state = yield* bench(Stream.make(chunk(hit(1)), exit), { bashEnv: { MARKER: "yes" }, bashInheritEnv: true, grepTimeoutMs: 1234 })
     const first = yield* state.call({ pattern: "$(do not run)'", path: "a.txt" }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(GrepResult)))
@@ -44,17 +48,43 @@ test("auto probes once; rg declares Bash and receives the pattern only on stdin 
   expect(seen.first).toMatchObject({ matches: 1, files: 1, timedOut: false })
 })
 
-test("an unavailable probe falls back in auto and explicit ripgrep fails at build", async () => {
-  const fallback = await scoped(Effect.gen(function* () {
-    const state = yield* bench(Stream.empty, {}, 127)
-    return { requires: state.tool.requires, value: yield* state.call({ pattern: "hit" }) }
+test("a pattern with a line break is refused before rg runs, since rg would read each of its lines as a pattern", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const state = yield* bench(Stream.make(chunk(hit(1)), exit))
+    return { refused: yield* Effect.flip(state.call({ pattern: "alpha\nbeta", literal: true })), commands: state.commands.length }
   }))
-  expect(fallback.requires).toEqual([FileSystem.key, SessionEnvironment.key])
-  expect(fallback.value).toMatchObject({ matches: 1, timedOut: false })
+  expect(seen.refused).toEqual({ error: "InvalidPattern", message: "the pattern contains a line break, but grep matches one line at a time; search for a single line of the text instead" })
+  expect(seen.commands).toBe(0)
+})
+
+test("auto selects builtin without probing over a pair that is not this machine's, and explicit ripgrep fails at build without rg", async () => {
+  const fallback = await scoped(Effect.gen(function* () {
+    // An in-memory FileSystem beside a shell: rg would search another tree than the tools read.
+    const state = yield* bench(Stream.empty, { grepEngine: "auto" }, 0)
+    return { requires: state.tool.requires, probes: state.probes.length, commands: state.commands.length, value: yield* state.call({ pattern: "hit" }) }
+  }))
+  expect(fallback).toMatchObject({ requires: [FileSystem.key, SessionEnvironment.key], probes: 0, commands: 0, value: { matches: 1, timedOut: false } })
   const failure = await scoped(Effect.flip(bench(Stream.empty, { grepEngine: "ripgrep" }, 127)))
   expect(failure).toMatchObject({ code: "config.options", message: "grepEngine ripgrep requires rg on the Bash service PATH" })
   const noBash = await scoped(Effect.flip(workspaceTools({ ...workspaceToolsDefaults, tools: ["grep"], grepEngine: "ripgrep" })))
   expect(noBash).toMatchObject({ code: "config.options" })
+})
+
+test("auto probes over this machine's pair, using rg when it runs and builtin when it does not", async () => {
+  const engines = await scoped(Effect.gen(function* () {
+    const requiresOf = (bash: Context.Service.Shape<typeof Bash>) => workspaceTools({ ...workspaceToolsDefaults, tools: ["grep"] }).pipe(
+      Effect.provideService(Bash, bash), Effect.provideService(FileSystem, localFileSystem),
+      Effect.map((capability) => capability.tools[0]!.requires),
+    )
+    const local = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ exitGraceMs: 100 })))
+    const withoutRg = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ shell: "/bin/sh", parentEnv: { PATH: "/nonexistent-efferent-path" }, exitGraceMs: 100 })))
+    // The same shell behind a wrapper is no longer known to be this machine's.
+    const wrapped = Bash.of({ exec: (command, options) => local.exec(command, options), stream: (command, options) => local.stream(command, options) })
+    return { local: yield* requiresOf(local), withoutRg: yield* requiresOf(withoutRg), wrapped: yield* requiresOf(wrapped) }
+  }))
+  expect(engines.local).toEqual(hasRg ? [FileSystem.key, SessionEnvironment.key, Bash.key] : [FileSystem.key, SessionEnvironment.key])
+  expect(engines.withoutRg).toEqual([FileSystem.key, SessionEnvironment.key])
+  expect(engines.wrapped).toEqual([FileSystem.key, SessionEnvironment.key])
 })
 
 test("stopping at the global cap closes the Bash stream instead of waiting for exit", async () => {

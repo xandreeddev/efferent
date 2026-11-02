@@ -262,6 +262,53 @@ describe("tool policy over real turn services", () => {
     expect(refused.map((event) => event.data.toolCallId)).toEqual(["call-9", "call-9", "call-9"])
   })))
 
+  test("a run of another agent inside a handler waits on that agent's lanes and permits instead of refusing as nested", () => run(Effect.gen(function* () {
+    const writing = yield* Deferred.make<void>()
+    const releaseWriter = yield* Deferred.make<void>()
+    const holding = yield* Deferred.make<void>()
+    const releaseHolder = yield* Deferred.make<void>()
+    const inner = yield* registryOf([
+      defineTool({ tool: W, handler: () => Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(releaseWriter)), Effect.as("written")) }),
+      defineTool({ tool: B, annotations: { readOnly: true }, handler: () => Effect.succeed("read") }),
+      defineTool({ tool: A, annotations: { readOnly: true }, handler: ({ n }) => n === 1 ? Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(releaseHolder)), Effect.as("held")) : Effect.succeed("permitted") }),
+    ], { toolPolicy: { [A.name]: { concurrency: 1 } } })
+    const innerTurn = yield* opened(inner, "inner")
+    const otherSession = yield* opened(inner, "inner-other")
+    const Outer = tool("policy_outer")
+    const outer = yield* registryOf([defineTool({ tool: Outer, handler: () => Effect.gen(function* () {
+      // Another agent's writer, then its reader queued behind it: the reader waits on that agent's lanes.
+      const writer = yield* innerTurn.call(W.name, 1).pipe(Effect.forkChild)
+      yield* Deferred.await(writing)
+      const reader = yield* innerTurn.call(B.name, 2).pipe(Effect.forkChild)
+      yield* yields
+      yield* Deferred.succeed(releaseWriter, undefined)
+      const lanes = [(yield* Fiber.join(writer)).result, (yield* Fiber.join(reader)).result]
+      // Another session of that agent holds a one-call permit: this call waits for it.
+      const holder = yield* otherSession.call(A.name, 1).pipe(Effect.forkChild)
+      yield* Deferred.await(holding)
+      const waiter = yield* innerTurn.call(A.name, 2).pipe(Effect.forkChild)
+      yield* yields
+      yield* Deferred.succeed(releaseHolder, undefined)
+      const permits = [(yield* Fiber.join(holder)).result, (yield* Fiber.join(waiter)).result]
+      return JSON.stringify([...lanes, ...permits])
+    }).pipe(Effect.orDie) })])
+    const outerTurn = yield* opened(outer, "outer")
+    expect((yield* outerTurn.call(Outer.name, 0)).result).toBe(JSON.stringify(["written", "read", "held", "permitted"]))
+  })))
+
+  test("a handler's own agent refuses a recursive call at an occupied per-tool permit from another open", () => run(Effect.gen(function* () {
+    const held = yield* Ref.make<Option.Option<{ readonly call: (name: string, n: number) => Effect.Effect<{ readonly result: unknown }, unknown> }>>(Option.none())
+    const registry = yield* registryOf([
+      defineTool({ tool: A, annotations: { readOnly: true }, handler: ({ n }) => n === 1
+        ? Ref.get(held).pipe(Effect.flatMap((other) => Option.getOrThrow(other).call(A.name, 2)), Effect.map((result) => JSON.stringify(result.result)), Effect.orDie)
+        : Effect.succeed("recursed") }),
+    ], { toolPolicy: { [A.name]: { concurrency: 1 } } })
+    const first = yield* opened(registry, "recursive-outer")
+    const second = yield* opened(registry, "recursive-inner")
+    yield* Ref.set(held, Option.some(second))
+    expect((yield* first.call(A.name, 1)).result).toBe(JSON.stringify({ error: "ToolConcurrency", message: "This tool cannot run inside the current tool call while its execution limits are occupied; finish the current call before trying again" }))
+  })))
+
   test("queued calls recheck a breaker after taking permits and preserve the refusal's identity", () => run(Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
     const release = yield* Deferred.make<void>()

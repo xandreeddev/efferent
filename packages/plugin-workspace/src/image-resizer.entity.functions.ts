@@ -25,3 +25,15 @@ export const imageOpacityCommand = (tool: ImageResizeTool, input: string): strin
   Match.exhaustive,
   (args) => args.map(shellQuote).join(" "),
 )
+
+/**
+ * Run a command so that what it creates is its owner's alone: directories
+ * 0700, files 0600, whatever the host's umask.
+ */
+export const privately = (command: string): string => `umask 077 && ${command}`
+
+/** Create the conversion directory, private and new (it fails when the path exists). */
+export const privateDirectoryCommand = (directory: string): string => privately(["mkdir", "--", directory].map(shellQuote).join(" "))
+
+/** Write standard input to a private file in the command's directory. */
+export const privateInputCommand = (name: string): string => privately(`cat > ${shellQuote(name)}`)

@@ -11,6 +11,7 @@ import {
   definePlugin,
   harnessDefectsAsFailures,
   HarnessError,
+  LoopProtection,
   isBudgetTokens,
   normalizeUserMessage,
   PluginInstanceId,
@@ -99,7 +100,11 @@ export interface AgentConfig {
   /** The prompt-cache key is `<prefix>:<conversation>`; none is sent without a prefix. */
   readonly cacheKeyPrefix?: string
   readonly workspace?: string
-  /** Defaults for every run; a turn's policy overrides them. */
+  /**
+   * Defaults for every run; a turn's policy overrides them. Its loop
+   * protection (`degenerate`, `malformedLimit`) is decoded here
+   * (`config.limits`), and a run's merged limits again (`turn.limits`).
+   */
   readonly limits?: Partial<LoopLimits>
   /**
    * Every run's token budget unless its policy gives one; 64 000 by default.
@@ -314,6 +319,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   if (config.budgetTokens !== undefined && !isBudgetTokens(config.budgetTokens)) {
     return yield* Effect.fail(failure("config.budget", `budgetTokens must be an integer of at least 1, not ${config.budgetTokens}`))
   }
+  // A bad loop policy fails here, not inside the first turn's loop.
+  yield* Schema.decodeUnknownEffect(LoopProtection)(config.limits ?? {}).pipe(
+    Effect.mapError((cause) => new HarnessError({ code: "config.limits", message: "the agent's limits carry a degenerate policy or malformedLimit that does not decode", cause })),
+  )
   const parent = yield* Effect.scope
   const entries = config.plugins.map(entryOf)
   const hosted = config.capabilities ?? []

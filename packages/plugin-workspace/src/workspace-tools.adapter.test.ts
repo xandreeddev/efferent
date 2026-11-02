@@ -917,3 +917,33 @@ test("image fitting works in a read-only workspace, honours the host side and re
   expect(seen.source).toEqual(Buffer.from(source))
   expect(seen.invalid).toMatchObject({ _tag: "ImageRejected", reason: "TooManyPixels", message: "the image is 128x128 pixels, more than 64 a side" })
 })
+
+test.skipIf(!hasRg)("rg and builtin refuse a pattern with a line break alike, and cap a directory holding one file alike", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const builtin = yield* bench({ grepEngine: "builtin" })
+    yield* io(() => writeFile(join(builtin.root, "f.txt"), "alpha\nbeta\nalpha beta\n"))
+    yield* io(() => mkdir(join(builtin.root, "one")))
+    yield* io(() => writeFile(join(builtin.root, "one", "only.ts"), Array.from({ length: 60 }, (_, at) => `hit ${at}`).join("\n") + "\n"))
+    const bash = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ exitGraceMs: 100 })))
+    const capability = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "ripgrep" }).pipe(Effect.provideService(Bash, bash))
+    const rg = caller(capability, Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: builtin.root }), Context.add(Bash, bash)))
+    const engines = [builtin.call, rg]
+    return {
+      lineBreak: yield* Effect.forEach(engines, (call) => fails(call("grep", { pattern: "alpha\nbeta", literal: true })), { concurrency: 1 }),
+      oneFile: yield* Effect.forEach(engines, (call) => succeeds(GrepResult)(call("grep", { pattern: "hit", path: "one" })).pipe(Effect.map((found) => ({ matches: found.matches, truncated: found.truncated }))), { concurrency: 1 }),
+    }
+  }))
+  const refusal = { error: "InvalidPattern", message: "the pattern contains a line break, but grep matches one line at a time; search for a single line of the text instead" }
+  expect(seen.lineBreak).toEqual([refusal, refusal])
+  expect(seen.oneFile).toEqual([{ matches: 25, truncated: true }, { matches: 25, truncated: true }])
+})
+
+test("builtin grep caps each file of a directory at a quarter of its limit even when the directory holds one file, as ripgrep does", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const { root, call } = yield* bench({ grepMatches: 8 })
+    yield* io(() => mkdir(join(root, "single")))
+    yield* io(() => writeFile(join(root, "single", "only.txt"), "hit\n".repeat(20)))
+    return yield* succeeds(GrepResult)(call("grep", { pattern: "hit", path: "single" }))
+  }))
+  expect(seen).toMatchObject({ matches: 2, files: 1, truncated: true })
+})

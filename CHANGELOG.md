@@ -10,6 +10,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A whole `ImageResizerConfig` adds `maxSourcePixels: 100_000_000` (or
+  spreads `imageResizerDefaults`). `grepEngine: "auto"` now uses ripgrep only
+  over `localSystemPlugin`'s own `FileSystem` and `Bash`; a host whose other
+  pair shares one tree (a container's) sets `grepEngine: "ripgrep"`.
+  `Agent.define` fails with the new code `config.limits`, and a run with
+  `turn.limits`, when loop `limits` carry a `degenerate` policy or
+  `malformedLimit` that does not decode (core's new `LoopProtection`). Custom
+  registries rerun `toolRegistryConformance` for its `nested-other-open`
+  check.
+
 - Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
   queued follow-ups restore this recorded parent across runner contexts and
   process restarts. Identical start retries keep their first parent; old rows
@@ -1729,6 +1739,28 @@ Model-visible text (exact pins and the compaction golden updated):
   `error`, never a host's code.
 
 ### Fixed
+
+- Host policy for tools and the workspace. Tool discovery keys its
+  nested-call marker to the gates a running handler can hold (its registry's
+  per-tool permits, its turn's lanes), so a run of another agent or turn
+  inside a tool handler waits on its own lanes and permits instead of
+  refusing parallel calls with `ToolConcurrency`; recursive calls into held
+  gates still refuse rather than deadlock. Workspace `grep` refuses a pattern
+  with a line break (`InvalidPattern`) in both engines, where ripgrep read
+  each line as a separate pattern and returned false matches; the builtin
+  engine caps each file at a quarter of the limit whenever it searches a
+  directory, as ripgrep does, a one-file directory included; and
+  `grepEngine: "auto"` no longer runs `rg` over a FileSystem and Bash that
+  may not share a tree (an in-memory FileSystem beside a machine shell
+  searched the machine's disk). Writes are refused when a read root or a
+  `protect` glob matches them without regard to letter case, so a
+  case-insensitive file system that keeps spellings cannot reach a read-only
+  root or `.GIT/config` through another spelling. The image CLI creates its
+  conversion directory `0700` and files `0600` (`umask 077`) rather than
+  leaving a workspace image readable to other local users, and refuses a
+  source declaring more than `maxSourcePixels` before any converter decodes
+  it. Loop protection limits are decoded at `Agent.define` and per run, so an
+  invalid policy fails before any provider call instead of inside the loop.
 
 - Retain each files adapter's physical IO slot until the original native
   promise settles, including after caller timeout or cancellation. Bound queued

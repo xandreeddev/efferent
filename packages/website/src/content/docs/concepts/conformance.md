@@ -613,6 +613,9 @@ const checks = toolRegistryConformance((capabilities, limits) =>
   overtake the waiting writer.
 - **nested-writer-priority**: a synchronous toolkit child cannot overtake a
   writer waiting behind an earlier reader's turnstile acquisition.
+- **nested-other-open**: calls a handler makes into another open of the
+  registry (a run inside a tool) wait on that open's lanes; only calls back
+  into gates the handler may hold refuse as nested.
 - **refused-inactive**, **refused-forbidden**, **refused-denied**,
   **refused-call-limit**, **refused-tool-call-limit**: a call refused before
   its handler runs (a tool not loaded, a permission the turn lacks, an

@@ -12,3 +12,15 @@ export type DegeneratePolicy = typeof DegeneratePolicy.Type
 
 /** Failure occurs on this consecutive malformed response, not after this many retries. @public */
 export const MalformedLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))
+
+/**
+ * The loop protection a host may set in `LoopLimits`, each field optional:
+ * `Agent.define` decodes its `limits` with this (`config.limits`) and a run
+ * decodes the turn's merged limits (`turn.limits`), so a bad policy fails
+ * before any step rather than inside the loop. @public
+ */
+export const LoopProtection = Schema.Struct({
+  degenerate: Schema.optionalKey(DegeneratePolicy),
+  malformedLimit: Schema.optionalKey(MalformedLimit),
+})
+export type LoopProtection = typeof LoopProtection.Type

@@ -423,7 +423,8 @@ Requires: `@xandreed/core/FileSystem`, `@xandreed/core/Bash`
 {
   "tool": "auto",
   "tempDir": null,
-  "timeoutMs": 30000
+  "timeoutMs": 30000,
+  "maxSourcePixels": 100000000
 }
 ```
 
@@ -458,12 +459,18 @@ Requires: `@xandreed/core/FileSystem`, `@xandreed/core/Bash`
       "type": "integer",
       "minimum": 1,
       "maximum": 600000
+    },
+    "maxSourcePixels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000000
     }
   },
   "required": [
     "tool",
     "tempDir",
-    "timeoutMs"
+    "timeoutMs",
+    "maxSourcePixels"
   ],
   "additionalProperties": true
 }

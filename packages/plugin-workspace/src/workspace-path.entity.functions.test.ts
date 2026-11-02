@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Path, Result } from "effect"
+import { Context, Effect, Option, Path, Result } from "effect"
 import fc from "fast-check"
 import { FileSystem, FsError, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
 import type { FsReason } from "@xandreed/core"
@@ -222,4 +222,42 @@ test("an explicit later root controls an equal-real-path tie, including aliases"
     return yield* resolveTarget(access, "src/file", { confine: true, intent: "write" })
   }))
   expect(result).toEqual({ path: "/work/src/file", display: "src/file" })
+})
+
+/**
+ * The memory file system as a case-insensitive one that keeps spellings (a
+ * Linux casefold directory, a FAT or SMB mount): every path is looked up
+ * without letter case, and `realPath` returns the spelling it was given.
+ */
+const caseInsensitive = (fs: Context.Service.Shape<typeof FileSystem>): Context.Service.Shape<typeof FileSystem> => new Proxy(fs, {
+  get: (target, key) => {
+    const member: unknown = Reflect.get(target, key)
+    if (typeof member !== "function") return member
+    return (first: unknown, ...rest: ReadonlyArray<unknown>) => {
+      const lookedUp = Reflect.apply(member, target, [typeof first === "string" ? first.toLowerCase() : first, ...rest])
+      return key === "realPath" ? Effect.as(lookedUp, first) : lookedUp
+    }
+  },
+})
+
+test("a case-insensitive file system cannot reach a read root or a protected path through another spelling", async () => {
+  const seen = await Effect.runPromise(Effect.gen(function* () {
+    const fs = caseInsensitive(yield* makeMemoryFileSystem({ "/work/vendor/lib.ts": "vendored", "/work/.git/config": "config", "/work/src/main.ts": "main" }))
+    const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
+    const access = yield* openWorkspace(path, { workspaceAccess: "write", roots: [{ path: "vendor", access: "read" }] }).pipe(
+      Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/work" }),
+    )
+    const write = (input: string) => resolveTarget(access, input, { confine: true, intent: "write" })
+    const rules = Result.getOrThrow(compileProtect([".git/**"]))
+    return {
+      vendor: yield* Effect.result(write("Vendor/new.ts")),
+      existing: yield* Effect.result(write("VENDOR/lib.ts")),
+      ordinary: yield* Effect.result(write("Src/main.ts")),
+      protected: yield* write(".GIT/config").pipe(Effect.flatMap((target) => checkWritable(access, target, rules)), Effect.result),
+    }
+  }))
+  expect(seen.vendor).toEqual(Result.fail({ error: "ReadOnly", message: "Vendor/new.ts is under vendor, which the workspace tools may read but not change" }))
+  expect(seen.existing).toEqual(Result.fail({ error: "ReadOnly", message: "VENDOR/lib.ts is under vendor, which the workspace tools may read but not change" }))
+  expect(seen.ordinary).toEqual(Result.succeed({ path: "/work/Src/main.ts", display: "Src/main.ts" }))
+  expect(seen.protected).toEqual(Result.fail({ error: "Protected", message: ".GIT/config is protected (.git/**); the workspace tools do not change it" }))
 })

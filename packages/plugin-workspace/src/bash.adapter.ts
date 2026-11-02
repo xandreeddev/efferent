@@ -228,13 +228,21 @@ export const makeBash = Effect.fnUntraced(function* (options: BashLiveOptions = 
     output.finish(bashExitOf({ code: end.code, signal: end.signal, timedOut, durationMs: end.at - started }))
   }), { bufferSize: OUTPUT_BUFFER })
 
-  return Bash.of({
+  const local = Bash.of({
     stream,
     exec: Effect.fn("bash.exec")(function* (command: string, run: BashOptions) {
       return yield* collectBashResult(stream(command, run))
     }),
   })
+  localShells.add(local)
+  return local
 })
+
+/** Every `Bash` service `makeBash` built: commands on this machine, the tree `localFileSystem` sees. */
+const localShells = new WeakSet<BashShape>()
+
+/** Whether a `Bash` service is one `makeBash` built, so its commands see the same files as `localFileSystem`. */
+export const runsOnThisMachine = (bash: BashShape): boolean => localShells.has(bash)
 
 /**
  * The local `Bash` (`makeBash`) as a layer; building it fails with `ShellMissing` when the shell is not installed.

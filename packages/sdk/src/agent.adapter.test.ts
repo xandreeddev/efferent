@@ -152,7 +152,7 @@ const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> =
   plugins: [memory, toolDiscoveryPlugin, stepLoopPlugin, ...(extra.plugins ?? [])],
   capabilities: [host, ...(extra.capabilities ?? [])],
   turnServices: [LanguageModel.LanguageModel, ...(extra.turnServices ?? [])],
-  limits: { streaming: false, maxSteps: 6 },
+  limits: { streaming: false, maxSteps: 6, ...extra.limits },
   cacheKeyPrefix: "agent",
   ...(extra.budgetTokens === undefined ? {} : { budgetTokens: extra.budgetTokens }),
 })
@@ -1413,6 +1413,34 @@ describe("the agent's graph", () => {
       plugins: [memoryWindowPlugin, toolDiscoveryPlugin], turnServices: [LanguageModel.LanguageModel, StepLoop],
     })).pipe(Effect.map((agent) => agent.fingerprint)))
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe("the loop limits", () => {
+  test("Agent.define refuses a degenerate policy or malformedLimit that does not decode (config.limits)", async () => {
+    const codes = await Effect.runPromise(Effect.forEach([
+      { malformedLimit: 0 },
+      { malformedLimit: 1.5 },
+      { degenerate: { _tag: "Enabled" as const, nudgeAfter: 5, breakAfter: 3 } },
+    ], (limits) => Effect.scoped(Effect.flip(define(memoryWindowPlugin, { limits }))).pipe(Effect.map((error) => error.code)), { concurrency: 1 }))
+    expect(codes).toEqual(["config.limits", "config.limits", "config.limits"])
+    const accepted = await Effect.runPromise(Effect.scoped(define(memoryWindowPlugin, { limits: { malformedLimit: 1, degenerate: { _tag: "Disabled" } } })).pipe(Effect.as("defined")))
+    expect(accepted).toBe("defined")
+  })
+
+  test("a run refuses policy limits that do not decode (turn.limits), before any provider call", async () => {
+    const { codes, seen } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted([])
+      const codes = yield* Effect.forEach([{ malformedLimit: 0 }, { degenerate: { _tag: "Enabled" as const, nudgeAfter: 2, breakAfter: 2 } }], (limits, index) =>
+        Effect.flip(agent.turn(inputFor(journal, `limits-${index}`, "hello", model), (turn) =>
+          turn.run({ limits }).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))).pipe(
+          Effect.map(codeOf)), { concurrency: 1 })
+      return { codes, seen: yield* Ref.get(seen) }
+    })))
+    expect(codes).toEqual(["turn.limits", "turn.limits"])
+    expect(seen).toHaveLength(0)
   })
 })
 

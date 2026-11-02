@@ -1,8 +1,10 @@
 import { Effect, Option, Path, RcMap, Result, Semaphore } from "effect"
 import type { Scope } from "effect"
-import { Bash, compileGlob, defineCapability, definePromptSection, defineSkill, HarnessError, ImageResizer, SessionEnvironment } from "@xandreed/core"
+import { Bash, compileGlob, defineCapability, definePromptSection, defineSkill, FileSystem, HarnessError, ImageResizer, SessionEnvironment } from "@xandreed/core"
 import type { Capability, RegisteredTool } from "@xandreed/core"
+import { runsOnThisMachine } from "./bash.adapter.js"
 import { bashTool } from "./bash-tool.adapter.js"
+import { localFileSystem } from "./file-system.adapter.js"
 import { findTool, grepTool, lsTool, readTool, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
 import type { WorkspaceToolContext } from "./read-tools.adapter.js"
 import { compileProtect, openWorkspace } from "./workspace-path.entity.functions.js"
@@ -41,8 +43,12 @@ const invalid = (message: string) => new HarnessError({ code: "config.options", 
  * decoded, so a graph refuses them before activating anything). Tools are never
  * given guidance as skill instructions: it is in their descriptions and the
  * section, since an always-on skill's instructions never reach the model.
- * Ripgrep requires FileSystem and Bash to see the same file tree; a host
- * pairing an in-memory file system with a machine shell selects builtin.
+ * Ripgrep requires FileSystem and Bash to see the same file tree, so
+ * `grepEngine: "auto"` uses it only when both, here, are this machine's
+ * (`localFileSystem` and a `makeBash` shell, as `localSystemPlugin`
+ * provides); with any other pair (an in-memory file system, a container's
+ * shell, a wrapper) it selects builtin without probing. A host whose pair
+ * shares a tree selects `ripgrep` itself.
  *
  * @public
  */
@@ -54,7 +60,10 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
   const locks = yield* RcMap.make({ lookup: (_path: string) => Semaphore.make(1), idleTimeToLive: "1 minute" })
   const bash = yield* Effect.serviceOption(Bash)
   const hasBash = Option.isSome(bash)
-  const probe = config.tools.includes("grep") && config.grepEngine !== "builtin"
+  // auto picks ripgrep only over this machine's pair, where Bash sees the files the FileSystem does; ripgrep is the host's word for any pair.
+  const sameTree = Option.exists(yield* Effect.serviceOption(FileSystem), (service) => service === localFileSystem) && Option.exists(bash, runsOnThisMachine)
+  if (config.tools.includes("grep") && config.grepEngine === "auto" && !sameTree) yield* Effect.logDebug("grep: the FileSystem and Bash are not this machine's local pair; using the builtin engine")
+  const probe = config.tools.includes("grep") && (config.grepEngine === "ripgrep" || (config.grepEngine === "auto" && sameTree))
     ? yield* Option.match(bash, {
       onNone: () => Effect.succeed(false),
       onSome: (service) => service.exec("rg --version", { cwd: "/", timeoutMs: 5_000, ...bashEnvironment(config, Option.none()) }).pipe(
@@ -63,7 +72,7 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
       ),
     }) : false
   if (config.tools.includes("grep") && config.grepEngine === "ripgrep" && !probe) return yield* Effect.fail(invalid("grepEngine ripgrep requires rg on the Bash service PATH"))
-  if (config.tools.includes("grep") && config.grepEngine === "auto" && !probe) yield* Effect.logDebug("grep: ripgrep is unavailable; using the builtin engine")
+  if (config.tools.includes("grep") && config.grepEngine === "auto" && sameTree && !probe) yield* Effect.logDebug("grep: ripgrep is unavailable; using the builtin engine")
   const resolved: WorkspaceToolsConfig = { ...config, grepEngine: probe ? "ripgrep" : "builtin" }
   const wanted = ORDER.filter((tool) => config.tools.includes(tool))
   if (wanted.includes("bash") && !hasBash) {

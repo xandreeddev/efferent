@@ -4,7 +4,7 @@ import type { Path, RcMap, Semaphore } from "effect"
 import { Bash, defineTool, Failure, FileSystem, ImageResizer, SessionEnvironment, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { searchRipgrep } from "./ripgrep.adapter.js"
-import { compilePattern, searchText } from "./text-search.entity.functions.js"
+import { compilePattern, searchText, singleLinePattern } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, withinAnyRoot } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
@@ -126,7 +126,9 @@ interface Searched {
  * binary; one the file system refuses (permission denied, say) is named in
  * `unreadable` with the reason, not counted as skipped. Lines are cut to `grepLineChars` before matching. Searching a
  * directory, one file gives at most a quarter of the limit, so one large
- * file cannot fill the result.
+ * file cannot fill the result, however many files the directory holds (as
+ * with ripgrep, which cannot know that ahead). A pattern with a line break
+ * is refused (`singleLinePattern`) whichever engine runs.
  */
 export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: GrepTool(config),
@@ -134,6 +136,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
+    yield* Effect.fromResult(singleLinePattern(params.pattern))
     const pattern = config.grepEngine === "ripgrep" ? Option.none<RegExp>()
       : Option.some(yield* Effect.fromResult(compilePattern(params.pattern, { literal: params.literal ?? false, ignoreCase: params.ignoreCase ?? false })))
     const info = yield* access.fs.stat(target.path).pipe(Effect.mapError(fsFailure(target.display)))
@@ -148,7 +151,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
         })),
         Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `glob ${params.glob ?? glob}: ${error.message}`) : fsFailure(target.display)(error)))
     const limit = params.limit ?? config.grepMatches
-    const perFile = files.length > 1 ? Math.max(1, Math.ceil(limit / 4)) : limit
+    const perFile = info.kind === "directory" ? Math.max(1, Math.ceil(limit / 4)) : limit
     const context = params.context ?? 0
     const skip = (state: Searched): Searched => ({ ...state, skipped: state.skipped + 1 })
     const searched = yield* Effect.reduce(files, (): Searched => ({ lines: [], matches: 0, files: 0, skipped: 0, truncated: false, unreadable: [] }), (state, file) => {

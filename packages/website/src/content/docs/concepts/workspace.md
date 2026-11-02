@@ -77,12 +77,17 @@ A coding turn reads and edits many times: raise tool discovery's
   to the workspace. The longest matching real root controls writes; a later
   root wins an equal-path tie. A write into a read root returns `ReadOnly`.
   An extra root that cannot be opened as a directory is logged and skipped.
-  `confine: false` disables these root and access restrictions.
+  `confine: false` disables these root and access restrictions. A write is
+  also refused when a read root matches it without regard to letter case,
+  so a case-insensitive file system that keeps spellings (a Linux casefold
+  directory, a FAT or SMB mount) cannot reach a read root through another
+  spelling.
 - `write` and `edit` refuse the `protect` globs: `.git/**` and
   `.efferent/**` by default, relative to the workspace. They do not protect
   a writable extra root's own `.git` or `.efferent` directory. An alias from
-  an extra root into a protected workspace file is still refused. Use
-  read-only roots for external reference trees.
+  an extra root into a protected workspace file is still refused, and so is
+  another letter case of a protected path (`.GIT/config`). Use read-only
+  roots for external reference trees.
 - `find` and `grep` never enter linked directories or the `exclude` names
   (`node_modules`, `.git`, `.efferent`; an entry with a `/` is a path
   relative to the workspace root, wherever the search starts; those path
@@ -98,11 +103,16 @@ A coding turn reads and edits many times: raise tool discovery's
 
 These checks stop a model's mistakes. They do not contain a hostile one:
 `bash` runs any command the host process may run, and a path can change
-between its check and its use. `grepEngine: "auto"` probes for `rg` once through `Bash` and uses it when
-available, including on a remote or container-backed Bash/FileSystem pair.
-Both services must see the same tree; select `"builtin"` for an in-memory or
-different FileSystem.
-`"ripgrep"` requires it; `"builtin"` keeps the JavaScript engine. Ripgrep uses
+between its check and its use. `grepEngine: "auto"` uses `rg` only over this
+machine's pair, the `FileSystem` and `Bash` that `localSystemPlugin` provides,
+which see the same files: it probes for `rg` once and uses it when available.
+With any other pair (an in-memory FileSystem, a container's Bash, a wrapper)
+auto selects the builtin engine without probing. `"ripgrep"` requires `rg`
+over whatever pair the host gives, which must see the same tree (a container
+whose FileSystem and Bash both run inside it); `"builtin"` keeps the
+JavaScript engine. Both engines refuse a pattern with a line break
+(`InvalidPattern`), since grep matches one line at a time, and searching a
+directory takes at most a quarter of the limit from one file. Ripgrep uses
 its default syntax (no lookaround or backreferences), gets patterns on stdin,
 ignores ripgrep config files and stops after `grepTimeoutMs` (30 000 ms).
 `grepIgnoreFiles: true` honours `.gitignore`, `.ignore` and other ignore files;
@@ -184,9 +194,12 @@ auto probes once in that order. Activation fails with `images.unavailable`
 when the requested tool is missing or none can run. No native npm dependency
 is installed. `tempDir` is an existing absolute POSIX directory, or `null`
 (default) for Bash's `TMPDIR` with `/tmp` as fallback. `timeoutMs` (default
-30 000, maximum 600 000) bounds the complete fit, then cleanup runs. Private
-conversion directories are removed on success, failure and interruption;
-the source is untouched. Commands use the default `bashEnvironment`
+30 000, maximum 600 000) bounds the complete fit, then cleanup runs.
+`maxSourcePixels` (default 100 000 000) refuses a source whose header declares
+more pixels before any converter decodes it, so a small file declaring a huge
+canvas cannot hold the host's memory or disk. Conversion directories are
+private (`0700`, their files `0600`, whatever the host's umask) and removed on
+success, failure and interruption; the source is untouched. Commands use the default `bashEnvironment`
 allowlist over the host's `parentEnv`. Four bounded shrink attempts keep
 aspect and never upscale; JPEG stays JPEG, GIF/WebP uses its first frame,
 and opaque PNG may become JPEG where the backend can establish opacity.
@@ -234,7 +247,7 @@ The options are flat; every one has a default
 | `maxLines`, `maxBytes` | 2000, 51 200 | the most `read`, `find` and `grep` show, and the tail `bash` keeps |
 | `lsEntries`, `findResults`, `grepMatches` | 500, 1000, 100 | caps on `ls`, `find` and `grep` |
 | `grepLineChars` | 500 | displayed width; builtin also cuts before matching |
-| `grepEngine` | `"auto"` | probe for rg once; `"ripgrep"` requires it, `"builtin"` selects JavaScript |
+| `grepEngine` | `"auto"` | rg over `localSystemPlugin`'s pair when it is installed (probed once), else builtin; `"ripgrep"` requires it, `"builtin"` selects JavaScript |
 | `grepTimeoutMs` | 30000 | ripgrep search timeout |
 | `grepIgnoreFiles` | `false` | honour ignore files when using ripgrep |
 | `maxFileBytes` | 32 MB | the largest file `read`, `edit` and `grep` load (an image too), and the most of an output `bash` saves |

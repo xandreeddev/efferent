@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
 import fc from "fast-check"
-import { compilePattern, renderSearchLines, repeatsRepetition, searchText } from "./text-search.entity.functions.js"
+import { compilePattern, renderSearchLines, repeatsRepetition, searchText, singleLinePattern } from "./text-search.entity.functions.js"
 
 const regex = (pattern: string, options: { readonly literal?: boolean; readonly ignoreCase?: boolean } = {}) =>
   Result.getOrThrow(compilePattern(pattern, { literal: options.literal ?? false, ignoreCase: options.ignoreCase ?? false }))
@@ -33,6 +33,14 @@ describe("compilePattern", () => {
       { error: "InvalidPattern", message: "(a+)+$ repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines; rewrite it without the nested repetition, or search with bash (grep -E, rg)" },
       { error: "InvalidPattern", message: `a( is not a valid regular expression; the engine says: ${engine}. Pass literal: true to search for it as text` },
     ])
+  })
+})
+
+describe("singleLinePattern", () => {
+  test("a pattern with a line break is refused with one pinned message; one without passes as it is", () => {
+    const refused = ["alpha\nbeta", "\n", "line\r", "a\r\nb"].map((pattern) => Result.match(singleLinePattern(pattern), { onFailure: (failure) => failure, onSuccess: () => undefined }))
+    expect(refused).toEqual(Array.from({ length: 4 }, () => ({ error: "InvalidPattern", message: "the pattern contains a line break, but grep matches one line at a time; search for a single line of the text instead" })))
+    expect(["", "a\\nb", "[^\\n]+", "plain text"].map((pattern) => Result.getOrThrow(singleLinePattern(pattern)))).toEqual(["", "a\\nb", "[^\\n]+", "plain text"])
   })
 })
 

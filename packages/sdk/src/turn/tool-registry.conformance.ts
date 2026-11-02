@@ -630,6 +630,33 @@ export const toolRegistryConformance = (
         yield* expect("read-write-lanes", (yield* Ref.get(order)).join() === [Where.name, Flaky.name, Where.name].join(), "a waiting writer was starved by a later reader")
       }))
     }).pipe(Effect.timeout("2 seconds"))),
+    check("a run of another open inside a handler waits on that open's own lanes instead of refusing as nested", "nested-other-open", () => Effect.gen(function* () {
+      const count = yield* Ref.make(0)
+      const writing = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = yield* Ref.make<Option.Option<KitTurn>>(Option.none())
+      const inner = yield* Ref.make<ReadonlyArray<string>>([])
+      yield* inTurn({ execution: () => Effect.gen(function* () {
+        const position = yield* Ref.updateAndGet(count, (n) => n + 1)
+        // The inner writer holds its open's lanes until the inner reader has queued behind it.
+        if (position === 2) return yield* Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(release)))
+        if (position !== 1) return
+        // The outer handler drives another open of the registry, as a run inside a tool does.
+        const turn = Option.getOrThrow(yield* Ref.get(held))
+        const writer = yield* turn.reopenCall(Flaky.name, { outcome: "success" }).pipe(Effect.forkChild)
+        yield* Deferred.await(writing)
+        const reader = yield* turn.reopenCall(Where.name, {}).pipe(Effect.forkChild)
+        yield* tick
+        yield* Deferred.succeed(release, undefined)
+        const results = yield* Effect.forEach([writer, reader], (fiber) => Fiber.join(fiber), { concurrency: 1 })
+        yield* Ref.set(inner, results.map((result) => result.isFailure ? errorOf(result.result) : "ok"))
+      }).pipe(Effect.orDie) }, (turn) => Effect.gen(function* () {
+        yield* Ref.set(held, Option.some(turn))
+        yield* turn.call(Where.name, {})
+        const outcomes = (yield* Ref.get(inner)).join()
+        yield* expect("nested-other-open", outcomes === "ok,ok", `the other open's writer and reader returned ${outcomes || "nothing"}, not ok,ok: a call into another open's lanes is not nested`)
+      }))
+    }).pipe(Effect.timeout("2 seconds"))),
     check("per-tool concurrency permits are shared across turn opens and are released after interrupted handlers", "policy-concurrency", () => Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
       const active = yield* Ref.make(0)
