@@ -6,7 +6,7 @@ import type { AcceptedModelInput } from "../domain/accepted-model-input.entity.j
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import type { ModelOverflowEvidence } from "../domain/model-failure.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
-import type { DegeneratePolicy } from "../domain/loop-limits.entity.js"
+import type { DegeneratePolicy, InvalidCallPolicy } from "../domain/loop-limits.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
@@ -31,6 +31,13 @@ export interface LoopLimits {
   readonly degenerate?: DegeneratePolicy
   /** Fail on this consecutive malformed response; default 3 tolerates two correctives. */
   readonly malformedLimit?: number
+  /**
+   * A whole reply's call to a tool the step does not have, or with
+   * parameters that do not decode: `corrective` (the default) runs none of
+   * the reply's calls and answers it as malformed; `answer` answers each
+   * such call with a failure result and runs the others.
+   */
+  readonly invalidCalls?: InvalidCallPolicy
 }
 
 /**

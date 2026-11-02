@@ -132,7 +132,12 @@ const selectedSlots = (encoded: unknown, selected: Option.Option<ReadonlyArray<M
 /** Tool result schemas are context-free by contract (they cross the wire). */
 const contextFree = (schema: Schema.Top): Schema.Codec<unknown, unknown> => schema as Schema.Codec<unknown, unknown>
 
-/** The text a load_skill call returns (tier 2) — also used for matcher-seeded skills. */
+/**
+ * The text a load_skill call returns (tier 2) — also used for matcher-seeded
+ * skills: a host fingerprints the skill text the model sees, to version it.
+ *
+ * @public
+ */
 export const skillInstructions = (skills: ReadonlyArray<SkillDefinition>, tools: ReadonlyArray<string>): string =>
   skills.map((skill) => [
     `## ${skill.id}`,
@@ -141,7 +146,12 @@ export const skillInstructions = (skills: ReadonlyArray<SkillDefinition>, tools:
     skill.references.length === 0 ? "" : `References (read_skill_reference): ${skill.references.map((reference) => `${reference.id} — ${reference.title}`).join("; ")}`,
   ].filter((line) => line.length > 0).join("\n")).join("\n\n") + (tools.length === 0 ? "" : `\n\nNow available: ${tools.join(", ")}`)
 
-/** Tier 1: the catalogue line per loadable skill. */
+/**
+ * Tier 1: the catalogue section's text, a line per loadable skill: a host
+ * fingerprints the skill catalogue the model sees, to version it.
+ *
+ * @public
+ */
 export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Option<string> => {
   const loadable = skills.filter((skill) => !skill.always)
   return loadable.length === 0 ? Option.none() : Option.some([

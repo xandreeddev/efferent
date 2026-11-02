@@ -115,6 +115,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     requireCompletion: request.limits.requireCompletion,
     ...(request.limits.degenerate === undefined ? {} : { degenerate: request.limits.degenerate }),
     ...(request.limits.malformedLimit === undefined ? {} : { malformedLimit: request.limits.malformedLimit }),
+    ...(request.limits.invalidCalls === undefined ? {} : { invalidCalls: request.limits.invalidCalls }),
     captureTraceContent: request.captureTraceContent,
     pollableTools: request.tools.pollable,
     ...Option.match(request.correctives, { onNone: () => ({}), onSome: (correctives) => ({ correctives }) }),

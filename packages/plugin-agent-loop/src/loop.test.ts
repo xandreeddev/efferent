@@ -6,7 +6,7 @@ import type { AgentMessage, FinishReason, TokenUsage } from "@xandreed/core"
 import type { LoopEvent } from "./loop-event.entity.js"
 import { DEFAULT_TOOL_CONCURRENCY, DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 import type { CompactionPlan } from "./loop.js"
-import { lengthCorrective, replyCutFailure } from "./response-gate.entity.functions.js"
+import { duplicateCallCorrective, lengthCorrective, replyCutFailure } from "./response-gate.entity.functions.js"
 
 /** A scripted provider: call N returns `script(N)`'s encoded parts. */
 const scriptedModel = (script: (call: number) => ReadonlyArray<unknown>) =>
@@ -1375,6 +1375,7 @@ describe("runLoop gates each response on its finish reason", () => {
       readonly pendingInput?: () => Effect.Effect<Option.Option<string>>
       readonly requireCompletion?: boolean
       readonly isComplete?: (step: number) => Effect.Effect<boolean>
+      readonly invalidCalls?: "corrective" | "answer"
     } = {},
   ) => Effect.runPromise(Effect.gen(function* () {
     const ran: Array<string> = []
@@ -1391,6 +1392,7 @@ describe("runLoop gates each response on its finish reason", () => {
       ...(options.pendingInput === undefined ? {} : { pendingInput: options.pendingInput }),
       ...(options.requireCompletion === undefined ? {} : { requireCompletion: options.requireCompletion }),
       ...(options.isComplete === undefined ? {} : { isComplete: options.isComplete }),
+      ...(options.invalidCalls === undefined ? {} : { invalidCalls: options.invalidCalls }),
       onTail: (tail, step) => Effect.sync(() => {
         log.push(...tail.map((message) => [step, message] as const))
         batches.push(tail.map((message) => message.role))
@@ -1640,6 +1642,83 @@ describe("runLoop gates each response on its finish reason", () => {
     expect(gate.roles).toEqual([[1, "user"], [1, "assistant"]])
     expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: corrective }]])
     expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "fixed" })
+  })
+
+  const INVALID_PARAMETERS_ANSWER = {
+    error: "InvalidParameters",
+    message: "This call was not run: its parameters do not match the schema of echo; what did not match follows, and it may quote your call. "
+      + "Call echo again with its parameters as its schema gives them if you still need it.\n\n<parameter-errors>\nExpected string\n  at [\"value\"]\n</parameter-errors>",
+  }
+  const TOOL_NOT_FOUND_ANSWER = {
+    error: "ToolNotFound",
+    message: "This call was not run: it names a tool you do not have; the name follows, as you wrote it. The tools you can call are: echo.\n\n<tool-name>\nnot_a_tool\n</tool-name>",
+  }
+
+  test.each([
+    ["has parameters that do not decode", { value: 7 }, "echo", INVALID_PARAMETERS_ANSWER],
+    ["names a tool the step does not have", { value: "b" }, "not_a_tool", TOOL_NOT_FOUND_ANSWER],
+  ] as const)("under invalidCalls answer, a whole response whose second call %s runs the first, answers the second with the reply and settles completed", async (_what, params, name, failure) => {
+    const gate = await gated((call) => call === 0
+      ? [echoCall("c1", { value: "fine" }), { type: "tool-call", id: "c2", name, params }, finish("tool-calls")]
+      : answers, { invalidCalls: "answer" })
+    expect(gate.ran).toEqual(["fine"])
+    expect(toolStarts(gate.events).map((event) => event.type === "tool_start" ? event.toolCallId : "")).toEqual(["c1"])
+    expect(gate.settled).toEqual(["0:completed", "1:completed"])
+    // The answer is recorded with the reply, in its record; the run call's result after it.
+    expect(gate.batches.slice(0, 2)).toEqual([["assistant", "tool"], ["tool"]])
+    const rejected = { type: "tool-result" as const, toolCallId: ToolCallId.make("c2"), toolName: name, output: failure, isError: true }
+    expect(toolMessages(gate.log)).toEqual([
+      [0, { role: "tool", content: [rejected] }],
+      [0, { role: "tool", content: [echoResult("c1", { echoed: "fine" }, false)] }],
+    ])
+    expect(userMessages(gate.log)).toEqual([])
+    // The run's own tail keeps call order.
+    expect(gate.tail.filter((message) => message.role === "tool")).toEqual([{ role: "tool", content: [echoResult("c1", { echoed: "fine" }, false), rejected] }])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("under invalidCalls answer, a whole response whose every call is invalid runs none, answers each and the run goes on", async () => {
+    const gate = await gated((call) => call === 0
+      ? [{ type: "tool-call", id: "c1", name: "not_a_tool", params: { value: "b" } }, echoCall("c2", { value: 7 }), finish("tool-calls")]
+      : answers, { invalidCalls: "answer" })
+    expect(gate.ran).toEqual([])
+    expect(toolStarts(gate.events)).toEqual([])
+    expect(gate.settled).toEqual(["0:completed", "1:completed"])
+    expect(gate.batches[0]).toEqual(["assistant", "tool"])
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      { type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "not_a_tool", output: TOOL_NOT_FOUND_ANSWER, isError: true },
+      echoResult("c2", INVALID_PARAMETERS_ANSWER, true),
+    ] }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("under invalidCalls answer, a response that repeats a call id is still malformed: none of its calls runs", async () => {
+    const gate = await gated((call) => call === 0
+      ? [echoCall("c1", { value: "a" }), echoCall("c1", { value: "b" }), finish("tool-calls")]
+      : answers, { invalidCalls: "answer" })
+    expect(gate.ran).toEqual([])
+    expect(gate.settled).toEqual(["0:malformed", "1:completed"])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: duplicateCallCorrective(["echo"]) }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("under invalidCalls answer, a reply cut short is answered as cut, its calls never checked", async () => {
+    const gate = await gated((call) => call === 0
+      ? [echoCall("c1", { value: "a" }), echoCall("c2", { wrong: true }), finish("length")]
+      : answers, { invalidCalls: "answer" })
+    expect(gate.ran).toEqual([])
+    expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      echoResult("c1", replyCutFailure("length"), true),
+      echoResult("c2", replyCutFailure("length"), true),
+    ] }]])
+  })
+
+  test("under invalidCalls answer, the same rejected call again and again is no progress: the breaker nudges, then stops the run", async () => {
+    const gate = await gated(() => [echoCall("c1", { value: 7 }), finish("tool-calls")], { invalidCalls: "answer" })
+    expect(gate.ran).toEqual([])
+    expect(userMessages(gate.log).map(([, message]) => message.content)).toContain(hostNote(DEGENERATE_REPEAT_NUDGE))
+    expect(gate.end).toMatchObject({ reason: "degenerate-loop" })
   })
 
   test.each([

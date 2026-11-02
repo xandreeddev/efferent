@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Response, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
+import { Cause, Context, Effect, Exit, Option, Ref, Schema, Stream } from "effect"
 import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
@@ -18,6 +18,14 @@ const WHOLE: ReadonlyArray<FinishReason> = ["stop", "tool-calls", "pause"]
 
 /** The run's text after a reply: what it carries with the reply's text after it, else its text so far. */
 const joined = (text: string, carried: string, reply: string): string => (carried + reply).length > 0 ? carried + reply : text
+
+/** The answer to a whole reply's call the loop does not run, under `invalidCalls: "answer"`. */
+const notAnswerable = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart => {
+  const failure = { error: "InvalidCall", message: "This call was not run." }
+  return Response.makePart("tool-result", {
+    id: call.id, name: call.name, providerExecuted: false, preliminary: false, result: failure, encodedResult: failure, isFailure: true,
+  })
+}
 
 /** The answer to a call of a reply cut short: it was not run. */
 const notRun = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart => {
@@ -41,8 +49,11 @@ const notRun = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart 
  * or a whole step between them restarts nothing. `batch-tail` records the
  * response and all results only after every handler returns. `cut-apart`
  * records a cut reply, then each of its calls' answers on its own.
+ * `ignores-invalid-calls` treats every reply with a call it will not run as
+ * malformed, whatever `invalidCalls` says; `answers-apart` records such a
+ * call's answer on its own, after the reply.
  */
-type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail" | "cut-apart" | "waiting"
+type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail" | "cut-apart" | "waiting" | "ignores-invalid-calls" | "answers-apart"
 
 /**
  * The smallest loop that honours the StepLoop contract, written directly on
@@ -62,6 +73,14 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
     const model = yield* Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel)))
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(request.handlers))
     const run = request.run.ordinal
+    // Under `invalidCalls: "answer"` a whole reply's calls come back unvalidated, for the loop to answer one it does not run.
+    const answering = request.limits.invalidCalls === "answer" && careless !== "ignores-invalid-calls"
+    /** A call to a tool the step does not have, or with parameters its schema does not decode. */
+    const unrunnable = (call: Response.ToolCallPart<string, unknown>): boolean => {
+      const tool = Object.hasOwn(toolkit.tools, call.name) ? toolkit.tools[call.name] : undefined
+      return tool === undefined || (Schema.isSchema(tool.parametersSchema)
+        && Option.isNone(Schema.decodeUnknownOption(tool.parametersSchema as Schema.Decoder<unknown>)(call.params)))
+    }
     const ended = yield* Ref.make<ReadonlySet<number>>(new Set())
     const malformed = yield* Ref.make(0)
     const progress = yield* Ref.make<{ readonly seen: ReadonlySet<string>; readonly stale: number }>({ seen: new Set(), stale: 0 })
@@ -133,7 +152,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         const options = { prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }
         const generated: Effect.Effect<{ readonly content: ReadonlyArray<Response.AnyPart>; readonly finishReason: FinishReason; readonly usage?: Response.Usage }, unknown> = streamedThrough
           ? foldStreamParts(provider.streamText(options) as never, () => Effect.void)
-          : provider.generateText(resolvedThrough ? options : { ...options, disableToolCallResolution: true }) as never
+          : provider.generateText(resolvedThrough ? options : { ...options, disableToolCallResolution: true, ...(answering ? { toolCallValidation: "deferred" as const } : {}) }) as never
         return yield* generated.pipe(
           // The run's trace content switch, for the model call to read.
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
@@ -191,14 +210,16 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         _tag: "assistant.message", step: index, run, text: responseText(parts), reasoning: "", model: Option.none(),
         toolCalls: responseToolCalls(parts).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used, finishReason: response.finishReason,
       })
-      // A cut reply's calls never run: their answers are recorded with it.
-      const unrun = cut && !resolvedThrough ? calls.map(notRun) : []
+      // A cut reply's calls never run, nor do a whole one's it answers instead: their answers are recorded with it.
+      const rejected = !cut && answering ? calls.filter(unrunnable) : []
+      const unrun = cut && !resolvedThrough ? calls.map(notRun) : rejected.map(notAnswerable)
+      const apart = careless === (cut ? "cut-apart" : "answers-apart")
       if (careless !== "batch-tail") {
-        yield* record(index, responseToAgentMessages(careless === "cut-apart" ? parts : [...parts, ...unrun]), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
+        yield* record(index, responseToAgentMessages(apart ? parts : [...parts, ...unrun]), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
         yield* publishAssistant
       }
-      const answers = resolvedThrough ? [] : cut ? unrun : yield* runCalls(calls, index)
-      if (careless === "cut-apart") yield* Effect.forEach(unrun, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
+      if (apart) yield* Effect.forEach(unrun, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
+      const answers = resolvedThrough ? [] : cut ? unrun : [...unrun, ...yield* runCalls(calls.filter((call) => !rejected.includes(call)), index)]
       const content: ReadonlyArray<Response.AnyPart> = [...parts, ...answers]
       if (careless === "batch-tail") {
         yield* record(index, responseToAgentMessages(content), Option.isSome(planned) ? undefined : acceptedModelInputOf(response.usage, parts))
@@ -267,6 +288,24 @@ conform("a minimal loop", minimalLoopOf("careful"))
 const failedChecks = (loop: Context.Service.Shape<typeof StepLoop>) => Effect.runPromise(Effect.forEach(stepLoopConformance(loop), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }))
   .then((failed) => [...new Set(failed.flat())].toSorted())
+
+describe("a loop careless with invalidCalls", () => {
+  test("a minimal loop that treats every reply with a call it will not run as malformed fails the invalid-calls check", async () => {
+    expect(await failedChecks(minimalLoopOf("ignores-invalid-calls"))).toEqual(["invalid-calls"])
+  })
+
+  test("a minimal loop that records an answered call apart from its reply fails the invalid-calls-record check", async () => {
+    expect(await failedChecks(minimalLoopOf("answers-apart"))).toEqual(["invalid-calls-record"])
+  })
+
+  test("runSteps handed limits without invalidCalls, as a loop that drops it would run, fails the invalid-calls check", async () => {
+    const careless = StepLoop.of({ ...STEP_LOOP, run: (request) => {
+      const { invalidCalls: _dropped, ...limits } = request.limits
+      return runSteps({ ...request, limits })
+    } })
+    expect(await failedChecks(careless)).toEqual(["invalid-calls"])
+  })
+})
 
 test("ignoring the waiting probe fails its initial and settled checks", async () => {
   expect(await failedChecks(minimalLoopOf("waiting"))).toEqual(["waiting-initial", "waiting-settled"])
@@ -352,8 +391,8 @@ describe("a loop careless with a reply cut short", () => {
     expect(await failedChecks(minimalLoopOf("streamed"))).toEqual(["accepted-input", "assistant-first", "cut-stream"])
   })
 
-  test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part", async () => {
-    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["accepted-input", "assistant-first", "context-overflow", "cut-unknown", "incremental-results", "model-failures", "record-failure"])
+  test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part, and cannot answer an invalid call alone", async () => {
+    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["accepted-input", "assistant-first", "context-overflow", "cut-unknown", "incremental-results", "invalid-calls", "model-failures", "record-failure"])
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {

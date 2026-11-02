@@ -1,9 +1,9 @@
 import type { Tool } from "effect/ai"
-import { Array as Arr, Effect, Option, Schema } from "effect"
-import { hostNote } from "@xandreed/core"
+import { Array as Arr, Effect, Match, Option, Schema } from "effect"
+import { clipTo, framed, hostNote } from "@xandreed/core"
 import type { Failure, FinishReason } from "@xandreed/core"
 import { WholeReason } from "./response-gate.entity.js"
-import type { CutReason, MalformedCall, ResponseVerdict } from "./response-gate.entity.js"
+import type { CutReason, MalformedCall, RejectedCall, ResponseVerdict } from "./response-gate.entity.js"
 
 const isWhole = Schema.is(WholeReason)
 
@@ -59,19 +59,19 @@ const toolNamed = (tools: Readonly<Record<string, Tool.Any>>, name: string): Opt
   Object.hasOwn(tools, name) ? Option.fromNullishOr(tools[name]) : Option.none()
 
 /**
- * The first of a whole response's tool calls the loop will not run: a tool
- * the step does not have, or parameters its tool's schema does not decode.
- * None of the calls runs until every one passes (the loop answers the first
- * that does not as a malformed response). A tool whose parameters are not a
+ * Each of a whole response's tool calls checked, in call order: None for
+ * one the loop may run, else why it will not run it: a tool the step does
+ * not have, parameters its tool's schema does not decode, or an id an
+ * earlier call of the response has. A tool whose parameters are not a
  * Schema (a JSON Schema the toolkit passes through) checks its own. The
  * parameters decode as the toolkit decodes them, in an Effect with the
  * caller's services: a schema that decodes asynchronously, or through a
  * service, is checked like any other.
  */
-export const malformedCall = (
+export const callRejections = (
   calls: ReadonlyArray<{ readonly id?: string; readonly name: string; readonly params: unknown }>,
   tools: Readonly<Record<string, Tool.Any>>,
-): Effect.Effect<Option.Option<MalformedCall>> => Effect.forEach(calls, (call, index): Effect.Effect<Option.Option<MalformedCall>> => call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)
+): Effect.Effect<ReadonlyArray<Option.Option<MalformedCall>>> => Effect.forEach(calls, (call, index): Effect.Effect<Option.Option<MalformedCall>> => call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)
   ? Effect.succeed(Option.some({ _tag: "DuplicateId", toolName: call.name }))
   : Option.match(toolNamed(tools, call.name), {
   onNone: () => Effect.succeed(Option.some({ _tag: "NotFound", toolName: call.name })),
@@ -82,4 +82,39 @@ export const malformedCall = (
       onFailure: (error) => Option.some({ _tag: "Invalid", toolName: call.name, description: error.message }),
     })),
   }),
-}), { concurrency: 1 }).pipe(Effect.map((checked) => Arr.findFirst(checked, (found) => found)))
+}), { concurrency: 1 })
+
+/**
+ * The first of a whole response's tool calls the loop will not run
+ * (`callRejections`). Under the default policy none of the calls runs until
+ * every one passes (the loop answers the first that does not as a malformed
+ * response).
+ */
+export const malformedCall = (
+  calls: ReadonlyArray<{ readonly id?: string; readonly name: string; readonly params: unknown }>,
+  tools: Readonly<Record<string, Tool.Any>>,
+): Effect.Effect<Option.Option<MalformedCall>> => callRejections(calls, tools).pipe(Effect.map((checked) => Arr.findFirst(checked, (found) => found)))
+
+/** Whether the loop can answer a call alone (`RejectedCall`), not only by answering its whole response as malformed. */
+export const isRejectedCall = (call: MalformedCall): call is RejectedCall => call._tag !== "DuplicateId"
+
+/** The longest tool name or decoder report the loop quotes back to the model, in a corrective or a rejected call's answer. */
+export const QUOTE_CHARS = 600
+
+/**
+ * What a whole reply's call the loop answers instead of running is answered
+ * with, under `invalidCalls: "answer"`: it was not run, why, and, for a tool
+ * the step does not have, the tools it can call; then what the model wrote,
+ * framed as data and clipped (the name it gave, or the decoder's report on
+ * its parameters, which may quote them).
+ */
+export const rejectedCallFailure = (call: RejectedCall, tools: ReadonlyArray<string>): Failure => Match.valueTags(call, {
+  NotFound: (missing): Failure => ({
+    error: "ToolNotFound",
+    message: `This call was not run: it names a tool you do not have; the name follows, as you wrote it. ${tools.length === 0 ? "You can call no tools now." : `The tools you can call are: ${tools.join(", ")}.`}\n\n${framed("tool-name", clipTo(missing.toolName, QUOTE_CHARS))}`,
+  }),
+  Invalid: (invalid): Failure => ({
+    error: "InvalidParameters",
+    message: `This call was not run: its parameters do not match the schema of ${invalid.toolName}; what did not match follows, and it may quote your call. Call ${invalid.toolName} again with its parameters as its schema gives them if you still need it.\n\n${framed("parameter-errors", clipTo(invalid.description, QUOTE_CHARS))}`,
+  }),
+})

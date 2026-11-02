@@ -14,6 +14,18 @@ export type DegeneratePolicy = typeof DegeneratePolicy.Type
 export const MalformedLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))
 
 /**
+ * What the loop does with a whole reply's tool call it will not run, one
+ * that names a tool the step does not have or gives parameters its schema
+ * does not decode: `corrective` (the default) runs none of the reply's
+ * calls and answers the reply with a corrective turn, as malformed;
+ * `answer` answers each such call with a failure result and runs the
+ * reply's other calls. A reply that repeats a call id is malformed under
+ * both. @public
+ */
+export const InvalidCallPolicy = Schema.Literals(["corrective", "answer"])
+export type InvalidCallPolicy = typeof InvalidCallPolicy.Type
+
+/**
  * The loop protection a host may set in `LoopLimits`, each field optional:
  * `Agent.define` decodes its `limits` with this (`config.limits`) and a run
  * decodes the turn's merged limits (`turn.limits`), so a bad policy fails
@@ -22,5 +34,6 @@ export const MalformedLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, ma
 export const LoopProtection = Schema.Struct({
   degenerate: Schema.optionalKey(DegeneratePolicy),
   malformedLimit: Schema.optionalKey(MalformedLimit),
+  invalidCalls: Schema.optionalKey(InvalidCallPolicy),
 })
 export type LoopProtection = typeof LoopProtection.Type

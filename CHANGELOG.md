@@ -8,6 +8,36 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `LoopLimits.invalidCalls` (`InvalidCallPolicy`, core): what a whole
+  reply's call to a tool the step does not have, or with parameters its
+  schema does not decode, costs. `corrective`, the default, keeps today's
+  behaviour: none of the reply's calls runs and the reply is answered as
+  malformed. `answer` answers each such call alone, as its result, and runs
+  the reply's other calls, so a host whose replies batch independent calls
+  (a render next to a publish) does not lose the good ones to one bad call.
+  The answers are recorded with the reply, in its record; the step ends
+  `completed` with no corrective; the journal shows such a call `Completed`
+  with no start. A reply that repeats a call id is malformed under both.
+  Set it in `Agent.define`'s `limits` or a turn's `limits`; `LoopProtection`
+  decodes it (`config.limits`, `turn.limits`), and `runLoop` takes it as
+  `invalidCalls`. The new model-facing text is the answer,
+  `rejectedCallFailure`: `{ error: "ToolNotFound", message }` (the step's
+  tools and the name it wrote, framed as `tool-name`) or
+  `{ error: "InvalidParameters", message }` (the decoder's report, framed as
+  `parameter-errors`), clipped at 600 characters. `stepLoopConformance` adds
+  the checks `invalid-calls` and `invalid-calls-record`: a host's own
+  `StepLoop` that ignores `limits.invalidCalls`, or records an answered call
+  apart from its reply, fails them.
+- A host fingerprints the tool contracts and skill text the model sees, to
+  version them: `@xandreed/core` exports `toolParametersSchema` (a tool's
+  parameters as the model sees them) and `strictJsonSchema` (any schema in
+  that model-facing JSON Schema form) from its root again, and
+  `@xandreed/plugin-tool-discovery` exports `skillInstructions` (the exact
+  text `load_skill` returns) and `catalogText` (the skill catalogue
+  section's text).
+
 ## 0.15.0 — 2026-11-02
 
 Agents that outlive their process and take direction while they work: a

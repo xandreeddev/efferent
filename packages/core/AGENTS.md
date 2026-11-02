@@ -40,8 +40,9 @@ declared in `internal/` are root API too, declared again at the end of
 `src/index.ts` (the same value, or a type of the same shape, since a root
 entry may not re-export what that folder declares:
 `scripts/api-snapshot.ts`): `compileGlob` and its types (the workspace
-plugin uses them), and `assistantModel` and `assistantUsage` (documented for
-hosts).
+plugin uses them), `assistantModel` and `assistantUsage` (documented for
+hosts), and `toolParametersSchema` and `strictJsonSchema` (a host
+fingerprints the tool contracts the model sees, to version them).
 
 The credential and settings stores (`AuthStore`, `SettingsStore`) are not
 core's: they are the models plugin's own ports, exported with their kits by

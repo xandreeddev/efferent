@@ -832,8 +832,12 @@ Pollable tools do not count. `limits.malformedLimit` defaults to 3: the third
 consecutive unusable reply fails the run, so at most two corrective replies
 are sent. Set it to 1 to fail on the first malformed reply. A cut reply and
 a malformed reply reset each other's streak. These policies never bypass
-`maxSteps`, and a final step appends no unread nudge or corrective. Core's
-`LoopProtection` schema decodes both: `Agent.define` refuses its `limits`
+`maxSteps`, and a final step appends no unread nudge or corrective.
+`limits.invalidCalls` (`InvalidCallPolicy`) says what a whole reply's call
+to a tool the step does not have, or with parameters that do not decode,
+costs: `corrective` (the default) answers the whole reply as malformed, and
+`answer` answers that call alone and runs the reply's others (below). Core's
+`LoopProtection` schema decodes all three: `Agent.define` refuses its `limits`
 with `config.limits`, and a run refuses its merged limits (a turn policy's
 over the agent's) with `turn.limits` before any provider call.
 
@@ -861,6 +865,22 @@ turn's `limits.toolConcurrency` defaults to 1), their results in call order. Whe
 `malformed`, and the loop answers it with the corrective for the first call
 that failed (a tool the model does not have, or parameters that do not
 match, with what it wrote).
+
+A host whose replies batch independent calls (a render next to a publish)
+can keep one bad call from costing the others: with `limits.invalidCalls:
+"answer"`, each call that names a tool the step does not have, or whose
+parameters do not decode, is not run and is answered, as its result, with a
+failure the model reads: `{ error: "ToolNotFound", message }`, the tools it
+can call and the name it wrote, or `{ error: "InvalidParameters", message }`,
+the decoder's report on its parameters, each framed and clipped at 600
+characters. The answers are recorded with the reply, in its record, as a
+cut reply's are; the reply's other calls run as usual, and the step ends
+`completed`, with no corrective. A reply whose calls are all answered so
+still ends its step `completed`, and the run goes on to the next step. The
+journal shows such a call `Completed` with no start (`toolCallStatesOf`),
+and the degenerate-loop breaker counts the same answered call again and
+again as no progress. A reply that repeats a call id is malformed under
+both policies: one id must name one call.
 
 A response cut short runs none of its calls, and its calls are not checked:
 each is answered, as the call's result, with a failure the model reads,

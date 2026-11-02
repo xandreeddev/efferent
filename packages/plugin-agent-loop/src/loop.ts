@@ -3,7 +3,7 @@ import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
 import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
 import { CurrentToolResultReceipt, foldStreamParts, makeToolResultReceipt, withToolResultReceiptGuard } from "@xandreed/core/internal"
-import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
+import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, InvalidCallPolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, ModelOverflowEvidence, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
@@ -13,8 +13,8 @@ import { plannedCallIdOf, responseModelOf, ToolCallId } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
-import { DUPLICATE_CALL_IDS, duplicateCallCorrective, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
-import type { CutReason } from "./response-gate.entity.js"
+import { callRejections, DUPLICATE_CALL_IDS, duplicateCallCorrective, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import type { CutReason, MalformedCall, RejectedCall } from "./response-gate.entity.js"
 import { claimRecovery, initialAttempt, settledAttempt, visibleAttempt } from "./request-attempt.entity.functions.js"
 
 /**
@@ -139,6 +139,15 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   readonly degenerate?: DegeneratePolicy
   /** Fail on this consecutive malformed response; default 3 permits two corrective requests. */
   readonly malformedLimit?: number
+  /**
+   * A whole response's call to a tool the step does not have, or with
+   * parameters its schema does not decode: `corrective` (the default) runs
+   * none of the response's calls and answers it as malformed; `answer`
+   * answers each such call with a failure result (`rejectedCallFailure`),
+   * recorded with the response, and runs its other calls. A repeated call
+   * id is malformed under both.
+   */
+  readonly invalidCalls?: InvalidCallPolicy
   /** Run-pinned deterministic capability selection, refreshed between steps
    * and sent in the order returned (append new tools to keep the prefix stable).
    * A capability-expansion tool can update this selection for the next call.
@@ -334,7 +343,7 @@ const DEFAULT_MALFORMED_LIMIT = 3
 const REPEAT_NUDGE_AT = 3
 const REPEAT_BREAK_AT = 5
 const defaultDegenerate: DegeneratePolicy = { _tag: "Enabled", nudgeAfter: REPEAT_NUDGE_AT, breakAfter: REPEAT_BREAK_AT }
-const loopPolicy = Schema.Struct({ degenerate: DegeneratePolicy, malformedLimit: MalformedLimit })
+const loopPolicy = Schema.Struct({ degenerate: DegeneratePolicy, malformedLimit: MalformedLimit, invalidCalls: InvalidCallPolicy })
 
 /** @public */
 export const DEGENERATE_REPEAT_NUDGE =
@@ -349,8 +358,6 @@ export const DEGENERATE_LOOP_STOP =
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
 
-/** The longest decoder report, or tool name, the malformed corrective quotes. */
-const CORRECTIVE_QUOTE_CHARS = 600
 
 /** What the model can call now, and how to answer, closing each corrective of a malformed reply. */
 const replyAgain = (tools: ReadonlyArray<string>): string => tools.length === 0
@@ -370,8 +377,8 @@ const replyAgain = (tools: ReadonlyArray<string>): string => tools.length === 0
  * schema, not the model's words.
  */
 const malformedCorrective = (reason: MalformedResponse["reason"], tools: ReadonlyArray<string>): string => Match.valueTags(reason, {
-  ToolNotFoundError: (notFound) => `${hostNote(`your previous reply called a tool you do not have; its name follows, as you wrote it. ${replyAgain(tools)}`)}\n\n${framed("tool-name", clipTo(notFound.toolName, CORRECTIVE_QUOTE_CHARS))}`,
-  ToolParameterValidationError: (invalid) => `${hostNote(`your previous reply called ${invalid.toolName} with parameters that do not match its schema; what did not match follows, and it may quote your reply. ${replyAgain(tools)}`)}\n\n${framed("parameter-errors", clipTo(invalid.description, CORRECTIVE_QUOTE_CHARS))}`,
+  ToolNotFoundError: (notFound) => `${hostNote(`your previous reply called a tool you do not have; its name follows, as you wrote it. ${replyAgain(tools)}`)}\n\n${framed("tool-name", clipTo(notFound.toolName, QUOTE_CHARS))}`,
+  ToolParameterValidationError: (invalid) => `${hostNote(`your previous reply called ${invalid.toolName} with parameters that do not match its schema; what did not match follows, and it may quote your reply. ${replyAgain(tools)}`)}\n\n${framed("parameter-errors", clipTo(invalid.description, QUOTE_CHARS))}`,
   InvalidOutputError: (invalid) => invalid.description === DUPLICATE_CALL_IDS ? duplicateCallCorrective(tools)
     : hostNote(`your previous reply could not be decoded, which usually means a tool call's arguments were not valid JSON. ${replyAgain(tools)}`),
 })
@@ -549,6 +556,20 @@ const cutResult = (call: Response.ToolCallPart<string, unknown>, reason: CutReas
   })
 }
 
+/** The answer to a whole response's tool call the loop will not run, under `invalidCalls: "answer"` (`rejectedCallFailure`). */
+const rejectedResult = (call: Response.ToolCallPart<string, unknown>, rejection: RejectedCall, tools: ReadonlyArray<string>): Response.AnyPart => {
+  const failure = rejectedCallFailure(rejection, tools)
+  return Response.makePart("tool-result", {
+    id: call.id, name: call.name, providerExecuted: false, preliminary: false,
+    result: failure, encodedResult: failure, isFailure: true,
+  })
+}
+
+/** A whole response's call: run by the loop, or answered without running (`rejectedResult`). */
+type CallPlan =
+  | { readonly _tag: "Run"; readonly call: Response.ToolCallPart<string, unknown> }
+  | { readonly _tag: "Answer"; readonly part: Response.AnyPart }
+
 /** @public */
 export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = never>(
   options: RunLoopOptions<Tools, E, R>,
@@ -558,6 +579,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     const policy = yield* Schema.decodeUnknownEffect(loopPolicy)({
       degenerate: options.degenerate ?? defaultDegenerate, malformedLimit: options.malformedLimit ?? DEFAULT_MALFORMED_LIMIT,
+      invalidCalls: options.invalidCalls ?? "corrective",
     }).pipe(Effect.mapError((cause) => harnessError("config.options", "Loop policy limits are invalid", cause)))
     const pollable: ReadonlySet<string> = new Set(options.pollableTools ?? [])
     const captureTraceContent = options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent))
@@ -820,8 +842,13 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         const calls = response.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : [])
         const verdict = verdictOf(outcome.finishReason, calls.length > 0)
         // A whole response runs its calls only once every one names a tool the step has and its
-        // parameters decode: one that does not is a malformed response, and none of them ran.
-        const malformed = verdict._tag === "Whole" ? yield* malformedCall(calls, selectedTools) : Option.none()
+        // parameters decode: one that does not is a malformed response, and none of them ran. Under
+        // `invalidCalls: "answer"` only a repeated id is: a call the loop can answer alone is answered
+        // with a failure result, and the others run.
+        const rejections = verdict._tag === "Whole" ? yield* callRejections(calls, selectedTools) : calls.map(() => Option.none<MalformedCall>())
+        const malformed = Arr.findFirst(rejections, (rejection) => policy.invalidCalls === "answer"
+          ? Option.filter(rejection, (found) => !isRejectedCall(found))
+          : rejection)
         if (Option.isSome(malformed)) {
           const reason = Match.valueTags(malformed.value, {
             NotFound: (missing) => new AiError.ToolNotFoundError({ toolName: missing.toolName, availableTools: toolNames }),
@@ -832,10 +859,16 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         }
         // Store the assistant's complete request before any handler can run. Provider-executed
         // results stay inside that message. A killed process leaves the exact pending calls.
-        // A cut response's calls never run: their answers are stored with it, in the same record,
-        // so no reopened log shows a cut call without its result.
+        // A cut response's calls never run, nor do a whole one's the loop answers instead: their
+        // answers are stored with it, in the same record, so no reopened log shows such a call without
+        // its result.
+        const plans = Arr.zip(calls, rejections).map(([call, rejection]): CallPlan =>
+          Option.match(Option.filter(rejection, isRejectedCall), {
+            onNone: () => ({ _tag: "Run", call }),
+            onSome: (rejected) => ({ _tag: "Answer", part: rejectedResult(call, rejected, toolNames) }),
+          }))
         const answered = Match.valueTags(verdict, {
-          Whole: (): ReadonlyArray<Response.AnyPart> => [],
+          Whole: (): ReadonlyArray<Response.AnyPart> => plans.flatMap((plan) => Match.valueTags(plan, { Run: () => [], Answer: (answer) => [answer.part] })),
           Cut: (cut) => calls.map((call) => cutResult(call, cut.reason)),
         })
         const usage = extractUsage(outcome.usage, response)
@@ -867,7 +900,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           )
         })
         const results = yield* Match.valueTags(verdict, {
-          Whole: () => Effect.forEach(calls, invoke, { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
+          Whole: () => Effect.forEach(plans, (plan) => Match.valueTags(plan, {
+            Run: (run) => invoke(run.call),
+            Answer: (answer) => Effect.succeed(answer.part),
+          }), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
           Cut: () => Effect.succeed(answered),
         })
         const cut = verdict._tag === "Cut" ? Option.some(verdict.reason) : Option.none<CutReason>()
@@ -882,8 +918,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         })
         const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         const toolResults = responseToolResults(content)
-        // Calls that ran: a cut response's were answered, not run.
-        yield* Option.isSome(cut) ? Effect.void : Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
+        // Calls that ran: a cut response's were answered, not run, as were a whole one's the loop answered instead.
+        const answeredIds: ReadonlySet<string> = new Set(responseToolResults(answered).map((result) => result.id))
+        yield* Option.isSome(cut) ? Effect.void : Effect.forEach(toolResults.filter((tr) => !answeredIds.has(tr.id)), (tr) => Metric.update(tagged(engineToolCalls, {
           "engine.tool": tr.toolName, "engine.ok": tr.ok ? "true" : "false",
         }), 1), { concurrency: 1 })
         return {
@@ -926,7 +963,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         return { ...state, ...settledText(state, ""), turnIndex: recoveredIndex, malformedStreak: streak, cutStreak: 0, phase: "step-cap" } satisfies LoopState
       }
       const reason = malformed.err.reason
-      const desc = clipTo("description" in reason ? reason.description : reason.message, CORRECTIVE_QUOTE_CHARS)
+      const desc = clipTo("description" in reason ? reason.description : reason.message, QUOTE_CHARS)
       yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
       yield* Metric.update(tagged(engineCorrections, { "engine.kind": "malformed" }), 1)
       const corrective: AgentMessage = {

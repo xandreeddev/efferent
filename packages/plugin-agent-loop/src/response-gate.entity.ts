@@ -19,15 +19,21 @@ export const WholeReason = FinishReason.pick(["stop", "tool-calls", "pause"])
 export type CutReason = Exclude<FinishReason, typeof WholeReason.Type>
 
 /**
- * A tool call of a whole response the loop will not run, and so runs none
- * of the response's: a tool the step does not have, or parameters its tool's
- * schema does not decode (with the decoder's report). The loop answers it as
- * a malformed response.
+ * A tool call of a whole response the loop will not run: a tool the step
+ * does not have, parameters its tool's schema does not decode (with the
+ * decoder's report), or an id an earlier call of the response has. The loop
+ * answers the response as malformed and runs none of its calls, unless the
+ * host's `invalidCalls` is `answer`: then a call it can answer alone
+ * (`RejectedCall`) is answered with a failure result and the others run.
  */
 export type MalformedCall =
+  | RejectedCall
+  | { readonly _tag: "DuplicateId"; readonly toolName: string }
+
+/** A call the loop can answer alone, without its response's other calls: one that names no tool the step has, or whose parameters do not decode. */
+export type RejectedCall =
   | { readonly _tag: "NotFound"; readonly toolName: string }
   | { readonly _tag: "Invalid"; readonly toolName: string; readonly description: string }
-  | { readonly _tag: "DuplicateId"; readonly toolName: string }
 
 /** What a response is worth running: whole (its calls run), or cut short for `reason` (none of them runs). */
 export type ResponseVerdict =
