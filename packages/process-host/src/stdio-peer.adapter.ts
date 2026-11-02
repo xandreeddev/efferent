@@ -48,6 +48,8 @@ const makePeer = Effect.fnUntraced(function*(options: StdioPeerOptions) {
   const scope = yield* Effect.scope
   const wake = yield* Queue.sliding<void>(1)
   const serial = yield* Semaphore.make(1)
+  // Pending writer slots: a full set makes the next writer wait, never fail at once.
+  const slots = yield* Semaphore.make(config.maxPendingWrites)
   const phase = MutableRef.make<ProcessPeerPhase>({ _tag: "Open" })
   const source = MutableRef.make<ProcessInputPhase>(input.readableEnded ? { _tag: "Ended" }
     : input.destroyed ? { _tag: "Failed", error: peerError("Closed", "input") } : { _tag: "Open" })
@@ -102,6 +104,8 @@ const makePeer = Effect.fnUntraced(function*(options: StdioPeerOptions) {
     pending.forEach((ack) => { Deferred.doneUnsafe(ack, Effect.fail(error)) })
     Option.map(activeWrite.current, (ack) => Deferred.doneUnsafe(ack, Effect.fail(error)))
     signal()
+    // Writers waiting for a slot wake now and observe the closed peer, rather than wait out their timeout.
+    yield* slots.releaseAll
     // A synchronous native callback can schedule its error event on the next tick.
     yield* Effect.callback<void>((resume) => {
       const handle = setImmediate(() => resume(Effect.void))
@@ -238,12 +242,17 @@ const makePeer = Effect.fnUntraced(function*(options: StdioPeerOptions) {
     if (byteLength > config.maxFrameBytes) return yield* Effect.fail(peerError("FrameTooLarge", "output"))
     yield* nativeWrite(encoder.encode(`${text}\n`))
   })
+  const failIfFailed = Effect.suspend(() => Option.match(currentFailure(), { onNone: () => Effect.void, onSome: Effect.fail }))
+  /** Wait for a free writer slot, at most the write timeout: a latched failure ends every accepted writer, and disposal releases every slot. */
+  const reserve = failIfFailed.pipe(
+    Effect.andThen(slots.take(1).pipe(Effect.timeoutOrElse({ duration: config.writeTimeoutMs, orElse: () => Effect.fail(peerError("Capacity", "output")) }))),
+  )
   const send = Effect.fn("process_peer.send")((event: ProcessEvent) => Effect.uninterruptibleMask((restore) => Effect.gen(function*() {
     const ack = yield* Deferred.make<void, ProcessPeerError>()
+    yield* restore(reserve)
     yield* Effect.suspend(() => {
       const failure = currentFailure()
-      if (Option.isSome(failure)) return Effect.fail(failure.value)
-      if (pending.size >= config.maxPendingWrites) return Effect.fail(peerError("Capacity", "output"))
+      if (Option.isSome(failure)) return slots.release(1).pipe(Effect.andThen(Effect.fail(failure.value)))
       pending.add(ack)
       return Effect.void
     })
@@ -253,14 +262,16 @@ const makePeer = Effect.fnUntraced(function*(options: StdioPeerOptions) {
       Effect.onExit((exit) => Effect.sync(() => {
         Exit.match(exit, {
           onFailure: (cause) => {
-            const error = Option.getOrElse(Cause.findErrorOption(cause), () => peerError("Output", "output", cause))
+            // Only the peer's own scope interrupts a worker: that is disposal, not an output failure.
+            const error = Cause.hasInterruptsOnly(cause) ? peerError("Closed", "output")
+              : Option.getOrElse(Cause.findErrorOption(cause), () => peerError("Output", "output", cause))
             latch(error)
             Deferred.doneUnsafe(ack, Effect.fail(error))
           },
           onSuccess: () => { Deferred.doneUnsafe(ack, Effect.void) },
         })
         pending.delete(ack)
-      })),
+      }).pipe(Effect.andThen(slots.release(1)))),
       Effect.exit,
     )
     yield* Effect.forkIn(restore(worker), scope)

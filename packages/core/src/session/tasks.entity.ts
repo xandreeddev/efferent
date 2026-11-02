@@ -62,10 +62,17 @@ export class TaskMissing extends Schema.TaggedError<TaskMissing>()("TaskMissing"
   taskId: ConversationId,
 }) {}
 
-/** A task control which its current state or the supplied asking context cannot accept. */
+/**
+ * A task control which its current state or the supplied asking context cannot
+ * accept: the task finished (`inactive`), it waits for an answer (`waiting`),
+ * the asking turn already asked or a question is outstanding (`question`), no
+ * pending question has the answered id (`unknown-question`), or the ask came
+ * from outside the task's current turn (`context`). `harnessCodeOf` gives each
+ * reason its own code (`TAGGED_REASON_CODES`).
+ */
 export class TaskControlRefused extends Schema.TaggedError<TaskControlRefused>()("TaskControlRefused", {
   session: ConversationId,
   taskId: ConversationId,
-  reason: Schema.Literals(["inactive", "waiting", "question", "context"]),
+  reason: Schema.Literals(["inactive", "waiting", "question", "unknown-question", "context"]),
   message: Schema.String,
 }) {}

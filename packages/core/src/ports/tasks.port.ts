@@ -64,7 +64,8 @@ export class Tasks extends Context.Service<Tasks, {
   /**
    * Store the answer and enqueue its exact next-turn input. A full inbox
    * leaves an accepted durable answer for reconcile, with enqueued false.
-   * Exact duplicate answers never execute the child again.
+   * Exact duplicate answers never execute the child again. An id that no
+   * pending question has fails `TaskControlRefused` (`unknown-question`).
    */
   readonly answer: (parent: SessionAddress, taskId: ConversationId, input: { readonly questionId: TaskQuestionId; readonly text: string }) =>
     Effect.Effect<{ readonly accepted: true; readonly enqueued: boolean }, TaskMissing | SessionMissing | SessionContended | SessionLogError | TaskControlRefused | TaskConflict>

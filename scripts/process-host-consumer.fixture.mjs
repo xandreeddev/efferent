@@ -1,13 +1,13 @@
 /** The same real process protocol journey runs against source Bun and packed Node/Bun. */
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises"
+import { access, appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { Readable, Writable } from "node:stream"
 import { fileURLToPath } from "node:url"
-import { Context, Effect, Layer, MutableRef, Option, Schema, Stream } from "effect"
+import { Context, Effect, Layer, MutableRef, Option, Schedule, Schema, Stream } from "effect"
 import { LanguageModel, Tool } from "effect/ai"
 import {
   ConversationId, defineCapability, defineSkill, defineTool, Failure,
@@ -78,7 +78,10 @@ const childMain = async (directory, kind, hardDeadlineMs) => runProcessHost({
     const agent = yield* Agent.define({
       plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
       capabilities: [defineCapability({ id: "process-host-fixture", version: "1", tools: [defineTool({ tool: Hold, handler: () =>
-        Effect.sync(() => process.stderr.write("handler-entered\n")).pipe(Effect.andThen(kind === "stuck-work" ? Effect.uninterruptible(Effect.never) : Effect.never)),
+        Effect.sync(() => process.stderr.write("handler-entered\n")).pipe(Effect.andThen(kind === "stuck-work" ? Effect.uninterruptible(Effect.never)
+          // The steer journey's parent releases the call once its steer is acknowledged.
+          : kind === "steer" ? Effect.tryPromise(() => access(join(directory, "release"))).pipe(Effect.retry(Schedule.spaced("10 millis")), Effect.orDie, Effect.as("released"))
+            : Effect.never)),
       })], skills: [defineSkill({ id: "process-host-fixture", summary: "Use the fixture checkpoint.", tools: [Hold.name], always: true })] })],
       turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 3 },
     })
@@ -87,7 +90,7 @@ const childMain = async (directory, kind, hardDeadlineMs) => runProcessHost({
       generateText: (options) => Effect.gen(function* () {
         calls.value++
         yield* Effect.tryPromise(() => appendFile(join(directory, "calls.ndjson"), `${JSON.stringify(options.prompt.content)}\n`)).pipe(Effect.orDie)
-        if ((kind === "block" || kind === "stuck-work") && calls.value === 1) return [{ type: "tool-call", id: "process-held-call", name: Hold.name, params: {} }, finish("tool-calls")]
+        if ((kind === "block" || kind === "stuck-work" || kind === "steer") && calls.value === 1) return [{ type: "tool-call", id: "process-held-call", name: Hold.name, params: {} }, finish("tool-calls")]
         if (kind === "stalled-output") {
           yield* Effect.sync(() => process.stderr.write("large-output\n"))
           return [{ type: "text", text: "x".repeat(8 * 1024 * 1024) }, finish()]
@@ -202,6 +205,49 @@ const controls = async (directory) => {
     await peer.shutdown()
     return { controlsResponsive: true, durableQueueAck: true, cancelExactTurn: true, lifecycleAckVerified: true, protocolOnlyStdout: true }
   } finally { await peer.close() }
+}
+
+/** A steer sent while a tool runs reaches the same turn's next model call, as its own user message. */
+const steering = async (directory) => {
+  const peer = start(directory, "steer")
+  try {
+    await peer.hello()
+    await peer.send(begin("steer-begin"))
+    await peer.until(() => peer.stderr.text.includes("handler-entered"), "tool did not enter")
+    await peer.send(queued("steer", "running-steer"))
+    assert.equal((await peer.frame("queued", "running-steer")).enqueued, true)
+    await writeFile(join(directory, "release"), "")
+    assert.equal((await peer.frame("begin.result", "steer-begin")).result.outcome, "completed")
+    const requests = (await readFile(join(directory, "calls.ndjson"), "utf8")).trim().split("\n")
+    assert.equal(requests.length, 2, "the steer did not reach the running turn's next model call")
+    assert.ok(!requests[0].includes("steer checkpoint"), "the steer reached a call made before it was sent")
+    assert.ok(requests[1].includes("steer checkpoint"), "the running turn's next model call lacked the durable steer")
+    const state = await audit(directory)
+    const taken = state.events.filter((row) => row.kind === "inbox.taken" && row.data.id === "running-steer")
+    assert.equal(taken.length, 1, "the steer was not taken exactly once")
+    assert.ok(Option.contains(taken[0].turn, 1), "the steer was taken outside the running turn")
+    assert.equal(state.events.filter((row) => row.kind === "turn.started").length, 1, "the steer started another turn")
+    await peer.shutdown()
+    return { steerReachesRunningTurn: true }
+  } finally { await peer.close() }
+}
+
+/**
+ * The parent closes its end of the child's stdout, then stdin. Node reports the
+ * write to the closed pipe (EPIPE), so the child exits 1; Bun reports such a
+ * write as successful, so its child exits 0 after an unread shutdown frame.
+ */
+const closedStdout = async (directory) => {
+  const peer = start(directory, "idle")
+  try {
+    await peer.hello()
+    peer.child.stdout.destroy()
+    peer.child.stdin.end()
+    const exit = await peer.ended
+    assert.equal(exit.code, process.versions.bun === undefined ? 1 : 0, `closed stdout: ${peer.stderr.text}`)
+    return { closedStdoutExitDocumented: true }
+    // Its reader stays open on the destroyed stream, so only the child is closed here.
+  } finally { if (peer.child.exitCode === null && peer.child.signalCode === null) peer.child.kill("SIGKILL") }
 }
 
 const restart = async (directory, signal) => {
@@ -352,6 +398,8 @@ else {
     const report = { runtime: process.release.name === "node" && !process.versions.bun ? `Node ${process.versions.node}` : `Bun ${process.versions.bun}`,
       ...await peerKit(),
       ...await controls(join(directory, "controls")),
+      ...await steering(join(directory, "steering")),
+      ...await closedStdout(join(directory, "closed-stdout")),
       ...await restart(join(directory, "term"), "SIGTERM"),
       ...await restart(join(directory, "kill"), "SIGKILL"),
       ...await nativeDeadlines(directory),

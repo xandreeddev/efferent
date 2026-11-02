@@ -68,7 +68,10 @@ on Node and Bun in `bun run verify:packages`).
   `flushTelemetry`. It adds no LangSmith/provider/OpenTelemetry SDK.
   `LangSmithTelemetryOptions` requires a Redacted API key and one exclusive
   `LangSmithTarget`: Project, or Agent plus one `LangSmithEnvironment`.
-  The full `tracesUrl` is used verbatim, defaulting to the US SaaS
+  An optional `workspaceId` is sent as LangSmith's documented `X-Tenant-Id`
+  header, which a key linked to several workspaces needs. `protocol` defaults
+  to `http/protobuf`, the encoding LangSmith documents; `http/json` is for
+  local collectors. The full `tracesUrl` is used verbatim, defaulting to the US SaaS
   `/otel/v1/traces` endpoint. Target, key, URL and timing validation fail with
   the fixed secret-free `config.options` message; parse inputs and causes are
   never attached. Actual native Headers validation at the transport boundary
@@ -100,7 +103,10 @@ on Node and Bun in `bun run verify:packages`).
   No global SpanTransformer, response accumulator or wrapping model is added.
   Current cache-write spelling wins; deprecated cache_creation maps only when
   current cache_write is absent. The provider-name compatibility alias is
-  destination-specific. Already-gated engine step input/output may map to
+  destination-specific. An LLM or embedding run names its priced model in
+  `langsmith.metadata.ls_model_name` (LangSmith prices by that metadata, while
+  `gen_ai.*` model names map only to invocation parameters): the response
+  model, else the request model, never over a host-authored value. Already-gated engine step input/output may map to
   chain input.value/output.value, with existing clipping; the exporter does
   not read payloads or override content consent. Tests use scripted models
   and local collectors. Live LangSmith ingestion remains UNVERIFIED.

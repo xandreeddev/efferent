@@ -12,8 +12,9 @@ import { DEFAULT_SERVICE_NAME } from "./otlp-telemetry.entity.js"
 
 /**
  * Trace-only LangSmith OTLP export over the host's HttpClient. The target is
- * one project or registered agent/environment. tracesUrl is a full signal
- * endpoint, used verbatim. Native Effect AI operations own inference usage;
+ * one project or registered agent/environment; workspaceId selects the
+ * workspace of a key linked to several (`X-Tenant-Id`). tracesUrl is a full
+ * signal endpoint, used verbatim. Native Effect AI operations own inference usage;
  * framework wrappers remain chains. Missing custom-model usage stays absent.
  * Capture/retention consent remains the host's existing trace-content policy.
  * The local collector verifies emitted OTLP; live LangSmith ingestion is UNVERIFIED.
@@ -26,7 +27,11 @@ export const LangSmithTelemetryHttpLive = (options: LangSmithTelemetryOptions): 
       Project: (target): Readonly<Record<string, string>> => ({ "Langsmith-Project": target.project }),
       Agent: (target): Readonly<Record<string, string>> => ({ "Langsmith-Agent-Id": target.agentId, "Langsmith-Agent-Environment": target.environment }),
     })
-    const headers = { ...destinationHeaders, "x-api-key": Redacted.value(config.apiKey) }
+    const headers = {
+      ...destinationHeaders,
+      ...(config.workspaceId === undefined ? {} : { "X-Tenant-Id": config.workspaceId }),
+      "x-api-key": Redacted.value(config.apiKey),
+    }
     // Validate the actual transport's ByteString/header constraints before an
     // exporter exists. Native errors may repeat a value, so keep no cause.
     yield* Effect.try({ try: () => new Headers(headers), catch: () => harnessError("config.options", LANGSMITH_OPTIONS_ERROR) })

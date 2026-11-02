@@ -1,4 +1,4 @@
-import { Effect, Fiber, Result, Stream } from "effect"
+import { Effect, Fiber, Option, Result, Stream } from "effect"
 import type { Context, Scope } from "effect"
 import { check, ConformanceFailure } from "@xandreed/core/conformance"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
@@ -101,15 +101,29 @@ export const processPeerConformance = (subject: ProcessPeerSubject): ReadonlyArr
     yield* Fiber.join(send)
     yield* Fiber.join(flush)
   }))),
-  check("rejects excess pending writers before encoding", "writer-capacity", () => Effect.scoped(Effect.gen(function*() {
-    const fixture = yield* subject.open({ holdWrites: true, maxPendingWrites: 1 })
-    const send = yield* fixture.peer.send(hello()).pipe(Effect.forkScoped)
+  check("makes an excess writer wait for a bounded slot, before encoding, for at most the write timeout", "writer-capacity", () => Effect.scoped(Effect.gen(function*() {
+    const fixture = yield* subject.open({ holdWrites: true, maxPendingWrites: 1, writeTimeoutMs: 60_000 })
+    const first = yield* fixture.peer.send(hello("one")).pipe(Effect.forkScoped)
     const writes = yield* eventually(fixture.writes, (chunks) => chunks.length > 0)
     yield* expect("writer-capacity", writes.length === 1, "the first write must occupy the bounded slot")
-    const result = yield* Effect.result(fixture.peer.send(hello("two")))
-    yield* expect("writer-capacity", Result.isFailure(result) && result.failure.reason === "Capacity", "excess pending writes must fail with Capacity")
+    const second = yield* Effect.result(fixture.peer.send(hello("two"))).pipe(Effect.forkScoped)
+    yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+    yield* expect("writer-capacity", second.pollUnsafe() === undefined && (yield* fixture.writes).length === 1,
+      "an excess writer must wait for a free slot without failing or writing")
     yield* fixture.releaseWrites
-    yield* Fiber.join(send)
+    yield* Fiber.join(first)
+    const waited = yield* Fiber.join(second)
+    yield* fixture.peer.flush
+    yield* expect("writer-capacity", Result.isSuccess(waited)
+      && outputText(yield* fixture.writes) === '{"_tag":"hello","requestId":"one","protocolVersion":1}\n{"_tag":"hello","requestId":"two","protocolVersion":1}\n',
+    "the waiting writer must be written once a slot frees")
+    const stalled = yield* subject.open({ holdWrites: true, maxPendingWrites: 1, writeTimeoutMs: 20 })
+    const held = yield* Effect.result(stalled.peer.send(hello("held"))).pipe(Effect.forkScoped)
+    yield* eventually(stalled.writes, (chunks) => chunks.length > 0)
+    const bounded = yield* Effect.result(stalled.peer.send(hello("bounded"))).pipe(Effect.timeoutOption(5_000))
+    yield* Fiber.join(held)
+    yield* expect("writer-capacity", Option.exists(bounded, (result) => Result.isFailure(result) && ["Capacity", "WriteTimeout"].includes(result.failure.reason)),
+      "a writer waiting on a stalled output must fail within the write timeout")
   }))),
   check("preserves the first output failure for flush and later sends", "failure-latch", () => Effect.scoped(Effect.gen(function*() {
     const fixture = yield* subject.open({ holdWrites: true })

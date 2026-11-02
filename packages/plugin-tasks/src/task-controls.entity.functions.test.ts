@@ -19,6 +19,7 @@ test("control refusals tell the model how to proceed exactly", () => {
     inactive: "The background task has finished; start another task for more work",
     waiting: "The background task needs an answer; use answer_task with its pending question",
     question: "Ask one question per turn and wait for its answer before asking another",
+    "unknown-question": "No question with this id is waiting for an answer; check task_status for the task's pending question and its id",
     context: "Ask from the background task's current turn with its current run and step",
   })
 })

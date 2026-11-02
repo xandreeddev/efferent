@@ -4,6 +4,7 @@ import { Effect, Option, Schema } from "effect"
 const required = [
   "peerKitVerified",
   "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout",
+  "steerReachesRunningTurn", "closedStdoutExitDocumented",
   "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified",
   "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer",
   "secondSignalVerified", "stalledStdoutBounded",

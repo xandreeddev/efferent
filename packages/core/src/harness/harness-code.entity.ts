@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { turnBeginCodes } from "../session/sessions.entity.js"
+import type { TaskControlRefused } from "../session/tasks.entity.js"
 
 /**
  * Every code the framework's packages raise, emit in a protocol error, or store in a `turn.ended`
@@ -97,11 +98,18 @@ export const HARNESS_CODES = [
   "store.open",
   "store.stalled",
   "store.version",
+  "task.conflict",
+  "task.context",
   "task.deadline",
+  "task.inactive",
   "task.lost",
+  "task.missing",
+  "task.question-limit",
+  "task.question-unknown",
   "task.refused",
   "task.removed",
   "task.turn",
+  "task.waiting",
   "tasks.encode",
   "tasks.kind",
   "tasks.lost",
@@ -152,4 +160,24 @@ export const TAGGED_CODES = {
   InputConflict: "inbox.input-conflict",
   TurnClosed: "turn.closed",
   ReservedKind: "events.reserved",
+  TaskMissing: "task.missing",
+  TaskConflict: "task.conflict",
 } as const satisfies Readonly<Record<string, HarnessCode>>
+
+/**
+ * The code a tagged error stands for by its `reason`, for tags whose reasons
+ * call for different handling: a task control refusal tells a host whether
+ * the task finished, waits for an answer or was answered under an unknown
+ * question id. `harnessCodeOf` reads it after `TAGGED_CODES`.
+ *
+ * @public
+ */
+export const TAGGED_REASON_CODES = {
+  TaskControlRefused: {
+    inactive: "task.inactive",
+    waiting: "task.waiting",
+    question: "task.question-limit",
+    "unknown-question": "task.question-unknown",
+    context: "task.context",
+  },
+} as const satisfies { readonly TaskControlRefused: Readonly<Record<TaskControlRefused["reason"], HarnessCode>> }

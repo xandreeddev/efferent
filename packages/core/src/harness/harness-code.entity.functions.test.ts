@@ -19,7 +19,8 @@ import {
   TurnDuplicate,
   TurnRefused,
 } from "../session/sessions.entity.js"
-import { HARNESS_CODES, HarnessCode, TAGGED_CODES } from "./harness-code.entity.js"
+import { TaskConflict, TaskControlRefused, TaskMissing } from "../session/tasks.entity.js"
+import { HARNESS_CODES, HarnessCode, TAGGED_CODES, TAGGED_REASON_CODES } from "./harness-code.entity.js"
 import { harnessCodeOf, harnessError } from "./harness-code.entity.functions.js"
 import { HarnessError } from "./plugin.entity.js"
 import { isHarnessError } from "./plugin.entity.functions.js"
@@ -48,6 +49,8 @@ const tagged = [
   new SessionLogError({ code: "store.busy", message: "the database is locked" }),
   new TurnClosed({ session, turn: 2, reason: "cancelled" }),
   new ReservedKind({ kind: "turn.ended" }),
+  new TaskMissing({ session, taskId: session }),
+  new TaskConflict({ session, taskId: session }),
 ]
 
 describe("harnessCodeOf", () => {
@@ -68,6 +71,16 @@ describe("harnessCodeOf", () => {
     expect(tagged.map((error) => harnessCodeOf({ ...error, _tag: error._tag }))).toEqual(tagged.map((error) => harnessCodeOf(error)))
     expect(harnessCodeOf({ _tag: "SessionBusy" })).toEqual(Option.some("session.busy"))
     expect(harnessCodeOf({ _tag: "HarnessError", code: "events.depth", message: "too deep" })).toEqual(Option.some("events.depth"))
+  })
+
+  test("a task control refusal gives the code of its reason, so a host can tell an unknown question from a finished task", () => {
+    const reasons = Object.keys(TAGGED_REASON_CODES.TaskControlRefused) as ReadonlyArray<keyof typeof TAGGED_REASON_CODES.TaskControlRefused>
+    expect(reasons.map((reason) => harnessCodeOf(new TaskControlRefused({ session, taskId: session, reason, message: "refused" }))))
+      .toEqual(reasons.map((reason) => Option.some(TAGGED_REASON_CODES.TaskControlRefused[reason])))
+    expect(harnessCodeOf(new TaskControlRefused({ session, taskId: session, reason: "unknown-question", message: "refused" }))).toEqual(Option.some("task.question-unknown"))
+    expect(harnessCodeOf({ _tag: "TaskControlRefused", reason: "inactive" })).toEqual(Option.some("task.inactive"))
+    expect(harnessCodeOf({ _tag: "TaskControlRefused", reason: "not-a-reason" })).toEqual(Option.none())
+    expect(Object.values(TAGGED_REASON_CODES.TaskControlRefused).every((code) => (HARNESS_CODES as ReadonlyArray<string>).includes(code))).toBe(true)
   })
 
   test("another tagged error gives its own string code", () => {

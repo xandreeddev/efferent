@@ -52,6 +52,20 @@ describe("LangSmith tracer", () => {
     expect(ended(alias)).toMatchObject({ "gen_ai.system": "explicit", "gen_ai.usage.cache_write.input_tokens": 7 })
   })
 
+  test("an inference run names its priced model in ls_model_name: the answering model, else the requested one, never over an authored name", () => {
+    const tracer = langSmithTracer(Tracer.nativeTracer)
+    const run = (attributes: Readonly<Record<string, string>>, name = "LanguageModel.generateText") => {
+      const span = tracer.span(options(name))
+      Object.entries(attributes).forEach(([key, value]) => span.attribute(key, value))
+      return ended(span)["langsmith.metadata.ls_model_name"]
+    }
+    expect(run({ "gen_ai.request.model": "requested", "gen_ai.response.model": "answered-2026" })).toBe("answered-2026")
+    expect(run({ "gen_ai.request.model": "requested" })).toBe("requested")
+    expect(run({})).toBeUndefined()
+    expect(run({ "gen_ai.request.model": "requested", "langsmith.metadata.ls_model_name": "host-priced" })).toBe("host-priced")
+    expect(run({ "gen_ai.request.model": "requested" }, "engine.step")).toBeUndefined()
+  })
+
   test("wrappers and synthetic calls cannot be reclassified or billed through alternate backend attributes", () => {
     const tracer = langSmithTracer(Tracer.nativeTracer)
     ;["agent.turn", "engine.run", "engine.turn", "providers.generate", "models.utility", "loop.tool_call"].forEach((name) => {

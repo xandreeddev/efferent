@@ -10367,6 +10367,41 @@
         "code": "task.removed",
         "where": "a task's status",
         "meaning": "The task's session was removed with its parent."
+      },
+      {
+        "code": "task.missing",
+        "where": "a `TaskMissing` (`Tasks` controls; a process-host answer's frameworkCode)",
+        "meaning": "The parent started no task under this id."
+      },
+      {
+        "code": "task.conflict",
+        "where": "a `TaskConflict` (`Tasks.start`, `ask`, `answer`)",
+        "meaning": "This task id, question id or answer was already stored with different content; the stored one stands."
+      },
+      {
+        "code": "task.inactive",
+        "where": "a `TaskControlRefused` of reason `inactive`",
+        "meaning": "The task finished or was cancelled; the control changed nothing."
+      },
+      {
+        "code": "task.waiting",
+        "where": "a `TaskControlRefused` of reason `waiting`",
+        "meaning": "The task waits for an answer to its question; steering is refused until it is answered."
+      },
+      {
+        "code": "task.question-limit",
+        "where": "a `TaskControlRefused` of reason `question`",
+        "meaning": "The asking turn already asked, or a question is outstanding: one new question per turn, one outstanding per task."
+      },
+      {
+        "code": "task.question-unknown",
+        "where": "a `TaskControlRefused` of reason `unknown-question`",
+        "meaning": "No pending question of the task has the answered id; read the task's status for its pending question."
+      },
+      {
+        "code": "task.context",
+        "where": "a `TaskControlRefused` of reason `context`",
+        "meaning": "The question was not asked from the task's current turn, run and step."
       }
     ],
     "delivery": {

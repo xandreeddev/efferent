@@ -32,6 +32,9 @@ const finishAttributes = (span: Tracer.Span, type: LangSmithRunType): void => {
   if (inferenceType(type)) {
     alias("gen_ai.provider.name", "gen_ai.system")
     alias("gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_write.input_tokens")
+    // LangSmith prices a run by `metadata.ls_model_name`; gen_ai model names map only to invocation
+    // params. The model that answered names the run, else the one requested; an authored name stays.
+    alias(span.attributes.has("gen_ai.response.model") ? "gen_ai.response.model" : "gen_ai.request.model", "langsmith.metadata.ls_model_name")
   }
   if (type === "chain") {
     alias("engine.step.input", "input.value")

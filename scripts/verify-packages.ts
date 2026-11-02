@@ -917,7 +917,7 @@ await writeFile(join(consumer, "process-host-consumer.mjs"), await readFile(join
 for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   const processChild = Bun.spawn([binary, "process-host-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
   const processReport = await new Response(processChild.stdout).text()
-  const required = ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"]
+  const required = ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "steerReachesRunningTurn", "closedStdoutExitDocumented", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"]
   if (await processChild.exited !== 0 || !processReport.includes(`process-host {"runtime":"${runtime} `) || required.some((name) => !processReport.includes(`"${name}":true`))) {
     console.error(`the packed ${runtime} process host lost protocol responsiveness, peer conformance, bounded shutdown or durable restart evidence`); process.exit(1)
   }

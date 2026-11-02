@@ -1,7 +1,7 @@
 import { Clock, Context, Deferred, Effect, Fiber, FiberSet, Match, Option, Predicate, Ref, Result, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { harnessCodeOf } from "@xandreed/core"
-import type { SessionAddress, SessionLog, TurnRunner } from "@xandreed/core"
+import type { SessionAddress, SessionLog, TurnEvent, TurnRunner } from "@xandreed/core"
 import { ProcessPeer } from "./ports/process-peer.port.js"
 import type { ProcessPeerError } from "./process-peer.entity.js"
 import { PROCESS_PROTOCOL_VERSION } from "./process-protocol.entity.js"
@@ -71,6 +71,21 @@ export const serveProcess = Effect.fn("process.serve")(function* <E>(options: Pr
     _tag: "error", requestId, code, message, fatal: false, ...(frameworkCode === undefined ? {} : { frameworkCode }),
   })
 
+  /**
+   * One event's progress frame. In full mode an event whose content is not JSON
+   * (a BigInt, a cycle, a function) is sent as its projection, labelled
+   * `mode: "projection"`, or omitted when it has none: one tool result never
+   * stops the connection.
+   */
+  const progressOf = (event: TurnEvent) => processProgressOf(event, config.events).pipe(
+    Effect.catch((error) => config.events === "full" && error.reason === "InvalidEvent"
+      ? Effect.logWarning("a turn event's full content is not JSON; its projection is sent instead").pipe(
+        Effect.annotateLogs({ "efferent.event": event._tag }),
+        Effect.andThen(processProgressOf(event, "projection")),
+      )
+      : Effect.fail(error)),
+  )
+
   const observe: ProcessObservers = {
     sessionLog: (inner: Context.Service.Shape<typeof SessionLog>) => ({
       create: (header) => inner.create(header),
@@ -100,7 +115,7 @@ export const serveProcess = Effect.fn("process.serve")(function* <E>(options: Pr
     turnRunner: (inner: TurnRunner): TurnRunner => ({
       turn: (input, use) => inner.turn(input, (turn) => Effect.gen(function* () {
         const address = turn.admitted.session
-        if (config.owners.includes(address.owner)) yield* turn.events.subscribe(Option.some, (event) => processProgressOf(event, config.events).pipe(
+        if (config.owners.includes(address.owner)) yield* turn.events.subscribe(Option.some, (event) => progressOf(event).pipe(
           Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (progress) => Ref.get(state).pipe(Effect.flatMap((current) => send({
             _tag: "turn.event", session: address, turn: turn.turn, runId: turn.runId, progress, ...correlation(processRequestOf(current, address, turn.runId)),
           }))) })),

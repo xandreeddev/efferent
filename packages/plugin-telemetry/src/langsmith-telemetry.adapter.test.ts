@@ -89,6 +89,8 @@ describe("LangSmith OTLP layers", () => {
     expect(llms.reduce((n, span) => n + Number(attrs(span)["gen_ai.usage.input_tokens"]), 0)).toBe(21)
     expect(llms.reduce((n, span) => n + Number(attrs(span)["gen_ai.usage.output_tokens"]), 0)).toBe(6)
     expect(llms.every((span) => attrs(span)["gen_ai.system"] === "fixture" && attrs(span)["gen_ai.response.model"] === "actual")).toBe(true)
+    expect(llms.map((span) => attrs(span)["langsmith.metadata.ls_model_name"])).toEqual(["actual", "actual", "actual"])
+    expect(attrs(emitted.find((span) => span.name === "engine.turn")!)["langsmith.metadata.ls_model_name"]).toBeUndefined()
     const engine = emitted.find((span) => span.name === "engine.turn")!
     expect(attrs(engine)).toMatchObject({ "langsmith.span.kind": "chain", "engine.usage.input_tokens": 21 })
     expect(attrs(engine)["gen_ai.usage.input_tokens"]).toBeUndefined()
@@ -109,6 +111,21 @@ describe("LangSmith OTLP layers", () => {
     expect(observed).toHaveLength(4)
     expect(observed.map((post) => post.headers.get("Langsmith-Agent-Environment"))).toEqual(["local", "development", "staging", "production"])
     expect(observed.every((post) => post.path === "/otel/v1/traces" && post.headers.get("Langsmith-Agent-Id") === "collector-agent" && post.headers.get("Langsmith-Project") === null)).toBe(true)
+  })
+
+  test("a workspace id is sent as LangSmith's X-Tenant-Id header beside either target, and a malformed one is refused", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const endpoint = yield* collector
+      yield* Effect.forEach([project, { _tag: "Agent" as const, agentId: "collector-agent", environment: "local" as const }], (target) => Effect.void.pipe(
+        Effect.withSpan("host.event"),
+        Effect.provide(LangSmithTelemetryLive({ apiKey, target, workspaceId: "11111111-2222-4333-8444-555555555555", tracesUrl: `${endpoint.url}/otel/v1/traces`, protocol: "http/json", exportInterval: "1 hour" })),
+      ), { concurrency: 1 })
+      yield* Effect.void.pipe(Effect.withSpan("host.event"), Effect.provide(LangSmithTelemetryLive({ apiKey, target: project, tracesUrl: `${endpoint.url}/otel/v1/traces`, protocol: "http/json", exportInterval: "1 hour" })))
+      return endpoint.posts
+    })))
+    expect(observed.map((post) => post.headers.get("X-Tenant-Id"))).toEqual(["11111111-2222-4333-8444-555555555555", "11111111-2222-4333-8444-555555555555", null])
+    const refused = await Effect.runPromise(Effect.exit(Effect.scoped(Layer.build(LangSmithTelemetryLive({ apiKey, target: project, workspaceId: "two words" })))))
+    expect(Exit.isFailure(refused) && Cause.squash(refused.cause)).toMatchObject({ _tag: "HarnessError", code: "config.options", message: LANGSMITH_OPTIONS_ERROR })
   })
 
   test("HttpLive uses the complete default endpoint and exporter failures cannot fail host work", async () => {

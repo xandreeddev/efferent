@@ -18,7 +18,9 @@ export interface RunProcessHostOptions<E = never> extends ProcessHostOptions<E> 
  * Run a host's entry module until the process exits. The first signal starts
  * graceful shutdown, a second signal exits immediately, and an independent
  * timer bounds asynchronous stuck work, writes and finalizers. Use serveProcess
- * when embedding the server without owning the native process.
+ * when embedding the server without owning the native process. Exit 0 follows
+ * acknowledged native writes, not the parent's reads: Bun reports a write to a
+ * closed stdout pipe as successful, where Node fails it and exits 1.
  * @public
  */
 export const runProcessHost = <E>(options: RunProcessHostOptions<E>): Promise<never> => {

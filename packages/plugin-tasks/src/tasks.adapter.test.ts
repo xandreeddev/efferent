@@ -5,6 +5,7 @@ import { TestClock } from "effect/testing"
 import {
   ConversationId,
   frameworkDraft,
+  harnessCodeOf,
   HarnessError,
   InboxItemId,
   ReservedKind,
@@ -690,6 +691,18 @@ describe("helper execution controls", () => {
     expect(rows.filter((row) => row.kind === "turn.ended").map((row) => row.data.reason)).toEqual(["waiting"])
     expect(rows.filter((row) => row.kind === "task.result")).toEqual([])
     expect((yield* h.sessions.get(child)).pending).toBe(1)
+  })))
+
+  test("an answer under an id no pending question has is refused as an unknown question, never as the asker's one-question limit", () => scenario(Effect.gen(function* () {
+    const h = yield* harness({ turn: (writer) => Tasks.pipe(Effect.flatMap((tasks) => tasks.ask(writer, question(writer)).pipe(Effect.orDie)), Effect.as({ outcome: "waiting" as const, reply: Option.none() })) })
+    const started = yield* h.tasks.start(h.parent, { instructions: "ask", mode: "spawn" })
+    yield* h.idle
+    const wrong = yield* Effect.flip(h.tasks.answer(h.parent, started.taskId, { questionId: TaskQuestionId.make("not-the-id"), text: "Primary source" }))
+    expect(wrong._tag === "TaskControlRefused" ? [wrong.reason, wrong.message, harnessCodeOf(wrong)] : wrong._tag).toEqual([
+      "unknown-question", "No question with this id is waiting for an answer; check task_status for the task's pending question and its id", Option.some("task.question-unknown"),
+    ])
+    const task = yield* h.tasks.status(h.parent, started.taskId)
+    expect([task.status, task.question?.questionId, (yield* h.sessions.get({ id: started.child, owner })).pending]).toEqual(["waiting", TaskQuestionId.make("which-source"), 0])
   })))
 
   test("an accepted answer replays its stored input across config changes and retires after cancellation", () => scenario(Effect.gen(function* () {

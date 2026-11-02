@@ -265,6 +265,7 @@ const StreamPartId
 const Subject
 const SubjectId
 const TAGGED_CODES
+const TAGGED_REASON_CODES
 const TURN_EVENT_KINDS
 const TURN_EVENT_NAMES
 const TaskMode
