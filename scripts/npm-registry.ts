@@ -3,7 +3,7 @@
  * answer means, and when to stop asking, are the pure functions in publish-plan.ts.
  */
 import { Result } from "effect"
-import { confirmSchedule, confirmation, label, registry, registryAnswer } from "./publish-plan.js"
+import { confirmSchedule, confirmation, label, registry, registryAnswer, registryProvenance } from "./publish-plan.js"
 import type { Confirmation, Versioned } from "./publish-plan.js"
 
 /** Whether the registry has `item`. Cache-busted, because the registry's CDN can keep serving a 404 for a version that was just published. */
@@ -12,6 +12,14 @@ export const onRegistry = (item: Versioned): Promise<Result.Result<boolean, stri
     (response) => registryAnswer(item, response.status),
     (error: unknown) => Result.fail(`the registry could not be reached for ${label(item)}: ${String(error)}`),
   )
+
+/** Fail closed when an existing core version cannot be tied to this release's exact commit. */
+export const checkRegistryProvenance = (item: Versioned, head: string): Promise<Result.Result<void, string>> =>
+  fetch(`${registry}/${item.name.replace("/", "%2f")}/${item.version}?cb=${Date.now()}`, { headers: { "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(30_000) }).then(
+    (response) => response.status === 200
+      ? response.text().then((body) => registryProvenance(item, head, response.status, body))
+      : registryProvenance(item, head, response.status, ""),
+  ).then((verdict) => verdict, (error: unknown) => Result.fail(`the registry release metadata could not be read for ${label(item)}: ${String(error)}`))
 
 /** A settled confirmation: the registry has the version, or it still does not after `confirmSchedule`. */
 export type Settled = Exclude<Confirmation, { readonly _tag: "Pending" }>

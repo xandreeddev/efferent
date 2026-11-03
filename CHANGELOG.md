@@ -8,6 +8,38 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/plugin-memory`: Efferent's native cross-conversation memory,
+  evidence-backed facts, preferences, profiles and routine observations,
+  temporal relationship extraction, conservative entity resolution and
+  correction history. Durable source jobs, reviewed extraction, staged
+  embeddings, query planning and evidence reranking run over host-supplied
+  models. Recall and source-read tools derive their owner from the turn;
+  explicit save/forget tools require `memory.write`.
+- `@xandreed/plugin-memory/capture`: owner-checked synchronization and
+  bounded backfill of committed conversation evidence, final host replies
+  and tool execution outcomes, with replay-safe source identities and
+  journal checkpoints. Recalled context and memory/RAG results are excluded.
+- `@xandreed/plugin-rag`: source-grounded text/Markdown ingestion, exact
+  source spans, revision replacement, lexical/vector fusion, cited reads,
+  optional temporal GraphRAG, and bounded model-assisted retrieval. Tools
+  and recorded turn evidence compose with existing conversation memory.
+- `@xandreed/plugin-knowledge-postgres`: native PostgreSQL/pgvector stores,
+  transactional publication, leases and durable processing stages, temporal
+  graph traversal, source tombstones and evidence invalidation. Forgetting
+  also clears unpublished stages and fences stale extraction writes. Shared
+  core schemas, in-memory reference adapters and conformance kits prove
+  scope isolation, concurrency, history and recovery behavior.
+- Core and SDK: acknowledged-commit observers and multi-provider background
+  worker activity/shutdown, preserving the original turn result when an
+  optional observer fails. Typed plugin stacks concatenate these contributions.
+  Existing framework journal formats are unchanged.
+- Native extraction, review, query-planning, reranking, memory and RAG model
+  text is versioned and pinned exactly. A controlled evaluation app supports
+  cleaned LongMemEval/LoCoMo, graph ablations and evaluation-only reference
+  deployments; measured parity requires explicitly configured real model runs.
+
 ### Repository
 
 - `bun run release:publish` publishes a release in one command from a clean
@@ -16,7 +48,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   its native build and the install with it), builds, runs the publish dry run
   and the publish, then, once the registry has every package of the build,
   creates the `v<version>` tag on HEAD and pushes it. It refuses a working
-  tree with changes, and a tag that names another commit. `--verify` adds
+  tree with changes, a tag that names another commit, and an existing core
+  version without matching release commit metadata. Tag and provenance
+  checks run before uploads; built manifests carry `gitHead` for safe resume.
+  `--verify` adds
   `verify:packages`, which CI already runs on the merge commit; `--dry-run`
   stops before the upload.
 - `bun run publish:packages --publish` no longer stops on an upload npm
@@ -24,6 +59,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   previously staged version" after npm retried a request that went through:
   it asks the registry for that version for up to about a minute, counts it
   as published when it is there, and stops as before when it is not.
+
+- Verify the native knowledge packages on Bun and packed Node, with a
+  pinned pgvector PostgreSQL service in CI. Add native memory/RAG setup,
+  research rationale and evaluation documentation.
 
 ## 0.15.1 — 2026-11-02
 

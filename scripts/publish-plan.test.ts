@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
+import { confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
 import type { BuildStamp, Built, Manifest, PublishState } from "./publish-plan.js"
 
 const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
@@ -114,6 +114,23 @@ describe("registry", () => {
     expect(publishCommand("core", false)).toEqual(["npm", "publish", "./.artifacts/packages/core", "--access", "public", "--tag", "latest",
       "--registry", registry, `--@xandreed:registry=${registry}`, "--dry-run"])
     expect(publishCommand("core", true)).not.toContain("--dry-run")
+  })
+
+  test("an absent version starts a new release, and an existing one resumes only at its exact commit", () => {
+    const core = manifest("core", "0.16.0")
+    expect(registryProvenance(core, commit, 404, "")).toEqual(Result.succeed(undefined))
+    expect(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: commit }))).toEqual(Result.succeed(undefined))
+    const different = registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }))
+    expect(different).toEqual(Result.fail("@xandreed/core@0.16.0 was published from 15d6dc518d5, not HEAD 9b898c1bb07; resume from its original commit or prepare a new shared version"))
+  })
+
+  test("missing provenance, malformed metadata, mismatched identity and registry refusals fail closed", () => {
+    const core = manifest("core", "0.16.0")
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version })))).toBe(true)
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: "" })))).toBe(true)
+    expect(registryProvenance(core, commit, 200, "not json")).toEqual(Result.fail("the registry returned invalid release metadata for @xandreed/core@0.16.0"))
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: "0.15.1", gitHead: commit })))).toBe(true)
+    expect(registryProvenance(core, commit, 503, "")).toEqual(Result.fail("the registry answered 503 for @xandreed/core@0.16.0"))
   })
 })
 

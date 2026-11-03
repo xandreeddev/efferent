@@ -7,7 +7,7 @@ import { distributionDependencies } from "./distribution-manifest.js"
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
 const names = ["core", "runtime", "sdk", "process-host", "evals", "evals-cli", "evals-langfuse", "evals-langsmith",
-  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models",
+  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-memory", "plugin-rag", "plugin-knowledge-postgres", "plugin-tool-discovery", "plugin-models",
   "plugin-session-files", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render", "plugin-workspace", "plugin-telemetry"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
@@ -82,7 +82,7 @@ await Promise.all(names.map(async (name) => {
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
   // Caret ranges, `@xandreed/core` and `effect` as peers: mixed patch versions install one copy of each.
   const { dependencies, peerDependencies } = distributionDependencies(original, versions)
-  const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
+  const manifest = { ...original, version, gitHead: stamp.commit ?? undefined, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",
     ...(name === "evals-cli" ? { bin: { "efferent-eval": "dist/main.js" } } : {}),
   }

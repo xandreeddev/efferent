@@ -159,8 +159,12 @@ bun run release:publish            # --verify adds verify:packages; --dry-run st
 
 `release:publish` (`scripts/release-publish.ts`) refuses a working tree with
 changes (untracked files included) and, unless `--dry-run`, a stdin that is
-not a terminal. It then runs, in order and attached to the terminal, stopping
-at the first failure:
+not a terminal. Before building or uploading, it refuses a conflicting local
+or remote release tag, or an existing core version whose registry `gitHead`
+does not match HEAD. Built manifests record that commit so an interrupted
+release can resume from the same source; older packages without that metadata
+cannot establish a safe resume. It then runs, in order and attached to the
+terminal, stopping at the first failure:
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts

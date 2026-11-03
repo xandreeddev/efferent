@@ -4,6 +4,7 @@ import {
   CurrentTraceContent,
   DrainActivity,
   WaitingInput,
+  BackgroundWorkers,
   CapabilitiesLive,
   DEFAULT_SHUTDOWN_DEADLINE,
   Capabilities,
@@ -12,6 +13,7 @@ import {
   harnessDefectsAsFailures,
   HarnessError,
   LoopProtection,
+  notifyCommittedTurn,
   isBudgetTokens,
   normalizeUserMessage,
   PluginInstanceId,
@@ -481,6 +483,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // On failure the turn's own cause wins: an end not stored is logged (the scope's end tries it again).
       if (Exit.isFailure(exit)) {
         yield* writer.end(turnEndingOf(exit)).pipe(
+          Effect.tap(() => notifyCommittedTurn({ session: writer.admitted.session, runId: writer.admitted.runId, turn: writer.admitted.turn }).pipe(Effect.provide(context))),
           Effect.catchTag("TurnClosed", (closed) => Effect.logDebug(`the failed turn's end was not stored: the turn was ${closed.reason}`)),
           Effect.catch((error) => Effect.logWarning(`the failed turn's end was not stored: ${reasonOf(Cause.fail(error))}`)),
         )
@@ -488,6 +491,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       }
       // On success a failed end fails the turn; the inbox items it leaves waiting are the caller's to drain.
       const { pending } = yield* writer.end(turnEndingOf(exit))
+      yield* notifyCommittedTurn({ session: writer.admitted.session, runId: writer.admitted.runId, turn: writer.admitted.turn }).pipe(Effect.provide(context))
       return { ...exit.value, pending } satisfies TurnResult
     })
     // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end,
@@ -499,14 +503,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   // the inbox drainer's: it is built beside the agent (it runs the agent), so it is never in the runtime,
   // and the caller's `DrainActivity` (`InboxDrainLive`'s, provided where this is read) counts instead.
   const runtimeProbes = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.updateContext((current: Context.Context<never>) => {
-    const probes = Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(runtime))
+    const probes = Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity, BackgroundWorkers)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity, BackgroundWorkers)(runtime))
     const drains = Option.orElse(Context.getOption(runtime, DrainActivity), () => Context.getOption(current, DrainActivity))
     return Option.match(drains, { onNone: () => probes, onSome: (probe) => Context.add(probes, DrainActivity, probe) })
   }))
   const activity = runtimeProbes(processActivity)
   const shutdown = (options?: ShutdownOptions) => runtimeProbes(shutdownGracefully(options ?? config.shutdown ?? { deadline: DEFAULT_SHUTDOWN_DEADLINE })).pipe(
     Effect.tap((report) => report.left.inFlight
-      ? Effect.logWarning(`the agent stopped with ${report.left.openTurns.length + report.left.beginningTurns} turns and ${report.left.runningTasks} tasks still in flight`)
+      ? Effect.logWarning(`the agent stopped with ${report.left.openTurns.length + report.left.beginningTurns} turns and ${report.left.runningTasks} tasks${report.left.runningWorkers === undefined ? "" : ` and ${report.left.runningWorkers} worker jobs`} still in flight`)
       : Effect.void))
   // Added after the runtime's plugins were activated in this scope, so it runs before they close.
   const configured = config.shutdown

@@ -272,6 +272,9 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 | `@xandreed/plugin-agent-loop` | The agent step loop |
 | `@xandreed/plugin-models` | Model routing and provider adapters |
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |
+| `@xandreed/plugin-memory` | Cross-conversation memory, evidence-backed routines, profiles, and temporal graph recall |
+| `@xandreed/plugin-rag` | Cited document retrieval and optional temporal graph extraction |
+| `@xandreed/plugin-knowledge-postgres` | PostgreSQL/pgvector persistence for native memory, documents, graph history, and processing jobs |
 | `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
 | `@xandreed/plugin-sessions` | Conversation sessions and the turn lifecycle |
 | `@xandreed/plugin-session-files` | Session store in a directory, local or on a network mount, one file per commit (Node 24 and Bun) |
@@ -283,6 +286,9 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
 | `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |
+
+See [native memory and RAG](docs/native-knowledge.md) for the temporal graph,
+cross-conversation capture, cited document retrieval and PostgreSQL setup.
 
 `packages/foundry` (the deterministic verification framework behind
 `bun run typecheck`) and `packages/website` (the docs site) are development

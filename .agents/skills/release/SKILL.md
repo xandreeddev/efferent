@@ -68,6 +68,10 @@ are there, creates the `v<version>` tag on HEAD and pushes it.
 
 ## Known traps
 
+- Before uploads, the helper checks local and remote tags and the existing
+  core version's registry `gitHead` against HEAD. A mismatch or missing
+  metadata refuses the release. New build manifests record `gitHead` so a
+  partial release can resume from its exact commit.
 - A plain `bun install --frozen-lockfile` can exit 1 in a fresh checkout: the
   docs site's `astro` pulls in an optional `sharp` whose install script falls
   back to a node-gyp build and fails. Nothing published needs an install

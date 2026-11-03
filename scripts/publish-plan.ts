@@ -121,6 +121,21 @@ export const registryAnswer = (item: Versioned, status: number): Result.Result<b
     : status === 404 ? Result.succeed(false)
     : Result.fail(`the registry answered ${status} for ${label(item)}`)
 
+const PublishedVersion = Schema.Struct({ name: Schema.String, version: Schema.String, gitHead: Schema.optionalKey(Schema.String) })
+/** An existing release can be resumed only from the commit npm recorded, never from a later same-version checkout. */
+export const registryProvenance = (item: Versioned, head: string, status: number, body: string): Result.Result<void, string> => {
+  const found = registryAnswer(item, status)
+  if (Result.isFailure(found)) return Result.fail(found.failure)
+  if (!found.success) return Result.succeed(undefined)
+  const metadata = Schema.decodeUnknownResult(Schema.fromJsonString(PublishedVersion))(body)
+  if (Result.isFailure(metadata)) return Result.fail(`the registry returned invalid release metadata for ${label(item)}`)
+  if (metadata.success.name !== item.name || metadata.success.version !== item.version) return Result.fail(`the registry returned metadata for a different package or version than ${label(item)}`)
+  const origin = metadata.success.gitHead
+  if (origin === undefined || origin.length === 0) return Result.fail(`${label(item)} already exists, but npm records no gitHead; its release commit cannot be verified, so publishing or tagging from this checkout is refused`)
+  return origin === head ? Result.succeed(undefined)
+    : Result.fail(`${label(item)} was published from ${short(origin)}, not HEAD ${short(head)}; resume from its original commit or prepare a new shared version`)
+}
+
 /**
  * How long a `name@version` is asked for before it counts as missing: 12 answers 5 seconds
  * apart, about a minute. Asked after an `npm publish` that failed (npm can retry a request that

@@ -1,6 +1,8 @@
 import { Context, Effect, Layer, Option } from "effect"
 import { Capabilities } from "../ports/capability.port.js"
 import type { Capability } from "../ports/capability.port.js"
+import { BackgroundWorkers } from "../ports/background-workers.port.js"
+import { CommittedTurnObservers } from "../ports/committed-turn-observers.port.js"
 
 /** The host's own bundles as a layer: the bottom of a plugin stack (see `stackPlugins`). */
 export const CapabilitiesLive = (...bundles: ReadonlyArray<Capability>): Layer.Layer<Capabilities> =>
@@ -12,7 +14,7 @@ const capabilitiesOf = (context: Context.Context<never>): ReadonlyArray<Capabili
 /**
  * Stack one plugin layer on the layers below it, as the plugin graph
  * activates them: `next` is built over everything `base` provides; the two
- * Capabilities arrays concatenate, base first (activateGraph's order); any
+ * Capabilities, BackgroundWorkers and CommittedTurnObservers arrays concatenate, base first (activateGraph's order); any
  * other service of `next` wins.
  *
  * ```ts
@@ -40,7 +42,12 @@ export const stackPlugins = <A2, E2, R2>(next: Layer.Layer<A2, E2, R2>) =>
       const upper = yield* Layer.buildWithMemoMap(next, memoMap, scope).pipe(Effect.provide(lower))
       const merged = [...Context.merge(lower, upper).mapUnsafe].filter(([key]) => key !== Layer.CurrentMemoMap.key)
       const contributes = lower.mapUnsafe.has(Capabilities.key) || upper.mapUnsafe.has(Capabilities.key)
-      return Context.makeUnsafe<A1 | A2>(new Map(contributes
-        ? [...merged, [Capabilities.key, [...capabilitiesOf(lower), ...capabilitiesOf(upper)]]]
-        : merged))
+      const workers = lower.mapUnsafe.has(BackgroundWorkers.key) || upper.mapUnsafe.has(BackgroundWorkers.key)
+      const observers = lower.mapUnsafe.has(CommittedTurnObservers.key) || upper.mapUnsafe.has(CommittedTurnObservers.key)
+      return Context.makeUnsafe<A1 | A2>(new Map([
+        ...merged,
+        ...(contributes ? [[Capabilities.key, [...capabilitiesOf(lower), ...capabilitiesOf(upper)]] as const] : []),
+        ...(workers ? [[BackgroundWorkers.key, [...Option.getOrElse(Context.getOption(lower, BackgroundWorkers), () => []), ...Option.getOrElse(Context.getOption(upper, BackgroundWorkers), () => [])]] as const] : []),
+        ...(observers ? [[CommittedTurnObservers.key, [...Option.getOrElse(Context.getOption(lower, CommittedTurnObservers), () => []), ...Option.getOrElse(Context.getOption(upper, CommittedTurnObservers), () => [])]] as const] : []),
+      ]))
     }))

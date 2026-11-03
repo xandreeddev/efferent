@@ -9671,6 +9671,11 @@
       "meaning": "The digester's model call failed or did not answer within `digestTimeoutMs`. It is logged, and the turn goes on: memory records no digest, and the tool result stays whole."
     },
     {
+      "code": "memory.capture",
+      "where": "`@xandreed/plugin-memory`",
+      "meaning": "An acknowledged turn could not be synchronized into durable memory sources. The original turn result is preserved; owner-scoped synchronization or backfill can retry capture."
+    },
+    {
       "code": "memory.summary",
       "where": "`@xandreed/plugin-memory-summary`",
       "meaning": "The turn's services carry no `UtilityLlm`, and the turn fails when its memory opens; or the summarizer failed or did not answer within `summaryTimeoutMs`, which is logged: the turn goes on without a new summary, and its later steps do not ask again."

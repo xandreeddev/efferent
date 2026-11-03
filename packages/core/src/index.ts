@@ -219,6 +219,12 @@ export { ActiveTurn, ProcessActivity, ShutdownReport, TurnsInFlight, WaitingInpu
 export { awaitIdle, DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_SHUTDOWN_RESERVE, processActivity, shutdownGracefully } from "./session/activity.entity.functions.js"
 export type { ShutdownOptions } from "./session/activity.entity.functions.js"
 export { DrainActivity, TaskActivity, TurnActivity, TurnShutdown, WaitingInput } from "./ports/activity.port.js"
+export { BackgroundWorkers } from "./ports/background-workers.port.js"
+export type { BackgroundWorker } from "./ports/background-workers.port.js"
+export { CommittedTurnObservers } from "./ports/committed-turn-observers.port.js"
+export type { CommittedTurnObserver } from "./ports/committed-turn-observers.port.js"
+export { CommittedTurn, COMMITTED_TURN_OBSERVER_TIMEOUT_MS } from "./turn/committed-turn.entity.js"
+export { notifyCommittedTurn } from "./turn/committed-turn.entity.functions.js"
 
 export { HarnessError, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "./harness/plugin.entity.js"
 export type { PartialOptions, Plugin, TypedPlugin } from "./harness/plugin.entity.js"
@@ -271,6 +277,7 @@ export {
   renderLog,
   rewrittenBy,
   toolInputOf,
+  toolInputsByResult,
   toolInputsOf,
 } from "./memory/memory-log.entity.functions.js"
 export type { RenderOptions } from "./memory/memory-log.entity.functions.js"
@@ -457,3 +464,28 @@ export { ImageResizer } from "./ports/image-resizer.port.js"
 export { ImageInput, ImageFitTarget, ImageResizeReason, ImageResizeError } from "./domain/image-resize.entity.js"
 export { fitTarget, scaledSize } from "./domain/image-resize.entity.functions.js"
 export { imageSizeOf } from "./domain/media.entity.functions.js"
+
+export {
+  KnowledgeSourceId, KnowledgeJobId, KnowledgeMemoryId, KnowledgeChunkId,
+  KnowledgeEntityId, KnowledgeAssertionId, KnowledgeLeaseToken, KnowledgeScope,
+  KnowledgeSourceRef, KnowledgeSource, KnowledgeProvenance, KnowledgeEmbeddingSpace,
+  KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
+  KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStage,
+  KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
+  KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
+  KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
+  KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
+} from "./knowledge/knowledge.entity.js"
+export { MemoryStore, KnowledgeStore, TemporalGraph, LongTermMemory, Knowledge } from "./ports/knowledge.port.js"
+export type { KnowledgeIndex } from "./ports/knowledge.port.js"
+export {
+  knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace,
+  knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
+  knowledgeCandidateText, fuseKnowledgeCandidates, traverseKnowledgeGraph,
+  validateKnowledgeStage,
+} from "./knowledge/knowledge.entity.functions.js"
+export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
+export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion } from "./knowledge/knowledge-extraction.entity.js"
+export { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge/knowledge-query.entity.js"
+export { knowledgeQueryPrompt, knowledgeRerankPrompt, applyKnowledgeRerank, budgetKnowledgeRecall } from "./knowledge/knowledge-query.entity.functions.js"
+export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge/knowledge-extraction.entity.functions.js"

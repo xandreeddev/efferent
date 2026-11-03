@@ -16,7 +16,9 @@
  *
  * It refuses, before running anything, when HEAD cannot be read, when the working tree has
  * changes (untracked files included), or, unless it is a dry run, when stdin is not a terminal.
- * It refuses to tag when the build is not of HEAD, or when `v<version>` already names another
+ * Before any commands, it refuses an existing core version whose npm gitHead differs from HEAD
+ * or is missing, and a conflicting local or origin release tag. It repeats the tag check after
+ * publishing. It refuses to tag when the build is not of HEAD, or when `v<version>` already names another
  * commit here or on origin: a release tag is never moved. A run that stopped part-way can be
  * repeated from the same commit: the install and build repeat, versions already on npm are
  * skipped, and a tag already on HEAD is kept.
@@ -25,8 +27,8 @@
  */
 import { join } from "node:path"
 import { Result, Schema } from "effect"
-import { confirmOnRegistry } from "./npm-registry.js"
-import { BuildStamp, notCleanTree, notOfHead, releaseSteps, tagPlan } from "./publish-plan.js"
+import { checkRegistryProvenance, confirmOnRegistry } from "./npm-registry.js"
+import { BuildStamp, Manifest, notCleanTree, notOfHead, releaseSteps, tagPlan } from "./publish-plan.js"
 import type { Ran } from "./publish-plan.js"
 
 const root = join(import.meta.dir, "..")
@@ -73,6 +75,21 @@ const before = [
   ...(dryRun || process.stdin.isTTY ? [] : ["stdin is not a terminal; run this from an interactive terminal, where npm asks for the second factor"]),
 ]
 if (before.length > 0) refuse("release", before)
+
+// Publishing a new package under an old shared version would bind it to an older core.
+// Missing npm gitHead cannot establish a safe resume, even if the version already exists.
+const corePath = join(root, "packages/core/package.json")
+if (!await Bun.file(corePath).exists()) refuse("release", ["packages/core/package.json does not exist"])
+const coreRead = Schema.decodeUnknownResult(Schema.fromJsonString(Manifest))(await Bun.file(corePath).text())
+if (Result.isFailure(coreRead)) refuse("release", [`packages/core/package.json is not valid: ${coreRead.failure.message}`])
+const core = coreRead.success
+if (core.name !== "@xandreed/core") refuse("release", ["packages/core/package.json does not name @xandreed/core"])
+const preflightTag = `v${core.version}`
+const preflightLocal = run(["git", "rev-parse", "-q", "--verify", `refs/tags/${preflightTag}^{commit}`])
+const preflight = tagPlan({ tag: preflightTag, head: head.stdout, local: preflightLocal.success ? preflightLocal.stdout : null, remote: run(["git", "ls-remote", "origin", `refs/tags/${preflightTag}`, `refs/tags/${preflightTag}^{}`]) })
+if (preflight.reasons.length > 0) refuse("release", preflight.reasons)
+const provenance = await checkRegistryProvenance(core, head.stdout)
+if (Result.isFailure(provenance)) refuse("release", [provenance.failure])
 
 await attached(releaseSteps({ verify, dryRun }))
 if (dryRun) {
