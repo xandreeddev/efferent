@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Publish the unscoped `efferent` npm name as a documentation landing page
+  with the release README, working source links and scoped-package install
+  instructions. Keep its README current through the CI release workflow.
 - Prepare shared-version release PRs from Changesets in GitHub Actions.
   After a merged release passes CI, publish its exact tested source, confirm
   all npm versions, create the immutable tag and GitHub release, and dispatch

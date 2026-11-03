@@ -159,7 +159,8 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    and the trusted Actions check. It builds and verifies the packed packages,
    runs the publishing dry run, publishes in dependency order, confirms every
    version on npm, pushes `v<version>`, creates the GitHub release and
-   dispatches the docs deployment at that tag.
+   dispatches the docs deployment at that tag. Its separate `landing` job
+   then publishes the release README as the unscoped `efferent` package.
 
 Merging the release PR signs off on package publication, the immutable tag
 and documentation deployment. Ordinary feature commits retaining the current
@@ -196,6 +197,26 @@ then remove `NPM_TOKEN`. The job grants `id-token: write` and uses npm
 11.15.0 on Node 24. npm automatically uses OIDC when no token is supplied;
 `npm whoami` does not validate OIDC, so CI checks that account only for
 explicit token authentication. Local publishing retains its account check.
+
+Also configure that trusted publisher for the unscoped `efferent` package.
+It reserves the project's npm name and publishes only the release README,
+license and package metadata. Its separate `landing` job runs after the
+framework release, using the same verified version and source commit. The
+README points to the scoped framework packages; its repository links target
+that exact source commit so they also work on npm. It has no runtime API,
+commands or dependencies. Versions through 0.6.1 contain the historical CLI.
+
+To inspect the landing package locally without uploading:
+
+```sh
+bun run publish:landing
+```
+
+This builds and packs the isolated `.artifacts/npm-landing` directory.
+Uploads require `--ci --publish` and run through `release.yml`. Retrying an
+existing release skips the landing version only when both its source commit
+and packed integrity match. A retry can add a missing landing version
+without republishing the framework packages or moving the release tag.
 
 See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens/)
 and [trusted publishing](https://docs.npmjs.com/trusted-publishers/).

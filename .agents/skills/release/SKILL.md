@@ -51,6 +51,12 @@ its exact Actions workflow/check, main ancestry, version, changelog and
 compatibility fixtures. It builds and verifies the source, publishes in
 dependency order, confirms every registry version, pushes `v<version>`,
 creates the GitHub release and dispatches docs deployment at that tag.
+After framework publication, its separate `landing` job publishes the
+unscoped `efferent` name with only that release's README, license and package
+metadata. It shares the verified version and source commit but stays out of
+the 24-package framework cohort. `bun run publish:landing` previews its
+isolated package locally; live uploads require the CI context. Resume only
+when the registry records the same source commit and packed integrity.
 
 For an already prepared release or an interrupted run:
 
@@ -77,6 +83,7 @@ validated GitHub Actions context; local use retains interactive authentication.
   `xandreeddev/efferent`, workflow `release.yml`, and direct-publish permission;
   then remove the bootstrap token. The CI job has `id-token: write`, Node 24
   and npm 11.15.0. OIDC cannot be checked with `npm whoami`.
+  Include the unscoped `efferent` landing package as a separate trust entry.
 - Source and build must share one version and commit, with no source changes.
   Registry `gitHead` must match for a partial-release resume. Check local and
   remote tags before uploading and again before pushing; never move a release
