@@ -84,6 +84,11 @@ validated GitHub Actions context; local use retains interactive authentication.
   then remove the bootstrap token. The CI job has `id-token: write`, Node 24
   and npm 11.15.0. OIDC cannot be checked with `npm whoami`.
   Include the unscoped `efferent` landing package as a separate trust entry.
+- Preserve GitHub's authentic environment when npm generates provenance,
+  including `GITHUB_SHA`. The signing certificate binds the workflow commit,
+  even when the checked release source is historical. Store that verified
+  source in package `gitHead`; provenance signs the archive and identifies
+  its publishing context. Never substitute the source SHA in GitHub's fields.
 - Source and build must share one version and commit, with no source changes.
   Registry `gitHead` must match for a partial-release resume. Check local and
   remote tags before uploading and again before pushing; never move a release

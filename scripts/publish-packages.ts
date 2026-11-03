@@ -138,9 +138,9 @@ const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string
   if (next === undefined) return done
   const command = publishCommand(next.dir, live, ci)
   console.log(`\n$ ${command.join(" ")}`)
-  // npm provenance reads GITHUB_SHA for the checked-out material. A bootstrap source can
-  // predate the pipeline; retain the workflow identity while naming the verified source commit.
-  const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit", ...(ci ? { env: { ...process.env, GITHUB_SHA: head.stdout } } : {}) })
+  // npm provenance must match GitHub's signed workflow identity. The independently
+  // verified artifact source remains recorded in the built manifest's gitHead.
+  const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit" })
   if (await child.exited !== 0) {
     if (!live) return stop(next, done, "")
     console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about a minute).`)

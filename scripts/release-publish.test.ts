@@ -8,7 +8,7 @@ const other = "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const core = { name: "@xandreed/core", version: "0.16.0" }
 const metadata = { ...core, gitHead: commit }
 
-const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?: number; body?: unknown; remote?: string; remoteAfterPublish?: string; networkFailure?: boolean; ci?: boolean; sourceRoot?: boolean; publisher?: boolean; tty?: boolean; env?: Record<string, string>; account?: string; dirty?: boolean; builtHead?: string } = {}) => {
+const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?: number; body?: unknown; remote?: string; remoteAfterPublish?: string; networkFailure?: boolean; ci?: boolean; sourceRoot?: boolean; publisher?: boolean; tty?: boolean; env?: Record<string, string>; account?: string; dirty?: boolean; builtHead?: string; certificateSha?: string } = {}) => {
   const root = await mkdtemp(join(tmpdir(), "efferent-release-preflight-"))
   const commands = join(root, "commands.log")
   const live = join(root, "live")
@@ -44,11 +44,17 @@ case "$*" in *--publish) touch "$RELEASE_TEST_LIVE" ;; esac
 printf 'npm %s\\n' "$*" >> "$RELEASE_TEST_COMMANDS"
 if [ "$1" = whoami ]; then printf '%s\\n' "$RELEASE_TEST_ACCOUNT"; fi
 if [ -n "$RELEASE_TEST_EXPECT_OIDC_TOKEN" ] && [ "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" != "$RELEASE_TEST_EXPECT_OIDC_TOKEN" ]; then exit 99; fi
-if [ "$1" = publish ]; then printf '%s\\n' "$GITHUB_SHA" "$GITHUB_WORKFLOW_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$ACTIONS_ID_TOKEN_REQUEST_URL" > "$RELEASE_TEST_NPM_CONTEXT"; fi
+if [ "$1" = publish ]; then
+  printf '%s\\n' "$GITHUB_SHA" "$GITHUB_WORKFLOW_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$ACTIONS_ID_TOKEN_REQUEST_URL" > "$RELEASE_TEST_NPM_CONTEXT"
+  if [ -n "$RELEASE_TEST_CERTIFICATE_SHA" ] && [ "$GITHUB_SHA" != "$RELEASE_TEST_CERTIFICATE_SHA" ]; then
+    printf '%s\\n' 'E422: provenance gitCommit does not match certificate SourceRepositoryDigest' >&2
+    exit 42
+  fi
+fi
 `, { mode: 0o755 })
     await writeFile(join(root, "registry-preload.ts"), `Object.defineProperty(process.stdin, "isTTY", { value: ${options.tty ?? true} });
-const originalSourceSha = process.env.GITHUB_SHA;
-process.on("exit", () => { if (process.env.GITHUB_SHA !== originalSourceSha) process.exitCode = 97; });
+const originalWorkflowSha = process.env.GITHUB_SHA;
+process.on("exit", () => { if (process.env.GITHUB_SHA !== originalWorkflowSha) process.exitCode = 97; });
 globalThis.fetch = async () => {
   if (process.env.RELEASE_TEST_NETWORK_FAILURE === "1") throw new Error("fixture network unavailable");
   return new Response(process.env.RELEASE_TEST_BODY, { status: Number(process.env.RELEASE_TEST_STATUS) });
@@ -56,7 +62,7 @@ globalThis.fetch = async () => {
 `)
     const result = Bun.spawnSync([process.execPath, "--preload", join(root, "registry-preload.ts"), join(root, options.publisher ? "scripts/publish-packages.ts" : "scripts/release-publish.ts"), ...(options.ci ? ["--ci"] : []), ...(options.sourceRoot ? ["--root", source] : []), ...(options.verify ? ["--verify"] : []), ...(!options.publisher && options.dryRun ? ["--dry-run"] : [])], {
       cwd: root,
-      env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}`, RELEASE_TEST_HEAD: commit, RELEASE_TEST_COMMANDS: commands, RELEASE_TEST_LIVE: live, RELEASE_TEST_SOURCE: source, RELEASE_TEST_NPM_CONTEXT: npmContext,
+      env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}`, RELEASE_TEST_HEAD: commit, RELEASE_TEST_COMMANDS: commands, RELEASE_TEST_LIVE: live, RELEASE_TEST_SOURCE: source, RELEASE_TEST_NPM_CONTEXT: npmContext, RELEASE_TEST_CERTIFICATE_SHA: options.certificateSha ?? "",
         RELEASE_TEST_REMOTE: options.remote ?? "", RELEASE_TEST_REMOTE_AFTER: options.remoteAfterPublish ?? options.remote ?? "",
         RELEASE_TEST_STATUS: String(options.status ?? 200), RELEASE_TEST_BODY: JSON.stringify(options.body ?? metadata), RELEASE_TEST_NETWORK_FAILURE: options.networkFailure ? "1" : "0", RELEASE_TEST_ACCOUNT: options.account ?? "xandreed", RELEASE_TEST_EXPECT_OIDC_TOKEN: options.env?.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
         GITHUB_ACTIONS: "", GITHUB_REPOSITORY: "", ACTIONS_ID_TOKEN_REQUEST_URL: "", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "", NODE_AUTH_TOKEN: "", GITHUB_OUTPUT: output, ...options.env },
@@ -174,12 +180,20 @@ describe("CI release source isolation", () => {
     expect(stale.commands).toEqual([])
   })
 
-  test("npm provenance names the verified source commit while retaining the newer pipeline identity", async () => {
+  test("npm provenance retains the signed pipeline identity while gitHead names the verified source", async () => {
     const workflow = "xandreeddev/efferent/.github/workflows/release.yml@refs/heads/main"
-    const result = await runRelease({ ci: true, publisher: true, sourceRoot: true, status: 404,
+    const result = await runRelease({ ci: true, publisher: true, sourceRoot: true, status: 404, certificateSha: other,
       env: { ...oidc, GITHUB_SHA: other, GITHUB_WORKFLOW_SHA: other, GITHUB_WORKFLOW_REF: workflow, GITHUB_RUN_ID: "fixture-run-123" } })
     expect(result.code).toBe(0)
-    expect(result.npmContext).toBe(`${commit}\n${other}\n${workflow}\nfixture-run-123\n${oidc.ACTIONS_ID_TOKEN_REQUEST_URL}\n`)
+    expect(result.npmContext).toBe(`${other}\n${other}\n${workflow}\nfixture-run-123\n${oidc.ACTIONS_ID_TOKEN_REQUEST_URL}\n`)
+    expect(result.manifest.gitHead).toBe(commit)
+  })
+
+  test("the registry fixture rejects a provenance SHA that differs from the signing certificate", async () => {
+    const result = await runRelease({ ci: true, publisher: true, sourceRoot: true, status: 404, certificateSha: commit,
+      env: { ...oidc, GITHUB_SHA: other, GITHUB_WORKFLOW_SHA: other } })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("provenance gitCommit does not match certificate SourceRepositoryDigest")
     expect(result.manifest.gitHead).toBe(commit)
   })
 })
