@@ -13,7 +13,7 @@
  * In order, each attached to this terminal, the first failure stopping the run:
  * `bun install --frozen-lockfile --ignore-scripts`, `bun run build:packages`,
  * `bun run publish:packages` (its dry run) and `bun run publish:packages --publish`. Then it asks
- * the registry for every package the build stamp (`build.json`) records, for up to about a minute
+ * the registry for every package the build stamp (`build.json`) records, for up to about three minutes
  * each, and only when the registry has them all creates the lightweight `v<version>` tag on HEAD
  * and pushes it to origin, which deploys the documentation site.
  *

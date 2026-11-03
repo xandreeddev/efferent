@@ -170,3 +170,5 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bun pipeline/scripts/publish-npm-landing.ts --ci --root "$GITHUB_WORKSPACE/source" --publish
+      - name: Verify every published package
+        run: bun pipeline/scripts/release-status.ts --root "$GITHUB_WORKSPACE/source" --wait 180

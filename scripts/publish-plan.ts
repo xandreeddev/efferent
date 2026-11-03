@@ -150,12 +150,12 @@ export const registryProvenance = (item: Versioned, head: string, status: number
 }
 
 /**
- * How long a `name@version` is asked for before it counts as missing: 12 answers 5 seconds
- * apart, about a minute. Asked after an `npm publish` that failed (npm can retry a request that
+ * How long a `name@version` is asked for before it counts as missing: 36 answers 5 seconds
+ * apart, about three minutes. Asked after an `npm publish` that failed (npm can retry a request that
  * went through and then fail on its own upload with E409 "previously staged") and before a
  * release is tagged, since the registry's CDN can answer 404 for a while after a publish.
  */
-export const confirmSchedule = { attempts: 12, intervalMillis: 5_000 } as const
+export const confirmSchedule = { attempts: 36, intervalMillis: 5_000 } as const
 
 /** What the registry's answers so far say about one `name@version`. */
 export type Confirmation =

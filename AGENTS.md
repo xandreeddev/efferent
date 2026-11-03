@@ -5,7 +5,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 `packages/<name>/AGENTS.md`. `CLAUDE.md` links here. Skills, in
 `.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
 `commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
-`domain-entity`, `change-event`, `journey-test`, `release`.
+`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`.
 
 ## Task map
 
@@ -20,6 +20,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Add or change an event, a journal kind or a stored payload | skill `change-event` |
 | Test a plugin end to end through `Agent.define` | skill `journey-test` |
 | Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
+| Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
 
 ## Architecture

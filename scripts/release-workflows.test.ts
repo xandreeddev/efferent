@@ -4,6 +4,7 @@ import { Result, Schema } from "effect"
 const Strings = Schema.Record(Schema.String, Schema.String)
 const Step = Schema.Struct({
   name: Schema.optionalKey(Schema.String), id: Schema.optionalKey(Schema.String),
+  if: Schema.optionalKey(Schema.String),
   run: Schema.optionalKey(Schema.String), uses: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Strings), with: Schema.optionalKey(Schema.JsonObject),
 })
@@ -75,6 +76,9 @@ test("the documentation-only npm landing page uses the verified source after fra
   expect(source?.with?.["persist-credentials"]).toBe(false)
   expect(step(landing, "landing").run).toBe('bun pipeline/scripts/publish-npm-landing.ts --ci --root "$GITHUB_WORKSPACE/source" --publish')
   expect(step(landing, "landing").env).toEqual({ NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" })
+  const audit = landing.steps.findIndex((entry) => entry.run?.includes("scripts/release-status.ts"))
+  expect(audit).toBeGreaterThan(landing.steps.findIndex((entry) => entry.id === "landing"))
+  expect(landing.steps[audit]?.run).toBe('bun pipeline/scripts/release-status.ts --root "$GITHUB_WORKSPACE/source" --wait 180')
 })
 
 test("release PRs consume changesets and explicitly dispatch the required CI check", async () => {
@@ -91,4 +95,16 @@ test("release PRs consume changesets and explicitly dispatch the required CI che
   const triggers = Schema.decodeUnknownResult(Schema.Struct({ on: Schema.JsonObject }))(ci)
   if (Result.isFailure(triggers)) throw triggers.failure
   expect(Object.hasOwn(triggers.success.on, "workflow_dispatch")).toBe(true)
+})
+
+test("manual patch intent is opt-in and runs before normal release versioning", async () => {
+  const workflow = await read("release-pr")
+  const dispatch = Schema.decodeUnknownResult(Schema.Struct({ inputs: Schema.Struct({ patch: Schema.Struct({ type: Schema.Literal("boolean"), default: Schema.Literal(false), required: Schema.Literal(false) }) }) }))(workflow.on.workflow_dispatch)
+  expect(Result.isSuccess(dispatch)).toBe(true)
+  const steps = job(workflow, "version").steps
+  const patch = steps.findIndex((entry) => entry.run === "bun run release:patch")
+  const version = steps.findIndex((entry) => entry.id === "version")
+  expect(patch).toBeGreaterThanOrEqual(0)
+  expect(patch).toBeLessThan(version)
+  expect(steps[patch]?.if).toBe("github.event_name == 'workflow_dispatch' && inputs.patch == true")
 })

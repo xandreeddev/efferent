@@ -13,10 +13,12 @@ export const onRegistry = (item: Versioned): Promise<Result.Result<boolean, stri
     (error: unknown) => Result.fail(`the registry could not be reached for ${label(item)}: ${String(error)}`),
   )
 
-/** Fail closed when an existing core version cannot be tied to this release's exact commit. */
-export const checkRegistryProvenance = (item: Versioned, head: string): Promise<Result.Result<void, string>> =>
+/** Fail closed when an existing version cannot be tied to this release's exact commit; require presence when validating a skip. */
+export const checkRegistryProvenance = (item: Versioned, head: string, requiredPresence = false): Promise<Result.Result<void, string>> =>
   fetch(`${registry}/${item.name.replace("/", "%2f")}/${item.version}?cb=${Date.now()}`, { headers: { "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(30_000) }).then(
-    (response) => response.status === 200
+    (response) => requiredPresence && response.status === 404
+      ? Result.fail(`${label(item)} disappeared from the registry before its source commit could be verified; refusing to skip it`)
+      : response.status === 200
       ? response.text().then((body) => registryProvenance(item, head, response.status, body))
       : registryProvenance(item, head, response.status, ""),
   ).then((verdict) => verdict, (error: unknown) => Result.fail(`the registry release metadata could not be read for ${label(item)}: ${String(error)}`))
@@ -24,7 +26,7 @@ export const checkRegistryProvenance = (item: Versioned, head: string): Promise<
 /** A settled confirmation: the registry has the version, or it still does not after `confirmSchedule`. */
 export type Settled = Exclude<Confirmation, { readonly _tag: "Pending" }>
 
-/** Ask the registry for `item` now, then every `confirmSchedule.intervalMillis` until it has it or `confirmSchedule.attempts` answers say it does not (about a minute). */
+/** Ask the registry for `item` now, then every `confirmSchedule.intervalMillis` until it has it or `confirmSchedule.attempts` answers say it does not (about three minutes). */
 export const confirmOnRegistry = async (item: Versioned, answers: ReadonlyArray<Result.Result<boolean, string>> = []): Promise<Settled> => {
   const verdict = confirmation(item, answers, confirmSchedule.attempts)
   if (verdict._tag !== "Pending") return verdict

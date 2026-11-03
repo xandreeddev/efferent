@@ -26,6 +26,11 @@ it again. Do not publish a different version or an unreviewed source commit.
   **Unreleased** changelog entry. Patch, minor or major intent in any fixed
   package versions the whole framework group consistently.
 - Repository-only changes need not bump packages.
+- To request an authorized patch from CI when no changesets are pending, run
+  `gh workflow run release-pr.yml --repo xandreeddev/efferent --ref main -f patch=true`.
+  Its patch helper records the intent before the normal versioner prepares
+  the release PR. It refuses existing notes so a requested patch cannot
+  silently consume a pending minor or major release.
 - Keep `.changeset/config.json` and `releaseDirectories` in
   `scripts/release-version-plan.ts` synchronized with the build list when
   adding packages; versioning tests enforce this.
@@ -57,6 +62,10 @@ metadata. It shares the verified version and source commit but stays out of
 the 24-package framework cohort. `bun run publish:landing` previews its
 isolated package locally; live uploads require the CI context. Resume only
 when the registry records the same source commit and packed integrity.
+The final registry audit checks all 25 names and reports provenance presence.
+Use `bun run release:status --root <release-checkout> --wait 180` to repeat
+that read-only check. Add `--require-provenance` when verifying that every
+package was published with attestations through CI.
 
 For an already prepared release or an interrupted run:
 
@@ -95,6 +104,8 @@ validated GitHub Actions context; local use retains interactive authentication.
   tag. Confirm ambiguous npm upload failures through the registry.
 - Tags pushed with `GITHUB_TOKEN` do not trigger another push workflow. The
   release job explicitly dispatches `docs.yml` only after npm confirmation.
+- For first-publication activation, exact trusted-publisher settings and
+  partial-release diagnosis, read `../trusted-publishing/SKILL.md`.
 - `bun run release:publish` is an interactive recovery tool, used only when
   the maintainer explicitly requests local publication. Routine releases run
   in GitHub Actions.

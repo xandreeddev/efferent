@@ -22,7 +22,7 @@
  * terminal, so its browser or one-time-password 2FA prompt works.
  *
  * When `npm publish` fails in a live run, the registry is asked for that version
- * for about a minute before the run stops: npm can retry a request that went
+ * for about three minutes before the run stops: npm can retry a request that went
  * through and then fail its own upload (E409 "Cannot publish over previously
  * staged version"), and the registry's CDN can answer 404 for a while after a
  * publish. A version the registry has is counted as published.
@@ -111,8 +111,16 @@ if (ci) {
 }
 
 // The registry decides what is left to publish.
-const states = await Promise.all(plan.order.map(async (built) => ({ built, published: await onRegistry(built.manifest) })))
-const unknownState = states.flatMap(({ published }) => Result.isFailure(published) ? [published.failure] : [])
+const states = await Promise.all(plan.order.map(async (built) => {
+  const published = await onRegistry(built.manifest)
+  const provenance = Result.isSuccess(published) && published.success
+    ? await checkRegistryProvenance(built.manifest, head.stdout, true) : Result.succeed(undefined)
+  return { built, published, provenance }
+}))
+const unknownState = states.flatMap(({ published, provenance }) => [
+  ...(Result.isFailure(published) ? [published.failure] : []),
+  ...(Result.isFailure(provenance) ? [provenance.failure] : []),
+])
 if (unknownState.length > 0) refuse(unknownState)
 const queue = states.flatMap(({ built, published }) => Result.isSuccess(published) && !published.success ? [built] : [])
 states.filter(({ built }) => !queue.includes(built)).forEach(({ built }) => console.log(`skip ${label(built.manifest)} (already on npm)`))
@@ -143,7 +151,7 @@ const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string
   const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit" })
   if (await child.exited !== 0) {
     if (!live) return stop(next, done, "")
-    console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about a minute).`)
+    console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about three minutes).`)
     const verdict = await confirmOnRegistry(next.manifest)
     if (verdict._tag === "Missing") return stop(next, done, `: ${verdict.reason}`)
     console.log(`npm reported a failure for ${label(next.manifest)}, but the registry has it: the upload went through. Counted as published.`)
