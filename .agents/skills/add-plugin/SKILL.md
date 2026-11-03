@@ -48,6 +48,9 @@ data in `foundry.config.ts`.
      comment above `plugin-workspace`'s tests' layer first: never make two
      packages devDependencies of each other.
 4. `scripts/build-packages.ts`: add the directory name to `names`.
+   Also register its package name in `.changeset/config.json`'s fixed group
+   and its directory in `scripts/release-version-plan.ts`'s
+   `releaseDirectories`. Versioning tests check these against the build list.
 5. A plugin package: import it in `scripts/generate-plugin-reference.ts` and
    add its plugins to `firstParty` (docs:generate also exits 1 for any
    exported plugin missing there).

@@ -132,112 +132,102 @@ The lists the check reads are the `registration` data in
 
 ## Publishing
 
-The framework packages are published from a maintainer's terminal; there is
-no release automation, and publishing needs explicit sign-off. All 24
-publishable packages (`names` in `scripts/build-packages.ts`) share one version (`0.16.0` in the sources) and are
-published under npm's `latest` tag. The build writes `private: false` into
-each manifest it builds, so a source `private: true` (core's) does not keep
-a package off npm. The previously published `efferent`,
-`@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
+Releases run in GitHub Actions. All 24 publishable packages share version
+`0.16.0` in source and publish together under npm's `latest` tag. Changesets
+versions this fixed group; the release workflow publishes the isolated build
+from `.artifacts/packages`, whose manifests have `private: false`.
 
-For a release, set the new version in every publishable `package.json` and in
-each plugin definition (`version:` in `definePlugin`), run
-`bun run docs:generate`, and turn the changelog's **Unreleased** section into
-the new version, with the release date. Set the version in the README's,
-the website getting-started page's and the website home page's "published
-at" sentences, and drop any README exception for a package not yet on npm
-(npm holds older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, from
-an earlier line: check with `npm view @xandreed/plugin-telemetry versions`
-that none is at or above the new version). Record the release's journal
-fixture with `bun scripts/record-journal-fixture.ts` and its evaluation run
-with `bun scripts/record-run-fixture.ts`. Merge that, then publish and tag
-from a clean checkout of the merge commit, in an interactive terminal:
+### Release PRs
+
+1. Add a changeset with `bun run changeset` in a package-change PR. Choose
+   the affected package and patch, minor or major intent. The fixed group
+   makes every framework package take the same resulting version. Keep the
+   usual entry under **Unreleased** in `CHANGELOG.md` too.
+2. After changesets reach `main`, `release-pr.yml` runs `release:version`
+   and opens or updates `changeset-release/main`. It consumes the notes,
+   synchronizes package and plugin versions, updates the central changelog
+   and version markers, records the new journal/run fixtures and regenerates
+   docs. The source manifests remain private; Changesets is used for
+   versioning, while the framework publisher handles distribution artifacts.
+3. Review and merge the generated PR, titled `release <version>`. The bot
+   explicitly dispatches the existing `ci` workflow on its branch so its
+   required check can run with `GITHUB_TOKEN`. Branch protection still
+   requires that check to pass before merging.
+4. After the merged release commit passes main's `ci`, `release.yml`
+   verifies its source SHA, version, dated changelog, compatibility fixtures
+   and the trusted Actions check. It builds and verifies the packed packages,
+   runs the publishing dry run, publishes in dependency order, confirms every
+   version on npm, pushes `v<version>`, creates the GitHub release and
+   dispatches the docs deployment at that tag.
+
+Merging the release PR signs off on package publication, the immutable tag
+and documentation deployment. Ordinary feature commits retaining the current
+version do not publish. A Changesets note is unnecessary for repository-only
+changes that should not bump the framework version.
+
+For the already prepared `0.16.0` release, or to retry an interrupted release,
+run the workflow on GitHub's Actions tab, or dispatch it:
 
 ```sh
-bun run release:publish            # --verify adds verify:packages; --dry-run stops before the upload
+gh workflow run release.yml --ref main -f version=0.16.0
 ```
 
-`release:publish` (`scripts/release-publish.ts`) refuses a working tree with
-changes (untracked files included) and, unless `--dry-run`, a stdin that is
-not a terminal. Before building or uploading, it refuses a conflicting local
-or remote release tag, or an existing core version whose registry `gitHead`
-does not match HEAD. Built manifests record that commit so an interrupted
-release can resume from the same source; older packages without that metadata
-cannot establish a safe resume. It then runs, in order and attached to the
-terminal, stopping at the first failure:
+The workflow resolves the original `release <version>` commit on main,
+checks its exact successful CI run, and publishes that clean source even
+when the pipeline code has advanced. If history contains more than one
+release commit for that version, pass `-f commit=<full-sha>` explicitly.
+Publication never runs from an arbitrary PR or a commit outside main.
 
-```sh
-bun install --frozen-lockfile --ignore-scripts
-bun run build:packages            # also writes .artifacts/packages/build.json
-bun run publish:packages          # dry run: every check, then npm publish --dry-run
-bun run publish:packages --publish
-```
+### npm authentication
 
-The install skips lifecycle scripts: the docs site's `astro` has an optional
-`sharp` whose install script can fall back to a node-gyp build and fail the
-install, and nothing published needs one. `verify:packages` takes minutes and
-CI runs it on every merge commit, the release's included, so it runs only
-with `--verify`. After the publish, the command asks the registry for every
-package `build.json` records, for up to about a minute each, and only when the
-registry has them all creates the `v<version>` tag on HEAD and pushes it to
-origin. A tag that already names HEAD is kept; one that names another commit,
-here or on origin, refuses: a release tag is never moved.
+The first publication of new package names needs an npm granular token.
+Create a short-lived token with package/scope read and write (publish and
+stage), access to `@xandreed`, and bypass 2FA. Save it directly as the
+repository Actions secret `NPM_TOKEN`; do not put it in a file or a PR.
+Package settings must permit token publication. A stage-only token does not
+perform this workflow's direct publication.
 
-The distribution build resolves `workspace:*` dependencies to caret ranges of
-the matching package versions (`^0.16.0`) and declares `@xandreed/core` and
-`effect` peer dependencies at caret ranges (`^0.16.0`, `^4.0.7`), never exact
-pins, so a host on other patch versions installs one copy of `@xandreed/core`
-and of `effect`, and one whose dependencies cannot share a copy gets a peer
-conflict instead of a second one (`scripts/distribution-manifest.ts`). It
-stamps `build.json` with the commit, whether the working tree had changes, the
-shared version and the packages it built. Changes are tracked and untracked
-files anywhere, plus gitignored files in a package's `src`, `skills` or
-`profiles` folder, which the build copies too.
-`publish:packages` refuses, before publishing anything, when:
+For ongoing releases, configure npm trusted publishing for each package:
+GitHub owner `xandreeddev`, repository `efferent`, workflow `release.yml`,
+with permission to publish directly. No environment name is required by
+this workflow. Use npm's current trusted-publisher setup instructions,
+then remove `NPM_TOKEN`. The job grants `id-token: write` and uses npm
+11.15.0 on Node 24. npm automatically uses OIDC when no token is supplied;
+`npm whoami` does not validate OIDC, so CI checks that account only for
+explicit token authentication. Local publishing retains its account check.
 
-- the packages do not all share one version;
-- a built version differs from its source `package.json`;
-- `build.json` is missing, does not list the built packages, records a commit
-  other than `HEAD`, or records a build from a tree with changes;
-- the working tree has changes, untracked files included;
-- the `@xandreed/*` dependencies between the packages form a cycle;
-- `npm whoami` fails (log in with `npm login`), or names an account other than
-  the project's (`xandreed`);
-- the registry cannot be reached, or answers anything but found or not found,
-  when asked whether a version is already published.
+See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens/)
+and [trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+Tokens are a bootstrap path; npm's direct token-publishing policy changes
+in January 2027 make trusted publishing the ongoing path.
 
-Every step uses `https://registry.npmjs.org`: the already-published check,
-`npm whoami` and `npm publish`, which is passed the registry so that npm
-settings (a scoped `@xandreed:registry` included) cannot send it elsewhere. It
-publishes one package at a time, each after the `@xandreed/*` packages it
-depends on, with `npm publish <dir> --access public --tag latest`. A
-`name@version` already on the registry is skipped (the check bypasses the
-registry's cache), so a run that stopped part-way can be repeated. The
-registry's CDN can still answer 404 for a version published moments before,
-and npm can fail an upload with E409 "Cannot publish over previously staged
-version" after retrying a request that went through; so when `npm publish`
-fails in a live run, the script asks the registry for that version for up to
-about a minute, counts it as published when the registry has it, and stops
-otherwise. npm runs in the same terminal, so its two-factor prompt works
-there; run it from an interactive terminal. Merging a version bump publishes
-nothing; `release:publish` tags the release (`v<version>`) once it is on npm. Tags resume with `v0.14.0`; 0.11.0
-to 0.13.0 have none (`v0.1.1` to `v0.3.0` belong to the frozen earlier line).
+### Integrity and recovery
 
-Never publish from a commit whose version is already on npm for some
-packages, unless it is the commit those were published from (a run that
-stopped part-way). The skip above would then publish only what is missing,
-such as a package added since that release, depending on the published
-`@xandreed/*` versions, which lack what it needs. A new package starts at
-the current shared version and first ships with the next version bump.
+The publisher keeps the build/HEAD, clean-tree, shared-version, dependency
+order and immutable-tag checks. Built manifests record `gitHead` and the
+repository URL. An existing release can resume only when npm's core version
+records the same source commit. Missing provenance cannot establish a safe
+resume, and another same-version checkout is refused.
 
-Pushing a `v<version>` tag also deploys the documentation site from that tag
-(`.github/workflows/docs.yml`; a manual dispatch can deploy it too), so
-`release:publish` runs only with the sign-off for both. The `github-pages`
-environment must allow `v*` tags to deploy: it allowed only `main` before the
-site moved to tag deploys, and a refused tag fails the deploy job after the
-build. Add the rule once, in Settings → Environments → github-pages →
-Deployment branches and tags, or with
-`gh api -X POST repos/xandreeddev/efferent/environments/github-pages/deployment-branch-policies -f name='v*' -f type=tag`.
+Every registry read and upload uses `https://registry.npmjs.org` explicitly.
+After an ambiguous npm failure, the publisher checks the registry for about
+a minute before deciding whether the upload succeeded. A retry uses the same
+source commit and skips versions already uploaded. It never moves a pushed
+release tag. The workflow uses one publication concurrency group and does
+not cancel a release in progress.
+
+The source and pipeline checkouts are separate, so a historical release can
+use the current CI publisher without changing its source or build stamp.
+Both GitHub token-created release PRs and tag pushes need explicit workflow
+dispatches: CI is dispatched on the release branch, and `docs.yml` on the
+published tag. The docs deployment is therefore after all npm versions are
+confirmed, including when the tag was pushed with `GITHUB_TOKEN`.
+For historical checkouts, npm's provenance records the verified source SHA;
+the workflow identity and run still identify the current publishing pipeline.
+
+`bun run release:publish` remains available for an explicitly requested
+interactive recovery. Routine releases and the initial release above run
+through GitHub Actions.
 
 ## Distribution changes
 

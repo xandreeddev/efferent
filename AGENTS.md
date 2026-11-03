@@ -207,4 +207,6 @@ keep candidate, prompt, schema and protocol versions in their evidence.
   file, commit, comment and screenshot; never copy code from another project.
 - Every PR adds an entry under "Unreleased" in `CHANGELOG.md`.
 - Publishing to npm and pushing a `v*` tag (it deploys the docs site) happen
-  only on explicit sign-off.
+  only on explicit sign-off. Merging a generated `release <version>` PR
+  signs off on CI publication after its main CI passes; an explicit
+  `release.yml` dispatch signs off on that selected release or retry.

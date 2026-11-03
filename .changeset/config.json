@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config/schema.json",
+  "changelog": false,
+  "commit": false,
+  "fixed": [[
+    "@xandreed/core", "@xandreed/runtime", "@xandreed/sdk", "@xandreed/process-host",
+    "@xandreed/evals", "@xandreed/evals-cli", "@xandreed/evals-langfuse", "@xandreed/evals-langsmith",
+    "@xandreed/plugin-agent-loop", "@xandreed/plugin-memory-window", "@xandreed/plugin-memory-summary", "@xandreed/plugin-memory-digest",
+    "@xandreed/plugin-memory", "@xandreed/plugin-rag", "@xandreed/plugin-knowledge-postgres", "@xandreed/plugin-tool-discovery", "@xandreed/plugin-models",
+    "@xandreed/plugin-session-files", "@xandreed/plugin-session-sqlite", "@xandreed/plugin-sessions", "@xandreed/plugin-tasks",
+    "@xandreed/plugin-render", "@xandreed/plugin-workspace", "@xandreed/plugin-telemetry"
+  ]],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "format": false,
+  "privatePackages": { "version": true, "tag": false },
+  "updateInternalDependencies": "patch",
+  "ignore": ["@xandreed/foundry", "@xandreed/website"]
+}

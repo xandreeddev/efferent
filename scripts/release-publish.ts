@@ -6,6 +6,9 @@
  *   bun run release:publish            install, build, publish dry run, publish, tag
  *   bun run release:publish --verify   also bun run verify:packages after the build (CI already ran it on the merge commit)
  *   bun run release:publish --dry-run  stop after the publish dry run: nothing is uploaded or tagged
+ *   bun scripts/release-publish.ts --ci --root <clean-release-checkout> --verify
+ * CI requires this repository's GitHub Actions context plus npm token or OIDC request credentials.
+ * Build and verification run in the source checkout; publication uses this pipeline's publisher.
  *
  * In order, each attached to this terminal, the first failure stopping the run:
  * `bun install --frozen-lockfile --ignore-scripts`, `bun run build:packages`,
@@ -25,23 +28,31 @@
  *
  * The steps and the tag decision are pure functions in publish-plan.ts.
  */
-import { join } from "node:path"
+import { appendFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { Result, Schema } from "effect"
 import { checkRegistryProvenance, confirmOnRegistry } from "./npm-registry.js"
-import { BuildStamp, Manifest, notCleanTree, notOfHead, releaseSteps, tagPlan } from "./publish-plan.js"
+import { BuildStamp, ciAuthentication, Manifest, notCleanTree, notOfHead, releaseSteps, tagPlan } from "./publish-plan.js"
 import type { Ran } from "./publish-plan.js"
 
-const root = join(import.meta.dir, "..")
-const stampPath = join(root, ".artifacts/packages/build.json")
-
 const args = process.argv.slice(2)
-const unknown = args.filter((arg) => arg !== "--verify" && arg !== "--dry-run")
-if (unknown.length > 0) {
-  console.error(`Unknown argument: ${unknown.join(" ")}\nUsage: bun run release:publish [--verify] [--dry-run]`)
+const rootIndex = args.indexOf("--root")
+const sourceRoot = rootIndex < 0 ? undefined : args[rootIndex + 1]
+const unknown = args.filter((arg, index) => !["--verify", "--dry-run", "--ci", "--root"].includes(arg) && !(rootIndex >= 0 && index === rootIndex + 1))
+if (unknown.length > 0 || (rootIndex >= 0 && (sourceRoot === undefined || sourceRoot.startsWith("--") || args.filter((arg) => arg === "--root").length !== 1))) {
+  console.error(`Invalid arguments. Usage: bun run release:publish [--verify] [--dry-run] [--ci] [--root <clean-checkout>]`)
   process.exit(2)
 }
 const verify = args.includes("--verify")
 const dryRun = args.includes("--dry-run")
+const ci = args.includes("--ci")
+const root = sourceRoot === undefined ? join(import.meta.dir, "..") : resolve(sourceRoot)
+const stampPath = join(root, ".artifacts/packages/build.json")
+const authentication = ci ? ciAuthentication(process.env) : Result.succeed("token" as const)
+if (Result.isFailure(authentication)) {
+  console.error(authentication.failure)
+  process.exit(1)
+}
 
 function refuse(what: string, reasons: ReadonlyArray<string>): never {
   console.error(`Refusing to ${what}:\n${reasons.map((reason) => `  - ${reason}`).join("\n")}`)
@@ -72,9 +83,13 @@ const head = run(["git", "rev-parse", "HEAD"])
 const before = [
   ...(head.success ? [] : ["git cannot read HEAD; run this from a git checkout"]),
   ...notCleanTree(run(["git", "status", "--porcelain"])),
-  ...(dryRun || process.stdin.isTTY ? [] : ["stdin is not a terminal; run this from an interactive terminal, where npm asks for the second factor"]),
+  ...(ci || dryRun || process.stdin.isTTY ? [] : ["stdin is not a terminal; run this from an interactive terminal, where npm asks for the second factor"]),
 ]
 if (before.length > 0) refuse("release", before)
+if (ci && authentication.success === "token") {
+  const account = run(["npm", "whoami", "--registry", "https://registry.npmjs.org"])
+  if (!account.success || account.stdout !== "xandreed") refuse("release", ["the CI npm token must authenticate as xandreed before building the release"])
+}
 
 // Publishing a new package under an old shared version would bind it to an older core.
 // Missing npm gitHead cannot establish a safe resume, even if the version already exists.
@@ -91,7 +106,7 @@ if (preflight.reasons.length > 0) refuse("release", preflight.reasons)
 const provenance = await checkRegistryProvenance(core, head.stdout)
 if (Result.isFailure(provenance)) refuse("release", [provenance.failure])
 
-await attached(releaseSteps({ verify, dryRun }))
+await attached(releaseSteps({ verify, dryRun, ci, root, publisher: join(import.meta.dir, "publish-packages.ts") }))
 if (dryRun) {
   console.log("\nDry run passed; nothing was uploaded or tagged. Release with: bun run release:publish")
   process.exit(0)
@@ -117,4 +132,5 @@ const reasons = [...notOfHead(stamp, now), ...plan.reasons]
 if (reasons.length > 0) refuse("tag", reasons)
 if (plan.commands.length === 0) console.log(`${tag} already names HEAD here and on origin.`)
 await attached(plan.commands)
-console.log(`\nReleased ${version}: the registry has all ${stamp.packages.length} package(s), and origin has ${tag} at ${now.stdout.slice(0, 11)}, which deploys the documentation site (.github/workflows/docs.yml).`)
+if (ci && process.env.GITHUB_OUTPUT !== undefined) await appendFile(process.env.GITHUB_OUTPUT, `version=${version}\ntag=${tag}\nsha=${now.stdout}\n`)
+console.log(`\nReleased ${version}: the registry has all ${stamp.packages.length} package(s), and origin has ${tag} at ${now.stdout.slice(0, 11)}.${ci ? " CI must explicitly dispatch the documentation workflow for this tag." : " The tag deploys the documentation site (.github/workflows/docs.yml)."}`)

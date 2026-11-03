@@ -28,6 +28,10 @@ describes changes in this checkout for the next release.
 `@xandreed/plugin-models` needs Node 24.5 or newer.
 The historical `efferent` npm package is a different release line.
 
+Releases use Changesets and GitHub Actions: changesets create a version PR;
+merging it and passing CI publishes the package set, creates its GitHub
+release and deploys the tagged docs. See [releasing](CONTRIBUTING.md#publishing).
+
 ## Compose
 
 ```ts

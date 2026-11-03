@@ -30,25 +30,32 @@
  * The checks, the order and when to stop asking are pure functions in
  * publish-plan.ts; the registry reads are in npm-registry.ts.
  */
-import { dirname, join, relative } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { Result, Schema } from "effect"
-import { confirmOnRegistry, onRegistry } from "./npm-registry.js"
-import { BuildStamp, Manifest, label, planPublish, publishCommand, registry } from "./publish-plan.js"
+import { checkRegistryProvenance, confirmOnRegistry, onRegistry } from "./npm-registry.js"
+import { BuildStamp, ciAuthentication, Manifest, label, planPublish, publishCommand, registry, repositoryMetadata } from "./publish-plan.js"
 import type { Built, Ran } from "./publish-plan.js"
 
-const root = join(import.meta.dir, "..")
-const output = join(root, ".artifacts/packages")
 /** The npm account the packages are published from; any other logged-in account is refused. */
 const publisher = "xandreed"
-const shown = (path: string) => `./${relative(root, path)}`
-
 const args = process.argv.slice(2)
-const unknown = args.filter((arg) => arg !== "--publish")
-if (unknown.length > 0) {
-  console.error(`Unknown argument: ${unknown.join(" ")}\nUsage: bun run publish:packages [--publish]`)
+const rootIndex = args.indexOf("--root")
+const sourceRoot = rootIndex < 0 ? undefined : args[rootIndex + 1]
+const unknown = args.filter((arg, index) => !["--publish", "--ci", "--root"].includes(arg) && !(rootIndex >= 0 && index === rootIndex + 1))
+if (unknown.length > 0 || (rootIndex >= 0 && (sourceRoot === undefined || sourceRoot.startsWith("--") || args.filter((arg) => arg === "--root").length !== 1))) {
+  console.error(`Invalid arguments. Usage: bun run publish:packages [--publish] [--ci] [--root <clean-checkout>]`)
   process.exit(2)
 }
 const live = args.includes("--publish")
+const ci = args.includes("--ci")
+const root = sourceRoot === undefined ? join(import.meta.dir, "..") : resolve(sourceRoot)
+const output = join(root, ".artifacts/packages")
+const shown = (path: string) => `./${relative(root, path)}`
+const authentication = ci ? ciAuthentication(process.env) : Result.succeed("token" as const)
+if (Result.isFailure(authentication)) {
+  console.error(authentication.failure)
+  process.exit(1)
+}
 
 function refuse(reasons: ReadonlyArray<string>): never {
   console.error(`Refusing to publish:\n${reasons.map((reason) => `  - ${reason}`).join("\n")}`)
@@ -85,9 +92,23 @@ const builds: ReadonlyArray<Built> = reads.flatMap(({ dir, manifest, source }) =
 
 // Checks that need no network; every failing one is reported together.
 const head = run(["git", "rev-parse", "HEAD"])
-const whoami = run(["npm", "whoami", "--registry", registry])
-const plan = planPublish({ stamp, builds, head, status: run(["git", "status", "--porcelain"]), whoami, publisher })
+const whoami = authentication.success === "oidc" ? { success: true, stdout: "GitHub OIDC", stderr: "" } : run(["npm", "whoami", "--registry", registry])
+const plan = planPublish({ stamp, builds, head, status: run(["git", "status", "--porcelain"]), whoami, publisher, authentication: authentication.success })
 if (plan.reasons.length > 0) refuse(plan.reasons)
+if (ci) {
+  const core = builds.find(({ manifest }) => manifest.name === "@xandreed/core")
+  if (core === undefined) refuse(["the CI release build does not include @xandreed/core"])
+  const provenance = await checkRegistryProvenance(core.manifest, head.stdout)
+  if (Result.isFailure(provenance)) refuse([provenance.failure])
+  const wrong = builds.filter(({ manifest }) => manifest.gitHead !== undefined && manifest.gitHead !== head.stdout)
+  if (wrong.length > 0) refuse(wrong.map(({ manifest }) => `${label(manifest)} has a gitHead different from the source checkout`))
+  await Promise.all(builds.map(async ({ dir }) => {
+    const file = Bun.file(join(output, dir, "package.json"))
+    const raw = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.JsonObject))(await file.text())
+    if (Result.isFailure(raw)) refuse([`the built manifest for ${dir} is invalid`])
+    await Bun.write(file, `${JSON.stringify({ ...raw.success, gitHead: head.stdout, repository: repositoryMetadata(dir) }, null, 2)}\n`)
+  }))
+}
 
 // The registry decides what is left to publish.
 const states = await Promise.all(plan.order.map(async (built) => ({ built, published: await onRegistry(built.manifest) })))
@@ -115,9 +136,11 @@ const stop = (failed: Built, done: ReadonlyArray<string>, why: string): never =>
 const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
   const [next, ...rest] = pending
   if (next === undefined) return done
-  const command = publishCommand(next.dir, live)
+  const command = publishCommand(next.dir, live, ci)
   console.log(`\n$ ${command.join(" ")}`)
-  const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit" })
+  // npm provenance reads GITHUB_SHA for the checked-out material. A bootstrap source can
+  // predate the pipeline; retain the workflow identity while naming the verified source commit.
+  const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit", ...(ci ? { env: { ...process.env, GITHUB_SHA: head.stdout } } : {}) })
   if (await child.exited !== 0) {
     if (!live) return stop(next, done, "")
     console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about a minute).`)

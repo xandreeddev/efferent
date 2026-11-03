@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
+import { ciAuthentication, confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
 import type { BuildStamp, Built, Manifest, PublishState } from "./publish-plan.js"
 
 const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
@@ -203,8 +203,8 @@ describe("tagPlan", () => {
 
   test("creates and pushes a new tag, and keeps what already names HEAD", () => {
     expect(tagPlan({ tag, head: commit, local: null, remote: none }))
-      .toEqual({ reasons: [], commands: [["git", "tag", tag], ["git", "push", "origin", "refs/tags/v0.14.0"]] })
-    expect(tagPlan({ tag, head: commit, local: commit, remote: none }).commands).toEqual([["git", "push", "origin", "refs/tags/v0.14.0"]])
+      .toEqual({ reasons: [], commands: [["git", "tag", tag], ["git", "push", "origin", "refs/tags/v0.14.0:refs/tags/v0.14.0"]] })
+    expect(tagPlan({ tag, head: commit, local: commit, remote: none }).commands).toEqual([["git", "push", "origin", "refs/tags/v0.14.0:refs/tags/v0.14.0"]])
     expect(tagPlan({ tag, head: commit, local: commit, remote: listing(commit) })).toEqual({ reasons: [], commands: [] })
   })
 
@@ -218,5 +218,25 @@ describe("tagPlan", () => {
   test("refuses when origin's tags cannot be read", () => {
     expect(tagPlan({ tag, head: commit, local: null, remote: { success: false, stdout: "", stderr: "fatal: could not read from remote repository" } }))
       .toEqual({ reasons: ["git cannot read the tags on origin: fatal: could not read from remote repository"], commands: [] })
+  })
+})
+
+describe("CI authentication", () => {
+  const github = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "xandreeddev/efferent" }
+  const oidc = { ...github, ACTIONS_ID_TOKEN_REQUEST_URL: "https://actions.example.invalid/token", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture" }
+  test("requires this repository's Actions context and credentials, preferring an explicit npm token", () => {
+    expect(Result.isFailure(ciAuthentication({}))).toBe(true)
+    expect(Result.isFailure(ciAuthentication({ ...oidc, GITHUB_REPOSITORY: "somewhere/else" }))).toBe(true)
+    expect(Result.isFailure(ciAuthentication(github))).toBe(true)
+    expect(Result.isFailure(ciAuthentication({ ...oidc, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "" }))).toBe(true)
+    expect(ciAuthentication(oidc)).toEqual(Result.succeed("oidc"))
+    expect(ciAuthentication({ ...oidc, NODE_AUTH_TOKEN: "fixture-token" })).toEqual(Result.succeed("token"))
+  })
+  test("OIDC skips only account lookup and retains all build guards", () => {
+    const unavailable = { success: false, stdout: "", stderr: "not a token session" }
+    expect(planPublish(state({ authentication: "oidc", whoami: unavailable })).reasons).toEqual([])
+    expect(planPublish(state({ authentication: "oidc", whoami: unavailable, stamp: stampOf(repository, { dirty: true }) })).reasons).toHaveLength(1)
+    expect(planPublish(state({ authentication: "token", whoami: unavailable })).reasons).toHaveLength(1)
+    expect(publishCommand("core", false, true)).toContain("--provenance")
   })
 })

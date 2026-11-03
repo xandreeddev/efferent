@@ -1,103 +1,96 @@
 ---
 name: release
-description: Cut a release of the @xandreed/* framework packages, only on explicit maintainer sign-off — the shared version bump, CHANGELOG, journal fixture, docs:generate, build and verify, then `bun run release:publish`, which publishes to npm and pushes the v<version> tag that deploys the docs site. Read before any version bump, npm publish or release tag.
+description: Prepare Changesets release PRs and publish the exact tested release through GitHub Actions, including npm provenance, immutable tags, GitHub releases and docs deployment. Read before versioning, publishing or tagging.
 ---
 
-# Cut a release
+# Release through GitHub Actions
 
-Publishing to npm and pushing a `v<version>` tag are outward-facing and
-cannot be taken back. Do none of it without the maintainer's explicit
-sign-off for that release, and stop at each step marked **sign-off** for a
-fresh yes. CONTRIBUTING.md, "Publishing", is the full reference, including
-everything `publish:packages` refuses.
-
-## 1. The release PR
-
+Releases use `.github/workflows/release-pr.yml` and `release.yml`.
 All publishable packages (`names` in `scripts/build-packages.ts`) share one
-version and publish together under npm's `latest` tag.
+version. Changesets has one fixed group for them; source manifests stay
+private and the framework publisher uploads the isolated distribution build.
+CONTRIBUTING.md, "Publishing", is the complete workflow and setup reference.
 
-1. Set the new version in every publishable `packages/<name>/package.json`
-   and in every plugin definition (`version:` in each `definePlugin`).
-2. `bun run docs:generate` (the plugin reference carries the versions).
-3. In `CHANGELOG.md`, turn **Unreleased** into `## <version> — <date>`, with
-   its headings intact, and start a new empty **Unreleased**.
-4. Set the version in the "published at" sentences: `README.md`,
-   `packages/website/src/content/docs/getting-started.md` and
-   `packages/website/src/pages/index.astro`. Drop any README exception for a
-   package not yet on npm.
-5. A package published from an earlier line must have no npm version at or
-   above the new one: `npm view @xandreed/plugin-telemetry versions`.
-6. Record the release's journal fixture: `bun scripts/record-journal-fixture.ts`
-   writes `packages/sdk/fixtures/journal-<version>.json` (it refuses to
-   overwrite one; development refreshes use `--unreleased --force`), with the
-   release's `storedFormat`, which `docs/stored-format.json`'s history must
-   hold (`journal-compat.test.ts` checks it). Record its
-   evaluation run the same way: `bun scripts/record-run-fixture.ts` writes
-   `packages/evals/fixtures/run-<version>.json`.
-7. Run every gate (below), open the PR titled `release <version>` (skill
-   `commit-style`) and merge it. Merging publishes nothing.
+## Authorization
 
-## 2. Publish and tag (**sign-off**)
+Publication, tags and docs deployment are outward-facing. Maintainer approval
+and merging a generated `release <version>` PR signs off on that release's CI
+publication after main CI succeeds. An explicit `release.yml` workflow dispatch
+signs off on the selected release or retry. An existing user instruction to
+perform that release is authorization to complete these steps; do not request
+it again. Do not publish a different version or an unreviewed source commit.
 
-From a clean checkout of the merge commit (no changes, no untracked files),
-in an interactive terminal:
+## 1. Record release intent
+
+- Package changes add a changeset with `bun run changeset` and the normal
+  **Unreleased** changelog entry. Patch, minor or major intent in any fixed
+  package versions the whole framework group consistently.
+- Repository-only changes need not bump packages.
+- Keep `.changeset/config.json` and `releaseDirectories` in
+  `scripts/release-version-plan.ts` synchronized with the build list when
+  adding packages; versioning tests enforce this.
+
+## 2. Review the generated release PR
+
+When changesets reach main, `release-pr.yml` calls `release:version` and
+updates the bot-owned `changeset-release/main` branch. It consumes notes,
+bumps manifests, synchronizes `definePlugin` versions and version markers,
+dates the central changelog, records the new journal and evaluation fixtures,
+updates lock metadata and regenerates documentation. Never overwrite an
+existing released fixture to silence a test.
+
+The workflow explicitly dispatches `ci.yml` on that branch to supply its
+required CI check with `GITHUB_TOKEN`. Review all generated files, fix any
+failures and merge using the repository's `commit-style` rules. The PR title
+is exactly `release <version>` so the publish selector can recognize it.
+
+## 3. Publish in CI
+
+After the merged release commit passes main's `ci`, `release.yml` verifies
+its exact Actions workflow/check, main ancestry, version, changelog and
+compatibility fixtures. It builds and verifies the source, publishes in
+dependency order, confirms every registry version, pushes `v<version>`,
+creates the GitHub release and dispatches docs deployment at that tag.
+
+For an already prepared release or an interrupted run:
 
 ```sh
-bun run release:publish
+gh workflow run release.yml --ref main -f version=<version>
 ```
 
-It runs, in order, each attached to the terminal, and stops at the first
-failure: `bun install --frozen-lockfile --ignore-scripts`,
-`bun run build:packages`, `bun run publish:packages` (the dry run: every
-check, then `npm publish --dry-run`) and `bun run publish:packages --publish`.
-Then it asks the registry for every package of the build and, only when all
-are there, creates the `v<version>` tag on HEAD and pushes it.
+The selector resolves the original release commit, not a later same-version
+feature commit. Supply `-f commit=<full-sha>` if more than one release commit
+has the same title. A retry must preserve the original publication source.
 
-- npm asks for the second factor in that terminal, and `npm whoami` must name
-  the project's account. The command refuses a stdin that is not a terminal.
-- `--verify` adds `bun run verify:packages` after the build. It takes minutes
-  and CI already ran it on the merge commit, so it is opt-in. `--dry-run`
-  stops after the publish dry run: nothing is uploaded or tagged.
-- Pushing a `v*` tag deploys the documentation site from that tag
-  (`.github/workflows/docs.yml`), so the one sign-off covers both. A tag
-  already on HEAD is kept; one on another commit refuses. Never move or
-  delete a pushed release tag.
-- A run that stopped part-way can be repeated from the same commit: versions
-  already on the registry are skipped. Never publish from a commit whose
-  version is partly on npm unless it is the commit those came from.
+The checked pipeline can publish a clean historical checkout using
+`release-publish.ts --ci --root <source> --verify`. These flags are for the
+validated GitHub Actions context; local use retains interactive authentication.
 
-## Known traps
+## 4. Authentication and recovery
 
-- Before uploads, the helper checks local and remote tags and the existing
-  core version's registry `gitHead` against HEAD. A mismatch or missing
-  metadata refuses the release. New build manifests record `gitHead` so a
-  partial release can resume from its exact commit.
-- A plain `bun install --frozen-lockfile` can exit 1 in a fresh checkout: the
-  docs site's `astro` pulls in an optional `sharp` whose install script falls
-  back to a node-gyp build and fails. Nothing published needs an install
-  script, hence `--ignore-scripts`.
-- npm can fail an upload with E409 "Cannot publish over previously staged
-  version" after retrying a request that went through: the version is on the
-  registry. After a failed `npm publish`, the script asks the registry for
-  about a minute and counts a version it finds as published.
-- The registry's CDN can answer 404 for a version published moments ago, even
-  cache-busted, so a rerun can upload it again and meet that E409. The same
-  check, before the tag too, waits it out.
+- Bootstrap new package names with a short-lived npm granular token stored
+  directly as the repository secret `NPM_TOKEN`: `@xandreed` scope read/write
+  publish-and-stage and bypass 2FA. Never ask for a token in chat or put one
+  in a tracked file. Missing authentication is an external setup requirement,
+  not a reason to weaken release guards or publish from a local terminal.
+- Configure trusted publishing for each package with repository
+  `xandreeddev/efferent`, workflow `release.yml`, and direct-publish permission;
+  then remove the bootstrap token. The CI job has `id-token: write`, Node 24
+  and npm 11.15.0. OIDC cannot be checked with `npm whoami`.
+- Source and build must share one version and commit, with no source changes.
+  Registry `gitHead` must match for a partial-release resume. Check local and
+  remote tags before uploading and again before pushing; never move a release
+  tag. Confirm ambiguous npm upload failures through the registry.
+- Tags pushed with `GITHUB_TOKEN` do not trigger another push workflow. The
+  release job explicitly dispatches `docs.yml` only after npm confirmation.
+- `bun run release:publish` is an interactive recovery tool, used only when
+  the maintainer explicitly requests local publication. Routine releases run
+  in GitHub Actions.
 
-## Gates before the release PR
+## Checks
 
-```bash
-bun run typecheck && env -u HTTP_PROXY -u HTTPS_PROXY bun test && bun run foundry demo
-bun run build:packages && mkdir -p .artifacts/tmp && TMPDIR=$PWD/.artifacts/tmp bun run verify:packages
-bun run docs:generate && bun run --cwd packages/website check
-```
-
-## Checklist
-
-- [ ] Explicit sign-off for this release
-- [ ] One version in every package.json and every `definePlugin`
-- [ ] docs:generate; CHANGELOG section dated; README and website versions
-- [ ] Earlier-line npm versions checked
-- [ ] Journal fixture recorded for the new version
-- [ ] Gates green; `release <version>` PR merged
-- [ ] `bun run release:publish` from a clean checkout of the merge commit (sign-off): packages on npm, `v<version>` pushed
+Run the definition of done from root AGENTS.md. Release script and workflow
+policy tests run within `bun test`; the package verification exercises the
+packed artifacts on Node and Bun. New release fixtures stay compatible with
+all recorded prior releases. Provider-backed quality claims require their
+own configured models, credentials and evidence.
