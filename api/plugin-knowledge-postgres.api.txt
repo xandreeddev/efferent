@@ -1,0 +1,8 @@
+const KnowledgePostgresConfig
+const KnowledgePostgresLive
+const KnowledgePostgresPluginLive
+const default
+const knowledgePostgresDefaults
+const knowledgePostgresPlugin
+const makeKnowledgePostgres
+type KnowledgePostgresConfig

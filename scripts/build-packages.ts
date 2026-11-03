@@ -7,7 +7,7 @@ import { distributionDependencies } from "./distribution-manifest.js"
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
 const names = ["core", "runtime", "sdk", "process-host", "evals", "evals-cli", "evals-langfuse", "evals-langsmith",
-  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models",
+  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-memory", "plugin-rag", "plugin-knowledge-postgres", "plugin-tool-discovery", "plugin-models",
   "plugin-session-files", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render", "plugin-workspace", "plugin-telemetry"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,

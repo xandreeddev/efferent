@@ -109,6 +109,15 @@
       "@xandreed/plugin-memory-digest": [
         "packages/plugin-memory-digest/src/index.ts"
       ],
+      "@xandreed/plugin-memory": [
+        "packages/plugin-memory/src/index.ts"
+      ],
+      "@xandreed/plugin-rag": [
+        "packages/plugin-rag/src/index.ts"
+      ],
+      "@xandreed/plugin-knowledge-postgres": [
+        "packages/plugin-knowledge-postgres/src/index.ts"
+      ],
       "@xandreed/plugin-tool-discovery": [
         "packages/plugin-tool-discovery/src/index.ts"
       ],

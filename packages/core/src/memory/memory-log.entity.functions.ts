@@ -738,6 +738,16 @@ export const toolInputOf = (entries: ReadonlyArray<LogEntry>, result: LogEntry):
   result.body._tag === "ToolResult" && result.body.interception !== undefined && Object.hasOwn(result.body.interception, "effectiveInput")
     ? result.body.interception.effectiveInput : Option.match(requestForResult(entries, result), { onNone: () => ({}), onSome: (request) => request.input })
 
+/** Recorded result inputs by entry identity, indexing scoped requests once for the whole log. @public */
+export const toolInputsByResult = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<EntryId, unknown> => {
+  const requestOf = requestResolverOf(entries)
+  return new Map(entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [[entry.id,
+    entry.body.interception !== undefined && Object.hasOwn(entry.body.interception, "effectiveInput")
+      ? entry.body.interception.effectiveInput
+      : Option.match(requestOf(entry), { onNone: () => ({}), onSome: (request) => request.input }),
+  ] as const] : []))
+}
+
 /** Results by the place of their calls in the request (a stable sort: log order among equals). */
 const byCall = Order.mapInput(Order.Number, (pair: { readonly call: number }) => pair.call)
 

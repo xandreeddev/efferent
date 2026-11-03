@@ -912,6 +912,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(helperReport.trim())
 }
+// Native memory, RAG and temporal graph conformance through the packed public API.
+await writeFile(join(consumer, "knowledge-consumer.mjs"), await readFile(join(root, "scripts/knowledge-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const knowledgeChild = Bun.spawn([binary, "knowledge-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const knowledgeReport = await new Response(knowledgeChild.stdout).text()
+  const required = ["nativeMemory", "nativeRag", "sourceEvidence", "referenceMemory", "referenceKnowledge", "temporalGraph"]
+  if (await knowledgeChild.exited !== 0 || required.some((name) => !knowledgeReport.includes(`"${name}":true`)) || (process.env.EFFERENT_TEST_POSTGRES_URL && !knowledgeReport.includes('"postgres":true'))) {
+    console.error(`the packed ${runtime} native knowledge engines lost source evidence, temporal graph or store conformance`); process.exit(1)
+  }
+  console.log(`${runtime} knowledge ${knowledgeReport.trim()}`)
+}
 // The process host's real parent/child protocol, peer kit, signals and durable restart on both runtimes.
 await writeFile(join(consumer, "process-host-consumer.mjs"), await readFile(join(root, "scripts/process-host-consumer.fixture.mjs"), "utf8"))
 for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {

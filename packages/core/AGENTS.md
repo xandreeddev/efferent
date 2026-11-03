@@ -398,6 +398,24 @@ failures and an infallible cache. `DrainActivity` counts active attempts.
 `ProcessActivity.busy` includes queued input; `inFlight` distinguishes work
 shutdown must wait for. `awaitIdle({ queued: false })` performs no queue I/O.
 
+`CommittedTurnObservers` is a multi-provider optional callback service. Its
+`notifyCommittedTurn` helper snapshots the acknowledged turn for each
+observer, runs them sequentially with a one-second bound and logs failures.
+It never changes an authoritative end. The SDK invokes it only after its
+owned writer's end ACK; hosts ending borrowed writers invoke it themselves.
+`committedTurnObserversConformance` checks copying, order, soft failures and
+timeouts; SDK journeys separately check authoritative commit ordering.
+
+`BackgroundWorkers` is a multi-provider lifecycle service independent of
+`TaskActivity`: claimed jobs count, idle polling and durable backlog do not.
+`ProcessActivity.runningWorkers` is omitted without the service. Worker
+`stop` prevents new claims while allowing durable enqueues; `interrupt`
+cancels local work and leaves leases recoverable. `shutdownGracefully`
+shares one absolute deadline across turn settlement, worker stop, drain
+and interruption. `backgroundWorkersConformance` checks application of
+the service and its coexistence with task counts. Scope finalizers must
+stop workers before their store dependencies close.
+
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/conformance/index.ts`; the `ToolRegistry`'s is the sdk's,
 `@xandreed/sdk/conformance`, since it runs its turns over `TurnLive`). Run a port's kit against every adapter of it, and
@@ -525,6 +543,9 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
+| Native memory and document extraction prompts, output schema, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
+| Independent extraction evidence-review prompt | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
+| Bounded query-planning and evidence-reranking prompts | `src/knowledge/knowledge-query.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:97` |
 | Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
 | Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact, `src/turn/model-request-hook.entity.functions.test.ts:26-32` |
