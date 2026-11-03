@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Order } from "effect"
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -22,7 +23,7 @@ const fixture = async (use: (root: string, env: NodeJS.ProcessEnv) => Promise<vo
     await put(".agents/skills/add-plugin/SKILL.md", `definePlugin({version: "${previous}"}); protocol version: "1".\n`)
     await put("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Keep existing release prose.\n\n## 0.16.0 — 2026-11-03\n\nAn old release.\n")
     for (const directory of releaseDirectories) {
-      await put(`packages/${directory}/package.json`, JSON.stringify({ name: `@xandreed/${directory}`, private: true, version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }))
+      await put(`packages/${directory}/package.json`, JSON.stringify({ name: `@xandreed/${directory}`, ...(directory === "core" ? { private: true } : directory === "runtime" ? { private: false } : {}), version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }))
       await put(`packages/${directory}/src/plugin.adapter.ts`, `const protocol = { version: "1" }; export const plugin = definePlugin({ version: "${previous}" });\n`)
       await put(`packages/${directory}/src/plugin.adapter.test.ts`, `const historical = "${previous}";\n`)
     }
@@ -48,10 +49,10 @@ test("no pending notes preserves the prepared 0.16.0 release without invoking Ch
   expect(result).toEqual({ hasChanges: false, version: previous, summaries: [] })
   expect(versionOutputs(result)).toBe("has_changes=false\nversion=0.16.0\n")
   expect(await readFile(join(root, "bun.lock"), "utf8")).toBe(before)
-  expect(await readdir(join(root, ".changeset"))).toEqual(["README.md", "config.json"])
+  expect((await readdir(join(root, ".changeset"))).toSorted(Order.String)).toEqual(["README.md", "config.json"])
 }))
 
-test("actual Changesets versions all private packages and the wrapper synchronizes release artifacts", () => fixture(async (root, env) => {
+test("actual Changesets versions mixed-visibility packages and the wrapper synchronizes release artifacts", () => fixture(async (root, env) => {
   await writeFile(join(root, ".changeset/ground-memory.md"), '---\n"@xandreed/core": minor\n---\n\nRetain source evidence.\n')
   const result = await runReleaseVersion(root, "2026-11-04", env)
   expect(result).toEqual({ hasChanges: true, version: "0.17.0", summaries: ["Retain source evidence."] })
@@ -63,6 +64,9 @@ test("actual Changesets versions all private packages and the wrapper synchroniz
     expect(await readFile(join(root, `packages/${directory}/src/plugin.adapter.test.ts`), "utf8")).toContain(previous)
   }
   expect((await Bun.file(join(root, "packages/foundry/package.json")).json()).version).toBe("0.0.0")
+  expect((await Bun.file(join(root, "packages/core/package.json")).json()).private).toBe(true)
+  expect((await Bun.file(join(root, "packages/runtime/package.json")).json()).private).toBe(false)
+  expect(Object.hasOwn(await Bun.file(join(root, "packages/sdk/package.json")).json(), "private")).toBe(false)
   const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8")
   expect(changelog).toContain("## 0.17.0 — 2026-11-04")
   expect(changelog).toContain("Keep existing release prose.")
@@ -76,7 +80,7 @@ test("actual Changesets versions all private packages and the wrapper synchroniz
   expect((await Bun.file(join(root, "packages/evals/fixtures/run-0.17.0.json")).json()).version).toBe("0.17.0")
   expect((await Bun.file(join(root, "docs/plugin-reference.json")).json()).version).toBe("0.17.0")
   expect((await readFile(join(root, "bun.lock"), "utf8")).match(/"version": "0.17.0"/g)).toHaveLength(24)
-  expect(await readdir(join(root, ".changeset"))).toEqual(["README.md", "config.json"])
+  expect((await readdir(join(root, ".changeset"))).toSorted(Order.String)).toEqual(["README.md", "config.json"])
   expect((await runReleaseVersion(root, "2026-11-04", env)).hasChanges).toBe(false)
 }), 20000)
 

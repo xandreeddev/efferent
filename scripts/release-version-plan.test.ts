@@ -5,7 +5,7 @@ import { Result } from "effect"
 import { isTestCode } from "./build-check.js"
 import {
   changelogVersionText, isReleaseVersion, lockVersionText, pluginVersionText, publishedVersionText,
-  releaseDirectories, releaseNames, releaseVersionPlan, sharedReleaseVersion, validateReleaseConfiguration, versionOutputs,
+  readSourceManifest, releaseDirectories, releaseNames, releaseVersionPlan, sharedReleaseVersion, validateReleaseConfiguration, versionOutputs,
 } from "./release-version-plan.js"
 
 const previous = "0.16.0"
@@ -24,13 +24,18 @@ describe("shared release version plans", () => {
     expect(Result.isFailure(validateReleaseConfiguration(config.replace('"version": true', '"version": false'), builder))).toBe(true)
     expect(Result.isFailure(validateReleaseConfiguration(config, builder.replace('"core",', '"unexpected",')))).toBe(true)
   })
-  test("requires every private source package to share a stable release version", () => {
-    const manifests = releaseNames.map((name) => ({ name, version: previous, private: true }))
+  test("requires every distribution package to share a stable version regardless of visibility", () => {
+    const manifests = releaseNames.map((name, index) => ({ name, version: previous, ...(index % 3 === 0 ? { private: true } : index % 3 === 1 ? { private: false } : {}) }))
     expect(success(sharedReleaseVersion(manifests))).toBe(previous)
     expect(Result.isFailure(sharedReleaseVersion(manifests.slice(1)))).toBe(true)
     expect(Result.isFailure(sharedReleaseVersion(manifests.map((entry, index) => index ? entry : { ...entry, version: "0.16.1" })))).toBe(true)
     expect(["0.16.0", "1.0.0"].every(isReleaseVersion)).toBe(true)
     expect(["01.16.0", "0.16.0\nversion=oops", "0.16.0-beta.1", "0.16", "9007199254740992.0.0"].some(isReleaseVersion)).toBe(false)
+  })
+  test("the actual 24 source manifests decode and share the current version", async () => {
+    const manifests = await Promise.all(releaseDirectories.map(async (directory) => success(readSourceManifest(await readFile(new URL(`../packages/${directory}/package.json`, import.meta.url), "utf8")))))
+    expect(manifests).toHaveLength(24)
+    expect(success(sharedReleaseVersion(manifests))).toBe(manifests[0]!.version)
   })
   test("accepts the captured complete CLI plan and refuses partial, unchanged or foreign releases", () => {
     expect(success(releaseVersionPlan(JSON.stringify(plan), previous))).toEqual({ hasChanges: true, version: next, summaries: ["Preserve source evidence."] })

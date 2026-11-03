@@ -15,7 +15,7 @@ const sameNames = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
 const failure = (message: string) => Result.fail(message)
 const json = <A, I>(schema: Schema.Codec<A, I>, text: string): Result.Result<A, string> => Result.mapError(Schema.decodeUnknownResult(Schema.fromJsonString(schema))(text), (error) => error.message)
 
-export const SourceManifest = Schema.Struct({ name: Schema.String, version: Schema.String, private: Schema.Boolean })
+export const SourceManifest = Schema.Struct({ name: Schema.String, version: Schema.String, private: Schema.optionalKey(Schema.Boolean) })
 export type SourceManifest = typeof SourceManifest.Type
 export const readSourceManifest = (text: string) => json(SourceManifest, text)
 const Configuration = Schema.Struct({
@@ -35,8 +35,8 @@ export const validateReleaseConfiguration = (text: string, buildSource: string):
 })
 export const sharedReleaseVersion = (manifests: ReadonlyArray<SourceManifest>): Result.Result<string, string> => {
   const version = manifests[0]?.version ?? ""
-  return sameNames(manifests.map((manifest) => manifest.name), releaseNames) && isReleaseVersion(version) && manifests.every((manifest) => manifest.version === version && manifest.private)
-    ? Result.succeed(version) : failure("All 24 source distribution packages must be private and share one stable semantic version")
+  return sameNames(manifests.map((manifest) => manifest.name), releaseNames) && isReleaseVersion(version) && manifests.every((manifest) => manifest.version === version)
+    ? Result.succeed(version) : failure("All 24 source distribution packages must share one stable semantic version")
 }
 const NoteRelease = Schema.Struct({ name: Schema.String, type: Schema.Literals(["major", "minor", "patch"]) })
 const CliPlan = Schema.Struct({

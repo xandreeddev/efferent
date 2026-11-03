@@ -16,5 +16,6 @@ published at its existing version when this automation is introduced; do not
 add a bump note merely to publish that version. Subsequent notes produce the
 next shared version. Release fixtures are never overwritten.
 
-Source packages stay private during development. Publishing uses Efferent's
-verified public build artifacts rather than `changeset publish`.
+Private source packages are included in versioning, and existing visibility
+flags stay unchanged. Publishing uses Efferent's verified public build
+artifacts rather than `changeset publish`.

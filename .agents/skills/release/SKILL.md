@@ -7,8 +7,8 @@ description: Prepare Changesets release PRs and publish the exact tested release
 
 Releases use `.github/workflows/release-pr.yml` and `release.yml`.
 All publishable packages (`names` in `scripts/build-packages.ts`) share one
-version. Changesets has one fixed group for them; source manifests stay
-private and the framework publisher uploads the isolated distribution build.
+version. Changesets has one fixed group for them, including private source
+packages; the framework publisher uploads the isolated distribution build.
 CONTRIBUTING.md, "Publishing", is the complete workflow and setup reference.
 
 ## Authorization

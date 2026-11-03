@@ -147,8 +147,9 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    and opens or updates `changeset-release/main`. It consumes the notes,
    synchronizes package and plugin versions, updates the central changelog
    and version markers, records the new journal/run fixtures and regenerates
-   docs. The source manifests remain private; Changesets is used for
-   versioning, while the framework publisher handles distribution artifacts.
+   docs. Existing source-package visibility is preserved, including private
+   packages such as core. Changesets versions the whole group, while the
+   framework publisher handles distribution artifacts.
 3. Review and merge the generated PR, titled `release <version>`. The bot
    explicitly dispatches the existing `ci` workflow on its branch so its
    required check can run with `GITHUB_TOKEN`. Branch protection still
