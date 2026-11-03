@@ -329,9 +329,10 @@ each plugin's version is its package's. `bun run docs:generate` writes the
 plugin and event references, and copies the events guide's snippets from the
 test that runs them into the guide and its website page.
 
-Releases are published with `bun run publish:packages`, which checks the build
-against the current commit and is a dry run unless `--publish` is passed; see
-[publishing](CONTRIBUTING.md#publishing). Changes per release are in the
+Releases are published and tagged with `bun run release:publish`, which
+installs, builds and runs `bun run publish:packages` (it checks the build
+against the current commit and is a dry run unless `--publish` is passed),
+then tags the release; see [publishing](CONTRIBUTING.md#publishing). Changes per release are in the
 [changelog](CHANGELOG.md).
 
 See [the framework guide](docs/framework.md), the

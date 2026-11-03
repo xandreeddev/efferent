@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { planPublish, publishCommand, registry, registryAnswer } from "./publish-plan.js"
+import { confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
 import type { BuildStamp, Built, Manifest, PublishState } from "./publish-plan.js"
 
 const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
@@ -114,5 +114,109 @@ describe("registry", () => {
     expect(publishCommand("core", false)).toEqual(["npm", "publish", "./.artifacts/packages/core", "--access", "public", "--tag", "latest",
       "--registry", registry, `--@xandreed:registry=${registry}`, "--dry-run"])
     expect(publishCommand("core", true)).not.toContain("--dry-run")
+  })
+
+  test("an absent version starts a new release, and an existing one resumes only at its exact commit", () => {
+    const core = manifest("core", "0.16.0")
+    expect(registryProvenance(core, commit, 404, "")).toEqual(Result.succeed(undefined))
+    expect(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: commit }))).toEqual(Result.succeed(undefined))
+    const different = registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }))
+    expect(different).toEqual(Result.fail("@xandreed/core@0.16.0 was published from 15d6dc518d5, not HEAD 9b898c1bb07; resume from its original commit or prepare a new shared version"))
+  })
+
+  test("missing provenance, malformed metadata, mismatched identity and registry refusals fail closed", () => {
+    const core = manifest("core", "0.16.0")
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version })))).toBe(true)
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: core.version, gitHead: "" })))).toBe(true)
+    expect(registryProvenance(core, commit, 200, "not json")).toEqual(Result.fail("the registry returned invalid release metadata for @xandreed/core@0.16.0"))
+    expect(Result.isFailure(registryProvenance(core, commit, 200, JSON.stringify({ name: core.name, version: "0.15.1", gitHead: commit })))).toBe(true)
+    expect(registryProvenance(core, commit, 503, "")).toEqual(Result.fail("the registry answered 503 for @xandreed/core@0.16.0"))
+  })
+})
+
+describe("confirmation", () => {
+  const core = manifest("core", "0.14.0")
+  const found = Result.succeed(true)
+  const absent = Result.succeed(false)
+  const { attempts } = confirmSchedule
+
+  test("asks for about a minute", () => {
+    expect(attempts * confirmSchedule.intervalMillis).toBe(60_000)
+  })
+
+  test("a failed upload the registry has is published: on the first answer, after the CDN's 404s, and when a 404 follows", () => {
+    expect(confirmation(core, [found], attempts)).toEqual({ _tag: "Published" })
+    expect(confirmation(core, [absent, absent, found], attempts)).toEqual({ _tag: "Published" })
+    expect(confirmation(core, [found, absent], attempts)).toEqual({ _tag: "Published" })
+  })
+
+  test("asks again until it has every answer, then the version is missing", () => {
+    expect(confirmation(core, [], attempts)).toEqual({ _tag: "Pending" })
+    expect(confirmation(core, Array.from({ length: attempts - 1 }, () => absent), attempts)).toEqual({ _tag: "Pending" })
+    expect(confirmation(core, Array.from({ length: attempts }, () => absent), attempts))
+      .toEqual({ _tag: "Missing", reason: "the registry does not have @xandreed/core@0.14.0 after 12 checks" })
+  })
+
+  test("a missing version names the registry's last refusal", () => {
+    const answers = [registryAnswer(core, 503), absent, registryAnswer(core, 500)]
+    expect(confirmation(core, answers, 3))
+      .toEqual({ _tag: "Missing", reason: "the registry does not have @xandreed/core@0.14.0 after 3 checks (the last refusal: the registry answered 500 for @xandreed/core@0.14.0)" })
+  })
+})
+
+describe("release:publish", () => {
+  test("installs without lifecycle scripts, builds, dry-runs, then publishes", () => {
+    expect(releaseSteps({ verify: false, dryRun: false })).toEqual([
+      ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
+      ["bun", "run", "build:packages"],
+      ["bun", "run", "publish:packages"],
+      ["bun", "run", "publish:packages", "--publish"],
+    ])
+  })
+
+  test("verifies the build only when asked, and a dry run stops before the upload", () => {
+    expect(releaseSteps({ verify: true, dryRun: false })[2]).toEqual(["bun", "run", "verify:packages"])
+    expect(releaseSteps({ verify: false, dryRun: true }).at(-1)).toEqual(["bun", "run", "publish:packages"])
+    expect(releaseSteps({ verify: true, dryRun: true }).flat()).not.toContain("--publish")
+  })
+
+  test("refuses a checkout with changes, as publish:packages does", () => {
+    expect(notCleanTree(ran(""))).toEqual([])
+    expect(notCleanTree(ran(" M package.json\n?? notes.md")))
+      .toEqual(["the working tree has changes; commit, stash or remove them: M package.json, ?? notes.md"])
+    expect(notCleanTree({ success: false, stdout: "", stderr: "fatal: not a git repository" })).toEqual(["git cannot read the working tree status"])
+  })
+})
+
+describe("tagPlan", () => {
+  const other = "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  const listing = (sha: string, ref = "refs/tags/v0.14.0") => ran(`${sha}\t${ref}`)
+  const none = ran("")
+  const tag = "v0.14.0"
+
+  test("reads the commit origin's tag names, an annotated tag's peeled line first, and no other tag", () => {
+    expect(remoteTagCommit(`${commit}\trefs/tags/v0.14.0`, tag)).toBe(commit)
+    expect(remoteTagCommit(`${other}\trefs/tags/v0.14.0\n${commit}\trefs/tags/v0.14.0^{}`, tag)).toBe(commit)
+    expect(remoteTagCommit(`${commit}\trefs/tags/v0.14.01`, tag)).toBeNull()
+    expect(remoteTagCommit("", tag)).toBeNull()
+  })
+
+  test("creates and pushes a new tag, and keeps what already names HEAD", () => {
+    expect(tagPlan({ tag, head: commit, local: null, remote: none }))
+      .toEqual({ reasons: [], commands: [["git", "tag", tag], ["git", "push", "origin", "refs/tags/v0.14.0"]] })
+    expect(tagPlan({ tag, head: commit, local: commit, remote: none }).commands).toEqual([["git", "push", "origin", "refs/tags/v0.14.0"]])
+    expect(tagPlan({ tag, head: commit, local: commit, remote: listing(commit) })).toEqual({ reasons: [], commands: [] })
+  })
+
+  test("never moves a tag that names another commit, here or on origin", () => {
+    expect(tagPlan({ tag, head: commit, local: other, remote: none }))
+      .toEqual({ reasons: ["the tag v0.14.0 names 15d6dc518d5, not HEAD 9b898c1bb07; a release tag is never moved"], commands: [] })
+    expect(tagPlan({ tag, head: commit, local: null, remote: listing(other) }))
+      .toEqual({ reasons: ["origin's tag v0.14.0 names 15d6dc518d5, not HEAD 9b898c1bb07; a release tag is never moved"], commands: [] })
+  })
+
+  test("refuses when origin's tags cannot be read", () => {
+    expect(tagPlan({ tag, head: commit, local: null, remote: { success: false, stdout: "", stderr: "fatal: could not read from remote repository" } }))
+      .toEqual({ reasons: ["git cannot read the tags on origin: fatal: could not read from remote repository"], commands: [] })
   })
 })

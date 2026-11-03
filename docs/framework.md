@@ -426,7 +426,8 @@ metrics through the packed `@xandreed/plugin-telemetry` to a local OTLP
 collector, on both Bun and Node. Publishing is a separate release action:
 `bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
 against the current commit and a clean tree, then publishes in dependency order; it is a
-dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
+dry run unless `--publish` is passed. `bun run release:publish` runs the install, the
+build, that dry run and the publish, then tags the release (see [publishing](../CONTRIBUTING.md#publishing)).
 
 ## Traces and metrics
 
