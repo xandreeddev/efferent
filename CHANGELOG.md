@@ -8,6 +8,38 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/plugin-memory`: Efferent's native cross-conversation memory,
+  evidence-backed facts, preferences, profiles and routine observations,
+  temporal relationship extraction, conservative entity resolution and
+  correction history. Durable source jobs, reviewed extraction, staged
+  embeddings, query planning and evidence reranking run over host-supplied
+  models. Recall and source-read tools derive their owner from the turn;
+  explicit save/forget tools require `memory.write`.
+- `@xandreed/plugin-memory/capture`: owner-checked synchronization and
+  bounded backfill of committed conversation evidence, final host replies
+  and tool execution outcomes, with replay-safe source identities and
+  journal checkpoints. Recalled context and memory/RAG results are excluded.
+- `@xandreed/plugin-rag`: source-grounded text/Markdown ingestion, exact
+  source spans, revision replacement, lexical/vector fusion, cited reads,
+  optional temporal GraphRAG, and bounded model-assisted retrieval. Tools
+  and recorded turn evidence compose with existing conversation memory.
+- `@xandreed/plugin-knowledge-postgres`: native PostgreSQL/pgvector stores,
+  transactional publication, leases and durable processing stages, temporal
+  graph traversal, source tombstones and evidence invalidation. Forgetting
+  also clears unpublished stages and fences stale extraction writes. Shared
+  core schemas, in-memory reference adapters and conformance kits prove
+  scope isolation, concurrency, history and recovery behavior.
+- Core and SDK: acknowledged-commit observers and multi-provider background
+  worker activity/shutdown, preserving the original turn result when an
+  optional observer fails. Typed plugin stacks concatenate these contributions.
+  Existing framework journal formats are unchanged.
+- Native extraction, review, query-planning, reranking, memory and RAG model
+  text is versioned and pinned exactly. A controlled evaluation app supports
+  cleaned LongMemEval/LoCoMo, graph ablations and evaluation-only reference
+  deployments; measured parity requires explicitly configured real model runs.
+
 ### Fixed
 
 - An evaluation run whose trials together outgrow the longest string the
@@ -25,8 +57,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   in any other layout. `fingerprint` (evals) hashes an array, and each array
   member of an object, an element at a time, so `executionFingerprint`,
   which grading records as `sourceExecution`, no longer fails on such a run;
-  every digest is unchanged. One trial must still fit in one string, and
+  digests of JSON values are unchanged. One trial must still fit in one string, and
   `inspect` without `--summary` still prints the run as one.
+
+### Repository
+
+- Verify the native knowledge packages on Bun and packed Node, with a
+  pinned pgvector PostgreSQL service in CI. Add native memory/RAG setup,
+  research rationale and evaluation documentation.
 
 ## 0.15.1 — 2026-11-02
 

@@ -1,0 +1,15 @@
+class MemoryCapture
+const MemoryCaptureConfig
+const MemoryCaptureLive
+const MemoryConfig
+const MemoryLive
+const MemoryPluginLive
+const MemorySyncResult
+const default
+const memoryCaptureDefaults
+const memoryCapturePlugin
+const memoryDefaults
+const memoryPlugin
+type MemoryCaptureConfig
+type MemoryConfig
+type MemorySyncResult

@@ -7,6 +7,9 @@ import * as agentLoop from "@xandreed/plugin-agent-loop"
 import * as memoryDigest from "@xandreed/plugin-memory-digest"
 import * as memorySummary from "@xandreed/plugin-memory-summary"
 import * as memoryWindow from "@xandreed/plugin-memory-window"
+import * as memory from "@xandreed/plugin-memory"
+import * as rag from "@xandreed/plugin-rag"
+import * as knowledgePostgres from "@xandreed/plugin-knowledge-postgres"
 import * as models from "@xandreed/plugin-models"
 import * as render from "@xandreed/plugin-render"
 import * as sessionFiles from "@xandreed/plugin-session-files"
@@ -25,7 +28,7 @@ const jsonSchemaOf = (schema: Schema.Top) => {
 const firstParty: ReadonlyArray<Plugin> = [sessionFiles.sessionFilesPlugin, sessionFiles.sessionLogFilesPlugin, sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
   workspace.localSystemPlugin, workspace.imageResizerPlugin, workspace.skillsDirectoryPlugin, workspace.workspaceToolsPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
   toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, telemetry.telemetryPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
-  render.uiOutputPlugin]
+  render.uiOutputPlugin, knowledgePostgres.knowledgePostgresPlugin, memory.memoryPlugin, memory.memoryCapturePlugin, rag.ragPlugin]
 /** A `definePlugin` result, as a package exports it. */
 const isPlugin = (value: unknown): value is Plugin => typeof value === "object" && value !== null && "id" in value && "version" in value
   && "apiVersion" in value && "build" in value && "provides" in value && typeof value.id === "string" && typeof value.build === "function"
