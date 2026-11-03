@@ -191,17 +191,22 @@ implicitly join personal and document knowledge.
 `forget(scope, sourceId)` tombstones all revisions, removes source text from the
 native store, cancels pending work and hides dependent indexed knowledge,
 including historical graph reads. Retry and backfill cannot resurrect that
-source. Affected indexed text, vectors, provenance and staged extraction are purged.
-Minimal identity fences and tombstones remain. The original conversation journal and database backups have independent
-retention. Use an explicit new source identity for newly authorized evidence.
+source. Affected indexed text, vectors and provenance are purged. Every durable
+extraction stage in the same scope is discarded; version and provenance checks
+reject stale work before it can be staged again. Minimal identity fences and
+tombstones remain. The original conversation journal and database backups have
+independent retention. Use an explicit new source identity for newly authorized
+evidence.
 
 Native workers rescan durable jobs on startup, renew leases during processing,
-and expose claimed work through `BackgroundWorkers`. Sleeping pollers and queued
-jobs do not count as active work. Shutdown lets admitted turns commit and enqueue,
+and expose admitted claims and claimed work through `BackgroundWorkers`.
+Sleeping pollers and queued jobs do not count as active work. Shutdown lets
+admitted turns commit and enqueue,
 stops new claims, then drains or interrupts active workers within the shared
 deadline before their database scope closes. Retained jobs are recoverable by
-another worker. A serverless host can disable the worker and schedule bounded
-`process` calls.
+another worker. A claim still waiting on storage at the deadline remains reported
+in flight; cancellation prevents extraction when it returns. A serverless host
+can disable the worker and schedule bounded `process` calls.
 
 ## Research and quality
 

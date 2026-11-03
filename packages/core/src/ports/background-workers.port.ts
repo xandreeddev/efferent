@@ -4,9 +4,9 @@ import type { Effect } from "effect"
 /** A runtime worker whose queued work is durable outside its fiber. @public */
 export interface BackgroundWorker {
   readonly id: string
-  /** Claimed work only: sleeping pollers and durable pending jobs do not count. */
+  /** Admitted claims and claimed work only: sleeping pollers and durable pending jobs do not count. */
   readonly running: Effect.Effect<number>
-  /** Completes once no claimed work remains; a sleeping poller is idle. */
+  /** Completes once no admitted claim or claimed work remains; a sleeping poller is idle. */
   readonly idle: Effect.Effect<void>
   /** Idempotently stop claiming new work; producers may still enqueue durably. */
   readonly stop: Effect.Effect<void>

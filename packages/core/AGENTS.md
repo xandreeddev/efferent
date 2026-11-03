@@ -407,7 +407,7 @@ owned writer's end ACK; hosts ending borrowed writers invoke it themselves.
 timeouts; SDK journeys separately check authoritative commit ordering.
 
 `BackgroundWorkers` is a multi-provider lifecycle service independent of
-`TaskActivity`: claimed jobs count, idle polling and durable backlog do not.
+`TaskActivity`: admitted claims and claimed jobs count, idle polling and durable backlog do not.
 `ProcessActivity.runningWorkers` is omitted without the service. Worker
 `stop` prevents new claims while allowing durable enqueues; `interrupt`
 cancels local work and leaves leases recoverable. `shutdownGracefully`

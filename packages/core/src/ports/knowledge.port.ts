@@ -10,9 +10,11 @@ import type {
 /**
  * Durable source processing and derived indexes. Replaying identical source/revision/engine
  * returns its original job. Conflicting content or source/job reuse fails without changes.
+ * Staging verifies the unexpired lease, current scope version and source provenance.
  * Publication verifies the unexpired lease, current source revision, provenance and scope CAS,
  * atomically replaces that source's indexes, retires requested records, and completes the job.
- * Forget tombstones every revision, cancels jobs, and hides dependent derivations immediately.
+ * Forget tombstones every revision, cancels its jobs, removes dependent derivations, and clears
+ * all durable staged extractions in that scope. In-flight stale extractions cannot be restaged.
  * Absence is Option; lease/version/tombstone violations are KnowledgeError.
  * @public
  */

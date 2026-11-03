@@ -18,6 +18,9 @@ scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
 unfinished processing through leases. Profile and routine memories retain their
 evidence; inferred routines require three distinct source episodes.
+Count admitted claims before masked storage I/O and keep that I/O outside the
+local admission permit. Shutdown remains bounded and reports a stalled claim
+as busy; its eventual result observes cancellation before extraction starts.
 
 Capture reads are bounded by pageSize and maxPages, including checkpoint
 fallback scans. Check the recent journal tail for the usual checkpoint; never

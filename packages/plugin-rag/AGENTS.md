@@ -26,8 +26,10 @@ through KnowledgeStore. Node 24 and Bun.
   expansion applies both temporal coordinates at every hop and shares the
   evidence budget with excerpts.
 - Renew processing leases throughout model and embedding work. Serialize
-  local processing, coordinate stop with claiming, and count only claimed
-  work in BackgroundWorkers. Pending jobs and sleeping pollers are idle.
+  local processing, coordinate stop with claiming, and count admitted claims
+  and claimed work in BackgroundWorkers. Keep masked claim I/O outside the
+  admission permit so shutdown can cancel it and report it as busy. Pending
+  jobs and sleeping pollers are idle.
 - A stopped worker accepts durable ingestion but starts no new work. Scope
   closure interrupts its fiber before its store dependency closes. A failed
   job retains its staged chunks; another worker can resume after retry.

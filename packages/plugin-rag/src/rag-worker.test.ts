@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Option, Ref } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { BackgroundWorkers, KnowledgeJobId, makeKnowledgeIndexMemory } from "@xandreed/core"
+import { BackgroundWorkers, KnowledgeError, KnowledgeJobId, makeKnowledgeIndexMemory, shutdownGracefully } from "@xandreed/core"
 import { enqueue, makeRag, scope } from "./rag.testing.js"
 
 describe("native document worker reliability", () => {
@@ -53,5 +53,40 @@ describe("native document worker reliability", () => {
     expect(yield* knowledge.process(scope, 1)).toBe(0)
     const resumed = yield* makeRag({}, index)
     expect(yield* resumed.knowledge.process(scope, 1)).toBe(1)
+  }))))
+
+  test("shutdown counts a stalled admitted claim and cancels it before embedding can start", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const embeddingCalls = yield* Ref.make(0)
+    const store = { ...index, claim: (request: Parameters<typeof index.claim>[0]) => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(index.claim(request))) }
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Ref.update(embeddingCalls, (count) => count + 1).pipe(Effect.as({ results: inputs.map(() => [1, 0]), usage: { inputTokens: 1 } })) })
+    const { knowledge, built } = yield* makeRag({}, store, embeddings)
+    const job = yield* knowledge.ingest(enqueue("claim-deadline", "A document whose claim is stalled."))
+    const worker = Context.get(built, BackgroundWorkers)[0]!
+    const processing = yield* Effect.forkChild(knowledge.process(scope, 1))
+    yield* Deferred.await(entered)
+    expect(yield* worker.running).toBe(1)
+    const shutdown = yield* Effect.forkChild(shutdownGracefully({ deadline: 20, reserve: 10 }).pipe(Effect.provideService(BackgroundWorkers, [worker])))
+    yield* TestClock.adjust(20)
+    expect(yield* Fiber.join(shutdown)).toMatchObject({ idle: false, left: { inFlight: true, runningWorkers: 1 } })
+    yield* Deferred.succeed(release, undefined)
+    const exit = yield* Fiber.await(processing)
+    expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+    expect(yield* Ref.get(embeddingCalls)).toBe(0)
+    expect(yield* worker.running).toBe(0)
+    expect(Option.exists(yield* index.status(scope, job.id), (current) => current.phase._tag === "Queued")).toBe(true)
+  })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("empty, failed and defective claims release admission activity", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    yield* Effect.forEach([Effect.succeed(Option.none()), Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "Fixture claim failure" })), Effect.die("Fixture claim defect")], (claim) => Effect.gen(function* () {
+      const { knowledge, built } = yield* makeRag({}, { ...index, claim: () => claim })
+      const worker = Context.get(built, BackgroundWorkers)[0]!
+      yield* Effect.exit(knowledge.process(scope, 1))
+      expect(yield* worker.running).toBe(0)
+      yield* worker.idle
+    }), { concurrency: 1 })
   }))))
 })

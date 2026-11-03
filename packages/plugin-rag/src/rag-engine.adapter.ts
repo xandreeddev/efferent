@@ -91,19 +91,19 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     const token = KnowledgeLeaseToken.make(yield* Effect.sync(() => crypto.randomUUID()))
     const currentFiber = yield* Effect.fiber
     const decision: Option.Option<Option.Option<KnowledgeJob>> = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-      const claimed = yield* admission.withPermits(1)(Effect.gen(function* () {
-        if (!(yield* Ref.get(accepting))) return Option.none<KnowledgeJob>()
-        const selected = yield* store.claim({ scope, worker: name, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
-        if (Option.isSome(selected)) {
-          yield* Ref.update(active, (fibers) => [...fibers, currentFiber])
-          yield* SubscriptionRef.update(running, (count) => count + 1)
-        }
-        return selected
+      const admitted = yield* admission.withPermits(1)(Effect.gen(function* () {
+        if (!(yield* Ref.get(accepting))) return false
+        yield* Ref.update(active, (fibers) => [...fibers, currentFiber])
+        yield* SubscriptionRef.update(running, (count) => count + 1)
+        return true
       }))
-      if (Option.isNone(claimed)) return Option.none<Option.Option<KnowledgeJob>>()
-      const job = claimed.value
-      const heartbeat = Effect.forever(Effect.sleep(Math.max(1, Math.floor(config.leaseMs / 3))).pipe(Effect.andThen(Effect.suspend(() => lease(job, token).pipe(Effect.flatMap((current) => store.renew(current, config.leaseMs)))))))
+      if (!admitted) return Option.none<Option.Option<KnowledgeJob>>()
       return yield* Effect.gen(function* () {
+        // Count uncertain claims before storage I/O; stop never waits on that I/O while holding admission.
+        const claimed = yield* store.claim({ scope, worker: name, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
+        if (Option.isNone(claimed)) return Option.none<Option.Option<KnowledgeJob>>()
+        const job = claimed.value
+        const heartbeat = Effect.forever(Effect.sleep(Math.max(1, Math.floor(config.leaseMs / 3))).pipe(Effect.andThen(Effect.suspend(() => lease(job, token).pipe(Effect.flatMap((current) => store.renew(current, config.leaseMs)))))))
         const outcome = yield* Effect.exit(restore(Effect.raceFirst(work(job, token), heartbeat)))
         return yield* Exit.match(outcome, {
           onSuccess: () => Effect.succeed(Option.some(Option.none<KnowledgeJob>())),

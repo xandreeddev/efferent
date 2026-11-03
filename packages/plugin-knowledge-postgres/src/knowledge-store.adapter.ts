@@ -85,6 +85,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
   })
   const validateStage = (tx: PostgresQueries, lease: KnowledgeLease, stage: KnowledgeStage) => Effect.gen(function* () {
     const state = yield* snapshot(tx, lease.scope)
+    if (state.version !== stage.expectedVersion) return yield* invalid("Conflict", "the knowledge graph changed after extraction")
     const originals = yield* sources(tx, lease.scope)
     const refusal = validateKnowledgeStage(stage, state, originals)
     if (Option.isSome(refusal)) return yield* Effect.fail(refusal.value)
@@ -93,7 +94,6 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
     const profile = scope[0]?.embedding_profile
     const badVector = vectors.some((vector) => vector.values.length !== vector.space.dimensions || vector.space.dimensions > 16_000 || !vector.values.every(Number.isFinite) || (profile !== null && profile !== undefined && !sameEmbeddingSpace(profile, vector.space)))
     if (badVector) return yield* invalid("EmbeddingMismatch", "the embedding identity or dimensions differ from the stored index")
-    if (state.version !== stage.expectedVersion) return yield* invalid("Conflict", "the knowledge graph changed after extraction")
     return vectors[0]?.space
   })
   const recordSources = (tx: PostgresQueries, scope: KnowledgeScope, kind: string, id: string, spans: ReadonlyArray<{ readonly source: KnowledgeSourceRef }>) =>
@@ -277,6 +277,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
       yield* db.transaction((tx) => Effect.gen(function* () {
         yield* lockScope(tx, lease.scope)
         const job = yield* leased(tx, lease)
+        yield* validateStage(tx, lease, stage)
         yield* saveJob(tx, { ...job, stage: Option.some(stage) })
       }))
     }),
@@ -286,7 +287,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         const previous = yield* status(tx, lease.scope, lease.jobId)
         if (Option.isSome(previous) && previous.value.phase._tag === "Complete") return
         const job = yield* leased(tx, lease)
-        if (Option.isNone(job.stage)) return yield* invalid("Invalid", "the knowledge job has no staged extraction")
+        if (Option.isNone(job.stage)) return yield* invalid("Conflict", "the knowledge job has no current staged extraction")
         const stage = job.stage.value
         const profile = yield* validateStage(tx, lease, stage)
         const referenced = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.assertions.flatMap((edge) => edge.provenance), ...stage.entities.flatMap((entity) => entity.provenance)]
@@ -404,7 +405,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
           AND ((kind='memory' AND record_id IN (SELECT jsonb_array_elements_text($5::text::jsonb)))
             OR (kind='assertion' AND record_id IN (SELECT jsonb_array_elements_text($6::text::jsonb))))`, [...params(domain, scope), memoryIds, assertionIds])
         yield* tx.execute(`UPDATE efferent_knowledge.jobs SET payload=jsonb_set(payload,'{stage}','null'::jsonb)
-          WHERE ${WHERE} AND source_id IN (SELECT jsonb_array_elements_text($5::text::jsonb))`, [...params(domain, scope), affectedIds])
+          WHERE ${WHERE}`, params(domain, scope))
         yield* tx.execute(`UPDATE efferent_knowledge.jobs j SET phase='Queued',lease_token=NULL,lease_until=NULL,
           payload=jsonb_set(jsonb_set(j.payload,'{phase}','{"_tag":"Queued"}'::jsonb),'{stage}','null'::jsonb)
           WHERE j.domain=$1 AND j.owner=$2 AND j.namespace=$3 AND j.collection=$4 AND j.source_id <> $5

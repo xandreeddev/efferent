@@ -3,8 +3,8 @@ import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result } from "effect"
 import { TestClock } from "effect/testing"
 import {
-  BackgroundWorkers, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, makeKnowledgeIndexMemory,
-  MemoryStore, UtilityCompletion, UtilityLlm,
+  BackgroundWorkers, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, makeKnowledgeIndexMemory,
+  MemoryStore, shutdownGracefully, UtilityCompletion, UtilityLlm,
 } from "@xandreed/core"
 import type { KnowledgeIndex, KnowledgeScope } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
@@ -60,7 +60,7 @@ test("memory heartbeats retain leases throughout extraction, review and embeddin
   expect(Option.exists(yield* index.status(scope, job.id), (current) => current.phase._tag === "Complete")).toBe(true)
 })))
 
-test("memory stop waits for claim admission before reporting idle and admits no later jobs", () => run(Effect.gen(function* () {
+test("memory stop counts admitted claims without waiting on their storage I/O and admits no later jobs", () => run(Effect.gen(function* () {
   const index = yield* makeKnowledgeIndexMemory()
   const claimed = yield* Deferred.make<void>()
   const allowClaim = yield* Deferred.make<void>()
@@ -72,19 +72,50 @@ test("memory stop waits for claim admission before reporting idle and admits no 
   yield* memory.capture(input())
   const processing = yield* Effect.forkChild(memory.process(scope, 1))
   yield* Deferred.await(claimed)
-  const stopped = yield* Ref.make(false)
-  const stopping = yield* Effect.forkChild(worker.stop.pipe(Effect.andThen(Ref.set(stopped, true))))
-  yield* Effect.yieldNow
-  expect(yield* Ref.get(stopped)).toBe(false)
+  expect(yield* worker.running).toBe(1)
+  yield* worker.stop
+  expect(yield* worker.running).toBe(1)
   yield* Deferred.succeed(allowClaim, undefined)
   yield* Deferred.await(modelStarted)
-  yield* Fiber.join(stopping)
   expect(yield* worker.running).toBe(1)
   yield* memory.capture(input("after-stop"))
   yield* Deferred.succeed(allowModel, undefined)
   expect(yield* Fiber.join(processing)).toBe(1)
   expect(yield* memory.process(scope, 1)).toBe(0)
   expect(Option.exists(yield* memory.status(scope, KnowledgeJobId.make("after-stop:1")), (job) => job.phase._tag === "Queued")).toBe(true)
+})))
+
+test("memory shutdown reports a stalled admitted claim and cancels it before extraction can start", () => run(Effect.gen(function* () {
+  const index = yield* makeKnowledgeIndexMemory()
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  const modelCalls = yield* Ref.make(0)
+  const wrapped: KnowledgeIndex = { ...index, claim: (request) => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(index.claim(request))) }
+  const utility = UtilityLlm.of({ complete: () => Ref.update(modelCalls, (count) => count + 1).pipe(Effect.as(completion)) })
+  const { memory, worker } = yield* open(wrapped, utility, yield* embeddings())
+  const job = yield* memory.capture(input())
+  const processing = yield* Effect.forkChild(memory.process(scope, 1))
+  yield* Deferred.await(entered)
+  expect(yield* worker.running).toBe(1)
+  const shutdown = yield* Effect.forkChild(shutdownGracefully({ deadline: 20, reserve: 10 }).pipe(Effect.provideService(BackgroundWorkers, [worker])))
+  yield* TestClock.adjust(20)
+  expect(yield* Fiber.join(shutdown)).toMatchObject({ idle: false, left: { inFlight: true, runningWorkers: 1 } })
+  yield* Deferred.succeed(release, undefined)
+  const exit = yield* Fiber.await(processing)
+  expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+  expect(yield* Ref.get(modelCalls)).toBe(0)
+  expect(yield* worker.running).toBe(0)
+  expect(Option.exists(yield* index.status(scope, job.id), (current) => current.phase._tag === "Queued")).toBe(true)
+})))
+
+test("memory releases admission activity on empty, failed and defective claims", () => run(Effect.gen(function* () {
+  const index = yield* makeKnowledgeIndexMemory()
+  yield* Effect.forEach([Effect.succeed(Option.none()), Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "Fixture claim failure" })), Effect.die("Fixture claim defect")], (claim) => Effect.gen(function* () {
+    const { memory, worker } = yield* open({ ...index, claim: () => claim }, UtilityLlm.of({ complete: () => Effect.succeed(completion) }), yield* embeddings())
+    yield* Effect.exit(memory.process(scope, 1))
+    expect(yield* worker.running).toBe(0)
+    yield* worker.idle
+  }), { concurrency: 1 })
 })))
 
 test("memory interruption requeues a staged manual job for a startup worker without re-extraction", () => run(Effect.gen(function* () {

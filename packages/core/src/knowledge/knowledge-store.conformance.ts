@@ -90,8 +90,7 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const job = yield* enqueue(fixture, source, "second-job")
       yield* claim(fixture)
       const lease = leaseOf(fixture.scope, job)
-      yield* fixture.index.stage(lease, stageOf(source, 0, "second-memory"))
-      const failed = yield* Effect.result(fixture.index.publish(lease))
+      const failed = yield* Effect.result(fixture.index.stage(lease, stageOf(source, 0, "second-memory")).pipe(Effect.andThen(fixture.index.publish(lease))))
       const snapshot = yield* fixture.index.snapshot(fixture.scope)
       const status = yield* fixture.index.status(fixture.scope, job.id)
       yield* expect("knowledge.atomic-cas", Result.isFailure(failed) && snapshot.version === 1 && snapshot.memories.length === 1 && Option.exists(status, (value) => value.phase._tag === "Processing"), "a stale publication partially committed")
@@ -102,8 +101,7 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* claim(fixture)
       const lease = leaseOf(fixture.scope, job)
       const memory = memoryOf(source)
-      yield* fixture.index.stage(lease, { ...stageOf(source), memories: [{ ...memory, provenance: memory.provenance.map((span) => ({ ...span, quote: "invented" })) }] })
-      const failed = yield* Effect.result(fixture.index.publish(lease))
+      const failed = yield* Effect.result(fixture.index.stage(lease, { ...stageOf(source), memories: [{ ...memory, provenance: memory.provenance.map((span) => ({ ...span, quote: "invented" })) }] }).pipe(Effect.andThen(fixture.index.publish(lease))))
       const snapshot = yield* fixture.index.snapshot(fixture.scope)
       yield* expect("knowledge.exact-provenance", Result.isFailure(failed) && snapshot.version === 0 && snapshot.memories.length === 0, "invented quotations reached the index")
       const invalidInterval = yield* Effect.result(fixture.index.stage(lease, { ...stageOf(source), memories: [{ ...memory, knownFrom: 10, knownTo: Option.some(9) }] }).pipe(Effect.andThen(fixture.index.publish(lease))))
@@ -228,6 +226,35 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const old = yield* fixture.index.status(fixture.scope, oldJob.id)
       const current = yield* fixture.index.status(fixture.scope, newJob.id)
       yield* expect("knowledge.forgotten-stage-privacy", Option.exists(old, (job) => job.phase._tag === "Complete" && Option.isNone(job.stage)) && Option.exists(current, (job) => job.phase._tag === "Queued" && Option.isNone(job.stage)), "an older completed job retained staged deleted evidence or the latest surviving revision was not requeued")
+    })),
+    indexCheck("knowledge.unpublished-stage-privacy", (fixture) => Effect.gen(function* () {
+      const initial = yield* seed(fixture)
+      const source = sourceOf(fixture.scope, "A surviving conversation", "survivor")
+      const job = yield* enqueue(fixture, source, "survivor-job")
+      yield* claim(fixture)
+      const lease = leaseOf(fixture.scope, job, 51)
+      const staged = { ...stageOf(source, 1, "survivor-memory"), memories: [{ ...memoryOf(source, "survivor-memory"), evidence: { _tag: "Inferred" as const, supports: [KnowledgeMemoryId.make("memory")] }, provenance: [...memoryOf(source).provenance, ...memoryOf(initial.source).provenance] }] }
+      yield* fixture.index.stage(leaseOf(fixture.scope, job), staged)
+      const otherScope = { ...fixture.scope, owner: `${fixture.scope.owner}-other` }
+      const otherSource = sourceOf(otherScope, "Other owner evidence", "survivor")
+      const otherJob = yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make("other-owner-job"), source: otherSource, engine: "kit", expectedRevision: Option.none() })
+      yield* fixture.index.claim({ scope: otherScope, worker: "kit", token: KnowledgeLeaseToken.make("token"), now: 20, leaseMs: 100 })
+      yield* fixture.index.stage(leaseOf(otherScope, otherJob), stageOf(otherSource, 0, "other-owner-memory"))
+      yield* fixture.index.forget(fixture.scope, initial.source.ref.id, 50)
+      const status = yield* fixture.index.status(fixture.scope, job.id)
+      const otherStatus = yield* fixture.index.status(otherScope, otherJob.id)
+      yield* expect("knowledge.unpublished-stage-privacy", Option.exists(status, (current) => current.phase._tag === "Processing" && Option.isNone(current.stage)) && Option.exists(otherStatus, (current) => current.phase._tag === "Processing" && Option.isSome(current.stage)) && Option.isSome(yield* fixture.index.source(fixture.scope, source.ref)), "forget retained an unpublished extraction, changed an unrelated lease, or crossed owner scope")
+      const clearedPublish = yield* Effect.result(fixture.index.publish(lease))
+      const unpublished = yield* fixture.index.snapshot(fixture.scope)
+      yield* expect("knowledge.unpublished-stage-privacy", Result.isFailure(clearedPublish) && clearedPublish.failure.reason === "Conflict" && unpublished.version === 2 && unpublished.memories.length === 0 && unpublished.graph.assertions.length === 0, "publishing a cleared stage was not retryable or partially changed the index")
+      const stale = yield* Effect.result(fixture.index.stage(lease, staged))
+      const version = (yield* fixture.index.snapshot(fixture.scope)).version
+      const forgotten = yield* Effect.result(fixture.index.stage(lease, { ...staged, expectedVersion: version }))
+      const after = yield* fixture.index.status(fixture.scope, job.id)
+      yield* expect("knowledge.unpublished-stage-privacy", Result.isFailure(stale) && stale.failure.reason === "Conflict" && Result.isFailure(forgotten) && Option.exists(after, (current) => Option.isNone(current.stage)), "an in-flight worker restored stale or forgotten source evidence into durable staging")
+      yield* fixture.index.stage(lease, stageOf(source, version, "survivor-memory"))
+      yield* fixture.index.publish(lease)
+      yield* expect("knowledge.unpublished-stage-privacy", Option.isSome(yield* fixture.index.memory(fixture.scope, KnowledgeMemoryId.make("survivor-memory"))), "a cleared unpublished extraction could not be rebuilt from its surviving source")
     })),
     indexCheck("knowledge.pending-discovery", (fixture) => Effect.gen(function* () {
       const foreign = { ...sourceOf(fixture.scope, "Other collection", "foreign-source"), scope: { ...fixture.scope, collection: `${fixture.scope.collection}-other` } }

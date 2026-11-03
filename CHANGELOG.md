@@ -27,7 +27,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and recorded turn evidence compose with existing conversation memory.
 - `@xandreed/plugin-knowledge-postgres`: native PostgreSQL/pgvector stores,
   transactional publication, leases and durable processing stages, temporal
-  graph traversal, source tombstones and evidence invalidation. Shared
+  graph traversal, source tombstones and evidence invalidation. Forgetting
+  also clears unpublished stages and fences stale extraction writes. Shared
   core schemas, in-memory reference adapters and conformance kits prove
   scope isolation, concurrency, history and recovery behavior.
 - Core and SDK: acknowledged-commit observers and multi-provider background

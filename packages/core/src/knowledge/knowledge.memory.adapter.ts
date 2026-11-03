@@ -148,12 +148,18 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
         Complete: () => Result.fail(error("LeaseLost", "The processing job completed")), Cancelled: () => Result.fail(error("LeaseLost", "The processing job was cancelled")),
       })
     })),
-    stage: Effect.fn("knowledge_store.stage")((lease, stage) => leased(lease, (current, job) => Result.succeed({ state: replaceJob(current, { ...job, stage: Option.some(stage) }), value: undefined }))),
+    stage: Effect.fn("knowledge_store.stage")((lease, stage) => leased(lease, (current, job) => {
+      const data = scoped(current, lease.scope)
+      if (data.version !== stage.expectedVersion) return Result.fail(error("Conflict", "The scope changed after extraction"))
+      const validation = validateKnowledgeStage(stage, snapshotOf(data), current.sources.filter((source) => sameKnowledgeScope(source.scope, lease.scope) && !tombstoned(current, lease.scope, source.ref.id)))
+      if (Option.isSome(validation)) return Result.fail(validation.value)
+      return Result.succeed({ state: replaceJob(current, { ...job, stage: Option.some(stage) }), value: undefined })
+    })),
     publish: Effect.fn("knowledge_store.publish")((lease) => change((current) => {
       const completed = current.jobs.find((job) => job.id === lease.jobId && sameKnowledgeScope(job.scope, lease.scope) && job.phase._tag === "Complete")
       if (completed) return Result.succeed({ state: current, value: undefined })
       return Result.flatMap(ownedJob(current, lease), (job) => Option.match(job.stage, {
-        onNone: () => Result.fail(error("Invalid", "The processing job has no staged extraction")),
+        onNone: () => Result.fail(error("Conflict", "The staged extraction is unavailable; reconcile the current scope before publication")),
         onSome: (stage) => {
           const source = latest(current, lease.scope, job.source.id)
           if (tombstoned(current, lease.scope, job.source.id)) return Result.fail(error("Tombstoned", "The source was forgotten"))
@@ -231,7 +237,7 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
       const jobs = current.jobs.map((job): KnowledgeJob => {
         if (!sameKnowledgeScope(job.scope, scope)) return job
         if (job.source.id === id) return { ...job, stage: Option.none(), phase: { _tag: "Cancelled", cancelledAt: now } }
-        if (!removed.sources.includes(job.source.id)) return job
+        if (!removed.sources.includes(job.source.id)) return { ...job, stage: Option.none() }
         return Option.exists(latest(current, scope, job.source.id), (source) => source.ref.revision === job.source.revision)
           ? { ...job, stage: Option.none(), phase: { _tag: "Queued" } } : { ...job, stage: Option.none() }
       })
