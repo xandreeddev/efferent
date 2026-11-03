@@ -40,6 +40,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   cleaned LongMemEval/LoCoMo, graph ablations and evaluation-only reference
   deployments; measured parity requires explicitly configured real model runs.
 
+### Fixed
+
+- An evaluation run whose trials together outgrow the longest string the
+  runtime builds (V8's is just under 512 MiB) is kept. `efferent-eval` wrote
+  `execution.json` and `report.json` as one `JSON.stringify` string, so such
+  a run failed `persistence` (`RangeError: Invalid string length`) at its
+  last write, after every trial had run, and kept nothing but the trial
+  files. `EvaluationRunStoreFsLive` now writes the same text a trial at a
+  time, byte for byte what the one string held, through the same temporary
+  file (mode `0600`) renamed into place. `readRun` reads a file larger than
+  one string in parts, the run without its trials and then each trial, cut
+  at the bounds that layout gives them, so `grade --from`, `compare`,
+  `review`, `export` and `inspect --summary` read such a run too; a file
+  that fits in one string is read whole, as before, and so is a larger one
+  in any other layout. `fingerprint` (evals) hashes an array, and each array
+  member of an object, an element at a time, so `executionFingerprint`,
+  which grading records as `sourceExecution`, no longer fails on such a run;
+  digests of JSON values are unchanged. One trial must still fit in one string, and
+  `inspect` without `--summary` still prints the run as one.
+
 ### Repository
 
 - `bun run release:publish` publishes a release in one command from a clean
