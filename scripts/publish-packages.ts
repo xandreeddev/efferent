@@ -21,11 +21,19 @@
  * so a run that stopped part-way can be repeated. npm runs attached to this
  * terminal, so its browser or one-time-password 2FA prompt works.
  *
- * The checks and the order are pure functions in publish-plan.ts.
+ * When `npm publish` fails in a live run, the registry is asked for that version
+ * for about a minute before the run stops: npm can retry a request that went
+ * through and then fail its own upload (E409 "Cannot publish over previously
+ * staged version"), and the registry's CDN can answer 404 for a while after a
+ * publish. A version the registry has is counted as published.
+ *
+ * The checks, the order and when to stop asking are pure functions in
+ * publish-plan.ts; the registry reads are in npm-registry.ts.
  */
 import { dirname, join, relative } from "node:path"
 import { Result, Schema } from "effect"
-import { BuildStamp, Manifest, label, planPublish, publishCommand, registry, registryAnswer } from "./publish-plan.js"
+import { confirmOnRegistry, onRegistry } from "./npm-registry.js"
+import { BuildStamp, Manifest, label, planPublish, publishCommand, registry } from "./publish-plan.js"
 import type { Built, Ran } from "./publish-plan.js"
 
 const root = join(import.meta.dir, "..")
@@ -60,13 +68,6 @@ const run = (command: ReadonlyArray<string>): Ran => {
   return { success: result.success, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString().trim() }
 }
 
-/** Cache-busted, because the registry's CDN can keep serving a 404 for a version that was just published. */
-const onRegistry = (manifest: Manifest): Promise<Result.Result<boolean, string>> =>
-  fetch(`${registry}/${manifest.name.replace("/", "%2f")}/${manifest.version}?cb=${Date.now()}`, { headers: { "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(30_000) }).then(
-    (response) => registryAnswer(manifest, response.status),
-    (error: unknown) => Result.fail(`the registry could not be reached for ${label(manifest)}: ${String(error)}`),
-  )
-
 // The stamp and the manifests: what was built, from which commit, at which version.
 const stampRead = await readJson(join(output, "build.json"), Schema.decodeUnknownResult(Schema.fromJsonString(BuildStamp)))
 if (Result.isFailure(stampRead)) refuse([`${stampRead.failure}; run bun run build:packages first`])
@@ -100,7 +101,17 @@ if (queue.length === 0) {
 }
 console.log(`${live ? "Publishing" : "Dry run of publishing"} ${queue.length} package(s) at ${plan.version} from ${head.stdout.slice(0, 11)} as ${whoami.stdout} to ${registry}: ${queue.map(({ manifest }) => manifest.name).join(", ")}`)
 
-/** One at a time, in order; the first failure stops the run. */
+/** Stop the run on the first real failure, naming what went out before it. */
+const stop = (failed: Built, done: ReadonlyArray<string>, why: string): never => {
+  console.error(`\nnpm publish failed for ${label(failed.manifest)}${why}.${done.length > 0 ? ` ${live ? "Published" : "Dry-ran"} before it: ${done.join(", ")}.` : ""} Fix the cause and run the script again; versions already on npm are skipped.`)
+  return process.exit(1)
+}
+
+/**
+ * One at a time, in order; the first failure stops the run. In a live run a failed upload the
+ * registry then has (npm's E409 "previously staged" after a retried request that went through)
+ * is counted as published.
+ */
 const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
   const [next, ...rest] = pending
   if (next === undefined) return done
@@ -108,8 +119,11 @@ const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string
   console.log(`\n$ ${command.join(" ")}`)
   const child = Bun.spawn([...command], { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit" })
   if (await child.exited !== 0) {
-    console.error(`\nnpm publish failed for ${label(next.manifest)}.${done.length > 0 ? ` ${live ? "Published" : "Dry-ran"} before it: ${done.join(", ")}.` : ""} Fix the cause and run the script again; versions already on npm are skipped.`)
-    return process.exit(1)
+    if (!live) return stop(next, done, "")
+    console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about a minute).`)
+    const verdict = await confirmOnRegistry(next.manifest)
+    if (verdict._tag === "Missing") return stop(next, done, `: ${verdict.reason}`)
+    console.log(`npm reported a failure for ${label(next.manifest)}, but the registry has it: the upload went through. Counted as published.`)
   }
   return publish(rest, [...done, label(next.manifest)])
 }

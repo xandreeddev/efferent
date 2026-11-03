@@ -82,7 +82,7 @@ await Promise.all(names.map(async (name) => {
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
   // Caret ranges, `@xandreed/core` and `effect` as peers: mixed patch versions install one copy of each.
   const { dependencies, peerDependencies } = distributionDependencies(original, versions)
-  const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
+  const manifest = { ...original, version, gitHead: stamp.commit ?? undefined, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",
     ...(name === "evals-cli" ? { bin: { "efferent-eval": "dist/main.js" } } : {}),
   }

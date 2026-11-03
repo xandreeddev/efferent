@@ -150,16 +150,38 @@ at" sentences, and drop any README exception for a package not yet on npm
 an earlier line: check with `npm view @xandreed/plugin-telemetry versions`
 that none is at or above the new version). Record the release's journal
 fixture with `bun scripts/record-journal-fixture.ts` and its evaluation run
-with `bun scripts/record-run-fixture.ts`. Merge that, then
-publish from a clean checkout of the merge commit:
+with `bun scripts/record-run-fixture.ts`. Merge that, then publish and tag
+from a clean checkout of the merge commit, in an interactive terminal:
 
 ```sh
-bun install --frozen-lockfile
+bun run release:publish            # --verify adds verify:packages; --dry-run stops before the upload
+```
+
+`release:publish` (`scripts/release-publish.ts`) refuses a working tree with
+changes (untracked files included) and, unless `--dry-run`, a stdin that is
+not a terminal. Before building or uploading, it refuses a conflicting local
+or remote release tag, or an existing core version whose registry `gitHead`
+does not match HEAD. Built manifests record that commit so an interrupted
+release can resume from the same source; older packages without that metadata
+cannot establish a safe resume. It then runs, in order and attached to the
+terminal, stopping at the first failure:
+
+```sh
+bun install --frozen-lockfile --ignore-scripts
 bun run build:packages            # also writes .artifacts/packages/build.json
-bun run verify:packages
 bun run publish:packages          # dry run: every check, then npm publish --dry-run
 bun run publish:packages --publish
 ```
+
+The install skips lifecycle scripts: the docs site's `astro` has an optional
+`sharp` whose install script can fall back to a node-gyp build and fail the
+install, and nothing published needs one. `verify:packages` takes minutes and
+CI runs it on every merge commit, the release's included, so it runs only
+with `--verify`. After the publish, the command asks the registry for every
+package `build.json` records, for up to about a minute each, and only when the
+registry has them all creates the `v<version>` tag on HEAD and pushes it to
+origin. A tag that already names HEAD is kept; one that names another commit,
+here or on origin, refuses: a release tag is never moved.
 
 The distribution build resolves `workspace:*` dependencies to caret ranges of
 the matching package versions (`^0.15.1`) and declares `@xandreed/core` and
@@ -190,10 +212,15 @@ settings (a scoped `@xandreed:registry` included) cannot send it elsewhere. It
 publishes one package at a time, each after the `@xandreed/*` packages it
 depends on, with `npm publish <dir> --access public --tag latest`. A
 `name@version` already on the registry is skipped (the check bypasses the
-registry's cache), so a run that stopped part-way can be repeated. npm runs in
-the same terminal, so its two-factor prompt works there; run it from an
-interactive terminal. Merging a version bump publishes nothing; tag the
-release (`v<version>`) after it is on npm. Tags resume with `v0.14.0`; 0.11.0
+registry's cache), so a run that stopped part-way can be repeated. The
+registry's CDN can still answer 404 for a version published moments before,
+and npm can fail an upload with E409 "Cannot publish over previously staged
+version" after retrying a request that went through; so when `npm publish`
+fails in a live run, the script asks the registry for that version for up to
+about a minute, counts it as published when the registry has it, and stops
+otherwise. npm runs in the same terminal, so its two-factor prompt works
+there; run it from an interactive terminal. Merging a version bump publishes
+nothing; `release:publish` tags the release (`v<version>`) once it is on npm. Tags resume with `v0.14.0`; 0.11.0
 to 0.13.0 have none (`v0.1.1` to `v0.3.0` belong to the frozen earlier line).
 
 Never publish from a commit whose version is already on npm for some
@@ -204,8 +231,8 @@ such as a package added since that release, depending on the published
 the current shared version and first ships with the next version bump.
 
 Pushing a `v<version>` tag also deploys the documentation site from that tag
-(`.github/workflows/docs.yml`; a manual dispatch can deploy it too), so push
-the tag only with the same sign-off as the npm publish. The `github-pages`
+(`.github/workflows/docs.yml`; a manual dispatch can deploy it too), so
+`release:publish` runs only with the sign-off for both. The `github-pages`
 environment must allow `v*` tags to deploy: it allowed only `main` before the
 site moved to tag deploys, and a refused tag fails the deploy job after the
 build. Add the rule once, in Settings → Environments → github-pages →
