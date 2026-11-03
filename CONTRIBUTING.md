@@ -133,8 +133,8 @@ The lists the check reads are the `registration` data in
 ## Publishing
 
 The framework packages are published from a maintainer's terminal; there is
-no release automation, and publishing needs explicit sign-off. All 19
-publishable packages (`names` in `scripts/build-packages.ts`) share one version (`0.15.1` in the sources) and are
+no release automation, and publishing needs explicit sign-off. All 24
+publishable packages (`names` in `scripts/build-packages.ts`) share one version (`0.16.0` in the sources) and are
 published under npm's `latest` tag. The build writes `private: false` into
 each manifest it builds, so a source `private: true` (core's) does not keep
 a package off npm. The previously published `efferent`,
@@ -184,8 +184,8 @@ origin. A tag that already names HEAD is kept; one that names another commit,
 here or on origin, refuses: a release tag is never moved.
 
 The distribution build resolves `workspace:*` dependencies to caret ranges of
-the matching package versions (`^0.15.1`) and declares `@xandreed/core` and
-`effect` peer dependencies at caret ranges (`^0.15.1`, `^4.0.7`), never exact
+the matching package versions (`^0.16.0`) and declares `@xandreed/core` and
+`effect` peer dependencies at caret ranges (`^0.16.0`, `^4.0.7`), never exact
 pins, so a host on other patch versions installs one copy of `@xandreed/core`
 and of `effect`, and one whose dependencies cannot share a copy gets a peer
 conflict instead of a second one (`scripts/distribution-manifest.ts`). It

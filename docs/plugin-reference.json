@@ -1,7 +1,7 @@
 [
   {
     "id": "@xandreed/plugin-session-files",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -37,7 +37,7 @@
   },
   {
     "id": "@xandreed/plugin-session-files/log",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -72,7 +72,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -101,7 +101,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite/log",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -129,7 +129,7 @@
   },
   {
     "id": "@xandreed/plugin-sessions",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -328,7 +328,7 @@
   },
   {
     "id": "@xandreed/plugin-workspace/local",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -385,7 +385,7 @@
   },
   {
     "id": "@xandreed/plugin-workspace/images",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -449,7 +449,7 @@
   },
   {
     "id": "@xandreed/plugin-workspace/skills",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -552,7 +552,7 @@
   },
   {
     "id": "@xandreed/plugin-workspace/tools",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -861,7 +861,7 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -1323,7 +1323,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-window",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -1423,7 +1423,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-summary",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -1552,7 +1552,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-digest",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "session",
     "requires": [
@@ -1591,7 +1591,7 @@
   },
   {
     "id": "@xandreed/plugin-tool-discovery",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -1703,7 +1703,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop/steps",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -1722,7 +1722,7 @@
   },
   {
     "id": "@xandreed/plugin-tasks",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -1777,7 +1777,7 @@
   },
   {
     "id": "@xandreed/plugin-telemetry",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "session",
     "requires": [
@@ -1853,7 +1853,7 @@
   },
   {
     "id": "@xandreed/plugin-render/surface",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -1886,7 +1886,7 @@
   },
   {
     "id": "@xandreed/plugin-render/feed",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -1939,7 +1939,7 @@
   },
   {
     "id": "@xandreed/plugin-render/output",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "session",
     "requires": [
@@ -1974,7 +1974,7 @@
   },
   {
     "id": "@xandreed/plugin-knowledge-postgres",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
@@ -2027,7 +2027,7 @@
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [
@@ -2206,7 +2206,7 @@
   },
   {
     "id": "@xandreed/plugin-memory/capture",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "session",
     "requires": [
@@ -2276,7 +2276,7 @@
   },
   {
     "id": "@xandreed/plugin-rag",
-    "version": "0.15.1",
+    "version": "0.16.0",
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [

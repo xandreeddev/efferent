@@ -8,6 +8,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.16.0 — 2026-11-03
+
+Native memory and document retrieval compose through shared ports and separate
+plugins, backed by PostgreSQL, pgvector and a temporal knowledge graph.
+This release also keeps evaluation runs larger than one runtime string and
+adds a checked publishing workflow for packages and the documentation site.
+
 ### Added
 
 - `@xandreed/plugin-memory`: Efferent's native cross-conversation memory,
@@ -57,8 +64,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   in any other layout. `fingerprint` (evals) hashes an array, and each array
   member of an object, an element at a time, so `executionFingerprint`,
   which grading records as `sourceExecution`, no longer fails on such a run;
-  digests of JSON values are unchanged. One trial must still fit in one string, and
-  `inspect` without `--summary` still prints the run as one.
+  digests of JSON values are unchanged. One trial must still fit in one
+  string, and `inspect` without `--summary` still prints the run as one.
 
 ### Repository
 
@@ -71,9 +78,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   tree with changes, a tag that names another commit, and an existing core
   version without matching release commit metadata. Tag and provenance
   checks run before uploads; built manifests carry `gitHead` for safe resume.
-  `--verify` adds
-  `verify:packages`, which CI already runs on the merge commit; `--dry-run`
-  stops before the upload.
+  `--verify` adds `verify:packages`, which CI already runs on the merge
+  commit; `--dry-run` stops before the upload.
 - `bun run publish:packages --publish` no longer stops on an upload npm
   reports as failed but the registry has, as with E409 "Cannot publish over
   previously staged version" after npm retried a request that went through:
