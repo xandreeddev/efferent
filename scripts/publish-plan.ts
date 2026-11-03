@@ -11,6 +11,7 @@ const Dependencies = Schema.optionalKey(Schema.Record(Schema.String, Schema.Stri
 /** The fields of a package.json the publish script reads. */
 export const Manifest = Schema.Struct({
   name: Schema.String, version: Schema.String,
+  gitHead: Schema.optionalKey(Schema.String),
   dependencies: Dependencies, peerDependencies: Dependencies, optionalDependencies: Dependencies,
 })
 export type Manifest = typeof Manifest.Type
@@ -36,7 +37,19 @@ export interface PublishState {
   readonly whoami: Ran
   /** The one npm account the packages are published from. */
   readonly publisher: string
+  readonly authentication?: "token" | "oidc"
 }
+
+/** OIDC authorization is verified by npm publish, not npm whoami. Never enable it outside this repository's Actions context. */
+export const ciAuthentication = (env: Readonly<Record<string, string | undefined>>): Result.Result<"token" | "oidc", string> => {
+  if (env.GITHUB_ACTIONS !== "true" || env.GITHUB_REPOSITORY !== "xandreeddev/efferent") return Result.fail("--ci requires GitHub Actions in xandreeddev/efferent")
+  if ((env.NODE_AUTH_TOKEN ?? "").trim().length > 0) return Result.succeed("token")
+  return (env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "").startsWith("https://") && (env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "").length > 0
+    ? Result.succeed("oidc") : Result.fail("--ci requires NODE_AUTH_TOKEN or GitHub OIDC request credentials (id-token: write)")
+}
+
+/** Published source location, including packages bootstrapped before their source manifests declared one. */
+export const repositoryMetadata = (dir: string) => ({ type: "git", url: "git+https://github.com/xandreeddev/efferent.git", directory: `packages/${dir}` })
 /** Every reason to refuse (empty when publishing may go ahead), the shared version, and the packages in publish order. */
 export interface PublishPlan { readonly reasons: ReadonlyArray<string>; readonly version: string; readonly order: ReadonlyArray<Built> }
 
@@ -85,7 +98,7 @@ export const notCleanTree = (status: Ran): ReadonlyArray<string> => {
 }
 
 /** Every check that needs no network, reported together, and the publish order. */
-export const planPublish = ({ stamp, builds, head, status, whoami, publisher }: PublishState): PublishPlan => {
+export const planPublish = ({ stamp, builds, head, status, whoami, publisher, authentication }: PublishState): PublishPlan => {
   const none = builds.length === 0 ? [`${output} holds no built packages; run bun run build:packages first`] : []
   const stamped = new Map(stamp.packages.map((entry) => [entry.dir, entry]))
   const unstamped = builds.filter(({ dir, manifest }) => stamped.get(dir)?.name !== manifest.name || stamped.get(dir)?.version !== manifest.version)
@@ -104,7 +117,7 @@ export const planPublish = ({ stamp, builds, head, status, whoami, publisher }: 
   const dirty = notCleanTree(status)
   const order = topological(builds, [], new Set(builds.map(({ manifest }) => manifest.name)))
   const cycle = order.stuck.length > 0 ? [`the @xandreed/* dependencies of ${order.stuck.map(({ manifest }) => manifest.name).join(", ")} form a cycle`] : []
-  const account = !whoami.success
+  const account = authentication === "oidc" ? [] : !whoami.success
     ? [`npm whoami failed on ${registry}; log in with npm login${whoami.stderr.length > 0 ? `:\n      ${whoami.stderr.split("\n").join("\n      ")}` : ""}`]
     : whoami.stdout !== publisher ? [`npm is logged in as ${whoami.stdout}, but the packages are published only as ${publisher}; npm logout, then npm login as ${publisher}`]
     : []
@@ -163,8 +176,8 @@ export const confirmation = (item: Versioned, answers: ReadonlyArray<Result.Resu
 }
 
 /** `npm publish` for one built package, pinned to `registry` (the scoped registry setting too, which npm would otherwise prefer). */
-export const publishCommand = (dir: string, live: boolean): ReadonlyArray<string> =>
-  ["npm", "publish", folder(dir), "--access", "public", "--tag", "latest", "--registry", registry, `--@xandreed:registry=${registry}`, ...(live ? [] : ["--dry-run"])]
+export const publishCommand = (dir: string, live: boolean, ci = false): ReadonlyArray<string> =>
+  ["npm", "publish", folder(dir), "--access", "public", "--tag", "latest", "--registry", registry, `--@xandreed:registry=${registry}`, ...(ci ? ["--provenance"] : []), ...(live ? [] : ["--dry-run"])]
 
 /**
  * The commands `bun run release:publish` runs, in order, from the repository root. The install
@@ -173,12 +186,13 @@ export const publishCommand = (dir: string, live: boolean): ReadonlyArray<string
  * `verify:packages` is opt-in (CI runs it on every merge commit); a dry run stops after the
  * publish dry run.
  */
-export const releaseSteps = ({ verify, dryRun }: { readonly verify: boolean; readonly dryRun: boolean }): ReadonlyArray<ReadonlyArray<string>> => [
+export const releaseSteps = ({ verify, dryRun, ci = false, root, publisher }: { readonly verify: boolean; readonly dryRun: boolean; readonly ci?: boolean; readonly root?: string; readonly publisher?: string }): ReadonlyArray<ReadonlyArray<string>> => [
   ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
   ["bun", "run", "build:packages"],
   ...(verify ? [["bun", "run", "verify:packages"]] : []),
-  ["bun", "run", "publish:packages"],
-  ...(dryRun ? [] : [["bun", "run", "publish:packages", "--publish"]]),
+  ...(ci && root !== undefined && publisher !== undefined
+    ? [["bun", publisher, "--ci", "--root", root], ...(dryRun ? [] : [["bun", publisher, "--ci", "--root", root, "--publish"]])]
+    : [["bun", "run", "publish:packages"], ...(dryRun ? [] : [["bun", "run", "publish:packages", "--publish"]])]),
 ]
 
 /** The commit `tag` names in `git ls-remote origin refs/tags/<tag> refs/tags/<tag>^{}` output (an annotated tag's peeled line first), or null when origin has no such tag. */
@@ -206,7 +220,7 @@ export const tagPlan = ({ tag, head, local, remote }: TagState): TagPlan => {
     reasons,
     commands: reasons.length > 0 ? [] : [
       ...(local === null ? [["git", "tag", tag]] : []),
-      ...(onOrigin === null ? [["git", "push", "origin", `refs/tags/${tag}`]] : []),
+      ...(onOrigin === null ? [["git", "push", "origin", `refs/tags/${tag}:refs/tags/${tag}`]] : []),
     ],
   }
 }

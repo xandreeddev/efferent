@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel } from "effect/ai"
-import { Effect, Exit, Layer } from "effect"
+import { Effect, Exit, Layer, Schema } from "effect"
 import { isHarnessError, RunContext, TurnEvents } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -17,9 +17,12 @@ const codeOf = (exit: Exit.Exit<unknown, unknown>): string => Exit.match(exit, {
 })
 
 describe("telemetryPlugin", () => {
-  test("is session-scoped, keeps the earlier plugin's id, and requires the turn's RunContext and TurnEvents", () => {
+  test("is session-scoped, shares its package version, keeps the earlier plugin's id, and requires the turn's RunContext and TurnEvents", async () => {
+    const manifest = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ version: Schema.String })))(
+      await Bun.file(new URL("../package.json", import.meta.url)).text(),
+    ))
     expect({ id: telemetryPlugin.id, version: telemetryPlugin.version, scope: telemetryPlugin.scope, requires: telemetryPlugin.requires, provides: telemetryPlugin.provides })
-      .toEqual({ id: "@xandreed/plugin-telemetry", version: "0.16.0", scope: "session", requires: [RunContext.key, TurnEvents.key], provides: [] })
+      .toEqual({ id: "@xandreed/plugin-telemetry", version: manifest.version, scope: "session", requires: [RunContext.key, TurnEvents.key], provides: [] })
     expect(telemetryPlugin.defaults).toEqual({ prices: {}, metricAttributes: {}, spanEvents: true })
   })
 

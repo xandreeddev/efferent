@@ -423,11 +423,13 @@ and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters, loads a
 turn in which a scripted model reads, edits and runs a command through the
 workspace tools, and flushes a turn's `agent.turn` span and its usage and cost
 metrics through the packed `@xandreed/plugin-telemetry` to a local OTLP
-collector, on both Bun and Node. Publishing is a separate release action:
-`bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
-against the current commit and a clean tree, then publishes in dependency order; it is a
-dry run unless `--publish` is passed. `bun run release:publish` runs the install, the
-build, that dry run and the publish, then tags the release (see [publishing](../CONTRIBUTING.md#publishing)).
+collector, on both Bun and Node. Changesets prepares a shared-version release
+PR through GitHub Actions. After the merged release commit passes CI, the
+release workflow verifies that exact source, builds and verifies its packed
+packages, publishes them in dependency order, confirms the registry versions,
+pushes the immutable release tag and deploys the docs. It preserves the clean
+tree, build stamp and source-commit checks; token and npm trusted publishing
+authentication are supported. See [publishing](../CONTRIBUTING.md#publishing).
 
 ## Traces and metrics
 

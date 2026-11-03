@@ -8,6 +8,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- Prepare shared-version release PRs from Changesets in GitHub Actions.
+  After a merged release passes CI, publish its exact tested source, confirm
+  all npm versions, create the immutable tag and GitHub release, and dispatch
+  the docs deployment. Support token bootstrap and npm trusted publishing,
+  including clean historical checkouts for the prepared 0.16.0 release.
+- Keep plugin versions, compatibility fixtures, version markers, the central
+  changelog and generated documentation synchronized when consuming changesets.
+
 ## 0.16.0 — 2026-11-03
 
 Native memory and document retrieval compose through shared ports and separate

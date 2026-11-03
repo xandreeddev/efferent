@@ -8,10 +8,11 @@
 # be merged nor pushed to main.
 name: ci
 
-on:
+"on":
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
