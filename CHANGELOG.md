@@ -10,6 +10,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Request a shared patch release from the release-PR workflow and audit all
+  25 npm packages after publication. Add a trusted-publishing skill covering
+  activation, source verification and recovery from partial releases.
+- Allow three minutes for registry propagation when confirming uploads,
+  including the documentation package, before reporting a missing version.
+- Verify the source commit of every existing framework package before
+  accepting it during a resumed publication.
 - Preserve the signed GitHub workflow identity in npm provenance when
   publishing a historical release checkout. Keep its verified source commit
   in package metadata and retain the source and archive integrity checks.

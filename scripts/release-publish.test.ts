@@ -7,8 +7,9 @@ const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
 const other = "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const core = { name: "@xandreed/core", version: "0.16.0" }
 const metadata = { ...core, gitHead: commit }
+const runtime = { name: "@xandreed/runtime", version: core.version, dependencies: { "@xandreed/core": core.version } }
 
-const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?: number; body?: unknown; remote?: string; remoteAfterPublish?: string; networkFailure?: boolean; ci?: boolean; sourceRoot?: boolean; publisher?: boolean; tty?: boolean; env?: Record<string, string>; account?: string; dirty?: boolean; builtHead?: string; certificateSha?: string } = {}) => {
+const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?: number; body?: unknown; runtime?: { body: unknown; status?: number; disappears?: boolean }; remote?: string; remoteAfterPublish?: string; networkFailure?: boolean; ci?: boolean; sourceRoot?: boolean; publisher?: boolean; tty?: boolean; env?: Record<string, string>; account?: string; dirty?: boolean; builtHead?: string; certificateSha?: string } = {}) => {
   const root = await mkdtemp(join(tmpdir(), "efferent-release-preflight-"))
   const commands = join(root, "commands.log")
   const live = join(root, "live")
@@ -24,7 +25,13 @@ const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?
     await Promise.all(["release-publish.ts", "publish-packages.ts", "npm-registry.ts", "publish-plan.ts"].map((name) => copyFile(join(import.meta.dir, name), join(root, "scripts", name))))
     await writeFile(join(source, "packages/core/package.json"), JSON.stringify(core))
     await writeFile(join(source, ".artifacts/packages/core/package.json"), JSON.stringify({ ...core, gitHead: options.builtHead ?? commit, description: "Preserve unrelated distribution fields", exports: { ".": "./dist/index.js" } }))
-    await writeFile(join(source, ".artifacts/packages/build.json"), JSON.stringify({ commit, dirty: options.dirty ?? false, version: core.version, packages: [{ dir: "core", ...core }] }))
+    if (options.runtime !== undefined) {
+      await mkdir(join(source, "packages/runtime"), { recursive: true })
+      await mkdir(join(source, ".artifacts/packages/runtime"), { recursive: true })
+      await writeFile(join(source, "packages/runtime/package.json"), JSON.stringify(runtime))
+      await writeFile(join(source, ".artifacts/packages/runtime/package.json"), JSON.stringify({ ...runtime, gitHead: commit }))
+    }
+    await writeFile(join(source, ".artifacts/packages/build.json"), JSON.stringify({ commit, dirty: options.dirty ?? false, version: core.version, packages: [{ dir: "core", ...core }, ...(options.runtime === undefined ? [] : [{ dir: "runtime", name: runtime.name, version: runtime.version }])] }))
     await writeFile(commands, "")
     await writeFile(join(root, "bin/git"), `#!/bin/sh
 case "$1" in
@@ -55,8 +62,13 @@ fi
     await writeFile(join(root, "registry-preload.ts"), `Object.defineProperty(process.stdin, "isTTY", { value: ${options.tty ?? true} });
 const originalWorkflowSha = process.env.GITHUB_SHA;
 process.on("exit", () => { if (process.env.GITHUB_SHA !== originalWorkflowSha) process.exitCode = 97; });
-globalThis.fetch = async () => {
+const runtimeRequests = { count: 0 };
+globalThis.fetch = async (url) => {
   if (process.env.RELEASE_TEST_NETWORK_FAILURE === "1") throw new Error("fixture network unavailable");
+  if (String(url).includes("@xandreed%2fruntime/")) {
+    runtimeRequests.count += 1;
+    return new Response(process.env.RELEASE_TEST_RUNTIME_BODY, { status: process.env.RELEASE_TEST_RUNTIME_DISAPPEARS === "1" && runtimeRequests.count >= 2 ? 404 : Number(process.env.RELEASE_TEST_RUNTIME_STATUS) });
+  }
   return new Response(process.env.RELEASE_TEST_BODY, { status: Number(process.env.RELEASE_TEST_STATUS) });
 };
 `)
@@ -65,6 +77,8 @@ globalThis.fetch = async () => {
       env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}`, RELEASE_TEST_HEAD: commit, RELEASE_TEST_COMMANDS: commands, RELEASE_TEST_LIVE: live, RELEASE_TEST_SOURCE: source, RELEASE_TEST_NPM_CONTEXT: npmContext, RELEASE_TEST_CERTIFICATE_SHA: options.certificateSha ?? "",
         RELEASE_TEST_REMOTE: options.remote ?? "", RELEASE_TEST_REMOTE_AFTER: options.remoteAfterPublish ?? options.remote ?? "",
         RELEASE_TEST_STATUS: String(options.status ?? 200), RELEASE_TEST_BODY: JSON.stringify(options.body ?? metadata), RELEASE_TEST_NETWORK_FAILURE: options.networkFailure ? "1" : "0", RELEASE_TEST_ACCOUNT: options.account ?? "xandreed", RELEASE_TEST_EXPECT_OIDC_TOKEN: options.env?.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
+        RELEASE_TEST_RUNTIME_BODY: JSON.stringify(options.runtime?.body ?? {}), RELEASE_TEST_RUNTIME_STATUS: String(options.runtime?.status ?? 200),
+        RELEASE_TEST_RUNTIME_DISAPPEARS: options.runtime?.disappears ? "1" : "0",
         GITHUB_ACTIONS: "", GITHUB_REPOSITORY: "", ACTIONS_ID_TOKEN_REQUEST_URL: "", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "", NODE_AUTH_TOKEN: "", GITHUB_OUTPUT: output, ...options.env },
       stdout: "pipe", stderr: "pipe", timeout: 5000,
     })
@@ -125,6 +139,33 @@ const github = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "xandreeddev/efferen
 const oidc = { ...github, ACTIONS_ID_TOKEN_REQUEST_URL: "https://actions.example.invalid/token", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-oidc-request" }
 
 describe("CI release source isolation", () => {
+  test("a package disappearing between presence and provenance checks refuses before skip or upload", async () => {
+    const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body: { ...runtime, gitHead: commit }, disappears: true } })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("@xandreed/runtime@0.16.0 disappeared from the registry")
+    expect(result.output).not.toContain("skip @xandreed/")
+    expect(result.commands).toEqual([])
+  })
+
+  test("a published non-core package with wrong or missing source provenance refuses before skip or upload", async () => {
+    for (const body of [{ ...runtime, gitHead: other }, runtime]) {
+      const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body } })
+      expect(result.code).toBe(1)
+      expect(result.output).toContain("@xandreed/runtime@0.16.0")
+      expect(result.output).not.toContain("skip ")
+      expect(result.commands).toEqual([])
+    }
+  })
+
+  test("a resume skips every published package only when each source commit matches", async () => {
+    const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body: { ...runtime, gitHead: commit } } })
+    expect(result.code).toBe(0)
+    expect(result.output).toContain("skip @xandreed/core@0.16.0 (already on npm)")
+    expect(result.output).toContain("skip @xandreed/runtime@0.16.0 (already on npm)")
+    expect(result.output).toContain("nothing to publish")
+    expect(result.commands).toEqual([])
+  })
+
   test("CI refuses an untrusted context before commands even without a terminal", async () => {
     const result = await runRelease({ ci: true, tty: false })
     expect(result.code).toBe(1)

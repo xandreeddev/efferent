@@ -140,8 +140,9 @@ describe("confirmation", () => {
   const absent = Result.succeed(false)
   const { attempts } = confirmSchedule
 
-  test("asks for about a minute", () => {
-    expect(attempts * confirmSchedule.intervalMillis).toBe(60_000)
+  test("permits registry propagation beyond a minute within a three-minute bound", () => {
+    expect(attempts * confirmSchedule.intervalMillis).toBe(180_000)
+    expect(confirmation(core, [...Array.from({ length: 15 }, () => absent), found], attempts)).toEqual({ _tag: "Published" })
   })
 
   test("a failed upload the registry has is published: on the first answer, after the CDN's 404s, and when a 404 follows", () => {
@@ -154,7 +155,7 @@ describe("confirmation", () => {
     expect(confirmation(core, [], attempts)).toEqual({ _tag: "Pending" })
     expect(confirmation(core, Array.from({ length: attempts - 1 }, () => absent), attempts)).toEqual({ _tag: "Pending" })
     expect(confirmation(core, Array.from({ length: attempts }, () => absent), attempts))
-      .toEqual({ _tag: "Missing", reason: "the registry does not have @xandreed/core@0.14.0 after 12 checks" })
+      .toEqual({ _tag: "Missing", reason: `the registry does not have @xandreed/core@0.14.0 after ${attempts} checks` })
   })
 
   test("a missing version names the registry's last refusal", () => {

@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { Result, Schema } from "effect"
-import { ciAuthentication, registry } from "./publish-plan.js"
+import { ciAuthentication, confirmSchedule, registry } from "./publish-plan.js"
 import { decodeLandingJson, landingArguments, landingCommand, landingSource, landingVersion, packNpmLanding } from "./npm-landing.js"
 import type { LandingCommand, LandingPack } from "./npm-landing.js"
 
@@ -24,7 +24,7 @@ export const publishNpmLanding = async (options: LandingPublishOptions, dependen
   const run = dependencies.run ?? landingCommand
   const fetcher = dependencies.fetch ?? globalThis.fetch
   const sleep = dependencies.sleep ?? Bun.sleep
-  const schedule = dependencies.confirmation ?? { attempts: 12, intervalMs: 5000 }
+  const schedule = dependencies.confirmation ?? { attempts: confirmSchedule.attempts, intervalMs: confirmSchedule.intervalMillis }
   if (options.live && !options.ci) throw new Error("Live landing publication requires --ci --publish; local live publication is refused")
   if (options.live) {
     const authentication = ciAuthentication(env)
@@ -58,7 +58,7 @@ export const publishNpmLanding = async (options: LandingPublishOptions, dependen
   // npm's signed workflow identity must remain authentic; the artifact's gitHead identifies its source separately.
   const uploaded = await run(["npm", "publish", pack.tarball, "--provenance", "--access", "public", "--tag", "latest", "--registry", registry, "--ignore-scripts"], pack.root, env)
   if (uploaded.code !== 0) console.error(`npm publish failed (exit ${uploaded.code}); checking whether the upload reached npm.\n${(uploaded.stderr.trim() || uploaded.stdout.trim()).slice(0, 8000)}`)
-  const deadline = Date.now() + 60_000
+  const deadline = Date.now() + confirmSchedule.attempts * confirmSchedule.intervalMillis
   let last = uploaded.code === 0 ? "The uploaded version is not visible" : "npm publish failed and its upload could not be confirmed"
   for (let attempt = 0; attempt < schedule.attempts && Date.now() < deadline; attempt++) {
     if (attempt > 0) await sleep(Math.min(schedule.intervalMs, Math.max(0, deadline - Date.now())))

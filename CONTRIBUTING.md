@@ -167,6 +167,18 @@ and documentation deployment. Ordinary feature commits retaining the current
 version do not publish. A Changesets note is unnecessary for repository-only
 changes that should not bump the framework version.
 
+To request an authorized patch through CI when no changesets are pending:
+
+```sh
+gh workflow run release-pr.yml --repo xandreeddev/efferent --ref main -f patch=true
+```
+
+This records a patch intent in CI and prepares the usual shared-version PR.
+The helper refuses pending notes so it cannot turn a patch request into a
+minor or major release. Review and merge that PR normally; publication starts
+after its merged source passes CI. `bun run release:patch` only records the
+intent locally and is also used by that workflow.
+
 For the already prepared `0.16.0` release, or to retry an interrupted release,
 run the workflow on GitHub's Actions tab, or dispatch it:
 
@@ -218,6 +230,20 @@ existing release skips the landing version only when both its source commit
 and packed integrity match. A retry can add a missing landing version
 without republishing the framework packages or moving the release tag.
 
+The final CI audit checks all 25 names for the release version, source commit
+and archive integrity metadata, and reports whether provenance is present.
+To repeat it from a checkout of the release source:
+
+```sh
+bun run release:status --root <release-checkout> --wait 180
+```
+
+The audit only reads the public registry. It handles propagation delays and
+returns a failure for missing or mismatched packages. Add `--require-provenance`
+to require attestation metadata for every package when testing trusted
+publishing. The `trusted-publishing` skill in `.agents/skills/` describes the
+activation and recovery procedure.
+
 See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens/)
 and [trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 Tokens are a bootstrap path; npm's direct token-publishing policy changes
@@ -233,7 +259,7 @@ resume, and another same-version checkout is refused.
 
 Every registry read and upload uses `https://registry.npmjs.org` explicitly.
 After an ambiguous npm failure, the publisher checks the registry for about
-a minute before deciding whether the upload succeeded. A retry uses the same
+three minutes before deciding whether the upload succeeded. A retry uses the same
 source commit and skips versions already uploaded. It never moves a pushed
 release tag. The workflow uses one publication concurrency group and does
 not cancel a release in progress.
