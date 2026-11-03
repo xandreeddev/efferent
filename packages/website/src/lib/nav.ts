@@ -49,6 +49,8 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/engine", label: "Core contracts" },
       { slug: "concepts/conformance", label: "Conformance kits" },
       { slug: "concepts/workspace", label: "Workspace tools" },
+      { slug: "concepts/native-knowledge", label: "Memory, graphs & RAG" },
+      { slug: "concepts/knowledge-evaluation", label: "Knowledge evaluation" },
       { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/providers", label: "Plugin configuration" },
       { slug: "concepts/evals", label: "Evals — calibrations and journeys" },

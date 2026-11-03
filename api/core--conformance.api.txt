@@ -1,14 +1,20 @@
 class ConformanceFailure
+const backgroundWorkersConformance
 const bashConformance
 const check
+const committedTurnObserversConformance
 const fileSystemConformance
 const imageResizerConformance
 const imageResizerPng
 const inMemoryLog
 const inboxRunnerConformance
+const knowledgeConformance
+const knowledgeStoreConformance
+const longTermMemoryConformance
 const mediaStoreConformance
 const memoryConformance
 const memorySnapshotConformance
+const memoryStoreConformance
 const modelCallRecorderConformance
 const modelCatalogConformance
 const modelRequestHookConformance
@@ -20,8 +26,10 @@ const sessionsConformance
 const stepLoopConformance
 const taskRunnerConformance
 const tasksConformance
+const temporalGraphConformance
 const textReply
 const turnConformance
+interface BackgroundWorkersSubject
 interface BashFixture
 interface BashSubject
 interface ConformanceCheck
@@ -29,6 +37,10 @@ interface FileSystemFixture
 interface FileSystemSubject
 interface ImageResizerSubject
 interface InboxRunnerSubject
+interface KnowledgeIndexFixture
+interface KnowledgeIndexSubject
+interface KnowledgeSubject
+interface LongTermMemorySubject
 interface MediaStoreSubject
 interface MemorySnapshotSubject
 interface ModelCallRecorderFixture
@@ -42,3 +54,4 @@ interface SessionsSubject
 interface TaskRunnerFixture
 interface TasksDependencies
 interface TasksFixture
+type CommittedTurnNotifier

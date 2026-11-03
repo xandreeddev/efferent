@@ -2364,6 +2364,30 @@ const plugins = [
 ]
 ```
 
+### Native cross-conversation memory and document retrieval
+
+`@xandreed/plugin-memory` learns facts, preferences, decisions, profiles and
+evidence-backed routines from committed interaction sources. Its temporal
+knowledge graph preserves relationships, provenance, validity time and recorded
+knowledge time. `memoryCapturePlugin` synchronizes owner-authorized session
+journals after acknowledged closing commits; `MemoryCapture.sync` and `backfill`
+repair missed capture or import older conversations. A supplied `TurnWriter`
+is synchronized after its host ends it. Capture records tool execution outcomes;
+domain effects require supporting evidence rather than an assistant's claim.
+
+`@xandreed/plugin-rag` indexes host-supplied text/Markdown and retrieves original
+passages with source identities, revisions and character ranges. Its optional
+graph extraction enables multi-hop retrieval. `@xandreed/plugin-knowledge-postgres`
+provides both engines' native PostgreSQL/pgvector persistence, processing leases,
+transactional publication, temporal traversal and source tombstones. These engines
+coexist with the window/summary strategy and result digestion.
+
+Use the [native memory and RAG guide](native-knowledge.md) for composition,
+scope rules, model configuration, async readiness, revisions and forgetting.
+The [evaluation guide](knowledge-evaluation.md) describes controlled comparisons;
+key-free conformance tests establish behavior, while real model runs establish
+retrieval and answer quality.
+
 ### Typed plugin layers
 
 `definePlugin` returns a `TypedPlugin`: the `Plugin` the graph loads, plus its
@@ -2397,8 +2421,9 @@ The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
 so on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
-`next` is built over everything `base` provides, the two `Capabilities`
-arrays concatenate base first, and any other service of `next` wins.
+`next` is built over everything `base` provides. `Capabilities`,
+`BackgroundWorkers` and `CommittedTurnObservers` arrays concatenate base first,
+and any other service of `next` wins.
 `CapabilitiesLive(...bundles)` is the host's own bundle at the bottom of the
 stack.
 
@@ -2536,6 +2561,14 @@ following a completed reply. `TurnLive` remains open for that settlement and
 flush, then closes; an agent-owned writer ends afterward, its end storing the
 reply and `turn.ended` in one commit (a host that ends the writer itself
 stores them the same way, and a scope closed without an end stores them too).
+
+`CommittedTurnObservers` is the acknowledged-commit seam: `Agent.turn` invokes
+each observer after its owned writer's closing commit succeeds, on success or
+failure. Each optional observer is bounded and soft; it cannot change the
+original result. A before-turn session plugin can capture `Sessions` and
+contribute an observer without requiring `RunContext`. A host ending a supplied
+writer calls `notifyCommittedTurn` after its own acknowledged end, or invokes
+the capture service explicitly.
 
 Subscriptions owned by the body, host or turn-dependent plugin scopes have
 already closed when the final `turn.ended` event is published. An observer that

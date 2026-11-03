@@ -3,6 +3,10 @@
 // `ToolRegistry` kit runs its turns over the sdk's `TurnLive`, so it is
 // `@xandreed/sdk/conformance`.
 export { ConformanceFailure } from "../conformance.entity.js"
+export { committedTurnObserversConformance } from "../turn/committed-turn-observers.conformance.js"
+export type { CommittedTurnNotifier } from "../turn/committed-turn-observers.conformance.js"
+export { backgroundWorkersConformance } from "../session/background-workers.conformance.js"
+export type { BackgroundWorkersSubject } from "../session/background-workers.conformance.js"
 export type { ConformanceCheck } from "../conformance.entity.js"
 export { check } from "../conformance.functions.js"
 export { memorySnapshotConformance } from "../memory/memory-snapshot.conformance.js"
@@ -40,3 +44,7 @@ export type { ImageResizerSubject } from "../workspace/image-resizer.conformance
 
 export { modelRequestHookConformance } from "../turn/model-request-hook.conformance.js"
 export type { ModelRequestHookSubject } from "../turn/model-request-hook.conformance.js"
+export { knowledgeStoreConformance, memoryStoreConformance, temporalGraphConformance } from "../knowledge/knowledge-store.conformance.js"
+export type { KnowledgeIndexFixture, KnowledgeIndexSubject } from "../knowledge/knowledge-store.conformance.js"
+export { longTermMemoryConformance, knowledgeConformance } from "../knowledge/knowledge-facade.conformance.js"
+export type { LongTermMemorySubject, KnowledgeSubject } from "../knowledge/knowledge-facade.conformance.js"

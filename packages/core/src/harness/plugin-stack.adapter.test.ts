@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option, Ref } from "effect"
 import { Capabilities } from "../ports/capability.port.js"
+import { BackgroundWorkers } from "../ports/background-workers.port.js"
+import { CommittedTurnObservers } from "../ports/committed-turn-observers.port.js"
 import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
 import { defineCapability } from "./capability.entity.functions.js"
 import { CapabilitiesLive, stackPlugins } from "./plugin-stack.adapter.js"
@@ -20,6 +22,15 @@ const read = <E>(layer: Layer.Layer<Capabilities | SessionEnvironment, E>) => Ef
 }).pipe(Effect.provide(layer)))
 
 describe("stackPlugins", () => {
+  test("native workers and committed observers concatenate without replacing one another", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const worker = (id: string) => ({ id, running: Effect.succeed(0), idle: Effect.void, stop: Effect.void, interrupt: Effect.void })
+    const observer = (id: string) => ({ id, committed: () => Effect.void })
+    const lower = Layer.merge(Layer.succeed(BackgroundWorkers, [worker("memory")]), Layer.succeed(CommittedTurnObservers, [observer("memory")]))
+    const upper = Layer.merge(Layer.succeed(BackgroundWorkers, [worker("rag")]), Layer.succeed(CommittedTurnObservers, [observer("audit")]))
+    const context = yield* Layer.build(lower.pipe(stackPlugins(upper)))
+    expect(Context.get(context, BackgroundWorkers).map((item) => item.id)).toEqual(["memory", "rag"])
+    expect(Context.get(context, CommittedTurnObservers).map((item) => item.id)).toEqual(["memory", "audit"])
+  }))))
   test("next is built over base; capabilities concatenate base first", async () => {
     expect(await read(CapabilitiesLive(a!).pipe(stackPlugins(reader)))).toEqual({ capabilities: ["a", "b"], workspace: "a" })
   })

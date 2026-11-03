@@ -2057,3 +2057,528 @@ Requires: `efferent/ui/OutputAdmission`, `efferent/ui/OutputJournal`, `efferent/
   "additionalProperties": true
 }
 ```
+
+## @xandreed/plugin-knowledge-postgres
+
+Scope: **runtime** · API 3 · Version 0.15.1
+
+Provides: `@xandreed/core/MemoryStore`, `@xandreed/core/KnowledgeStore`, `@xandreed/core/TemporalGraph`
+
+Requires: none
+
+### Defaults
+
+```json
+{
+  "urlEnv": "EFFERENT_KNOWLEDGE_DATABASE_URL",
+  "connections": 4,
+  "statementTimeoutMs": 15000,
+  "connectTimeoutSeconds": 10
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "urlEnv": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "connections": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "statementTimeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120000
+    },
+    "connectTimeoutSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60
+    }
+  },
+  "required": [
+    "urlEnv",
+    "connections",
+    "statementTimeoutMs",
+    "connectTimeoutSeconds"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-memory
+
+Scope: **runtime** · API 3 · Version 0.15.1
+
+Provides: `@xandreed/core/LongTermMemory`
+
+Contributes: `efferent/Capabilities`, `@xandreed/core/BackgroundWorkers`
+
+Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/EmbeddingModel`
+
+### Defaults
+
+```json
+{
+  "namespace": "default",
+  "collection": "memory",
+  "embeddingModel": "host",
+  "embeddingVersion": "1",
+  "embeddingDimensions": 1536,
+  "review": true,
+  "consolidate": true,
+  "queryPlanning": true,
+  "rerank": true,
+  "retrievalTimeoutMs": 10000,
+  "worker": true,
+  "pollMs": 2000,
+  "batchSize": 10,
+  "maxAttempts": 3,
+  "leaseMs": 180000,
+  "modelTimeoutMs": 60000,
+  "maxSourceChars": 48000,
+  "maxCandidateChars": 32000,
+  "recallChars": 8000,
+  "recallLimit": 8,
+  "graphDepth": 2,
+  "sectionOrder": 700,
+  "tools": true
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "collection": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingModel": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingVersion": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingDimensions": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "review": {
+      "type": "boolean"
+    },
+    "consolidate": {
+      "type": "boolean"
+    },
+    "queryPlanning": {
+      "type": "boolean"
+    },
+    "rerank": {
+      "type": "boolean"
+    },
+    "retrievalTimeoutMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "worker": {
+      "type": "boolean"
+    },
+    "pollMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "batchSize": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "maximum": 10,
+      "exclusiveMinimum": 0
+    },
+    "leaseMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "modelTimeoutMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "maxSourceChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "maxCandidateChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "recallChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "recallLimit": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "graphDepth": {
+      "type": "integer",
+      "maximum": 3,
+      "exclusiveMinimum": 0
+    },
+    "sectionOrder": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "tools": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "namespace",
+    "collection",
+    "embeddingModel",
+    "embeddingVersion",
+    "embeddingDimensions",
+    "review",
+    "consolidate",
+    "queryPlanning",
+    "rerank",
+    "retrievalTimeoutMs",
+    "worker",
+    "pollMs",
+    "batchSize",
+    "maxAttempts",
+    "leaseMs",
+    "modelTimeoutMs",
+    "maxSourceChars",
+    "maxCandidateChars",
+    "recallChars",
+    "recallLimit",
+    "graphDepth",
+    "sectionOrder",
+    "tools"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-memory/capture
+
+Scope: **session** · API 3 · Version 0.15.1
+
+Provides: `@xandreed/plugin-memory/MemoryCapture`
+
+Contributes: `@xandreed/core/CommittedTurnObservers`
+
+Requires: `efferent/Sessions`, `@xandreed/core/LongTermMemory`
+
+### Defaults
+
+```json
+{
+  "namespace": "default",
+  "collection": "memory",
+  "maxSourceChars": 48000,
+  "maxTurns": 10,
+  "pageSize": 500,
+  "maxPages": 100
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "collection": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "maxSourceChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "maxTurns": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "pageSize": {
+      "type": "integer",
+      "maximum": 5000,
+      "exclusiveMinimum": 0
+    },
+    "maxPages": {
+      "type": "integer",
+      "maximum": 1000,
+      "exclusiveMinimum": 0
+    }
+  },
+  "required": [
+    "namespace",
+    "collection",
+    "maxSourceChars",
+    "maxTurns",
+    "pageSize",
+    "maxPages"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-rag
+
+Scope: **runtime** · API 3 · Version 0.15.1
+
+Provides: `@xandreed/core/Knowledge`
+
+Contributes: `@xandreed/core/BackgroundWorkers`, `efferent/Capabilities`
+
+Requires: `@xandreed/core/KnowledgeStore`, `effect/ai/EmbeddingModel`
+
+Optional: `@xandreed/core/UtilityLlm`
+
+### Defaults
+
+```json
+{
+  "namespace": "default",
+  "collection": "knowledge",
+  "embeddingModel": "host",
+  "embeddingVersion": "1",
+  "embeddingDimensions": 1536,
+  "graph": false,
+  "review": true,
+  "queryPlanning": true,
+  "rerank": true,
+  "queryTimeoutMs": 10000,
+  "worker": true,
+  "pollMs": 2000,
+  "batchSize": 10,
+  "maxAttempts": 3,
+  "leaseMs": 180000,
+  "modelTimeoutMs": 60000,
+  "maxSourceChars": 200000,
+  "maxCandidateChars": 32000,
+  "chunkChars": 2000,
+  "overlapChars": 200,
+  "embeddingBatchSize": 32,
+  "searchLimit": 8,
+  "evidenceChars": 8000,
+  "readChars": 8000,
+  "graphDepth": 2,
+  "recall": false,
+  "sectionOrder": 720,
+  "tools": true
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "collection": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingModel": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingVersion": {
+      "type": "string",
+      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+      "minLength": 1
+    },
+    "embeddingDimensions": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "graph": {
+      "type": "boolean"
+    },
+    "review": {
+      "type": "boolean"
+    },
+    "queryPlanning": {
+      "type": "boolean"
+    },
+    "rerank": {
+      "type": "boolean"
+    },
+    "queryTimeoutMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "worker": {
+      "type": "boolean"
+    },
+    "pollMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "batchSize": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "maximum": 10,
+      "exclusiveMinimum": 0
+    },
+    "leaseMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "modelTimeoutMs": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "maxSourceChars": {
+      "type": "integer",
+      "maximum": 2000000,
+      "exclusiveMinimum": 0
+    },
+    "maxCandidateChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "chunkChars": {
+      "type": "integer",
+      "maximum": 16000,
+      "minimum": 200
+    },
+    "overlapChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "embeddingBatchSize": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "searchLimit": {
+      "type": "integer",
+      "maximum": 100,
+      "exclusiveMinimum": 0
+    },
+    "evidenceChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "readChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
+    "graphDepth": {
+      "type": "integer",
+      "maximum": 3,
+      "exclusiveMinimum": 0
+    },
+    "recall": {
+      "type": "boolean"
+    },
+    "sectionOrder": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "tools": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "namespace",
+    "collection",
+    "embeddingModel",
+    "embeddingVersion",
+    "embeddingDimensions",
+    "graph",
+    "review",
+    "queryPlanning",
+    "rerank",
+    "queryTimeoutMs",
+    "worker",
+    "pollMs",
+    "batchSize",
+    "maxAttempts",
+    "leaseMs",
+    "modelTimeoutMs",
+    "maxSourceChars",
+    "maxCandidateChars",
+    "chunkChars",
+    "overlapChars",
+    "embeddingBatchSize",
+    "searchLimit",
+    "evidenceChars",
+    "readChars",
+    "graphDepth",
+    "recall",
+    "sectionOrder",
+    "tools"
+  ],
+  "additionalProperties": true
+}
+```

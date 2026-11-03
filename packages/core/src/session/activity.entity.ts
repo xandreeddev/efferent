@@ -46,6 +46,8 @@ export const ProcessActivity = Schema.Struct({
   openTurns: Schema.Array(ActiveTurn),
   beginningTurns: Schema.Int,
   runningTasks: Schema.Int,
+  /** Admitted native worker claims and jobs, present when BackgroundWorkers is provided. */
+  runningWorkers: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Known sessions with pending durable user input; zero counts are omitted. */
   waiting: Schema.Array(WaitingInputCount),
   /** The sum of the pending counts in waiting; legacy notices do not count. */
