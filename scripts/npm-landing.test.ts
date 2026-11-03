@@ -3,8 +3,8 @@ import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Order } from "effect"
-import { landingArguments, landingCommand, landingManifest, landingReadme, packNpmLanding } from "./npm-landing.js"
+import { Order, Schema } from "effect"
+import { decodeLandingJson, landingArguments, landingCommand, landingManifest, landingReadme, packNpmLanding } from "./npm-landing.js"
 import type { LandingCommand } from "./npm-landing.js"
 import { publishNpmLanding } from "./publish-npm-landing.js"
 
@@ -80,7 +80,12 @@ const scenario = (root: string, options: Scenario = {}) => {
       await writeFile(archive, bytes)
       return reply(JSON.stringify([{ name: "efferent", version, filename: `efferent-${version}.tgz`, integrity, files: ["LICENSE", "README.md", "package.json", ...(options.extraFile ? ["index.js"] : [])].map((path) => ({ path })) }]))
     }
-    if (command[1] === "publish") { uploaded = true; return reply("", options.uploadCode ?? 0, "npm fixture: trust owner or workflow was refused") }
+    if (command[1] === "publish") {
+      // Model npm's certificate check: a forged provenance commit is rejected before the upload is accepted.
+      if (env.GITHUB_SHA !== workflowSha) return reply("", 1, "npm E422: gitCommit does not match signed SourceRepositoryDigest")
+      uploaded = true
+      return reply("", options.uploadCode ?? 0, "npm fixture: trust owner or workflow was refused")
+    }
     throw new Error(`Unexpected fixture command: ${command.join(" ")}`)
   }
   const metadata = (kind: "exact" | "wrong-sha" | "wrong-integrity") => ({ name: "efferent", version, gitHead: kind === "wrong-sha" ? workflowSha : sha, dist: { integrity: kind === "wrong-integrity" ? "sha512-other" : integrity } })
@@ -126,14 +131,16 @@ test("existing versions skip only when source SHA and actual tarball integrity b
   for (const existing of ["wrong-sha", "wrong-integrity"] as const) await expect(publishNpmLanding({ root, live: true, ci: true }, scenario(root, { existing }))).rejects.toThrow("different provenance or tarball integrity")
 }))
 
-test("upload uses the verified source SHA only in the child and confirms exact metadata after an ambiguous failure", () => fixture(async (root) => {
+test("upload preserves the signing workflow SHA and source gitHead while confirming an ambiguous failure", () => fixture(async (root) => {
   const setup = scenario(root, { uploadCode: 1, confirmed: "exact" })
   const result = await publishNpmLanding({ root, live: true, ci: true }, setup)
   expect(result.published).toBe(true)
   const upload = setup.calls.find(({ command }) => command[1] === "publish")!
   expect(upload.command).toEqual(["npm", "publish", result.tarball, "--provenance", "--access", "public", "--tag", "latest", "--registry", "https://registry.npmjs.org", "--ignore-scripts"])
-  expect(upload.env.GITHUB_SHA).toBe(sha)
+  expect(upload.env.GITHUB_SHA).toBe(workflowSha)
   expect(setup.env.GITHUB_SHA).toBe(workflowSha)
+  const artifact = decodeLandingJson(Schema.Struct({ gitHead: Schema.String }), await readFile(join(result.directory, "package.json"), "utf8"))
+  expect(artifact.gitHead).toBe(sha)
 }))
 
 test("a 200 response with another SHA or integrity is never treated as a successful upload", () => fixture(async (root) => {

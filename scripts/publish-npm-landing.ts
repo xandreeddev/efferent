@@ -55,7 +55,8 @@ export const publishNpmLanding = async (options: LandingPublishOptions, dependen
   if (current.sha !== pack.sha || current.version !== pack.version) throw new Error("The landing source changed after packing")
   const integrity = `sha512-${createHash("sha512").update(await readFile(pack.tarball)).digest("base64")}`
   if (integrity !== pack.integrity) throw new Error("The landing tarball changed after validation")
-  const uploaded = await run(["npm", "publish", pack.tarball, "--provenance", "--access", "public", "--tag", "latest", "--registry", registry, "--ignore-scripts"], pack.root, { ...env, GITHUB_SHA: pack.sha })
+  // npm's signed workflow identity must remain authentic; the artifact's gitHead identifies its source separately.
+  const uploaded = await run(["npm", "publish", pack.tarball, "--provenance", "--access", "public", "--tag", "latest", "--registry", registry, "--ignore-scripts"], pack.root, env)
   if (uploaded.code !== 0) console.error(`npm publish failed (exit ${uploaded.code}); checking whether the upload reached npm.\n${(uploaded.stderr.trim() || uploaded.stdout.trim()).slice(0, 8000)}`)
   const deadline = Date.now() + 60_000
   let last = uploaded.code === 0 ? "The uploaded version is not visible" : "npm publish failed and its upload could not be confirmed"

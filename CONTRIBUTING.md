@@ -244,8 +244,12 @@ Both GitHub token-created release PRs and tag pushes need explicit workflow
 dispatches: CI is dispatched on the release branch, and `docs.yml` on the
 published tag. The docs deployment is therefore after all npm versions are
 confirmed, including when the tag was pushed with `GITHUB_TOKEN`.
-For historical checkouts, npm's provenance records the verified source SHA;
-the workflow identity and run still identify the current publishing pipeline.
+For historical checkouts, the package's `gitHead` records the verified release
+source. npm's provenance signs the archive digest and identifies the actual
+publishing workflow commit. Keep GitHub's environment values unchanged:
+the signing certificate binds that workflow SHA, so substituting a historical
+source SHA makes npm reject the provenance. The source checks, manifest and
+immutable README links record the separate release input.
 
 `bun run release:publish` remains available for an explicitly requested
 interactive recovery. Routine releases and the initial release above run

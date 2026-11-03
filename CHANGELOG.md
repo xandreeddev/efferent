@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Preserve the signed GitHub workflow identity in npm provenance when
+  publishing a historical release checkout. Keep its verified source commit
+  in package metadata and retain the source and archive integrity checks.
 - Publish the unscoped `efferent` npm name as a documentation landing page
   with the release README, working source links and scoped-package install
   instructions. Keep its README current through the CI release workflow.
