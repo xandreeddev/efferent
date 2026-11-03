@@ -25,8 +25,8 @@ both as peer dependencies and use caret ranges for other framework packages,
 so compatible patch versions share them; incompatible peer versions are
 reported during installation.
 
-This guide follows repository source, including unreleased additions. Choose
-the package versions and APIs available in the release you install.
+This guide follows version `0.16.0`. Install the framework packages from this
+release for the APIs shown here.
 `@xandreed/plugin-models` needs Node 24.5 or newer.
 
 ## Compose
