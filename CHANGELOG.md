@@ -8,6 +8,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- Document conditional approval of a reviewed bot PR's blocked workflow;
+  a passing branch dispatch does not replace the required PR check.
+
 ## 0.16.1 — 2026-11-03
 
 ### Repository

@@ -151,9 +151,8 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    packages such as core. Changesets versions the whole group, while the
    framework publisher handles distribution artifacts.
 3. Review and merge the generated PR, titled `release <version>`. The bot
-   explicitly dispatches the existing `ci` workflow on its branch so its
-   required check can run with `GITHUB_TOKEN`. Branch protection still
-   requires that check to pass before merging.
+   dispatches `ci` on its branch; merging still requires the PR's required check.
+   A passing branch dispatch does not replace a pending required PR check.
 4. After the merged release commit passes main's `ci`, `release.yml`
    verifies its source SHA, version, dated changelog, compatibility fixtures
    and the trusted Actions check. It builds and verifies the packed packages,
@@ -161,6 +160,13 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    version on npm, pushes `v<version>`, creates the GitHub release and
    dispatches the docs deployment at that tag. Its separate `landing` job
    then publishes the release README as the unscoped `efferent` package.
+
+If the bot PR's `pull_request` run is `action_required`, inspect the reviewed
+source and workflow, then approve that run and wait for its required check:
+
+```sh
+gh api --method POST "repos/xandreeddev/efferent/actions/runs/<run-id>/approve"
+```
 
 Merging the release PR signs off on package publication, the immutable tag
 and documentation deployment. Ordinary feature commits retaining the current
