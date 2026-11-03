@@ -74,8 +74,8 @@ jobs:
             ## Checks
 
             - The required `ci` workflow validates this release before merging.
-      # Explicit dispatch works with GITHUB_TOKEN and supplies the required ci
-      # check even when a token-created PR's normal event requires approval.
+      # Explicit dispatch validates the branch; GitHub can still require approval
+      # of a separate PR workflow before merging.
       - name: Run the required CI on the release branch
         if: steps.pr.outputs.pull-request-number != '' && (steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated')
         env:

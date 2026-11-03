@@ -49,6 +49,8 @@ change. Review the generated `release <version>` PR: the 24 manifests, plugin
 versions, lockfile, documentation and new journal/run fixtures must agree.
 Preserve existing released fixtures. Merge after the required CI passes;
 main's successful CI then starts `release.yml` automatically.
+If a reviewed bot PR run is `action_required`, follow CONTRIBUTING.md's
+approval procedure; a passing branch dispatch does not replace its required check.
 
 The publisher uploads framework packages in dependency order, confirms the
 registry, creates the immutable release tag and GitHub release, dispatches docs,

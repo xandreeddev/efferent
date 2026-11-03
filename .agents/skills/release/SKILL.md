@@ -44,10 +44,11 @@ dates the central changelog, records the new journal and evaluation fixtures,
 updates lock metadata and regenerates documentation. Never overwrite an
 existing released fixture to silence a test.
 
-The workflow explicitly dispatches `ci.yml` on that branch to supply its
-required CI check with `GITHUB_TOKEN`. Review all generated files, fix any
-failures and merge using the repository's `commit-style` rules. The PR title
-is exactly `release <version>` so the publish selector can recognize it.
+The workflow dispatches `ci.yml` on that branch with `GITHUB_TOKEN`; a passing
+branch run does not replace a pending required PR check. If the PR run
+is `action_required`, follow CONTRIBUTING.md's approval procedure after reviewing its source
+and wait for its required check. Review all generated files and merge using
+`commit-style`; keep the title exactly `release <version>` for the publish selector.
 
 ## 3. Publish in CI
 
