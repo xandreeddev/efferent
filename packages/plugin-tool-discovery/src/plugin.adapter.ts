@@ -41,7 +41,7 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
  * @public
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.16.0", scope: "runtime",
+  id: "@xandreed/plugin-tool-discovery", version: "0.16.1", scope: "runtime",
   config: ToolDiscoveryConfig, defaults: toolDiscoveryDefaults,
   requires: [Capabilities],
   provides: [ToolRegistry],

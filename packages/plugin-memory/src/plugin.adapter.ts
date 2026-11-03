@@ -7,7 +7,7 @@ import { MemoryConfig, memoryDefaults } from "./memory.entity.js"
 
 /** Native evidence-backed memory with temporal graph reconciliation and durable background processing. @public */
 export const memoryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory", version: "0.16.0", scope: "runtime",
+  id: "@xandreed/plugin-memory", version: "0.16.1", scope: "runtime",
   config: MemoryConfig, defaults: memoryDefaults,
   requires: [MemoryStore, UtilityLlm, EmbeddingModel.EmbeddingModel],
   provides: [LongTermMemory], contributes: [Capabilities, BackgroundWorkers],

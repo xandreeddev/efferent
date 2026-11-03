@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.16.1 — 2026-11-03
+
 ### Repository
 
 - Request a shared patch release from the release-PR workflow and audit all
@@ -30,6 +32,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   including clean historical checkouts for the prepared 0.16.0 release.
 - Keep plugin versions, compatibility fixtures, version markers, the central
   changelog and generated documentation synchronized when consuming changesets.
+
+### Changes
+
+- Publish a coordinated framework patch and its documentation landing package through npm trusted publishing, preserving the verified release source and authentic workflow provenance.
 
 ## 0.16.0 — 2026-11-03
 
