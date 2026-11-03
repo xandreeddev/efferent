@@ -26,7 +26,8 @@ second copy.
 Workspace packages share version `0.16.0`. The [Unreleased changelog](CHANGELOG.md#unreleased)
 describes changes in this checkout for the next release.
 `@xandreed/plugin-models` needs Node 24.5 or newer.
-The historical `efferent` npm package is a different release line.
+The unscoped `efferent` npm package is the project's documentation landing
+page; install the `@xandreed/*` packages above to use the framework.
 
 Releases use Changesets and GitHub Actions: changesets create a version PR;
 merging it and passing CI publishes the package set, creates its GitHub
@@ -333,10 +334,10 @@ each plugin's version is its package's. `bun run docs:generate` writes the
 plugin and event references, and copies the events guide's snippets from the
 test that runs them into the guide and its website page.
 
-Releases are published and tagged with `bun run release:publish`, which
-installs, builds and runs `bun run publish:packages` (it checks the build
-against the current commit and is a dry run unless `--publish` is passed),
-then tags the release; see [publishing](CONTRIBUTING.md#publishing). Changes per release are in the
+Changesets prepares the release PR. After it merges and passes CI,
+`release.yml` publishes the framework packages, tags the release, deploys
+the docs and updates the `efferent` npm landing page; see
+[publishing](CONTRIBUTING.md#publishing). Changes per release are in the
 [changelog](CHANGELOG.md).
 
 See [the framework guide](docs/framework.md), the

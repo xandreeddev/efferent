@@ -8,7 +8,7 @@ const Step = Schema.Struct({
   env: Schema.optionalKey(Strings), with: Schema.optionalKey(Schema.JsonObject),
 })
 const Job = Schema.Struct({
-  if: Schema.optionalKey(Schema.String), needs: Schema.optionalKey(Schema.String),
+  if: Schema.optionalKey(Schema.String), needs: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   permissions: Strings, steps: Schema.Array(Step), env: Schema.optionalKey(Strings),
 })
 const Workflow = Schema.Struct({
@@ -63,6 +63,18 @@ test("GitHub release and explicit docs dispatch follow successful npm publicatio
   expect(publish.steps[release]?.run).toContain('test "$RELEASE_SHA" = "$EXPECTED_SHA"')
   expect(publish.steps[docs]?.run).toBe('gh workflow run docs.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"')
   expect(publish.steps[docs]?.env?.RELEASE_TAG).toBe("${{ steps.publish.outputs.tag }}")
+})
+
+test("the documentation-only npm landing page uses the verified source after framework publication", async () => {
+  const landing = job(await read("release"), "landing")
+  expect(landing.needs).toEqual(["target", "publish"])
+  expect(landing.if).toBe("needs.target.outputs.eligible == 'true'")
+  expect(landing.permissions).toEqual({ contents: "read", "id-token": "write" })
+  const source = landing.steps.find((entry) => entry.with?.path === "source")
+  expect(source?.with?.ref).toBe("${{ needs.target.outputs.sha }}")
+  expect(source?.with?.["persist-credentials"]).toBe(false)
+  expect(step(landing, "landing").run).toBe('bun pipeline/scripts/publish-npm-landing.ts --ci --root "$GITHUB_WORKSPACE/source" --publish')
+  expect(step(landing, "landing").env).toEqual({ NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" })
 })
 
 test("release PRs consume changesets and explicitly dispatch the required CI check", async () => {
