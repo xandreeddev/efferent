@@ -1,9 +1,10 @@
-import { Clock, Duration, Effect, Layer, Option, Queue, Scope, Stream } from "effect"
+import { Clock, Deferred, Duration, Effect, Layer, Option, Queue, Scope, Stream } from "effect"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
-import type { FeedFrame, FeedOptions, FeedScope } from "./domain/feed-frame.entity.js"
-import { nextPollMs } from "./domain/feed-frame.entity.functions.js"
+import type { FeedFrame, FeedOptions, FeedPayload, FeedScope } from "./domain/feed-frame.entity.js"
+import { nextPollMs, transientOf } from "./domain/feed-frame.entity.functions.js"
 import type { RenderError } from "./domain/render-surface.entity.js"
 import { JournalTail, RenderFeed } from "./ports/render.port.js"
+import type { FeedProjection } from "./ports/render.port.js"
 
 interface Cursor {
   readonly after: number
@@ -36,16 +37,9 @@ const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effec
     }),
   })
 
-/**
- * A journal tail as a stream of frames: records after the cursor (projected),
- * one ready frame after the first empty poll, heartbeats while idle, idle
- * polling backs off (a `changes` signal polls at once); the stream ends after
- * `maxDurationMs`.
- *
- * @public
- */
-export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
-  frames: (feed, after, project) => Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)], { concurrency: 1 }).pipe(Effect.map(([now, wait]) =>
+/** The journal side of a feed: records after the cursor, one ready frame, heartbeats while idle, until `maxDurationMs`. */
+const journalFrames = (tail: typeof JournalTail.Service, options: FeedOptions, feed: FeedScope, after: number, project: FeedProjection): Stream.Stream<FeedFrame, RenderError> =>
+  Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)], { concurrency: 1 }).pipe(Effect.map(([now, wait]) =>
     Stream.paginate({ after, ready: false, delayMs: 0, quietSince: now, startedAt: now } satisfies Cursor, (cursor): Effect.Effect<Step, RenderError> => Effect.gen(function* () {
       yield* wait(cursor.delayMs)
       const at = yield* Clock.currentTimeMillis
@@ -76,7 +70,39 @@ export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOp
       }
       return [frames, Option.some(next)] as const
     })),
-  ))),
+  )))
+
+/**
+ * Live frames beside the journal's: each payload goes out as a transient
+ * frame once the journal side has sent its ready frame (the backlog comes
+ * first; the live stream's own buffering decides what waits meanwhile), and
+ * the merged stream ends when the journal side does. A live stream that
+ * ends only stops live frames; one that fails, or a payload named `ready`,
+ * fails the feed.
+ */
+const withLive = (journal: Stream.Stream<FeedFrame, RenderError>, live: Stream.Stream<FeedPayload, RenderError>): Stream.Stream<FeedFrame, RenderError> =>
+  Stream.unwrap(Deferred.make<void>().pipe(Effect.map((caughtUp) => Stream.merge(
+    // Release the live side only once the ready frame is out, so no transient frame overtakes it.
+    journal.pipe(Stream.flatMap((frame) => Stream.succeed(frame).pipe(Stream.concat(
+      frame._tag === "FeedReady" ? Stream.fromEffectDrain(Deferred.succeed(caughtUp, undefined)) : Stream.empty)))),
+    live.pipe(Stream.mapEffect((payload) => Deferred.await(caughtUp).pipe(Effect.andThen(Effect.fromResult(transientOf(payload)))))),
+    { haltStrategy: "left" },
+  ))))
+
+/**
+ * A journal tail as a stream of frames: records after the cursor (projected),
+ * one ready frame after the first empty poll, heartbeats while idle, idle
+ * polling backs off (a `changes` signal polls at once); the stream ends after
+ * `maxDurationMs`. A `live` stream's payloads join as transient frames after
+ * the ready frame; they never move the cursor.
+ *
+ * @public
+ */
+export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
+  frames: (feed, after, project, live) => {
+    const journal = journalFrames(tail, options, feed, after, project)
+    return live === undefined ? journal : withLive(journal, live)
+  },
 })
 
 export const RenderFeedLive = (options: FeedOptions) =>

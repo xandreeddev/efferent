@@ -3716,7 +3716,11 @@ accepted, the ordinary inbox drainer's explicit startup takeover handles it.
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
-after a cursor, then follows `changes` and polls. The events guide
+after a cursor, then follows `changes` and polls. A host that also
+streams what the journal never stores (a reply as it is written, a
+preview) passes it to `RenderFeed.frames` as `live`: those payloads go out
+as transient frames after the ready frame, with no SSE `id` and no
+sequence, so they never move the resume cursor. The events guide
 [serves it over SSE](events.md#serving-turns-over-http) with a projection
 that keeps prompts and tool input and output on the server, and shows
 [what another process needs to follow a session](events.md#reading-the-journal)

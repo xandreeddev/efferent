@@ -9834,11 +9834,13 @@
       },
       "preamble": "retry: 1000\n\n",
       "record": "id: 42\nevent: turn.reply\ndata: {\"outcome\":\"completed\",\"reply\":\"Done.\"}\n\n",
+      "transient": "event: reply.delta\ndata: {\"text\":\"Do\"}\n\n",
       "ready": "event: ready\ndata: {}\n\n",
       "heartbeat": ": heartbeat\n\n"
     },
     "socket": {
       "record": "{\"type\":\"record\",\"sequence\":42,\"event\":\"turn.reply\",\"data\":{\"outcome\":\"completed\",\"reply\":\"Done.\"}}",
+      "transient": "{\"type\":\"transient\",\"event\":\"reply.delta\",\"data\":{\"text\":\"Do\"}}",
       "ready": "{\"type\":\"ready\"}",
       "heartbeat": "{\"type\":\"heartbeat\"}",
       "resume": "{\"after\":41}"

@@ -3,9 +3,10 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http"
 import { Socket } from "node:net"
 import type { AddressInfo } from "node:net"
 import { Effect, Logger, Option, Result, Stream } from "effect"
-import { FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
+import { FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
+import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
 import { RenderError } from "./domain/render-surface.entity.js"
-import { decodeSse, encodeSse, nextPollMs, socketResumeOf, ssePreamble } from "./domain/feed-frame.entity.functions.js"
+import { decodeSocketFrame, decodeSse, encodeSocketFrame, encodeSse, nextPollMs, socketResumeOf, ssePreamble, transientOf } from "./domain/feed-frame.entity.functions.js"
 import { makeRenderFeed } from "./render-feed.adapter.js"
 import { SseTransport, sseNodePeer, WebSocketTransport } from "./render-transport.adapter.js"
 import { renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
@@ -33,9 +34,54 @@ test("a malformed SSE record is a typed failure, not a throw", () => {
   const decoded = [
     decodeSse("id: -1\nevent: surface.planned\ndata: {}\n\n"),
     decodeSse("id: 2\nevent: surface.planned\ndata: [1]\n\n"),
-    decodeSse("event: surface.planned\ndata: {}\n\n"),
+    decodeSse("event: surface.planned\n\n"),
+    decodeSse("data: {}\n\n"),
+    decodeSse("event: preview\ndata: [1]\n\n"),
   ]
-  expect(decoded.map((result) => Result.isFailure(result) ? result.failure.code : "decoded")).toEqual(["invalid", "invalid", "invalid"])
+  expect(decoded.map((result) => Result.isFailure(result) ? result.failure.code : "decoded")).toEqual(["invalid", "invalid", "invalid", "invalid", "invalid"])
+})
+
+test("a transient frame has no id on SSE and its own type on a socket", () => {
+  const transient = FeedTransient.make({ event: "reply.delta", data: { text: "Hel" } })
+  expect(encodeSse(transient)).toBe("event: reply.delta\ndata: {\"text\":\"Hel\"}\n\n")
+  expect(encodeSocketFrame(transient)).toBe("{\"type\":\"transient\",\"event\":\"reply.delta\",\"data\":{\"text\":\"Hel\"}}")
+  expect(decodeSse(`${ssePreamble}${encodeSse(FeedRecord.make({ sequence: 3, event: "turn.started", data: {} }))}${encodeSse(transient)}`)).toEqual(
+    Result.succeed([FeedRecord.make({ sequence: 3, event: "turn.started", data: {} }), transient]))
+  expect(decodeSocketFrame(encodeSocketFrame(transient))).toEqual(Option.some(transient))
+})
+
+test("ready is the feed's own frame: a record may carry the name, a transient frame may not", () => {
+  expect(decodeSse("id: 4\nevent: ready\ndata: {\"a\":1}\n\n")).toEqual(Result.succeed([FeedRecord.make({ sequence: 4, event: "ready", data: { a: 1 } })]))
+  expect(decodeSse("event: ready\ndata: {}\n\n")).toEqual(Result.succeed([FeedReady.make({})]))
+  expect(decodeSocketFrame("{\"type\":\"transient\",\"event\":\"ready\",\"data\":{}}")).toEqual(Option.none())
+  const refused = transientOf({ event: "ready", data: {} })
+  expect(Result.isFailure(refused) ? refused.failure.code : "accepted").toBe("invalid")
+  expect(transientOf({ event: "preview", data: { a: 1 } })).toEqual(Result.succeed(FeedTransient.make({ event: "preview", data: { a: 1 } })))
+})
+
+test("a live payload named ready fails the feed, which either wire ends quietly", async () => {
+  const feed = makeRenderFeed({ read: () => Effect.succeed([]) }, { pollMs: 5, maxPollMs: 10, heartbeatMs: 1_000, maxDurationMs: 1_000 })
+  const failed = await Effect.runPromise(Stream.runCollect(feed.frames(
+    { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0, () => Effect.succeed(Option.none()), Stream.make({ event: "ready", data: {} }),
+  )).pipe(Effect.flip))
+  expect(failed.code).toBe("invalid")
+})
+
+test("transient frames never move the cursor a client resumes from", async () => {
+  const feed = makeRenderFeed({ read: (_feed, after) => Effect.succeed([{ sequence: 5, kind: "turn.started", data: {} }].filter((record) => record.sequence > after)) },
+    { pollMs: 5, maxPollMs: 10, heartbeatMs: 1_000, maxDurationMs: 60 })
+  const written: Array<string> = []
+  await Effect.runPromise(SseTransport.serve(feed.frames(
+    { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0,
+    (record) => Effect.succeed(Option.some({ event: record.kind, data: record.data })),
+    Stream.make({ event: "reply.delta", data: { text: "a" } }, { event: "reply.delta", data: { text: "b" } }),
+  ), { write: (chunk) => Effect.sync(() => { written.push(chunk) }), closed: Effect.never }))
+  // What an EventSource keeps as its last event id: the last id line written, never one of a transient block.
+  const ids = written.join("").split("\n").filter((line) => line.startsWith("id: "))
+  expect(ids).toEqual(["id: 5"])
+  const frames = decodeSse(written.join(""))
+  expect(Result.map(frames, (all) => all.filter((frame) => frame._tag !== "FeedHeartbeat").map((frame) => frame._tag))).toEqual(
+    Result.succeed(["FeedRecord", "FeedReady", "FeedTransient", "FeedTransient"]))
 })
 
 test("a feed that fails ends either wire quietly for the client and logs why", async () => {

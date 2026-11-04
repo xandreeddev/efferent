@@ -109,8 +109,23 @@ export class JournalTail extends Context.Service<JournalTail, {
 /** Maps a journal record to what a client receives; `None` skips it (the cursor still advances). */
 export type FeedProjection = (record: JournalRecord) => Effect.Effect<Option.Option<FeedPayload>, RenderError>
 
+/**
+ * A journal's frames after a cursor, for one client.
+ * - Records come after `after`, in sequence order, projected by `project`;
+ *   one ready frame follows the backlog, heartbeats fill idle time, and the
+ *   stream ends after the feed's `maxDurationMs`.
+ * - `live`, when given, carries what the journal never stores (a reply as it
+ *   streams, a preview, a handshake): each payload becomes a `FeedTransient`
+ *   frame, sent only after the ready frame, and the stream still ends when
+ *   the journal side does. Transient frames carry no sequence and never move
+ *   the resume cursor: a client that reconnects gets only what the journal
+ *   kept. A live stream that ends stops only the live frames; one that fails,
+ *   or a payload named `ready`, fails the feed.
+ *
+ * @public
+ */
 export class RenderFeed extends Context.Service<RenderFeed, {
-  readonly frames: (feed: FeedScope, after: number, project: FeedProjection) => Stream.Stream<FeedFrame, RenderError>
+  readonly frames: (feed: FeedScope, after: number, project: FeedProjection, live?: Stream.Stream<FeedPayload, RenderError>) => Stream.Stream<FeedFrame, RenderError>
 }>()("efferent/render/Feed") {}
 
 /**

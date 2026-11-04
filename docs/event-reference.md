@@ -486,12 +486,13 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 
 ## Feed and socket frames
 
-`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor.
+`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor. A host may pass `RenderFeed.frames` a live stream of payloads the journal never stores (a reply as it streams, a preview, a handshake): each goes out after the `ready` frame as a transient frame, which has no SSE `id` and no `sequence`, so it never moves the cursor and a reconnecting client gets only what the journal kept. `ready` is the feed's own frame: a transient frame may not take that name.
 
 | Frame | SSE | WebSocket |
 | --- | --- | --- |
 | preamble | `"retry: 1000\n\n"` | none |
 | record | `"id: 42\nevent: turn.reply\ndata: {\"outcome\":\"completed\",\"reply\":\"Done.\"}\n\n"` | `{"type":"record","sequence":42,"event":"turn.reply","data":{"outcome":"completed","reply":"Done."}}` |
+| transient | `"event: reply.delta\ndata: {\"text\":\"Do\"}\n\n"` | `{"type":"transient","event":"reply.delta","data":{"text":"Do"}}` |
 | ready | `"event: ready\ndata: {}\n\n"` | `{"type":"ready"}` |
 | heartbeat | `": heartbeat\n\n"` | `{"type":"heartbeat"}` |
 | resume | the `Last-Event-ID` request header | the client's first message, `{"after":41}` |

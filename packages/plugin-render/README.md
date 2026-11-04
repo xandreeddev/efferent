@@ -48,13 +48,20 @@ const serveEvents = (response, feedScope, after: number) => Effect.gen(function*
   while idle; the stream ends after `maxDurationMs` and clients reconnect with their cursor. Idle
   polling backs off. A `JournalTail` may also offer `changes(feed)`, a stream whose every element
   wakes the feed to poll at once (a database notification, an in-process signal). Polling stays the
-  fallback: a failed or ended `changes` stream only stops the wake-ups.
+  fallback: a failed or ended `changes` stream only stops the wake-ups. A host that also streams what
+  the journal never stores (a reply as it is written, a preview, a build handshake) passes it as
+  `live`, the fourth argument: each payload goes out as a `FeedTransient` frame after the ready frame,
+  the feed still ends when the journal side does, and a transient frame never moves the resume cursor
+  (a reconnecting client gets only what the journal kept). A live stream that ends stops only the
+  live frames; one that fails, or a payload named `ready`, fails the feed.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
-  `event: ready`, and `: heartbeat` comments. `decodeSse(text)` reads them back as a `Result`: a
-  malformed record fails with `RenderError` code `invalid`. `sseNodePeer(response, headers, timeout)`
+  transient `event: <event>` / `data: <json>` blocks with no `id`, `event: ready`, and `: heartbeat`
+  comments. `decodeSse(text)` reads them back as a `Result`: a
+  malformed record or transient frame fails with `RenderError` code `invalid`. `sseNodePeer(response, headers, timeout)`
   drops a client that has not taken a write within `timeout` (2 seconds). A feed that fails ends the
   connection like a finished one, and the transport logs the failure as a warning. WebSocket wire: one JSON object per frame
-  (`{"type":"record","sequence":n,"event":…,"data":{…}}`, `{"type":"ready"}`, `{"type":"heartbeat"}`);
+  (`{"type":"record","sequence":n,"event":…,"data":{…}}`, `{"type":"transient","event":…,"data":{…}}`,
+  `{"type":"ready"}`, `{"type":"heartbeat"}`);
   a client resumes by sending `{"after": n}`.
 - Conformance kits (`renderSurfaceConformance`, `renderFeedConformance`, `renderTransportConformance`)
   hold any store, feed or transport implementation to the same contract.

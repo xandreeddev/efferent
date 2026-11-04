@@ -17,6 +17,7 @@ const FeedPayload
 const FeedReady
 const FeedRecord
 const FeedScope
+const FeedTransient
 const FreezeReason
 const JournalRecord
 const MemoryRenderStoreLive
@@ -100,6 +101,7 @@ type FeedOptions
 type FeedPayload
 type FeedProjection
 type FeedScope
+type FeedTransient
 type FreezeReason
 type JournalRecord
 type NodeId

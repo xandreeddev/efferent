@@ -36,12 +36,26 @@ export const FeedRecord = Schema.TaggedStruct("FeedRecord", {
   event: Id,
   data: Json,
 })
+/**
+ * A live frame with no sequence: something a client sees as it happens but
+ * the journal never stores (a reply as it streams, a preview, a build
+ * handshake). It carries no cursor, so it never moves a client's resume
+ * point; a reconnecting client gets only what the journal kept. Its event
+ * may not be `ready`, the feed's own frame.
+ *
+ * @public
+ */
+export const FeedTransient = Schema.TaggedStruct("FeedTransient", {
+  event: Id.check(Schema.makeFilter((event) => event !== "ready" || "a transient frame may not be named ready, the feed's own frame")),
+  data: Json,
+})
+export type FeedTransient = typeof FeedTransient.Type
 /** Sent once, after the first poll finds nothing new: the client has caught up. */
 export const FeedReady = Schema.TaggedStruct("FeedReady", {})
 /** Sent when the feed has been idle for the heartbeat interval. */
 export const FeedHeartbeat = Schema.TaggedStruct("FeedHeartbeat", {})
 /** @public */
-export const FeedFrame = Schema.Union([FeedRecord, FeedReady, FeedHeartbeat])
+export const FeedFrame = Schema.Union([FeedRecord, FeedTransient, FeedReady, FeedHeartbeat])
 export type FeedFrame = typeof FeedFrame.Type
 
 /**
@@ -54,6 +68,12 @@ export const SseRecordFields = Schema.Struct({
   event: FeedRecord.fields.event,
   data: Schema.fromJsonString(FeedRecord.fields.data),
 }).pipe(Schema.encodeKeys({ sequence: "id" }))
+
+/** The fields of one SSE transient block, as text: an `event` and its JSON `data`, and no `id`. */
+export const SseTransientFields = Schema.Struct({
+  event: FeedTransient.fields.event,
+  data: Schema.fromJsonString(FeedTransient.fields.data),
+})
 
 export const FeedOptions = Schema.Struct({
   /** Poll interval after new records. */
@@ -73,6 +93,7 @@ export type FeedOptions = typeof FeedOptions.Type
  */
 export const SocketFrame = Schema.Union(
   [Schema.Struct({ type: Schema.Literal("record"), sequence: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))), event: Id, data: Json }),
+  Schema.Struct({ type: Schema.Literal("transient"), event: FeedTransient.fields.event, data: Json }),
   Schema.Struct({ type: Schema.Literal("ready") }),
   Schema.Struct({ type: Schema.Literal("heartbeat") })],
 )

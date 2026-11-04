@@ -1,8 +1,8 @@
 import { Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
 import { canonicalJson } from "@xandreed/core"
 import { ConformanceFailure } from "@xandreed/core/conformance"
-import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
-import type { FeedFrame, FeedOptions, JournalRecord } from "./domain/feed-frame.entity.js"
+import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
+import type { FeedFrame, FeedOptions, FeedPayload, JournalRecord } from "./domain/feed-frame.entity.js"
 import { decodeSocketFrame, decodeSse } from "./domain/feed-frame.entity.functions.js"
 import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
 import type { RenderError } from "./domain/render-surface.entity.js"
@@ -15,8 +15,10 @@ const holds = (check: string) => (condition: boolean, message: string) =>
 const sample: ReadonlyArray<FeedFrame> = [
   FeedRecord.make({ sequence: 1, event: "surface.planned", data: { versionId: "m:v1", nested: { list: [1, 2], text: "line\nbreak" } } }),
   FeedReady.make({}),
+  FeedTransient.make({ event: "reply.delta", data: { text: "par", nested: { list: [1, 2], text: "line\nbreak" } } }),
   FeedHeartbeat.make({}),
   FeedRecord.make({ sequence: 2, event: "message.updated", data: { text: "é ✓" } }),
+  FeedTransient.make({ event: "preview", data: {} }),
 ]
 
 /**
@@ -68,6 +70,8 @@ const feedScope = { threadId: ThreadId.make("thread"), principalId: PrincipalId.
 const record = (sequence: number, kind = "message.updated"): JournalRecord => ({ sequence, kind, data: { sequence } })
 const collect = (stream: Stream.Stream<FeedFrame, RenderError>) => Stream.runCollect(stream).pipe(Effect.map((chunk) => Array.from(chunk)))
 const sequences = (frames: ReadonlyArray<FeedFrame>) => frames.flatMap((frame) => frame._tag === "FeedRecord" ? [frame.sequence] : [])
+const transients = (frames: ReadonlyArray<FeedFrame>) => frames.flatMap((frame) => frame._tag === "FeedTransient" ? [frame.event] : [])
+const livePayload = (event: string): FeedPayload => ({ event, data: { event } })
 
 /**
  * The contract of a RenderFeed built over a JournalTail with short intervals.
@@ -116,6 +120,36 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
         const frames = yield* Fiber.join(running).pipe(Effect.timeout("1 second"), Effect.option)
         yield* expect(Option.isSome(frames), "the appended record arrived long before the next poll")
         yield* expect(canonicalJson(sequences(Option.getOrElse(frames, () => []))) === canonicalJson([1, 2]), `records in order, got ${canonicalJson(sequences(Option.getOrElse(frames, () => [])))}`)
+      }),
+    },
+    {
+      name: "live frames follow the ready frame and end with the journal side",
+      run: Effect.gen(function* () {
+        const expect = holds("live frames follow the ready frame and end with the journal side")
+        const journal = yield* makeMemoryJournal([record(1), record(2)])
+        // Ready at once and never ending: only the journal side may end the feed.
+        const live = Stream.fromIterable([livePayload("live.first"), livePayload("live.second")]).pipe(Stream.concat(Stream.never))
+        const frames = yield* collect(makeFeed(journal.tail, options).frames(feedScope, 0, project, live)).pipe(Effect.timeout("2 seconds"), Effect.option)
+        yield* expect(Option.isSome(frames), "the feed ended after maxDurationMs although the live stream never ends")
+        const all = Option.getOrElse(frames, () => [])
+        const ready = all.findIndex((frame) => frame._tag === "FeedReady")
+        yield* expect(canonicalJson(sequences(all)) === canonicalJson([1, 2]), `the backlog, got ${canonicalJson(sequences(all))}`)
+        yield* expect(canonicalJson(transients(all)) === canonicalJson(["live.first", "live.second"]), `every live payload in order, got ${canonicalJson(transients(all))}`)
+        yield* expect(canonicalJson(all.find((frame) => frame._tag === "FeedTransient")) === canonicalJson(FeedTransient.make({ event: "live.first", data: { event: "live.first" } })), "a live payload as a transient frame, unchanged")
+        yield* expect(ready >= 0 && all.every((frame, index) => frame._tag !== "FeedTransient" || index > ready), "no transient frame before the ready frame")
+      }),
+    },
+    {
+      name: "a live stream that ends leaves the journal side following",
+      run: Effect.gen(function* () {
+        const expect = holds("a live stream that ends leaves the journal side following")
+        const journal = yield* makeMemoryJournal([record(1)])
+        const running = yield* Effect.forkChild(collect(makeFeed(journal.tail, options).frames(feedScope, 0, project, Stream.make(livePayload("live.only")))))
+        yield* Effect.sleep("60 millis")
+        yield* journal.append(record(2))
+        const frames = yield* Fiber.join(running)
+        yield* expect(canonicalJson(sequences(frames)) === canonicalJson([1, 2]), `the record appended after the live stream ended, got ${canonicalJson(sequences(frames))}`)
+        yield* expect(canonicalJson(transients(frames)) === canonicalJson(["live.only"]), `the live payload, got ${canonicalJson(transients(frames))}`)
       }),
     },
   ]
