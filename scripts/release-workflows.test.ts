@@ -10,7 +10,7 @@ const Step = Schema.Struct({
 })
 const Job = Schema.Struct({
   if: Schema.optionalKey(Schema.String), needs: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
-  permissions: Strings, steps: Schema.Array(Step), env: Schema.optionalKey(Strings),
+  permissions: Schema.optionalKey(Strings), steps: Schema.Array(Step), env: Schema.optionalKey(Strings),
 })
 const Workflow = Schema.Struct({
   permissions: Strings, jobs: Schema.Record(Schema.String, Job),
@@ -33,6 +33,40 @@ const step = (selected: Job, id: string) => {
   if (selectedStep === undefined) throw new Error(`Missing workflow step ${id}`)
   return selectedStep
 }
+
+test("CI permits repository PRs, main pushes and manual runs while rejecting forks", async () => {
+  const workflow = await read("ci")
+  expect(workflow.permissions).toEqual({ contents: "read" })
+  expect(workflow.on.push).toEqual({ branches: ["main"] })
+  expect(Object.hasOwn(workflow.on, "pull_request")).toBe(true)
+  expect(Object.hasOwn(workflow.on, "workflow_dispatch")).toBe(true)
+  expect(Object.hasOwn(workflow.on, "pull_request_target")).toBe(false)
+  const guard = job(workflow, "ci").if
+  if (guard === undefined) throw new Error("CI must restrict its repository and PR source")
+  // This guard uses the shared JavaScript/GitHub logical expression subset.
+  // Execute the actual workflow expression, passing event data as values.
+  const evaluate = new Function("github", `return (${guard})`)
+  const repository = "xandreeddev/efferent"
+  const context = (event_name: string, current = repository, head?: string, actor = "xandreeddev") => ({
+    repository: current, event_name, actor,
+    event: head === undefined ? {} : { pull_request: { head: { repo: { full_name: head } } } },
+  })
+  const cases = [
+    { name: "owner PR", github: context("pull_request", repository, repository), allowed: true },
+    { name: "bot PR", github: context("pull_request", repository, repository, "github-actions[bot]"), allowed: true },
+    { name: "main push", github: context("push"), allowed: true },
+    { name: "manual run", github: context("workflow_dispatch"), allowed: true },
+    { name: "fork PR", github: context("pull_request", repository, "outside/efferent"), allowed: false },
+    { name: "PR in another repository", github: context("pull_request", "outside/efferent", "outside/efferent"), allowed: false },
+    { name: "push in another repository", github: context("push", "outside/efferent"), allowed: false },
+    { name: "manual run in another repository", github: context("workflow_dispatch", "outside/efferent"), allowed: false },
+  ]
+  for (const item of cases) {
+    const allowed = Schema.decodeUnknownResult(Schema.Boolean)(evaluate(item.github))
+    if (Result.isFailure(allowed)) throw allowed.failure
+    expect({ name: item.name, allowed: allowed.success }).toEqual({ name: item.name, allowed: item.allowed })
+  }
+})
 
 test("release publication receives npm credentials only after read-only source and CI verification", async () => {
   const workflow = await read("release")
