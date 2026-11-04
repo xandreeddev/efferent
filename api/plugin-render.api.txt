@@ -71,6 +71,7 @@ const nextPollMs
 const openSurface
 const operationIdOf
 const outputScopeOf
+const payloadOf
 const progressOf
 const proposalOf
 const renderFeedConformance

@@ -54,6 +54,10 @@ const serveEvents = (response, feedScope, after: number) => Effect.gen(function*
   the feed still ends when the journal side does, and a transient frame never moves the resume cursor
   (a reconnecting client gets only what the journal kept). A live stream that ends stops only the
   live frames; one that fails, or a payload named `ready`, fails the feed.
+- A `FeedProjection<R>` may require the host's services: `frames` returns a stream that requires
+  `R` too, provided where the connection runs it. It fails with `RenderError` (a projection maps a
+  store's error into one). `payloadOf(schema)(event, value)` encodes a value with the host's schema
+  into a `FeedPayload`, dropping `undefined` fields, and fails with `invalid` when it has no JSON form.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
   transient `event: <event>` / `data: <json>` blocks with no `id`, `event: ready`, and `: heartbeat`
   comments. `decodeSse(text)` reads them back as a `Result`: a

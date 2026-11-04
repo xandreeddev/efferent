@@ -73,6 +73,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the feed. `encodeSse`, `decodeSse`, `encodeSocketFrame` and
   `decodeSocketFrame` read and write them, and the transport kit's sample
   includes them.
+- `@xandreed/plugin-render`: `payloadOf(schema)(event, value)` encodes a
+  host's value with its own schema into a `FeedPayload` (undefined fields
+  dropped), so a projection no longer casts its encoded object to
+  `JsonObject`; a value with no JSON form or an empty event fails with
+  `RenderError` code `invalid`. `FeedProjection<R>` may now require
+  services: `RenderFeed.frames` returns a stream that requires the
+  projection's `R`, provided where the connection runs it, instead of a
+  context captured per connection. `R` defaults to `never`, so existing
+  projections and calls are unchanged. `renderFeedConformance` checks that
+  a feed runs the projection with the stream's services.
 
 ### Migration
 
@@ -81,6 +91,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`Match.valueTags`, `Match.exhaustive`) adds its case; a host's own
   `RenderFeed` honours the new optional `live` argument to pass
   `renderFeedConformance`'s two new checks.
+- `@xandreed/plugin-render`: a host's own `RenderFeed` implementation
+  (not `makeRenderFeed`) declares `frames` generic over the projection's
+  services, `<R>(feed, after, project: FeedProjection<R>) =>
+  Stream<FeedFrame, RenderError, R>`, and runs the projection inside that
+  stream.
 
 ### Repository
 

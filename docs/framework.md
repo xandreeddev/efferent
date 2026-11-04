@@ -3724,7 +3724,10 @@ sequence, so they never move the resume cursor. The events guide
 [serves it over SSE](events.md#serving-turns-over-http) with a projection
 that keeps prompts and tool input and output on the server, and shows
 [what another process needs to follow a session](events.md#reading-the-journal)
-(the same `SessionLog`, and polling).
+(the same `SessionLog`, and polling). A projection (`FeedProjection<R>`) may
+require services, which the feed's stream then requires, so the connection
+provides them where it runs the stream; it fails with `RenderError`, and
+`payloadOf(schema)` builds its payload from the host's own schema.
 
 ### Busy signal and graceful shutdown
 

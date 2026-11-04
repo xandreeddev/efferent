@@ -60,6 +60,40 @@ Pass a `FeedProjection` to choose which records clients receive. Returning
 prompts, tool inputs and private result data server-side unless the host
 explicitly intends to expose them.
 
+A projection may read the host's own services: a `FeedProjection<R>`
+requires `R`, and `frames` returns a stream that requires it too, so the
+connection provides those services where it runs the stream, with no
+context captured beforehand. Its failures are `RenderError`s, so map a
+store's own error into one; a failure ends the connection. `payloadOf(schema)`
+encodes a value with the host's schema into a `FeedPayload` (undefined fields
+dropped, as on the wire), without casting the encoded object to JSON, and
+fails with `invalid` when the value has no JSON form:
+
+```ts
+import { Context, Effect, Option, Schema } from "effect"
+import { payloadOf, RenderError, RenderFeed } from "@xandreed/plugin-render"
+import type { FeedProjection, FeedScope } from "@xandreed/plugin-render"
+
+class Replies extends Context.Service<Replies, {
+  readonly text: (sequence: number) => Effect.Effect<Option.Option<string>, Error>
+}>()("example/Replies") {}
+
+const Reply = Schema.Struct({ text: Schema.String, words: Schema.NumberFromString })
+const reply = payloadOf(Reply)
+
+const project: FeedProjection<Replies> = (record) => Effect.gen(function* () {
+  if (record.kind !== "turn.reply") return Option.none()
+  const text = yield* (yield* Replies).text(record.sequence).pipe(
+    Effect.mapError((cause) => new RenderError({ code: "storage", message: cause.message })),
+  )
+  return yield* Effect.transposeOption(Option.map(text, (body) => reply("reply", { text: body, words: body.split(" ").length })))
+})
+
+// A stream of frames that requires Replies: the connection provides it.
+const follow = (scope: FeedScope, after: number) =>
+  RenderFeed.pipe(Effect.map((feed) => feed.frames(scope, after, project)))
+```
+
 ## Connection lifecycle
 
 The feed emits records after the cursor, one ready frame after the first

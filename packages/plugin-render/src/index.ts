@@ -73,6 +73,7 @@ export {
   encodeSocketFrame,
   encodeSse,
   nextPollMs,
+  payloadOf,
   socketResumeOf,
   ssePreamble,
 } from "./domain/feed-frame.entity.functions.js"

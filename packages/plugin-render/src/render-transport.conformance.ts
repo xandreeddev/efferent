@@ -1,4 +1,4 @@
-import { Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
+import { Context, Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
 import { canonicalJson } from "@xandreed/core"
 import { ConformanceFailure } from "@xandreed/core/conformance"
 import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
@@ -66,6 +66,9 @@ export const makeMemoryJournal = Effect.fnUntraced(function* (initial: ReadonlyA
 })
 
 const project: FeedProjection = (record) => Effect.succeed(record.kind === "hidden" ? Option.none() : Option.some({ event: record.kind, data: record.data }))
+/** Who the context check's projection shows records to: read from the stream's context, so a feed that runs the projection without it shows "nobody". */
+const Viewer = Context.Reference<string>("@xandreed/plugin-render/FeedConformanceViewer", { defaultValue: () => "nobody" })
+const viewing: FeedProjection = (record) => Viewer.useSync((viewer) => Option.some({ event: record.kind, data: { viewer } }))
 const feedScope = { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }
 const record = (sequence: number, kind = "message.updated"): JournalRecord => ({ sequence, kind, data: { sequence } })
 const collect = (stream: Stream.Stream<FeedFrame, RenderError>) => Stream.runCollect(stream).pipe(Effect.map((chunk) => Array.from(chunk)))
@@ -150,6 +153,16 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
         const frames = yield* Fiber.join(running)
         yield* expect(canonicalJson(sequences(frames)) === canonicalJson([1, 2]), `the record appended after the live stream ended, got ${canonicalJson(sequences(frames))}`)
         yield* expect(canonicalJson(transients(frames)) === canonicalJson(["live.only"]), `the live payload, got ${canonicalJson(transients(frames))}`)
+      }),
+    },
+    {
+      name: "the projection runs with the services provided to the stream",
+      run: Effect.gen(function* () {
+        const expect = holds("the projection runs with the services provided to the stream")
+        const journal = yield* makeMemoryJournal([record(1), record(2)])
+        const frames = yield* collect(makeFeed(journal.tail, options).frames(feedScope, 0, viewing).pipe(Stream.provideService(Viewer, "guest")))
+        const viewers = frames.flatMap((frame) => frame._tag === "FeedRecord" ? [frame.data["viewer"]] : [])
+        yield* expect(canonicalJson(viewers) === canonicalJson(["guest", "guest"]), `each record projected with the stream's services, got ${canonicalJson(viewers)}`)
       }),
     },
   ]
