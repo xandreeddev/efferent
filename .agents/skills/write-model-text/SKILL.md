@@ -16,6 +16,7 @@ cached prefixes. Treat a wording change like an API change.
 | `PromptSection` (`id`, `version`, `tier`, `order`, `render`) | a capability's sections; `definePromptSection` with `requires` for one whose `render` reads services | system prompt: host `system`, then `static`, then `session` sections, each by `order` then `id` (`orderSections`, `core/src/turn/prompt-sections.ts`); `turn` sections become per-turn user messages |
 | Skill `summary` | `defineSkill` | one catalogue line, loadable skills only |
 | Skill `instructions` | `defineSkill` or a SKILL.md body | only through `load_skill` or a matcher seed; never for an `always: true` skill (tool discovery activates it but shows no instructions; `skillsDirectoryPlugin`'s `workspace.skills.always` section is the one exception) |
+| Skill `references` (id and title; the text on demand) | `defineSkill` or the other files of a SKILL.md's directory | listed in a loaded skill's `load_skill` result, an always-on skill's in the catalogue section; their text only through `read_skill_reference` |
 | `Failure { error, message }` | a handler failure with `failureMode: "return"` | the tool result |
 | Result views and compact forms | beside the descriptions (`plugin-workspace/src/workspace-tools.entity.functions.ts`) | tool results; the compact form in older turns |
 | Correctives, host notes, compaction handoffs | `plugin-agent-loop/src/loop.ts`, `core/src/memory/*`, `core/src/internal/mapping.entity.functions.ts` | user-role messages |

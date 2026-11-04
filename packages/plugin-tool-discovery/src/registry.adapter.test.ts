@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Effect, Option, Schema } from "effect"
-import { defineCapability, defineTool, Failure, Media, mediaFromBase64, UserMessage } from "@xandreed/core"
-import { makeRegistry } from "./registry.adapter.js"
+import { defineCapability, defineSkill, defineTool, Failure, Media, mediaFromBase64, UserMessage } from "@xandreed/core"
+import { catalogText, makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"
 
 // The registry inside a turn (calls, refusals, activation, its own tools) is
@@ -74,5 +74,28 @@ describe("a tool's digest task", () => {
     const task = Option.getOrThrow(found)
     expect(task.apply({ keep: [], summary: Option.some("r-1 matched") })).toEqual(Option.none())
     expect(task.apply({ keep: [], summary: Option.some("r-1 and r-2 matched") })).toEqual(Option.some("r-1 and r-2 matched"))
+  })
+})
+
+describe("the catalogue section", () => {
+  const filing = defineSkill({ id: "filing", summary: "File records.", tools: [], references: [{ id: "codes", title: "Filing codes", text: "..." }] })
+  const lookup = defineSkill({ id: "lookup", summary: "Look records up.", tools: [], always: true })
+  const archiving = defineSkill({
+    id: "archiving", summary: "Archive records.", tools: [], always: true,
+    references: [{ id: "retention", title: "Retention rules", text: "..." }, { id: "purge", title: "Purging", text: "..." }],
+  })
+
+  test("lists the loadable skills, and the references of the always-on skills that ship some, which no load_skill result lists", () => {
+    expect(catalogText([filing, lookup])).toEqual(Option.some(
+      "## Skills (call load_skill before doing work one covers; its tools become available next step)\n- filing: File records.",
+    ))
+    expect(catalogText([lookup, archiving])).toEqual(Option.some(
+      "## References of always-on skills (their tools are already available; read one with read_skill_reference)\n- archiving: retention — Retention rules; purge — Purging",
+    ))
+    expect(catalogText([filing, lookup, archiving])).toEqual(Option.some([
+      "## Skills (call load_skill before doing work one covers; its tools become available next step)\n- filing: File records.",
+      "## References of always-on skills (their tools are already available; read one with read_skill_reference)\n- archiving: retention — Retention rules; purge — Purging",
+    ].join("\n\n")))
+    expect(catalogText([lookup])).toEqual(Option.none())
   })
 })

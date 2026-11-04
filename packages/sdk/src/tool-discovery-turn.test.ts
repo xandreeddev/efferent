@@ -569,7 +569,7 @@ describe("the registry's own tools", () => {
       tool.name === "load_skill" || tool.name === "read_skill_reference" ? [[tool.name, tool.description]] : [])), Option.none(), capabilities))
     const loadSkill = ["load_skill", "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers."]
     expect(successOf((await own([selectable])).outcome)).toEqual([loadSkill])
-    expect(successOf((await own([referenced])).outcome)).toEqual([loadSkill, ["read_skill_reference", "Read one reference document listed by a loaded skill."]])
+    expect(successOf((await own([referenced])).outcome)).toEqual([loadSkill, ["read_skill_reference", "Read one reference document that a loaded skill or an always-on skill lists."]])
   })
 
   test("read_skill_reference reads a reference of a loaded skill, and refuses one of a skill not loaded or not listed", async () => {
@@ -586,5 +586,20 @@ describe("the registry's own tools", () => {
       { error: "UnknownReference", message: "archiving has no reference purge" },
       "Keep records seven years.",
     ])
+  })
+
+  test("read_skill_reference reads an always-on skill's reference once the turn's start activates it, with no load_skill", async () => {
+    const alwaysOn = defineCapability({
+      id: "always-referenced",
+      version: "1",
+      tools: [defineTool({ tool: Archive, handler: ({ id }) => Effect.succeed(`archived ${id}`) })],
+      skills: [defineSkill({
+        id: "archiving", summary: "Archive records.", tools: [Archive.name], always: true,
+        references: [{ id: "retention", title: "Retention rules", text: "Keep records seven years." }],
+      })],
+    })
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => tools.select(message).pipe(
+      Effect.andThen(callTool(tools, "read_skill_reference", { skill: "archiving", reference: "retention" }))), Option.none(), [alwaysOn]))
+    expect(successOf(turn.outcome)).toEqual("Keep records seven years.")
   })
 })

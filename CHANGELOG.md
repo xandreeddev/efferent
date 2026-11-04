@@ -28,6 +28,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-render`: `decodeSse` decodes a block with an `id` as a
   record whatever its event, so a record a projection names `ready` no
   longer reads back as the ready frame.
+- `@xandreed/plugin-tool-discovery`: an always-on skill's references are
+  listed to the model. Such a skill is activated at every turn's start, so
+  `read_skill_reference` served its references, but nothing named them: the
+  catalogue listed only the loadable skills, and only a `load_skill` result
+  listed references. The catalogue section (`catalogText`) now adds, after
+  the loadable skills, `## References of always-on skills (their tools are
+  already available; read one with read_skill_reference)` with a line per
+  always-on skill that has references (`- <skill>: <id> — <title>; …`). It
+  renders even when no skill is loadable, and stays absent when there is
+  neither. The section's version is now `"2"` (`SystemPrepared` records
+  it); its text, and so its fingerprint, is unchanged for an agent whose
+  always-on skills have no references. The `read_skill_reference`
+  description now reads "Read one reference document that a loaded skill or
+  an always-on skill lists.", which changes the tool schema of every agent
+  that registers it.
+- `@xandreed/plugin-workspace`: the `workspace.skills.always` section
+  (`alwaysSkillsText`) no longer lists an always-on file skill's references,
+  which the catalogue now lists; its version follows its text.
+- `@xandreed/core`: `defineSkill`, `SkillDefinition` and `docs/framework.md`
+  describe always-on skills as the registry treats them: activated at each
+  turn's start (source `always`), never loaded with `load_skill`, their
+  references served by `read_skill_reference`.
 
 ### Added
 

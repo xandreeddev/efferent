@@ -104,7 +104,7 @@ const LoadSkill = Tool.make("load_skill", {
 })
 
 const ReadSkillReference = Tool.make("read_skill_reference", {
-  description: "Read one reference document listed by a loaded skill.",
+  description: "Read one reference document that a loaded skill or an always-on skill lists.",
   parameters: Schema.Struct({ skill: Schema.String, reference: Schema.String }),
   success: Schema.String,
   failure: Failure,
@@ -132,6 +132,9 @@ const selectedSlots = (encoded: unknown, selected: Option.Option<ReadonlyArray<M
 /** Tool result schemas are context-free by contract (they cross the wire). */
 const contextFree = (schema: Schema.Top): Schema.Codec<unknown, unknown> => schema as Schema.Codec<unknown, unknown>
 
+/** A skill's references as the model reads them: `id — title`, joined by "; ". */
+const referenceList = (skill: SkillDefinition): string => skill.references.map((reference) => `${reference.id} — ${reference.title}`).join("; ")
+
 /**
  * The text a load_skill call returns (tier 2) — also used for matcher-seeded
  * skills: a host fingerprints the skill text the model sees, to version it.
@@ -143,21 +146,32 @@ export const skillInstructions = (skills: ReadonlyArray<SkillDefinition>, tools:
     `## ${skill.id}`,
     skill.instructions.length > 0 ? skill.instructions : skill.summary,
     skill.tools.length === 0 ? "" : `Tools: ${skill.tools.join(", ")}`,
-    skill.references.length === 0 ? "" : `References (read_skill_reference): ${skill.references.map((reference) => `${reference.id} — ${reference.title}`).join("; ")}`,
+    skill.references.length === 0 ? "" : `References (read_skill_reference): ${referenceList(skill)}`,
   ].filter((line) => line.length > 0).join("\n")).join("\n\n") + (tools.length === 0 ? "" : `\n\nNow available: ${tools.join(", ")}`)
 
 /**
- * Tier 1: the catalogue section's text, a line per loadable skill: a host
- * fingerprints the skill catalogue the model sees, to version it.
+ * Tier 1: the catalogue section's text, which a host fingerprints to
+ * version the skill catalogue the model sees: a line per loadable skill
+ * and, since an always-on skill is active without a `load_skill` result to
+ * list its references, a line per always-on skill that ships references,
+ * naming them for `read_skill_reference`. None when there is neither.
  *
  * @public
  */
 export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Option<string> => {
   const loadable = skills.filter((skill) => !skill.always)
-  return loadable.length === 0 ? Option.none() : Option.some([
-    "## Skills (call load_skill before doing work one covers; its tools become available next step)",
-    ...loadable.map((skill) => `- ${skill.id}: ${skill.summary}`),
-  ].join("\n"))
+  const referenced = skills.filter((skill) => skill.always && skill.references.length > 0)
+  const parts = [
+    ...(loadable.length === 0 ? [] : [[
+      "## Skills (call load_skill before doing work one covers; its tools become available next step)",
+      ...loadable.map((skill) => `- ${skill.id}: ${skill.summary}`),
+    ].join("\n")]),
+    ...(referenced.length === 0 ? [] : [[
+      "## References of always-on skills (their tools are already available; read one with read_skill_reference)",
+      ...referenced.map((skill) => `- ${skill.id}: ${referenceList(skill)}`),
+    ].join("\n")]),
+  ]
+  return parts.length === 0 ? Option.none() : Option.some(parts.join("\n\n"))
 }
 
 /**
