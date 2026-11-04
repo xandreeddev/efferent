@@ -139,7 +139,7 @@ check; a bot workflow awaiting approval follows the Publishing procedure below.
 ## Publishing
 
 Releases run in GitHub Actions. All 24 publishable packages share version
-`0.16.1` in source and publish together under npm's `latest` tag. Changesets
+`0.16.2` in source and publish together under npm's `latest` tag. Changesets
 versions this fixed group; the release workflow publishes the isolated build
 from `.artifacts/packages`, whose manifests have `private: false`.
 
@@ -191,11 +191,11 @@ minor or major release. Review and merge that PR normally; publication starts
 after its merged source passes CI. `bun run release:patch` only records the
 intent locally and is also used by that workflow.
 
-For the already prepared `0.16.1` release, or to retry an interrupted release,
+For the already prepared `0.16.2` release, or to retry an interrupted release,
 run the workflow on GitHub's Actions tab, or dispatch it:
 
 ```sh
-gh workflow run release.yml --ref main -f version=0.16.1
+gh workflow run release.yml --ref main -f version=0.16.2
 ```
 
 The workflow resolves the original `release <version>` commit on main,
