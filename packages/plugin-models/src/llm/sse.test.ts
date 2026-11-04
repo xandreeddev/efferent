@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import fc from "fast-check"
 import { Effect, Match, Option, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
@@ -100,6 +101,10 @@ describe("sseStreamParts", () => {
       ),
     )
     expect(parts).toEqual([
+      { type: "tool-params-start", id: "c1", name: "echo" },
+      { type: "tool-params-delta", id: "c1", delta: `{"va` },
+      { type: "tool-params-delta", id: "c1", delta: `lue":"hi"}` },
+      { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "echo", params: { value: "hi" } },
       { type: "finish", reason: "tool-calls", usage: zeroUsage },
     ])
@@ -115,10 +120,70 @@ describe("sseStreamParts", () => {
       ),
     )
     expect(parts).toEqual([
+      { type: "tool-params-start", id: "a", name: "first" },
+      { type: "tool-params-delta", id: "a", delta: `{"n":` },
+      { type: "tool-params-start", id: "b", name: "second" },
+      { type: "tool-params-delta", id: "b", delta: "{}" },
+      { type: "tool-params-delta", id: "a", delta: "1}" },
+      { type: "tool-params-end", id: "a" },
       { type: "tool-call", id: "a", name: "first", params: { n: 1 } },
+      { type: "tool-params-end", id: "b" },
       { type: "tool-call", id: "b", name: "second", params: {} },
       { type: "finish", reason: "tool-calls", usage: zeroUsage },
     ])
+  })
+
+  test("a call's arguments stream from the fragment that names it: earlier ones as one delta, empty ones as none; a later id leaves its stream id", async () => {
+    const parts = await collect(
+      wire(
+        `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\""}}]}}]}`,
+        `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"echo","arguments":":1"}}]}}]}`,
+        `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":""}}]}}]}`,
+        `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"late","function":{"arguments":"}"}}]}}]}`,
+        `{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+        `[DONE]`,
+      ),
+    )
+    expect(parts).toEqual([
+      { type: "tool-params-start", id: "call-0", name: "echo" },
+      { type: "tool-params-delta", id: "call-0", delta: `{"a":1` },
+      { type: "tool-params-delta", id: "call-0", delta: "}" },
+      { type: "tool-params-end", id: "call-0" },
+      { type: "tool-call", id: "late", name: "echo", params: { a: 1 } },
+      { type: "finish", reason: "tool-calls", usage: zeroUsage },
+    ])
+  })
+
+  test("a call that is never named streams nothing and is the invalid output it was before", async () => {
+    const exit = await Effect.runPromiseExit(Stream.runCollect(sseStreamParts({
+      moduleName: "Test",
+      body: bodyFromChunks([enc.encode(wire(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"arguments":"{broken"}}]}}]}`, `[DONE]`))]),
+    })))
+    expect(exit._tag).toBe("Failure")
+    const named = await collect(wire(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"arguments":"{}"}}]}}]}`, `[DONE]`))
+    expect(named).toEqual([
+      { type: "tool-call", id: "c1", name: "", params: {} },
+      { type: "finish", reason: "tool-calls", usage: zeroUsage },
+    ])
+  })
+
+  test("however the wire splits a call's arguments, its deltas concatenate to them, and the call's params are what they parse to", async () => {
+    const value = fc.dictionary(fc.constantFrom("query", "limit", "é ☕", `a"b`, ""), fc.oneof(fc.string({ maxLength: 6 }), fc.integer(), fc.boolean()), { maxKeys: 4 })
+    await fc.assert(fc.asyncProperty(value, fc.array(fc.nat(), { maxLength: 6 }), fc.boolean(), async (params, cuts, withId) => {
+      const text = JSON.stringify(params)
+      const bounds = [...new Set([0, ...cuts.map((cut) => cut % (text.length + 1)), text.length])].toSorted((a, b) => a - b)
+      const pieces = bounds.slice(1).map((end, at) => text.slice(bounds[at], end))
+      const lines = pieces.map((piece, at) => JSON.stringify({ choices: [{ delta: { tool_calls: [{
+        index: 0, ...(at === 0 ? { ...(withId ? { id: "c1" } : {}), function: { name: "echo", arguments: piece } } : { function: { arguments: piece } }),
+      }] } }] }))
+      const parts = await collect(wire(...lines, `{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`, `[DONE]`)) as ReadonlyArray<{ readonly type: string; readonly id?: string; readonly delta?: string; readonly params?: unknown }>
+      const id = withId ? "c1" : "call-0"
+      const deltas = parts.filter((part) => part.type === "tool-params-delta")
+      expect(deltas.every((part) => part.id === id && (part.delta ?? "").length > 0)).toBe(true)
+      expect(deltas.map((part) => part.delta).join("")).toBe(text)
+      expect(parts.map((part) => part.type)).toEqual(["tool-params-start", ...deltas.map(() => "tool-params-delta"), "tool-params-end", "tool-call", "finish"])
+      expect(parts.find((part) => part.type === "tool-call")?.params).toEqual(params)
+    }), { numRuns: 60 })
   })
 
   test("a stream cut at the output limit keeps its tool calls and finishes on length", async () => {
@@ -130,6 +195,9 @@ describe("sseStreamParts", () => {
       ),
     )
     expect(parts).toEqual([
+      { type: "tool-params-start", id: "c1", name: "echo" },
+      { type: "tool-params-delta", id: "c1", delta: `{"value":"hi"}` },
+      { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "echo", params: { value: "hi" } },
       { type: "finish", reason: "length", usage: zeroUsage },
     ])
@@ -265,8 +333,16 @@ describe("sseStreamParts", () => {
     const cut = (reason: string) => [
       { type: "text-start", id: "text-1" },
       { type: "text-delta", id: "text-1", delta: "Writing both files." },
+      { type: "tool-params-start", id: "c1", name: "write" },
+      { type: "tool-params-delta", id: "c1", delta: `{"path":"a.txt","content":"done"}` },
+      { type: "tool-params-start", id: "c2", name: "write" },
+      { type: "tool-params-delta", id: "c2", delta: `{"path":"b.txt",` },
+      { type: "tool-params-delta", id: "c2", delta: `"content":"half of the` },
       { type: "text-end", id: "text-1" },
+      { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "write", params: { path: "a.txt", content: "done" } },
+      // A cut call's arguments streamed as they came; its params are {}.
+      { type: "tool-params-end", id: "c2" },
       { type: "tool-call", id: "c2", name: "write", params: {} },
       { type: "finish", reason, usage: zeroUsage },
     ]
@@ -295,7 +371,13 @@ describe("sseStreamParts", () => {
     ]
     const cutOff = await collect(wire(...calls))
     expect(cutOff).toEqual([
+      { type: "tool-params-start", id: "c1", name: "write" },
+      { type: "tool-params-delta", id: "c1", delta: `{"path":"a.txt"}` },
+      { type: "tool-params-start", id: "c2", name: "write" },
+      { type: "tool-params-delta", id: "c2", delta: `{"path":"b` },
+      { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "write", params: { path: "a.txt" } },
+      { type: "tool-params-end", id: "c2" },
       { type: "tool-call", id: "c2", name: "write", params: {} },
       { type: "finish", reason: "unknown", usage: zeroUsage },
     ])
@@ -620,7 +702,7 @@ describe("compat streamText", () => {
   })
 })
 
-test("SSE keeps missing tool-call ids empty for the loop to assign, and preserves provider ids", async () => {
+test("SSE keeps missing tool-call ids empty for the loop to assign, and preserves provider ids; an id-less call streams as call-<index>", async () => {
   const parts = await collect(wire(
     JSON.stringify({ choices: [{ delta: { tool_calls: [
       { index: 0, function: { name: "echo", arguments: "{}" } },
@@ -631,8 +713,17 @@ test("SSE keeps missing tool-call ids empty for the loop to assign, and preserve
     "[DONE]",
   ))
   expect(parts).toEqual([
+    { type: "tool-params-start", id: "call-0", name: "echo" },
+    { type: "tool-params-delta", id: "call-0", delta: "{}" },
+    { type: "tool-params-start", id: "provider:second", name: "echo" },
+    { type: "tool-params-delta", id: "provider:second", delta: "{}" },
+    { type: "tool-params-start", id: "call-2", name: "echo" },
+    { type: "tool-params-delta", id: "call-2", delta: "{}" },
+    { type: "tool-params-end", id: "call-0" },
     { type: "tool-call", id: "", name: "echo", params: {} },
+    { type: "tool-params-end", id: "provider:second" },
     { type: "tool-call", id: "provider:second", name: "echo", params: {} },
+    { type: "tool-params-end", id: "call-2" },
     { type: "tool-call", id: "", name: "echo", params: {} },
     { type: "finish", reason: "tool-calls", usage: zeroUsage },
   ])

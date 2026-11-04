@@ -110,6 +110,11 @@ What the frames mean:
   its `assistant.message.text`. A `tool-params` part starts with an empty
   delta, and its `id` is the provider's id for the call (the one
   `assistant.message.toolCalls` and `step.ended.results` carry as well).
+  A call's `tool-params` deltas, concatenated, are its arguments as the
+  provider wrote them. The native providers and OpenAI-compatible
+  endpoints alike stream them; a compatible endpoint's call sent without an
+  id streams under `call-<index>` (its place among the reply's calls), and
+  the loop mints the call's own id.
 - `assistant.message` is published once per provider response, after the
   step's tools have run: it restates the step's text. Replace the step's
   deltas with it. Its `finishReason` says why the response ended: `stop`,

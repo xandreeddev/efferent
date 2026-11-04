@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Response, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Schema, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, StreamPartId, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
 import { acceptedModelInputOf, harnessDefectsAsFailures, modelOverflowEvidenceOf } from "@xandreed/core"
@@ -380,6 +380,13 @@ describe("a loop careless with a reply cut short", () => {
   test("one that publishes every assistant.message as finished with stop fails the finish reason's checks", async () => {
     expect(await failedChecks(republishing((event) => event._tag === "assistant.message" ? { ...event, finishReason: "stop" } : event)))
       .toEqual(["cut", "cut-stream", "cut-text", "cut-unknown", "finish"])
+  })
+
+  test("one that streams a call's arguments under another id, or on the text channel, fails tool-params", async () => {
+    expect(await failedChecks(republishing((event) => event._tag === "assistant.delta" && event.channel === "tool-params" ? { ...event, id: StreamPartId.make(`params-${event.id}`) } : event)))
+      .toEqual(["tool-params"])
+    expect(await failedChecks(republishing((event) => event._tag === "assistant.delta" && event.channel === "tool-params" ? { ...event, channel: "text" } : event)))
+      .toEqual(["tool-params"])
   })
 
   test("one that ends a truncated step completed fails the cut checks", async () => {

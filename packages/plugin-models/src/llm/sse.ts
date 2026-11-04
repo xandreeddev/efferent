@@ -19,6 +19,14 @@ import { classifyAiError } from "./provider-failure.entity.functions.js"
  * text/reasoning delta or a completed tool call — empty deltas emit nothing.
  * The retry gate (S2) and the engine fold (S3) both hinge on that.
  *
+ * A tool call's arguments stream as they arrive, the way native providers
+ * stream them: `tool-params-start` once its wire index has a name,
+ * `tool-params-delta` for each non-empty arguments fragment, and
+ * `tool-params-end` at the flush, just before the completed `tool-call`.
+ * They are progress, not content: the `tool-call` alone carries the call.
+ * Their id is the provider's call id, or `call-<index>` for a call the
+ * provider sent without one (the tool call itself keeps its id empty).
+ *
  * An end marker is concatenated after the wire lines so the flush (open
  * chunk ends → accumulated tool calls → finish) runs even when the gateway
  * never sends `[DONE]`; a second flush is idempotent via `flushed`. A body
@@ -132,6 +140,8 @@ interface ToolCallAccum {
   readonly id: string
   readonly name: string
   readonly args: string
+  /** The id its `tool-params-*` parts carry, once `tool-params-start` went out. */
+  readonly streamed: Option.Option<string>
 }
 
 interface SseState {
@@ -141,7 +151,8 @@ interface SseState {
   readonly textSeq: number
   readonly reasoningSeq: number
   /** Fragments merged by wire index — id/name land on the first fragment,
-   *  arguments concatenate across the rest. Emitted whole at flush. */
+   *  arguments concatenate across the rest. Streamed as they arrive, and
+   *  emitted whole at flush. */
   readonly toolCalls: ReadonlyArray<ToolCallAccum>
   readonly finishReason: Option.Option<string>
   readonly usage: Option.Option<CompletionUsage>
@@ -218,26 +229,51 @@ const emitText = (state: SseState, delta: string): Emit =>
     }),
   )
 
-const emptyAccum: ToolCallAccum = { id: "", name: "", args: "" }
+const emptyAccum: ToolCallAccum = { id: "", name: "", args: "", streamed: Option.none() }
 
+/** The id a call's argument stream is grouped by: the provider's, else its wire index's. */
+const streamIdOf = (call: ToolCallAccum, index: number): string => call.id.length > 0 ? call.id : `call-${index}`
+
+/**
+ * One wire fragment merged into its call by index — id/name land on the
+ * first fragment that carries them, arguments concatenate — with the parts
+ * that stream it: the call's `tool-params-start` once it has a name (and the
+ * arguments that arrived before it, as one delta), then a delta per
+ * non-empty arguments fragment.
+ */
 const mergeToolFragment = (
-  calls: ReadonlyArray<ToolCallAccum>,
+  [calls, parts]: readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>],
   fragment: StreamToolCall,
-): ReadonlyArray<ToolCallAccum> => {
+): readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>] => {
   const index = fragment.index ?? 0
   const padded =
     calls.length > index
       ? calls
       : [...calls, ...Array.from({ length: index + 1 - calls.length }, () => emptyAccum)]
-  return padded.map((call, at) =>
-    at === index
-      ? {
-          id: call.id.length > 0 ? call.id : (fragment.id ?? ""),
-          name: call.name.length > 0 ? call.name : (fragment.function?.name ?? ""),
-          args: call.args + (fragment.function?.arguments ?? ""),
-        }
-      : call,
-  )
+  const call = padded[index] ?? emptyAccum
+  const piece = fragment.function?.arguments ?? ""
+  const merged: ToolCallAccum = {
+    id: call.id.length > 0 ? call.id : (fragment.id ?? ""),
+    name: call.name.length > 0 ? call.name : (fragment.function?.name ?? ""),
+    args: call.args + piece,
+    streamed: call.streamed,
+  }
+  const [next, emitted] = Option.match(merged.streamed, {
+    onSome: (id): readonly [ToolCallAccum, ReadonlyArray<Part>] =>
+      [merged, piece.length > 0 ? [{ type: "tool-params-delta", id, delta: piece }] : []],
+    onNone: (): readonly [ToolCallAccum, ReadonlyArray<Part>] => {
+      if (merged.name.length === 0) return [merged, []]
+      const id = streamIdOf(merged, index)
+      return [
+        { ...merged, streamed: Option.some(id) },
+        [
+          { type: "tool-params-start", id, name: merged.name },
+          ...(merged.args.length > 0 ? [{ type: "tool-params-delta" as const, id, delta: merged.args }] : []),
+        ],
+      ]
+    },
+  })
+  return [padded.map((other, at) => at === index ? next : other), [...parts, ...emitted]]
 }
 
 const malformed = (moduleName: string, description: string): AiError.AiError =>
@@ -275,19 +311,21 @@ const applyChunk = (
     typeof content === "string" && content.length > 0 ? emitText(s, content) : [s, []],
   )
   const [folded, parts] = afterText
+  const [toolCalls, toolParts] = (delta?.tool_calls ?? []).reduce(mergeToolFragment, [folded.toolCalls, parts] as const)
   const next: SseState = {
     ...folded,
-    toolCalls: (delta?.tool_calls ?? []).reduce(mergeToolFragment, folded.toolCalls),
+    toolCalls,
     // The last reason that names something: a blank one on a later chunk keeps it.
     finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
     usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
   }
-  return Effect.succeed([next, parts])
+  return Effect.succeed([next, toolParts])
 }
 
 /** The end-of-stream flush: close open chunks, decide the finish reason,
- *  emit the accumulated tool calls (unparseable arguments are an invalid
- *  output — the loop's corrective path — unless the reply was cut:
+ *  end each streamed call's arguments and emit the accumulated tool calls
+ *  (unparseable arguments are an invalid output — the loop's corrective
+ *  path — unless the reply was cut:
  *  `toolCallParams`), then the finish with the folded usage. A stream that
  *  ended (`eof`) without naming a finish reason or sending `[DONE]` finishes
  *  `unknown`: nothing says it was complete. */
@@ -302,13 +340,16 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState, end: 
           toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
             malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
           ).pipe(
-            Effect.map((params): Part => ({
-              type: "tool-call",
-              // Leave an omitted id for the loop's deterministic, session-scoped mint.
-              id: call.id,
-              name: call.name,
-              params,
-            })),
+            Effect.map((params): ReadonlyArray<Part> => [
+              ...Option.match(call.streamed, { onNone: () => [], onSome: (id): ReadonlyArray<Part> => [{ type: "tool-params-end", id }] }),
+              {
+                type: "tool-call",
+                // Leave an omitted id for the loop's deterministic, session-scoped mint.
+                id: call.id,
+                name: call.name,
+                params,
+              },
+            ]),
           ),
           { concurrency: 1 },
         )
@@ -320,7 +361,7 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState, end: 
         }
         return [
           { ...closed, flushed: true },
-          [...closeParts, ...toolParts, finish],
+          [...closeParts, ...toolParts.flat(), finish],
         ] as const
       })
 
