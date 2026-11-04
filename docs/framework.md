@@ -265,7 +265,11 @@ second overflow retains `model.context-overflow`. Writer and recorder failures
 remain hard failures. Without a hook, existing failure behavior is preserved.
 
 Automatic recovery stops once a nonempty `assistant_delta` has escaped, including
-reasoning or tool-argument deltas. Metadata and error parts alone do not prevent
+reasoning or tool-argument deltas. Every first-party route streams a tool
+call's arguments as `tool-params` parts while the reply streams, the
+OpenAI-compatible client included: a call's stream opens once its tool is
+named, and a stream that fails after that point no longer falls back to a
+settled call, as one that fails after its first text does not. Metadata and error parts alone do not prevent
 recovery. A late overflow preserves the observed deltas and fails without silently
 appending a second answer. After a stream has fallen back to a settled call,
 context recovery stays settled. Media replanning does not reset the step's

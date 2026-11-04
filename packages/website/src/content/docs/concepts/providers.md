@@ -645,6 +645,13 @@ to the underlying request. Tools and SDK callbacks are never wrapped in
 model retries or timeout wrappers. The framework loop waits for the whole
 response before executing its handlers; tools bound their own work.
 
+Every route streams a tool call's arguments while the reply streams
+(`tool-params` parts, `assistant.delta` on the `tool-params` channel). An
+OpenAI-compatible endpoint's call opens once the wire names its tool, under
+the provider's call id, or `call-<index>` when the provider sends none (the
+loop mints the call's own id); each non-empty arguments fragment is one
+delta, and the deltas end just before the completed call.
+
 The loop's existing fallback from a nonpermanent stream failure before its
 first part to `generateText` is a fresh logical budget. It reuses the same
 frozen prepared header, model, prompt, tools and directive: no second

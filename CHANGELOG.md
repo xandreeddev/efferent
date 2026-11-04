@@ -8,6 +8,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- `@xandreed/plugin-models`: an OpenAI-compatible endpoint's streamed tool
+  calls now stream their arguments. The client folded each call's
+  `function.arguments` fragments silently and emitted the whole call only
+  when the stream ended, so on every compatible endpoint (gateways, local
+  servers) `assistant.delta` never published on its `tool-params` channel,
+  and a host could neither show a call while it streamed nor act on a
+  complete argument prefix. The stream now emits `tool-params-start` once a
+  call's wire index names its tool, under the provider's call id (or
+  `call-<index>` when the provider sends none; the call itself still gets
+  the loop's minted id), a `tool-params-delta` for each non-empty arguments
+  fragment, and `tool-params-end` just before the completed `tool-call`,
+  as the native providers do. A call's deltas, concatenated, are its
+  arguments as sent; the completed call, its params and the cut-reply
+  handling are unchanged. As with text, a stream that fails after a call
+  has opened no longer falls back to a settled call.
+
+### Added
+
+- `@xandreed/core`: `stepLoopConformance` checks `tool-params`: a loop that
+  publishes deltas publishes a streamed call's argument deltas on the
+  `tool-params` channel under the call's id, opening with an empty one,
+  and they concatenate to the input its `assistant.message` carries.
+
 ### Repository
 
 - Explain the native memory engine through one source, its extracted memories

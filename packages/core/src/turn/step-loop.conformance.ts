@@ -1374,6 +1374,31 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
     }),
   },
   {
+    name: "a streamed call's argument deltas reach the bus on tool-params under its id, and concatenate to the input its assistant.message carries",
+    run: Effect.gen(function* () {
+      const check = "tool-params"
+      const pieces = [`{"n"`, ":", "4}"]
+      const streamedCall: ReadonlyArray<StreamPart> = [
+        { type: "tool-params-start", id: "c1", name: Probe.name },
+        ...pieces.map((delta): StreamPart => ({ type: "tool-params-delta", id: "c1", delta })),
+        { type: "tool-params-end", id: "c1" },
+        { type: "tool-call", id: "c1", name: Probe.name, params: { n: 4 }, providerExecuted: false },
+        { type: "finish", reason: "tool-calls", usage },
+      ]
+      const { events } = yield* observe(loop, { streaming: true, script: [probeCall("c1", 4), textReply("done")], stream: [streamedCall, streamedText("done")] })
+      // A loop may answer with settled calls even when streaming is offered: one that publishes no delta streams nothing to check.
+      if (!events.some((event) => event._tag === "assistant.delta")) return
+      const deltas = events.flatMap((event) => event._tag === "assistant.delta" && event.step === 0 && event.channel === "tool-params" ? [event] : [])
+      const streamed = deltas.map((event) => event.delta)
+      yield* expect(check, deltas.every((event) => event.id === "c1") && canonicalJson(streamed) === canonicalJson(["", ...pieces]),
+        `the step's tool-params deltas were ${JSON.stringify(deltas.map((event) => [event.id, event.delta]))}, not an empty start then ${JSON.stringify(pieces)} under c1`)
+      const message = events.find((event) => event._tag === "assistant.message" && event.step === 0)
+      const call = message?._tag === "assistant.message" ? message.toolCalls[0] : undefined
+      yield* expect(check, call !== undefined && call.id === "c1" && canonicalJson(call.input) === canonicalJson({ n: 4 }) && streamed.join("") === `{"n":4}`,
+        `the assistant.message carried ${JSON.stringify(call)}, not the call c1 whose input the deltas spelled`)
+    }),
+  },
+  {
     name: "id-less tool calls get ids distinct across two runs of a turn and two turns, and the step events carry the run",
     run: Effect.gen(function* () {
       const runs: ReadonlyArray<RunRef> = [FIRST_RUN, { ...FIRST_RUN, ordinal: RunOrdinal.make(1) }, { id: RunId.make("conformance-2"), turn: 2, ordinal: RunOrdinal.make(0) }]
