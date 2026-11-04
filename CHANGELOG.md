@@ -8,6 +8,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- Prepare bot-authored release PRs as previews, then hand their reviewed source
+  to a new maintainer-owned PR before squashing, preserving the required author
+  identity. Use its PR-event CI and remove redundant branch dispatch permissions.
+
 ## 0.16.2 — 2026-11-04
 
 ### Repository

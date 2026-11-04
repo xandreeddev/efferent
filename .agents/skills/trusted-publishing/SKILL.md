@@ -47,10 +47,11 @@ This records patch intent in CI, then runs the existing Changesets versioner.
 The helper refuses pending notes instead of consuming an unrelated version
 change. Review the generated `release <version>` PR: the 24 manifests, plugin
 versions, lockfile, documentation and new journal/run fixtures must agree.
-Preserve existing released fixtures. Merge after the required CI passes;
-main's successful CI then starts `release.yml` automatically.
-If a reviewed bot PR run is `action_required`, follow CONTRIBUTING.md's
-approval procedure; a passing branch dispatch does not replace its required check.
+Preserve existing released fixtures. Before squashing, use CONTRIBUTING.md's
+maintainer-owned release PR handoff, retaining the reviewed head/base and title.
+Do not merge or reopen the bot preview as the final PR: that keeps its author.
+Wait for the new maintainer-owned PR's required `pull_request` CI; dispatched
+workflow jobs do not satisfy it. Main's successful CI then starts `release.yml`.
 
 The publisher uploads framework packages in dependency order, confirms the
 registry, creates the immutable release tag and GitHub release, dispatches docs,

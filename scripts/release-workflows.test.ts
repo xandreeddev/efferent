@@ -115,20 +115,25 @@ test("the documentation-only npm landing page uses the verified source after fra
   expect(landing.steps[audit]?.run).toBe('bun pipeline/scripts/release-status.ts --root "$GITHUB_WORKSPACE/source" --wait 180')
 })
 
-test("release PRs consume changesets and explicitly dispatch the required CI check", async () => {
+test("release previews retain their branch for maintainer-owned PR CI without dispatch permission", async () => {
   const workflow = await read("release-pr")
   const version = job(workflow, "version")
   expect(workflow.permissions).toEqual({ contents: "read" })
-  expect(version.permissions).toEqual({ contents: "write", "pull-requests": "write", actions: "write" })
+  expect(version.permissions).toEqual({ contents: "write", "pull-requests": "write" })
   expect(version.if).toBe("github.repository == 'xandreeddev/efferent' && github.ref == 'refs/heads/main'")
   expect(step(version, "version").run).toBe("bun run release:version")
   expect(step(version, "pr").with?.branch).toBe("changeset-release/main")
+  expect(step(version, "pr").with?.base).toBe("main")
+  expect(step(version, "pr").with?.["delete-branch"]).toBe(false)
+  expect(step(version, "pr").with?.token).toBe("${{ github.token }}")
   expect(step(version, "pr").with?.author).toBe("Xand Reed <xandreed@proton.me>")
-  expect(version.steps.some((entry) => entry.run === 'gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref changeset-release/main')).toBe(true)
+  expect(step(version, "pr").with?.committer).toBe("Xand Reed <xandreed@proton.me>")
+  expect(version.steps.some((entry) => /\bgh\s+workflow\s+run\b/.test(entry.run ?? ""))).toBe(false)
   const ci = Bun.YAML.parse(await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text())
   const triggers = Schema.decodeUnknownResult(Schema.Struct({ on: Schema.JsonObject }))(ci)
   if (Result.isFailure(triggers)) throw triggers.failure
-  expect(Object.hasOwn(triggers.success.on, "workflow_dispatch")).toBe(true)
+  expect(Object.hasOwn(triggers.success.on, "pull_request")).toBe(true)
+  expect(Object.hasOwn(triggers.success.on, "pull_request_target")).toBe(false)
 })
 
 test("manual patch intent is opt-in and runs before normal release versioning", async () => {
