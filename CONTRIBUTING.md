@@ -66,6 +66,12 @@ The lists the check reads are the `registration` data in
 
 ## PRs
 
+The repository limits PR creation to collaborators (`collaborators_only`)
+and requires Actions approval for all external contributors
+(`all_external_contributors`). CI runs only in `xandreeddev/efferent` and
+skips fork PRs. Same-repository human and bot PRs still receive the required
+check; a bot workflow awaiting approval follows the Publishing procedure below.
+
 - Branch off `main`; PRs squash-merge, so the PR title becomes the commit
   title and the body its message: write both as the `commit-style` skill
   says.

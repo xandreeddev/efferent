@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Restrict CI to this repository and same-repository PRs, preserving human
+  and release-bot checks while skipping fork PRs. Document collaborator-only
+  PR creation and external-contributor workflow approval settings.
 - Document conditional approval of a reviewed bot PR's blocked workflow;
   a passing branch dispatch does not replace the required PR check.
 
