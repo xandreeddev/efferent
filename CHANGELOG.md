@@ -32,6 +32,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   publishes deltas publishes a streamed call's argument deltas on the
   `tool-params` channel under the call's id, opening with an empty one,
   and they concatenate to the input its `assistant.message` carries.
+- `@xandreed/core`, `@xandreed/plugin-agent-loop`: `assistant.delta` has an
+  optional `toolName`. The step loop sets it on the first delta of a
+  streamed tool call's `tool-params` part (its start, with an empty
+  `delta`), so a subscriber knows which tool the argument text that follows
+  belongs to; the stream already named it, and the loop dropped it when it
+  published the event. The event now also documents that a `tool-params`
+  `id` is the call's `toolCallId`, as `assistant.message.toolCalls`,
+  `tool.started` and `step.ended.results` carry it, so a host pairs a call
+  it renders while it streams with the `invocationId` of its `tool.*`
+  events. The event is transient: no stored format changes. Over
+  `@xandreed/process-host`, full-content progress carries the new key too.
 
 ### Repository
 

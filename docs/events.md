@@ -105,8 +105,10 @@ What the frames mean:
   on channel `text`, `reasoning` or `tool-params`; `id` groups the
   increments of one content part. A step's `text` deltas, concatenated, are
   its `assistant.message.text`. A `tool-params` part starts with an empty
-  delta, and its `id` is the provider's id for the call (the one
-  `assistant.message.toolCalls` and `step.ended.results` carry as well).
+  delta that carries `toolName`, the tool it calls; its `id` is the
+  provider's id for the call, the `toolCallId` that
+  `assistant.message.toolCalls`, `tool.started` (beside its
+  `invocationId`) and `step.ended.results` carry as well.
   A call's `tool-params` deltas, concatenated, are its arguments as the
   provider wrote them. The native providers and OpenAI-compatible
   endpoints alike stream them; a compatible endpoint's call sent without an
@@ -893,8 +895,9 @@ step arrives with its `memory.message` record once the step has ended.
 
 ## Known limitations
 
-- A `tool-params` delta does not carry the tool's name, and no event maps
-  the provider's call id to the `invocationId` of the call's `tool.*` events.
+- A call the provider streams without an id has no id on its `tool-params`
+  deltas: the loop gives it a deterministic `toolCallId` once the response
+  is whole, and only the events after that carry it.
 - Bus events carry no `seq`: handing a client from the live stream to the
   journal takes a cursor the host reads, as the `started` frame's `after`
   does. Deltas are never journaled, so a step's text reaches the journal

@@ -1247,8 +1247,9 @@ host's `ActionPolicy` denied it, or a call limit is reached),
 `tool.progress` (transient), `tool.completed` (decoded result and encoded
 form), `step.ended` (the recorded results by entry id, refused calls
 included), `completion.evaluated`, `skills.activated`, `context.built`,
-`decision.recorded`, `assistant.message`, `assistant.delta` (transient),
-`stream.fallback` (a streamed call failed before its first part, and the run
+`decision.recorded`, `assistant.message`, `assistant.delta` (transient; a
+streamed call's argument part names its tool on its first delta, and its
+`id` is the call's `toolCallId`), `stream.fallback` (a streamed call failed before its first part, and the run
 goes on without streaming; a refusal over an image is no stream failure: it
 has no fallback, and the turn sends the step again without the images,
 `onMediaRejected`), `turn.ended`, and host events from

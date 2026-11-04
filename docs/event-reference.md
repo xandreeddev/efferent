@@ -186,7 +186,7 @@ Published by the step loop once per provider response, after its assistant conte
 
 ### `assistant.delta`
 
-Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.
+Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. A `tool-params` part streams one call's argument text: its first delta is empty and carries `toolName`, the tool it calls, and its `id` is the provider's id for the call, the `toolCallId` of that call in `assistant.message.toolCalls`, `tool.started` (beside its `invocationId`) and `step.ended.results` (a call streamed with no id gets the loop's deterministic id once the response is whole, which its deltas do not carry). Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.
 
 | Field | Type |
 | --- | --- |
@@ -194,6 +194,7 @@ Published by the step loop for each streamed increment while `limits.streaming` 
 | `channel` | `"text" \| "reasoning" \| "tool-params"` |
 | `id` | `string` |
 | `delta` | `string` |
+| `toolName` | `string` (optional) |
 
 ### `stream.fallback`
 

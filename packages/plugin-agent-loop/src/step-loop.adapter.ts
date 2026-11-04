@@ -85,7 +85,10 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
   // own step.* from onStepSettled) or not at all publish nothing here.
   const onEvent = (event: LoopEvent): Effect.Effect<void, TurnError> => Match.value(event).pipe(Match.discriminatorsExhaustive("type")({
     assistant_delta: (delta): Effect.Effect<void, TurnError> =>
-      request.events.publish({ _tag: "assistant.delta", step: delta.turnIndex, channel: delta.channel, id: StreamPartId.make(delta.id), delta: delta.delta }),
+      request.events.publish({
+        _tag: "assistant.delta", step: delta.turnIndex, channel: delta.channel, id: StreamPartId.make(delta.id), delta: delta.delta,
+        ...(delta.toolName === undefined ? {} : { toolName: delta.toolName }),
+      }),
     assistant_message: (message): Effect.Effect<void, TurnError> => Effect.gen(function* () {
       if (!isPlanned(message.turnIndex)) yield* Ref.update(ledger, used(message.usage))
       yield* request.events.publish({
