@@ -1,0 +1,128 @@
+[
+  {
+    "group": "Models & execution",
+    "items": [
+      {
+        "slug": "plugins/models",
+        "label": "Models"
+      },
+      {
+        "slug": "plugins/tool-discovery",
+        "label": "Tool discovery and skills"
+      },
+      {
+        "slug": "plugins/agent-loop-steps",
+        "label": "Agent step loop"
+      },
+      {
+        "slug": "plugins/tasks",
+        "label": "Background tasks"
+      }
+    ]
+  },
+  {
+    "group": "Session plugins",
+    "items": [
+      {
+        "slug": "plugins/session-files",
+        "label": "File-backed sessions"
+      },
+      {
+        "slug": "plugins/session-files-log",
+        "label": "File session log"
+      },
+      {
+        "slug": "plugins/session-sqlite",
+        "label": "SQLite sessions"
+      },
+      {
+        "slug": "plugins/session-sqlite-log",
+        "label": "SQLite session log"
+      },
+      {
+        "slug": "plugins/sessions",
+        "label": "Sessions and turn ownership"
+      }
+    ]
+  },
+  {
+    "group": "Context plugins",
+    "items": [
+      {
+        "slug": "plugins/memory-window",
+        "label": "Window memory"
+      },
+      {
+        "slug": "plugins/memory-summary",
+        "label": "Summary memory"
+      },
+      {
+        "slug": "plugins/memory-digest",
+        "label": "Result digests"
+      }
+    ]
+  },
+  {
+    "group": "Knowledge plugins",
+    "items": [
+      {
+        "slug": "plugins/knowledge-postgres",
+        "label": "Knowledge PostgreSQL"
+      },
+      {
+        "slug": "plugins/memory",
+        "label": "Long-term memory"
+      },
+      {
+        "slug": "plugins/memory-capture",
+        "label": "Conversation memory capture"
+      },
+      {
+        "slug": "plugins/rag",
+        "label": "Document RAG"
+      }
+    ]
+  },
+  {
+    "group": "Workspace plugins",
+    "items": [
+      {
+        "slug": "plugins/workspace-local",
+        "label": "Local filesystem and shell"
+      },
+      {
+        "slug": "plugins/workspace-images",
+        "label": "Workspace image fitting"
+      },
+      {
+        "slug": "plugins/workspace-skills",
+        "label": "Skills from directories"
+      },
+      {
+        "slug": "plugins/workspace-tools",
+        "label": "Workspace tools"
+      }
+    ]
+  },
+  {
+    "group": "Rendering & telemetry",
+    "items": [
+      {
+        "slug": "plugins/telemetry",
+        "label": "Turn telemetry"
+      },
+      {
+        "slug": "plugins/render-surface",
+        "label": "Render surfaces"
+      },
+      {
+        "slug": "plugins/render-feed",
+        "label": "Render journal feed"
+      },
+      {
+        "slug": "plugins/render-output",
+        "label": "Component output"
+      }
+    ]
+  }
+]

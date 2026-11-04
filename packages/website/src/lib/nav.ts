@@ -3,6 +3,8 @@
  * Every internal link in .astro components goes through `href()` so it gets the
  * project-page base (`/efferent`) — markdown links are handled by a rehype plugin.
  */
+import pluginNavigation from "../data/plugin-navigation.json"
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
 
 export const href = (path: string): string => {
@@ -16,7 +18,7 @@ export const NPM = "https://www.npmjs.com/package/@xandreed/sdk"
 export const topNav = [
   { label: "Docs", href: "/docs/getting-started" },
   { label: "Ecosystem", href: "/#ecosystem" },
-  { label: "Plugins", href: "/docs/concepts/plugin-reference" },
+  { label: "Plugins", href: "/docs/plugins" },
 ]
 
 export interface DocItem {
@@ -36,10 +38,16 @@ export const docsNav: DocGroup[] = [
   {
     group: "Guides",
     items: [
+      { slug: "concepts/context-journal", label: "Context, memory & the journal" },
       { slug: "guides/events", label: "Events" },
       { slug: "guides/process-protocol", label: "Process protocol" },
     ],
   },
+  {
+    group: "Plugins",
+    items: [{ slug: "plugins", label: "Choose your plugins" }],
+  },
+  ...pluginNavigation,
   {
     group: "Concepts",
     items: [

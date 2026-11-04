@@ -100,8 +100,8 @@ Plugins are configured where the agent is defined: an entry in
 `Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
 merge over the plugin's defaults, nested objects key by key (an array, or an
 object of another of the shapes the schema allows, replaces its default), and
-decode through its schema; undeclared keys are refused. The [plugin reference](/docs/concepts/plugin-reference/) lists every
-first-party plugin with its defaults and configuration schema, and
+decode through its schema; undeclared keys are refused. The [plugin guides](/docs/plugins/) explain
+each first-party definition and how to compose it. The [plugin reference](/docs/concepts/plugin-reference/) lists generated defaults and schemas, and
 [plugin configuration](/docs/concepts/providers/#model-endpoints) shows how to
 point the models plugin at any OpenAI-compatible endpoint.
 
@@ -115,6 +115,9 @@ point the models plugin at any OpenAI-compatible endpoint.
 | `@xandreed/plugin-agent-loop` | The agent step loop |
 | `@xandreed/plugin-models` | Model routing and provider adapters |
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |
+| `@xandreed/plugin-memory` | Long-term memory, evidence-backed facts and routines, and acknowledged-turn capture |
+| `@xandreed/plugin-rag` | Document ingestion, cited retrieval and optional graph retrieval |
+| `@xandreed/plugin-knowledge-postgres` | Native PostgreSQL/pgvector knowledge and memory storage |
 | `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
 | `@xandreed/plugin-sessions` | Conversation sessions, durable queued input, the turn lifecycle and optional inbox execution |
 | `@xandreed/plugin-session-files` | Directory session store (Node 24 and Bun; requires hard links) |

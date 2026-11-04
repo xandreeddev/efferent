@@ -91,6 +91,14 @@ release previews use the maintainer-owned PR handoff below.
   [plugin](docs/plugin-reference.json) and [event](docs/event-reference.md)
   references, the guides' snippets and their website pages; CI fails on any
   difference from what is committed.
+- Each exported first-party plugin has a guide in
+  `packages/website/src/content/docs/plugins/`, named from its id: remove
+  `@xandreed/plugin-` and replace `/` with `-`. Set its `pluginId`, title and
+  description in frontmatter. Write setup, composition and examples outside
+  the `plugin-reference:start/end` markers; `docs:generate` refreshes the
+  contract inside them and the sidebar navigation. Missing or orphaned guides
+  fail generation. `scripts/plugin-docs.test.ts` checks coverage, freshness and
+  TypeScript examples against the current public APIs.
 - What each published entry exports is recorded in `api/`: one file per
   entry, `api/<package>.api.txt` for a package's root and
   `api/<package>--<subpath>.api.txt` for each other entry (every `/` of the

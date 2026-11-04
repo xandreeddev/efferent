@@ -103,8 +103,13 @@ another product's private tables.
 
 `memoryCapturePlugin` is built before the turn and observes acknowledged closing
 commits. It saves the user's initial and steered input, the final host reply,
-and recorded tool outcomes. Assistant proposals, hidden reasoning, retrieved
-context, summaries and memory/RAG results do not become fresh learning evidence.
+and original recorded tool-result views, with their correlated arguments.
+Intermediate assistant messages, reasoning, context sections, summaries,
+digests and memory/RAG tool results are skipped as standalone capture events.
+Final replies remain evidence and may contain proposals or repeat retrieved
+material; extraction is instructed to distinguish those claims from confirmed
+effects. Capture uses the original result view, before later context compaction
+or digest presentations, and cannot restore bytes the tool never returned.
 Handler outcomes remain distinct from confirmed domain effects: a handler can
 return successfully while reporting a failed command or incomplete action.
 
