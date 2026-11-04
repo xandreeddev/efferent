@@ -54,7 +54,7 @@ export const toolDiscoveryPlugin = definePlugin({
       version: "1",
       // Built from the registry's skills, here: the section reads no service when it renders.
       promptSections: config.loadSkill ? [definePromptSection({
-        id: "tool-discovery.catalogue", version: "1", tier: "static", order: config.catalogOrder,
+        id: "tool-discovery.catalogue", version: "2", tier: "static", order: config.catalogOrder,
         render: () => Effect.succeed(catalogText(registry.skills)),
       })] : [],
     })

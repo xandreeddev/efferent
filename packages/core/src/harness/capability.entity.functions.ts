@@ -92,11 +92,13 @@ export const definePromptSection = <const Req extends ServiceKeys = readonly []>
 /**
  * A skill, as `defineSkill` takes it: its ids as strings, which it brands
  * (`SkillId`, `SkillReferenceId`; one that is empty or not trimmed throws).
- * An always-on skill is active from every turn's first step and is never
- * loaded, so nothing shows the model instructions on it: it takes none
- * (`instructions` does not compile with `always: true`). Give the model
- * what such a skill's tools need in their descriptions or in a prompt
- * section.
+ * An always-on skill is activated at every turn's start (recorded with the
+ * source `always`) and is never loaded with load_skill, so nothing shows
+ * the model instructions on it: it takes none (`instructions` does not
+ * compile with `always: true`). Give the model what such a skill's tools
+ * need in their descriptions or in a prompt section. Its `references` are
+ * served as a loaded skill's are: tool discovery's catalogue lists them
+ * for read_skill_reference.
  *
  * @public
  */

@@ -1825,15 +1825,24 @@ grow-only active set in memory:
 1. Tier 1: the skill catalogue is a static system-prompt section.
 2. Tier 2: `load_skill` returns a skill's instructions and appends its tools
    to the active set from the next step.
-3. Tier 3: `read_skill_reference` serves a loaded skill's references. It is
-   registered only when some skill has references.
+3. Tier 3: `read_skill_reference` serves the references of an active
+   skill: one loaded, whose `load_skill` result lists them, or one always
+   on. It is registered only when some skill has references.
 
-An always-on skill (`always: true`) is active from every turn's first step,
-is not in the catalogue and is never loaded, so nothing shows the model
-instructions on it: `defineSkill` takes none for one (`instructions` does
-not compile with `always: true`). Put what its tools need in their
-descriptions or in a prompt section; the skills directory renders its file
-skills' own in a section.
+An always-on skill (`always: true`) is activated at every turn's start
+(`turn.tools.select` records it with the source `always`), is not in the
+catalogue's list of loadable skills and is never loaded with `load_skill`,
+so nothing shows the model instructions on it: `defineSkill` takes none for
+one (`instructions` does not compile with `always: true`). Put what its
+tools need in their descriptions or in a prompt section; the skills
+directory renders its file skills' own in a section. Its references, which
+no `load_skill` result shows, are listed in the catalogue section under
+their own heading, a line per always-on skill that has some:
+
+```text
+## References of always-on skills (their tools are already available; read one with read_skill_reference)
+- archiving: retention — Retention rules; purge — Purging
+```
 
 A tool's handler may read only the services its `requires` lists (a
 Reference, which has a default, needs no entry): one that reads another does
@@ -2119,7 +2128,8 @@ and does not count toward `maxBytes`), `maxFiles` (2000) and `maxBytes`
 (8 MiB) each root, and `maxSkills` (200) all of them (`skills.limit`). Tool discovery activates `always` skills at each turn's
 start but lists only the others, so the plugin renders the always-on
 skills' instructions in a static section (`alwaysSection`, at
-`sectionOrder` 850, before the catalogue at 900). A skill id the host or
+`sectionOrder` 850, before the catalogue at 900); their references are
+listed by the catalogue, not again in that section. A skill id the host or
 another plugin also defines fails `Agent.define` with `skills.duplicate`:
 give the directory an `idPrefix` (`"project."`). To read several
 directories, give one instance several `roots`: the capability and the

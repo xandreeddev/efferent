@@ -79,6 +79,7 @@ root. Oversized references are left unread and do not count toward the text
 byte limit. Exceeding collection limits fails with `skills.limit`.
 `alwaysSection` includes always-on instructions in a static prompt section,
 because discovery activates those skills without listing their instructions.
+Their references are listed by discovery's catalogue, not in that section.
 
 ## Related guides
 

@@ -81,6 +81,11 @@ export const SkillDefinition = Schema.Struct({
   /** Active from the first step of every turn; not in the catalogue. */
   always: Schema.Boolean,
   permissions: Schema.Array(Schema.String),
+  /**
+   * Tier 3: read with read_skill_reference once the skill is active. A
+   * loaded skill's are listed in its load_skill result; an always-on
+   * skill's, which no load_skill result shows, in tool discovery's catalogue.
+   */
   references: Schema.Array(SkillReference),
 })
 export type SkillDefinition = typeof SkillDefinition.Type

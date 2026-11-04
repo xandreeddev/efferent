@@ -54,6 +54,9 @@ can seed activation before model steps begin.
 The active set grows during a turn; starting another turn opens a fresh
 registry session. Always-on skills do not appear in the loadable catalogue:
 put their guidance in tool descriptions or a contributed prompt section.
+They are active from each turn's start, so `read_skill_reference` serves
+their references without a `load_skill`; the catalogue section lists those
+references under its own heading.
 
 ## Policies and limits
 

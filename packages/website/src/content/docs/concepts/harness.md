@@ -334,7 +334,9 @@ const agent = yield* Agent.define({
   plugin puts their instructions in a static system-prompt section. In
   code, an always-on skill takes no instructions (`defineSkill` does not
   compile with both): tool discovery never loads it, so give its tools'
-  guidance in their descriptions or a prompt section.
+  guidance in their descriptions or a prompt section. Its references are
+  still read with `read_skill_reference`: tool discovery's catalogue lists
+  them under "References of always-on skills".
 - **Failures.** A skill id the host or another plugin also defines fails
   `Agent.define` with `skills.duplicate`: set `idPrefix`. A bad `SKILL.md`
   (no frontmatter, no description, an id already used) is logged and left

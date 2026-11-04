@@ -63,7 +63,8 @@ export const settleSkills = Effect.fn("skills.settle")(function* (found: SkillsF
 /**
  * The always-on skills' instructions as one system-prompt section: tool
  * discovery activates them at every turn's start but lists only the skills
- * that are loaded on demand.
+ * that are loaded on demand, and the references of the always-on ones
+ * (its catalogue), so their references are not listed here again.
  */
 export const alwaysSkillsText = (skills: ReadonlyArray<SkillDefinition>): Option.Option<string> => {
   const always = skills.filter((skill) => skill.always)
@@ -72,8 +73,7 @@ export const alwaysSkillsText = (skills: ReadonlyArray<SkillDefinition>): Option
     ...always.map((skill) => [
       `### ${skill.id}`,
       skill.instructions.length > 0 ? skill.instructions : skill.summary,
-      skill.references.length === 0 ? "" : `References (read_skill_reference): ${skill.references.map((reference) => `${reference.id} — ${reference.title}`).join("; ")}`,
-    ].filter((line) => line.length > 0).join("\n")),
+    ].join("\n")),
   ].join("\n\n"))
 }
 

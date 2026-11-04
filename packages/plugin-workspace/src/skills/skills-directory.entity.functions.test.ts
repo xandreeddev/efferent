@@ -47,8 +47,8 @@ describe("the always-on section", () => {
     defineSkill({ id: "rare", summary: "Rarely needed.", tools: [] }),
   ]
 
-  test("renders the always-on skills' instructions and references, and nothing without one", () => {
-    expect(alwaysSkillsText(skills)).toEqual(Option.some("## Always-on skills\n\n### style\nWrite short sentences.\nReferences (read_skill_reference): references/words.md — Words"))
+  test("renders the always-on skills' instructions, not their references (tool discovery's catalogue lists those), and nothing without one", () => {
+    expect(alwaysSkillsText(skills)).toEqual(Option.some("## Always-on skills\n\n### style\nWrite short sentences."))
     expect(alwaysSkillsText(skills.slice(1))).toEqual(Option.none())
   })
 
