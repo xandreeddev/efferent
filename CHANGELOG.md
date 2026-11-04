@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.16.2 — 2026-11-04
+
 ### Repository
 
 - Restrict CI to this repository and same-repository PRs, preserving human
@@ -15,6 +17,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   PR creation and external-contributor workflow approval settings.
 - Document conditional approval of a reviewed bot PR's blocked workflow;
   a passing branch dispatch does not replace the required PR check.
+
+### Changes
+
+- Publish a coordinated framework patch and its documentation landing package through npm trusted publishing, preserving the verified release source and authentic workflow provenance.
 
 ## 0.16.1 — 2026-11-03
 
