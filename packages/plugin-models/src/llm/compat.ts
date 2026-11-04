@@ -84,7 +84,27 @@ export interface CompatConfig {
   readonly usage?: UsageReading
   /** The model reads images: send them as `image_url` parts (default false: label lines; see `toChatMessages`). */
   readonly images?: boolean
-  /** The fetch requests go through (the models plugin supplies its chosen transport); otherwise uses the call-local FetchHttpClient.Fetch reference. */
+  /** Endpoint-specific body fields (a gateway's routing or retention
+   * options, a provider's own extensions), sent on every request after the
+   * gateway extensions, with `standardOnly` too. A field of the same name
+   * replaces the temperature or the setting this client derives (thinking,
+   * effort, `max_tokens`). They are request settings: `beforeRequest` and
+   * `aroundRequest` see them in the body, and the model's request
+   * descriptor records them. The fields a request is made of (`model`,
+   * `messages`, `stream`, `stream_options`, `response_format`, `tools`,
+   * `tool_choice`) are not settings: a key naming one fails each call as an
+   * invalid request, before any send. */
+  readonly extensions?: Schema.JsonObject
+  /** This model's output cap, sent as `max_tokens` when the call policy
+   * sets none (a call policy's `maxOutputTokens` wins), with `standardOnly`
+   * too. A positive integer; any other value fails each call as an invalid
+   * request, before any send. */
+  readonly maxOutputTokens?: number
+  /** The fetch requests go through (the models plugin supplies its chosen
+   * transport); otherwise uses the call-local FetchHttpClient.Fetch
+   * reference. Transport only: a field the body needs belongs in
+   * `extensions`, since a fetch that rewrites the body sends what neither
+   * `beforeRequest` nor the request descriptor saw. */
   readonly fetchImpl?: ModelsFetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every
    * physical send: the first and each retry the request policy makes. A
@@ -403,24 +423,47 @@ export const fromChatCompletion = Effect.fnUntraced(function* (
 })
 
 /** A request's public options, shared by the body and the model's descriptor:
- *  the sampling temperature (sent before the messages) and the gateway
- *  extensions (sent after them), as the wire has always ordered them; JSON, as the descriptor records them. */
-const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Schema.JsonObject; readonly extensions: Schema.JsonObject } => ({
-  sampling: config.temperature === undefined ? {} : { temperature: config.temperature },
-  extensions: config.standardOnly === true ? {} : {
-    ...Option.match(cacheKey, { onNone: () => ({}), onSome: (key) => ({ prompt_cache_key: key }) }),
-    ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
-    ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
-    ...Option.match(policy, {
-      onNone: () => ({}),
-      onSome: (value) => ({
-        ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
-        // The call policy's effort in the chat-completions vocabulary (`max`, `xhigh` and `none` are no gateway's).
-        ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: publicReasoningEffort(value.effort) }),
+ *  the sampling temperature (sent before the messages) and the extensions
+ *  (sent after them: the gateway's, then the host's own), as the wire has
+ *  always ordered them; JSON, as the descriptor records them. The output cap
+ *  is the call policy's, else the config's (`maxOutputTokens`); with
+ *  `standardOnly` only the config's is sent, as the call policy is not. */
+const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Schema.JsonObject; readonly extensions: Schema.JsonObject } => {
+  const standardOnly = config.standardOnly === true
+  const cap = Option.orElse(
+    standardOnly ? Option.none<number>() : Option.flatMap(policy, (value) => Option.fromNullishOr(value.maxOutputTokens)),
+    () => Option.fromNullishOr(config.maxOutputTokens),
+  )
+  const maxTokens = Option.match(cap, { onNone: () => ({}), onSome: (value) => ({ max_tokens: value }) })
+  return {
+    sampling: config.temperature === undefined ? {} : { temperature: config.temperature },
+    extensions: {
+      ...(standardOnly ? maxTokens : {
+        ...Option.match(cacheKey, { onNone: () => ({}), onSome: (key) => ({ prompt_cache_key: key }) }),
+        ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
+        ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
+        ...maxTokens,
+        ...Option.match(policy, {
+          onNone: () => ({}),
+          // The call policy's effort in the chat-completions vocabulary (`max`, `xhigh` and `none` are no gateway's).
+          onSome: (value) => config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: publicReasoningEffort(value.effort) },
+        }),
       }),
-    }),
-  },
-})
+      ...config.extensions,
+    },
+  }
+}
+
+/** The fields a request is made of, which `extensions` cannot replace. */
+const REQUEST_FIELDS: ReadonlyArray<string> = ["model", "messages", "stream", "stream_options", "response_format", "tools", "tool_choice"]
+
+/** Why a config's own request settings cannot be sent, when they cannot. */
+const unsendableSettings = (config: CompatConfig): Option.Option<string> => {
+  const reserved = Object.keys(config.extensions ?? {}).filter((key) => REQUEST_FIELDS.includes(key))
+  if (reserved.length > 0) return Option.some(`extensions cannot set the request's own fields: ${reserved.join(", ")}`)
+  const cap = config.maxOutputTokens
+  return cap === undefined || (Number.isSafeInteger(cap) && cap > 0) ? Option.none() : Option.some(`maxOutputTokens must be a positive integer, got ${cap}`)
+}
 
 /** The one request shape both paths send; only `stream` differs (streaming
  *  additionally asks the gateway to attach usage to the final chunk). The
@@ -431,8 +474,12 @@ const chatRequestBody = (
   config: CompatConfig,
   options: LanguageModel.ProviderOptions,
   streaming: boolean,
-): Effect.Effect<Json> =>
+): Effect.Effect<Json, AiError.AiError> =>
   Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
+    Effect.tap(() => Option.match(unsendableSettings(config), {
+      onNone: () => Effect.void,
+      onSome: (description) => Effect.fail(AiError.make({ module: config.moduleName, method: streaming ? "streamText" : "generateText", reason: new AiError.InvalidRequestError({ description }) })),
+    })),
     Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
       const settings = requestSettings(config, cacheKey, policy)
