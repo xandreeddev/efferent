@@ -5,7 +5,7 @@ import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effe
 import { join } from "node:path"
 import { ConversationId, CurrentPromptCacheKey, defineCapability, defineSkill, defineTool, entriesOfEvents, Failure, LogEntry, replayModelRequest, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
-import type { Turn, TurnOutcome } from "@xandreed/core"
+import type { Turn, TurnEvent, TurnOutcome } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -175,4 +175,31 @@ test("a streamed turn keeps its reasoning's provider metadata: the next request,
   const actual = `${JSON.stringify({ outcomes: result.outcomes, requests: result.requests, log: result.log }, null, 2)}\n`
   if (process.env.EFFERENT_UPDATE_MODEL_GOLDEN === "1") await Bun.write(modelPath, actual)
   expect(actual).toBe(await Bun.file(modelPath).text())
+})
+
+test("a streamed call's argument deltas name its tool and pair with its tool.started by toolCallId", async () => {
+  const events = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const address = { id: conversation, owner: "stream-pairing" }
+    yield* sessions.create({ owner: address.owner, id: conversation })
+    const model = yield* streamingModel(yield* Ref.make<ReadonlyArray<unknown>>([]), "run-1", [thinkThenLookup("alpha"), answerText("Found record-alpha.")])
+    const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
+    const agent = yield* Agent.define(streamConfig)
+    yield* agent.turn({
+      turn: { session: address, userMessage: new UserMessage({ text: "find alpha" }), runId: RunId.make("run-1") },
+      services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
+    }, (turn) => turn.events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event])).pipe(Effect.andThen(runToStop(turn))))
+    return yield* Ref.get(seen)
+  })))
+  const params = events.flatMap((event) => event._tag === "assistant.delta" && event.channel === "tool-params" ? [event] : [])
+  expect(params.map(({ id, delta, toolName }) => ({ id: String(id), delta, toolName }))).toEqual([
+    { id: "toolu_1", delta: "", toolName: "lookup" },
+    { id: "toolu_1", delta: '{"query":"alpha"}', toolName: undefined },
+  ])
+  // Only the part's first delta carries the key at all.
+  expect(params.map((event) => Object.hasOwn(event, "toolName"))).toEqual([true, false])
+  const started = events.flatMap((event) => event._tag === "tool.started" ? [event] : [])
+  expect(started.map(({ toolCallId, tool }) => ({ toolCallId: String(toolCallId), tool }))).toEqual([{ toolCallId: "toolu_1", tool: "lookup" }])
+  // The two ids are branded apart: a host pairs them as strings.
+  expect(String(started[0]?.toolCallId)).toBe(String(params[0]?.id))
 })

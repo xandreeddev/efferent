@@ -576,6 +576,32 @@ describe("runSteps streaming", () => {
     expect(events.some((event) => event._tag === "assistant.delta")).toBe(false)
   })
 
+  test("a tool-params part's first assistant.delta names its tool, and no other delta carries a tool name", async () => {
+    const parts: ReadonlyArray<Response.StreamPartEncoded> = [
+      { type: "text-start", id: "text-0" },
+      { type: "text-delta", id: "text-0", delta: "Looking." },
+      { type: "text-end", id: "text-0" },
+      { type: "tool-params-start", id: "call-1", name: "lookup" },
+      { type: "tool-params-delta", id: "call-1", delta: "{\"query\":" },
+      { type: "tool-params-delta", id: "call-1", delta: "\"alpha\"}" },
+      { type: "tool-params-end", id: "call-1" },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 4 }, outputTokens: { total: 2 } } },
+    ]
+    const { events } = await Effect.runPromise(Effect.gen(function* () {
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.die("this run streams"),
+        streamText: () => Stream.fromIterable(parts),
+      })
+      return yield* runWith(model, { streaming: true, captureTraceContent: false })
+    }))
+    expect(events.filter((event) => event._tag === "assistant.delta")).toEqual([
+      { _tag: "assistant.delta", step: 0, channel: "text", id: StreamPartId.make("text-0"), delta: "Looking." },
+      { _tag: "assistant.delta", step: 0, channel: "tool-params", id: StreamPartId.make("call-1"), delta: "", toolName: "lookup" },
+      { _tag: "assistant.delta", step: 0, channel: "tool-params", id: StreamPartId.make("call-1"), delta: "{\"query\":" },
+      { _tag: "assistant.delta", step: 0, channel: "tool-params", id: StreamPartId.make("call-1"), delta: "\"alpha\"}" },
+    ])
+  })
+
   test("without streaming there is no fallback to report", async () => {
     const { events } = await Effect.runPromise(Effect.gen(function* () {
       const reads = yield* Ref.make<ReadonlyArray<boolean>>([])

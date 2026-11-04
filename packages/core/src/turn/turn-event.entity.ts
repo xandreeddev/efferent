@@ -217,8 +217,10 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   channel: Schema.Literals(["text", "reasoning", "tool-params"]),
   id: StreamPartId,
   delta: Schema.String,
+  /** The tool a `tool-params` part calls: on the part's first delta (its start, with an empty `delta`); absent on the others and on every text or reasoning delta. */
+  toolName: Schema.optionalKey(Schema.String),
 }).annotate({
-  description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",
+  description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. A `tool-params` part streams one call's argument text: its first delta is empty and carries `toolName`, the tool it calls, and its `id` is the provider's id for the call, the `toolCallId` of that call in `assistant.message.toolCalls`, `tool.started` (beside its `invocationId`) and `step.ended.results` (a call streamed with no id gets the loop's deterministic id once the response is whole, which its deltas do not carry). Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",
 })
 
 /** @public */

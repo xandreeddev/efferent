@@ -31,7 +31,7 @@ export interface StreamDelta {
   readonly channel: "text" | "reasoning" | "tool-params"
   readonly id: string
   readonly delta: string
-  /** The tool being called — set on `tool-params` deltas only. */
+  /** The tool being called — set on a `tool-params` part's first delta (its start) only. */
   readonly toolName?: string
 }
 
