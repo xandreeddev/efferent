@@ -43,6 +43,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   it renders while it streams with the `invocationId` of its `tool.*`
   events. The event is transient: no stored format changes. Over
   `@xandreed/process-host`, full-content progress carries the new key too.
+- `CompatConfig.extensions` (`@xandreed/plugin-models/compat`): endpoint
+  body fields, such as a gateway's routing or retention options or a
+  provider's own extensions, sent on every request after the gateway
+  extensions, `standardOnly` included. They are request settings, so
+  `beforeRequest` and `aroundRequest` see the body that is sent and the
+  model's request descriptor and settings fingerprint record them; a host no
+  longer rewrites the JSON body in `fetchImpl`, which stays transport only.
+  A key naming a field the request is made of (`model`, `messages`,
+  `stream`, `stream_options`, `response_format`, `tools`, `tool_choice`)
+  fails each call as an invalid request before any send.
+- `CompatConfig.maxOutputTokens`: a model's output cap, sent as
+  `max_tokens` when the call policy sets none (the call policy's cap wins),
+  and with `standardOnly` too. A value that is no positive integer fails each
+  call as an invalid request. Without either field the body is unchanged.
 
 ### Repository
 

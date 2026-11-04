@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Prompt, Tool } from "effect/ai"
+import { AiError, Prompt, Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, ToolCallId } from "@xandreed/core"
 import { extractUsage, toPromptMessages } from "@xandreed/core/internal"
-import type { AgentMessage } from "@xandreed/core"
+import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, promptWithImageLabels, thinkingParams, toChatMessages } from "./compat.js"
+import type { CompatConfig } from "./compat.js"
 import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
 import { modelRetryDefaults } from "./model-retry-policy.entity.js"
 
@@ -413,6 +414,96 @@ describe("makeCompatLanguageModel", () => {
     await Effect.runPromise(request)
     expect((calls[0]?.body as { prompt_cache_key?: string }).prompt_cache_key).toBe("conv-abc")
     expect("prompt_cache_key" in (calls[1]?.body as Record<string, unknown>)).toBe(false)
+  })
+})
+
+describe("makeCompatLanguageModel: endpoint extensions and a model's output cap", () => {
+  const routed = { provider: { order: ["first-host", "second-host"], allow_fallbacks: false }, store: false }
+  const call = (config: Partial<CompatConfig>, policy: Option.Option<ModelCallPolicy> = Option.none()) => {
+    const { calls, impl } = capture()
+    const admitted: Array<Readonly<Record<string, unknown>>> = []
+    const run = Effect.gen(function* () {
+      const svc = yield* makeCompatLanguageModel({
+        moduleName: "Test", model: "kimi-k2-code", chatUrl: "https://gw.example/chat/completions", apiKey: "k", fetchImpl: impl,
+        beforeRequest: (body) => Effect.sync(() => { admitted.push(body) }),
+        ...config,
+      })
+      const descriptor = yield* modelRequestDescriptorOf(svc)
+      yield* svc.generateText({ prompt: "hello" })
+      return descriptor
+    }).pipe(
+      Effect.provideService(CurrentPromptCacheKey, Option.some("lane:test")),
+      Effect.provideService(CurrentModelCallPolicy, policy),
+      Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 }),
+    )
+    return { calls, admitted, run }
+  }
+  const settingsOf = (sent: unknown) => Object.fromEntries(Object.entries(sent as Schema.JsonObject).filter(([key]) => !["messages", "model", "stream"].includes(key)))
+
+  test("extensions are sent after the gateway extensions, and beforeRequest and the descriptor see the body that is sent", async () => {
+    const { calls, admitted, run } = call({ extensions: routed }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    const descriptor = await Effect.runPromise(run)
+    const sent = calls[0]!.body as Record<string, unknown>
+    expect(Object.keys(sent)).toEqual(["model", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort", "max_tokens", "provider", "store"])
+    expect(sent).toMatchObject(routed)
+    expect(admitted).toEqual([sent])
+    expect(Option.getOrThrow(descriptor).settings).toEqual(settingsOf(sent))
+  })
+
+  test("an extension replaces a derived setting of the same name and is sent with standardOnly too", async () => {
+    const replaced = call({ extensions: { reasoning_effort: "medium", max_tokens: 99 } }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    await Effect.runPromise(replaced.run)
+    expect(replaced.calls[0]!.body).toMatchObject({ reasoning_effort: "medium", max_tokens: 99 })
+    const standard = call({ standardOnly: true, extensions: routed }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    const descriptor = await Effect.runPromise(standard.run)
+    expect(settingsOf(standard.calls[0]!.body)).toEqual(routed)
+    expect(Option.getOrThrow(descriptor).settings).toEqual(routed)
+  })
+
+  test("maxOutputTokens is the cap when the call policy sets none; a call policy's cap wins", async () => {
+    const unset = call({ maxOutputTokens: 512 })
+    const descriptor = await Effect.runPromise(unset.run)
+    expect(unset.calls[0]!.body).toMatchObject({ max_tokens: 512 })
+    expect(Option.getOrThrow(descriptor).settings).toMatchObject({ max_tokens: 512 })
+    const uncapped = call({ maxOutputTokens: 512 }, Option.some({ effort: "low" }))
+    await Effect.runPromise(uncapped.run)
+    expect(uncapped.calls[0]!.body).toMatchObject({ max_tokens: 512, reasoning_effort: "low" })
+    const capped = call({ maxOutputTokens: 512 }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    await Effect.runPromise(capped.run)
+    expect(capped.calls[0]!.body).toMatchObject({ max_tokens: 64 })
+  })
+
+  test("with standardOnly the model's cap is sent and the call policy's is not, as before", async () => {
+    const own = call({ standardOnly: true, maxOutputTokens: 512 }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    await Effect.runPromise(own.run)
+    expect(settingsOf(own.calls[0]!.body)).toEqual({ max_tokens: 512 })
+    const none = call({ standardOnly: true }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    await Effect.runPromise(none.run)
+    expect(settingsOf(none.calls[0]!.body)).toEqual({})
+  })
+
+  test("without extensions or a cap the body is unchanged", async () => {
+    const { calls, run } = call({})
+    await Effect.runPromise(run)
+    expect(Object.keys(calls[0]!.body as Record<string, unknown>)).toEqual(["model", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort"])
+  })
+
+  test("an extension naming a field the request is made of, or a cap that is no positive integer, fails as an invalid request before any send", async () => {
+    const cases: ReadonlyArray<readonly [Partial<CompatConfig>, string]> = [
+      [{ extensions: { ...routed, messages: [], tools: [] } }, "extensions cannot set the request's own fields: messages, tools"],
+      [{ extensions: { stream: true } }, "extensions cannot set the request's own fields: stream"],
+      [{ maxOutputTokens: 0 }, "maxOutputTokens must be a positive integer, got 0"],
+      [{ maxOutputTokens: 1.5 }, "maxOutputTokens must be a positive integer, got 1.5"],
+    ]
+    await Effect.runPromise(Effect.forEach(cases, ([config, description]) => {
+      const { calls, admitted, run } = call(config)
+      return run.pipe(Effect.flip, Effect.map((error) => {
+        expect(AiError.isAiError(error) && error.reason._tag).toBe("InvalidRequestError")
+        expect(AiError.isAiError(error) && error.reason.message).toContain(description)
+        expect(calls).toHaveLength(0)
+        expect(admitted).toHaveLength(0)
+      }))
+    }, { concurrency: 1 }))
   })
 })
 
