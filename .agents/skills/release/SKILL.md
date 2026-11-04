@@ -44,11 +44,13 @@ dates the central changelog, records the new journal and evaluation fixtures,
 updates lock metadata and regenerates documentation. Never overwrite an
 existing released fixture to silence a test.
 
-The workflow dispatches `ci.yml` on that branch with `GITHUB_TOKEN`; a passing
-branch run does not replace a pending required PR check. If the PR run
-is `action_required`, follow CONTRIBUTING.md's approval procedure after reviewing its source
-and wait for its required check. Review all generated files and merge using
-`commit-style`; keep the title exactly `release <version>` for the publish selector.
+Treat the bot PR as a preview. Follow CONTRIBUTING.md's maintainer-owned release
+PR handoff: review its exact head/base, close it without deleting the branch,
+and create a new PR under the maintainer's account from that same source.
+Reopening a bot PR does not change its author. Require the maintainer-owned
+PR's `pull_request` CI before squashing with the repository's author identity;
+`--author-email` alone does not replace a bot author's name. Dispatched workflow
+jobs cannot satisfy required PR checks. Keep the title exactly `release <version>`.
 
 ## 3. Publish in CI
 

@@ -27,7 +27,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -46,7 +45,8 @@ jobs:
       - name: Consume changesets and prepare the shared release
         id: version
         run: bun run release:version
-      - name: Open or update the release PR
+      # GITHUB_TOKEN prepares a preview; the maintainer creates the final PR.
+      - name: Open or update the release preview
         if: steps.version.outputs.has_changes == 'true'
         id: pr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -54,7 +54,7 @@ jobs:
           token: ${{ github.token }}
           branch: changeset-release/main
           base: main
-          delete-branch: true
+          delete-branch: false
           author: Xand Reed <xandreed@proton.me>
           committer: Xand Reed <xandreed@proton.me>
           title: release ${{ steps.version.outputs.version }}
@@ -69,15 +69,14 @@ jobs:
             - Release the framework packages together at `${{ steps.version.outputs.version }}`.
             - Consume the pending changesets and synchronize plugin metadata,
               the central changelog, compatibility fixtures and generated docs.
-            - Merging this PR signs off on CI publication after its checks pass.
+
+            ## Handoff
+
+            This bot PR is a preview. Follow the maintainer-owned release PR
+            procedure in CONTRIBUTING.md: close this preview without deleting
+            its branch, then create a new maintainer-owned PR from the same
+            reviewed head and base. Merge that PR after its required CI passes.
 
             ## Checks
 
-            - The required `ci` workflow validates this release before merging.
-      # Explicit dispatch validates the branch; GitHub can still require approval
-      # of a separate PR workflow before merging.
-      - name: Run the required CI on the release branch
-        if: steps.pr.outputs.pull-request-number != '' && (steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref changeset-release/main
+            - The maintainer-owned PR triggers the required `pull_request` CI.

@@ -69,8 +69,8 @@ The lists the check reads are the `registration` data in
 The repository limits PR creation to collaborators (`collaborators_only`)
 and requires Actions approval for all external contributors
 (`all_external_contributors`). CI runs only in `xandreeddev/efferent` and
-skips fork PRs. Same-repository human and bot PRs still receive the required
-check; a bot workflow awaiting approval follows the Publishing procedure below.
+skips fork PRs. Same-repository PR events are eligible for the required check;
+release previews use the maintainer-owned PR handoff below.
 
 - Branch off `main`; PRs squash-merge, so the PR title becomes the commit
   title and the body its message: write both as the `commit-style` skill
@@ -156,9 +156,9 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    docs. Existing source-package visibility is preserved, including private
    packages such as core. Changesets versions the whole group, while the
    framework publisher handles distribution artifacts.
-3. Review and merge the generated PR, titled `release <version>`. The bot
-   dispatches `ci` on its branch; merging still requires the PR's required check.
-   A passing branch dispatch does not replace a pending required PR check.
+3. Review the generated bot preview, then follow the maintainer-owned PR handoff
+   below. Merge the new maintainer-owned PR, titled `release <version>`, after
+   its required `pull_request` CI passes.
 4. After the merged release commit passes main's `ci`, `release.yml`
    verifies its source SHA, version, dated changelog, compatibility fixtures
    and the trusted Actions check. It builds and verifies the packed packages,
@@ -167,17 +167,86 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    dispatches the docs deployment at that tag. Its separate `landing` job
    then publishes the release README as the unscoped `efferent` package.
 
-If the bot PR's `pull_request` run is `action_required`, inspect the reviewed
-source and workflow, then approve that run and wait for its required check:
-
-```sh
-gh api --method POST "repos/xandreeddev/efferent/actions/runs/<run-id>/approve"
-```
-
 Merging the release PR signs off on package publication, the immutable tag
 and documentation deployment. Ordinary feature commits retaining the current
 version do not publish. A Changesets note is unnecessary for repository-only
 changes that should not bump the framework version.
+
+### Maintainer-owned release PR
+
+The workflow's bot PR is a preview. GitHub can retain that PR author's name
+when squash merging even with `--author-email`; closing and reopening it does
+not change the author. Create a **new** PR under the maintainer's account from
+the same reviewed branch, head and base. No personal access token is added to CI.
+The new PR triggers `pull_request` CI. GitHub's [required-check documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated)
+explains why dispatched workflow jobs cannot satisfy PR ruleset checks.
+
+After reviewing the preview diff, substitute its PR number, release version,
+full head SHA and full base SHA below. If either SHA changes, review again.
+The identity guards reject a different account, fork, branch, base or PR title.
+
+```sh
+(
+set -eu
+RELEASE_REPO=xandreeddev/efferent
+PREVIEW_PR='<preview-pr-number>'
+RELEASE_VERSION='<version>'
+REVIEWED_HEAD='<reviewed-full-head-sha>'
+REVIEWED_BASE='<reviewed-full-base-sha>'
+test "$(gh api user --jq '[.login, .name] | join("|")')" = 'xandreeddev|Xand Reed'
+pr_identity() {
+  gh api "repos/$RELEASE_REPO/pulls/$1" --jq \
+    '[.state, .draft, .user.login, .head.repo.full_name, .head.ref, .head.sha, .base.repo.full_name, .base.ref, .base.sha, .title] | join("|")'
+}
+test "$(pr_identity "$PREVIEW_PR")" = \
+  "open|false|github-actions[bot]|$RELEASE_REPO|changeset-release/main|$REVIEWED_HEAD|$RELEASE_REPO|main|$REVIEWED_BASE|release $RELEASE_VERSION"
+HANDOFF_BODY="$(mktemp)"
+cat > "$HANDOFF_BODY" <<'EOF'
+## What
+
+- Release the reviewed package versions, notes, fixtures and generated docs.
+
+## Checks
+
+- The required PR `ci` check must pass on this reviewed source before merging.
+EOF
+gh pr close "$PREVIEW_PR" --repo "$RELEASE_REPO" # Keep the branch: no --delete-branch.
+OWNER_PR_URL="$(gh pr create --repo "$RELEASE_REPO" --base main \
+  --head changeset-release/main --title "release $RELEASE_VERSION" --body-file "$HANDOFF_BODY")"
+OWNER_PR="${OWNER_PR_URL##*/}"
+rm "$HANDOFF_BODY"
+EXPECTED_OWNER="open|false|xandreeddev|$RELEASE_REPO|changeset-release/main|$REVIEWED_HEAD|$RELEASE_REPO|main|$REVIEWED_BASE|release $RELEASE_VERSION"
+test "$(pr_identity "$OWNER_PR")" = "$EXPECTED_OWNER"
+CI_RUN=''
+for ATTEMPT in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  CI_RUN="$(gh api "repos/$RELEASE_REPO/actions/runs?event=pull_request&head_sha=$REVIEWED_HEAD&per_page=100" --jq \
+    "[.workflow_runs[] | select(.event == \"pull_request\" and .head_sha == \"$REVIEWED_HEAD\" and .path == \".github/workflows/ci.yml\" and any(.pull_requests[]?; .number == $OWNER_PR))][0].id // empty")"
+  test -z "$CI_RUN" || break
+  test "$ATTEMPT" -eq 12 || sleep 5
+done
+test -n "$CI_RUN" || {
+  printf 'CI has not registered; keep %s open and resume waiting for this reviewed source.\n' "$OWNER_PR_URL" >&2
+  exit 1
+}
+gh run watch "$CI_RUN" --repo "$RELEASE_REPO" --exit-status
+gh pr checks "$OWNER_PR" --repo "$RELEASE_REPO" --required --watch
+test "$(pr_identity "$OWNER_PR")" = "$EXPECTED_OWNER"
+gh pr merge "$OWNER_PR" --repo "$RELEASE_REPO" --squash \
+  --match-head-commit "$REVIEWED_HEAD" --author-email xandreed@proton.me \
+  --subject "release $RELEASE_VERSION" \
+  --body 'Synchronize the shared package and plugin versions, release notes, compatibility fixtures and generated documentation.'
+)
+```
+
+If the run appears late or awaits approval, retain the new owner PR and resume
+CI discovery/waiting with that PR number and the same pinned head/base; do not
+create another PR. If its run is `action_required`, inspect and approve only
+that reviewed run with
+`gh api --method POST "repos/xandreeddev/efferent/actions/runs/<run-id>/approve"`,
+then wait for its required check. Existing release authorization covers this
+handoff; do not request it again. Verify the squash commit author is
+`Xand Reed <xandreed@proton.me>`; never rewrite main or a published release to
+repair historical authorship.
 
 To request an authorized patch through CI when no changesets are pending:
 
@@ -278,10 +347,9 @@ not cancel a release in progress.
 
 The source and pipeline checkouts are separate, so a historical release can
 use the current CI publisher without changing its source or build stamp.
-Both GitHub token-created release PRs and tag pushes need explicit workflow
-dispatches: CI is dispatched on the release branch, and `docs.yml` on the
-published tag. The docs deployment is therefore after all npm versions are
-confirmed, including when the tag was pushed with `GITHUB_TOKEN`.
+The maintainer-owned release PR supplies its `pull_request` CI. Tags pushed with
+`GITHUB_TOKEN` still need an explicit `docs.yml` dispatch on the published tag,
+after all framework npm versions are confirmed.
 For historical checkouts, the package's `gitHead` records the verified release
 source. npm's provenance signs the archive digest and identifies the actual
 publishing workflow commit. Keep GitHub's environment values unchanged:
