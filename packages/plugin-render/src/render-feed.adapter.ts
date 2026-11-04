@@ -38,9 +38,9 @@ const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effec
   })
 
 /** The journal side of a feed: records after the cursor, one ready frame, heartbeats while idle, until `maxDurationMs`. */
-const journalFrames = (tail: typeof JournalTail.Service, options: FeedOptions, feed: FeedScope, after: number, project: FeedProjection): Stream.Stream<FeedFrame, RenderError> =>
+const journalFrames = <R>(tail: typeof JournalTail.Service, options: FeedOptions, feed: FeedScope, after: number, project: FeedProjection<R>): Stream.Stream<FeedFrame, RenderError, R> =>
   Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)], { concurrency: 1 }).pipe(Effect.map(([now, wait]) =>
-    Stream.paginate({ after, ready: false, delayMs: 0, quietSince: now, startedAt: now } satisfies Cursor, (cursor): Effect.Effect<Step, RenderError> => Effect.gen(function* () {
+    Stream.paginate({ after, ready: false, delayMs: 0, quietSince: now, startedAt: now } satisfies Cursor, (cursor): Effect.Effect<Step, RenderError, R> => Effect.gen(function* () {
       yield* wait(cursor.delayMs)
       const at = yield* Clock.currentTimeMillis
       if (at - cursor.startedAt >= options.maxDurationMs) return [[], Option.none()] as const
@@ -80,7 +80,7 @@ const journalFrames = (tail: typeof JournalTail.Service, options: FeedOptions, f
  * ends only stops live frames; one that fails, or a payload named `ready`,
  * fails the feed.
  */
-const withLive = (journal: Stream.Stream<FeedFrame, RenderError>, live: Stream.Stream<FeedPayload, RenderError>): Stream.Stream<FeedFrame, RenderError> =>
+const withLive = <R>(journal: Stream.Stream<FeedFrame, RenderError, R>, live: Stream.Stream<FeedPayload, RenderError>): Stream.Stream<FeedFrame, RenderError, R> =>
   Stream.unwrap(Deferred.make<void>().pipe(Effect.map((caughtUp) => Stream.merge(
     // Release the live side only once the ready frame is out, so no transient frame overtakes it.
     journal.pipe(Stream.flatMap((frame) => Stream.succeed(frame).pipe(Stream.concat(
@@ -99,7 +99,7 @@ const withLive = (journal: Stream.Stream<FeedFrame, RenderError>, live: Stream.S
  * @public
  */
 export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
-  frames: (feed, after, project, live) => {
+  frames: <R>(feed: FeedScope, after: number, project: FeedProjection<R>, live?: Stream.Stream<FeedPayload, RenderError>) => {
     const journal = journalFrames(tail, options, feed, after, project)
     return live === undefined ? journal : withLive(journal, live)
   },

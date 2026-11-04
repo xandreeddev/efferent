@@ -2,14 +2,20 @@ import { expect, test } from "bun:test"
 import { createServer, IncomingMessage, ServerResponse } from "node:http"
 import { Socket } from "node:net"
 import type { AddressInfo } from "node:net"
-import { Effect, Logger, Option, Result, Stream } from "effect"
+import { Effect, Logger, Option, Result, Schema, Stream } from "effect"
+import { RunId } from "@xandreed/core"
 import { FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
-import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
-import { RenderError } from "./domain/render-surface.entity.js"
-import { decodeSocketFrame, decodeSse, encodeSocketFrame, encodeSse, nextPollMs, socketResumeOf, ssePreamble, transientOf } from "./domain/feed-frame.entity.functions.js"
+import type { FeedFrame } from "./domain/feed-frame.entity.js"
+import { PrincipalId, RenderMessageId, ThreadId } from "./domain/render-output.entity.js"
+import { RenderError, SurfaceId } from "./domain/render-surface.entity.js"
+import type { VersionId } from "./domain/render-surface.entity.js"
+import { decodeSocketFrame, decodeSse, encodeSocketFrame, encodeSse, nextPollMs, payloadOf, socketResumeOf, ssePreamble, transientOf } from "./domain/feed-frame.entity.functions.js"
+import { RenderStore } from "./ports/render.port.js"
+import type { FeedProjection } from "./ports/render.port.js"
 import { makeRenderFeed } from "./render-feed.adapter.js"
+import { MemoryRenderStoreLive } from "./render-store.memory.adapter.js"
 import { SseTransport, sseNodePeer, WebSocketTransport } from "./render-transport.adapter.js"
-import { renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
+import { makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
 
 renderTransportConformance({ sse: SseTransport, socket: WebSocketTransport }).forEach((check) => {
   test(`transport conformance: ${check.name}`, async () => {
@@ -146,4 +152,44 @@ test("SSE over a Node HTTP response reaches a real client", async () => {
   expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8")
   expect(text.startsWith(ssePreamble)).toBe(true)
   expect(decodeSse(text)).toEqual(Result.succeed(frames))
+})
+
+/** A host's own client event: its encoded form (a number as text, an optional field) is not typed as JSON. */
+const Shown = Schema.Struct({ text: Schema.String, at: Schema.NumberFromString, note: Schema.optional(Schema.String), versions: Schema.Int })
+const shown = payloadOf(Shown)
+const surface = {
+  threadId: ThreadId.make("thread"), runId: RunId.make("run"), messageId: RenderMessageId.make("answer"), principalId: PrincipalId.make("guest"),
+  fence: 1, surfaceId: SurfaceId.make("page"), baseVersion: Option.none<VersionId>(),
+}
+
+test("payloadOf encodes a host's schema into a payload, dropping undefined fields", async () => {
+  const payload = await Effect.runPromise(shown("message.updated", { text: "hi", at: 3, note: undefined, versions: 1 }))
+  expect(payload).toEqual({ event: "message.updated", data: { text: "hi", at: "3", versions: 1 } })
+  expect(FeedRecord.make({ sequence: 1, ...payload })).toEqual({ _tag: "FeedRecord", sequence: 1, event: "message.updated", data: { text: "hi", at: "3", versions: 1 } })
+})
+
+test("payloadOf refuses JSON it cannot carry and an empty event as invalid", async () => {
+  const failures = await Effect.runPromise(Effect.all([
+    Effect.flip(payloadOf(Schema.Struct({ count: Schema.BigInt }))("counted", { count: 1n })),
+    Effect.flip(shown(" ", { text: "hi", at: 1, versions: 0 })),
+  ], { concurrency: 1 }))
+  expect(failures.map((failure) => failure.code)).toEqual(["invalid", "invalid"])
+  expect(failures[0]?.message.startsWith("Invalid feed payload counted: ")).toBe(true)
+})
+
+test("a projection that reads a store requires it on the feed's stream, provided where the stream runs", async () => {
+  const withVersions: FeedProjection<RenderStore> = (record) => Effect.gen(function* () {
+    const records = yield* (yield* RenderStore).hydrate(surface)
+    return Option.some(yield* shown(record.kind, { text: "hi", at: record.sequence, versions: records.length }))
+  })
+  const options = { pollMs: 5, maxPollMs: 10, heartbeatMs: 1_000, maxDurationMs: 1_000 }
+  const frames = await Effect.runPromise(Effect.gen(function* () {
+    const journal = yield* makeMemoryJournal([{ sequence: 1, kind: "message.updated", data: {} }])
+    const stream: Stream.Stream<FeedFrame, RenderError, RenderStore> = makeRenderFeed(journal.tail, options).frames({ threadId: surface.threadId, principalId: surface.principalId }, 0, withVersions)
+    return yield* Stream.runCollect(stream.pipe(Stream.takeUntil((frame) => frame._tag === "FeedReady")))
+  }).pipe(Effect.provide(MemoryRenderStoreLive)))
+  expect(Array.from(frames)).toEqual([
+    FeedRecord.make({ sequence: 1, event: "message.updated", data: { text: "hi", at: "1", versions: 0 } }),
+    FeedReady.make({}),
+  ])
 })

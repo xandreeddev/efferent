@@ -106,8 +106,16 @@ export class JournalTail extends Context.Service<JournalTail, {
   readonly changes?: (feed: FeedScope) => Stream.Stream<void, RenderError>
 }>()("efferent/render/JournalTail") {}
 
-/** Maps a journal record to what a client receives; `None` skips it (the cursor still advances). */
-export type FeedProjection = (record: JournalRecord) => Effect.Effect<Option.Option<FeedPayload>, RenderError>
+/**
+ * Maps a journal record to what a client receives; `None` skips it (the
+ * cursor still advances). It may require services (`R`, none by default):
+ * `RenderFeed.frames` passes them on to its stream, so they are provided
+ * where the connection runs it (a store the projection reads, a request's
+ * own context), not captured beforehand. Its failures are `RenderError`s: a
+ * projection maps its own (`payloadOf` encodes a payload with the host's
+ * schema and fails with `invalid`), and a failure ends the connection.
+ */
+export type FeedProjection<R = never> = (record: JournalRecord) => Effect.Effect<Option.Option<FeedPayload>, RenderError, R>
 
 /**
  * A journal's frames after a cursor, for one client.
@@ -125,7 +133,8 @@ export type FeedProjection = (record: JournalRecord) => Effect.Effect<Option.Opt
  * @public
  */
 export class RenderFeed extends Context.Service<RenderFeed, {
-  readonly frames: (feed: FeedScope, after: number, project: FeedProjection, live?: Stream.Stream<FeedPayload, RenderError>) => Stream.Stream<FeedFrame, RenderError>
+  /** The frames after `after`, each record through `project`; the stream requires what the projection requires. */
+  readonly frames: <R = never>(feed: FeedScope, after: number, project: FeedProjection<R>, live?: Stream.Stream<FeedPayload, RenderError>) => Stream.Stream<FeedFrame, RenderError, R>
 }>()("efferent/render/Feed") {}
 
 /**

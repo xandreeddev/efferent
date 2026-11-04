@@ -1,7 +1,30 @@
-import { Result, Match, Option, Schema } from "effect"
-import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient, SocketFrame, SocketResume, SseRecordFields, SseTransientFields } from "./feed-frame.entity.js"
-import type { FeedFrame, FeedOptions, FeedPayload } from "./feed-frame.entity.js"
+import { Effect, Result, Match, Option, Schema } from "effect"
+import { storedJson } from "@xandreed/core"
+import { FeedHeartbeat, FeedPayload, FeedReady, FeedRecord, FeedTransient, SocketFrame, SocketResume, SseRecordFields, SseTransientFields } from "./feed-frame.entity.js"
+import type { FeedFrame, FeedOptions } from "./feed-frame.entity.js"
 import { RenderError } from "./render-surface.entity.js"
+
+const decodePayload = Schema.decodeUnknownEffect(FeedPayload)
+
+/**
+ * A payload from the host's own schema, for a `FeedProjection` or a frame
+ * the host builds itself: `value` is encoded with `schema`, carried as JSON
+ * (`storedJson`: `undefined` fields dropped, as the wire drops them) and
+ * checked as a `FeedPayload`, so an encoded object needs no cast to the
+ * payload's `JsonObject`. A value that does not encode, an encoded form JSON
+ * cannot hold (a BigInt) or an event name that is empty fails with
+ * `RenderError` code `invalid`, named after the event.
+ *
+ * @public
+ */
+export const payloadOf = <A, I extends Readonly<Record<string, unknown>>, RD, RE>(schema: Schema.Codec<A, I, RD, RE>) => {
+  const encode = Schema.encodeEffect(schema)
+  return (event: string, value: A): Effect.Effect<FeedPayload, RenderError, RE> => encode(value).pipe(
+    Effect.flatMap(storedJson),
+    Effect.flatMap((data) => decodePayload({ event, data })),
+    Effect.mapError((error) => new RenderError({ code: "invalid", message: `Invalid feed payload ${event}: ${error.message}` })),
+  )
+}
 
 /**
  * SSE wire format, one block per frame:
