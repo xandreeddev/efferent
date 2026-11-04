@@ -787,7 +787,11 @@ export const clientProjection: FeedProjection = (record) => Effect.succeed(Optio
 The feed sends `retry: 1000` first, then one frame per shown record (`id:
 <seq>`, `event: <kind>`, `data: <json>`), one `ready` frame once the
 backlog is sent, and a `: heartbeat` comment while it is idle; records it
-skips still move the cursor. It ends after `maxDurationMs` (240 s by
+skips still move the cursor. Frames the journal never stores, such as a
+reply's text as it streams, can ride the same connection: pass them to
+`frames` as a `live` stream of payloads, and each goes out after `ready`
+as an `event:`/`data:` block with no `id`, which leaves `Last-Event-ID` at
+the last record. It ends after `maxDurationMs` (240 s by
 default, keep it below the platform's limit) and `EventSource` reconnects
 with `Last-Event-ID`. The feed checks that limit between writes, so a write
 is bounded as the turn's push is: a client that stays connected but stops

@@ -25,6 +25,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   arguments as sent; the completed call, its params and the cut-reply
   handling are unchanged. As with text, a stream that fails after a call
   has opened no longer falls back to a settled call.
+- `@xandreed/plugin-render`: `decodeSse` decodes a block with an `id` as a
+  record whatever its event, so a record a projection names `ready` no
+  longer reads back as the ready frame.
 
 ### Added
 
@@ -57,6 +60,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `max_tokens` when the call policy sets none (the call policy's cap wins),
   and with `standardOnly` too. A value that is no positive integer fails each
   call as an invalid request. Without either field the body is unchanged.
+- `@xandreed/plugin-render`: a feed can carry live frames the journal never
+  stores (a reply as it streams, a preview, a build handshake) on the same
+  connection. `RenderFeed.frames` takes an optional `live` stream of
+  `FeedPayload`s; each goes out as a `FeedTransient` frame after the ready
+  frame, and the feed still ends when its journal side does. Over SSE a
+  transient frame is an `event:`/`data:` block with no `id`, so
+  `Last-Event-ID` stays at the last record; over a WebSocket it is
+  `{"type":"transient","event":…,"data":{…}}`. Transient frames never move
+  the resume cursor. A live stream that ends stops only the live frames;
+  one that fails, or a payload named `ready` (the feed's own frame), fails
+  the feed. `encodeSse`, `decodeSse`, `encodeSocketFrame` and
+  `decodeSocketFrame` read and write them, and the transport kit's sample
+  includes them.
+
+### Migration
+
+- `@xandreed/plugin-render`: `FeedFrame` has a fourth member,
+  `FeedTransient`. A host that matches every frame exhaustively
+  (`Match.valueTags`, `Match.exhaustive`) adds its case; a host's own
+  `RenderFeed` honours the new optional `live` argument to pass
+  `renderFeedConformance`'s two new checks.
 
 ### Repository
 

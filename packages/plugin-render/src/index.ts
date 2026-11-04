@@ -61,6 +61,7 @@ export {
   FeedReady,
   FeedRecord,
   FeedScope,
+  FeedTransient,
   JournalRecord,
   SocketFrame,
   SocketResume,

@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { JsonSchema, Option, Schema, SchemaAST } from "effect"
 import { HARNESS_CODES, JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, turnBeginCodes, TurnEvent } from "@xandreed/core"
 import type { TurnEventName } from "@xandreed/core"
-import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
+import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, FeedTransient, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
 import { deliveryId, TASK_ANSWERED, TASK_CANCELLED, TASK_QUESTIONED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskCancelled, TaskQuestioned, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 import { codeListProblems, raisedCodes } from "./error-codes.js"
 
@@ -324,16 +324,19 @@ codeListProblems({
 }).forEach(fail)
 
 const sample = FeedRecord.make({ sequence: 42, event: "turn.reply", data: { outcome: "completed", reply: "Done." } })
+const transientSample = FeedTransient.make({ event: "reply.delta", data: { text: "Do" } })
 const feed = {
   sse: {
     headers: sseHeaders,
     preamble: ssePreamble,
     record: encodeSse(sample),
+    transient: encodeSse(transientSample),
     ready: encodeSse(FeedReady.make({})),
     heartbeat: encodeSse(FeedHeartbeat.make({})),
   },
   socket: {
     record: encodeSocketFrame(sample),
+    transient: encodeSocketFrame(transientSample),
     ready: encodeSocketFrame(FeedReady.make({})),
     heartbeat: encodeSocketFrame(FeedHeartbeat.make({})),
     resume: JSON.stringify({ after: 41 }),
@@ -394,10 +397,11 @@ const body = (links: { readonly guide: string }) => [
   "A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` gives for the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). Most codes are a `HarnessError`'s; a tag (`TAGGED_CODES`: a begin refusal, `TurnClosed`, `ReservedKind`, `SessionContended`, `TaskMissing`, `TaskConflict`) stands for its own, and a `TaskControlRefused` for its reason's (`TAGGED_REASON_CODES`). A `SessionLogError` carries a store's (`store.*`, and the sessions and tasks plugins' storage codes), and a turn that fails with one stores `session.log`; an `AuthError` or a `SettingsError` carries its own.",
   table(["Code", "Where", "Meaning"], ERROR_CODES.map((entry) => [code(entry.code), entry.where, entry.meaning])),
   "## Feed and socket frames",
-  "`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor.",
+  "`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor. A host may pass `RenderFeed.frames` a live stream of payloads the journal never stores (a reply as it streams, a preview, a handshake): each goes out after the `ready` frame as a transient frame, which has no SSE `id` and no `sequence`, so it never moves the cursor and a reconnecting client gets only what the journal kept. `ready` is the feed's own frame: a transient frame may not take that name.",
   table(["Frame", "SSE", "WebSocket"], [
     ["preamble", code(JSON.stringify(feed.sse.preamble)), "none"],
     ["record", code(JSON.stringify(feed.sse.record)), code(feed.socket.record)],
+    ["transient", code(JSON.stringify(feed.sse.transient)), code(feed.socket.transient)],
     ["ready", code(JSON.stringify(feed.sse.ready)), code(feed.socket.ready)],
     ["heartbeat", code(JSON.stringify(feed.sse.heartbeat)), code(feed.socket.heartbeat)],
     ["resume", "the `Last-Event-ID` request header", `the client's first message, ${code(feed.socket.resume)}`],

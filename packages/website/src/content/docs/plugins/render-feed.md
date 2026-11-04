@@ -67,6 +67,34 @@ empty poll, then heartbeats while idle. Polling backs off up to `maxPollMs`;
 an optional journal change signal wakes it sooner. If that signal fails or
 ends, polling continues.
 
+## Live frames
+
+A host that also streams what the journal never stores, such as a reply as
+it is written, a preview or a build handshake, passes that stream as the
+fourth argument of `frames`. Each payload goes out as a transient frame,
+after the ready frame so the backlog comes first. Transient frames carry no
+sequence: over SSE they have no `id` line, so `Last-Event-ID` stays at the
+last journaled record, and a reconnecting client receives only what the
+journal kept. The feed still ends when its journal side does. A live stream
+that ends stops only the live frames; one that fails, or a payload named
+`ready`, ends the connection like a failing feed.
+
+```ts
+import { Effect, Stream } from "effect"
+import { RenderFeed } from "@xandreed/plugin-render"
+import type { FeedPayload, FeedProjection, FeedScope, RenderError } from "@xandreed/plugin-render"
+
+declare const scope: FeedScope
+declare const project: FeedProjection
+declare const replyDeltas: Stream.Stream<string, RenderError>
+
+const live: Stream.Stream<FeedPayload, RenderError> = replyDeltas.pipe(
+  Stream.map((text): FeedPayload => ({ event: "reply.delta", data: { text } })),
+)
+
+const frames = RenderFeed.pipe(Effect.map((feed) => feed.frames(scope, 0, project, live)))
+```
+
 The stream ends after `maxDurationMs`; clients reconnect with their last
 cursor. `SseTransport` and `WebSocketTransport` carry equivalent frame
 content. Serve them at the host edge and close their scoped work when the
