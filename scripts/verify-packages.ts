@@ -487,9 +487,10 @@ await filesFs.rm(filesRoot, { recursive: true, force: true })
 const fileSystem = await runKit("FileSystem", fileSystemConformance({ open: makeMemoryFileSystem().pipe(Effect.tap((fs) => fs.mkdir("/work")), Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink }))) }))
 // The StepLoop and TurnRunner contracts (their usage totals among them) hold on Node too.
 const stepLoop = await runKit("StepLoop", stepLoopConformance(StepLoop.of({ ...STEP_LOOP, run: runSteps })))
-// The SSE transport kit, and sseNodePeer's Brotli over node:http, decoded back to the frames it sent.
-const { decodeSse, renderTransportConformance, SseTransport, sseNodePeer, WebSocketTransport } = await import("@xandreed/plugin-render")
+// The SSE transport kit, the feed kit (snapshots and kinds among it), and sseNodePeer's Brotli over node:http, decoded back to the frames it sent.
+const { decodeSse, makeRenderFeed, renderFeedConformance, renderTransportConformance, SseTransport, sseNodePeer, WebSocketTransport } = await import("@xandreed/plugin-render")
 const transportKit = await runKit("render transport", renderTransportConformance({ sse: SseTransport, socket: WebSocketTransport }))
+const feedKit = await runKit("render feed", renderFeedConformance(makeRenderFeed))
 const { createServer, get } = await import("node:http")
 const { brotliDecompressSync } = await import("node:zlib")
 const sseServer = createServer((request, response) => {
@@ -667,7 +668,7 @@ const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) =
   Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks), shutdown: Context.getOption(context, TurnShutdown) })))))
 const registryKit = await runKit("ToolRegistry", toolRegistryConformance((capabilities, limits) => Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(
   Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(Effect.map((context) => Context.get(context, ToolRegistry)))))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the render transport kit (" + transportKit + ") and a Brotli SSE response over node:http, the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the InboxRunner kit over agentInboxRunner (" + inboxRunnerKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the render transport kit (" + transportKit + "), the render feed kit over makeRenderFeed (" + feedKit + ") and a Brotli SSE response over node:http, the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the InboxRunner kit over agentInboxRunner (" + inboxRunnerKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
 ${localKits}
 ${workspaceJourney}
 `)

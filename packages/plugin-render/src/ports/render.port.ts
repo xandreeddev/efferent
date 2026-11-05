@@ -97,7 +97,14 @@ export class Render extends Context.Service<Render, {
  * @public
  */
 export class JournalTail extends Context.Service<JournalTail, {
-  readonly read: (feed: FeedScope, after: number) => Effect.Effect<ReadonlyArray<JournalRecord>, RenderError>
+  /**
+   * Records after `after`, in sequence order: all of them or a first page
+   * (the feed reads again after the last). With `kinds` (absent or empty: every
+   * kind), a tail reads only records of those kinds, so the others are never
+   * loaded (`Sessions.read` filters in the store); a tail that cannot filter
+   * may return them, and the feed drops them.
+   */
+  readonly read: (feed: FeedScope, after: number, kinds?: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<JournalRecord>, RenderError>
   /**
    * Optional wake signal: each element means the feed's journal may have new
    * records, and the feed polls at once instead of waiting out its interval.
@@ -118,10 +125,67 @@ export class JournalTail extends Context.Service<JournalTail, {
 export type FeedProjection<R = never> = (record: JournalRecord) => Effect.Effect<Option.Option<FeedPayload>, RenderError, R>
 
 /**
+ * The state a client builds from records `1..head` (of the feed's `kinds`), as
+ * one payload: given those records in sequence order, the payload a client
+ * that applies it holds the same state as one that received every projected
+ * record up to `head` (`foldEqualsReplay` checks a fold against its
+ * projection). Like the projection, it may require services (`R`) and fails
+ * with `RenderError`.
+ *
+ * @public
+ */
+export type SnapshotFold<R = never> = (records: ReadonlyArray<JournalRecord>) => Effect.Effect<FeedPayload, RenderError, R>
+
+/**
+ * Where a cold client starts: the journal folded up to `head`, a sequence the
+ * journal has reached (a session's `seq` when the client connects). A client
+ * at cursor 0, or past `head` (its state is from another journal), gets one
+ * record with sequence `head` carrying the fold, then the records after
+ * `head`; a client at a cursor in `1..head` resumes as without a snapshot.
+ *
+ * @public
+ */
+export interface FeedSnapshot<R = never> {
+  readonly head: number
+  readonly fold: SnapshotFold<R>
+}
+
+/**
+ * How one client's frames are made, beside the cursor and the projection.
+ * `R` is what the snapshot's fold requires (none by default), which the
+ * feed's stream then requires beside the projection's.
+ *
+ * @public
+ */
+export interface FeedFramesOptions<R = never> {
+  /**
+   * What the journal never stores (a reply as it streams, a preview, a
+   * handshake), sent as `FeedTransient` frames after the ready frame.
+   */
+  readonly live?: Stream.Stream<FeedPayload, RenderError>
+  /**
+   * The journal kinds the projection uses (absent or empty: every kind). The
+   * tail reads only those, the snapshot folds only those, and records of
+   * other kinds never reach the projection; the cursor moves past them all
+   * the same.
+   */
+  readonly kinds?: ReadonlyArray<string>
+  /** Start a client at cursor 0, or past the head, from the journal folded up to a head. */
+  readonly snapshot?: FeedSnapshot<R>
+}
+
+/**
  * A journal's frames after a cursor, for one client.
  * - Records come after `after`, in sequence order, projected by `project`;
  *   one ready frame follows the backlog, heartbeats fill idle time, and the
  *   stream ends after the feed's `maxDurationMs`.
+ * - `kinds`, when given, limits the records read, folded and projected to
+ *   those kinds; the cursor still moves past every record the tail returns.
+ * - `snapshot`, when given, starts a client at cursor 0 or past its `head`
+ *   with one record of sequence `head` carrying `fold` of the records up to
+ *   `head`, then continues after `head`: a client that reconnects with that
+ *   sequence resumes from it, and never gets the snapshot again unless the
+ *   journal is behind its cursor.
  * - `live`, when given, carries what the journal never stores (a reply as it
  *   streams, a preview, a handshake): each payload becomes a `FeedTransient`
  *   frame, sent only after the ready frame, and the stream still ends when
@@ -133,8 +197,8 @@ export type FeedProjection<R = never> = (record: JournalRecord) => Effect.Effect
  * @public
  */
 export class RenderFeed extends Context.Service<RenderFeed, {
-  /** The frames after `after`, each record through `project`; the stream requires what the projection requires. */
-  readonly frames: <R = never>(feed: FeedScope, after: number, project: FeedProjection<R>, live?: Stream.Stream<FeedPayload, RenderError>) => Stream.Stream<FeedFrame, RenderError, R>
+  /** The frames after `after`, each record through `project`; the stream requires what the projection and the fold require. */
+  readonly frames: <R = never, RF = never>(feed: FeedScope, after: number, project: FeedProjection<R>, options?: FeedFramesOptions<RF>) => Stream.Stream<FeedFrame, RenderError, R | RF>
 }>()("efferent/render/Feed") {}
 
 /**

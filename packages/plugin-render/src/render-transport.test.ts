@@ -7,18 +7,19 @@ import type { AddressInfo } from "node:net"
 import { Effect, Logger, Option, Result, Schema, Stream } from "effect"
 import { RunId } from "@xandreed/core"
 import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
-import type { FeedFrame } from "./domain/feed-frame.entity.js"
+import type { FeedFrame, FeedPayload, JournalRecord } from "./domain/feed-frame.entity.js"
 import { PrincipalId, RenderMessageId, ThreadId } from "./domain/render-output.entity.js"
 import { RenderError, SurfaceId } from "./domain/render-surface.entity.js"
 import type { VersionId } from "./domain/render-surface.entity.js"
 import { decodeSocketFrame, decodeSse, encodeSocketFrame, encodeSse, nextPollMs, payloadOf, socketResumeOf, ssePreamble, transientOf } from "./domain/feed-frame.entity.functions.js"
 import { sseContentEncodingOf } from "./domain/sse-encoding.entity.functions.js"
-import { RenderStore } from "./ports/render.port.js"
-import type { FeedProjection, RenderTransport, SsePeer } from "./ports/render.port.js"
+import { JournalTail, RenderStore } from "./ports/render.port.js"
+import type { FeedFramesOptions, FeedProjection, RenderFeed, RenderTransport, SnapshotFold, SsePeer } from "./ports/render.port.js"
 import { makeRenderFeed } from "./render-feed.adapter.js"
 import { MemoryRenderStoreLive } from "./render-store.memory.adapter.js"
 import { SseTransport, sseNodePeer, WebSocketTransport } from "./render-transport.adapter.js"
-import { makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
+import { foldEqualsReplay, makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
+import type { FoldReplaySubject } from "./render-transport.conformance.js"
 
 renderTransportConformance({ sse: SseTransport, socket: WebSocketTransport }).forEach((check) => {
   test(`transport conformance: ${check.name}`, async () => {
@@ -44,6 +45,143 @@ renderFeedConformance(makeRenderFeed).forEach((check) => {
   test(`feed conformance: ${check.name}`, async () => {
     await Effect.runPromise(check.run)
   })
+})
+
+const feedChecks = [
+  "the feed resumes after the cursor and sends one ready frame",
+  "an idle feed sends heartbeats and later records in order",
+  "a change signal polls at once instead of waiting out the interval",
+  "live frames follow the ready frame and end with the journal side",
+  "a live stream that ends leaves the journal side following",
+  "a client at cursor 0 or past the head starts from the snapshot, then follows the tail",
+  "a client at a cursor up to the head resumes without the snapshot",
+  "a kinds filter reads, folds and sends only those kinds",
+  "records of other kinds still move the cursor",
+  "the projection and the fold run with the services provided to the stream",
+]
+
+/** A feed made by `makeRenderFeed` whose frame options pass through `change` first. */
+const carelessFeed = (change: <R>(options: FeedFramesOptions<R>) => FeedFramesOptions<R>) => (tail: Parameters<typeof makeRenderFeed>[0], options: Parameters<typeof makeRenderFeed>[1]): typeof RenderFeed.Service => {
+  const feed = makeRenderFeed(tail, options)
+  return { frames: (scope, after, project, framesOptions = {}) => feed.frames(scope, after, project, change(framesOptions)) }
+}
+const failingFeedChecks = (makeFeed: Parameters<typeof renderFeedConformance>[0]) => Effect.runPromise(Effect.forEach(
+  renderFeedConformance(makeFeed),
+  (check) => check.run.pipe(Effect.match({ onFailure: () => [check.name], onSuccess: () => [] })),
+  { concurrency: 1 },
+).pipe(Effect.map((names) => names.flat())))
+
+test("the feed kit's checks are its documented list, and a feed that ignores the snapshot or the kinds fails theirs", async () => {
+  expect(renderFeedConformance(makeRenderFeed).map((check) => check.name)).toEqual(feedChecks)
+  const noSnapshot = carelessFeed(({ snapshot: _snapshot, ...rest }) => rest)
+  const noKinds = carelessFeed(({ kinds: _kinds, ...rest }) => rest)
+  expect(await failingFeedChecks(noSnapshot)).toEqual([
+    "a client at cursor 0 or past the head starts from the snapshot, then follows the tail",
+    "a kinds filter reads, folds and sends only those kinds",
+    "records of other kinds still move the cursor",
+    "the projection and the fold run with the services provided to the stream",
+  ])
+  expect(await failingFeedChecks(noKinds)).toEqual([
+    "a kinds filter reads, folds and sends only those kinds",
+    "records of other kinds still move the cursor",
+  ])
+}, 20_000)
+
+const guestFeed = { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }
+const quick = { pollMs: 5, maxPollMs: 10, heartbeatMs: 1_000, maxDurationMs: 60 }
+
+test("a feed without kinds calls its tail with the feed and the cursor alone, as before", async () => {
+  const calls: Array<number> = []
+  const feed = makeRenderFeed({ read: (...args) => Effect.sync(() => { calls.push(args.length) }).pipe(Effect.as([])) }, quick)
+  await Effect.runPromise(Stream.runDrain(feed.frames(guestFeed, 0, () => Effect.succeed(Option.none()), { kinds: [] })))
+  await Effect.runPromise(Stream.runDrain(feed.frames(guestFeed, 0, () => Effect.succeed(Option.none()))))
+  expect(calls.length > 0 && calls.every((count) => count === 2)).toBe(true)
+})
+
+test("a snapshot head that is no journal sequence fails the feed with invalid, whatever the cursor", async () => {
+  const feed = makeRenderFeed({ read: () => Effect.succeed([]) }, quick)
+  const fold: SnapshotFold = () => Effect.succeed({ event: "snapshot", data: {} })
+  const failures = await Effect.runPromise(Effect.forEach([[0, -1], [0, 1.5], [1, 1.5]], ([after = 0, head = 0]) =>
+    Effect.flip(Stream.runDrain(feed.frames(guestFeed, after, () => Effect.succeed(Option.none()), { snapshot: { head, fold } }))), { concurrency: 1 }))
+  expect(failures.map((failure) => failure.code)).toEqual(["invalid", "invalid", "invalid"])
+})
+
+test("an empty journal's snapshot is the fold of nothing at sequence 0", async () => {
+  const journal = await Effect.runPromise(makeMemoryJournal([]))
+  const folded: Array<number> = []
+  const fold: SnapshotFold = (records) => Effect.sync(() => { folded.push(records.length) }).pipe(Effect.as({ event: "snapshot", data: { empty: true } }))
+  const frames = await Effect.runPromise(Stream.runCollect(makeRenderFeed(journal.tail, quick).frames(guestFeed, 0, () => Effect.succeed(Option.none()), { snapshot: { head: 0, fold } })
+    .pipe(Stream.takeUntil((frame) => frame._tag === "FeedReady"))))
+  expect(Array.from(frames)).toEqual([FeedRecord.make({ sequence: 0, event: "snapshot", data: { empty: true } }), FeedReady.make({})])
+  expect(folded).toEqual([0])
+})
+
+test("a snapshot reads the journal page by page up to its head", async () => {
+  const all = Array.from({ length: 7 }, (_, index): JournalRecord => ({ sequence: index + 1, kind: "message.updated", data: {} }))
+  const reads: Array<number> = []
+  // A tail that returns two records a read, as a paged store does.
+  const feed = makeRenderFeed({ read: (_feed, after) => Effect.sync(() => { reads.push(after) }).pipe(Effect.as(all.filter((record) => record.sequence > after).slice(0, 2))) }, quick)
+  const fold: SnapshotFold = (records) => Effect.succeed({ event: "snapshot", data: { sequences: records.map((record) => record.sequence) } })
+  const frames = await Effect.runPromise(Stream.runCollect(feed.frames(guestFeed, 0, (record) => Effect.succeed(Option.some({ event: "record", data: { at: record.sequence } })), { snapshot: { head: 5, fold } })
+    .pipe(Stream.takeUntil((frame) => frame._tag === "FeedReady"))))
+  expect(Array.from(frames).flatMap((frame) => frame._tag === "FeedRecord" ? [[frame.sequence, frame.event]] : [])).toEqual([[5, "snapshot"], [6, "record"], [7, "record"]])
+  expect(Array.from(frames)[0]).toEqual(FeedRecord.make({ sequence: 5, event: "snapshot", data: { sequences: [1, 2, 3, 4, 5] } }))
+  expect(reads.slice(0, 3)).toEqual([0, 2, 4])
+})
+
+/** A client's state: each message's text by id; a snapshot replaces it whole. */
+type Messages = Readonly<Record<string, string>>
+const Message = Schema.Struct({ id: Schema.String, text: Schema.String })
+const Messages = Schema.Record(Schema.String, Schema.String)
+const sample: ReadonlyArray<JournalRecord> = [
+  { sequence: 1, kind: "message.created", data: { id: "a", text: "" } },
+  { sequence: 2, kind: "tool.input", data: { prompt: "large" } },
+  { sequence: 3, kind: "message.updated", data: { id: "a", text: "Hel" } },
+  { sequence: 4, kind: "message.created", data: { id: "b", text: "x" } },
+  { sequence: 5, kind: "message.updated", data: { id: "a", text: "Hello" } },
+  { sequence: 6, kind: "tool.input", data: { prompt: "large" } },
+]
+const shownKinds = ["message.created", "message.updated"]
+const messageOf = (data: unknown) => Option.getOrElse(Schema.decodeUnknownOption(Message)(data), () => ({ id: "?", text: "" }))
+const messagesProjection: FeedProjection = (record) => Effect.succeed(shownKinds.includes(record.kind) ? Option.some({ event: "message", data: record.data }) : Option.none())
+const messagesFold: SnapshotFold = (records) => Effect.succeed({ event: "messages", data: Object.fromEntries(records.map((record) => { const message = messageOf(record.data); return [message.id, message.text] })) })
+const applyMessage = (state: Messages, payload: FeedPayload): Messages => payload.event === "messages"
+  ? Option.getOrElse(Schema.decodeUnknownOption(Messages)(payload.data), () => ({}))
+  : { ...state, [messageOf(payload.data).id]: messageOf(payload.data).text }
+const subject: FoldReplaySubject<Messages> = { records: sample, kinds: shownKinds, project: messagesProjection, fold: messagesFold, initial: {}, apply: applyMessage }
+const foldFailure = <S>(of: FoldReplaySubject<S>) => Effect.runPromise(foldEqualsReplay(of).pipe(Effect.flip, Effect.map((failure) => failure.message)))
+
+test("foldEqualsReplay passes a fold that equals its projection's replay, at every head", async () => {
+  await Effect.runPromise(foldEqualsReplay(subject))
+})
+
+test("foldEqualsReplay fails a fold that drops a record, folds kinds the projection skips, merges into a stale state, or fails", async () => {
+  const dropsLast: SnapshotFold = (records) => messagesFold(records.slice(0, -1))
+  expect(await foldFailure({ ...subject, fold: dropsLast })).toStartWith("at head 1, the snapshot gives {}, the replay {\"a\":\"\"}")
+  // Without the kinds filter, the fold sees the records the projection skips.
+  expect(await foldFailure({ ...subject, kinds: [] })).toBe("at head 2, the snapshot gives {\"?\":\"\",\"a\":\"\"}, the replay {\"a\":\"\"}")
+  const merges = (state: Messages, payload: FeedPayload): Messages => payload.event === "messages" ? { ...state, ...applyMessage({}, payload) } : applyMessage(state, payload)
+  expect(await foldFailure({ ...subject, apply: merges })).toStartWith("at head 0, the snapshot applied to a client past the head gives")
+  const failing: SnapshotFold = () => Effect.fail(new RenderError({ code: "storage", message: "unreachable" }))
+  expect(await foldFailure({ ...subject, fold: failing })).toBe("the fold or the projection failed: unreachable")
+})
+
+test("a fold and a projection that require different services make a stream that requires both", async () => {
+  const withVersions: FeedProjection<RenderStore> = (record) => RenderStore.use((store) => store.hydrate(surface)).pipe(
+    Effect.map((records) => Option.some({ event: record.kind, data: { versions: records.length } })))
+  // A fold that also reads the whole journal through the tail it is given as a service.
+  const counted: SnapshotFold<JournalTail> = (records) => JournalTail.use((tail) => tail.read(guestFeed, 0)).pipe(
+    Effect.map((all) => ({ event: "snapshot", data: { folded: records.length, stored: all.length } })))
+  const frames = await Effect.runPromise(Effect.gen(function* () {
+    const journal = yield* makeMemoryJournal([{ sequence: 1, kind: "message.updated", data: {} }, { sequence: 2, kind: "message.updated", data: {} }])
+    const stream: Stream.Stream<FeedFrame, RenderError, RenderStore | JournalTail> = makeRenderFeed(journal.tail, quick).frames(guestFeed, 0, withVersions, { snapshot: { head: 1, fold: counted } })
+    return yield* Stream.runCollect(stream.pipe(Stream.takeUntil((frame) => frame._tag === "FeedReady"), Stream.provideService(JournalTail, journal.tail)))
+  }).pipe(Effect.provide(MemoryRenderStoreLive)))
+  expect(Array.from(frames)).toEqual([
+    FeedRecord.make({ sequence: 1, event: "snapshot", data: { folded: 1, stored: 2 } }),
+    FeedRecord.make({ sequence: 2, event: "message.updated", data: { versions: 0 } }),
+    FeedReady.make({}),
+  ])
 })
 
 test("the SSE wire format", () => {
@@ -85,7 +223,7 @@ test("ready is the feed's own frame: a record may carry the name, a transient fr
 test("a live payload named ready fails the feed, which either wire ends quietly", async () => {
   const feed = makeRenderFeed({ read: () => Effect.succeed([]) }, { pollMs: 5, maxPollMs: 10, heartbeatMs: 1_000, maxDurationMs: 1_000 })
   const failed = await Effect.runPromise(Stream.runCollect(feed.frames(
-    { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0, () => Effect.succeed(Option.none()), Stream.make({ event: "ready", data: {} }),
+    { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0, () => Effect.succeed(Option.none()), { live: Stream.make({ event: "ready", data: {} }) },
   )).pipe(Effect.flip))
   expect(failed.code).toBe("invalid")
 })
@@ -97,7 +235,7 @@ test("transient frames never move the cursor a client resumes from", async () =>
   await Effect.runPromise(SseTransport.serve(feed.frames(
     { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0,
     (record) => Effect.succeed(Option.some({ event: record.kind, data: record.data })),
-    Stream.make({ event: "reply.delta", data: { text: "a" } }, { event: "reply.delta", data: { text: "b" } }),
+    { live: Stream.make({ event: "reply.delta", data: { text: "a" } }, { event: "reply.delta", data: { text: "b" } }) },
   ), { write: (chunk) => Effect.sync(() => { written.push(chunk) }), closed: Effect.never, end: Effect.void }))
   // What an EventSource keeps as its last event id: the last id line written, never one of a transient block.
   const ids = written.join("").split("\n").filter((line) => line.startsWith("id: "))

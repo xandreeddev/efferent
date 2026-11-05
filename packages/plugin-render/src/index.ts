@@ -86,7 +86,9 @@ export { sseContentEncodingOf } from "./domain/sse-encoding.entity.functions.js"
  */
 export { ConformanceFailure } from "@xandreed/core/conformance"
 export {
+  type FeedFramesOptions,
   type FeedProjection,
+  type FeedSnapshot,
   JournalTail,
   Render,
   RenderFeed,
@@ -94,6 +96,7 @@ export {
   RenderStore,
   type RenderSurface,
   type RenderTransport,
+  type SnapshotFold,
   type SocketPeer,
   type SsePeer,
 } from "./ports/render.port.js"
@@ -106,4 +109,5 @@ export { SseTransport, sseHeaders, sseNodePeer, WebSocketTransport } from "./ren
 export { renderFeedDefaults, renderFeedPlugin, renderSurfaceDefaults, renderSurfacePlugin } from "./plugin.adapter.js"
 export { renderSurfaceConformance } from "./render-surface.conformance.js"
 export type { ConformanceCheck, SurfaceSubject } from "./render-surface.conformance.js"
-export { makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
+export { foldEqualsReplay, makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
+export type { FoldReplaySubject } from "./render-transport.conformance.js"
