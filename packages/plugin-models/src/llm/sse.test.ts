@@ -6,6 +6,7 @@ import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { finishReasonFromWire, sseStreamParts } from "./sse.js"
 import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
 import { modelRetryDefaults } from "./model-retry-policy.entity.js"
+import { scriptedChatCompletions } from "../transport/scripted-chat.adapter.js"
 
 /**
  * The SSE state machine's spec: exact part sequences from canned wires,
@@ -585,27 +586,8 @@ describe("sseStreamParts", () => {
 })
 
 describe("compat streamText", () => {
-  const sseResponse = (text: string): typeof fetch =>
-    ((_url: unknown, _init?: unknown) =>
-      Promise.resolve(
-        new Response(bodyFromChunks([enc.encode(text)]), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
-      )) as typeof fetch
-
   test("sends stream:true + include_usage and yields schema-valid decoded parts", async () => {
-    const calls: Array<{ body: unknown }> = []
-    const impl = ((url: unknown, init?: { body?: unknown }) => {
-      calls.push({ body: JSON.parse(String(init?.body ?? "{}")) })
-      return (sseResponse(
-        wire(
-          `{"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}`,
-          `{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-          `[DONE]`,
-        ),
-      ) as (u: unknown, i?: unknown) => Promise<Response>)(url, init)
-    }) as typeof fetch
+    const scripted = scriptedChatCompletions([{ text: "hi", usage: { promptTokens: 1, completionTokens: 1 } }])
     const parts = await Effect.runPromise(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -613,16 +595,16 @@ describe("compat streamText", () => {
           chatUrl: "https://gw.example/chat/completions",
           apiKey: "k",
           model: "test-model",
-          fetchImpl: impl,
+          fetchImpl: scripted.fetch,
         })
         return yield* Stream.runCollect(
           svc.streamText({ prompt: [{ role: "user", content: "hi" }] } as never),
         )
       }).pipe(Effect.scoped),
     )
-    const sent = calls[0]?.body as { stream: boolean; stream_options: unknown }
-    expect(sent.stream).toBe(true)
-    expect(sent.stream_options).toEqual({ include_usage: true })
+    const [sent] = await Effect.runPromise(scripted.requests)
+    expect(sent?.stream).toBe(true)
+    expect(sent?.body["stream_options"]).toEqual({ include_usage: true })
     const types = parts.map((part) => (part as { type: string }).type)
     expect(types).toEqual(["text-start", "text-delta", "text-end", "finish"])
     const delta = parts[1] as { delta: string }
@@ -652,26 +634,11 @@ describe("compat streamText", () => {
   })
 
   test("live dribble: the first delta arrives while the server still holds the tail", async () => {
+    // A scripted reply served over a real socket, its tail held 300 ms after the first text.
+    const scripted = scriptedChatCompletions([{ text: ["first", " second"], beforeChunk: (chunk) => chunk === 2 ? Effect.sleep("300 millis") : Effect.void }])
     const server = Bun.serve({
       port: 0,
-      fetch: () =>
-        new Response(
-          new ReadableStream({
-            async start(controller) {
-              controller.enqueue(
-                enc.encode(`data: {"choices":[{"delta":{"content":"first"}}]}\n\n`),
-              )
-              await new Promise((resolve) => setTimeout(resolve, 300))
-              controller.enqueue(
-                enc.encode(
-                  `data: {"choices":[{"delta":{"content":" second"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`,
-                ),
-              )
-              controller.close()
-            },
-          }),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        ),
+      fetch: async (request) => scripted.fetch(request.url, { method: request.method, headers: request.headers, body: await request.text() }),
     })
     const stamps = await Effect.runPromise(
       Effect.gen(function* () {

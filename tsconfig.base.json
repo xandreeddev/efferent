@@ -73,6 +73,9 @@
       "@xandreed/plugin-models/conformance": [
         "packages/plugin-models/src/conformance/index.ts"
       ],
+      "@xandreed/plugin-models/testing": [
+        "packages/plugin-models/src/scripted/index.ts"
+      ],
       "@xandreed/plugin-session-sqlite": [
         "packages/plugin-session-sqlite/src/index.ts"
       ],

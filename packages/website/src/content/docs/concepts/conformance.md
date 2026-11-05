@@ -19,7 +19,9 @@ file-system and shell kits on Bun and Node; `@xandreed/plugin-sessions`,
 `@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` pass the
 sessions, task and registry kits).
 `@xandreed/plugin-render` does the same for render surfaces, feeds and
-transports (see [render kits](#render-kits)).
+transports (see [render kits](#render-kits)). For tests above the model,
+`@xandreed/plugin-models/testing` ships a scripted OpenAI-compatible
+endpoint (see [testing helpers](#testing-helpers)).
 
 ## The kits
 
@@ -951,6 +953,54 @@ reads, delays and scoped cancellation. The shared Agent HTTP fixture runs
 on source Bun and packed Node/Bun, checking fallback reservation, frozen
 step replay and exactly one durable tool execution. These tests establish
 request behavior without claiming live provider acceptance or billing.
+
+## Testing helpers
+
+Kits check an adapter; a test of what runs above the model needs a model
+that answers on cue. `@xandreed/plugin-models/testing` exports
+`scriptedChatCompletions(script)`, an OpenAI-compatible chat-completions
+endpoint in the process, so a test or an evaluation runs the production
+compat client and models plugin and fakes only the transport. It returns
+`fetch` (the plugin's `ModelsTransport` fetch, or a compat client's
+`fetchImpl`), `requests` (every request, with the step that answered it) and
+`remaining` (the steps not yet used).
+
+```ts
+import { Effect } from "effect"
+import { scriptedChatCompletions } from "@xandreed/plugin-models/testing"
+
+const endpoint = scriptedChatCompletions([
+  { toolCalls: [{ name: "lookup", arguments: ['{"query":', '"alpha"}'] }], usage: { promptTokens: 12, completionTokens: 4 } },
+  { text: "Found alpha.", repeat: true },
+])
+const response = await endpoint.fetch("https://scripted.invalid/v1/chat/completions", {
+  method: "POST",
+  body: JSON.stringify({ model: "m", stream: true, messages: [] }),
+})
+const left = Effect.runSync(endpoint.remaining) // [1]: the repeat step stays
+```
+
+What it sends is the wire a compatible endpoint sends:
+
+- **steps**: a request takes the first step, in order, that is available
+  (unused, or `repeat`) and whose optional `when(request)` accepts it.
+- **streamed**: one `data:` event per read: the assistant role, the
+  reasoning and text fragments, each call's first chunk (its id when the
+  step gives one, and its name) then its arguments fragments, the finish
+  reason, the usage on a final chunk with no choices, `[DONE]`. A string is
+  split every `chunkSize` characters (default `SCRIPTED_CHUNK_SIZE`, 8); an
+  array is sent fragment by fragment.
+- **settled**: a request without `stream: true` gets one body with the
+  whole text, reasoning and calls.
+- **usage**: only a step's own `usage`, so a step without one reads as
+  unknown usage, never a measured zero.
+- **pacing**: `beforeChunk(index)` runs before each chunk is sent, to hold a
+  reply's tail until the test has seen its head.
+- **refusal**: a request no step answers (its body is no JSON object, no
+  step matches, a `when` throws) gets HTTP 400 and an OpenAI error naming the
+  request and the steps left; the compat client fails it at once as an
+  invalid request, without retrying. An aborted request rejects with its
+  signal's reason.
 
 ## Render kits
 

@@ -561,6 +561,20 @@ const { modelCatalogConformance } = await import("@xandreed/core/conformance")
 const { authStoreConformance, modelRequestConformance, settingsStoreConformance } = await import("@xandreed/plugin-models/conformance")
 const modelRequestChecks = await runKit("ModelRequest", modelRequestConformance())
 if (modelRequestChecks !== 5) { console.error("the packed default request-policy kit did not run all five checks"); process.exit(1) }
+// The scripted chat-completions endpoint of the packed testing entry, under the packed compat client: fragments, final-chunk usage, the request recorded.
+const { makeCompatLanguageModel } = await import("@xandreed/plugin-models/compat")
+const { scriptedChatCompletions } = await import("@xandreed/plugin-models/testing")
+const scriptedEndpoint = scriptedChatCompletions([{ text: "scripted on Node", usage: { promptTokens: 3, completionTokens: 2 }, chunkSize: 4 }])
+const scriptedParts = await Effect.runPromise(Effect.flatMap(
+  makeCompatLanguageModel({ moduleName: "Scripted", chatUrl: "https://scripted.invalid/v1/chat/completions", model: "m", fetchImpl: scriptedEndpoint.fetch }),
+  (client) => Stream.runCollect(client.streamText({ prompt: "hi" }))))
+const scriptedText = scriptedParts.filter((part) => part.type === "text-delta").map((part) => part.delta)
+const scriptedRequests = await Effect.runPromise(scriptedEndpoint.requests)
+if (JSON.stringify(scriptedText) !== JSON.stringify(["scri", "pted", " on ", "Node"]) || scriptedParts.at(-1)?.usage?.inputTokens?.total !== 3
+  || scriptedRequests.length !== 1 || scriptedRequests[0].stream !== true) {
+  console.error("the packed scripted endpoint on Node: " + JSON.stringify({ scriptedText, requests: scriptedRequests.length })); process.exit(1)
+}
+console.log("On Node, the packed scripted chat-completions endpoint streamed a reply through the packed compat client")
 const { AuthStore, ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport, SettingsStore } = await import("@xandreed/plugin-models")
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
 const { dirname } = await import("node:path")

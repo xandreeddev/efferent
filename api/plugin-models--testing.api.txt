@@ -1,0 +1,16 @@
+const SCRIPTED_CHUNK_SIZE
+const ScriptedFinishReason
+const ScriptedReply
+const ScriptedText
+const ScriptedToolCall
+const ScriptedUsage
+const scriptedChatCompletions
+interface ScriptedChatCompletions
+interface ScriptedRequest
+interface ScriptedRequestRecord
+type ScriptedFinishReason
+type ScriptedReply
+type ScriptedStep
+type ScriptedText
+type ScriptedToolCall
+type ScriptedUsage

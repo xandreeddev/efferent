@@ -79,6 +79,56 @@ and [result digests](/docs/plugins/memory-digest/) for supported tool results.
 The [context and journal guide](/docs/concepts/context-journal/) explains where
 their helper outputs are recorded and how later requests use them.
 
+## Test without a key
+
+`@xandreed/plugin-models/testing` exports `scriptedChatCompletions`, an
+OpenAI-compatible chat-completions endpoint that answers from a script in
+the process. Give its `fetch` to the plugin as the host's `ModelsTransport`
+(or to a compat client as `fetchImpl`): the production client, its retries
+and its usage accounting run, with no key and no network.
+
+```ts
+import { Context, Effect } from "effect"
+import { modelsPlugin, ModelsTransport } from "@xandreed/plugin-models"
+import { scriptedChatCompletions } from "@xandreed/plugin-models/testing"
+import type { ScriptedRequest } from "@xandreed/plugin-models/testing"
+
+const sawResult = (request: ScriptedRequest) => JSON.stringify(request.body["messages"] ?? []).includes("FOUND")
+const endpoint = scriptedChatCompletions([
+  {
+    toolCalls: [{ name: "lookup", arguments: JSON.stringify({ query: "alpha" }) }],
+    usage: { promptTokens: 40, completionTokens: 9 },
+    when: (request) => !sawResult(request),
+  },
+  { text: "Found alpha.", when: sawResult },
+])
+
+const plugins = [
+  { plugin: modelsPlugin, options: {
+    model: "scripted:m",
+    storage: "memory",
+    endpoints: { scripted: { url: "https://scripted.invalid/v1" } },
+  } },
+]
+const services = Context.make(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch }))
+// Agent.define({ plugins, services, ... }), run a turn, then:
+const seen = Effect.runSync(endpoint.requests)
+```
+
+A request takes the first step, in script order, that is still available
+and whose `when` accepts it; a step without `when` takes the next request,
+and a `repeat` step keeps answering. A streamed request gets the reply as
+`data:` chunks, one per read: the text and each tool call's arguments in
+fragments of `chunkSize` characters (default 8; give an array to choose the
+fragments), the usage on the final chunk, then `[DONE]`. A settled request
+gets the whole reply in one body. A step without `usage` reports none, which
+the plugin records as unknown, not zero. `beforeChunk` runs before each chunk
+is sent, to hold or slow a stream. A request no step answers is refused with
+HTTP 400 and an error naming it and the steps left, so the call fails at once
+instead of being retried. `requests` lists every request with the step that
+answered it, and `remaining` the steps no request has used. A script can be
+kept as JSON and decoded with the `ScriptedReply` schema.
+
 <!-- plugin-reference:start -->
 
 ## Generated configuration reference

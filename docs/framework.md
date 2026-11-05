@@ -387,8 +387,11 @@ holds: a kit is imported from its entry. The turn engine is
 so is the `ToolRegistry` kit, which runs its turns over that engine
 (`@xandreed/sdk/conformance`). The credential and settings stores
 (`AuthStore`, `SettingsStore`) are the models plugin's own ports:
-`@xandreed/plugin-models` exports them, and
-`@xandreed/plugin-models/conformance` their kits.
+`@xandreed/plugin-models` exports them,
+`@xandreed/plugin-models/conformance` their kits, and
+`@xandreed/plugin-models/testing` `scriptedChatCompletions`, a scripted
+OpenAI-compatible endpoint for tests and evaluations that run the
+production compat client with no key.
 
 The sdk's root names each of its exports: `Agent` (`AgentConfig`,
 `AgentPluginEntry`), `agentTaskExecutor`, the turn engine, and the names of

@@ -7,6 +7,7 @@ import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, promptWithImageLabels, thinkingParams, toChatMessages } from "./compat.js"
 import type { CompatConfig } from "./compat.js"
 import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
+import { scriptedChatCompletions } from "../transport/scripted-chat.adapter.js"
 import { modelRetryDefaults } from "./model-retry-policy.entity.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
@@ -18,21 +19,10 @@ const completion = (body: unknown, status = 200): typeof fetch =>
       }),
     )) as typeof fetch
 
-const capture = (): { calls: Array<{ url: string; body: unknown }>; impl: typeof fetch } => {
-  const calls: Array<{ url: string; body: unknown }> = []
-  const impl = ((url: unknown, init?: { body?: unknown }) => {
-    calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) })
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          choices: [{ finish_reason: "stop", message: { content: "ok" } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }),
-        { status: 200 },
-      ),
-    )
-  }) as typeof fetch
-  return { calls, impl }
+/** A compat endpoint that answers every request with `text`, and the requests it has seen. */
+const capture = (text = "ok") => {
+  const scripted = scriptedChatCompletions([{ text, usage: { promptTokens: 1, completionTokens: 1 }, repeat: true }])
+  return { impl: scripted.fetch, requests: () => Effect.runSync(scripted.requests) }
 }
 
 const Echo = Tool.make("echo", {
@@ -45,7 +35,7 @@ const Echo = Tool.make("echo", {
 
 describe("makeCompatLanguageModel", () => {
   test("its request descriptor matches the public options sent on the wire", async () => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     const descriptor = await Effect.runPromise(Effect.gen(function* () {
       const svc = yield* makeCompatLanguageModel({
         moduleName: "Test", model: "kimi-k2-code", chatUrl: "https://gw.example/chat/completions",
@@ -60,7 +50,7 @@ describe("makeCompatLanguageModel", () => {
     ))
     expect(Option.isSome(descriptor)).toBe(true)
     if (Option.isSome(descriptor)) {
-      const sent = calls[0]!.body as Schema.JsonObject
+      const sent = requests()[0]!.body as Schema.JsonObject
       expect(descriptor.value).toEqual({
         provider: "Test", model: "kimi-k2-code",
         settings: Object.fromEntries(Object.entries(sent).filter(([key]) => !["messages", "model", "stream"].includes(key))),
@@ -69,7 +59,7 @@ describe("makeCompatLanguageModel", () => {
     }
   })
   test("the wire keeps its key order: sampling before the messages, gateway extensions after them", async () => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     await Effect.runPromise(Effect.gen(function* () {
       const svc = yield* makeCompatLanguageModel({
         moduleName: "Test", model: "kimi-k2-code", chatUrl: "https://gw.example/chat/completions",
@@ -80,12 +70,12 @@ describe("makeCompatLanguageModel", () => {
       Effect.provideService(CurrentPromptCacheKey, Option.some("lane:test")),
       Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high", maxOutputTokens: 32 })),
     ))
-    expect(Object.keys(calls[0]!.body as Record<string, unknown>)).toEqual([
+    expect(Object.keys(requests()[0]!.body as Record<string, unknown>)).toEqual([
       "model", "temperature", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort", "max_tokens",
     ])
   })
   test("sends chat-completions shape: system + messages + tools + bearer key", async () => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -107,15 +97,15 @@ describe("makeCompatLanguageModel", () => {
       }),
     )
     expect(result.text).toBe("ok")
-    const sent = calls[0]?.body as {
+    const sent = requests()[0]?.body as {
       model: string
       stream: boolean
       messages: ReadonlyArray<{ role: string; content: string }>
     }
-    expect(calls[0]?.url).toBe("https://gw.example/chat/completions")
+    expect(requests()[0]?.url).toBe("https://gw.example/chat/completions")
     expect(sent.model).toBe("test-model")
     expect(sent.stream).toBe(false)
-    expect(calls[0]?.body).toMatchObject({ temperature: 0.25 })
+    expect(requests()[0]?.body).toMatchObject({ temperature: 0.25 })
     expect(sent.messages).toEqual([
       { role: "system", content: "sys" },
       { role: "user", content: "hi" },
@@ -123,21 +113,18 @@ describe("makeCompatLanguageModel", () => {
   })
 
   test("generateObject can disable thinking while preserving schema validation", async () => {
-    const calls: unknown[] = []
+    const { requests, impl } = capture('{"covered":true}')
     const result = await Effect.runPromise(Effect.gen(function* () {
       const svc = yield* makeCompatLanguageModel({
         moduleName: "Test", chatUrl: "https://gw.example/chat", apiKey: "test", model: "deepseek-flash", thinking: "disabled", reasoningEffort: "none",
-        fetchImpl: ((url: unknown, init: { body?: string }) => {
-          calls.push(JSON.parse(init.body ?? "{}"))
-          return completion({ choices: [{ finish_reason: "stop", message: { content: '{"covered":true}' } }] })(String(url))
-        }) as typeof fetch,
+        fetchImpl: impl,
       })
       return yield* svc.generateObject({ prompt: "Judge coverage", objectName: "grounding", schema: Schema.Struct({ covered: Schema.Boolean }) }).pipe(Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 256 })))
     }))
     expect(result.value).toEqual({ covered: true })
-    expect(calls[0]).toMatchObject({ thinking: { type: "disabled" }, reasoning: { effort: "none" }, max_tokens: 256 })
-    expect(calls[0]).not.toHaveProperty("reasoning_effort")
-    expect(calls[0]).toMatchObject({ response_format: { type: "json_schema", json_schema: { name: "grounding", strict: true, schema: { type: "object", required: ["covered"] } } } })
+    expect(requests()[0]?.body).toMatchObject({ thinking: { type: "disabled" }, reasoning: { effort: "none" }, max_tokens: 256 })
+    expect(requests()[0]?.body).not.toHaveProperty("reasoning_effort")
+    expect(requests()[0]?.body).toMatchObject({ response_format: { type: "json_schema", json_schema: { name: "grounding", strict: true, schema: { type: "object", required: ["covered"] } } } })
   })
 
   test("a non-OK status becomes a status-classified AiError with the status + body excerpt", async () => {
@@ -259,7 +246,7 @@ describe("makeCompatLanguageModel", () => {
     // 24/24 no-think turns emitted degenerate empty tool calls (live
     // forensics) — kimi/deepseek get thinking:{type:"enabled"}, qwen gets
     // enable_thinking, unknown families get nothing.
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     await Effect.runPromise(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -272,10 +259,10 @@ describe("makeCompatLanguageModel", () => {
         return yield* svc.generateText({ prompt: [{ role: "user", content: "hi" }] } as never)
       }),
     )
-    expect((calls[0]?.body as { thinking?: unknown }).thinking).toEqual({ type: "enabled" })
+    expect((requests()[0]?.body as { thinking?: unknown }).thinking).toEqual({ type: "enabled" })
     // The CODE variant rides HIGH effort (live-probed: 103 → 398 reasoning
     // tokens on the same prompt); the conversational tiers stay light.
-    expect((calls[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("high")
+    expect((requests()[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("high")
     expect(thinkingParams("kimi-k2.7-code")).toEqual({
       thinking: { type: "enabled" },
       reasoning_effort: "high",
@@ -287,7 +274,7 @@ describe("makeCompatLanguageModel", () => {
   })
 
   test("a dedicated agent policy overrides family effort and pins its output budget", async () => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     await Effect.runPromise(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -302,8 +289,8 @@ describe("makeCompatLanguageModel", () => {
         Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 1800 })),
       ),
     )
-    expect((calls[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("low")
-    expect((calls[0]?.body as { max_tokens?: unknown }).max_tokens).toBe(1800)
+    expect((requests()[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("low")
+    expect((requests()[0]?.body as { max_tokens?: unknown }).max_tokens).toBe(1800)
   })
 
   test("BOTH reasoning vocabularies parse into a reasoning part", async () => {
@@ -397,7 +384,7 @@ describe("makeCompatLanguageModel", () => {
   })
 
   test("the engine's cache identity rides as prompt_cache_key; absent when unstamped", async () => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     const svc = await Effect.runPromise(
       makeCompatLanguageModel({
         moduleName: "Test",
@@ -412,15 +399,15 @@ describe("makeCompatLanguageModel", () => {
       request.pipe(Effect.provideService(CurrentPromptCacheKey, Option.some("conv-abc"))),
     )
     await Effect.runPromise(request)
-    expect((calls[0]?.body as { prompt_cache_key?: string }).prompt_cache_key).toBe("conv-abc")
-    expect("prompt_cache_key" in (calls[1]?.body as Record<string, unknown>)).toBe(false)
+    expect((requests()[0]?.body as { prompt_cache_key?: string }).prompt_cache_key).toBe("conv-abc")
+    expect("prompt_cache_key" in (requests()[1]?.body as Record<string, unknown>)).toBe(false)
   })
 })
 
 describe("makeCompatLanguageModel: endpoint extensions and a model's output cap", () => {
   const routed = { provider: { order: ["first-host", "second-host"], allow_fallbacks: false }, store: false }
   const call = (config: Partial<CompatConfig>, policy: Option.Option<ModelCallPolicy> = Option.none()) => {
-    const { calls, impl } = capture()
+    const { requests, impl } = capture()
     const admitted: Array<Readonly<Record<string, unknown>>> = []
     const run = Effect.gen(function* () {
       const svc = yield* makeCompatLanguageModel({
@@ -436,14 +423,14 @@ describe("makeCompatLanguageModel: endpoint extensions and a model's output cap"
       Effect.provideService(CurrentModelCallPolicy, policy),
       Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 }),
     )
-    return { calls, admitted, run }
+    return { requests, admitted, run }
   }
   const settingsOf = (sent: unknown) => Object.fromEntries(Object.entries(sent as Schema.JsonObject).filter(([key]) => !["messages", "model", "stream"].includes(key)))
 
   test("extensions are sent after the gateway extensions, and beforeRequest and the descriptor see the body that is sent", async () => {
-    const { calls, admitted, run } = call({ extensions: routed }, Option.some({ effort: "low", maxOutputTokens: 64 }))
+    const { requests, admitted, run } = call({ extensions: routed }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     const descriptor = await Effect.runPromise(run)
-    const sent = calls[0]!.body as Record<string, unknown>
+    const sent = requests()[0]!.body as Record<string, unknown>
     expect(Object.keys(sent)).toEqual(["model", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort", "max_tokens", "provider", "store"])
     expect(sent).toMatchObject(routed)
     expect(admitted).toEqual([sent])
@@ -453,39 +440,39 @@ describe("makeCompatLanguageModel: endpoint extensions and a model's output cap"
   test("an extension replaces a derived setting of the same name and is sent with standardOnly too", async () => {
     const replaced = call({ extensions: { reasoning_effort: "medium", max_tokens: 99 } }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     await Effect.runPromise(replaced.run)
-    expect(replaced.calls[0]!.body).toMatchObject({ reasoning_effort: "medium", max_tokens: 99 })
+    expect(replaced.requests()[0]!.body).toMatchObject({ reasoning_effort: "medium", max_tokens: 99 })
     const standard = call({ standardOnly: true, extensions: routed }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     const descriptor = await Effect.runPromise(standard.run)
-    expect(settingsOf(standard.calls[0]!.body)).toEqual(routed)
+    expect(settingsOf(standard.requests()[0]!.body)).toEqual(routed)
     expect(Option.getOrThrow(descriptor).settings).toEqual(routed)
   })
 
   test("maxOutputTokens is the cap when the call policy sets none; a call policy's cap wins", async () => {
     const unset = call({ maxOutputTokens: 512 })
     const descriptor = await Effect.runPromise(unset.run)
-    expect(unset.calls[0]!.body).toMatchObject({ max_tokens: 512 })
+    expect(unset.requests()[0]!.body).toMatchObject({ max_tokens: 512 })
     expect(Option.getOrThrow(descriptor).settings).toMatchObject({ max_tokens: 512 })
     const uncapped = call({ maxOutputTokens: 512 }, Option.some({ effort: "low" }))
     await Effect.runPromise(uncapped.run)
-    expect(uncapped.calls[0]!.body).toMatchObject({ max_tokens: 512, reasoning_effort: "low" })
+    expect(uncapped.requests()[0]!.body).toMatchObject({ max_tokens: 512, reasoning_effort: "low" })
     const capped = call({ maxOutputTokens: 512 }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     await Effect.runPromise(capped.run)
-    expect(capped.calls[0]!.body).toMatchObject({ max_tokens: 64 })
+    expect(capped.requests()[0]!.body).toMatchObject({ max_tokens: 64 })
   })
 
   test("with standardOnly the model's cap is sent and the call policy's is not, as before", async () => {
     const own = call({ standardOnly: true, maxOutputTokens: 512 }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     await Effect.runPromise(own.run)
-    expect(settingsOf(own.calls[0]!.body)).toEqual({ max_tokens: 512 })
+    expect(settingsOf(own.requests()[0]!.body)).toEqual({ max_tokens: 512 })
     const none = call({ standardOnly: true }, Option.some({ effort: "low", maxOutputTokens: 64 }))
     await Effect.runPromise(none.run)
-    expect(settingsOf(none.calls[0]!.body)).toEqual({})
+    expect(settingsOf(none.requests()[0]!.body)).toEqual({})
   })
 
   test("without extensions or a cap the body is unchanged", async () => {
-    const { calls, run } = call({})
+    const { requests, run } = call({})
     await Effect.runPromise(run)
-    expect(Object.keys(calls[0]!.body as Record<string, unknown>)).toEqual(["model", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort"])
+    expect(Object.keys(requests()[0]!.body as Record<string, unknown>)).toEqual(["model", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort"])
   })
 
   test("an extension naming a field the request is made of, or a cap that is no positive integer, fails as an invalid request before any send", async () => {
@@ -496,11 +483,11 @@ describe("makeCompatLanguageModel: endpoint extensions and a model's output cap"
       [{ maxOutputTokens: 1.5 }, "maxOutputTokens must be a positive integer, got 1.5"],
     ]
     await Effect.runPromise(Effect.forEach(cases, ([config, description]) => {
-      const { calls, admitted, run } = call(config)
+      const { requests, admitted, run } = call(config)
       return run.pipe(Effect.flip, Effect.map((error) => {
         expect(AiError.isAiError(error) && error.reason._tag).toBe("InvalidRequestError")
         expect(AiError.isAiError(error) && error.reason.message).toContain(description)
-        expect(calls).toHaveLength(0)
+        expect(requests()).toHaveLength(0)
         expect(admitted).toHaveLength(0)
       }))
     }, { concurrency: 1 }))

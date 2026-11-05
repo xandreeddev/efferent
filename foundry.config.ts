@@ -148,6 +148,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-models/src/index.ts",
   "packages/plugin-models/src/compat/index.ts",
   "packages/plugin-models/src/conformance/index.ts",
+  "packages/plugin-models/src/scripted/index.ts",
   "packages/plugin-memory-window/src/index.ts",
   "packages/plugin-memory-summary/src/index.ts",
   "packages/plugin-memory-digest/src/index.ts",
