@@ -9,8 +9,12 @@ explicit synchronization and bounded backfill.
 
 Keep the existing `ConversationMemory` strategies independent. Never promote
 assistant proposals or handler success into confirmed domain effects. Retrieved
-sections and the memory/RAG tools' outputs are excluded from capture. All model
-tools derive scope from `RunContext.session.owner`; only host APIs accept scopes.
+sections and the memory/RAG tools' outputs are excluded from capture. The read
+tools and the recall section take the owner and any source filter from the run's
+`KnowledgeNarrowing` (by default `RunContext.session.owner`, no filter); only
+host APIs accept scopes. Narrowing never widens a write: `remember_memory`,
+`forget_memory` and capture keep the session's owner, and `forget_memory`
+refuses a source outside the filter as not found.
 
 Extraction and query protocols are core's shared native knowledge helpers. Extract
 through `extractKnowledge` (one call and review per `maxExtractionChars` window,
@@ -57,7 +61,7 @@ those dependencies to production. See the repository skills and definition of do
 | Parameters, failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:21` | exact, `src/memory-capability.adapter.test.ts:38` |
 | Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:41`, `:47` | exact, `src/memory-capability.adapter.test.ts:56`; exact, `src/memory-capability.adapter.test.ts:59`; exact, `src/memory-capability.adapter.test.ts:60` |
 | Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:44` | exact, `src/memory-capability.adapter.test.ts:57` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:84` | exact, `src/memory-capability.adapter.test.ts:33`; exact, `src/memory-capability.adapter.test.ts:34` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:90` | exact, `src/memory-capability.adapter.test.ts:33`; exact, `src/memory-capability.adapter.test.ts:34` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:50` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 

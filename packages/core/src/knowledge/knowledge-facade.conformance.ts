@@ -4,7 +4,7 @@ import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect } from "../conformance.functions.js"
 import type { Knowledge, LongTermMemory } from "../ports/knowledge.port.js"
 import { KnowledgeJobId, KnowledgeSourceId } from "./knowledge.entity.js"
-import type { KnowledgeScope } from "./knowledge.entity.js"
+import type { KnowledgeRecallResult, KnowledgeScope } from "./knowledge.entity.js"
 
 /** Fresh native memory service, with workers disabled and valid scripted extraction. @public */
 export interface LongTermMemorySubject {
@@ -75,6 +75,23 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
       const recalled = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000 })
       const status = yield* fixture.facade.status(fixture.scope, job.id)
       yield* expect(id, Option.isNone(source) && Result.isFailure(replay) && recalled.candidates.length === 0 && recalled.graph.assertions.length === 0 && Option.exists(status, (value) => value.phase._tag === "Cancelled" && Option.isNone(value.stage)), "forgotten source evidence survived or replay resurrected it")
+    })),
+    test("source-filter", (fixture, id) => Effect.gen(function* () {
+      const first = yield* seed(fixture, id)
+      const other = { ...sourceOf(fixture.scope), ref: { id: KnowledgeSourceId.make("facade-other"), revision: 1 } }
+      yield* fixture.facade.accept({ jobId: KnowledgeJobId.make("facade-other-job"), source: other, engine: "facade-kit", expectedRevision: Option.none() })
+      yield* expect(id, (yield* fixture.facade.process(fixture.scope, 1)) === 1, "explicit processing did not complete a second accepted source")
+      const recall = (sources?: ReadonlyArray<KnowledgeSourceId>) => fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000, ...(sources === undefined ? {} : { sources }) })
+      const cited = (result: KnowledgeRecallResult): ReadonlyArray<string> => [
+        ...result.candidates.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.provenance, Chunk: ({ chunk }) => [chunk.provenance] })),
+        ...result.graph.assertions.flatMap((edge) => edge.provenance), ...result.graph.entities.flatMap((entity) => entity.provenance),
+      ].map((span) => span.source.id)
+      const narrowed = cited(yield* recall([first.source.id]))
+      const empty = yield* recall([])
+      const whole = cited(yield* recall())
+      yield* expect(id, narrowed.length > 0 && narrowed.every((source) => source === first.source.id) && whole.includes(first.source.id) && whole.includes(other.ref.id) &&
+        empty.candidates.length === 0 && empty.graph.assertions.length === 0 && empty.graph.entities.length === 0,
+      "recall narrowed to one source returned another's evidence or none of its own, an empty filter returned evidence, or an unfiltered recall missed a source")
     })),
     test("retrieval-bounds", (fixture, id) => Effect.gen(function* () {
       yield* seed(fixture, id)

@@ -153,11 +153,20 @@ export const KnowledgeCandidate = Schema.Union([
   Schema.TaggedStruct("Chunk", { chunk: KnowledgeChunk, score: Schema.Number }),
 ])
 export type KnowledgeCandidate = typeof KnowledgeCandidate.Type
+/**
+ * The only sources a read may return evidence from, by id, within its scope: a record is kept
+ * when every span of its provenance cites one of them. An empty list returns nothing; leaving
+ * the filter out reads every source of the scope. At most 1000 ids.
+ * @public
+ */
+export const KnowledgeSourceFilter = Schema.Array(KnowledgeSourceId).check(Schema.isMaxLength(1000))
+export type KnowledgeSourceFilter = typeof KnowledgeSourceFilter.Type
 /** @public */
 export const KnowledgeSearch = Schema.Struct({
   scope: KnowledgeScope, query: Schema.String, vector: Schema.OptionFromNullOr(KnowledgeVector),
   limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
   knownAt: Schema.OptionFromNullOr(Count),
+  sources: Schema.optionalKey(KnowledgeSourceFilter),
 })
 export type KnowledgeSearch = typeof KnowledgeSearch.Type
 /** @public */
@@ -179,8 +188,17 @@ export type KnowledgeSnapshot = typeof KnowledgeSnapshot.Type
 export const KnowledgeRecall = Schema.Struct({
   scope: KnowledgeScope, query: Schema.String, limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
   maxChars: Positive, graph: Schema.optionalKey(Schema.Union([Schema.Literal(false), Schema.Struct({ perspective: Schema.Struct({ validAt: Schema.optionalKey(Count), knownAt: Schema.optionalKey(Count) }), depth: Positive.check(Schema.isLessThanOrEqualTo(3)) })])),
+  /** Candidates and graph evidence only from these sources; graph entities keep only their spans in them. */
+  sources: Schema.optionalKey(KnowledgeSourceFilter),
 })
 export type KnowledgeRecall = typeof KnowledgeRecall.Type
+/**
+ * How far one turn's retrieval reaches: the owner whose knowledge it reads and, when given,
+ * the only sources it may read (`KnowledgeNarrowing` returns it).
+ * @public
+ */
+export const KnowledgeReach = Schema.Struct({ owner: Text, sources: Schema.optionalKey(KnowledgeSourceFilter) })
+export type KnowledgeReach = typeof KnowledgeReach.Type
 /** @public */
 export const KnowledgeRecallResult = Schema.Struct({ candidates: Schema.Array(KnowledgeCandidate), graph: KnowledgeSubgraph })
 export type KnowledgeRecallResult = typeof KnowledgeRecallResult.Type

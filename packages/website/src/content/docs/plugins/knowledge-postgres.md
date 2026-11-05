@@ -80,6 +80,10 @@ owner, namespace and collection strings match. Every operation is scoped by
 those three coordinates. `TemporalGraph` reads the memory domain; the document
 store exposes its own graph traversal.
 
+A search's `sources` filter is applied in SQL, before ranking and limits: a
+chunk's source must be listed, and a memory is returned only when none of its
+recorded source links names an unlisted source. An empty list returns nothing.
+
 The lexical arm uses PostgreSQL text ranking with the `simple` configuration.
 The vector arm uses exact pgvector cosine ranking. This is not a BM25 or an
 approximate-nearest-neighbor implementation. Measure corpus size and query cost

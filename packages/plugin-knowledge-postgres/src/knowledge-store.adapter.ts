@@ -353,10 +353,23 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         const when = nullable(query.knownAt)
         const base = params(domain, query.scope)
         const memoryTime = "(($5::float8 IS NULL AND known_to IS NULL) OR ($5::float8 IS NOT NULL AND known_from <= $5 AND (known_to IS NULL OR $5 < known_to)))"
-        const lexicalMemories = yield* tx.rows(memoryScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(6)})::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND lexical @@ ${lexicalQuery(6)} ORDER BY score DESC,id LIMIT $7`, [...base, when, query.query, query.limit])
-        const lexicalChunks = yield* tx.rows(chunkScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(5)})::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND lexical @@ ${lexicalQuery(5)} ORDER BY score DESC,id LIMIT $6`, [...base, query.query, query.limit])
-        const semanticMemories = vector ? yield* tx.rows(memoryScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($6::vector)=0 THEN 0 ELSE 1-(embedding <=> $6::vector) END::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND embedding IS NOT NULL ORDER BY score DESC,id LIMIT $7`, [...base, when, vectorText(vector), query.limit]) : []
-        const semanticChunks = vector ? yield* tx.rows(chunkScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($5::vector)=0 THEN 0 ELSE 1-(embedding <=> $5::vector) END::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND embedding IS NOT NULL ORDER BY score DESC,id LIMIT $6`, [...base, vectorText(vector), query.limit]) : []
+        // A source filter is its statement's last parameter: a chunk's source is listed, and no span of a memory cites an unlisted one.
+        const listed = query.sources === undefined ? Option.none<string>() : Option.some(yield* strings(query.sources))
+        const filtered = (values: Parameters): Parameters => Option.match(listed, { onNone: () => values, onSome: (sources) => [...values, sources] })
+        const memorySources = (values: Parameters): string => Option.match(listed, { onNone: () => "", onSome: () => ` AND NOT EXISTS (SELECT 1 FROM efferent_knowledge.record_sources r WHERE r.domain=$1 AND r.owner=$2 AND r.namespace=$3 AND r.collection=$4 AND r.kind='memory' AND r.record_id=memories.id AND r.source_id NOT IN (SELECT jsonb_array_elements_text($${values.length + 1}::text::jsonb)))` })
+        const chunkSources = (values: Parameters): string => Option.match(listed, { onNone: () => "", onSome: () => ` AND source_id IN (SELECT jsonb_array_elements_text($${values.length + 1}::text::jsonb))` })
+        const lexicalMemoryValues: Parameters = [...base, when, query.query, query.limit]
+        const lexicalMemories = yield* tx.rows(memoryScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(6)})::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND lexical @@ ${lexicalQuery(6)}${memorySources(lexicalMemoryValues)} ORDER BY score DESC,id LIMIT $7`, filtered(lexicalMemoryValues))
+        const lexicalChunkValues: Parameters = [...base, query.query, query.limit]
+        const lexicalChunks = yield* tx.rows(chunkScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(5)})::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND lexical @@ ${lexicalQuery(5)}${chunkSources(lexicalChunkValues)} ORDER BY score DESC,id LIMIT $6`, filtered(lexicalChunkValues))
+        const semanticMemories = vector ? yield* Effect.suspend(() => {
+          const values: Parameters = [...base, when, vectorText(vector), query.limit]
+          return tx.rows(memoryScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($6::vector)=0 THEN 0 ELSE 1-(embedding <=> $6::vector) END::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND embedding IS NOT NULL${memorySources(values)} ORDER BY score DESC,id LIMIT $7`, filtered(values))
+        }) : []
+        const semanticChunks = vector ? yield* Effect.suspend(() => {
+          const values: Parameters = [...base, vectorText(vector), query.limit]
+          return tx.rows(chunkScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($5::vector)=0 THEN 0 ELSE 1-(embedding <=> $5::vector) END::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND embedding IS NOT NULL${chunkSources(values)} ORDER BY score DESC,id LIMIT $6`, filtered(values))
+        }) : []
         const combine = (memories: ReadonlyArray<{ readonly payload: KnowledgeMemory; readonly score: number }>, chunks: ReadonlyArray<{ readonly payload: KnowledgeChunk; readonly score: number }>): ReadonlyArray<KnowledgeCandidate> => [
           ...memories.map(({ payload, score }): KnowledgeCandidate => ({ _tag: "Memory", memory: payload, score })),
           ...chunks.map(({ payload, score }): KnowledgeCandidate => ({ _tag: "Chunk", chunk: payload, score })),

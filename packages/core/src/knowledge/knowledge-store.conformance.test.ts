@@ -14,7 +14,7 @@ describe("knowledge index reference conformance", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
-      "knowledge.hybrid-candidates", "knowledge.forget-tombstone", "knowledge.source-revision",
+      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
       "knowledge.engine-isolation", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
@@ -69,4 +69,11 @@ test("a store that claims jobs of any engine fails the engine isolation check al
   const broken = knowledgeStoreConformance({ open: engineBlind })
   const results = await Effect.runPromise(Effect.forEach(broken, (check) => Effect.result(check.run), { concurrency: 1 }))
   expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.engine-isolation"])
+})
+
+test("the source-filter check rejects a store that ignores the filter", async () => {
+  const unfiltered = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, search: ({ sources: _ignored, ...query }) => real.search(query) }))
+  const sourceFilter = knowledgeStoreConformance({ open: Effect.map(unfiltered, (index) => ({ index, scope })) }).filter((check) => check.name === "knowledge.source-filter")
+  const results = await Effect.runPromise(Effect.forEach(sourceFilter, (check) => Effect.result(check.run), { concurrency: 1 }))
+  expect(results.length === 1 && results.every(Result.isFailure)).toBe(true)
 })

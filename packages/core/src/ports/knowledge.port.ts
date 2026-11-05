@@ -1,11 +1,12 @@
-import { Context } from "effect"
-import type { Effect, Option } from "effect"
+import { Context, Effect } from "effect"
+import type { Option } from "effect"
 import type {
   KnowledgeCandidates, KnowledgeChunk, KnowledgeChunkId, KnowledgeClaim, KnowledgeEnqueue,
   KnowledgeError, KnowledgeJob, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
-  KnowledgePending, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
+  KnowledgePending, KnowledgeReach, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
   KnowledgeSourceId, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
 } from "../knowledge/knowledge.entity.js"
+import type { RunContext } from "./run-context.port.js"
 
 /**
  * Durable source processing and derived indexes. Replaying identical source/revision/engine
@@ -67,3 +68,18 @@ export class Knowledge extends Context.Service<Knowledge, {
   readonly retry: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly forget: (scope: KnowledgeScope, id: KnowledgeSourceId) => Effect.Effect<void, KnowledgeError>
 }>()("@xandreed/core/Knowledge") {}
+
+/**
+ * Narrows one turn's retrieval without replacing the tools or sections that read it: the
+ * document and memory capabilities ask it, once per tool call or section render, for the
+ * run's `KnowledgeReach`, and read the owner it names (in the engine's own namespace and
+ * collection) and, when it lists sources, only those sources (`KnowledgeRecall.sources`; a
+ * source read outside them is not found). It scopes reads only: a saved or forgotten memory
+ * stays on the session owner's memory, and a source outside the listed ones cannot be
+ * forgotten (it is not found). The default reaches the session owner's whole collection. A host provides its own
+ * among the agent's or the turn's services; a failure is the capability's unavailability.
+ * @public
+ */
+export const KnowledgeNarrowing = Context.Reference<{
+  readonly reach: (run: Context.Service.Shape<typeof RunContext>) => Effect.Effect<KnowledgeReach, KnowledgeError>
+}>("@xandreed/core/KnowledgeNarrowing", { defaultValue: () => ({ reach: (run) => Effect.succeed({ owner: run.session.owner }) }) })

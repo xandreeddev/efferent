@@ -10,6 +10,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
@@ -38,8 +39,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   options (or in `RagLive`/`MemoryLive` config). Extraction, review and
   graph options are unchanged.
 
-### Added
 
+### Added
 
 - `@xandreed/core`: stored tool lifecycle and conversation message records
   decode with typed schemas. `StoredData` adds `tool.started`,
@@ -205,9 +206,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   carried in that cap. The cap is advisory: it reaches only a `UtilityLlm`
   that reads the reference, and the models plugin's `UtilityLlmLive` does
   not apply it.
-
+- `@xandreed/core`, `@xandreed/plugin-rag`, `@xandreed/plugin-memory`,
+  `@xandreed/plugin-knowledge-postgres`: a host narrows retrieval per turn
+  without replacing the tools. Retrieval read the run's session owner and
+  the engine's one collection, and had no way to read only some sources, so
+  a host keeping one owner's sources apart (each conversation's own
+  attachments, say) turned the capabilities' tools and recall off and wrote
+  its own. `KnowledgeSearch` and `KnowledgeRecall` take an optional
+  `sources` filter (`KnowledgeSourceFilter`, source ids, at most 1000): a
+  record is kept only when every span of its provenance cites a listed
+  source, a graph entity keeps only its spans in them, a relation needs
+  every span listed and both entities kept, and an empty list reads
+  nothing. The in-memory store, the PostgreSQL store (in SQL) and both
+  engines honour it; `narrowKnowledgeGraph` and `citesKnowledgeSources`
+  state the rule. `KnowledgeNarrowing`, a reference a host provides among
+  the agent's or a turn's services, returns the run's `KnowledgeReach`: the
+  owner and, optionally, the sources that `search_knowledge`,
+  `read_knowledge`, `recall_memory`, `read_memory` and both recall sections
+  use (a read outside them is not found). It scopes reads only: saving and
+  forgetting a memory stay on the session owner's memory, and
+  `forget_memory` answers a source outside the listed ones as not found. Its default is the session owner's whole collection, so
+  nothing changes for a host that provides none: tool and section text,
+  versions and stored formats are unchanged. `knowledgeStoreConformance`
+  gains `knowledge.source-filter`, and `knowledgeConformance` and
+  `longTermMemoryConformance` gain `source-filter`.
 
 ### Changed
+
 
 
 
@@ -245,7 +270,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -297,7 +324,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 
 
@@ -313,6 +342,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

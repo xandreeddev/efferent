@@ -5,6 +5,7 @@ import {
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
+  narrowKnowledgeGraph, traverseKnowledgeGraph,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease,
@@ -152,6 +153,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   })
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
+    const sources = input.sources
+    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false } } satisfies KnowledgeRecallResult
     const now = yield* Clock.currentTimeMillis
     const fallback: KnowledgeQueryPlan = { queries: [input.query], entities: [], validAt: Option.none(), knownAt: Option.none() }
     const plan = config.queryPlanning ? yield* ask(knowledgeQueryPrompt(input.query, now), "plan", input.scope, Option.none()).pipe(
@@ -170,17 +173,20 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
         Effect.flatMap((response) => vector(response.vector)), Effect.map(Option.some),
         Effect.catchIf((error) => error.reason === "Unavailable", (error) => Effect.logWarning("Memory query embedding is unavailable; using lexical evidence", error).pipe(Effect.as(Option.none()))),
       )
-      return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt) })
+      return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }) })
     }), { concurrency: 2 })
     const arms = { lexical: results.flatMap((result) => result.lexical), semantic: results.flatMap((result) => result.semantic) }
     const fused = fuseKnowledgeCandidates(arms, candidateLimit, input.maxChars * 4)
-    const snapshot = yield* store.snapshot(input.scope)
+    const stored = yield* store.snapshot(input.scope)
+    // A source filter narrows the graph before seeding and traverses it here, as the store would.
+    const snapshot = sources === undefined ? stored : { ...stored, graph: narrowKnowledgeGraph(stored.graph, sources) }
     const scores = knowledgeBm25([input.query, ...plan.entities].join(" "), snapshot.graph.entities.map((entity) => [entity.name, ...entity.aliases].join(" ")))
     const matched = snapshot.graph.entities.filter((_, index) => (scores[index] ?? 0) > 0).map((entity) => entity.id)
     const seeds = [...matched, ...fused.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.entities, Chunk: () => [] }))]
     const graph = input.graph === false || seeds.length === 0
       ? { entities: [], assertions: [], truncated: false }
-      : yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
+      : sources === undefined ? yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
+        : traverseKnowledgeGraph(snapshot.graph, { scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
     const ranked: ReadonlyArray<KnowledgeCandidate> = config.rerank && fused.length > 0 ? yield* ask(knowledgeRerankPrompt(input.query, fused, graph, config.maxCandidateChars), "rerank", input.scope, Option.none()).pipe(
       Effect.flatMap((completion) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeRerank))(completion.text)),
       Effect.flatMap((order) => Option.match(applyKnowledgeRerank(fused, order), { onNone: () => Effect.fail(failure("Memory reranking returned an unknown evidence key")), onSome: Effect.succeed })),

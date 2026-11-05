@@ -1,10 +1,10 @@
 import { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Match, Option, Schema } from "effect"
 import {
-  CurrentToolInvocation, Failure, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, RunContext, Sessions,
-  budgetKnowledgeRecall, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError, userMessageText,
+  CurrentToolInvocation, Failure, KnowledgeJobId, KnowledgeNarrowing, KnowledgeSourceId, LongTermMemory, RunContext, Sessions,
+  budgetKnowledgeRecall, citesKnowledgeSources, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError, userMessageText,
 } from "@xandreed/core"
-import type { KnowledgeRecallResult, KnowledgeScope, KnowledgeSource } from "@xandreed/core"
+import type { KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource } from "@xandreed/core"
 import { MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture } from "./ports/memory-capture.port.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -79,6 +79,12 @@ const Forget = Tool.make("forget_memory", {
 
 const scopeOf = (owner: string, config: MemoryConfig): KnowledgeScope => ({ owner, namespace: config.namespace, collection: config.collection })
 const toolFailure = () => memoryCapabilityText.unavailable
+/** The run's reach (`KnowledgeNarrowing`): by default, the session owner's whole collection. */
+const reachOf = Effect.fnUntraced(function* () {
+  const run = yield* RunContext
+  return yield* (yield* KnowledgeNarrowing).reach(run)
+})
+const sourcesOf = (reach: KnowledgeReach) => reach.sources === undefined ? {} : { sources: reach.sources }
 
 /** All injected evidence is bounded and framed; citations keep source identity and revision. */
 export const renderMemoryRecall = (result: KnowledgeRecallResult, maxChars: number): string => {
@@ -100,19 +106,22 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
   id: "@xandreed/plugin-memory/recall", version: "1",
   tools: config.tools ? [
     defineTool({ tool: Recall, requires: [RunContext, LongTermMemory], annotations: { readOnly: true }, handler: (input) => Effect.gen(function* () {
-      const run = yield* RunContext
+      const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
       const memory = yield* LongTermMemory
-      const result = yield* memory.recall({ scope: scopeOf(run.session.owner, config), query: input.query, limit: config.recallLimit, maxChars: config.recallChars,
+      const result = yield* memory.recall({ scope: scopeOf(reach.owner, config), query: input.query, limit: config.recallLimit, maxChars: config.recallChars,
         ...(input.validAt === undefined && input.knownAt === undefined ? {} : { graph: { perspective: {
           ...(input.validAt === undefined ? {} : { validAt: input.validAt }), ...(input.knownAt === undefined ? {} : { knownAt: input.knownAt }),
-        }, depth: config.graphDepth } }),
+        }, depth: config.graphDepth } }), ...sourcesOf(reach),
       }).pipe(Effect.mapError(toolFailure))
       return renderMemoryRecall(result, config.recallChars)
     }) }),
     defineTool({ tool: Read, requires: [RunContext, LongTermMemory], annotations: { readOnly: true }, handler: (input) => Effect.gen(function* () {
-      const run = yield* RunContext
+      const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
       const memory = yield* LongTermMemory
-      const source = yield* memory.source(scopeOf(run.session.owner, config), { id: KnowledgeSourceId.make(input.source), revision: input.revision }).pipe(Effect.mapError(toolFailure))
+      const id = KnowledgeSourceId.make(input.source)
+      const source = reach.sources === undefined || reach.sources.includes(id)
+        ? yield* memory.source(scopeOf(reach.owner, config), { id, revision: input.revision }).pipe(Effect.mapError(toolFailure))
+        : Option.none<KnowledgeSource>()
       if (Option.isNone(source)) return yield* Effect.fail(memoryCapabilityText.missing)
       const offset = input.offset ?? 0
       if (offset >= source.value.text.length && offset > 0) return yield* Effect.fail(memoryCapabilityText.offsetError)
@@ -134,9 +143,14 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       } }).pipe(Effect.mapError(toolFailure))
       return savedMemoryReceipt(key)
     }) }),
+    // Narrowing scopes what a turn reads, never what it may delete: forgetting acts on the session owner's
+    // memory, as saving does, and a source outside the reach's filter is not found, as a read of it is.
     defineTool({ tool: Forget, requires: [RunContext, LongTermMemory], annotations: { permissions: ["memory.write"] }, handler: ({ source }) => Effect.gen(function* () {
       const run = yield* RunContext
-      yield* (yield* LongTermMemory).forget(scopeOf(run.session.owner, config), KnowledgeSourceId.make(source)).pipe(Effect.mapError(toolFailure))
+      const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
+      const id = KnowledgeSourceId.make(source)
+      if (reach.sources !== undefined && !reach.sources.includes(id)) return yield* Effect.fail(memoryCapabilityText.missing)
+      yield* (yield* LongTermMemory).forget(scopeOf(run.session.owner, config), id).pipe(Effect.mapError(toolFailure))
       return memoryCapabilityText.forgotten
     }) }),
   ] : [],
@@ -152,10 +166,14 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       const memory = yield* LongTermMemory
       const captured = yield* Effect.scoped(Layer.build(MemoryCaptureLive({ namespace: config.namespace, collection: config.collection, maxSourceChars: config.maxSourceChars, maxTurns: config.batchSize, pageSize: 500, maxPages: 100 })))
       yield* Context.get(captured, MemoryCapture).sync(run.session).pipe(Effect.ignore({ log: "Warn", message: "Memory catch-up will be retried after the turn" }))
-      const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(run.session.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars }).pipe(
+      const reach = yield* reachOf().pipe(Effect.tapError((cause) => Effect.logWarning("The memory reach is unavailable; no memory is recalled this turn", cause)), Effect.option)
+      if (Option.isNone(reach)) return Option.none<string>()
+      const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(reach.value.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...sourcesOf(reach.value) }).pipe(
         Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false } }))),
       )
-      const profile = yield* memory.profile(scopeOf(run.session.owner, config)).pipe(
+      const sources = reach.value.sources
+      const profile = yield* memory.profile(scopeOf(reach.value.owner, config)).pipe(
+        Effect.map((memories) => sources === undefined ? memories : memories.filter((memory) => citesKnowledgeSources(memory.provenance, sources))),
         Effect.catch((error) => Effect.logWarning("The memory profile is unavailable", error).pipe(Effect.as([]))),
       )
       const preferred = profile.slice(0, 4).map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
