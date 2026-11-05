@@ -1,33 +1,33 @@
 import postgres from "postgres"
-import { Effect, Exit, Option, Redacted, Schema } from "effect"
-import { errorCodeOf, KnowledgeError } from "@xandreed/core"
-import type { KnowledgePostgresConfig } from "./knowledge-postgres.entity.js"
+import { Effect, Exit, Redacted, Schema } from "effect"
+import { KnowledgeError } from "@xandreed/core"
+import { VECTOR_EXTENSION } from "./knowledge-postgres.entity.js"
+import type { KnowledgePostgresConfig, PostgresStep } from "./knowledge-postgres.entity.js"
+import { missingVectorExtension, postgresFailure } from "./knowledge-postgres.entity.functions.js"
 
 /** The driver stays behind this parameterized query boundary. */
 export interface PostgresQueries {
   readonly rows: <S extends Schema.Decoder<unknown>>(schema: S, statement: string, parameters?: ReadonlyArray<string | number | boolean | null>) => Effect.Effect<ReadonlyArray<S["Type"]>, KnowledgeError, S["DecodingServices"]>
   readonly execute: (statement: string, parameters?: ReadonlyArray<string | number | boolean | null>) => Effect.Effect<void, KnowledgeError>
+  /** The same connection, its failures read as failures of `step` (`postgresFailure`). */
+  readonly at: (step: PostgresStep) => PostgresQueries
 }
 
 export interface PostgresDatabase extends PostgresQueries {
   readonly transaction: <A>(use: (queries: PostgresQueries) => Effect.Effect<A, KnowledgeError>) => Effect.Effect<A, KnowledgeError>
 }
 
-/** The only foreign failure mapping. Messages never include connection strings or SQL values. */
-const postgresFailure = (cause: unknown): KnowledgeError => {
-  const conflict = Option.exists(errorCodeOf(cause), (code) => ["23505", "40001", "40P01"].includes(code))
-  return new KnowledgeError({ reason: conflict ? "Conflict" : "Unavailable", message: conflict ? "the knowledge store changed concurrently" : "the PostgreSQL knowledge store is unavailable", cause })
-}
+/** Every driver failure maps through `postgresFailure`, the only foreign failure mapping. */
+const promise = <A>(work: () => PromiseLike<A>, step: PostgresStep = "query"): Effect.Effect<A, KnowledgeError> =>
+  Effect.tryPromise({ try: () => Promise.resolve(work()), catch: (cause) => postgresFailure(cause, step) })
 
-const promise = <A>(work: () => PromiseLike<A>): Effect.Effect<A, KnowledgeError> =>
-  Effect.tryPromise({ try: () => Promise.resolve(work()), catch: postgresFailure })
-
-const queries = (sql: postgres.Sql | postgres.ReservedSql): PostgresQueries => ({
-  rows: (schema, statement, parameters = []) => promise(() => sql.unsafe(statement, [...parameters])).pipe(
+const queries = (sql: postgres.Sql | postgres.ReservedSql, step: PostgresStep = "query"): PostgresQueries => ({
+  rows: (schema, statement, parameters = []) => promise(() => sql.unsafe(statement, [...parameters]), step).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(schema))),
     Effect.mapError((cause) => cause._tag === "KnowledgeError" ? cause : new KnowledgeError({ reason: "Corrupt", message: "a PostgreSQL knowledge row does not match its schema", cause })),
   ),
-  execute: (statement, parameters = []) => promise(() => parameters.length === 0 ? sql.unsafe(statement).simple() : sql.unsafe(statement, [...parameters])).pipe(Effect.asVoid),
+  execute: (statement, parameters = []) => promise(() => parameters.length === 0 ? sql.unsafe(statement).simple() : sql.unsafe(statement, [...parameters]), step).pipe(Effect.asVoid),
+  at: (next) => queries(sql, next),
 })
 
 /** One scoped PostgreSQL pool. Reserved connections keep transactions on one backend. */
@@ -44,7 +44,7 @@ export const makePostgresDatabase = Effect.fn("knowledge_postgres.open")(functio
         connection: { statement_timeout: config.statementTimeoutMs, lock_timeout: config.statementTimeoutMs },
         onnotice: () => {},
       }),
-      catch: postgresFailure,
+      catch: (cause) => postgresFailure(cause, "query"),
     }),
     (pool) => promise(() => pool.end({ timeout: 5 })).pipe(Effect.ignore({ log: "Warn", message: "closing the PostgreSQL knowledge pool failed" })),
   )
@@ -150,19 +150,37 @@ CREATE TABLE IF NOT EXISTS efferent_knowledge.identities (
 );
 `
 
-/** Migration is serialized across processes, with an explicit newer-layout refusal. */
+/**
+ * Whether the database can have the extension `name`: installed in it already, or available on
+ * the server for `CREATE EXTENSION`. Read from the catalogs, which every role may read.
+ */
+export const extensionAvailable = (queries: PostgresQueries, name: string): Effect.Effect<boolean, KnowledgeError> =>
+  queries.rows(
+    Schema.Struct({ available: Schema.Boolean }),
+    "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = $1) OR EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = $1) AS available",
+    [name],
+  ).pipe(Effect.map((rows) => rows.some((row) => row.available)))
+
+/**
+ * Migration is serialized across processes, with an explicit newer-layout refusal. A server
+ * without pgvector, a role that may not create what is missing and a database whose objects do
+ * not fit the layout fail as `Invalid`, naming the cause; an outage stays `Unavailable`.
+ */
 export const migratePostgres = Effect.fn("knowledge_postgres.migrate")(function* (database: PostgresDatabase) {
   yield* database.transaction((tx) => Effect.gen(function* () {
     yield* tx.execute("SELECT pg_advisory_xact_lock(787418260114)")
-    yield* tx.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    yield* tx.execute("CREATE SCHEMA IF NOT EXISTS efferent_knowledge")
-    yield* tx.execute("CREATE TABLE IF NOT EXISTS efferent_knowledge.layout (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), version integer NOT NULL)")
-    const rows = yield* tx.rows(Schema.Struct({ version: Schema.Int }), "SELECT version FROM efferent_knowledge.layout WHERE singleton = true")
+    const extension = tx.at("extension")
+    if (!(yield* extensionAvailable(extension, VECTOR_EXTENSION))) return yield* Effect.fail(missingVectorExtension())
+    yield* extension.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    const layout = tx.at("layout")
+    yield* layout.execute("CREATE SCHEMA IF NOT EXISTS efferent_knowledge")
+    yield* layout.execute("CREATE TABLE IF NOT EXISTS efferent_knowledge.layout (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), version integer NOT NULL)")
+    const rows = yield* layout.rows(Schema.Struct({ version: Schema.Int }), "SELECT version FROM efferent_knowledge.layout WHERE singleton = true")
     const version = rows[0]?.version ?? 0
     if (version > 1) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "the knowledge database layout is newer than this implementation" }))
     if (version === 0) {
-      yield* tx.execute(LAYOUT_ONE)
-      yield* tx.execute("INSERT INTO efferent_knowledge.layout (singleton, version) VALUES (true, 1)")
+      yield* layout.execute(LAYOUT_ONE)
+      yield* layout.execute("INSERT INTO efferent_knowledge.layout (singleton, version) VALUES (true, 1)")
     }
   }))
 })

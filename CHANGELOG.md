@@ -10,12 +10,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
   runner provides a `ModelSpend`.
 
+
 ### Added
+
 
 - `@xandreed/core`: stored tool lifecycle and conversation message records
   decode with typed schemas. `StoredData` adds `tool.started`,
@@ -148,7 +151,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   a flag. `@xandreed/evals` now depends on `@xandreed/core`, for the ledger
   alone.
 
+
 ### Changed
+
 
 
 
@@ -178,14 +183,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
-
-
-
-
-
-
-
 
 - Releases wait up to about fifteen minutes (was three) for every package to
   appear on the registry before tagging. 0.17.0 and 0.17.1 each refused to tag
@@ -198,19 +197,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `knowledge_store.pending` trace, tens of thousands a day per process, and
   filled tracing quotas with empty traces. Each job a worker claims is traced
   as before.
-
-
-
-
-
-
-
-
-
-
-
+- `@xandreed/plugin-knowledge-postgres`: the store tells its failures apart
+  instead of reading every non-conflict error as an outage. A server without
+  pgvector, a role that may not create the extension or the
+  `efferent_knowledge` schema, a role missing a privilege on its tables and
+  a database whose objects do not fit the layout now fail with
+  `KnowledgeError` reason `Invalid` and a message naming the cause and the
+  fix (never the connection string or a value), so a host stops retrying a
+  setup problem. Migration first probes the catalogs for pgvector and refuses
+  before `CREATE EXTENSION` when the server lacks it. Connection failures,
+  statement and lock deadlines and every other error stay `Unavailable` with
+  the same message; concurrent writes stay `Conflict`. The classification is
+  one mapping by SQLSTATE and the step a statement runs in.
 
 ### Breaking
+
 
 
 
@@ -222,6 +223,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

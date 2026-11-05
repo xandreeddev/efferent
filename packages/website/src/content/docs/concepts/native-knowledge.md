@@ -107,8 +107,17 @@ secret URL from `EFFERENT_KNOWLEDGE_DATABASE_URL` by default.
 The PostgreSQL adapter needs the pgvector extension installed on its server.
 Its versioned migrations create Efferent-owned tables and indexes under the
 `efferent_knowledge` schema. Provision the extension with an administrative role
-before using a restricted application role. Never point the native adapter at
-another product's private tables.
+before using a restricted application role; that role still needs CREATE on the
+database and on `efferent_knowledge`, and read and write access to its tables.
+Never point the native adapter at another product's private tables.
+
+Opening the store tells a setup problem from an outage. A server without
+pgvector, a role that may not create the extension or the schema, a role
+missing a privilege on the tables and a database whose `efferent_knowledge`
+objects do not fit the layout fail with `KnowledgeError` reason `Invalid`, and
+a message naming the cause and the fix: retrying will not help. Connection
+failures and deadlines stay `Unavailable`, concurrent writes `Conflict`.
+Messages never carry the connection string; the driver's error is the `cause`.
 
 ## Conversation and action capture
 

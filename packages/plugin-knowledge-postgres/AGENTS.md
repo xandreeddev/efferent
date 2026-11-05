@@ -36,8 +36,16 @@ three ports. Node 24 and Bun use the same `postgres` driver.
 - Persist and validate embedding profiles and dimensions before storing vectors.
 - The migration version only advances transactionally. Never modify a shipped
   migration or silently reset an unsupported schema version.
-- Foreign promises use `Effect.tryPromise`; one mapping owns foreign errors.
-  Close the pool with its scope and keep server statement deadlines bounded.
+- Foreign promises use `Effect.tryPromise`; one mapping owns foreign errors:
+  `postgresFailure(cause, step)` classifies by SQLSTATE and the step a
+  statement runs in (`query`, the migration's `extension` or `layout`).
+  Concurrent writes are `Conflict`; a missing or uncreatable pgvector
+  extension, a missing privilege and, while migrating, objects that do not fit
+  the layout are `Invalid`; connection failures, deadlines and anything else
+  stay `Unavailable`, the retryable reason. Messages name the cause and the
+  fix, never the connection string or a value; the driver error stays in
+  `cause`. Close the pool with its scope and keep server statement deadlines
+  bounded.
 
 ## Model-facing text
 
@@ -45,7 +53,9 @@ None. The engine plugins own tools and prompt sections.
 
 ## Layout
 
-- `src/knowledge-postgres.entity.ts`: connection configuration and defaults.
+- `src/knowledge-postgres.entity.ts`: connection configuration and defaults,
+  the statement steps.
+- `src/knowledge-postgres.entity.functions.ts`: the failure mapping.
 - `src/postgres-connection.adapter.ts`: pool, queries, transactions and migration.
 - `src/knowledge-store.adapter.ts`: the store implementations.
 - `src/plugin.adapter.ts`: runtime plugin and its typed layer.
@@ -70,9 +80,13 @@ separate migration and must preserve tenant-filtered recall.
   define connection count and bounded connect/statement deadlines.
 
 First open runs migration layout 1 under a PostgreSQL advisory transaction
-lock. PostgreSQL must have pgvector available; the initial role must be able
-to create the extension/schema/tables (or use already provisioned objects).
-No credentials, tenant names or source contents belong in migration SQL.
+lock. It first probes the catalogs for pgvector (installed in the database or
+available on the server) and refuses with `Invalid` when it is neither. The
+extension may be installed in advance by a privileged role; the role that
+opens the store needs CREATE on the database and on `efferent_knowledge`
+(the `IF NOT EXISTS` statements check it even when the objects exist) and
+read and write access to its tables. No credentials, tenant names or source
+contents belong in migration SQL.
 
 ## Tests
 
@@ -82,4 +96,6 @@ pgvector extension installed; tests isolate data by owner, namespace and
 collection. Both store conformance kits run against the real server. Extra
 checks cover pool reopen after durable staging, two-pool lease races, atomic
 revision cutover, stale chunk identity fences, recursive forgetting, memory/RAG
-domain isolation, publication timestamps and decoding corrupt rows.
+domain isolation, publication timestamps and decoding corrupt rows. The
+failure mapping is a table test over driver-shaped errors; against a server,
+the extension probe and the refusal of an absent extension are checked.
