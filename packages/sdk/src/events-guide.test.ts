@@ -200,6 +200,12 @@ export const Progress = defineHostEvent("app.progress", Schema.Struct({ stage: S
 export const reportStage = (events: TurnEventsService, stage: string, done: number) => Progress.publish(events, { stage, done })
 // #endregion host-events
 
+// #region host-event-draft
+/** The same record from outside a turn (a user's action on a page): `draft` encodes it as the turn's writer stores it. */
+export const recordStage = (sessions: typeof Sessions.Service, address: SessionAddress, stage: string, done: number) =>
+  sessions.transact(address, () => Progress.draft({ stage, done }).pipe(Effect.map((draft) => ({ drafts: [draft], result: draft.kind }))))
+// #endregion host-event-draft
+
 // #region journal
 /** The events stored after `cursor`, oldest first, and the cursor to read from next. */
 export const readAfter = (sessions: typeof Sessions.Service, address: SessionAddress, cursor: number) =>
@@ -631,6 +637,20 @@ describe("tools and host events", () => {
     const stored = yield* host.sessions.read(address)
     expect(stored.filter((event) => event.kind === "app.progress").map((event) => event.data)).toEqual([{ stage: "search", done: 1 }])
     expect(stored.some((event) => event.kind === "tool.progress")).toBe(false)
+  })))
+
+  test("a host event published in a turn and the same event drafted through Sessions.transact read back alike from the journal", () => run(Effect.gen(function* () {
+    const host = yield* hostWith(yield* scripted([]))
+    yield* host.agent.turn({ ...ask("hello"), services: Context.make(LanguageModel.LanguageModel, host.model) }, (turn) =>
+      reportStage(turn.events, "search", 1).pipe(Effect.andThen(turn.reply("Done."))))
+    const decided = yield* recordStage(host.sessions, address, "search", 1)
+    expect(decided.result).toBe("app.progress")
+    const stored = yield* host.sessions.read(address, { kinds: ["app.progress"] })
+    expect(stored.map((event) => event.turn)).toEqual([Option.some(1), Option.none()]) // published in turn 1, then drafted outside a turn
+    expect(new Set(stored.map((event) => JSON.stringify(event.data))).size).toBe(1)
+    expect(decided.events.map((event) => event.seq)).toEqual(stored.slice(1).map((event) => event.seq))
+    const readBack = stored.map((event) => Progress.select({ _tag: "host", name: event.kind, data: event.data }))
+    expect(readBack).toEqual([Option.some({ stage: "search", done: 1 }), Option.some({ stage: "search", done: 1 })])
   })))
 })
 

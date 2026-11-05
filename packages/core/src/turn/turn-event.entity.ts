@@ -255,7 +255,7 @@ export const HostEvent = Schema.TaggedStruct("host", {
   name: Schema.Trimmed.check(Schema.isNonEmpty()),
   data: JsonObject,
 }).annotate({
-  description: "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.",
+  description: "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`. Outside a turn, the host event's `draft` gives that same record, kind and data, for `Sessions.transact`.",
 })
 
 /** A durable terminal model-attempt fact, published only after append and flush. @public */

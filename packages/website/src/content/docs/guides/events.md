@@ -395,6 +395,26 @@ export const reportStage = (events: TurnEventsService, stage: string, done: numb
 - Handlers may publish in turn, depth first, up to `maxEventDepth` (8, set
   on the agent); deeper fails with `events.depth`.
 
+The same record can be written outside a turn, where there is no bus to
+publish on: a user's action on a page, a setting, a job's result.
+`draft(data)` encodes it as `make` does, through the schema and JSON, and
+gives the draft the turn's writer would store for it: `name` as its kind,
+the same data. Pass it in `Sessions.transact`'s decision (or a turn
+writer's `append` or `transact`); it is stored without a turn, and `select`
+reads it back as it reads the published one. A payload that does not encode
+fails the draft with `events.encode`; a reserved name is refused by the
+write with `ReservedKind`, and nothing of that call is stored.
+
+```ts
+import { Effect } from "effect"
+import { Sessions } from "@xandreed/sdk"
+import type { SessionAddress } from "@xandreed/sdk"
+
+/** The same record from outside a turn (a user's action on a page): `draft` encodes it as the turn's writer stores it. */
+export const recordStage = (sessions: typeof Sessions.Service, address: SessionAddress, stage: string, done: number) =>
+  sessions.transact(address, () => Progress.draft({ stage, done }).pipe(Effect.map((draft) => ({ drafts: [draft], result: draft.kind }))))
+```
+
 ```ts
 import { Effect, Option, Schema } from "effect"
 import { defineHostEvent, harnessCodeOf } from "@xandreed/sdk"
