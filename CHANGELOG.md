@@ -8,6 +8,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: the background worker
+  scans for pending jobs untraced, so an idle worker records no spans. Each
+  scan (every `pollMs`, 2 s by default) exported a root
+  `knowledge_store.pending` trace, tens of thousands a day per process, and
+  filled tracing quotas with empty traces. Each job a worker claims is traced
+  as before.
+
 ## 0.17.1 — 2026-11-05
 
 ### Fixed

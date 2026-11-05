@@ -203,7 +203,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   })
 
   const drain = Effect.gen(function* () {
-    const pending = yield* store.pending({ engine: ENGINE, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize })
+    // The idle scan runs every poll: untraced, so an idle worker records nothing; each claimed job is traced.
+    const pending = yield* store.pending({ engine: ENGINE, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize }).pipe(Effect.withTracerEnabled(false))
     yield* Effect.forEach(pending.filter((job) => job.scope.collection === config.collection), (job) => processOne(job.scope, job).pipe(
       Effect.ignore({ log: "Warn", message: "A memory source remains unprocessed; inspect its processing status before retrying" }),
     ), { concurrency: 1 })

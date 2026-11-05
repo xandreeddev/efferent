@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Option, Ref } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { BackgroundWorkers, KnowledgeError, KnowledgeJobId, makeKnowledgeIndexMemory, shutdownGracefully } from "@xandreed/core"
 import { enqueue, makeRag, scope } from "./rag.testing.js"
 
 describe("native document worker reliability", () => {
+  test("an idle document worker records no spans", () => {
+    const names: Array<string> = []
+    const tracer = Tracer.make({ span: (options) => {
+      names.push(options.name)
+      return new Tracer.NativeSpan(options)
+    } })
+    return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      yield* makeRag({ worker: true, pollMs: 10 })
+      yield* TestClock.adjust(100)
+      expect(names.filter((name) => name.startsWith("knowledge_store."))).toEqual([])
+    })).pipe(Effect.withTracer(tracer), Effect.provide(TestClock.layer())))
+  })
+
   test("leases are renewed throughout slow embedding", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const index = yield* makeKnowledgeIndexMemory()
     const renewed = yield* Ref.make(0)
