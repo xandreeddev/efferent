@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "scripts": {
+    "example:memory": "bun scripts/memory-walkthrough.ts",
     "foundry": "bun packages/foundry/src/main.ts",
     "test": "bun test",
     "check": "bun run typecheck",

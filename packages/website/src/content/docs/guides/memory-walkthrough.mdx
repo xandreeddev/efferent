@@ -1,0 +1,169 @@
+---
+title: One assistant over five turns
+description: Watch real files, a durable journal, bounded context, and learned memory change across five user turns.
+---
+
+import MemoryWalkthrough from '../../../components/MemoryWalkthrough.astro'
+
+Follow one assistant as it reads a file, edits it, inspects a large log,
+reopens its journal, and starts a new conversation. The important question at
+each step is: **what is in the file, what is stored, and what does the model see?**
+
+The workspace starts with `deployment.md` containing `lane: green` and
+`status: draft`. A second file, `build.log`, contains 11,556 characters and
+ends with `ERROR_AT_END: queue worker stopped.` The first user request also
+states a preference: “I prefer concise release summaries.”
+
+The SDK, plugins, filesystem operations, file-backed journal, compaction and
+native memory engine are real. **Model replies, extraction and embeddings are
+scripted.** This makes the data flow reproducible without API keys; it does
+not test whether a real model would choose these tools or extract these facts.
+
+<MemoryWalkthrough />
+
+Each turn card shows the state **after that turn**. The request selector shows
+what the model received **during the turn**, before its next response. Select
+earlier requests to watch a tool call become a result in the following request.
+
+## Follow the five turns
+
+### 1. Read the file and state a preference
+
+The user asks for concise summaries and the current deployment lane.
+The assistant calls `read`, receives the file text, and answers “green.”
+
+Session A now has **30 journal events**. Its journal includes the user input,
+tool call, returned data, presentation and final reply. Capture has queued
+**one memory job**, but the native store has **no learned facts yet**.
+The preference is available in this conversation's history; capture and
+completed learning are different stages.
+
+### 2. Edit the actual file
+
+The user asks to change the lane from green to blue. The assistant calls
+`edit`; the workspace file now contains `lane: blue`. Session A grows to
+**53 journal events**, with **two queued memory jobs** and still no learned facts.
+
+At this turn's start, window memory records a `CompactViews` decision. The
+earlier read becomes `(read deployment.md: lines 1-2 of 2)` in the request.
+The original returned text remains in the journal. An old read is historical
+evidence; it does not automatically refresh when a file changes.
+
+### 3. Read a log that is too large for the current request
+
+The user asks for the log's final error. The assistant calls `read` on
+`build.log`. Window memory records a `Spill`: it keeps a **160-character
+preview** and reports **11,395 more characters** kept out of context.
+The rendered read is 11,555 characters; the file also has a final newline.
+
+The shortened result supplies locator `turn-3:3`. The assistant calls
+`recall_context` with that locator and character offset **11,406**, bringing
+the tail back into the next request. It can then report the final error.
+This reads the stored result; it does not run the filesystem read again.
+
+Session A has **87 journal events**. All **three capture jobs are still queued**,
+and there are still **no learned facts**. Context compaction has worked even
+though long-term extraction has not run.
+
+### Processing checkpoint: the host turns captured evidence into knowledge
+
+This example deliberately sets `worker: false`. The host now calls
+`memory.process(scope, 20)`, which processes the **three pending jobs**.
+The scripted extractor identifies one stated preference, and the native engine
+validates its source span, embeds it, and publishes:
+
+> The user prefers concise release summaries.
+
+The snapshot also contains one graph assertion expressing that preference.
+The other sources produce no additional facts. Queuing three sources does not
+mean creating three memories.
+
+Production workers process queued jobs automatically by default. The manual
+checkpoint here makes “captured” versus “learned and retrievable” visible.
+
+### 4. Reopen the file journal and reduce the context budget
+
+The first agent scope closes. A new agent opens the **same journal directory**
+and continues session A. The user asks to read the current deployment file.
+The assistant reads it again and sees blue.
+
+This run uses a smaller host budget of **2,600 estimated tokens**. Window
+memory records `DropTurns` decisions through turns 1 and 2, replacing their
+detailed exchange with a ledger. Session A grows to **112 journal events**;
+the original events remain stored.
+
+The ledger still mentions the user's preference. This turn therefore does
+**not** prove that the preference vanished from conversation context.
+Native recall also contributes the learned preference; the raw requests show
+both sources. The new conversation in the next step makes the distinction clearer.
+
+### 5. Start a fresh conversation with the same owner
+
+Session B starts with no inherited session-A transcript. The user asks how
+release summaries should be written and which lane the file currently uses.
+
+Before the model's first call, native memory adds a recorded
+`recalled-memory` context section containing the preference and its source.
+The assistant then calls `read` to establish the current file state: blue.
+It answers with the concise-summary preference and the current lane.
+
+Session B has **31 journal events of its own**. The preference arrived through
+cross-conversation retrieval. The lane was established by a fresh filesystem
+read. The model was not given session A's complete conversation.
+
+## What the numbers mean
+
+These are observations from this run, not universal limits or fixed turn counts.
+The normal host budget is 4,000; turn 4 uses 2,600. Each request reserves
+**1,255 estimated tokens** for the system prompt and active tool schemas.
+The playback shows message estimates separately from that reserve.
+
+These are framework estimates, **not measured provider token usage**. The
+scripted model supplies no real provider input count. Changing tools, text,
+budgets or configuration can change when a spill or dropped turn occurs.
+
+## What survives reopening
+
+The journal is genuinely reopened from disk, and the workspace file remains
+blue. The demo's **reference knowledge store is in memory**, retained by the
+host across the two agent scopes. This is not a full process-restart test of
+learned-memory persistence.
+
+Use [Knowledge PostgreSQL](/docs/plugins/knowledge-postgres/) for durable native
+knowledge across process restarts. Journal persistence and knowledge persistence
+are separate choices. [Session files](/docs/plugins/session-files/) stores the
+conversation, not a snapshot or undo history of the workspace filesystem.
+
+## Where summary, digest, and RAG fit
+
+- **Window or summary?** This run uses [window memory](/docs/plugins/memory-window/).
+  [Summary memory](/docs/plugins/memory-summary/) is an alternative context policy
+  that folds older turns into a recorded summary. Do not stack them expecting
+  both policies to run.
+- **Why no digest?** Built-in workspace tools supply compact views but no digest
+  tasks. Adding [the digest plugin](/docs/plugins/memory-digest/) alone would not
+  summarize their results. A tool must define a task and a memory policy request it.
+- **Is reading a file RAG?** No corpus is indexed here. [RAG](/docs/plugins/rag/)
+  requires explicit document ingestion; a workspace read becomes conversation
+  evidence, not an automatically synchronized document index.
+
+For the complete relationship, see [files, memory, and the context journal](/docs/concepts/context-journal/),
+[long-term memory](/docs/plugins/memory/), and [conversation capture](/docs/plugins/memory-capture/).
+
+## Run and inspect it
+
+From a checkout of the repository:
+
+```sh
+bun install --frozen-lockfile
+bun run example:memory
+```
+
+The command prints a run directory under `.artifacts/memory-walkthrough/`.
+Each run creates its own example workspace and journal inside that directory.
+Inspect its `workspace/`, file-backed `journal/`, and `walkthrough.json` to
+compare physical files, journal records, captured requests and learned facts.
+
+Read the [runnable source](https://github.com/xandreeddev/efferent/blob/main/scripts/memory-walkthrough.ts)
+or download [this playback's evidence JSON](/examples/memory-walkthrough.json).
+The interactive view replays that evidence locally; it makes no model calls.
