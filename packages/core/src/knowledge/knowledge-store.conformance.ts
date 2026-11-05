@@ -1,14 +1,15 @@
-import { Effect, Option, Result } from "effect"
+import { Effect, Option, Order, Result } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect } from "../conformance.functions.js"
 import type { KnowledgeIndex, TemporalGraph } from "../ports/knowledge.port.js"
+import { knowledgeCandidateKey } from "./knowledge.entity.functions.js"
 import type { Context } from "effect"
 import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
-  type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
+  type KnowledgeCandidates, type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
   type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 
@@ -56,7 +57,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging, CAS atomicity, exact evidence, isolation, hybrid candidates, forgetting,
+ * durable staging, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
  * revision replacement, engine-scoped discovery and claims, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -133,6 +134,30 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const found = yield* fixture.index.search(query)
       const mismatch = yield* Effect.result(fixture.index.search({ ...query, vector: Option.some({ space: { model: "other", version: "1", dimensions: 2 }, values: [1, 0] }) }))
       yield* expect("knowledge.hybrid-candidates", found.lexical.length === 1 && found.semantic.length === 1 && Result.isFailure(mismatch), "candidate arms or embedding-space isolation failed")
+    })),
+    indexCheck("knowledge.source-filter", (fixture) => Effect.gen(function* () {
+      const vector = { space: { model: "kit", version: "1", dimensions: 2 }, values: [1, 0] }
+      const chunkOf = (source: KnowledgeSource, name: string) => ({ id: KnowledgeChunkId.make(name), text: source.text, provenance: memoryOf(source).provenance[0]!, embedding: Option.some(vector) })
+      const first = sourceOf(fixture.scope)
+      const firstJob = yield* enqueue(fixture, first)
+      yield* claim(fixture)
+      yield* fixture.index.stage(leaseOf(fixture.scope, firstJob), { ...stageOf(first), chunks: [chunkOf(first, "first-chunk")] })
+      yield* fixture.index.publish(leaseOf(fixture.scope, firstJob))
+      const second = sourceOf(fixture.scope, "Bob prefers coffee", "second")
+      const secondJob = yield* enqueue(fixture, second, "second-job")
+      yield* claim(fixture, 30)
+      const joint = { ...memoryOf(second, "joint-memory"), text: "Alice and Bob prefer coffee", provenance: [...memoryOf(first).provenance, ...memoryOf(second).provenance] }
+      yield* fixture.index.stage(leaseOf(fixture.scope, secondJob, 31), { ...stageOf(second, 1, "second-memory"), memories: [memoryOf(second, "second-memory"), joint], chunks: [chunkOf(second, "second-chunk")] })
+      yield* fixture.index.publish(leaseOf(fixture.scope, secondJob, 31))
+      const search = (sources?: ReadonlyArray<KnowledgeSourceId>) => fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.some(vector), limit: 10, knownAt: Option.none(), ...(sources === undefined ? {} : { sources }) })
+      const keys = (found: KnowledgeCandidates) => [found.lexical, found.semantic].map((arm) => arm.map(knowledgeCandidateKey).toSorted(Order.String).join(","))
+      const firstOnly = keys(yield* search([first.ref.id]))
+      const both = keys(yield* search([first.ref.id, second.ref.id]))
+      const none = keys(yield* search([]))
+      const all = keys(yield* search())
+      const everything = "chunk:first-chunk,chunk:second-chunk,memory:joint-memory,memory:memory,memory:second-memory"
+      yield* expect("knowledge.source-filter", firstOnly.every((arm) => arm === "chunk:first-chunk,memory:memory") && both.every((arm) => arm === everything) && none.every((arm) => arm === "") && all.every((arm) => arm === everything),
+        "a source filter returned evidence citing an unlisted source, dropped a listed one, or an empty filter returned anything")
     })),
     indexCheck("knowledge.forget-tombstone", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

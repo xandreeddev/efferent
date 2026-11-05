@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId, KnowledgeVector,
+  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId, KnowledgeVector,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
-import { fuseKnowledgeCandidates, knowledgeBm25, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, traverseKnowledgeGraph, validateKnowledgeStage } from "./knowledge.entity.functions.js"
+import {
+  citesKnowledgeSources, fuseKnowledgeCandidates, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
+  narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
+} from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
 const source = (name: string): KnowledgeSource => ({ scope, ref: { id: KnowledgeSourceId.make(name), revision: 1 }, text: "Visits the cafe every Monday", occurredAt: 1, recordedAt: 2, metadata: {} })
@@ -83,4 +86,35 @@ test("graph intervals are half-open on both timelines and traversal cannot cross
   expect(traverseKnowledgeGraph(graph, query).assertions).toHaveLength(1)
   expect(traverseKnowledgeGraph(graph, { ...query, perspective: { validAt: 15, knownAt: 19 } }).assertions).toHaveLength(0)
   expect(traverseKnowledgeGraph(graph, { ...query, perspective: { validAt: 14, knownAt: 20 } }).assertions).toHaveLength(0)
+})
+
+test("a source filter keeps records every span of which cites a listed source", () => {
+  const one = KnowledgeSourceId.make("one")
+  const two = KnowledgeSourceId.make("two")
+  const joint: KnowledgeMemory = { ...memory("joint"), provenance: [...memory("one").provenance, ...memory("two").provenance] }
+  expect(citesKnowledgeSources(memory("one").provenance, [one])).toBe(true)
+  expect(citesKnowledgeSources(joint.provenance, [one])).toBe(false)
+  expect(citesKnowledgeSources(joint.provenance, [one, two])).toBe(true)
+  expect(citesKnowledgeSources([], [one])).toBe(false)
+  expect(citesKnowledgeSources(memory("one").provenance, [])).toBe(false)
+  const chunk: KnowledgeCandidate = { _tag: "Chunk", score: 1, chunk: { id: KnowledgeChunkId.make("chunk"), text: "Visits the", provenance: memory("two").provenance[0]!, embedding: Option.none() } }
+  expect([knowledgeCandidateWithin(chunk, [one]), knowledgeCandidateWithin(chunk, [two]), knowledgeCandidateWithin({ _tag: "Memory", score: 1, memory: joint }, [two])]).toEqual([false, true, false])
+})
+
+test("a narrowed graph keeps listed spans of mentioned entities and relations wholly from listed sources", () => {
+  const spanOf = (name: string) => memory(name).provenance[0]!
+  const person = { id: KnowledgeEntityId.make("person"), name: "Person", type: "person", aliases: [], provenance: [spanOf("one"), spanOf("two")] }
+  const place = { id: KnowledgeEntityId.make("place"), name: "Cafe", type: "place", aliases: [], provenance: [spanOf("two")] }
+  const edge = (name: string, spans: KnowledgeMemory["provenance"], object: "place" | "value") => ({
+    id: KnowledgeAssertionId.make(name), subject: person.id, predicate: "visits", text: name, provenance: spans,
+    object: object === "place" ? { _tag: "Entity" as const, entityId: place.id } : { _tag: "Value" as const, value: "Monday" },
+    validFrom: Option.none<number>(), validTo: Option.none<number>(), knownFrom: 1, knownTo: Option.none<number>(),
+  })
+  const graph = { entities: [person, place], assertions: [edge("from-one", [spanOf("one")], "value"), edge("from-both", [spanOf("one"), spanOf("two")], "value"), edge("to-place", [spanOf("one")], "place")], truncated: true }
+  const narrowed = narrowKnowledgeGraph(graph, [KnowledgeSourceId.make("one")])
+  expect(narrowed.entities.map((entity) => [String(entity.id), entity.provenance.map((span) => String(span.source.id))])).toEqual([["person", ["one"]]])
+  expect(narrowed.assertions.map((assertion) => String(assertion.id))).toEqual(["from-one"])
+  expect(narrowed.truncated).toBe(true)
+  expect(narrowKnowledgeGraph(graph, [])).toEqual({ entities: [], assertions: [], truncated: true })
+  expect(narrowKnowledgeGraph(graph, [KnowledgeSourceId.make("one"), KnowledgeSourceId.make("two")]).assertions.map((assertion) => String(assertion.id))).toEqual(["from-one", "from-both", "to-place"])
 })

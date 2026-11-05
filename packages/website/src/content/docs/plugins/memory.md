@@ -103,8 +103,15 @@ for the scores, graph expansion and final prompt path.
 
 Read tools are `recall_memory` and `read_memory`. The separate management skill
 exposes `remember_memory` and `forget_memory` under the `memory.write` grant.
-Model-facing scope always comes from the current session's owner. Host APIs
-explicitly name owner, namespace and collection.
+Model-facing scope comes from the current session's owner, unless the host
+narrows it per turn with `KnowledgeNarrowing`: another owner and, optionally,
+the only sources recall, reads and the turn-context section may reach, its
+profile records included (see
+[narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)).
+Narrowing scopes reads only: saving, forgetting and conversation capture keep
+the session owner, and a source outside the listed ones cannot be forgotten.
+Host APIs explicitly name owner, namespace and collection, and `recall` takes a
+`sources` filter.
 
 ## Processing, persistence and forgetting
 

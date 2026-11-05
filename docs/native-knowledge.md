@@ -219,6 +219,50 @@ hops and is capped at three. Results expose truncation and retain citations.
 Query/model work has explicit budgets; invalid planner/reranker output falls
 back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section.
 
+## Narrow retrieval per turn
+
+A host that keeps one owner's sources apart, such as each conversation's own
+attachments or one workspace of a team, narrows retrieval without replacing
+the tools or sections. `KnowledgeNarrowing` is a reference the document and
+memory capabilities ask, once per tool call or section render, for the run's
+`KnowledgeReach`: the owner whose knowledge it reads and, optionally, the only
+source ids it may read. The default reaches the session owner's whole
+collection. Provide your own among the agent's `services` or a turn's
+services:
+
+```ts
+import { Context, Effect } from "effect"
+import { KnowledgeNarrowing } from "@xandreed/core"
+import type { KnowledgeSourceFilter } from "@xandreed/core"
+
+declare const sourcesOfConversation: (conversation: string) => Effect.Effect<KnowledgeSourceFilter>
+
+const narrowing = Context.make(KnowledgeNarrowing, {
+  reach: (run) => sourcesOfConversation(run.session.id).pipe(
+    Effect.map((sources) => ({ owner: run.session.owner, sources })),
+  ),
+})
+```
+
+With sources listed, `search_knowledge`, `recall_memory` and both recall
+sections pass them on as `sources`; `read_knowledge` and `read_memory` answer a
+source outside them as not found, and an empty list reads nothing. A record is
+kept only when every span of its provenance cites a listed source. A graph
+entity is kept when a listed source mentions it, with only those spans, and a
+relation needs every span listed and both of its entities kept. Owners and
+sources come from the host, never from model arguments. Narrowing scopes what
+a turn reads, never what it may change: saving and forgetting a memory stay
+on the session owner's memory, as conversation capture does, and
+`forget_memory` answers a source outside the listed ones as not found, as
+`read_memory` does. A reach that fails makes the tools report the collection
+unavailable and leaves the recall sections out of that turn.
+
+Host calls take the same filter: `Knowledge.retrieve` and
+`LongTermMemory.recall` accept `sources` (`KnowledgeRecall.sources`, at most
+1000 ids), and `KnowledgeIndex.search` applies `KnowledgeSearch.sources` in the
+store, in SQL for PostgreSQL. The engine's namespace and collection stay the
+configured ones.
+
 ## Documents, tools and lifecycle
 
 RAG accepts host-supplied text or Markdown. The host handles file parsing, URLs
@@ -233,8 +277,9 @@ Memory tools are `recall_memory`, `read_memory`, `remember_memory` and
 `forget_memory`. Read tools are always available through the memory skill.
 Loading the management skill requires the `memory.write` grant. RAG exposes
 read-only `search_knowledge` and `read_knowledge`. Its automatic turn recall is
-opt-in with `recall: true`. Owner identities always come from `RunContext`;
-model arguments cannot select another owner. Collections and namespaces never
+opt-in with `recall: true`. Owner identities come from the run, by default
+its session owner ([narrow retrieval per turn](#narrow-retrieval-per-turn));
+model arguments cannot select another owner or source. Collections and namespaces never
 implicitly join personal and document knowledge.
 
 `forget(scope, sourceId)` tombstones all revisions, removes source text from the

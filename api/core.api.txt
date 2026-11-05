@@ -199,11 +199,13 @@ const KnowledgeLeaseToken
 const KnowledgeMemory
 const KnowledgeMemoryId
 const KnowledgeMemoryKind
+const KnowledgeNarrowing
 const KnowledgeObject
 const KnowledgePending
 const KnowledgePerspective
 const KnowledgeProvenance
 const KnowledgeQueryPlan
+const KnowledgeReach
 const KnowledgeRecall
 const KnowledgeRecallResult
 const KnowledgeRerank
@@ -211,6 +213,7 @@ const KnowledgeScope
 const KnowledgeSearch
 const KnowledgeSnapshot
 const KnowledgeSource
+const KnowledgeSourceFilter
 const KnowledgeSourceId
 const KnowledgeSourceRef
 const KnowledgeStage
@@ -418,6 +421,7 @@ const attachmentsOf
 const budgetKnowledgeRecall
 const canonicalJson
 const catalogOf
+const citesKnowledgeSources
 const clipTo
 const clippedMarker
 const collectBashResult
@@ -495,6 +499,7 @@ const modelFailureOf
 const modelOverflowEvidenceOf
 const modelRequestDescriptorOf
 const modelSpendExceededOf
+const narrowKnowledgeGraph
 const noMaintenance
 const normalizeUserMessage
 const notifyCommittedTurn
@@ -746,6 +751,7 @@ type KnowledgePending
 type KnowledgePerspective
 type KnowledgeProvenance
 type KnowledgeQueryPlan
+type KnowledgeReach
 type KnowledgeRecall
 type KnowledgeRecallResult
 type KnowledgeRerank
@@ -753,6 +759,7 @@ type KnowledgeScope
 type KnowledgeSearch
 type KnowledgeSnapshot
 type KnowledgeSource
+type KnowledgeSourceFilter
 type KnowledgeSourceId
 type KnowledgeSourceRef
 type KnowledgeStage

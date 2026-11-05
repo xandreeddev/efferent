@@ -80,7 +80,11 @@ to index it under the new one.
 
 The read-only tools are `search_knowledge` and `read_knowledge`. Results carry
 source references and bounded excerpts; a source read can continue by offset.
-Tool scope derives from the session owner. The host APIs accept explicit scopes.
+Tool scope derives from the session owner, unless the host narrows it per turn
+with `KnowledgeNarrowing`: another owner and, optionally, the only sources the
+turn's search, reads and recall may reach (see
+[narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)).
+The host APIs accept explicit scopes, and `retrieve` a `sources` filter.
 Set `recall: true` to inject bounded retrieved evidence into recorded turn
 context automatically; the default leaves retrieval to tools or host calls.
 

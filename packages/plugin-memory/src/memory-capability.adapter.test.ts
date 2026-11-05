@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { CurrentToolInvocation, InvocationId, KnowledgeError, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, RunContext, RunId, Sessions, UserMessage } from "@xandreed/core"
+import { CurrentToolInvocation, InvocationId, KnowledgeError, KnowledgeMemoryId, KnowledgeNarrowing, KnowledgeSourceId, LongTermMemory, RunContext, RunId, Sessions, UserMessage, type KnowledgeRecall, type KnowledgeScope } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -108,6 +108,53 @@ describe("memory model-facing contracts", () => {
       yield* TestClock.adjust(10)
       expect(yield* Fiber.join(timed)).toEqual(Option.none())
       return yield* turn.reply("Hello.")
+    }))
+  })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("a host's narrowing sets the owner recall, reads and the section use and the only sources they read, and never widens what forgetting reaches", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    const recalls = yield* Ref.make<ReadonlyArray<KnowledgeRecall>>([])
+    const reads = yield* Ref.make<ReadonlyArray<KnowledgeScope>>([])
+    const forgotten = yield* Ref.make<ReadonlyArray<KnowledgeScope>>([])
+    const profileOf = (name: string, text: string) => ({ id: KnowledgeMemoryId.make(name), kind: "preference" as const, text, entities: [], provenance: [{ source: { id: KnowledgeSourceId.make(name), revision: 1 }, start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" as const }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none() })
+    const memory = LongTermMemory.of({
+      ...fixture.memory,
+      recall: (input) => Ref.update(recalls, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false } })),
+      profile: () => Effect.succeed([profileOf("kept", "Prefers tea."), profileOf("other", "Prefers coffee.")]),
+      source: (scope, ref) => Ref.update(reads, (all) => [...all, scope]).pipe(Effect.as(Option.some({ scope, ref, text: "Prefers tea.", occurredAt: 1, recordedAt: 1, metadata: {} }))),
+      forget: (scope) => Ref.update(forgotten, (all) => [...all, scope]),
+    })
+    const narrowing = { reach: () => Effect.succeed({ owner: "workspace-owner", sources: [KnowledgeSourceId.make("kept")] }) }
+    const failing = { reach: () => Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "Fixture reach unavailable" })) }
+    const capability = memoryCapability(memoryDefaults)
+    const tool = (name: string) => capability.tools.find((entry) => entry.tool.name === name)!
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [Sessions, LongTermMemory] })
+    const services = Context.make(Sessions, fixture.sessions).pipe(Context.add(LongTermMemory, memory), Context.add(KnowledgeNarrowing, narrowing))
+    yield* agent.turn({ turn: { session: captureAddress, runId: RunId.make("narrowed-memory"), userMessage: new UserMessage({ text: "What do I prefer?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* tool("recall_memory").handler({ query: "prefer" }).pipe(Effect.orDie)
+      expect((yield* Ref.get(recalls)).map((input) => [input.scope.owner, (input.sources ?? []).map(String)])).toEqual([["workspace-owner", ["kept"]]])
+      const outside = yield* tool("read_memory").handler({ source: "other", revision: 1 }).pipe(Effect.result)
+      expect(outside._tag === "Failure" && outside.failure).toEqual(memoryCapabilityText.missing)
+      yield* tool("read_memory").handler({ source: "kept", revision: 1 }).pipe(Effect.orDie)
+      expect((yield* Ref.get(reads)).map((scope) => scope.owner)).toEqual(["workspace-owner"])
+      // Forgetting stays on the session owner's memory, and a source outside the filter is not found, as its read is.
+      const unseen = yield* tool("forget_memory").handler({ source: "other" }).pipe(Effect.result)
+      expect(unseen._tag === "Failure" && unseen.failure).toEqual(memoryCapabilityText.missing)
+      expect(yield* Ref.get(forgotten)).toEqual([])
+      yield* tool("forget_memory").handler({ source: "kept" }).pipe(Effect.orDie)
+      expect((yield* Ref.get(forgotten)).map((scope) => scope.owner)).toEqual([captureAddress.owner])
+      // Saving a note stays on the session owner's memory too.
+      const invocation = Option.some({ invocationId: InvocationId.make("narrowed-memory:call:1"), tool: "remember_memory", step: 0 })
+      yield* tool("remember_memory").handler({ text: "Prefers tea." }).pipe(Effect.provideService(CurrentToolInvocation, invocation), Effect.orDie)
+      expect((yield* Ref.get(fixture.calls)).filter((input) => input.source.ref.id.startsWith("note:")).map((input) => input.source.scope.owner)).toEqual([captureAddress.owner])
+      const text = yield* capability.promptSections[0]!.render({ variant: Option.none(), active: [], skills: [] })
+      expect(Option.isSome(text) && text.value.includes("Prefers tea.") && !text.value.includes("Prefers coffee.")).toBe(true)
+      expect(((yield* Ref.get(recalls)).at(-1)?.sources ?? []).map(String)).toEqual(["kept"])
+      // A reach that fails makes the tools unavailable and leaves the section out.
+      const unreachable = yield* tool("recall_memory").handler({ query: "prefer" }).pipe(Effect.provideService(KnowledgeNarrowing, failing), Effect.result)
+      expect(unreachable._tag === "Failure" && unreachable.failure).toEqual(memoryCapabilityText.unavailable)
+      expect(yield* capability.promptSections[0]!.render({ variant: Option.none(), active: [], skills: [] }).pipe(Effect.provideService(KnowledgeNarrowing, failing))).toEqual(Option.none())
+      return yield* turn.reply("Tea.")
     }))
   })).pipe(Effect.provide(TestClock.layer()))))
 

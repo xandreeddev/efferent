@@ -6,7 +6,7 @@ import {
   type KnowledgeSource, type KnowledgeSourceId, type KnowledgeSnapshot, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  knowledgeBm25, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCosine,
+  knowledgeBm25, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCandidateWithin, knowledgeCosine,
   sameEmbeddingSpace, sameKnowledgeScope, traverseKnowledgeGraph, validateKnowledgeStage,
 } from "./knowledge.entity.functions.js"
 import { KnowledgeStore, MemoryStore, TemporalGraph, type KnowledgeIndex } from "../ports/knowledge.port.js"
@@ -206,10 +206,12 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
         onNone: () => Option.isNone(memory.knownTo),
         onSome: (time) => memory.knownFrom <= time && Option.match(memory.knownTo, { onNone: () => true, onSome: (until) => time < until }),
       }))
-      const candidates: ReadonlyArray<KnowledgeCandidate> = [...memories.map((memory): KnowledgeCandidate => ({ _tag: "Memory", memory, score: 0 })), ...data.chunks.map((chunk): KnowledgeCandidate => ({ _tag: "Chunk", chunk, score: 0 }))]
+      const stored: ReadonlyArray<KnowledgeCandidate> = [...memories.map((memory): KnowledgeCandidate => ({ _tag: "Memory", memory, score: 0 })), ...data.chunks.map((chunk): KnowledgeCandidate => ({ _tag: "Chunk", chunk, score: 0 }))]
+      const sources = query.sources
+      const candidates = sources === undefined ? stored : stored.filter((candidate) => knowledgeCandidateWithin(candidate, sources))
       const scores = knowledgeBm25(query.query, candidates.map(knowledgeCandidateText))
       const lexical = candidates.map((candidate, position) => ({ ...candidate, score: scores[position] ?? 0 })).filter((candidate) => candidate.score > 0).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a), knowledgeCandidateKey(b))).slice(0, query.limit)
-      const embeddings = candidates.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => Option.toArray(memory.embedding), Chunk: ({ chunk }) => Option.toArray(chunk.embedding) }))
+      const embeddings = stored.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => Option.toArray(memory.embedding), Chunk: ({ chunk }) => Option.toArray(chunk.embedding) }))
       if (Option.isSome(query.vector) && embeddings.some((embedding) => !sameEmbeddingSpace(embedding.space, query.vector._tag === "Some" ? query.vector.value.space : embedding.space))) return yield* Effect.fail(error("EmbeddingMismatch", "The query embedding does not match the index"))
       const semantic = Option.match(query.vector, {
         onNone: () => [],

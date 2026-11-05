@@ -2,8 +2,8 @@ import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace,
-  type KnowledgeMemory, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
-  type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal,
+  type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
+  type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal,
   type KnowledgeVector,
 } from "./knowledge.entity.js"
 
@@ -102,6 +102,32 @@ export const traverseKnowledgeGraph = (graph: KnowledgeSubgraph, query: Knowledg
     entities,
     assertions: result.assertions.filter((edge) => endpoints(edge).every((id) => ids.includes(id))),
     truncated: result.truncated || query.seeds.length > seeds.length || result.assertions.some((edge) => endpoints(edge).some((id) => !ids.includes(id))),
+  }
+}
+
+/** Whether every span of a record's provenance cites one of the listed sources. @public */
+export const citesKnowledgeSources = (provenance: ReadonlyArray<KnowledgeProvenance>, sources: KnowledgeSourceFilter): boolean =>
+  provenance.length > 0 && provenance.every((span) => sources.includes(span.source.id))
+/** Whether a candidate is evidence from the listed sources only (`KnowledgeSearch.sources`). */
+export const knowledgeCandidateWithin = (candidate: KnowledgeCandidate, sources: KnowledgeSourceFilter): boolean => Match.valueTags(candidate, {
+  Memory: ({ memory }) => citesKnowledgeSources(memory.provenance, sources),
+  Chunk: ({ chunk }) => citesKnowledgeSources([chunk.provenance], sources),
+})
+/**
+ * The part of a graph the listed sources support: an entity they mention, keeping only its spans
+ * in them, and an assertion every span of which cites them, between entities that remain.
+ * @public
+ */
+export const narrowKnowledgeGraph = (graph: KnowledgeSubgraph, sources: KnowledgeSourceFilter): KnowledgeSubgraph => {
+  const entities = graph.entities.flatMap((entity) => {
+    const provenance = entity.provenance.filter((span) => sources.includes(span.source.id))
+    return provenance.length === 0 ? [] : [{ ...entity, provenance }]
+  })
+  const kept: ReadonlyArray<string> = entities.map((entity) => entity.id)
+  return {
+    entities,
+    assertions: graph.assertions.filter((edge) => citesKnowledgeSources(edge.provenance, sources) && endpoints(edge).every((id) => kept.includes(id))),
+    truncated: graph.truncated,
   }
 }
 
