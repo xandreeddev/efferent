@@ -23,8 +23,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   given kind. A record of a typed kind that does not decode fails with its
   `SchemaError`. `journalSchemaOf` returns these same schemas, so the stored
   format is unchanged (still 18) and every older journal decodes as before.
+- `@xandreed/plugin-models/testing`, a new entry: `scriptedChatCompletions`,
+  an OpenAI-compatible chat-completions endpoint that answers from a script
+  in the process, so a test or an evaluation runs the production compat
+  client, alone or under the models plugin as its `ModelsTransport`, with
+  no key and no network. Each request takes the first available step, in
+  order, whose optional `when` accepts it (a `repeat` step keeps
+  answering). A streamed request gets the reply as `data:` chunks, one per
+  read: the text and each tool call's arguments split into fragments
+  (`chunkSize` characters, or fragments given as they are sent), the call
+  named in its first chunk, the usage on the final chunk, then `[DONE]`; a
+  settled request gets the whole reply in one body. A reply without
+  `usage` reports none, so it reads as unknown, never zero. A step's
+  `beforeChunk` paces or holds its stream. A request no step answers is
+  refused with HTTP 400 and an OpenAI error naming it and the steps left,
+  which the client fails on at once without retrying. `requests` lists
+  every request with the step that answered it and `remaining` the steps
+  not yet used. `ScriptedReply` decodes a script kept as JSON.
 
 ### Changed
+
 
 
 - `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
@@ -44,7 +62,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   as before.
 
 
+
 ### Fixed
+
 
 
 
@@ -59,6 +79,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `knowledge_store.pending` trace, tens of thousands a day per process, and
   filled tracing quotas with empty traces. Each job a worker claims is traced
   as before.
+
+
 
 
 

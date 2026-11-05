@@ -151,7 +151,11 @@ credentials read back with every secret `Redacted`, resolve and refresh or
 fail as they should, one refresh at a time, a logout during a refresh sticks,
 damaged data fails instead of reading empty) and `settingsStoreConformance`
 (a `SettingsStore`, writable or read-only: values read back typed, clear, bad
-ones are refused, damaged data fails). See
+ones are refused, damaged data fails). For keyless tests above the model,
+`@xandreed/plugin-models/testing` ships `scriptedChatCompletions`, an
+OpenAI-compatible endpoint that answers from a script in the process
+(text and tool-call arguments streamed in fragments, usage on the final
+chunk, every request recorded). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
 ### Workspace tools
