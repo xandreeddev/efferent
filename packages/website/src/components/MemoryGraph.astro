@@ -1,0 +1,79 @@
+<figure class="memory-graph">
+  <svg viewBox="0 0 740 270" role="img" aria-labelledby="memory-graph-title memory-graph-description">
+    <title id="memory-graph-title">The graph extracted from source S1</title>
+    <desc id="memory-graph-description">User maintains Beacon. Beacon uses Postgres. User prefers the literal value concise release summaries. Each arrow is a directed assertion with source evidence; it has no numeric weight.</desc>
+    <defs>
+      <marker id="memory-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
+    </defs>
+    <g class="edges" marker-end="url(#memory-graph-arrow)">
+      <path d="M 170 58 H 288" />
+      <path d="M 445 58 H 563" />
+      <path d="M 95 92 V 183" />
+    </g>
+    <g class="labels">
+      <text x="232" y="43" text-anchor="middle">maintains</text>
+      <text x="507" y="43" text-anchor="middle">uses</text>
+      <text x="111" y="143">prefers</text>
+    </g>
+    <g class="entity">
+      <rect x="20" y="24" width="150" height="68" rx="9" />
+      <text x="95" y="53" text-anchor="middle">User</text>
+      <text class="identifier" x="95" y="75" text-anchor="middle">E1 · person</text>
+      <rect x="295" y="24" width="150" height="68" rx="9" />
+      <text x="370" y="53" text-anchor="middle">Beacon</text>
+      <text class="identifier" x="370" y="75" text-anchor="middle">E2 · project</text>
+      <rect x="570" y="24" width="150" height="68" rx="9" />
+      <text x="645" y="53" text-anchor="middle">Postgres</text>
+      <text class="identifier" x="645" y="75" text-anchor="middle">E3 · technology</text>
+    </g>
+    <g class="value">
+      <rect x="20" y="190" width="285" height="57" rx="9" />
+      <text x="162" y="214" text-anchor="middle">“concise release summaries”</text>
+      <text class="identifier" x="162" y="234" text-anchor="middle">literal value · not a separate entity</text>
+    </g>
+  </svg>
+  <ul class="mobile-relationships" aria-label="Extracted graph assertions">
+    <li><strong>User (E1)</strong><span>maintains ↓</span><strong>Beacon (E2)</strong></li>
+    <li><strong>Beacon (E2)</strong><span>uses ↓</span><strong>Postgres (E3)</strong></li>
+    <li><strong>User (E1)</strong><span>prefers ↓</span><q>concise release summaries</q><small>literal value</small></li>
+  </ul>
+  <figcaption>Illustrative extraction from S1. Arrows are stored relationships with quoted evidence;
+    they have no numeric weights. The model proposes the relationship names and entity types.</figcaption>
+  <details>
+    <summary>Show the evidence behind each arrow</summary>
+    <dl>
+      <div><dt>User maintains Beacon</dt><dd><code>S1 revision 1, characters 0–18</code><br /><q>I maintain Beacon.</q></dd></div>
+      <div><dt>Beacon uses Postgres</dt><dd><code>S1 revision 1, characters 19–40</code><br /><q>Beacon uses Postgres.</q></dd></div>
+      <div><dt>User prefers concise release summaries</dt><dd><code>S1 revision 1, characters 41–76</code><br /><q>I prefer concise release summaries.</q></dd></div>
+    </dl>
+    <p>Offsets are zero-based UTF-16 positions, with the end excluded. These are spans in the
+      simplified source shown in this guide; captured journal sources include additional labels.</p>
+  </details>
+</figure>
+
+<style>
+  .memory-graph { margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  svg { display: block; width: 100%; height: auto; font-family: var(--font-sans); }
+  .edges path { fill: none; stroke: var(--accent); stroke-width: 2; }
+  marker path { fill: var(--accent); }
+  rect { fill: var(--bg-soft); stroke: var(--border); stroke-width: 1.5; }
+  text { fill: var(--text); font-size: 17px; }
+  .labels text { fill: var(--accent); font-size: 15px; }
+  .identifier { fill: var(--text-dim); font-size: 12px; }
+  .value rect { stroke-dasharray: 5 3; }
+  figcaption, details p { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; }
+  details { margin-top: 0.8rem; }
+  summary { cursor: pointer; }
+  summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+  dl { display: grid; gap: 1rem; }
+  dt { font-weight: 650; }
+  dd { margin: 0.25rem 0 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+  .mobile-relationships { display: none; }
+  @media (max-width: 600px) {
+    svg { display: none; }
+    .mobile-relationships { display: grid; gap: 0.75rem; padding: 0; list-style: none; }
+    .mobile-relationships li { display: grid; gap: 0.15rem; text-align: center; padding: 0.75rem; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 7px; }
+    .mobile-relationships span { color: var(--accent); }
+    .mobile-relationships small { color: var(--text-dim); }
+  }
+</style>

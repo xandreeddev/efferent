@@ -1,0 +1,284 @@
+---
+title: How a message becomes memory
+description: Follow one message through extraction, graph records, PostgreSQL indexes, retrieval scores and reranking.
+---
+
+import MemoryGraph from '../../../components/MemoryGraph.astro'
+
+Suppose you tell the assistant:
+
+> I maintain Beacon. Beacon uses Postgres. I prefer concise release summaries.
+
+Later, in another conversation, you ask what database the project you maintain
+uses. How does the assistant find the answer without receiving your entire
+old conversation?
+
+**It saves evidence, extracts small records, then searches those records.**
+The graph connects the people, projects and systems mentioned in them.
+Here, “learning” means writing database records. It does not train or change
+the language model's weights. On later turns, retrieved evidence is inserted
+into the model's input.
+
+We will call this source **S1**. The records below are illustrative extraction
+outputs, not an observed model run. Short IDs such as E1 and M1 make them
+readable; real IDs include source identity, revision and extraction keys.
+
+## 1. Save the source before learning anything
+
+[Conversation capture](/docs/plugins/memory-capture/) reads completed,
+acknowledged turns from the journal. It saves source text and queues a
+processing job. Sources can include user statements, final replies and
+accepted tool evidence, with their roles kept distinct. Injected memory
+sections and memory/RAG tool results are excluded. Final replies remain
+captured and can repeat retrieved claims, so extraction must still distinguish
+the sources of claims; this is not perfect echo prevention.
+
+For this example, treat the quoted message as the whole source:
+
+| Saved item | Example |
+|---|---|
+| Source | S1, revision 1; the original 76-character text |
+| Scope | The caller's owner, namespace and collection |
+| Job | Process S1 with the native memory extraction protocol |
+| Learned records | None until processing publishes them |
+
+The source and job belong to the memory store. **They are separate from the
+conversation journal.** A queued job means evidence was captured; it does not
+mean facts have already been extracted.
+
+## 2. Ask a helper model to propose records
+
+The worker sends S1, a bounded selection of existing knowledge, and an output
+schema to `UtilityLlm`. This is a helper model call, separate from the agent's
+answer. The model proposes three kinds of record:
+
+| Kind | Proposed records for S1 |
+|---|---|
+| Entities: things with identities | E1 **User**, E2 **Beacon**, E3 **Postgres** |
+| Memories: readable claims | M1 “The user maintains Beacon.”; M2 “Beacon uses Postgres.”; M3 “The user prefers concise release summaries.” |
+| Assertions: explicit relationships | E1 **maintains** E2; E2 **uses** E3; E1 **prefers** the value “concise release summaries” |
+
+M1 and M2 are stated facts; M3 is a stated preference. A memory is useful to
+text search. An assertion makes its relationship traversable. Neither is
+automatically generated from the other: the extractor proposes both. There
+is no one-memory/one-edge rule, and predicates such as `maintains` are model
+output, not members of a fixed relationship vocabulary.
+
+Entity reuse is also a model decision. It may propose an existing supplied
+entity ID for Beacon. There is **no global “same name means same entity”
+merge**; ambiguous Beacons should remain separate. The engine checks that a
+proposed existing identity actually exists.
+
+The [extraction instructions and staging code](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge-extraction.entity.functions.ts)
+define these rules.
+
+## 3. Check the proposal, then embed it
+
+By default, a second helper call reviews the proposal against its source.
+The engine then checks the schema, entity references, supporting memories,
+supersession targets and source spans. For M2, one citation is:
+
+```json
+{
+  "source": { "id": "S1", "revision": 1 },
+  "start": 19,
+  "end": 40,
+  "quote": "Beacon uses Postgres."
+}
+```
+
+Offsets count UTF-16 characters; the end is exclusive. The exact substring
+must match. A unique quote can repair incorrect offsets. Records can retain
+additional provenance from their linked entities and supporting memories.
+
+**A matching quote proves that text exists, not that every proposed claim
+follows from it.** Semantic judgment still depends on extraction and review.
+A successful tool handler, for example, does not by itself prove a successful
+real-world action.
+
+The validated proposal is staged. The embedding model then turns each new
+**memory's text** into a numeric vector. M2's vector represents “Beacon uses
+Postgres.” It is not an embedding of the entire graph; native memory does not
+embed entity nodes or relationship edges. Vector model, version and dimensions
+must match the configured embedding space.
+
+## 4. Publish the graph and memories together
+
+With [Knowledge PostgreSQL](/docs/plugins/knowledge-postgres/), these are rows
+in ordinary tables under `efferent_knowledge`:
+
+| Table | Human-readable sample rows |
+|---|---|
+| `sources` | S1/revision 1 → original text and timestamps |
+| `jobs` | S1's processing status and staged proposal |
+| `entities` | E1 → User; E2 → Beacon; E3 → Postgres |
+| `memories` | M1/M2/M3 → claim text, kind, entity IDs, provenance, vector and known-time interval |
+| `assertions` | A1 → E1/maintains/E2; A2 → E2/uses/E3; A3 → E1/prefers/literal value |
+| `record_sources` | Links each derived record to the source revisions supporting it |
+
+An assertion stores its subject, predicate, entity object when present,
+valid/known times, and a JSON payload containing its text, provenance and
+object. A literal preference needs no extra “concise summaries” entity.
+
+<MemoryGraph />
+
+The graph is these entity and assertion records, **not a separate graph
+database or an image**. Publication checks the job lease and scope revision,
+then commits the derived records and retirements atomically. Extraction and
+embedding happen outside that transaction. A failure before publication
+leaves processing work to inspect or retry, rather than publishing half a
+new graph. See the [storage transaction](https://github.com/xandreeddev/efferent/blob/main/packages/plugin-knowledge-postgres/src/knowledge-store.adapter.ts#L284).
+
+PostgreSQL persists this knowledge across process restarts. The reference
+in-memory adapter keeps records only as long as its host retains that store.
+A durable journal alone does not make that adapter durable.
+
+## 5. Find memories for a new question
+
+For “What database does the project I maintain use?”, retrieval can make a
+helper planning call for complementary queries, entity names and explicitly supported time
+coordinates. It keeps the original question and searches at most four
+distinct queries. Planner failure falls back to the original question.
+
+Each query has two retrieval paths:
+
+| Path | What it compares | Actual implementation |
+|---|---|---|
+| Lexical | Words in the query and claim text | Reference adapter: BM25. PostgreSQL: `simple` text-search vectors, GIN indexes and `ts_rank_cd`. |
+| Semantic | Query vector and stored memory vectors | Cosine similarity within the same embedding space. PostgreSQL uses pgvector. |
+
+With the default eight final candidates, retrieval requests up to 32 candidates
+per arm per query before fusion and reranking.
+
+The PostgreSQL schema creates **no HNSW or IVFFlat index**. Its current
+semantic query calculates exact cosine scores and sorts scoped records.
+“Stored vectors” does not imply approximate nearest-neighbor indexing. Graph
+lookup has ordinary subject/object indexes. The [schema](https://github.com/xandreeddev/efferent/blob/main/packages/plugin-knowledge-postgres/src/postgres-connection.adapter.ts#L100)
+and [search queries](https://github.com/xandreeddev/efferent/blob/main/packages/plugin-knowledge-postgres/src/knowledge-store.adapter.ts#L347)
+show the distinction.
+
+## 6. Combine lexical and semantic ranks
+
+The engine combines positions in the two lists using reciprocal rank fusion:
+
+```text
+score = 1 / (60 + lexical rank) + 1 / (60 + semantic rank)
+```
+
+Ranks start at one; a missing result contributes zero. These arms have equal
+weight. The raw lexical and cosine score magnitudes are not added together.
+
+For arithmetic alone, suppose the three memories receive these ranks.
+**These are teaching inputs, not measured S1 results.**
+
+| Memory | Lexical rank | Semantic rank | Fused score |
+|---|---:|---:|---:|
+| M1 | 1 | 3 | 0.032266 |
+| M2 | 2 | 1 | 0.032522 |
+| M3 | absent | 2 | 0.016129 |
+
+M2 wins through strong placement in both lists. Its score is a ranking value,
+**not a 3.25% confidence estimate**. With multiple queries, the
+implementation concatenates their lexical lists and semantic lists, then uses
+each candidate's first position in each arm. It does not sum a separate vote
+for every query. See the [fusion function](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge.entity.functions.ts#L49).
+
+## 7. Expand relationships, then ask what evidence helps
+
+The engine finds graph starting points from matching entity names/aliases
+and the entities attached to retrieved memories. From User, two hops can
+follow **User → maintains → Beacon → uses → Postgres**. Traversal can follow
+either endpoint of an entity relationship.
+
+This is bounded breadth-first traversal: default two hops, maximum three,
+with separate caps of 100 entities and 100 assertions, and time checks at every hop. Edges have no
+numeric weights and are selected in stable ID order. **Graph evidence is
+separate from the two fused search lists.**
+
+By default, a helper reranker receives the question, candidate keys/text and
+graph relationship text. It can return:
+
+```json
+{ "order": ["memory:M2", "memory:M1"] }
+```
+
+That keeps M2 first and omits M3 from search results. It orders existing
+evidence; it does not generate an answer. Unknown or repeated keys reject
+the rerank. A failed call or timeout keeps deterministic fused ordering.
+An empty valid order deliberately selects no candidates.
+
+This LLM call reranks **memories/chunks, not graph assertions themselves**.
+The graph remains separately budgeted evidence. See [retrieval orchestration](https://github.com/xandreeddev/efferent/blob/main/packages/plugin-memory/src/memory-engine.adapter.ts#L145)
+and the [reranking contract](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge-query.entity.functions.ts#L17).
+
+## 8. Put selected evidence into model context
+
+Direct/search recall defaults to eight candidates and an 8,000-character
+evidence budget, including citations. The section's fixed framing and
+introductory text add overhead beyond that evidence budget.
+Graph evidence initially receives 40% of the character allowance
+when candidates exist; unused space can admit additional graph facts.
+
+The automatic context section also **prepends up to four active preference
+or profile memories**, independently of search relevance, and removes duplicate
+candidate IDs. M3 may therefore still appear for the database question.
+That is profile injection, not proof that semantic search ranked M3 highly.
+Its internal `score: 1` is a marker on prepended records, not a learned weight
+or a claim of 100% confidence.
+Before deduplication and the shared character budget, this automatic section
+can contain up to twelve candidates, rather than eight total.
+
+The agent receives readable claims and source locators in a framed
+`recalled-memory` section. It can answer “Postgres” or use `read_memory` to
+inspect the original source. It does not receive the whole database.
+
+## What happens when Beacon changes?
+
+Suppose a later source says Beacon migrated to SQLite on November 1, 2026.
+The extractor can reuse Beacon's entity, introduce SQLite, and propose
+supersession as a **change**, with the evidenced effective date. The old
+Postgres assertion is retired in knowledge time; a historical version keeps
+its validity ending on November 1. The new SQLite assertion begins then.
+
+If you instead say “I was mistaken; Beacon never used Postgres,” that is a
+**correction**. It retires the incorrect claim without inventing an earlier
+world state. The model must propose these distinctions; the engine does not
+infer a migration by comparing database names alone.
+
+`validAt` asks when a relationship held in the world. `knownAt` asks what the
+learned store had accepted by a time: its knowledge time starts at publication,
+not when a journal message was first saved. Graph traversal checks both; memory-text search
+filters known time. Unknown world dates stay unknown.
+
+Consolidation happens in the extraction model pass with existing candidate
+knowledge. It can propose profiles, supersessions or routines; there is no
+separate consolidation daemon. An **inferred** routine needs support from
+at least three distinct source episodes. A stated routine needs no such
+recurrence inference, and neither authorizes an action.
+
+## Defaults and current limits
+
+Review, consolidation, query planning, reranking and the processing worker are
+on by default. The worker scans queued work; the host can instead process
+jobs explicitly. Embedding labels describe the host-supplied model's identity;
+they do not instantiate an embedding model. See [memory configuration](/docs/plugins/memory/).
+
+The plugin responsibilities follow the data flow: `memoryCapturePlugin`
+copies committed conversation evidence into source jobs; `memoryPlugin`
+runs extraction and retrieval; `knowledgePostgresPlugin` stores the records.
+The host supplies the helper model and embedding service.
+
+The [five-turn executable walkthrough](/docs/guides/memory-walkthrough/) uses
+scripted models and disables review, consolidation, query planning, reranking
+and the worker to expose checkpoints. It demonstrates data flow, not those
+models' judgment or production retrieval quality.
+
+Current memory has **no persistent confidence/importance scores, weighted
+edges, retrieval recency decay, PageRank, learned graph ranking, cross-encoder
+reranker or ANN index**. The tests establish framework behavior; they do not
+establish competitive memory quality against other systems.
+
+[RAG](/docs/plugins/rag/) separately ingests documents and retrieves their
+original chunks. Workspace tool results may be captured as conversation
+evidence. The file itself does not become an automatically synchronized
+knowledge source; a RAG document index requires explicit ingestion.

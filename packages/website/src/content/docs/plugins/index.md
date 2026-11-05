@@ -10,6 +10,8 @@ configuration reference generated from its exported schema.
 Start with [Getting started](/docs/getting-started/) for a complete agent.
 For the relationship between stored conversations, model input and persistent
 knowledge, read [Context, memory and the journal](/docs/concepts/context-journal/).
+For the memory engine itself, [follow one source through extraction, graph
+storage and ranked retrieval](/docs/guides/memory-engine/).
 The [five-turn playback](/docs/guides/memory-walkthrough/) shows the actual
 state changes and model requests of one composed assistant.
 

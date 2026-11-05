@@ -8,6 +8,9 @@ bounded presentation of that conversation for the model, and optional learned
 knowledge or document indexes. Understanding their boundaries explains what
 the assistant can see now, what survives a restart, and what “remember” means.
 
+For extraction, graph storage, indexes, scores and reranking, read
+[how memory learns and retrieves](/docs/guides/memory-engine/).
+
 Start with the [five-turn interactive example](/docs/guides/memory-walkthrough/)
 to inspect actual file changes, journal events, model requests and learned
 memory at each step. This page explains the contracts behind that example.
