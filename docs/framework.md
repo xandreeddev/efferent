@@ -1262,7 +1262,11 @@ registry handles has its `invocationId` (`<runId>:call:<n>`), a refused one
 too: its `tool.refused` carries it, and a call that runs shares it across
 `tool.started`, `tool.progress` and `tool.completed`. A host event may not
 take any of these names, nor a kind the journal stores (`RESERVED_KINDS`):
-its publish fails with `events.reserved`. A tool handler reports progress with
+its publish fails with `events.reserved`. Outside a turn, a host event's
+`draft(data)` gives the record the turn's writer stores for it (`name` as
+the kind, the payload encoded through its schema and JSON, as `make` does)
+for `Sessions.transact`'s decision, so a record written by either path reads
+back alike through `select`. A tool handler reports progress with
 `publishToolProgress(channel, text)` (`stdout` or `stderr` for a command's
 output as it arrives, `status` for anything else): it reads
 `CurrentToolInvocation`, which the tool registry sets around each call, so
@@ -3342,7 +3346,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
 | `transact.keyed` (`key`, `command`, `events`: how many follow it) | `Sessions.transact` given a `key`, first in the commit of the decision's events |
 | `task.started`, `task.questioned`, `task.answered`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
-| anything else | the host, through the writer or `transact` |
+| anything else | the host, through the writer or `transact` (a host event's own record: `defineHostEvent`'s `draft`) |
 
 Memory is rebuilt from `MEMORY_KINDS` by `entriesOfEvents`, which reads JSON
 back with sorted keys, and requests send params, results and provider options

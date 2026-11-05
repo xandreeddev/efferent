@@ -5,6 +5,8 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentToolInvocation } from "../loop/stepContext.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
+import type { TurnDraft } from "../ports/sessions.port.js"
+import type { JsonObject } from "../session/session-log.entity.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import type { TurnError } from "../session/sessions.entity.js"
 
@@ -58,21 +60,28 @@ export const subscribeAll = <R>(events: TurnEventsService, subscriptions: Readon
  * An application's own typed event. Its name is the host's namespace
  * (e.g. `answer.published`); payloads are encoded with the schema and
  * carried as JSON (`storedJson`: `undefined` fields dropped), so a journal
- * sink can persist them like any other event. A payload that does not
- * encode, or whose encoded form JSON cannot hold (a BigInt), fails `make`
- * with `events.encode`.
+ * sink can persist them like any other event. `make` and `publish` put it
+ * on a turn's bus, which journals it under `name`; `draft` gives that same
+ * record, kind and data, for a write outside the bus (`Sessions.transact`,
+ * or a turn writer's `append` or `transact`), so both paths store it alike
+ * and `select` reads either back. A payload that does not encode, or whose
+ * encoded form JSON cannot hold (a BigInt), fails `make` and `draft` with
+ * `events.encode`. A reserved name is refused where it is written: the
+ * bus's publish with `events.reserved`, a writer with `ReservedKind`.
  */
 export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(name: string, schema: Schema.Codec<A, I>) => {
   const select = (event: TurnEvent): Option.Option<A> =>
     event._tag === "host" && event.name === name ? Schema.decodeUnknownOption(schema)(event.data) : Option.none()
-  const make = (data: A): Effect.Effect<TurnEvent, HarnessError> => Schema.encodeEffect(schema)(data).pipe(
+  const encode = (data: A): Effect.Effect<JsonObject, HarnessError> => Schema.encodeEffect(schema)(data).pipe(
     Effect.flatMap(storedJson),
-    Effect.map((encoded): TurnEvent => ({ _tag: "host", name, data: encoded })),
     Effect.mapError((error) => new HarnessError({ code: "events.encode", message: `${name}: ${error.message}` })),
   )
+  const make = (data: A): Effect.Effect<TurnEvent, HarnessError> => encode(data).pipe(Effect.map((encoded): TurnEvent => ({ _tag: "host", name, data: encoded })))
+  const draft = (data: A): Effect.Effect<TurnDraft, HarnessError> => encode(data).pipe(Effect.map((encoded): TurnDraft => ({ kind: name, data: encoded })))
   return {
     name,
     make,
+    draft,
     select,
     publish: (events: TurnEventsService, data: A) => make(data).pipe(Effect.flatMap(events.publish)),
     on: <R>(handle: (data: A) => Effect.Effect<void, TurnError, R>, options?: SubscribeOptions): Subscription<R> =>

@@ -139,6 +139,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   record cannot use. As with every format, an earlier release refuses to
   write to a session this release has written to (`session.version`), and
   still reads it; sessions stored before read as they were.
+- `@xandreed/core`: the object `defineHostEvent` returns gains
+  `draft(data)`, an `Effect<TurnDraft, HarnessError>` that encodes the
+  payload through the event's schema and JSON (`storedJson`) exactly as
+  `make` does and gives the record the turn's writer stores for the
+  published event: `name` as its kind, the same data. A host passes it in
+  `Sessions.transact`'s decision (or a turn writer's `append` or
+  `transact`) without re-encoding or casting, so a record written outside a
+  turn is stored byte for byte like the published one and `select` reads
+  either back. A payload that does not encode fails with `events.encode`;
+  a reserved name is refused by the write with `ReservedKind`. The stored
+  format is unchanged.
 
 ### Migration
 
