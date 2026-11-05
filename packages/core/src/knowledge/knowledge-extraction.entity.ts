@@ -3,6 +3,7 @@ import { KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeMe
 
 const Key = Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(160))
 const Offset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const Positive = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
 
 /** Source offsets proposed by extraction; publication verifies the exact quote. @public */
 export const KnowledgeExtractionSpan = Schema.Struct({ start: Offset, end: Offset, quote: Schema.String.check(Schema.isMinLength(1)) })
@@ -38,3 +39,11 @@ export const KnowledgeExtraction = Schema.Struct({
   assertions: Schema.Array(KnowledgeExtractedAssertion),
 })
 export type KnowledgeExtraction = typeof KnowledgeExtraction.Type
+/**
+ * The part of a source one extraction call reads: `[start, end)` in UTF-16
+ * offsets of the whole source, part `part` of `parts`, counted from 1. The
+ * windows of a source cover it in order, without gaps or overlap.
+ * @public
+ */
+export const KnowledgeExtractionWindow = Schema.Struct({ part: Positive, parts: Positive, start: Offset, end: Offset })
+export type KnowledgeExtractionWindow = typeof KnowledgeExtractionWindow.Type

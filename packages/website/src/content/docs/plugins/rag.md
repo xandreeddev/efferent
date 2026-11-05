@@ -90,6 +90,18 @@ use that helper when available; invalid or unavailable assistance falls back
 to deterministic lexical/vector retrieval. The total foreground query,
 including embedding and graph traversal, is bounded by `queryTimeoutMs`.
 
+One extraction call reads at most `maxExtractionChars` of a document (48,000
+by default; `maxSourceChars`, 200,000 by default, bounds the document). A
+longer document is extracted window by window, each window and its review in
+their own helper calls, and the windows' entities and relationships are merged
+with exact offsets into the whole document before anything is staged. Every
+helper call (extraction, review, planning, reranking) runs with
+`CurrentKnowledgeHelperCall` set to its purpose, scope, job and attempt where
+there is one, and the optional `maxHelperOutputTokens`, so a host's
+`UtilityLlm` can budget or refuse it. That cap is advisory: only a
+`UtilityLlm` that reads the reference applies it, and the models plugin's own
+`UtilityLlmLive` does not.
+
 Graph queries distinguish world time from recorded knowledge time, with both
 coordinates applied at every hop. Historical graph queries do not turn the
 current chunk index into a historical search index: read an older source by
@@ -139,6 +151,7 @@ Plugin: `@xandreed/plugin-rag` · Version **0.17.1** · Plugin API **3** · Scop
   "leaseMs": 180000,
   "modelTimeoutMs": 60000,
   "maxSourceChars": 200000,
+  "maxExtractionChars": 48000,
   "maxCandidateChars": 32000,
   "chunkChars": 2000,
   "overlapChars": 200,
@@ -238,6 +251,16 @@ Plugin: `@xandreed/plugin-rag` · Version **0.17.1** · Plugin API **3** · Scop
       "maximum": 2000000,
       "exclusiveMinimum": 0
     },
+    "maxExtractionChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "minimum": 1000
+    },
+    "maxHelperOutputTokens": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
     "maxCandidateChars": {
       "type": "integer",
       "maximum": 9007199254740991,
@@ -308,6 +331,7 @@ Plugin: `@xandreed/plugin-rag` · Version **0.17.1** · Plugin API **3** · Scop
     "leaseMs",
     "modelTimeoutMs",
     "maxSourceChars",
+    "maxExtractionChars",
     "maxCandidateChars",
     "chunkChars",
     "overlapChars",

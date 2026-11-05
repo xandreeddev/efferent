@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel, LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
+import { ConversationId, CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
+import type { KnowledgeHelperCall } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -18,9 +19,13 @@ describe("memory through the real agent", () => {
     const store = yield* makeKnowledgeIndexMemory()
     const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
     const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const helperCalls = yield* Ref.make<ReadonlyArray<Option.Option<KnowledgeHelperCall>>>([])
     const utility = UtilityLlm.of({ complete: (prompt) => {
       const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
-      return Effect.succeed(new UtilityCompletion({ text: JSON.stringify(fixtureExtraction(text)), usage: zeroUsage }))
+      return Effect.service(CurrentKnowledgeHelperCall).pipe(
+        Effect.flatMap((call) => Ref.update(helperCalls, (all) => [...all, call])),
+        Effect.as(new UtilityCompletion({ text: JSON.stringify(fixtureExtraction(text)), usage: zeroUsage })),
+      )
     } })
     const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
     const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
@@ -51,6 +56,10 @@ describe("memory through the real agent", () => {
     expect(yield* Context.get(otherSpace, LongTermMemory).process(pending[0]!.scope, 10)).toBe(0)
     expect(Option.map(yield* store.status(pending[0]!.scope, pending[0]!.id), (job) => job.phase._tag)).toEqual(Option.some("Queued"))
     expect(yield* memory.process(pending[0]!.scope, 10)).toBe(1)
+    expect(yield* Ref.get(helperCalls)).toEqual([Option.some({
+      purpose: "extract", scope: pending[0]!.scope, job: Option.some({ id: pending[0]!.id, attempt: 1 }), maxOutputTokens: Option.none(),
+    })])
+    expect(pending[0]!.scope.owner).toBe("same-owner")
     const captureContext = yield* Layer.build(MemoryCaptureLive(memoryCaptureDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(Sessions, sessions), Layer.succeed(LongTermMemory, memory)))))
     expect((yield* Context.get(captureContext, MemoryCapture).sync(first)).sources).toBe(0)
     yield* agent.turn({ turn: { session: second, runId: RunId.make("second"), userMessage: new UserMessage({ text: "What drink do I prefer?" }) }, services }, (turn) => Effect.gen(function* () {

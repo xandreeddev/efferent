@@ -109,7 +109,7 @@ export { collectBashResult, resolveBashEnv } from "./domain/bash.entity.function
 export { ModelCatalog } from "./ports/model-catalog.port.js"
 export { FileSystem } from "./ports/file-system.port.js"
 export { Bash } from "./ports/bash.port.js"
-export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/utility-llm.port.js"
+export { CurrentKnowledgeHelperCall, UtilityCompletion, UtilityError, UtilityLlm } from "./ports/utility-llm.port.js"
 
 // workspace: the in-memory FileSystem backend
 export { FileSystemMemoryLive, makeMemoryFileSystem } from "./workspace/file-system.memory.adapter.js"
@@ -510,6 +510,7 @@ export {
   KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
+  KnowledgeHelperPurpose, KnowledgeHelperJob, KnowledgeHelperCall,
 } from "./knowledge/knowledge.entity.js"
 export { MemoryStore, KnowledgeStore, TemporalGraph, LongTermMemory, Knowledge } from "./ports/knowledge.port.js"
 export type { KnowledgeIndex } from "./ports/knowledge.port.js"
@@ -520,7 +521,7 @@ export {
   validateKnowledgeStage,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
-export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion } from "./knowledge/knowledge-extraction.entity.js"
+export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow } from "./knowledge/knowledge-extraction.entity.js"
 export { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge/knowledge-query.entity.js"
 export { knowledgeQueryPrompt, knowledgeRerankPrompt, applyKnowledgeRerank, budgetKnowledgeRecall } from "./knowledge/knowledge-query.entity.functions.js"
-export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge/knowledge-extraction.entity.functions.js"
+export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction, knowledgeExtractionWindows, extractKnowledge } from "./knowledge/knowledge-extraction.entity.functions.js"

@@ -2234,6 +2234,7 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "leaseMs": 180000,
   "modelTimeoutMs": 60000,
   "maxSourceChars": 48000,
+  "maxExtractionChars": 48000,
   "maxCandidateChars": 32000,
   "recallChars": 8000,
   "recallLimit": 8,
@@ -2325,6 +2326,16 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
       "maximum": 9007199254740991,
       "exclusiveMinimum": 0
     },
+    "maxExtractionChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "minimum": 1000
+    },
+    "maxHelperOutputTokens": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
     "maxCandidateChars": {
       "type": "integer",
       "maximum": 9007199254740991,
@@ -2372,6 +2383,7 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "leaseMs",
     "modelTimeoutMs",
     "maxSourceChars",
+    "maxExtractionChars",
     "maxCandidateChars",
     "recallChars",
     "recallLimit",
@@ -2489,6 +2501,7 @@ Optional: `@xandreed/core/UtilityLlm`
   "leaseMs": 180000,
   "modelTimeoutMs": 60000,
   "maxSourceChars": 200000,
+  "maxExtractionChars": 48000,
   "maxCandidateChars": 32000,
   "chunkChars": 2000,
   "overlapChars": 200,
@@ -2585,6 +2598,16 @@ Optional: `@xandreed/core/UtilityLlm`
       "maximum": 2000000,
       "exclusiveMinimum": 0
     },
+    "maxExtractionChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "minimum": 1000
+    },
+    "maxHelperOutputTokens": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
     "maxCandidateChars": {
       "type": "integer",
       "maximum": 9007199254740991,
@@ -2655,6 +2678,7 @@ Optional: `@xandreed/core/UtilityLlm`
     "leaseMs",
     "modelTimeoutMs",
     "maxSourceChars",
+    "maxExtractionChars",
     "maxCandidateChars",
     "chunkChars",
     "overlapChars",

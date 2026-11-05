@@ -12,7 +12,10 @@ assistant proposals or handler success into confirmed domain effects. Retrieved
 sections and the memory/RAG tools' outputs are excluded from capture. All model
 tools derive scope from `RunContext.session.owner`; only host APIs accept scopes.
 
-Extraction and query protocols are core's shared native knowledge helpers. Stage
+Extraction and query protocols are core's shared native knowledge helpers. Extract
+through `extractKnowledge` (one call and review per `maxExtractionChars` window,
+merged before staging), and run every UtilityLlm call inside
+`CurrentKnowledgeHelperCall` (purpose, scope, job and attempt, output cap). Stage
 validated extraction before embedding. Publish through the store's lease and
 scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
@@ -55,7 +58,7 @@ those dependencies to production. See the repository skills and definition of do
 | Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:41`, `:47` | exact, `src/memory-capability.adapter.test.ts:56`; exact, `src/memory-capability.adapter.test.ts:59`; exact, `src/memory-capability.adapter.test.ts:60` |
 | Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:44` | exact, `src/memory-capability.adapter.test.ts:57` |
 | Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:84` | exact, `src/memory-capability.adapter.test.ts:33`; exact, `src/memory-capability.adapter.test.ts:34` |
-| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:45` |
+| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:50` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 
 ## Layout

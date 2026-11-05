@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref } from "effect"
-import { KnowledgeSourceId, LongTermMemory, MemoryStore } from "@xandreed/core"
+import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, knowledgeExtractionWindows } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { fixtureEnqueue, fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
@@ -111,5 +111,55 @@ describe("native memory engine", () => {
     const snapshot = yield* fixture.store.snapshot(fixtureScope)
     expect(snapshot.memories.map((memory) => memory.kind)).toEqual(["preference"])
     expect((yield* Ref.get(fixture.calls))[0]).toContain("Consolidation is disabled for this run.")
+  }))))
+})
+
+describe("bounded memory extraction", () => {
+  const filler = (word: string, count: number) => Array.from({ length: count }, (_, index) => `${word} ${index}.`).join(" ")
+  const text = [`User: I prefer tea. ${filler("Chat", 70)}`, `User: I prefer green tea in the morning. ${filler("Talk", 60)}`, `User: I prefer tea without sugar. ${filler("Note", 75)}`].join("\n\n")
+  const sourceOf = (prompt: string) => /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+  /** One stated preference per part: its first sentence, at offsets within the part. */
+  const reply = (prompt: string, call: Option.Option<{ readonly purpose: string }>) => {
+    const purpose = Option.map(call, (value) => value.purpose)
+    if (Option.contains(purpose, "plan")) return JSON.stringify({ queries: ["tea"], entities: [], validAt: null, knownAt: null })
+    if (!Option.contains(purpose, "extract") && !Option.contains(purpose, "review")) return "not JSON"
+    const part = sourceOf(prompt)
+    const sentence = part.slice(part.indexOf("I prefer"), part.indexOf(".", part.indexOf("I prefer")) + 1)
+    const span = { start: part.indexOf(sentence), end: part.indexOf(sentence) + sentence.length, quote: sentence }
+    return JSON.stringify({
+      entities: [{ key: "user", name: "User", type: "person", aliases: [], existing: null, spans: [{ start: part.indexOf("User"), end: part.indexOf("User") + 4, quote: "User" }] }],
+      memories: [{ key: "preference", kind: "preference", text: sentence, entities: ["user"], spans: [span], evidence: { _tag: "Stated" }, supersedes: [] }],
+      assertions: [],
+    })
+  }
+
+  test("a long source makes several bounded calls, each with its job context, and keeps exact provenance", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeMemoryFixture(reply, { review: true, maxExtractionChars: 1_000, maxSourceChars: 4_000, maxHelperOutputTokens: 256 })
+    const job = yield* fixture.memory.capture(fixtureEnqueue("long", text))
+    expect(yield* fixture.memory.process(fixtureScope, 1)).toBe(1)
+    const windows = knowledgeExtractionWindows(text, 1_000)
+    expect(windows.length).toBeGreaterThan(1)
+    const prompts = yield* Ref.get(fixture.calls)
+    expect(prompts).toHaveLength(windows.length * 2)
+    expect(prompts.map(sourceOf)).toEqual(windows.flatMap((window) => [text.slice(window.start, window.end), text.slice(window.start, window.end)]))
+    expect(yield* Ref.get(fixture.helperCalls)).toEqual(windows.flatMap(() => ["extract" as const, "review" as const]).map((purpose) => Option.some({
+      purpose, scope: fixtureScope, job: Option.some({ id: KnowledgeJobId.make("job:long"), attempt: 1 }), maxOutputTokens: Option.some(256),
+    })))
+    expect(job.id).toBe(KnowledgeJobId.make("job:long"))
+    const snapshot = yield* fixture.store.snapshot(fixtureScope)
+    expect(snapshot.memories.map((memory) => memory.text)).toEqual(["I prefer tea.", "I prefer green tea in the morning.", "I prefer tea without sugar."].slice(0, windows.length))
+    expect(snapshot.memories.flatMap((memory) => memory.provenance).every((span) => text.slice(span.start, span.end) === span.quote)).toBe(true)
+    expect(snapshot.graph.entities).toHaveLength(1)
+  }))))
+
+  test("recall's planning and reranking calls carry their purpose and scope but no job", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeMemoryFixture(reply, { queryPlanning: true, rerank: true })
+    yield* fixture.memory.capture(fixtureEnqueue("short", "User: I prefer tea."))
+    yield* fixture.memory.process(fixtureScope, 1)
+    yield* fixture.memory.recall({ scope: fixtureScope, query: "drink", limit: 8, maxChars: 8_000 })
+    expect((yield* Ref.get(fixture.helperCalls)).slice(1)).toEqual([
+      Option.some({ purpose: "plan", scope: fixtureScope, job: Option.none(), maxOutputTokens: Option.none() }),
+      Option.some({ purpose: "rerank", scope: fixtureScope, job: Option.none(), maxOutputTokens: Option.none() }),
+    ])
   }))))
 })

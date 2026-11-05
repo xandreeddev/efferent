@@ -10,6 +10,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
@@ -25,6 +26,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   revision (`expectedRevision: Option.some(<current revision>)`) under a new
   job id: the engine records it under its current id, and the new revision
   cancels the old job. Published knowledge is unaffected.
+
 
 ### Added
 
@@ -165,8 +167,36 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: `knowledgeStoreConformance` checks
   `knowledge.engine-isolation`: two engines in one collection neither
   discover nor claim each other's jobs, a claim by job id included.
+- `@xandreed/core`, `@xandreed/plugin-rag`, `@xandreed/plugin-memory`:
+  knowledge extraction is bounded per call. The engines sent a whole source
+  (up to `maxSourceChars`, 200,000 characters on the document engine) to one
+  helper completion, and the review resent it. Both engines now take
+  `maxExtractionChars` (48,000 by default, so a default memory source is
+  still one call): `extractKnowledge` splits a longer source into windows at
+  paragraph, line or word boundaries (`knowledgeExtractionWindows`), extracts
+  and reviews each window in its own calls, one after another, and merges the
+  results before staging, with every span repaired within its window and
+  moved to its exact offset in the whole source; an entity repeated across
+  windows under one key and agreeing identity becomes one entity, any other
+  repeated key is renamed (`key~2`). `knowledgeExtractionPrompt` takes an
+  optional `window` (`KnowledgeExtractionWindow`); over a window of a source
+  in several parts its prompt frames that part and says which part it is. A
+  source that fits one window makes exactly the calls and prompts it made
+  before.
+- `@xandreed/core`, `@xandreed/plugin-rag`, `@xandreed/plugin-memory`:
+  `CurrentKnowledgeHelperCall`, a context reference the knowledge engines set
+  around every `UtilityLlm.complete` they make (`KnowledgeHelperCall`: the
+  purpose, `extract`, `review`, `plan` or `rerank`; the scope; the job and
+  its attempt for extraction and review; and an output cap). A host's
+  `UtilityLlm` adapter reads it to budget, attribute or refuse a call; the
+  port's signature is unchanged and the reference is `Option.none()` for
+  other helper calls. Both engines take an optional `maxHelperOutputTokens`,
+  carried in that cap. The cap is advisory: it reaches only a `UtilityLlm`
+  that reads the reference, and the models plugin's `UtilityLlmLive` does
+  not apply it.
 
 ### Changed
+
 
 
 
@@ -200,7 +230,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 - Releases wait up to about fifteen minutes (was three) for every package to
   appear on the registry before tagging. 0.17.0 and 0.17.1 each refused to tag
@@ -248,7 +280,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   fixture's whole scope. `KnowledgeIndexFixture` states the fixture
   contract: no two checks share owner, namespace and collection together.
 
+
 ### Breaking
+
 
 
 
@@ -262,6 +296,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 
