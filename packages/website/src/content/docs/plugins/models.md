@@ -189,6 +189,10 @@ checked with `modelSpendConformance` from `@xandreed/core/conformance`. The
 plugin reserves uninterruptibly, so a hold the ledger has taken always
 reaches the attempt that closes it: such a ledger bounds its own wait on
 the store and fails with `ModelSpendUnavailable` past it.
+In an evaluation run, `@xandreed/evals` builds that ledger and gives each
+trial's runnable its account in it as `ModelSpend`; pass it to the agent the
+trial defines, and `efferent-eval run --budget-usd` caps the whole run
+([spend budget](/docs/concepts/evals/#spend-budget)).
 
 <!-- plugin-reference:start -->
 

@@ -49,6 +49,7 @@ const RetrievalJudgement
 const RetrievalMeasure
 const ReviewBundle
 const ReviewItem
+const RunSpend
 const Runnable
 const SelectionObservation
 const SemanticAnswer
@@ -66,6 +67,7 @@ const TraceStepId
 const Transcript
 const TranscriptEvent
 const Trial
+const TrialSpend
 const Version
 const approveReviews
 const argValue
@@ -103,6 +105,7 @@ const mean
 const numericMetric
 const parseEvaluationApp
 const percentile
+const positiveAmount
 const positiveInt
 const projectEvaluatorInput
 const rankingMetrics
@@ -139,10 +142,12 @@ interface GraderRegistration
 interface GradingSelection
 interface MetricComparison
 interface ProjectionRegistration
+interface RunSpendLedger
 interface RunnableExecution
 interface RunnableRegistration
 interface SemanticJevOptions
 interface SemanticLlmOptions
+interface TrialSpendAccount
 type ActionAssessment
 type ActionId
 type AppViolation
@@ -177,6 +182,7 @@ type RetrievalJudge
 type RetrievalJudgement
 type RetrievalMeasure
 type ReviewBundle
+type RunSpend
 type Runnable
 type SelectionObservation
 type SemanticAnswer
@@ -193,3 +199,4 @@ type TraceStepId
 type Transcript
 type TranscriptEvent
 type Trial
+type TrialSpend

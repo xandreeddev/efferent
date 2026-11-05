@@ -14,6 +14,7 @@ import {
   ReviewBundle,
   reviewBundle,
   approveReviews,
+  positiveAmount,
   positiveInt,
   type EvaluationApp,
   type EvaluationSelection,
@@ -80,7 +81,15 @@ export const cliArguments = (raw: ReadonlyArray<string>) => {
   }
 }
 const help =
-  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--execute-only] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
+  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--execute-only] [--budget-usd amount] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
+/** A run's spend and the trials its budget skipped, for a summary: nothing for a run that recorded no spend. */
+const spendSummary = (run: EvaluationRun) =>
+  run.spend === undefined
+    ? {}
+    : {
+        skipped: run.trials.filter((trial) => trial.status === "skipped").length,
+        spend: { budget: Option.getOrNull(run.spend.budget), settled: run.spend.settled }
+      }
 const requireFreshDirectory = (directory: string) =>
   fileIo(() => mkdir(directory, { recursive: true })).pipe(
     Effect.andThen(fileIo(() => readdir(directory))),
@@ -127,6 +136,7 @@ export const evaluationCli = Effect.fnUntraced(
                 (trial) => trial.status === "completed"
               ).length,
               failures: run.failures.length,
+              ...spendSummary(run),
               gates: run.gates.map((gate) => ({
                 ...gate,
                 value: Option.getOrNull(gate.value)
@@ -346,7 +356,11 @@ const appCommand = Effect.fn("eval.cli")(
         : {}),
       ...(line.has("--environment")
         ? { environment: line.value("--environment", "") }
-        : {})
+        : {}),
+      ...Option.match(yield* positiveAmount("--budget-usd", line.args), {
+        onNone: () => ({}),
+        onSome: (spendBudget) => ({ spendBudget })
+      })
     }
     if (!["run", "calibrate"].includes(line.command))
       return yield* Effect.fail(
@@ -405,6 +419,7 @@ const appCommand = Effect.fn("eval.cli")(
       trials: run.trials.length,
       completed: run.trials.filter((trial) => trial.status === "completed")
         .length,
+      ...spendSummary(run),
       gates: run.gates.map((gate) => ({
         ...gate,
         value: Option.getOrNull(gate.value)

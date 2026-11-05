@@ -3,6 +3,7 @@ import type { Effect, Schema, Scope } from "effect"
 import type { Candidate } from "../domain/candidate.entity.js"
 import type { Outcome } from "../domain/outcome.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
+import type { ModelSpend } from "@xandreed/core"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
 /**
@@ -21,6 +22,6 @@ export class TrialExecution extends Context.Service<TrialExecution, {
   ) => Effect.Effect<
     { readonly output: Schema.Json; readonly evidence: Schema.Json },
     EvaluationError,
-    TrialRecorder | Scope.Scope
+    TrialRecorder | ModelSpend | Scope.Scope
   >
 }>()("efferent/evals/TrialExecution") {}

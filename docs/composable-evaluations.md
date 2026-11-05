@@ -194,6 +194,41 @@ separately. Regrading saved evidence uses `gradeEvaluation` (`efferent-eval grad
 All examples and regression tests use scripted providers. They establish
 execution and measurement behavior, not model quality or provider compatibility.
 
+## A run's spend budget
+
+A run can cap what its trials spend on models: `--budget-usd <amount>` on
+`efferent-eval run` and `calibrate`, `spendBudget` in an `EvaluationSelection`.
+The run opens one `ModelSpend` ledger (`@xandreed/core`) and gives each trial
+its own account in it, which a runnable reads from its context and hands to
+whatever sends model requests: an agent with the models plugin's `spend`
+guard reserves each send's worst case in it before the send goes out and
+settles it at what the send cost.
+
+```ts
+const execute = (question: string) => Effect.scoped(Effect.gen(function* () {
+  const ledger = yield* ModelSpend // the trial's account in the run's ledger
+  const agent = yield* Agent.define({
+    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: modelsPlugin, options: {
+      model: "provider:model", spend: { prices: { "provider:model": price } },
+    } }],
+    services: Context.make(ModelSpend, ledger),
+  })
+  // … one turn on `question`, its reply the trial's output
+}))
+```
+
+Every reservation's total cap is the budget (or a lower cap the request
+names), shared by concurrent trials. Once a send is refused under it, or what
+the trials settled reaches it, the run starts no more trials: the finished
+ones keep their results, and the trial whose send was refused and every trial
+not started are `skipped`, their reason starting with `budget:`. A skipped
+trial is not a failure, is never graded and measures nothing, so a gate over
+it does not pass rather than counting a zero. The report records what each
+trial settled (`Trial.spend`) once it reserved anything, and the run's budget
+and settled total (`EvaluationRun.spend`); a run that metered nothing records
+no spend. Settled spend is the sends' observed cost, so the last sends before
+the run stopped may settle a little above what they held.
+
 ## Shared semantic rubrics: JEV and native Effect AI
 
 `SemanticJudge` is a provider-neutral Effect service. `SemanticInput` contains a

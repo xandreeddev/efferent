@@ -1,6 +1,6 @@
 # Evaluation domain and adapters
 
-The evaluation packages run typed functions, retrievers and agents without depending on an agent runtime or an observability provider. Applications own their schemas, execution adapters, environment lifecycle, evidence projections, model selection and budgets. Local reports are the source of truth.
+The evaluation packages run typed functions, retrievers and agents without depending on an agent runtime or an observability provider. Applications own their schemas, execution adapters, environment lifecycle, evidence projections, model selection and prices; a run can cap what its trials spend on models ([spend budget](#spend-budget)). Local reports are the source of truth.
 
 The task, trial, grader, transcript, outcome and suite vocabulary follows [Anthropic's evaluation definitions](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). A runnable is the versioned execution target bound to a task. A calibration evaluates a grader's agreement with labels; comparing application prompts or models is an ordinary suite.
 
@@ -23,7 +23,7 @@ packages/
   evals-langsmith/src/# official SDK export adapter
 ```
 
-The core has no agent SDK, Docker, browser, database or provider client dependency. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
+The core has no agent SDK, Docker, browser, database or provider client dependency; of the framework it imports only `@xandreed/core`, for the `ModelSpend` ledger a run shares across its trials. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
 
 ## Entities and their relationships
 
@@ -33,7 +33,7 @@ The core has no agent SDK, Docker, browser, database or provider client dependen
 | Candidate | Configuration and fingerprints of the subject under test |
 | Runnable | Identity and version of an execution target |
 | Journey | Fixture and ordered actions; action codecs belong to the app |
-| Trial | One task/candidate/sample attempt, timestamps, status, output, full evidence, transcript, outcome and grades |
+| Trial | One task/candidate/sample attempt, timestamps, status, output, full evidence, transcript, outcome, grades and settled spend |
 | Transcript | Ordered durable events, including intermediate tool work and failures |
 | Outcome | State observed through the environment after execution |
 | Grader | Versioned code, model or human grading definition and declared metrics |
@@ -41,12 +41,12 @@ The core has no agent SDK, Docker, browser, database or provider client dependen
 | Grade | Score or an explicit unavailable/error/pending/skipped result, plus its exact context and usage |
 | Suite | Tasks, candidates, repetitions, concurrency, deadlines, purpose and gates |
 | Calibration | Grader being evaluated and the suite measuring its agreement |
-| EvaluationRun | Trial evidence, gate findings, failures and run provenance |
+| EvaluationRun | Trial evidence, gate findings, failures, run provenance and spend |
 | ReviewBundle | Explicit labelled approvals bound to fingerprints of captured evidence |
 
 Suite, task, candidate, runnable, grader, projection, calibration and run ids are `EvalId`s: one segment, without "/" or "@". A trial's id joins them as `run/suite/candidate/task/sample` (an `EvalPath`, as are transcript event ids) and a grader key is `<id>@<version>`, so two trials never share a trial file and a key always splits back into its grader and version. A run id that is not an `EvalId` fails the run as `invalid`.
 
-Inputs and references travel on different paths. `RunnableExecution.execute` receives the task input, candidate and environment; it reads the trial-scoped `TrialRecorder` port. It never receives the reference or task declaration. The app projection receives the captured trial and reference afterwards. This prevents the harness from leaking labels; an app must also keep them out of its fixtures and closures.
+Inputs and references travel on different paths. `RunnableExecution.execute` receives the task input, candidate and environment; it reads the trial-scoped `TrialRecorder` port and its account in the run's `ModelSpend` ledger. It never receives the reference or task declaration. The app projection receives the captured trial and reference afterwards. This prevents the harness from leaking labels; an app must also keep them out of its fixtures and closures.
 
 ## Eval ports and app layers
 
@@ -156,13 +156,36 @@ efferent-eval grade --config eval.config.ts --from .eval-results/run-1/execution
 efferent-eval review --config eval.config.ts --report report.json --directory .eval-results/review
 ```
 
-Flags take `--flag value` or `--flag=value`. Without `--directory`, results go to `.eval-results/runs/<id>`, named after the run or grading revision they hold. `--repetitions`, `--concurrency` and `--timeout-ms` take positive integers; anything else is a usage error (`invalid`), never a silent default. A report or review file that does not exist fails as `missing`; one that does not decode, as `invalid`; any other file failure, as `persistence`. Each such error says what failed (`Cannot read <path>: EISDIR: …`) and keeps the underlying error as its `cause`.
+Flags take `--flag value` or `--flag=value`. Without `--directory`, results go to `.eval-results/runs/<id>`, named after the run or grading revision they hold. `--repetitions`, `--concurrency` and `--timeout-ms` take positive integers and `--budget-usd` a positive number; anything else is a usage error (`invalid`), never a silent default. A report or review file that does not exist fails as `missing`; one that does not decode, as `invalid`; any other file failure, as `persistence`. Each such error says what failed (`Cannot read <path>: EISDIR: …`) and keeps the underlying error as its `cause`.
 
 `inspect` and `compare` work without loading app configuration. `list`, `validate` and `estimate` require declarations only; resource acquisition belongs to environment/runnable execution. An async default configuration factory can inspect command arguments without acquiring execution resources. Apps register extensions for domain-specific cost estimation or plan selection.
 
 `grade` runs the app's graders against saved output/evidence and creates a separate report revision without acquiring the subject environment. Reviews start unapproved; `review --import review.json` requires unchanged evidence fingerprints and named approvals with rationales, and writes approved records separately. Applying labels to an app's dataset remains an app-owned, versioned operation.
 
 A run writes `report.json` and individual trial files under `trials/`. Writes use a temporary file followed by atomic rename; a failed write removes its temporary file. A run file holds every trial but is written one trial at a time, so the trials together may outgrow the longest string the runtime builds (V8's is just under 512 MiB); the CLI reads such a file back in parts. While a trial runs, its transcript events are appended to `trials/<id>.events.jsonl`, one JSON line each (mode 0600); the file is removed once the settled trial is written, so one left behind belongs to a trial whose process died, and holds the events it recorded. Blocking gate failure exits with status 2; missing measurements remain unavailable. Ctrl-C or SIGTERM interrupts the command: running trials settle as `cancelled`, their scoped worlds close, and the command exits with status 130 (a second signal ends it at once). `runCliMain` runs a command this way for an app's own entrypoint.
+
+## Spend budget
+
+`efferent-eval run` and `calibrate` take `--budget-usd <amount>` (programmatically,
+`EvaluationSelection.spendBudget`): the most the run's trials may spend together on model
+sends, in the currency of the prices their ledgers reserve at. A run opens one `ModelSpend`
+ledger (`@xandreed/core`) for its trials, and every runnable reads its trial's account in it
+from its context (`yield* ModelSpend`) and gives it to the agents or clients it runs, such as
+the models plugin's `spend` guard (`Agent.define({ services: Context.make(ModelSpend, ledger) })`).
+Every reservation's total cap is the budget, or the lower cap the request names, and
+concurrent trials share it.
+
+Once a send is refused under that cap, or what the trials settled reaches the budget, the run
+starts no more trials. Finished trials keep their results. A trial whose send the budget
+refused, and every trial not started, is recorded as `skipped` with a reason that starts with
+`budget:`: never in `failures`, never graded, never a zero. A gate over skipped trials is not
+measured, so it does not pass. A send settles at its observed cost, so the last sends before
+the run stopped may settle above what they held, and `settled` pass the budget by that much.
+
+The report records each trial's settled spend (`Trial.spend`, `{ settled }`) once it reserved
+anything, and the run's (`EvaluationRun.spend`, `{ budget, settled }`, `budget` `null` when the
+run had none) when it had a budget or any trial reserved: a run that metered nothing records no
+spend, not a zero. The run's summary prints `spend` and the count of `skipped` trials.
 
 ## Export
 

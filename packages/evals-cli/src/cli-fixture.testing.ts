@@ -12,12 +12,13 @@ import {
   type TrialRecorder
 } from "@xandreed/evals"
 import { Effect, Layer, Option, Schema } from "effect"
+import type { ModelSpend } from "@xandreed/core"
 
 const FunctionRunnable = runnableExecutionPort<string, string, Schema.Json, Record<string, never>>("cli-fixture")
 const FunctionEnvironment = evaluationEnvironmentPort<string, Record<string, never>>("cli-fixture")
-/** One suite, one task and one candidate over an in-memory function; `execute` stands in for the function and may record transcript events. */
+/** One suite, one task and one candidate over an in-memory function; `execute` stands in for the function and may record transcript events and reserve spend. */
 export const cliFixture = (
-  execute: (input: string) => Effect.Effect<{ readonly output: string; readonly evidence: Schema.Json }, EvaluationError, TrialRecorder> =
+  execute: (input: string) => Effect.Effect<{ readonly output: string; readonly evidence: Schema.Json }, EvaluationError, TrialRecorder | ModelSpend> =
     (input) => Effect.succeed({ output: input, evidence: {} })
 ): EvaluationApp => ({
   id: "cli-fixture",

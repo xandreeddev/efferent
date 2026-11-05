@@ -30,7 +30,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 - `sdk` → runtime, core: `Agent.define` and `Agent.turn`, the composable agent over sessions, and the turn engine they run on (`TurnLive` and the turn's lifecycle), with the `ToolRegistry` kit that runs turns over it (`@xandreed/sdk/conformance`); it re-exports by name the core names a host writes beside `Agent` (the rest stay `@xandreed/core`'s).
 - `process-host` → core: bounded stdio binding and process lifecycle on Node and Bun; the host supplies its TurnRunner, model and services.
 - `plugin-*` → core: independently configurable capabilities, the agent loop included.
-- `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24.
+- `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core for the `ModelSpend` ledger a run shares across its trials, nothing else.
 - `foundry` runs the gates (development tooling); `website` is the docs site. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction; inside

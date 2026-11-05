@@ -1,10 +1,15 @@
-import { Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
+import { ModelSpend, ModelSpendMemoryLive } from "@xandreed/core"
 import type { EvaluationApp } from "../contracts/evaluation-app.contract.js"
 import { EvaluationError } from "../domain/identity.entity.js"
 import { EvaluationServices } from "../ports/evaluation-services.port.js"
 import { TrialRecorder } from "../ports/trial-recorder.port.js"
+import { runSpendLedger } from "./run-spend.adapter.js"
 
-/** Layer construction belongs at the eval runtime edge, outside application use cases. */
+/**
+ * Layer construction belongs at the eval runtime edge, outside application use cases.
+ * A run's spend ledger is a fresh in-memory `ModelSpend` (`ModelSpendMemoryLive`).
+ */
 export const EvaluationServicesLive = (app: EvaluationApp) =>
   Layer.succeed(EvaluationServices, {
     execution: (runnableId, environmentId, recorder) =>
@@ -56,5 +61,9 @@ export const EvaluationServicesLive = (app: EvaluationApp) =>
                 message: `No grader ${id}`
               })
             )
-      })
+      }),
+    spend: (budget) =>
+      Layer.build(Layer.fresh(ModelSpendMemoryLive)).pipe(
+        Effect.flatMap((context) => runSpendLedger(Context.get(context, ModelSpend), budget))
+      )
   })

@@ -73,6 +73,15 @@ export interface EvaluationSelection {
   readonly executeOnly?: boolean
   readonly concurrency?: number
   readonly timeoutMs?: number
+  /**
+   * The most the run's trials may settle and hold together in its spend
+   * ledger, in the currency of the prices their ledgers reserve at (the
+   * CLI's `--budget-usd`): positive and finite. Every reservation is capped
+   * at it; once a send is refused under it, or what was settled reaches it,
+   * the run starts no more trials and records the rest as `skipped`.
+   * Absent, the run is not capped.
+   */
+  readonly spendBudget?: number
 }
 /** @public */
 export interface GradingSelection {

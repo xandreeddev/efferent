@@ -27,6 +27,7 @@
       "version": "0.17.1",
       "dependencies": {
         "@noble/hashes": "2.4.0",
+        "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
       },
     },
@@ -40,6 +41,9 @@
         "@xandreed/evals": "workspace:*",
         "effect": "4.0.7",
         "tsx": "4.23.13",
+      },
+      "devDependencies": {
+        "@xandreed/core": "workspace:*",
       },
     },
     "packages/evals-langfuse": {
@@ -275,6 +279,7 @@
         "effect": "4.0.7",
       },
       "devDependencies": {
+        "@xandreed/evals": "workspace:*",
         "@xandreed/plugin-agent-loop": "workspace:*",
         "@xandreed/plugin-memory-digest": "workspace:*",
         "@xandreed/plugin-memory-summary": "workspace:*",
