@@ -157,6 +157,14 @@ export const registryProvenance = (item: Versioned, head: string, status: number
  */
 export const confirmSchedule = { attempts: 36, intervalMillis: 5_000 } as const
 
+/**
+ * How long the release asks for every package before tagging: 90 answers 10 seconds apart, about
+ * fifteen minutes. A fresh version can stay invisible behind the registry's CDN for longer than three
+ * minutes (0.17.0 and 0.17.1 each refused to tag with packages that appeared minutes later), and the
+ * packages are asked for together, so the publish job's 45-minute limit still holds.
+ */
+export const tagConfirmSchedule = { attempts: 90, intervalMillis: 10_000 } as const
+
 /** What the registry's answers so far say about one `name@version`. */
 export type Confirmation =
   | { readonly _tag: "Published" }

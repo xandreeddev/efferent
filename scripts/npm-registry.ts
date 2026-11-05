@@ -26,10 +26,12 @@ export const checkRegistryProvenance = (item: Versioned, head: string, requiredP
 /** A settled confirmation: the registry has the version, or it still does not after `confirmSchedule`. */
 export type Settled = Exclude<Confirmation, { readonly _tag: "Pending" }>
 
-/** Ask the registry for `item` now, then every `confirmSchedule.intervalMillis` until it has it or `confirmSchedule.attempts` answers say it does not (about three minutes). */
-export const confirmOnRegistry = async (item: Versioned, answers: ReadonlyArray<Result.Result<boolean, string>> = []): Promise<Settled> => {
-  const verdict = confirmation(item, answers, confirmSchedule.attempts)
+/** Ask the registry for `item` now, then every `schedule.intervalMillis` until it has it or `schedule.attempts` answers say it does not (`confirmSchedule`: about three minutes). */
+export const confirmOnRegistry = async (
+  item: Versioned, answers: ReadonlyArray<Result.Result<boolean, string>> = [], schedule: { readonly attempts: number, readonly intervalMillis: number } = confirmSchedule,
+): Promise<Settled> => {
+  const verdict = confirmation(item, answers, schedule.attempts)
   if (verdict._tag !== "Pending") return verdict
-  if (answers.length > 0) await Bun.sleep(confirmSchedule.intervalMillis)
-  return confirmOnRegistry(item, [...answers, await onRegistry(item)])
+  if (answers.length > 0) await Bun.sleep(schedule.intervalMillis)
+  return confirmOnRegistry(item, [...answers, await onRegistry(item)], schedule)
 }
