@@ -53,8 +53,10 @@ export const HARNESS_CODES = [
   "model.invalid-response",
   "model.quota",
   "model.rate-limit",
+  "model.spend",
   "model.timeout",
   "model.unavailable",
+  "model.unpriced",
   "module.closed",
   "plugin.activation",
   "plugin.defect",
@@ -167,6 +169,7 @@ export const TAGGED_CODES = {
   ReservedKind: "events.reserved",
   TaskMissing: "task.missing",
   TaskConflict: "task.conflict",
+  ModelSpendExceeded: "model.spend",
 } as const satisfies Readonly<Record<string, HarnessCode>>
 
 /**

@@ -3,6 +3,7 @@ import { Option, Schema } from "effect"
 import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
 import { RunId } from "../domain/run.entity.js"
+import { ModelSpendExceeded } from "../domain/model-spend.entity.js"
 import { SessionLogError, SessionMissing } from "../session/session-log.entity.js"
 import {
   InboxItemId,
@@ -55,6 +56,7 @@ const tagged = [
   new ReservedKind({ kind: "turn.ended" }),
   new TaskMissing({ session, taskId: session }),
   new TaskConflict({ session, taskId: session }),
+  new ModelSpendExceeded({ reason: "turn", cap: 1, committed: 1, requested: 0.5, message: "past the turn's cap" }),
 ]
 
 describe("harnessCodeOf", () => {

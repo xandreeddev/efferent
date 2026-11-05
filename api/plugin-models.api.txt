@@ -31,6 +31,7 @@ const ModelEndpoints
 const ModelRetryPolicy
 const ModelSettings
 const ModelSettingsMap
+const ModelSpendOptions
 const ModelThinking
 const ModelsTransportLive
 const PromptCacheSettings
@@ -82,6 +83,7 @@ type ModelRetryPolicy
 type ModelRole
 type ModelSettings
 type ModelSettingsMap
+type ModelSpendOptions
 type ModelThinking
 type ModelsFetch
 type OAuthCredential

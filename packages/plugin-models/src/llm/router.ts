@@ -8,6 +8,7 @@ import { SettingsStore } from "../ports/settings-store.port.js"
 import { extractUsage } from "@xandreed/core/internal"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "../ports/settings-store.port.js"
+import { CurrentModelSpendGuard } from "../ports/model-spend-guard.port.js"
 import { buildProviderOver, endpointOwnKey, modelSettingsFailure, prependClaudeCode, providerServices, resolveMessagesConfiguration } from "./providers.js"
 import type { BuiltProvider, PromptOptions, ProviderServices } from "./providers.js"
 import { makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
@@ -566,12 +567,17 @@ const requestFetch = (services: ProviderServices): Effect.Effect<typeof globalTh
     ),
   }))
 
+/**
+ * A routed call over its layer's provider services: the transport's fetch
+ * (`requestFetch`) and the layer's spend guard, which each physical send
+ * of the call reserves with (`CurrentModelSpendGuard`).
+ */
 export const throughTransport = (services: ProviderServices) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.flatMap(requestFetch(services), (fetch) => Effect.provideService(effect, FetchHttpClient.Fetch, fetch))
+  Effect.flatMap(requestFetch(services), (fetch) => effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provideService(CurrentModelSpendGuard, services.spend)))
 
 /** {@link throughTransport} for a stream. */
 const throughTransportStream = (services: ProviderServices) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
-  Stream.unwrap(Effect.map(requestFetch(services), (fetch) => Stream.provideService(stream, FetchHttpClient.Fetch, fetch)))
+  Stream.unwrap(Effect.map(requestFetch(services), (fetch) => stream.pipe(Stream.provideService(FetchHttpClient.Fetch, fetch), Stream.provideService(CurrentModelSpendGuard, services.spend))))
 
 /**
  * The provider services of a routed model's layer, read once where it is

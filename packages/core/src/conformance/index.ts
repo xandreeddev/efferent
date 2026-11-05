@@ -16,6 +16,8 @@ export type { MediaStoreSubject } from "../media/media-store.conformance.js"
 export { requestHeaderConformance } from "../turn/request-header.conformance.js"
 export type { RequestHeaderSubject } from "../turn/request-header.conformance.js"
 export { modelCallRecorderConformance } from "../turn/model-call-recorder.conformance.js"
+export { modelSpendConformance } from "../turn/model-spend.conformance.js"
+export type { ModelSpendSubject } from "../turn/model-spend.conformance.js"
 export type { ModelCallRecorderSubject, ModelCallRecorderFixture } from "../turn/model-call-recorder.conformance.js"
 // the FileSystem and Bash contracts
 export { fileSystemConformance } from "../workspace/file-system.conformance.js"

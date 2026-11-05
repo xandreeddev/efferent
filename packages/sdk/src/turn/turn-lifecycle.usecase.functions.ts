@@ -2,6 +2,8 @@ import { Cause, Context, Effect, Exit, Option } from "effect"
 import { CurrentToolResultReceipt } from "@xandreed/core/internal"
 import {
   harnessDefectsAsFailures,
+  ModelSpend,
+  reasonOf,
   replayableContext,
   RunContext,
   sessionAttributes,
@@ -163,7 +165,8 @@ const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunCont
  * Run a turn's body to its end: once it succeeds, the turn settles (tasks
  * and background reactions) and finishes with its outcome, returned with
  * the turn's usage (`RunContext.usage`, the same total `turn.ended`
- * carries). Once the body has returned, its reply is recorded and the
+ * carries) and, when a `ModelSpend` ledger is among the turn's services,
+ * the turn's spend in it (`TurnResult.spend`). Once the body has returned, its reply is recorded and the
  * journal flushed even when the turn is interrupted then; an interruption
  * cuts only the drain of the reactions to the reply. The reply is stored
  * with the turn's end (`TurnWriter.closing`): when that finishing fails or
@@ -193,8 +196,19 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
   }
   const outcome = exit.value
   yield* finishing(restore, outcome)
-  const usage = yield* (yield* RunContext).usage
-  return { outcome: outcome.outcome, reply: outcome.reply, usage } satisfies TurnResult
+  const run = yield* RunContext
+  const usage = yield* run.usage
+  const spend = yield* turnSpendOf(run.runId)
+  return { outcome: outcome.outcome, reply: outcome.reply, usage, ...spend } satisfies TurnResult
+}))
+
+/** The turn's spend in the `ModelSpend` ledger among its services, if any; a ledger that cannot be read is logged and leaves it out. */
+const turnSpendOf = (runId: RunId): Effect.Effect<Pick<TurnResult, "spend">> => Effect.flatMap(Effect.serviceOption(ModelSpend), Option.match({
+  onNone: () => Effect.succeed({}),
+  onSome: (ledger) => ledger.totals(Option.some(runId)).pipe(
+    Effect.map((spend) => ({ spend })),
+    Effect.catch((error) => Effect.logWarning(`the turn's model spend could not be read: ${reasonOf(Cause.fail(error))}`).pipe(Effect.as({}))),
+  ),
 }))
 
 /**

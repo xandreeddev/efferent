@@ -89,8 +89,38 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   in its options: `frames(scope, after, project, { live })`). Nothing
   is stored: the journal, the stored format and the event reference are
   unchanged, and a client that reconnects reads only journaled records.
+- `@xandreed/core`, `@xandreed/plugin-models`, `@xandreed/sdk`: model
+  spend caps. Nothing reserved or capped what model calls could cost: a host
+  could only read the cost of a turn after it had been spent. Core's new
+  `ModelSpend` port is a ledger that reserves a send's worst case
+  (`reserve`, refused with `ModelSpendExceeded` past a turn's or the
+  ledger's cap, atomically; callers run it uninterruptibly), settles it at
+  what the send cost (`settle`) or releases it (`release`), reads a turn's or
+  the whole ledger's `totals`, and drops what it keeps for an ended turn
+  (`forget`, which the turn calls as its scope closes, so a ledger kept for
+  a process does not grow with every turn); `ModelSpendMemoryLive` is the in-memory ledger and
+  `modelSpendConformance` (`@xandreed/core/conformance`) the contract. The
+  models plugin's new `spend` option (`ModelSpendOptions`: `prices` keyed
+  by `"<provider>:<modelId>"`, `turnCap`, `totalCap`,
+  `uncappedOutputTokens`, `inputBytesPerToken`) guards every physical send,
+  retries, fallbacks and helper calls included, with the `ModelSpend` the
+  host passes in `AgentConfig.services`: a send reserves its worst case from
+  its body's size and output cap, and its attempt settles at `costOf` of its
+  reported usage when its `model.called` fact is recorded; without usage, a
+  request that went out (a timeout, a connection lost after the send, a
+  gateway's timeout status, a stream cut before its usage) settles at its
+  worst case, and one refused with an error status or never sent releases
+  it. A refused send is
+  never sent and fails the turn with a `HarnessError` of the new code
+  `model.spend` (its cause found by `modelSpendExceededOf`; the tag
+  `ModelSpendExceeded` stands for the same code), and a model the prices
+  leave out with `model.unpriced`. `TurnResult.spend` reports the turn's
+  settled and reserved spend whenever a ledger is among the turn's services,
+  and the turn sets `CurrentTurnRunId` for every call it makes, helper calls
+  included. Without the `spend` option nothing changes.
 
 ### Changed
+
 
 
 
@@ -116,7 +146,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -144,7 +176,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
@@ -154,6 +188,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

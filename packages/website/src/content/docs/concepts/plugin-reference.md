@@ -940,7 +940,7 @@ Provides: `effect/ai/LanguageModel`, `@xandreed/core/UtilityLlm`, `@xandreed/cor
 
 Requires: `efferent/SessionEnvironment`
 
-Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/ModelsTransport`
+Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/ModelsTransport`, `@xandreed/core/ModelSpend`
 
 ### Defaults
 
@@ -1373,6 +1373,67 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
         "drop_block",
         "error"
       ]
+    },
+    "spend": {
+      "type": "object",
+      "properties": {
+        "prices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheRead": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWrite": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reasoning": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "turnCap": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalCap": {
+          "type": "number",
+          "minimum": 0
+        },
+        "uncappedOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "inputBytesPerToken": {
+          "type": "number",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "additionalProperties": true
     }
   },
   "required": [

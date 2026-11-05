@@ -113,6 +113,19 @@ bytes, with careless-stub self-tests. Adapters belong in plugins; core adds
 no converter or native dependency. Reuse `imageSizeOf` and `mediaFromBytes`
 for output checks; header parsing stays in the media functions.
 
+`ModelSpend` is the model spend ledger port: its requests, holds, totals
+and errors live in `domain/model-spend.entity.ts`, the reservation, settle,
+release and forget transitions of the in-memory ledger are pure functions in its
+`.entity.functions.ts` (with `modelSpendExceededOf`), applied under one
+`Ref.modify` by `ModelSpendMemoryLive` (`turn/model-spend.memory.adapter.ts`).
+`modelSpendConformance` checks caps, refusals that hold nothing, settlement,
+release, repeats, concurrent reservations and forgetting an ended turn,
+with careless-stub self-tests. Callers run `reserve` uninterruptibly. The
+models plugin's `spend` option is its consumer; the turn sets
+`CurrentTurnRunId` (`loop/stepContext.ts`) so every call of a turn, helpers
+included, finds its turn, and forgets the turn in the ledger as its scope
+closes.
+
 `BuiltContext.stableMessages` is a required checked prefix length from the same
 render as its messages. The memory kit tests the selected run's volatile tail,
 reopened history and interrupted-call repair. A build leaves out another run's

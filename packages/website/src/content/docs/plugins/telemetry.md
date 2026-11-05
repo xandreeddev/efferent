@@ -64,6 +64,13 @@ Partial usage contributes an incomplete subtotal. A single cache-write rate
 makes mixed-lifetime cache cost approximate. These observed totals are not
 a provider invoice, and selected-response turn usage keeps its own meaning.
 
+The models plugin's [spend caps](/docs/plugins/models/#spend-caps) price
+the same usage with the same `ModelPrice` table, keyed the same way, so one
+table can serve both. They differ where usage is missing: telemetry reports
+no cost for an unknown usage, while the spend ledger settles a completed or
+interrupted attempt with no final usage at its reserved worst case. For calls
+with known usage, the reported cost and the settled spend agree.
+
 Keep `metricAttributes` few and bounded; do not use session, run or user ids
 as metric dimensions. Those correlations belong on spans. `spanEvents: false`
 disables the plugin's span enrichment while retaining its metrics.

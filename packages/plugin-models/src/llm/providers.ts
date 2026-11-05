@@ -34,6 +34,8 @@ import { ModelSettingsError, ModelThinking } from "./model-settings.entity.js"
 import type { ModelSettingsMap, ResolvedAnthropicSettings } from "./model-settings.entity.js"
 import { resolveAnthropicSettings, validateAnthropicRequest } from "./model-settings.entity.functions.js"
 import { CurrentThinkingPrefixMismatch } from "../ports/thinking-binding.port.js"
+import { CurrentModelSpendGuard } from "../ports/model-spend-guard.port.js"
+import type { ModelSpendGuard } from "../ports/model-spend-guard.port.js"
 import { THINKING_BINDING_BETA } from "./thinking-binding.entity.js"
 import type { ThinkingPrefixMismatch } from "./thinking-binding.entity.js"
 import { bindingFor, droppedInBody, droppedInMessageStart, firstEventData, mergeBetas } from "./thinking-binding.entity.functions.js"
@@ -398,9 +400,11 @@ export interface ProviderServices {
   readonly sessions: Option.Option<OpenAiCodexSessions>
   /** What a request to a model that binds thinking says about a changed prefix (`thinkingPrefixMismatch`). */
   readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
+  /** The spend guard every physical send reserves with (`spend`); none when the option is not set. */
+  readonly spend: Option.Option<ModelSpendGuard>
 }
 
-/** The provider services where this runs: `CurrentModelEndpoints`, `CurrentModelSettings`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`, `CurrentThinkingPrefixMismatch`. */
+/** The provider services where this runs: `CurrentModelEndpoints`, `CurrentModelSettings`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`, `CurrentThinkingPrefixMismatch`, `CurrentModelSpendGuard`. */
 export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
   endpoints: Effect.service(CurrentModelEndpoints),
   modelSettings: Effect.service(CurrentModelSettings),
@@ -408,6 +412,7 @@ export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
   managedTransport: Effect.service(CurrentManagedModelsTransport),
   sessions: Effect.service(CurrentOpenAiCodexSessions),
   thinkingPrefixMismatch: Effect.service(CurrentThinkingPrefixMismatch),
+  spend: Effect.service(CurrentModelSpendGuard),
 }, { concurrency: 1 })
 
 /** The compat client's `fetchImpl`: the transport's fetch, or (no transport) the global one. */
