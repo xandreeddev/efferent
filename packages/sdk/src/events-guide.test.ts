@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Duration, Effect, Exit, Layer, Match, Option, Ref, Schema, Scope, Stream } from "effect"
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Match, Option, Ref, Schema, Scope, Stream } from "effect"
 import { LanguageModel, Tool } from "effect/ai"
 import {
   ActionPolicy,
@@ -31,8 +31,8 @@ import {
 import type { Capability, SessionAddress, SessionLog, Turn, TurnBeginError, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { decodeSse, PrincipalId, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
-import type { FeedOptions, FeedPayload, FeedProjection, SsePeer } from "@xandreed/plugin-render"
+import { decodeSse, foldEqualsReplay, PrincipalId, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
+import type { FeedOptions, FeedPayload, FeedProjection, JournalRecord, SnapshotFold, SsePeer } from "@xandreed/plugin-render"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 
@@ -787,6 +787,37 @@ describe("serving turns over HTTP", () => {
     expect((yield* follow({ "last-event-id": String(reply) })).map((frame) => frame.event)).toEqual(["turn.ended"])
     const stranger = yield* Effect.promise(() => eventsRoute(host, "someone-else", sessionId, new Request(url(events)), waitUntil))
     expect([stranger.status, stranger.headers.get("content-type")?.startsWith("application/json")]).toEqual([404, true])
+    yield* settled
+  })))
+
+  test("a cold client starts from the session folded at its head, then follows only the kinds it shows", () => run(Effect.gen(function* () {
+    const host = yield* hostWith(yield* scripted([calls("c1", "lookup", { query: "alpha" }), says("Found five."), says("Again."), says("Third.")]))
+    const { waitUntil, settled } = background()
+    const turn = (text: string) => Effect.promise(() => turnRoute(host, owner, sessionId, post(`/sessions/${sessionId}/turns`, { text }), waitUntil).then((response) => response.text()))
+    yield* turn("find alpha")
+    yield* turn("again")
+    // A client's transcript: a line per message; the snapshot replaces it whole.
+    const kinds = ["turn.started", "turn.reply"]
+    const apply = (lines: ReadonlyArray<string>, payload: FeedPayload): ReadonlyArray<string> => payload.event === "transcript"
+      ? (Array.isArray(payload.data.lines) ? payload.data.lines.filter((line) => typeof line === "string") : [])
+      : [...lines, payload.event === "turn.started" ? `user: ${String(payload.data.text)}` : `agent: ${String(payload.data.reply)}`]
+    const fold: SnapshotFold = (records) => Effect.forEach(records, clientProjection, { concurrency: 1 }).pipe(
+      Effect.map((payloads) => ({ event: "transcript", data: { lines: [...payloads.flatMap(Option.toArray).reduce(apply, [])] } })))
+    const records: ReadonlyArray<JournalRecord> = (yield* host.sessions.read(address)).map((event) => ({ sequence: event.seq, kind: event.kind, data: event.data, turn: Option.getOrNull(event.turn) }))
+    yield* foldEqualsReplay({ records, kinds, project: clientProjection, fold, initial: [], apply })
+    const head = (yield* host.sessions.get(address)).seq
+    const scope = { threadId: ThreadId.make(sessionId), principalId: PrincipalId.make(owner) }
+    const cold = yield* Effect.forkChild(Stream.runCollect(host.feed.frames(scope, 0, clientProjection, { kinds, snapshot: { head, fold } }).pipe(
+      Stream.takeUntil((frame) => frame._tag === "FeedRecord" && frame.event === "turn.reply" && frame.data.turn === 3))))
+    yield* turn("third")
+    const frames = Array.from(yield* Fiber.join(cold)).flatMap((frame) => frame._tag === "FeedRecord" ? [frame] : [])
+    expect(frames.map((frame) => [frame.event, frame.data.turn ?? null])).toEqual([["transcript", null], ["turn.started", 3], ["turn.reply", 3]])
+    expect(frames[0]?.sequence).toBe(head)
+    expect(frames[0]?.data).toEqual({ lines: ["user: find alpha", "agent: Found five.", "user: again", "agent: Again."] })
+    // The snapshot's sequence is a cursor like any other: a client that reconnects with it gets the records after it, without the snapshot.
+    const resumed = Array.from(yield* Stream.runCollect(host.feed.frames(scope, head, clientProjection, { kinds, snapshot: { head, fold } }).pipe(
+      Stream.takeUntil((frame) => frame._tag === "FeedReady")))).flatMap((frame) => frame._tag === "FeedRecord" ? [frame.event] : [])
+    expect(resumed).toEqual(["turn.started", "turn.reply"])
     yield* settled
   })))
 

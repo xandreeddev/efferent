@@ -61,6 +61,7 @@ const describeError
 const encodeSocketFrame
 const encodeSse
 const fillOperationIdOf
+const foldEqualsReplay
 const fromOutputError
 const isConflictRefusal
 const isFrozenRefusal
@@ -92,6 +93,9 @@ const uiOutputPlugin
 const uiOutputToolkit
 const versionIdOf
 interface ConformanceCheck
+interface FeedFramesOptions
+interface FeedSnapshot
+interface FoldReplaySubject
 interface MemoryAnnotation
 interface RenderOpenOptions
 interface RenderSurface
@@ -116,6 +120,7 @@ type RenderNode
 type RenderSnapshot
 type RenderSnapshotInput
 type RevisionId
+type SnapshotFold
 type SocketFrame
 type SseContentEncoding
 type SurfaceCommitted

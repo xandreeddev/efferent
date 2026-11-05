@@ -14,16 +14,17 @@ const stored: ReadonlyArray<SessionLogEvent> = [
   { session: id, seq: 2, turn: Option.some(1), kind: "canvas.planned", at: 0, data: { page: "p" } },
 ]
 
-/** Sessions that hold one session of `owner`; everything else is unused by the tail. */
-const sessionsOf = (owner: string, asked: Array<SessionAddress>) => {
+/** Sessions that hold one session of `owner`, and remember each read's query; everything else is unused by the tail. */
+const sessionsOf = (owner: string, asked: Array<SessionAddress>, queries: Array<unknown> = []) => {
   const unused = () => Effect.die("unused")
   return Sessions.of({
     create: unused, fork: unused, get: unused, list: unused, remove: unused, lookup: unused, transact: unused,
     cancel: unused, begin: unused, enqueue: unused, deliver: unused, drain: unused,
     read: (address, query) => {
       asked.push(address)
+      queries.push(query)
       return address.owner === owner && address.id === id
-        ? Effect.succeed(stored.filter((event) => event.seq > (query?.after ?? 0)))
+        ? Effect.succeed(stored.filter((event) => event.seq > (query?.after ?? 0) && (query?.kinds === undefined || query.kinds.length === 0 || query.kinds.includes(event.kind))))
         : Effect.fail(new SessionMissing({ session: address.id }))
     },
     waiting: Stream.succeed(undefined),
@@ -31,8 +32,8 @@ const sessionsOf = (owner: string, asked: Array<SessionAddress>) => {
   })
 }
 
-const tailOver = (owner: string, asked: Array<SessionAddress>) =>
-  Effect.runSync(Effect.service(JournalTail).pipe(Effect.provide(SessionsJournalTailLive().pipe(Layer.provide(Layer.succeed(Sessions, sessionsOf(owner, asked)))))))
+const tailOver = (owner: string, asked: Array<SessionAddress>, queries: Array<unknown> = []) =>
+  Effect.runSync(Effect.service(JournalTail).pipe(Effect.provide(SessionsJournalTailLive().pipe(Layer.provide(Layer.succeed(Sessions, sessionsOf(owner, asked, queries)))))))
 
 test("a session's events are the feed's records, read as the feed's principal", async () => {
   const asked: Array<SessionAddress> = []
@@ -53,4 +54,14 @@ test("the session's commits wake the feed", async () => {
   const tail = tailOver("owner-1", [])
   const woken = await Effect.runPromise(Stream.runCount(Option.getOrThrow(Option.fromNullishOr(tail.changes))(feedOf("owner-1"))))
   expect(woken).toBe(1)
+})
+
+test("a read with kinds asks the session for only those kinds; one without asks for every kind, as before", async () => {
+  const queries: Array<unknown> = []
+  const tail = tailOver("owner-1", [], queries)
+  const only = await Effect.runPromise(tail.read(feedOf("owner-1"), 0, ["turn.started"]))
+  const every = await Effect.runPromise(tail.read(feedOf("owner-1"), 0))
+  expect(only.map((record) => record.kind)).toEqual(["turn.started"])
+  expect(every.map((record) => record.kind)).toEqual(["turn.started", "canvas.planned"])
+  expect(queries).toEqual([{ after: 0, limit: 500, kinds: ["turn.started"] }, { after: 0, limit: 500 }])
 })

@@ -1,7 +1,7 @@
 import { Effect, Result, Match, Option, Schema } from "effect"
 import { storedJson } from "@xandreed/core"
 import { FeedHeartbeat, FeedPayload, FeedReady, FeedRecord, FeedTransient, SocketFrame, SocketResume, SseRecordFields, SseTransientFields } from "./feed-frame.entity.js"
-import type { FeedFrame, FeedOptions } from "./feed-frame.entity.js"
+import type { FeedFrame, FeedOptions, JournalRecord } from "./feed-frame.entity.js"
 import { RenderError } from "./render-surface.entity.js"
 
 const decodePayload = Schema.decodeUnknownEffect(FeedPayload)
@@ -118,3 +118,10 @@ export const socketResumeOf = (text: string): Option.Option<number> =>
  */
 export const nextPollMs = (current: number, options: FeedOptions, received: boolean): number =>
   received ? options.pollMs : Math.min(options.maxPollMs, Math.max(options.pollMs, current * 2))
+
+/** Whether a record is of one of `kinds`; no kinds is every kind. */
+export const isOfKinds = (kinds: ReadonlyArray<string>) => (record: JournalRecord): boolean =>
+  kinds.length === 0 || kinds.includes(record.kind)
+
+/** Whether a client at `after` starts from a snapshot cut at `head`: it has nothing (0), or more than the journal had (past `head`). */
+export const startsFromSnapshot = (after: number, head: number): boolean => after === 0 || after > head

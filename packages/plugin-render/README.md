@@ -51,12 +51,28 @@ const serveEvents = (request, response, feedScope, after: number) => Effect.gen(
   wakes the feed to poll at once (a database notification, an in-process signal). Polling stays the
   fallback: a failed or ended `changes` stream only stops the wake-ups. A host that also streams what
   the journal never stores (a reply as it is written, a preview, a build handshake) passes it as
-  `live`, the fourth argument: each payload goes out as a `FeedTransient` frame after the ready frame,
-  the feed still ends when the journal side does, and a transient frame never moves the resume cursor
-  (a reconnecting client gets only what the journal kept). A live stream that ends stops only the
-  live frames; one that fails, or a payload named `ready`, fails the feed.
-- A `FeedProjection<R>` may require the host's services: `frames` returns a stream that requires
-  `R` too, provided where the connection runs it. It fails with `RenderError` (a projection maps a
+  `live` in the options, the fourth argument: each payload goes out as a `FeedTransient` frame after
+  the ready frame, the feed still ends when the journal side does, and a transient frame never moves
+  the resume cursor (a reconnecting client gets only what the journal kept). A live stream that ends
+  stops only the live frames; one that fails, or a payload named `ready`, fails the feed.
+- `kinds` in the options names the journal kinds the projection uses: the tail reads only those
+  (`JournalTail.read(feed, after, kinds)`; `SessionsJournalTailLive` passes them to `Sessions.read`,
+  so prompts, tool input and images are never loaded for a client that shows none), and records of
+  other kinds never reach the projection, while the cursor moves past them.
+- `snapshot: { head, fold }` starts a cold client from the current state instead of a replay of every
+  record: a client at cursor 0, or past `head`, gets one record with sequence `head` carrying
+  `fold(records 1..head)` (of `kinds`), then the records after `head`; a client at a cursor in
+  `1..head` resumes as before. `head` is a sequence the journal has reached (a session's `seq` when
+  the client connects). `foldEqualsReplay({ records, kinds, project, fold, initial, apply })` checks,
+  at every head of a sample journal, that a client starting from the snapshot holds the state of
+  one that applied every projected record:
+
+  ```ts
+  const view = yield* sessions.get(address)
+  const frames = feed.frames(feedScope, after, project, { kinds: ["turn.started", "turn.reply"], snapshot: { head: view.seq, fold } })
+  ```
+- A `FeedProjection<R>` (and a `SnapshotFold<R>`) may require the host's services: `frames` returns
+  a stream that requires them too, provided where the connection runs it. It fails with `RenderError` (a projection maps a
   store's error into one). `payloadOf(schema)(event, value)` encodes a value with the host's schema
   into a `FeedPayload`, dropping `undefined` fields, and fails with `invalid` when it has no JSON form.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
@@ -74,4 +90,5 @@ const serveEvents = (request, response, feedScope, after: number) => Effect.gen(
   `{"type":"ready"}`, `{"type":"heartbeat"}`);
   a client resumes by sending `{"after": n}`.
 - Conformance kits (`renderSurfaceConformance`, `renderFeedConformance`, `renderTransportConformance`)
-  hold any store, feed or transport implementation to the same contract.
+  hold any store, feed or transport implementation to the same contract; `foldEqualsReplay` holds a
+  host's snapshot fold to its projection.

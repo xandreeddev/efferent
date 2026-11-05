@@ -9,8 +9,9 @@ const decodeId = Schema.decodeUnknownEffect(ConversationId)
 /**
  * The feed's journal is a session: `threadId` names it and `principalId` is
  * its owner (another owner reads nothing); each record carries its turn. Reads never write, so following
- * a session runs nothing. `changes` wakes the feed after each commit this
- * instance makes; polling covers the others.
+ * a session runs nothing. A read with `kinds` is `Sessions.read` with those
+ * kinds, so the store loads only them. `changes` wakes the feed after each
+ * commit this instance makes; polling covers the others.
  */
 export const SessionsJournalTailLive = (options: { readonly page: number } = { page: 500 }): Layer.Layer<JournalTail, never, Sessions> =>
   Layer.effect(JournalTail, Effect.gen(function* () {
@@ -20,8 +21,8 @@ export const SessionsJournalTailLive = (options: { readonly page: number } = { p
       Effect.mapError(() => new RenderError({ code: "invalid", message: `not a session id: ${feed.threadId}` })),
     )
     return JournalTail.of({
-      read: (feed, after) => address(feed).pipe(
-        Effect.flatMap((session) => sessions.read(session, { after, limit: options.page }).pipe(
+      read: (feed, after, kinds) => address(feed).pipe(
+        Effect.flatMap((session) => sessions.read(session, { after, limit: options.page, ...(kinds === undefined ? {} : { kinds }) }).pipe(
           Effect.mapError((error) => error._tag === "SessionMissing"
             ? new RenderError({ code: "forbidden", message: "no such session" })
             : new RenderError({ code: "storage", message: error.message })),

@@ -101,11 +101,88 @@ empty poll, then heartbeats while idle. Polling backs off up to `maxPollMs`;
 an optional journal change signal wakes it sooner. If that signal fails or
 ends, polling continues.
 
+## Reading only some kinds
+
+A projection usually shows a few journal kinds and skips the rest. Name
+them as `kinds` in the options, the fourth argument of `frames`: the tail
+reads only those (`JournalTail.read(feed, after, kinds)`, which
+`SessionsJournalTailLive` passes to `Sessions.read`, so the store never
+loads the records the client would not see), and records of other kinds
+never reach the projection. The cursor still moves past every record the
+tail returns, so a tail that cannot filter stays correct, only slower.
+Absent or empty, `kinds` is every kind.
+
+## Starting from a snapshot
+
+Without a snapshot, a client at cursor 0 receives every record of the
+journal, however long. With `snapshot: { head, fold }`, a client at cursor
+0, or past `head` (its cursor is from a journal that was replaced), gets one
+record with sequence `head` carrying the fold of the records up to `head`,
+then the records after `head`. A client resuming at a cursor up to the head
+is not sent the snapshot, and a client that reconnects with the snapshot's
+sequence resumes after it. `head` must be a sequence the journal has
+reached: a session's `seq` read when the client connects. The fold sees the
+records of `kinds` only, may require services like the projection, and
+fails with `RenderError`.
+
+```ts
+import { Effect, Option } from "effect"
+import { Sessions } from "@xandreed/sdk"
+import type { SessionAddress } from "@xandreed/sdk"
+import { RenderFeed } from "@xandreed/plugin-render"
+import type { FeedPayload, FeedProjection, FeedScope, SnapshotFold } from "@xandreed/plugin-render"
+
+declare const scope: FeedScope
+declare const address: SessionAddress
+declare const project: FeedProjection
+
+const kinds = ["turn.started", "turn.reply"]
+
+// The client's state, as it applies each record's payload: the snapshot replaces it.
+const apply = (lines: ReadonlyArray<string>, payload: FeedPayload): ReadonlyArray<string> =>
+  payload.event === "transcript"
+    ? (Array.isArray(payload.data.lines) ? payload.data.lines.filter((line) => typeof line === "string") : [])
+    : [...lines, JSON.stringify(payload.data)]
+
+// The records up to the head, projected and applied as a client would.
+const fold: SnapshotFold = (records) =>
+  Effect.forEach(records, project, { concurrency: 1 }).pipe(Effect.map((payloads) => ({
+    event: "transcript",
+    data: { lines: [...payloads.flatMap(Option.toArray).reduce(apply, [])] },
+  })))
+
+const follow = (after: number) => Effect.gen(function* () {
+  const head = (yield* (yield* Sessions).get(address)).seq
+  return (yield* RenderFeed).frames(scope, after, project, { kinds, snapshot: { head, fold } })
+})
+```
+
+Prove a fold against its projection with `foldEqualsReplay` in a test:
+over a sample journal, at 0 and at every sequence of it, a client that
+starts from the snapshot (fresh, or holding a later state) holds the state
+of one that applied every projected record up to that head, and both end
+in the same state. It fails with `ConformanceFailure` naming the first head
+that differs:
+
+```ts
+import { Effect } from "effect"
+import { foldEqualsReplay } from "@xandreed/plugin-render"
+import type { FeedPayload, FeedProjection, JournalRecord, SnapshotFold } from "@xandreed/plugin-render"
+
+declare const sample: ReadonlyArray<JournalRecord>
+declare const project: FeedProjection
+declare const fold: SnapshotFold
+declare const apply: (lines: ReadonlyArray<string>, payload: FeedPayload) => ReadonlyArray<string>
+
+const proof = foldEqualsReplay({ records: sample, kinds: ["turn.started", "turn.reply"], project, fold, initial: [], apply })
+await Effect.runPromise(proof)
+```
+
 ## Live frames
 
 A host that also streams what the journal never stores, such as a reply as
-it is written, a preview or a build handshake, passes that stream as the
-fourth argument of `frames`. Each payload goes out as a transient frame,
+it is written, a preview or a build handshake, passes that stream as `live`
+in the options of `frames`. Each payload goes out as a transient frame,
 after the ready frame so the backlog comes first. Transient frames carry no
 sequence: over SSE they have no `id` line, so `Last-Event-ID` stays at the
 last journaled record, and a reconnecting client receives only what the
@@ -126,7 +203,7 @@ const live: Stream.Stream<FeedPayload, RenderError> = replyDeltas.pipe(
   Stream.map((text): FeedPayload => ({ event: "reply.delta", data: { text } })),
 )
 
-const frames = RenderFeed.pipe(Effect.map((feed) => feed.frames(scope, 0, project, live)))
+const frames = RenderFeed.pipe(Effect.map((feed) => feed.frames(scope, 0, project, { live })))
 ```
 
 The stream ends after `maxDurationMs`; clients reconnect with their last
@@ -160,7 +237,8 @@ const serve = (request: IncomingMessage, response: ServerResponse) =>
   )
 ```
 
-`renderFeedConformance` and `renderTransportConformance` exercise adapters.
+`renderFeedConformance` and `renderTransportConformance` exercise adapters;
+`foldEqualsReplay` checks a host's snapshot fold.
 
 ## Related guides
 

@@ -1012,8 +1012,15 @@ the same shape, `name` and `run`, and fail with core's
 | Kit | Checks | Run against |
 | --- | --- | --- |
 | `renderSurfaceConformance(subject)` | generations opened only by changed content, operation ids per surface and generation, completion once per version, a retried publish committing what a failed one left out (also after reopening), freezing (before the first publish too, and per surface) and placeholder fills in each version, threads that never see each other's records, preparations one at a time, reopening, rejected components never committed, an idempotent store, two writers of one message never planning the same version, a store that refuses a plan skipping or repeating a generation and every write under a lower fence (`forbidden`) | a `SurfaceSubject`, whose `make(admission)` builds a fresh `Render` and `RenderStore` for each check |
-| `renderFeedConformance(makeFeed)` | resuming after the cursor with one ready frame, heartbeats while idle, records in order, polling at once on a change signal, live payloads as transient frames only after the ready frame, ending with the journal side, and a live stream that ends leaving the journal side following | a function that builds a `RenderFeed` over a `JournalTail` (`makeMemoryJournal` gives one to append to) |
+| `renderFeedConformance(makeFeed)` | resuming after the cursor with one ready frame, heartbeats while idle, records in order, polling at once on a change signal, live payloads as transient frames only after the ready frame, ending with the journal side, a live stream that ends leaving the journal side following, a client at cursor 0 or past the head starting from the snapshot at the head and then following the tail, a client at a cursor up to the head resuming without it, a kinds filter that reaches the tail and limits the fold and the records sent, records of other kinds still moving the cursor, and the projection and the fold running with the stream's services | a function that builds a `RenderFeed` over a `JournalTail` (`makeMemoryJournal` gives one to append to) |
 | `renderTransportConformance({ sse, socket })` | SSE and WebSocket carry identical frames, transient frames included; SSE ends its peer once when the frames end, finished or failed, and never after the client left | the two `RenderTransport`s |
+
+`foldEqualsReplay({ records, kinds, project, fold, initial, apply })` is
+the host's side of a feed snapshot: over a sample journal, at 0 and at every
+sequence, a client that starts from the fold (fresh, or holding a later
+state) must hold the state of one that applied every projected record up
+to that head. It runs as one effect that requires what the projection and
+the fold require, and fails with `ConformanceFailure`.
 
 `inboxRunnerConformance` from `@xandreed/core/conformance` checks a runner's
 exact borrowed writer, queued message and media, completed/partial/failed

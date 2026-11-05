@@ -3783,16 +3783,27 @@ accepted, the ordinary inbox drainer's explicit startup takeover handles it.
 `JournalTail` over `Sessions`: the render feed replays a session's events
 after a cursor, then follows `changes` and polls. A host that also
 streams what the journal never stores (a reply as it is written, a
-preview) passes it to `RenderFeed.frames` as `live`: those payloads go out
-as transient frames after the ready frame, with no SSE `id` and no
-sequence, so they never move the resume cursor. The events guide
+preview) passes it to `RenderFeed.frames` as `live`, in the options after
+the projection: those payloads go out as transient frames after the ready
+frame, with no SSE `id` and no sequence, so they never move the resume
+cursor. `kinds` in the same options limits the feed to the journal kinds
+its projection shows: the tail passes them to `Sessions.read`, so the
+records it skips (prompts, tool input, images) are never loaded, and the
+cursor still moves past them. `snapshot: { head, fold }` starts a client
+at cursor 0, or past `head`, from the state instead of a replay: one
+record with sequence `head` (a session's `seq` when the client connects)
+carrying `fold` of the records up to it, then the records after it; a
+client resuming at a cursor up to the head is not sent it.
+`foldEqualsReplay` checks a fold against its projection at every head of a
+sample journal. The events guide
 [serves it over SSE](events.md#serving-turns-over-http) with a projection
 that keeps prompts and tool input and output on the server, and shows
 [what another process needs to follow a session](events.md#reading-the-journal)
-(the same `SessionLog`, and polling). A projection (`FeedProjection<R>`) may
-require services, which the feed's stream then requires, so the connection
-provides them where it runs the stream; it fails with `RenderError`, and
-`payloadOf(schema)` builds its payload from the host's own schema.
+(the same `SessionLog`, and polling). A projection (`FeedProjection<R>`) and
+a fold (`SnapshotFold<R>`) may require services, which the feed's stream
+then requires, so the connection provides them where it runs the stream;
+they fail with `RenderError`, and `payloadOf(schema)` builds a payload from
+the host's own schema.
 
 **Serving a feed over SSE.** `SseTransport.serve(frames, peer)` writes to an
 `SsePeer`: `write`, `closed` (the client left) and `end`, which it runs once

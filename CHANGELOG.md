@@ -40,8 +40,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   which the client fails on at once without retrying. `requests` lists
   every request with the step that answered it and `remaining` the steps
   not yet used. `ScriptedReply` decodes a script kept as JSON.
+- `@xandreed/plugin-render`: a render feed can start a cold client from a
+  snapshot and read only the kinds its projection uses. `RenderFeed.frames`
+  takes an options object after the projection, `{ live, kinds, snapshot }`.
+  With `snapshot: { head, fold }`, a client at cursor 0, or past `head`,
+  gets one `FeedRecord` with sequence `head` carrying `fold` of the records
+  up to `head` (a `SnapshotFold<R>`, which may require services like the
+  projection), then the records after `head`, instead of a replay of the
+  whole journal; a client at a cursor in `1..head` resumes as before, and
+  one that reconnects with the snapshot's sequence resumes after it. A
+  head that is no journal sequence fails the feed with `invalid`. With
+  `kinds`, the tail reads only those kinds: `JournalTail.read` takes an
+  optional third argument, `kinds`, which `SessionsJournalTailLive` passes
+  to `Sessions.read`, so records the client would never see (prompts, tool
+  input, images) are not loaded; the feed also drops other kinds a tail
+  returns and still moves the cursor past them. A call without `kinds`
+  reads its tail with the feed and cursor alone, as before.
+  `foldEqualsReplay({ records, kinds, project, fold, initial, apply })`
+  checks a fold against its projection at 0 and every sequence of a sample
+  journal: a client starting from the snapshot, fresh or holding a later
+  state, must hold the state of one that applied every projected record.
+  `renderFeedConformance` gains four checks (the snapshot then the tail, no
+  snapshot for a cursor up to the head, the kinds filter, the cursor moving
+  past other kinds), its services check covers the fold, and
+  `makeMemoryJournal`'s tails read only the kinds asked for. New types:
+  `FeedFramesOptions`, `FeedSnapshot`, `SnapshotFold`, `FoldReplaySubject`.
 
 ### Changed
+
 
 
 
@@ -63,7 +89,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -85,6 +113,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
+
+
+### Breaking
+
+- `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
+  options instead of as the fourth argument: `frames(scope, after,
+  project, live)` becomes `frames(scope, after, project, { live })`. A
+  host's own `RenderFeed` (not `makeRenderFeed`) takes the options object,
+  declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
+  options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
+  RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
 
 ## 0.17.1 — 2026-11-05
 
