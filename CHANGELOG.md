@@ -8,6 +8,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- `@xandreed/evals`: a host's own `EvaluationServices` (not
+  `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
+  the run's scope; a caller of `TrialExecution.execute` other than the
+  runner provides a `ModelSpend`.
+
 ### Added
 
 - `@xandreed/core`: stored tool lifecycle and conversation message records
@@ -118,8 +125,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   settled and reserved spend whenever a ledger is among the turn's services,
   and the turn sets `CurrentTurnRunId` for every call it makes, helper calls
   included. Without the `spend` option nothing changes.
+- `@xandreed/evals`, `@xandreed/evals-cli`: an evaluation run's spend
+  budget. Nothing capped what a run's trials could spend on models, and
+  reports recorded no spend. `efferent-eval run` and `calibrate` take
+  `--budget-usd <amount>` (`EvaluationSelection.spendBudget`; a value that
+  is not a positive finite number is `invalid`). A run opens one
+  `ModelSpend` ledger (`EvaluationServices.spend`, in memory in
+  `EvaluationServicesLive`) and gives each trial its own account in it,
+  which `RunnableExecution.execute` reads as `ModelSpend` and passes to the
+  agents it defines (the models plugin's `spend` guard). Every reservation's
+  total cap is at most the budget, shared by concurrent trials. Once a send
+  is refused under it, or what was settled reaches it, the run starts no
+  more trials: finished trials keep their results, and the trial whose send
+  was refused and those never started are `skipped` with a reason starting
+  `budget:`, never in `failures`, never graded and never a zero (a gate over
+  them does not pass). The report records `Trial.spend` (`{ settled }`) for
+  a trial that reserved anything and `EvaluationRun.spend` (`{ budget,
+  settled }`) when the run had a budget or a trial reserved; both keys are
+  optional, so earlier reports decode unchanged and a run that metered
+  nothing writes the same report as before. The run's summary prints
+  `skipped` and `spend` when it recorded spend. `positiveAmount` reads such
+  a flag. `@xandreed/evals` now depends on `@xandreed/core`, for the ledger
+  alone.
 
 ### Changed
+
 
 
 
@@ -147,7 +177,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -177,7 +209,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 
 
@@ -188,6 +222,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

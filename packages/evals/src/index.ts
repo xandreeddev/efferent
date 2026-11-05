@@ -12,6 +12,7 @@ export { Trial } from "./domain/trial.entity.js"
 export { Gate, Suite } from "./domain/suite.entity.js"
 export { Calibration } from "./domain/calibration.entity.js"
 export { EvaluationRun, GateFinding } from "./domain/evaluation-run.entity.js"
+export { RunSpend, TrialSpend } from "./domain/spend.entity.js"
 export { tasksFromDataset } from "./domain/task.entity.functions.js"
 export { fingerprint, gradingContext } from "./domain/grading-context.entity.functions.js"
 export { comparisonIssues, runGates } from "./domain/evaluation-run.entity.functions.js"
@@ -97,7 +98,7 @@ export {
 } from "./assessment.entity.functions.js"
 export { fingerprint as evaluationFingerprint } from "./domain/grading-context.entity.functions.js"
 export { isolatedServices } from "./adapters/isolated-services.adapter.js"
-export { argValue, csv, hasFlag, positiveInt } from "./cli.functions.js"
+export { argValue, csv, hasFlag, positiveAmount, positiveInt } from "./cli.functions.js"
 export {
   SemanticAnswer,
   SemanticAnswers,
@@ -134,5 +135,5 @@ export { EvidenceProjector } from "./ports/evidence-projector.port.js"
 export { GraderAssessment } from "./ports/grader-assessment.port.js"
 export { TrialRecorder } from "./ports/trial-recorder.port.js"
 
-export { EvaluationServices } from "./ports/evaluation-services.port.js"
+export { EvaluationServices, type RunSpendLedger, type TrialSpendAccount } from "./ports/evaluation-services.port.js"
 export { EvaluationServicesLive } from "./adapters/evaluation-services.adapter.js"

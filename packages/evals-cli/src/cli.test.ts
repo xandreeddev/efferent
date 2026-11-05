@@ -1,4 +1,5 @@
-import { EvalPath, EvaluationExport, EvaluationError, EvaluationRunStore, TranscriptEvent, Trial, TrialRecorder, comparisonIssues, positiveInt, type EvaluationApp } from "@xandreed/evals"
+import { EvalId, EvalPath, EvaluationExport, EvaluationError, EvaluationRunStore, TranscriptEvent, Trial, TrialRecorder, comparisonIssues, positiveAmount, positiveInt, type EvaluationApp } from "@xandreed/evals"
+import { ModelSpend } from "@xandreed/core"
 import { spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises"
@@ -343,3 +344,95 @@ test("a configuration whose default export is not an app is refused by shape", a
   expect(await validate("factory.config.ts")).toEqual([1, `invalid: Evaluation app refused (8 violations): ${
     ["suites", "calibrations", "runnables", "graders", "projections"].map((key) => `shape at ${key}: Missing key`).join("; ")}; and 3 more`])
 }, 30_000)
+
+/** The fixture, its one send reserving 1 in the trial's ledger and settling at 0.75; a refused send fails the trial. */
+const spendingApp = cliFixture((input) => Effect.gen(function* () {
+  const ledger = yield* ModelSpend
+  const hold = yield* ledger.reserve({ amount: 1, caps: {} })
+  yield* ledger.settle(hold, 0.75)
+  return { output: input, evidence: {} }
+}).pipe(Effect.mapError((error) => new EvaluationError({ code: "provider", message: error.message, cause: error }))))
+
+/** `run` over the spending fixture, four samples, with `flags`: its exit code, what it printed and its report. */
+const budgetedRun = async (flags: ReadonlyArray<string>) => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-budget-"))
+  const printed: unknown[] = []
+  const code = await Effect.runPromise(
+    evaluationCli(["run", "suite", "--directory", directory, "--repetitions", "4", ...flags], { config: spendingApp, output: (value) => printed.push(value) })
+  )
+  const report: { spend?: unknown; failures: ReadonlyArray<string>; trials: ReadonlyArray<{ status: string; reason: string; spend?: unknown }> } =
+    JSON.parse(await readFile(join(directory, "report.json"), "utf8"))
+  return { code, printed: printed[0], report, directory }
+}
+
+test("run --budget-usd under the budget runs every trial and records what each one and the run settled", async () => {
+  const { code, printed, report } = await budgetedRun(["--budget-usd", "5"])
+  expect(code).toBe(0)
+  expect(report.trials.map((trial) => [trial.status, trial.spend])).toEqual(Array.from({ length: 4 }, () => ["completed", { settled: 0.75 }]))
+  expect(report.spend).toEqual({ budget: 5, settled: 3 })
+  expect(printed).toMatchObject({ trials: 4, completed: 4, skipped: 0, spend: { budget: 5, settled: 3 } })
+})
+
+test("run --budget-usd over the budget keeps the finished trials and reports the rest as skipped for budget, not as failures", async () => {
+  const { code, printed, report, directory } = await budgetedRun(["--budget-usd=2"])
+  expect(report.trials.map((trial) => [trial.status, trial.spend])).toEqual([
+    ["completed", { settled: 0.75 }],
+    ["completed", { settled: 0.75 }],
+    ["skipped", { settled: 0 }],
+    ["skipped", undefined],
+  ])
+  expect(report.trials.slice(2).every((trial) => trial.reason.startsWith("budget: "))).toBe(true)
+  expect(report.failures).toEqual([])
+  expect(report.spend).toEqual({ budget: 2, settled: 1.5 })
+  expect(printed).toMatchObject({ trials: 4, completed: 2, skipped: 2, spend: { budget: 2, settled: 1.5 } })
+  // The fixture's blocking gate is not measured over skipped trials, so it fails, as an incomplete run's does.
+  expect(code).toBe(2)
+  expect((await readdir(join(directory, "trials"))).filter((name) => name.endsWith(".json"))).toHaveLength(4)
+  const summaries: unknown[] = []
+  await Effect.runPromise(evaluationCli(["inspect", "--summary", "--report", join(directory, "report.json")], { output: (value) => summaries.push(value) }))
+  expect(summaries[0]).toMatchObject({ completed: 2, failures: 0, skipped: 2, spend: { budget: 2, settled: 1.5 } })
+})
+
+test("a run that metered no spend prints and stores no spend", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-unmetered-"))
+  const printed: unknown[] = []
+  await Effect.runPromise(evaluationCli(["run", "suite", "--directory", directory], { config: app, output: (value) => printed.push(value) }))
+  expect(Object.keys(printed[0] as object)).not.toContain("spend")
+  expect(await readFile(join(directory, "report.json"), "utf8")).not.toContain("spend")
+})
+
+test("a bad --budget-usd is a usage error naming the flag, before anything runs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-budget-flag-"))
+  const refusals = await Effect.runPromise(Effect.forEach([["0"], ["-1"], ["abc"], ["Infinity"], []], (value) =>
+    evaluationCli(["run", "suite", "--directory", directory, "--budget-usd", ...value], { config: spendingApp, output }).pipe(
+      Effect.flip,
+      Effect.map((error) => [error.code, error.message])
+    ), { concurrency: 1 }))
+  expect(refusals).toEqual([
+    ["invalid", "--budget-usd needs a positive number, not \"0\""],
+    ["invalid", "--budget-usd needs a positive number, not \"-1\""],
+    ["invalid", "--budget-usd needs a positive number, not \"abc\""],
+    ["invalid", "--budget-usd needs a positive number, not \"Infinity\""],
+    ["invalid", "--budget-usd needs a positive number"],
+  ])
+  expect(await readdir(directory)).toEqual([])
+  expect(await Effect.runPromise(positiveAmount("--budget-usd", ["--budget-usd", "0.25"]))).toEqual(Option.some(0.25))
+  expect(await Effect.runPromise(positiveAmount("--budget-usd", []))).toEqual(Option.none())
+})
+
+test("calibrate --budget-usd caps the calibration's run as run's", async () => {
+  const calibrating: EvaluationApp = {
+    ...spendingApp,
+    calibrations: [{
+      id: EvalId.make("judge"), version: "1", grader: spendingApp.graders[0]!.definition,
+      suite: { ...spendingApp.suites[0]!, id: EvalId.make("judge-suite"), repetitions: 4 },
+    }],
+  }
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-calibrate-budget-"))
+  await Effect.runPromise(
+    evaluationCli(["calibrate", "judge", "--split", "validation", "--directory", directory, "--budget-usd", "2"], { config: calibrating, output })
+  )
+  const report = await Effect.runPromise(readRun(join(directory, "report.json")))
+  expect(report.trials.map((trial) => trial.status)).toEqual(["completed", "completed", "skipped", "skipped"])
+  expect(report.spend).toEqual({ budget: Option.some(2), settled: 1.5 })
+})

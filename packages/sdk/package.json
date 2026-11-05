@@ -24,6 +24,7 @@
     "@xandreed/plugin-session-files": "workspace:*",
     "@xandreed/plugin-tasks": "workspace:*",
     "@xandreed/plugin-models": "workspace:*",
-    "@xandreed/plugin-render": "workspace:*"
+    "@xandreed/plugin-render": "workspace:*",
+    "@xandreed/evals": "workspace:*"
   }
 }

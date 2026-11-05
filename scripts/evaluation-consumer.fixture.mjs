@@ -9,10 +9,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option, Schema, Layer } from "effect"
+import { ModelSpend } from "@xandreed/core"
 import {
   defineEvaluationApp,
   defineRunnable,
   EvalId,
+  EvaluationError,
   EvaluationRun,
   gradingContext,
   unknownEvaluationUsage
@@ -44,8 +46,12 @@ const runnable = defineRunnable({
     execute: (input) => Effect.gen(function* () {
       const recorder = yield* TrialRecorder
       yield* recorder.record("function.output", { input })
+      // One priced call: it holds 0.5 of the run's spend ledger and settles at 0.25.
+      const ledger = yield* ModelSpend
+      const hold = yield* ledger.reserve({ amount: 0.5, caps: {} })
+      yield* ledger.settle(hold, 0.25)
       return { output: input.toUpperCase(), evidence: { length: input.length } }
-    })
+    }).pipe(Effect.mapError((error) => new EvaluationError({ code: "provider", message: error.message, cause: error })))
   }),
   environments: [{ id: "memory", layer: Layer.succeed(Environment, {
     open: () => Effect.succeed({}),
@@ -159,7 +165,7 @@ const declaration = source.slice(
 )
 await writeFile(
   config,
-  `import { Effect, Layer, Option, Schema } from 'effect'; import { runnableExecutionPort, evaluationEnvironmentPort, TrialRecorder, EvidenceProjector, GraderAssessment, defineEvaluationApp, defineRunnable, EvalId, gradingContext, unknownEvaluationUsage } from '@xandreed/evals';\n${declaration}\nexport default app;\n`
+  `import { Effect, Layer, Option, Schema } from 'effect'; import { ModelSpend } from '@xandreed/core'; import { runnableExecutionPort, evaluationEnvironmentPort, TrialRecorder, EvidenceProjector, GraderAssessment, defineEvaluationApp, defineRunnable, EvalId, EvaluationError, gradingContext, unknownEvaluationUsage } from '@xandreed/evals';\n${declaration}\nexport default app;\n`
 )
 const output = () => undefined
 const code = await Effect.runPromise(
@@ -185,9 +191,35 @@ const run = await Effect.runPromise(
 if (
   code !== 0 ||
   !run.gates[0]?.passed ||
-  run.trials[0]?.transcript.length !== 1
+  run.trials[0]?.transcript.length !== 1 ||
+  run.trials[0]?.spend?.settled !== 0.25 ||
+  run.spend?.settled !== 0.25
 )
   process.exit(1)
+// Under a budget of 0.6 the first trial settles 0.25, the second's call
+// (0.5 more) is refused, and the third is never started.
+const budgeted = await mkdtemp(join(process.cwd(), "evals-node-budget-"))
+const budgetedCode = await Effect.runPromise(
+  evaluationCli(
+    ["run", "suite", "--config", config, "--directory", budgeted, "--repetitions", "3", "--budget-usd", "0.6"],
+    { output }
+  )
+)
+const capped = await Effect.runPromise(
+  Schema.decodeUnknownEffect(Schema.fromJsonString(EvaluationRun))(
+    await readFile(join(budgeted, "report.json"), "utf8")
+  )
+)
+if (
+  budgetedCode !== 2 ||
+  capped.trials.map((trial) => trial.status).join(",") !== "completed,skipped,skipped" ||
+  capped.failures.length !== 0 ||
+  Option.getOrNull(capped.spend?.budget ?? Option.none()) !== 0.6 ||
+  capped.spend?.settled !== 0.25
+) {
+  console.error("a budgeted run did not stop at its budget", JSON.stringify(capped.trials.map((trial) => [trial.status, trial.reason])))
+  process.exit(1)
+}
 if (
   langfuseExporter({
     baseUrl: "http://localhost",
@@ -202,5 +234,5 @@ if (
 )
   process.exit(1)
 console.log(
-  "Node 24 typed function, TS app loading, local CLI and optional exporter imports passed"
+  "Node 24 typed function, TS app loading, local CLI, a run's spend budget and optional exporter imports passed"
 )

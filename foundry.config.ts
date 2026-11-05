@@ -424,14 +424,15 @@ const config: typeof GateSuiteConfig.Encoded = {
   boundaries: {
     layers: [
       // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
-      ...testLayer("evals-cli", ["evals-cli", "evals"], ["effect", "node:", "bun:test"]),
+      ...testLayer("evals-cli", ["evals-cli", "evals", "core"], ["effect", "node:", "bun:test"]),
       { name: "evals-cli", path: src("evals-cli"), canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api"] },
       ...testLayer("evals-langfuse", ["evals-langfuse", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langfuse", path: src("evals-langfuse"), canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:"] },
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
-      ...testLayer("evals", ["evals"], ["effect", "effect/ai", "node:", "bun:test"]),
-      { name: "evals", path: src("evals"), canImport: [], externals: ["effect", "effect/ai", "@noble/hashes/"] },
+      // evals reaches core only for the ModelSpend ledger its runs share across their trials.
+      ...testLayer("evals", ["evals", "core"], ["effect", "effect/ai", "node:", "bun:test"]),
+      { name: "evals", path: src("evals"), canImport: ["core"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's layers, by a file's role rather than its folder; a glob takes no
       // alternatives, so a layer may need several entries. Its test code comes
       // first, then from the bottom: the model (entities, and the References
@@ -532,7 +533,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "runtime", path: src("runtime"), canImport: ["core"], externals: ["effect", "node:"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
-      // as written, so they import only what a consumer can.
+      // as written, so they import only what a consumer can. They import evals too:
+      // an evaluation run's trials run agents in eval-spend.journey.test.ts.
       ...testLayer(
         "sdk",
         [
@@ -551,6 +553,7 @@ const config: typeof GateSuiteConfig.Encoded = {
           "plugin-tasks",
           "plugin-models",
           "plugin-render",
+          "evals",
         ],
         ["effect", "effect/ai", "effect/testing", "node:", "bun:test"],
       ),

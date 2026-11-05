@@ -849,6 +849,14 @@ calls outside the step loop count toward their turn. Telemetry's reported
 cost and the settled spend agree for calls with known usage; telemetry
 reports no cost for an unknown usage, where the ledger keeps the worst case.
 
+An evaluation run is one run of spend too: `@xandreed/evals` opens one
+ledger per run and gives each trial its own account in it as the
+`ModelSpend` its runnable reads, so a runnable passes it to the agents it
+defines. `efferent-eval run --budget-usd <amount>` caps every reservation of
+every trial at the run's budget, starts no more trials once a send is
+refused under it, and records each trial's and the run's settled spend in
+the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget)).
+
 ## Host-planned initial tool batch
 
 `runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify

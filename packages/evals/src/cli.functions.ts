@@ -37,3 +37,21 @@ export const positiveInt = (name: string, fallback: number, argv: ReadonlyArray<
       Effect.mapError(() => new EvaluationError({ code: "invalid", message: `${name} needs a positive integer, not ${JSON.stringify(value)}` })),
     ),
   })
+
+const PositiveAmount = Schema.NumberFromString.check(Schema.isFinite(), Schema.isGreaterThan(0))
+
+/**
+ * A positive amount flag (a budget): none when the flag is absent, and a
+ * usage error (`invalid`) when it is given without a positive finite
+ * number, never a silent default.
+ */
+export const positiveAmount = (name: string, argv: ReadonlyArray<string> = process.argv): Effect.Effect<Option.Option<number>, EvaluationError> =>
+  Option.match(argValue(name, argv), {
+    onNone: () => hasFlag(name, argv)
+      ? Effect.fail(new EvaluationError({ code: "invalid", message: `${name} needs a positive number` }))
+      : Effect.succeed(Option.none()),
+    onSome: (value) => Schema.decodeUnknownEffect(PositiveAmount)(value).pipe(
+      Effect.map(Option.some),
+      Effect.mapError(() => new EvaluationError({ code: "invalid", message: `${name} needs a positive number, not ${JSON.stringify(value)}` })),
+    ),
+  })

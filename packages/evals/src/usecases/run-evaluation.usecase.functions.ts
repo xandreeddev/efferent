@@ -1,4 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
+import { ModelSpend } from "@xandreed/core"
 import { isUnavailable, reasonOf } from "../domain/identity.entity.functions.js"
 import type {
   EvaluationApp,
@@ -17,6 +18,8 @@ import type { EvaluationRun } from "../domain/evaluation-run.entity.js"
 import { runGates } from "../domain/evaluation-run.entity.functions.js"
 import { EvaluationRunStore } from "../ports/evaluation-store.port.js"
 import { EvaluationServices } from "../ports/evaluation-services.port.js"
+import type { RunSpendLedger, TrialSpendAccount } from "../ports/evaluation-services.port.js"
+import { runSpendOf } from "../domain/spend.entity.functions.js"
 import { TrialExecution } from "../ports/trial-execution.port.js"
 import { EvidenceProjector } from "../ports/evidence-projector.port.js"
 import { GraderAssessment } from "../ports/grader-assessment.port.js"
@@ -212,7 +215,8 @@ const runTrial = Effect.fn("eval.trial")(
     task: Task,
     candidate: Candidate,
     sample: number,
-    selection: EvaluationSelection
+    selection: EvaluationSelection,
+    spend: TrialSpendAccount
   ) {
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
@@ -297,7 +301,7 @@ const runTrial = Effect.fn("eval.trial")(
                     ...trial,
                     outcome: Option.some(outcome)
                   }))
-                })
+                }).pipe(Effect.provideService(ModelSpend, spend.ledger))
               }).pipe(Effect.provide(context))
             })
           ).pipe(
@@ -315,6 +319,11 @@ const runTrial = Effect.fn("eval.trial")(
         ).pipe(Effect.exit)
         return yield* writer.withPermits(1)(Effect.gen(function* () {
           const recorded = yield* Ref.get(state)
+          // A failure after a send the run's budget refused is the budget's, not the candidate's.
+          const refusal = Exit.isFailure(execution) && !Cause.hasInterruptsOnly(execution.cause)
+            ? yield* spend.refusal
+            : Option.none<string>()
+          const spent = yield* spend.spend
           const completed: Trial = {
             ...recorded,
             endedAt: yield* Clock.currentTimeMillis,
@@ -322,14 +331,22 @@ const runTrial = Effect.fn("eval.trial")(
               ? "completed"
               : Cause.hasInterruptsOnly(execution.cause)
                 ? "cancelled"
-                : "error",
+                : Option.isSome(refusal)
+                  ? "skipped"
+                  : "error",
             output: Exit.isSuccess(execution)
               ? Option.some(execution.value.output)
               : Option.none(),
             evidence: Exit.isSuccess(execution)
               ? Option.some(execution.value.evidence)
               : Option.none(),
-            reason: Exit.isSuccess(execution) ? "" : reasonOf(execution.cause)
+            reason: Exit.isSuccess(execution)
+              ? ""
+              : Option.match(refusal, {
+                  onNone: () => reasonOf(execution.cause),
+                  onSome: (message) => `budget: ${message}`
+                }),
+            ...Option.match(spent, { onNone: () => ({}), onSome: (value) => ({ spend: value }) })
           }
           yield* Ref.set(state, completed)
           yield* store.writeTrial(completed)
@@ -341,6 +358,63 @@ const runTrial = Effect.fn("eval.trial")(
   (effect, ...[, runId, suite, task, candidate, sample]) =>
     annotated(trialAttributes({ id: trialPath(runId, suite.id, candidate.id, task.id, sample), runId, suiteId: suite.id, task, candidate, sample }))(effect)
 )
+
+/** A trial the run does not start, its spend budget reached: stored as `skipped`, with nothing captured. */
+const notRunTrial = Effect.fnUntraced(function* (
+  runId: EvalId,
+  suite: Suite,
+  task: Task,
+  candidate: Candidate,
+  sample: number,
+  stopped: string
+) {
+  const store = yield* EvaluationRunStore
+  const at = yield* Clock.currentTimeMillis
+  const trial: Trial = {
+    version: 1,
+    id: trialPath(runId, suite.id, candidate.id, task.id, sample),
+    runId,
+    suiteId: suite.id,
+    task,
+    candidate,
+    sample,
+    status: "skipped",
+    startedAt: at,
+    endedAt: at,
+    output: Option.none(),
+    evidence: Option.none(),
+    outcome: Option.none(),
+    transcript: [],
+    reason: `budget: not run: ${stopped}`,
+    grades: []
+  }
+  yield* store.writeTrial(trial)
+  return trial
+})
+
+/** Runs a trial while the run may spend; once its budget stops it, records the trial as not run. */
+const scheduledTrial = (
+  app: EvaluationApp,
+  runId: EvalId,
+  suite: Suite,
+  task: Task,
+  candidate: Candidate,
+  sample: number,
+  selection: EvaluationSelection,
+  spend: RunSpendLedger
+) =>
+  Effect.flatMap(spend.stopped, (stopped) =>
+    Option.match(stopped, {
+      onNone: () =>
+        Effect.flatMap(spend.trial, (account) =>
+          runTrial(app, runId, suite, task, candidate, sample, selection, account)
+        ),
+      onSome: (reason) => notRunTrial(runId, suite, task, candidate, sample, reason)
+    })
+  )
+
+/** What a run reports as failed: trials that did not complete, but those its budget skipped. */
+const unfinished = (trial: Trial) => trial.status !== "completed" && trial.status !== "skipped"
 
 /**
  * Identifies captured execution independently of grader revisions and their reports.
@@ -472,6 +546,12 @@ export const gradeEvaluation = Effect.fn("eval.regrade")(
           },
           grades: []
         }
+        // A trial the budget skipped has nothing measured to grade.
+        if (revised.status === "skipped") {
+          const store = yield* EvaluationRunStore
+          yield* store.writeTrial(revised)
+          return revised
+        }
         return yield* gradeTrial(
           app,
           revised,
@@ -506,7 +586,7 @@ export const gradeEvaluation = Effect.fn("eval.regrade")(
         trials
       ),
       failures: trials.flatMap((trial) => [
-        ...(trial.status !== "completed"
+        ...(unfinished(trial)
           ? [`${trial.id}: ${trial.reason}`]
           : []),
         ...trial.grades
@@ -549,6 +629,17 @@ export const runEvaluation = Effect.fn("eval.run")(
           message: "Concurrency and timeout must be positive"
         })
       )
+    if (
+      selection.spendBudget !== undefined &&
+      (!Number.isFinite(selection.spendBudget) || selection.spendBudget <= 0)
+    )
+      return yield* Effect.fail(
+        new EvaluationError({
+          code: "invalid",
+          message: "A spend budget must be positive and finite"
+        })
+      )
+    const budget = Option.fromNullishOr(selection.spendBudget)
     const suites = app.suites
       .filter(
         (suite) =>
@@ -602,43 +693,48 @@ export const runEvaluation = Effect.fn("eval.run")(
         })
       )
     const startedAt = yield* Clock.currentTimeMillis
-    const trials = yield* Effect.forEach(suites, (suite) => {
-      const repetitions = selection.repetitions ?? suite.repetitions
-      const cases = suite.tasks.filter(
-        (task) =>
-          (!selection.split ||
-            selection.split === "all" ||
-            task.split === selection.split) &&
-          (!selection.tasks?.length || selection.tasks.includes(task.id))
-      )
-      if (!cases.length || !Number.isInteger(repetitions) || repetitions < 1)
-        return Effect.fail(
-          new EvaluationError({
-            code: "invalid",
-            message: "Empty split or invalid repetitions"
-          })
+    const services = yield* EvaluationServices
+    const { trials, totals } = yield* Effect.scoped(Effect.gen(function* () {
+      const spend = yield* services.spend(budget)
+      const trials = yield* Effect.forEach(suites, (suite) => {
+        const repetitions = selection.repetitions ?? suite.repetitions
+        const cases = suite.tasks.filter(
+          (task) =>
+            (!selection.split ||
+              selection.split === "all" ||
+              task.split === selection.split) &&
+            (!selection.tasks?.length || selection.tasks.includes(task.id))
         )
-      return Effect.forEach(
-        suite.candidates
-          .filter(
-            (candidate) =>
-              !selection.candidates?.length ||
-              selection.candidates.includes(candidate.id)
+        if (!cases.length || !Number.isInteger(repetitions) || repetitions < 1)
+          return Effect.fail(
+            new EvaluationError({
+              code: "invalid",
+              message: "Empty split or invalid repetitions"
+            })
           )
-          .flatMap((candidate) =>
-            cases.flatMap((task) =>
-              Array.from({ length: repetitions }, (_, index) => ({
-                candidate,
-                task,
-                sample: index + 1
-              }))
+        return Effect.forEach(
+          suite.candidates
+            .filter(
+              (candidate) =>
+                !selection.candidates?.length ||
+                selection.candidates.includes(candidate.id)
             )
-          ),
-        ({ task, candidate, sample }) =>
-          runTrial(app, id, suite, task, candidate, sample, selection),
-        { concurrency: suite.concurrency }
-      )
-    }, { concurrency: 1 })
+            .flatMap((candidate) =>
+              cases.flatMap((task) =>
+                Array.from({ length: repetitions }, (_, index) => ({
+                  candidate,
+                  task,
+                  sample: index + 1
+                }))
+              )
+            ),
+          ({ task, candidate, sample }) =>
+            scheduledTrial(app, id, suite, task, candidate, sample, selection, spend),
+          { concurrency: suite.concurrency }
+        )
+      }, { concurrency: 1 })
+      return { trials, totals: yield* spend.totals }
+    }))
     const settled = trials.flat()
     const run: EvaluationRun = {
       version: 1,
@@ -651,8 +747,12 @@ export const runEvaluation = Effect.fn("eval.run")(
       trials: settled,
       gates: [],
       failures: settled.flatMap((trial) =>
-        trial.status !== "completed" ? [`${trial.id}: ${trial.reason}`] : []
-      )
+        unfinished(trial) ? [`${trial.id}: ${trial.reason}`] : []
+      ),
+      ...Option.match(runSpendOf(budget, totals, settled), {
+        onNone: () => ({}),
+        onSome: (spend) => ({ spend })
+      })
     }
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
