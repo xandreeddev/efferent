@@ -62,6 +62,7 @@ function awaitIdle
 interface Agent
 interface AgentConfig
 interface AgentPluginEntry
+interface AgentTurn
 interface Capability
 interface NewTurn
 interface ShutdownOptions

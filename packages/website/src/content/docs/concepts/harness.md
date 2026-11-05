@@ -273,7 +273,13 @@ is refused by `Agent.define` (`config.graph`, naming the missing service).
 A tool declares the services its handler reads too (`defineTool`'s
 `requires`; a handler that reads another does not compile), and a turn whose
 services lack one fails to open its tools with `requires.missing`, naming
-the tool and the service, before its first step. A prompt section that reads
+the tool and the service, before its first step. Process-lifetime host
+services go in `Agent.define({ services })`, any `Context` as the host built
+it (no cast): `Agent.define` infers their type and returns an `Agent<S>`
+whose turns run with them, so a turn's `use` reads them (`yield* SomeHostTag`)
+without providing them again, and `agent.turn` requires only what it reads
+beside them. The tool check stays at run time, since what the plugins and
+each turn add is known only then; an `Agent<S>` is still a `TurnRunner`. A prompt section that reads
 services is built with `definePromptSection` and lists them the same way; a
 turn that renders it without one fails with `requires.missing`, naming the
 section and the service.

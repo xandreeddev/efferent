@@ -1013,6 +1013,26 @@ Swapping a strategy is swapping one entry. The host builds one `Sessions`
 (see [Sessions](#sessions-one-log-per-session)) and gives the agent the same
 instance its own code uses, in `services`.
 
+`services` takes the host's process-lifetime services as it built them, any
+`Context.Context<S>` (a `Layer.build` result, `Context.make`, a merge of
+them), with no cast. `Agent.define` infers `S` from it and returns an
+`Agent<S>`. Without `services`, or with services that may be absent (an
+optional spread), it is an agent of none (`Agent`, `Agent<never>`), and
+naming `S` (`Agent.define<S>(…)`) without giving `services` does not
+compile: an agent never claims services it may not have. Every turn runs
+with those services, so `use` may read them (`yield* SomeHostTag`) and
+`agent.turn` does not require them: it requires only what `use` reads that
+neither they, the input's `layer` nor the turn's own services (`RunContext`,
+`TurnEvents`, `TurnTasks`) provide. An `Agent<S>` is still an `Agent`
+and a `TurnRunner` (`agentTaskExecutor`, `agentInboxRunner` and the process
+host take one whatever its services: `AgentTurn`'s second signature is
+`TurnRunner.turn`'s). Plugins, tools and prompt sections still check what
+they need by key when they open: a tool whose `requires` names a service
+that neither `services`, a plugin, the input's `layer` nor the turn
+provides fails the turn's tool open with `requires.missing`, naming the
+tool and the service, before its first step. That check stays at run time
+because what the plugins and each turn add is known only then.
+
 ```ts
 const sessions = yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
   Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/runtime/sessions.db"), TurnAdmissionOpen)),

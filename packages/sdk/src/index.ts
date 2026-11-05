@@ -1,5 +1,5 @@
 export { Agent } from "./agent.adapter.js"
-export type { AgentConfig, AgentPluginEntry } from "./agent.adapter.js"
+export type { AgentConfig, AgentPluginEntry, AgentTurn } from "./agent.adapter.js"
 export { agentInboxRunner } from "./inbox-runner.adapter.js"
 export { taskInboxRunner } from "./task-inbox-runner.adapter.js"
 export { agentTaskExecutor } from "./task-executor.adapter.js"

@@ -8,7 +8,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Changed
+
+- `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
+  `AgentConfig<S>.services` is a `Context.Context<S>`, which `Agent.define`
+  infers and returns as an `Agent<S>`, so a host passes the context it built
+  without a cast. Every turn runs with those services, so `agent.turn` no
+  longer requires what `use` reads of them: a `use` that reads a host
+  service given to `Agent.define` needs no second `Effect.provide`. Services
+  that may be absent (an optional spread) make an `Agent` of none, and
+  naming `S` without giving `services` does not compile. An `Agent<S>` is
+  still an `Agent` and a `TurnRunner` (the new `AgentTurn` type has
+  `TurnRunner.turn` as its second signature), so `agentTaskExecutor`,
+  `agentInboxRunner` and the process host take it unchanged. Tools and prompt sections still check
+  their `requires` by key when a turn opens them (`requires.missing`), since
+  what plugins and each turn add is known only then. Nothing changes at run
+  time; `AgentConfig` and `Agent` without a type argument are the same types
+  as before.
+
 ### Fixed
+
 
 - Releases wait up to about fifteen minutes (was three) for every package to
   appear on the registry before tagging. 0.17.0 and 0.17.1 each refused to tag
@@ -21,6 +40,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `knowledge_store.pending` trace, tens of thousands a day per process, and
   filled tracing quotas with empty traces. Each job a worker claims is traced
   as before.
+
+
 
 ## 0.17.1 — 2026-11-05
 
