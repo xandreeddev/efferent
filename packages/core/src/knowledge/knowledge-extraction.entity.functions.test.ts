@@ -81,12 +81,15 @@ describe("native extraction and retrieval contracts", () => {
       text: `Grounded relationship ${index}.`, provenance: stage.memories[0]!.provenance,
       validFrom: Option.none<number>(), validTo: Option.none<number>(), knownFrom: 30, knownTo: Option.none<number>(),
     }))
-    const result = budgetKnowledgeRecall({ candidates: [{ _tag: "Memory", memory: stage.memories[0]!, score: 1 }], graph: { entities: stage.entities, assertions, truncated: false } }, 600, 8)
+    const cited = { ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: { kind: "note" } }
+    const dropped = { ...cited, ref: { id: KnowledgeSourceId.make("dropped"), revision: 1 } }
+    const result = budgetKnowledgeRecall({ candidates: [{ _tag: "Memory", memory: stage.memories[0]!, score: 1 }], graph: { entities: stage.entities, assertions, truncated: false }, sources: [cited, dropped] }, 600, 8)
     expect(result.graph.truncated).toBe(true)
     expect(result.graph.assertions.length).toBeGreaterThan(0)
     expect(result.graph.assertions.length).toBeLessThan(20)
     expect(result.candidates).toHaveLength(1)
     expect(result.graph.assertions.every((assertion) => assertion.provenance[0]?.source.id === source.ref.id)).toBe(true)
+    expect(result.sources).toEqual([cited])
   })))
 
   test("model protocols reject malformed plans and reranks reject invented or repeated keys", () => Effect.runPromise(Effect.gen(function* () {

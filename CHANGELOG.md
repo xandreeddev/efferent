@@ -10,7 +10,6 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
-
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
@@ -38,7 +37,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   reranking sets `queryPlanning: true` and `rerank: true` in the plugin's
   options (or in `RagLive`/`MemoryLive` config). Extraction, review and
   graph options are unchanged.
-
+- `@xandreed/core`: a host's own `KnowledgeIndex` (a `MemoryStore` or
+  `KnowledgeStore` other than the in-memory and PostgreSQL ones) adds
+  `sourceInfo(scope, refs)`, the batched read `knowledge.source-info`
+  checks; a host's own `Knowledge` or `LongTermMemory` returns `sources` in
+  each `KnowledgeRecallResult` it builds (`[]` when it cites nothing).
 
 ### Added
 
@@ -230,8 +233,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   versions and stored formats are unchanged. `knowledgeStoreConformance`
   gains `knowledge.source-filter`, and `knowledgeConformance` and
   `longTermMemoryConformance` gain `source-filter`.
+- `@xandreed/core`, `@xandreed/plugin-rag`, `@xandreed/plugin-memory`,
+  `@xandreed/plugin-knowledge-postgres`: a knowledge result names the
+  sources it cites. `retrieve` and `recall` returned each citation as a
+  source id, revision and character range only, so a host showing a title,
+  link or date beside a hit read every source in full, one call per hit,
+  though the store already held the metadata it was ingested with.
+  `KnowledgeRecallResult` gains `sources`: a `KnowledgeSourceInfo` (`ref`,
+  `occurredAt`, `recordedAt`, `metadata`, no text) per cited revision, once
+  each, in order of first citation (candidates, relations, entities); a
+  result encoded without it decodes with none. Both engines read them in one
+  call to the new `KnowledgeIndex.sourceInfo(scope, refs)`, which the
+  in-memory store and the PostgreSQL store (one query) implement and which
+  leaves out absent and forgotten revisions; `citedKnowledgeSources` lists a
+  result's cited references, and `budgetKnowledgeRecall` keeps only the
+  info of revisions still cited. `knowledgeStoreConformance` gains
+  `knowledge.source-info`, and `knowledgeConformance` and
+  `longTermMemoryConformance` gain `cited-sources`.
+- `@xandreed/plugin-rag`, `@xandreed/plugin-memory`: the text the knowledge
+  tools give the model is exported, so a host's own tools render evidence
+  the same way: `knowledgeEvidenceText` and `knowledgeSourcePage` (what
+  `search_knowledge`, the `knowledge.evidence` section and `read_knowledge`
+  show) and `renderMemoryRecall` and `memorySourcePage` (what
+  `recall_memory`, the `memory.recalled` section and `read_memory` show).
+  The evidence formatters take only a result's candidates and graph. Tool
+  and section text, versions and stored formats are unchanged.
 
 ### Changed
+
 
 
 
@@ -271,7 +300,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -325,7 +356,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 
 
@@ -342,6 +375,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

@@ -20,7 +20,7 @@ describe("native memory engine", () => {
     expect(result.graph.assertions.map((assertion) => assertion.predicate)).toEqual(["prefers"])
     expect((yield* fixture.memory.profile(fixtureScope)).map((memory) => memory.text)).toEqual([text])
     const other = yield* fixture.memory.recall({ scope: { ...fixtureScope, owner: "other-owner" }, query: "preferred drink", limit: 8, maxChars: 8_000 })
-    expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false } })
+    expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })
   }))))
 
   test("duplicate capture retains one job and runs extraction once", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

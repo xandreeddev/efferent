@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 const Text = Schema.Trimmed.check(Schema.isNonEmpty())
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
@@ -38,6 +38,9 @@ export const KnowledgeSource = Schema.Struct({
   occurredAt: Count, recordedAt: Count, metadata: Schema.JsonObject,
 })
 export type KnowledgeSource = typeof KnowledgeSource.Type
+/** A source revision's identity, times and host metadata, without its text or scope. @public */
+export const KnowledgeSourceInfo = Schema.Struct({ ref: KnowledgeSourceRef, occurredAt: Count, recordedAt: Count, metadata: Schema.JsonObject })
+export type KnowledgeSourceInfo = typeof KnowledgeSourceInfo.Type
 /** UTF-16 offsets into the exact source revision, checked again at publication. @public */
 export const KnowledgeProvenance = Schema.Struct({
   source: KnowledgeSourceRef, start: Count, end: Count, quote: Schema.String,
@@ -199,8 +202,15 @@ export type KnowledgeRecall = typeof KnowledgeRecall.Type
  */
 export const KnowledgeReach = Schema.Struct({ owner: Text, sources: Schema.optionalKey(KnowledgeSourceFilter) })
 export type KnowledgeReach = typeof KnowledgeReach.Type
-/** @public */
-export const KnowledgeRecallResult = Schema.Struct({ candidates: Schema.Array(KnowledgeCandidate), graph: KnowledgeSubgraph })
+/**
+ * Ranked evidence, its graph, and `sources`: the info of every source revision the evidence cites,
+ * once each, in order of first citation (candidates, then relations, then entities). A result
+ * encoded before `sources` existed decodes with none. @public
+ */
+export const KnowledgeRecallResult = Schema.Struct({
+  candidates: Schema.Array(KnowledgeCandidate), graph: KnowledgeSubgraph,
+  sources: Schema.Array(KnowledgeSourceInfo).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+})
 export type KnowledgeRecallResult = typeof KnowledgeRecallResult.Type
 /** What a knowledge engine asks of a `UtilityLlm` helper call: extract a source part, review that extraction, plan a search or rerank its evidence. @public */
 export const KnowledgeHelperPurpose = Schema.Literals(["extract", "review", "plan", "rerank"])

@@ -70,5 +70,6 @@ those dependencies to production. See the repository skills and definition of do
 - `memory.entity.ts`: configuration and plugin checkpoint schemas.
 - `memory-engine.adapter.ts`: native memory orchestration and processing worker.
 - `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture.
-- `memory-capability.adapter.ts`: recall, source read, explicit save/forget and turn evidence.
+- `memory-capability.adapter.ts`: recall, source read, explicit save/forget and turn evidence;
+  `renderMemoryRecall` and `memorySourcePage` are exported for a host's own tools.
 - `plugin.adapter.ts`, `index.ts`: registered plugins and named host API.

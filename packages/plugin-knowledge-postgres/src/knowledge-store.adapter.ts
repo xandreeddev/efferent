@@ -1,7 +1,7 @@
 import { Effect, Match, Option, Order, Schema } from "effect"
 import {
   KnowledgeAssertion, KnowledgeChunk, KnowledgeEmbeddingSpace, KnowledgeEntity, KnowledgeError,
-  KnowledgeJob, KnowledgeMemory, KnowledgeSource, sameEmbeddingSpace, validateKnowledgeStage,
+  KnowledgeJob, KnowledgeMemory, KnowledgeSource, KnowledgeSourceInfo, sameEmbeddingSpace, validateKnowledgeStage,
 } from "@xandreed/core"
 import type {
   KnowledgeCandidate, KnowledgeCandidates, KnowledgeIndex, KnowledgeLease,
@@ -381,6 +381,16 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
       const rows = yield* payloads(db, KnowledgeSource, `SELECT s.payload FROM efferent_knowledge.sources s JOIN efferent_knowledge.heads h USING (${KEY},source_id)
         WHERE s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=$5 AND s.revision=$6 AND h.tombstone_at IS NULL`, [...params(domain, scope), ref.id, ref.revision])
       return Option.fromNullishOr(rows[0])
+    }),
+    sourceInfo: Effect.fn("knowledge_store.source_info")(function* (scope, refs) {
+      if (refs.length === 0) return []
+      const listed = yield* encode(Schema.Array(Schema.Struct({ id: Schema.String, revision: Schema.Number })), refs)
+      return yield* payloads(db, KnowledgeSourceInfo, `SELECT jsonb_build_object('ref',s.payload->'ref','occurredAt',s.payload->'occurredAt','recordedAt',s.payload->'recordedAt','metadata',s.payload->'metadata') AS payload
+        FROM (SELECT DISTINCT ON (r.value->>'id',(r.value->>'revision')::bigint) r.value->>'id' AS source_id,(r.value->>'revision')::bigint AS revision,r.ordinality AS position
+          FROM jsonb_array_elements($5::text::jsonb) WITH ORDINALITY r ORDER BY r.value->>'id',(r.value->>'revision')::bigint,r.ordinality) wanted
+        JOIN efferent_knowledge.sources s ON s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=wanted.source_id AND s.revision=wanted.revision
+        JOIN efferent_knowledge.heads h ON h.domain=s.domain AND h.owner=s.owner AND h.namespace=s.namespace AND h.collection=s.collection AND h.source_id=s.source_id
+        WHERE h.tombstone_at IS NULL ORDER BY wanted.position`, [...params(domain, scope), listed])
     }),
     memory: Effect.fn("knowledge_store.memory")(function* (scope, id) {
       const rows = yield* payloads(db, KnowledgeMemory, `SELECT payload FROM efferent_knowledge.memories WHERE ${WHERE} AND id=$5 AND NOT invalidated`, [...params(domain, scope), id])

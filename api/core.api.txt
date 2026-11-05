@@ -215,6 +215,7 @@ const KnowledgeSnapshot
 const KnowledgeSource
 const KnowledgeSourceFilter
 const KnowledgeSourceId
+const KnowledgeSourceInfo
 const KnowledgeSourceRef
 const KnowledgeStage
 const KnowledgeStoreMemoryLive
@@ -421,6 +422,7 @@ const attachmentsOf
 const budgetKnowledgeRecall
 const canonicalJson
 const catalogOf
+const citedKnowledgeSources
 const citesKnowledgeSources
 const clipTo
 const clippedMarker
@@ -761,6 +763,7 @@ type KnowledgeSnapshot
 type KnowledgeSource
 type KnowledgeSourceFilter
 type KnowledgeSourceId
+type KnowledgeSourceInfo
 type KnowledgeSourceRef
 type KnowledgeStage
 type KnowledgeSubgraph

@@ -1,4 +1,4 @@
-import { Clock, Effect, Option, Schema } from "effect"
+import { Clock, Effect, Option, Order, Schema } from "effect"
 import type { Fiber } from "effect"
 import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
@@ -23,6 +23,13 @@ export const expect = (check: string, holds: boolean, message: string): Effect.E
 
 /** A port's failure as a kit compares and reports it: its framework code (`harnessCodeOf`), else its tag. */
 export const failureCode = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
+
+/** Two JSON values equal whatever order a store gives their object keys. */
+export const sameJson = (left: unknown, right: unknown): boolean => {
+  const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => typeof item === "object" && item !== null && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).toSorted(([a], [b]) => Order.String(a, b))) : item)
+  return canonical(left) === canonical(right)
+}
 
 /** Two usages with every count equal. */
 export const sameUsage = (a: TokenUsage, b: TokenUsage): boolean =>

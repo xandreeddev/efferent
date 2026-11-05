@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId, KnowledgeVector,
+  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  citesKnowledgeSources, fuseKnowledgeCandidates, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
+  citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
   narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
 } from "./knowledge.entity.functions.js"
 
@@ -76,6 +76,21 @@ test("BM25 finds exact tokens and cosine defines zero norms without NaN", () => 
   expect(scores[1]).toBe(0)
   const space = { model: "test", version: "1", dimensions: 2 }
   expect(knowledgeCosine({ space, values: [0, 0] }, { space, values: [1, 0] })).toBe(0)
+})
+test("cited sources are every revision the evidence cites, once each, candidates first", () => {
+  const span = (name: string, revision = 1) => ({ source: { id: KnowledgeSourceId.make(name), revision }, start: 0, end: 4, quote: "Visi" })
+  const chunk: KnowledgeCandidate = { _tag: "Chunk", score: 1, chunk: { id: KnowledgeChunkId.make("chunk"), text: "Visi", provenance: span("guide", 2), embedding: Option.none() } }
+  const entity = { id: KnowledgeEntityId.make("cafe"), name: "cafe", type: "place", aliases: [], provenance: [span("map"), span("one")] }
+  const edge = { id: KnowledgeAssertionId.make("edge"), subject: entity.id, predicate: "near", object: { _tag: "Value" as const, value: "park" }, text: "near", provenance: [span("guide", 1), span("one")], knownFrom: 1, knownTo: Option.none<number>(), validFrom: Option.none<number>(), validTo: Option.none<number>() }
+  const cited = citedKnowledgeSources({ candidates: [{ _tag: "Memory", memory: memory("one"), score: 1 }, chunk, chunk], graph: { entities: [entity], assertions: [edge], truncated: false } })
+  expect(cited).toEqual([span("one").source, span("guide", 2).source, span("guide", 1).source, span("map").source])
+  expect(citedKnowledgeSources({ candidates: [], graph: emptyGraph })).toEqual([])
+})
+test("a recall result encoded before sources existed decodes with none", async () => {
+  const decoded = await Effect.runPromise(Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: emptyGraph }))
+  expect(decoded.sources).toEqual([])
+  const info = { ref: { id: KnowledgeSourceId.make("guide"), revision: 1 }, occurredAt: 1, recordedAt: 2, metadata: { kind: "note", tags: ["a"] } }
+  expect((await Effect.runPromise(Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: emptyGraph, sources: [info] }))).sources).toEqual([info])
 })
 test("graph intervals are half-open on both timelines and traversal cannot cross invalid edges", () => {
   const ids = [KnowledgeEntityId.make("one"), KnowledgeEntityId.make("two"), KnowledgeEntityId.make("three")]

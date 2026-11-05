@@ -16,7 +16,7 @@ describe("knowledge index reference conformance", () => {
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
       "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
-      "knowledge.engine-isolation", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
+      "knowledge.engine-isolation", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
   })
 })

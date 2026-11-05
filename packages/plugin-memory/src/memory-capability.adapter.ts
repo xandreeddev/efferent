@@ -43,7 +43,7 @@ export const savedMemoryReceipt = (source: string): string => `Saved source ${so
 /** Preserve the user's request separately from the assistant-authored note. */
 export const memoryNoteEvidence = (request: string, note: string): string => `User request: ${request}\n\nAssistant saved note: ${note}`
 
-/** One bounded source page with an explicit data rule and its original coordinates. */
+/** One bounded source page, as `read_memory` shows it: the data rule, its original coordinates and the offset to continue at. @public */
 export const memorySourcePage = (source: KnowledgeSource, offset: number, maximum: number): string => {
   const end = Math.min(source.text.length, offset + maximum)
   return [
@@ -86,9 +86,13 @@ const reachOf = Effect.fnUntraced(function* () {
 })
 const sourcesOf = (reach: KnowledgeReach) => reach.sources === undefined ? {} : { sources: reach.sources }
 
-/** All injected evidence is bounded and framed; citations keep source identity and revision. */
-export const renderMemoryRecall = (result: KnowledgeRecallResult, maxChars: number): string => {
-  const bounded = budgetKnowledgeRecall(result, maxChars, result.candidates.length)
+/**
+ * The recalled evidence `recall_memory` and the `memory.recalled` section show the model: bounded
+ * to `maxChars` and framed, each record and relation with its source id, revision and character
+ * range. A host's own tools render memory evidence the same way with it. @public
+ */
+export const renderMemoryRecall = (result: Pick<KnowledgeRecallResult, "candidates" | "graph">, maxChars: number): string => {
+  const bounded = budgetKnowledgeRecall({ ...result, sources: [] }, maxChars, result.candidates.length)
   const records = bounded.candidates.map((candidate) => Match.valueTags(candidate, {
     Memory: ({ memory }) => `${memory.text}\n${memory.provenance.map((span) => `Source: ${span.source.id} revision ${span.source.revision}, characters ${span.start}-${span.end}`).join("\n")}`,
     Chunk: ({ chunk }) => `${chunk.text}\nSource: ${chunk.provenance.source.id} revision ${chunk.provenance.source.revision}, characters ${chunk.provenance.start}-${chunk.provenance.end}`,
@@ -169,7 +173,7 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       const reach = yield* reachOf().pipe(Effect.tapError((cause) => Effect.logWarning("The memory reach is unavailable; no memory is recalled this turn", cause)), Effect.option)
       if (Option.isNone(reach)) return Option.none<string>()
       const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(reach.value.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...sourcesOf(reach.value) }).pipe(
-        Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false } }))),
+        Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }))),
       )
       const sources = reach.value.sources
       const profile = yield* memory.profile(scopeOf(reach.value.owner, config)).pipe(

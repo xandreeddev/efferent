@@ -2,7 +2,7 @@ import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace,
-  type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
+  type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal,
   type KnowledgeVector,
 } from "./knowledge.entity.js"
@@ -71,6 +71,20 @@ export const fuseKnowledgeCandidates = (arms: KnowledgeCandidates, limit: number
       ? { used: result.used + length, items: [...result.items, { ...entry.candidate, score: entry.score }] }
       : result
   }, { used: 0, items: [] as ReadonlyArray<KnowledgeCandidate> }).items
+}
+
+/**
+ * The source revisions a recall's evidence cites, once each, in order of first citation:
+ * candidates, then relations, then entities. Engines read their info for `KnowledgeRecallResult.sources`.
+ * @public
+ */
+export const citedKnowledgeSources = (evidence: Pick<KnowledgeRecallResult, "candidates" | "graph">): ReadonlyArray<KnowledgeSourceRef> => {
+  const spans = [
+    ...evidence.candidates.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.provenance, Chunk: ({ chunk }) => [chunk.provenance] })),
+    ...evidence.graph.assertions.flatMap((assertion) => assertion.provenance),
+    ...evidence.graph.entities.flatMap((entity) => entity.provenance),
+  ]
+  return [...new Map(spans.map((span) => [JSON.stringify([span.source.id, span.source.revision]), span.source] as const)).values()]
 }
 
 const atTime = (start: number, end: Option.Option<number>, time: number): boolean => start <= time && Option.match(end, { onNone: () => true, onSome: (until) => time < until })

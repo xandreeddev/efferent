@@ -1,10 +1,11 @@
 import { Effect, Match, Option, Result } from "effect"
 import type { Context, Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect } from "../conformance.functions.js"
+import { check, expect, sameJson } from "../conformance.functions.js"
 import type { Knowledge, LongTermMemory } from "../ports/knowledge.port.js"
 import { KnowledgeJobId, KnowledgeSourceId } from "./knowledge.entity.js"
 import type { KnowledgeRecallResult, KnowledgeScope } from "./knowledge.entity.js"
+import { citedKnowledgeSources } from "./knowledge.entity.functions.js"
 
 /** Fresh native memory service, with workers disabled and valid scripted extraction. @public */
 export interface LongTermMemorySubject {
@@ -93,6 +94,15 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
         empty.candidates.length === 0 && empty.graph.assertions.length === 0 && empty.graph.entities.length === 0,
       "recall narrowed to one source returned another's evidence or none of its own, an empty filter returned evidence, or an unfiltered recall missed a source")
     })),
+    test("cited-sources", (fixture, id) => Effect.gen(function* () {
+      const source = { ...sourceOf(fixture.scope), metadata: { kind: "note", tags: ["kit"], origin: { page: 3 } } }
+      yield* fixture.facade.accept({ jobId: KnowledgeJobId.make("facade-job"), source, engine: "facade-kit", expectedRevision: Option.none() })
+      const processed = yield* fixture.facade.process(fixture.scope, 1)
+      const result = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000 })
+      const info = { ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata }
+      yield* expect(id, processed === 1 && result.candidates.length > 0 && sameJson(citedKnowledgeSources(result), [source.ref]) && sameJson(result.sources, [info]),
+        "recalled evidence did not carry the times and metadata of exactly the source revisions it cites")
+    })),
     test("retrieval-bounds", (fixture, id) => Effect.gen(function* () {
       yield* seed(fixture, id)
       const result = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 1, maxChars: 1, graph: false })
@@ -102,7 +112,7 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
   ]
 }
 
-/** Async processing, isolation, source retention, deletion and retrieval contracts; no model-quality assertions. @public */
+/** Async processing, isolation, source retention, deletion, cited source info and retrieval contracts; no model-quality assertions. @public */
 export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => facadeConformance("long_term_memory", Effect.map(subject.open, ({ memory, scope }) => ({ scope, facade: { ...memory, accept: memory.capture } })))
-/** Async document processing, isolation, source retention, deletion and retrieval contracts. @public */
+/** Async document processing, isolation, source retention, deletion, cited source info and retrieval contracts. @public */
 export const knowledgeConformance = (subject: KnowledgeSubject): ReadonlyArray<ConformanceCheck> => facadeConformance("knowledge_facade", Effect.map(subject.open, ({ knowledge, scope }) => ({ scope, facade: { ...knowledge, accept: knowledge.ingest, recall: knowledge.retrieve } })))

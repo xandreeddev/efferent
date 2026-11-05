@@ -9,8 +9,8 @@ import {
   UtilityCompletion, UtilityLlm,
 } from "@xandreed/core"
 import { knowledgeStoreConformance, memoryStoreConformance, temporalGraphConformance } from "@xandreed/core/conformance"
-import { MemoryLive, memoryDefaults } from "@xandreed/plugin-memory"
-import { RagLive, ragDefaults } from "@xandreed/plugin-rag"
+import { MemoryLive, memoryDefaults, memorySourcePage, renderMemoryRecall } from "@xandreed/plugin-memory"
+import { RagLive, knowledgeEvidenceText, knowledgeSourcePage, ragDefaults } from "@xandreed/plugin-rag"
 import { makeKnowledgePostgres } from "@xandreed/plugin-knowledge-postgres"
 
 const freshScope = (collection) => ({ owner: `packed-${randomUUID()}`, namespace: `packed-${randomUUID()}`, collection })
@@ -43,6 +43,7 @@ const enqueue = (scope, id, text) => ({
   source: { scope, ref: { id: KnowledgeSourceId.make(id), revision: 1 }, text, occurredAt: 0, recordedAt: 0, metadata: { source: "packed-fixture" } },
   engine: "host", expectedRevision: Option.none(),
 })
+const infoOf = (source) => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata })
 const verifySpan = (span, source) => {
   assert.deepEqual(span.source, source.ref)
   assert.equal(span.quote, source.text.slice(span.start, span.end))
@@ -88,9 +89,12 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   verifySpan(recalled.candidates[0].memory.provenance[0], memoryInput.source)
   verifySpan(recalled.graph.entities[0].provenance[0], memoryInput.source)
   verifySpan(recalled.graph.assertions[0].provenance[0], memoryInput.source)
+  assert.deepEqual(recalled.sources, [infoOf(memoryInput.source)])
   const memorySource = yield* memory.source(memoryScope, memoryInput.source.ref)
   assert.ok(Option.isSome(memorySource))
   assert.equal(memorySource.value.text, memoryInput.source.text)
+  assert.ok(renderMemoryRecall(recalled, 2000).includes(`Source: personal-evidence revision 1, characters 0-20`))
+  assert.ok(memorySourcePage(memorySource.value, 0, 100).includes(memoryInput.source.text))
   const isolated = yield* memory.recall({ scope: { ...memoryScope, owner: "another-owner" }, query: "coffee", limit: 3, maxChars: 1000 })
   assert.equal(isolated.candidates.length, 0)
 
@@ -124,9 +128,12 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   assert.equal(retrieved.graph.assertions.length, 1)
   verifySpan(retrieved.candidates[0].chunk.provenance, documentInput.source)
   verifySpan(retrieved.graph.assertions[0].provenance[0], documentInput.source)
+  assert.deepEqual(retrieved.sources, [infoOf(documentInput.source)])
   const documentSource = yield* knowledge.source(documentScope, documentInput.source.ref)
   assert.ok(Option.isSome(documentSource))
   assert.equal(documentSource.value.text, documentInput.source.text)
+  assert.ok(knowledgeEvidenceText(retrieved, 2000).includes('Source "deployment-guide", revision 1, characters 0-41'))
+  assert.ok(knowledgeSourcePage(documentSource.value, 0, 100).includes(documentInput.source.text))
 
   const postgresUrl = process.env.EFFERENT_TEST_POSTGRES_URL
   if (postgresUrl) {

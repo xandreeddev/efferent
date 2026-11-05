@@ -223,6 +223,11 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
       return { lexical, semantic }
     }),
     source: Effect.fn("knowledge_store.source")((scope, ref) => read((current) => tombstoned(current, scope, ref.id) ? Option.none() : Option.fromNullishOr(current.sources.find((source) => sameKnowledgeScope(source.scope, scope) && source.ref.id === ref.id && source.ref.revision === ref.revision)))),
+    sourceInfo: Effect.fn("knowledge_store.source_info")((scope, refs) => read((current) => refs.flatMap((ref, index) => {
+      const first = refs.findIndex((other) => other.id === ref.id && other.revision === ref.revision) === index
+      const found = first && !tombstoned(current, scope, ref.id) ? current.sources.find((source) => sameKnowledgeScope(source.scope, scope) && source.ref.id === ref.id && source.ref.revision === ref.revision) : undefined
+      return found === undefined ? [] : [{ ref: found.ref, occurredAt: found.occurredAt, recordedAt: found.recordedAt, metadata: found.metadata }]
+    }))),
     memory: Effect.fn("knowledge_store.memory")((scope, id) => read((current) => Option.fromNullishOr(scoped(current, scope).memories.find((memory) => memory.id === id)))),
     chunk: Effect.fn("knowledge_store.chunk")((scope, id) => read((current) => Option.fromNullishOr(scoped(current, scope).chunks.find((chunk) => chunk.id === id)))),
     forget: Effect.fn("knowledge_store.forget")((scope, id, now) => change((current) => {

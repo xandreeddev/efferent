@@ -1,7 +1,7 @@
 import { Option } from "effect"
 import { clipTo, framed } from "../turn/model-text.js"
 import type { KnowledgeCandidate, KnowledgeProvenance, KnowledgeRecallResult, KnowledgeSubgraph } from "./knowledge.entity.js"
-import { knowledgeCandidateKey, knowledgeCandidateText } from "./knowledge.entity.functions.js"
+import { citedKnowledgeSources, knowledgeCandidateKey, knowledgeCandidateText } from "./knowledge.entity.functions.js"
 import type { KnowledgeRerank } from "./knowledge-query.entity.js"
 
 /** Native query planning never receives answer labels or another owner's evidence. @public */
@@ -36,7 +36,7 @@ const candidateCost = (candidate: KnowledgeCandidate): number => knowledgeCandid
 const takeEvidence = <A>(values: ReadonlyArray<A>, budget: number, cost: (value: A) => number) => values.reduce((state, value) => state.used + cost(value) <= budget
   ? { items: [...state.items, value], used: state.used + cost(value) } : state, { items: [] as ReadonlyArray<A>, used: 0 })
 
-/** Share one evidence budget between complete candidate records and graph facts, preserving citations. @public */
+/** Share one evidence budget between complete candidate records and graph facts, preserving citations; `sources` keeps the info of revisions still cited. @public */
 export const budgetKnowledgeRecall = (result: KnowledgeRecallResult, maxChars: number, limit: number): KnowledgeRecallResult => {
   const graphAllowance = result.candidates.length === 0 ? maxChars : Math.floor(maxChars * 0.4)
   const assertionCost = (assertion: KnowledgeSubgraph["assertions"][number]) => assertion.text.length + citationCost(assertion.provenance) + 2
@@ -45,8 +45,10 @@ export const budgetKnowledgeRecall = (result: KnowledgeRecallResult, maxChars: n
   const extra = takeEvidence(result.graph.assertions.filter((assertion) => !graph.items.includes(assertion)), maxChars - graph.used - candidates.used, assertionCost)
   const assertions = [...graph.items, ...extra.items]
   const ids = assertions.flatMap((assertion) => [assertion.subject, ...(assertion.object._tag === "Entity" ? [assertion.object.entityId] : [])])
-  return {
+  const kept = {
     candidates: candidates.items,
     graph: { entities: result.graph.entities.filter((entity) => ids.includes(entity.id)), assertions, truncated: result.graph.truncated || assertions.length < result.graph.assertions.length },
   }
+  const cited = citedKnowledgeSources(kept)
+  return { ...kept, sources: result.sources.filter((source) => cited.some((ref) => ref.id === source.ref.id && ref.revision === source.ref.revision)) }
 }
