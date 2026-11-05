@@ -97,6 +97,11 @@ describe("native document ingestion", () => {
   })).pipe(Effect.provide(TestClock.layer()))))
 })
 
+const atlasGraph = { entities: [
+  { key: "a", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Atlas" }] },
+  { key: "b", name: "Beacon", type: "service", aliases: [], existing: null, spans: [{ start: 11, end: 17, quote: "Beacon" }] },
+], memories: [], assertions: [{ key: "owns", subject: "a", predicate: "owns", object: { _tag: "Entity", key: "b" }, text: "Atlas owns Beacon", spans: [{ start: 0, end: 18, quote: "Atlas owns Beacon." }], validFrom: 10, validTo: null, supersedes: [], supersession: "correction" }] }
+
 describe("native temporal GraphRAG", () => {
   test("document graphs are opt-in and expand two hops beyond the retrieved chunk", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const first = { entities: [
@@ -138,14 +143,62 @@ describe("native temporal GraphRAG", () => {
     expect(before.graph.assertions).toEqual([])
   }))))
 
-  test("graph extraction requires a utility model and cannot create personal memories from documents", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("graph extraction requires a utility model, and personal memories from a document omit its graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const absent = yield* Effect.result(makeRag({ graph: true }))
     expect(absent._tag).toBe("Failure")
     const { utility } = yield* scriptedUtility([JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [] }], assertions: [] })])
     const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
-    yield* knowledge.ingest(enqueue("bad", "Guide data."))
-    expect((yield* Effect.result(knowledge.process(scope, 1)))._tag).toBe("Failure")
+    const job = yield* knowledge.ingest(enqueue("bad", "Guide data."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
     expect((yield* store.snapshot(scope)).memories).toEqual([])
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.flatMap(status, (value) => value.stage).pipe(Option.map((stage) => stage.notes))).toEqual(Option.some([{ _tag: "GraphOmitted", reason: "Invalid", message: "Document extraction must not create personal memories" }]))
+    expect((yield* knowledge.retrieve({ scope, query: "Guide", limit: 3, maxChars: 1000 })).candidates).toHaveLength(1)
+  }))))
+
+  test("an invalid graph answer is retried within maxAttempts, and the retry publishes the graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const failures = yield* Ref.make<ReadonlyArray<string>>([])
+    const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], message: string) => Ref.update(failures, (all) => [...all, message]).pipe(Effect.andThen(index.fail(lease, message))) }
+    const { utility, prompts } = yield* scriptedUtility(["not JSON", JSON.stringify(atlasGraph)])
+    const { knowledge, store } = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, utility)
+    const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    expect(yield* Ref.get(failures)).toEqual(["The document model returned an invalid graph extraction"])
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.map(status, (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
+    expect(Option.exists(Option.flatMap(status, (value) => value.stage), (stage) => stage.notes === undefined && stage.chunks.length === 1)).toBe(true)
+    expect((yield* store.snapshot(scope)).graph.assertions.map((edge) => edge.predicate)).toEqual(["owns"])
+    expect(yield* Ref.get(prompts)).toHaveLength(2)
+  }))))
+
+  test("chunks publish without the graph when extraction or review fails on every attempt", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // Attempt 1: a valid extraction, then an invalid review. Attempt 2: the helper is unavailable.
+    const { utility, prompts } = yield* scriptedUtility([JSON.stringify(atlasGraph), "not JSON"])
+    const { knowledge, store } = yield* makeRag({ graph: true, review: true, maxAttempts: 2 }, undefined, undefined, utility)
+    const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.map(status, (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
+    expect(Option.flatMap(status, (value) => value.stage).pipe(Option.map((stage) => stage.notes))).toEqual(Option.some([{ _tag: "GraphOmitted", reason: "Unavailable", message: "Document graph extraction failed" }]))
+    expect(yield* Ref.get(prompts)).toHaveLength(3)
+    const snapshot = yield* store.snapshot(scope)
+    expect([snapshot.graph.entities, snapshot.graph.assertions]).toEqual([[], []])
+    const found = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000 })
+    expect(found.candidates.map((candidate) => candidate._tag === "Chunk" && candidate.chunk.provenance.source.id)).toEqual([KnowledgeSourceId.make("one")])
+  }))))
+
+  test("a source that is itself unavailable still fails, unretried and before any extraction", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const store = { ...index, source: () => Effect.succeed(Option.none()) }
+    const { utility, prompts } = yield* scriptedUtility([JSON.stringify(atlasGraph)])
+    const { knowledge } = yield* makeRag({ graph: true, review: false, maxAttempts: 3 }, store, undefined, utility)
+    const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    const failed = yield* Effect.result(knowledge.process(scope, 1))
+    expect(failed._tag === "Failure" && failed.failure.reason).toBe("Invalid")
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.map(status, (value) => [value.phase, value.attempt])).toEqual(Option.some([{ _tag: "Failed", message: "The document source is unavailable" }, 1]))
+    expect(yield* Ref.get(prompts)).toEqual([])
   }))))
 
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

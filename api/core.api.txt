@@ -218,6 +218,7 @@ const KnowledgeSourceId
 const KnowledgeSourceInfo
 const KnowledgeSourceRef
 const KnowledgeStage
+const KnowledgeStageNote
 const KnowledgeStoreMemoryLive
 const KnowledgeSubgraph
 const KnowledgeTraversal
@@ -766,6 +767,7 @@ type KnowledgeSourceId
 type KnowledgeSourceInfo
 type KnowledgeSourceRef
 type KnowledgeStage
+type KnowledgeStageNote
 type KnowledgeSubgraph
 type KnowledgeTraversal
 type KnowledgeVector

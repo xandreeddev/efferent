@@ -16,6 +16,12 @@ through KnowledgeStore. Node 24 and Bun.
 - Ingestion enqueues immutable source revisions. Do not replace the published
   document until all chunks, vectors and graph extraction are staged and the
   store accepts the lease, source revision and scope CAS atomically.
+- The graph is optional, the chunks are not. A failed or invalid graph
+  extraction or review fails the attempt with `RagGraphFailed`, which is
+  retried within `maxAttempts` whatever its reason; the last attempt stages
+  the chunks without the graph and a `GraphOmitted` stage note. Only the
+  source's own failures (unavailable, tombstoned, embedding mismatch) stay
+  unretried.
 - Chunk text and provenance are exact UTF-16 slices of the original source.
   Prefer paragraph, heading and line boundaries; never normalize source text.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is
@@ -74,12 +80,18 @@ prompts. This package owns the following text contracts:
 - `src/rag-engine.adapter.test.ts`: exact chunk spans, Unicode, source
   replacement failure/retry, worker restart, owner isolation, forgetting,
   temporal two-hop GraphRAG, document/personal-memory separation, windowed
-  graph extraction with exact provenance, helper call contexts, query
-  planning, reranking and bounded model-assistance fallback.
+  graph extraction with exact provenance, helper call contexts, graph
+  extraction retried within `maxAttempts` and omitted on the last attempt, an
+  unavailable source failing unretried, query planning, reranking and bounded
+  model-assistance fallback.
+- `src/rag.conformance.test.ts`: `knowledgeConformance`, its
+  `failed-extraction` check on an engine whose helper always answers invalid
+  JSON.
 - `src/rag-capability.adapter.test.ts`: exact text pins.
 - `src/rag.journey.test.ts`: real Agent search/read tools, source citations,
   cited sources' metadata, the exported evidence text, model requests and
-  recorded turn context, with no keys or network.
+  recorded turn context, and search over a document whose graph extraction
+  failed, with no keys or network.
 - `src/rag-narrowing.journey.test.ts`: two conversations of one owner, each
   narrowed by the host to its own sources, search, read and recall only them.
 - `src/rag-worker.test.ts`: lease heartbeats, durable defect handling and

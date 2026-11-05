@@ -414,6 +414,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Fixed
 
+- `@xandreed/plugin-rag`: optional graph extraction no longer keeps a
+  document out of plain retrieval. With `graph: true`, the engine computed
+  the graph before the chunks, so a failed or invalid extraction or review
+  failed the job and none of the source's chunks were published; and a
+  failure with reason `Invalid` (an invalid model answer) was never retried,
+  as if the source itself were invalid. A graph failure is now recorded on
+  the job (`fail`, its message) and retried within `maxAttempts` whatever its
+  reason; the last attempt stages and publishes the chunks without entities
+  or assertions, and its stage carries a `GraphOmitted` note with the
+  failure's reason and message. A source that is itself invalid or
+  unavailable, a tombstoned source and an embedding mismatch still fail
+  unretried. With `graph: false`, a stage is unchanged.
 - `@xandreed/plugin-models`: an OpenAI-compatible endpoint's streamed tool
   calls now stream their arguments. The client folded each call's
   `function.arguments` fragments silently and emitted the whole call only
@@ -457,6 +469,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/core`: `KnowledgeStage` has an optional `notes`, a list of
+  `KnowledgeStageNote` (`GraphOmitted`, with a `KnowledgeErrorReason` and a
+  message): what an engine left out of a stage and why. It is written only
+  when something was left out, so older stages decode unchanged, and it
+  stays on the job through retry and publication.
+- `@xandreed/core`: `knowledgeConformance` checks `failed-extraction`: a
+  source whose optional graph extraction fails still completes and is found
+  by plain retrieval (`graph: false`) at its exact revision. A subject's new
+  optional `failingExtraction` opens a service whose extraction always
+  fails, and the completed job must then record a `GraphOmitted` note;
+  without it, the check runs on `open`. `knowledgeStoreConformance`'s
+  `stage-retry` check also requires a stage's notes to survive retry.
 - `@xandreed/core`: `stepLoopConformance` checks `tool-params`: a loop that
   publishes deltas publishes a streamed call's argument deltas on the
   `tool-params` channel under the call's id, opening with an empty one,
@@ -557,6 +581,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- `@xandreed/core`: a host's own `KnowledgeStore` keeps a stage's `notes`
+  with it (a store that saves the encoded `KnowledgeJob` already does) to
+  pass `stage-retry`; a host's own `Knowledge` publishes a source's chunks
+  when its optional extraction fails, to pass `failed-extraction`.
 - `@xandreed/plugin-render`: `FeedFrame` has a fourth member,
   `FeedTransient`. A host that matches every frame exhaustively
   (`Match.valueTags`, `Match.exhaustive`) adds its case; a host's own

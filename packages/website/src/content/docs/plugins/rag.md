@@ -63,6 +63,12 @@ graph extraction before atomic publication. When replacing a document, provide
 the expected previous revision. Its published index stays searchable until the
 new revision is ready; a failure does not expose a half-built replacement.
 
+The graph never keeps a document out of plain retrieval. A failed or invalid
+extraction (or review) is recorded on the job and retried within `maxAttempts`;
+the last attempt publishes the chunks without the graph, and the job's stage
+records a `GraphOmitted` note (`stage.notes`) with the failure's reason and
+message. A source that is itself invalid still fails.
+
 Use `status`, `retry`, and `process` for host-controlled operation. With
 `worker: false`, the host must schedule processing. Workers otherwise recover
 durable jobs after restart and renew leases during processing.

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import {
-  ConversationId, Knowledge, KnowledgeRecallResult, onEvent, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage,
+  ConversationId, Knowledge, KnowledgeRecallResult, onEvent, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, zeroUsage,
 } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -82,5 +82,31 @@ describe("document retrieval through Agent", () => {
     // The exported formatter is the tool's own view: a host's tool shows the model the same text.
     const requests = yield* Ref.get(seen)
     expect(requests[1]).toContain(JSON.stringify(knowledgeEvidenceText(result!, ragDefaults.evidenceChars)).slice(1, -1))
+  }))))
+
+  test("a document whose optional graph extraction failed is still found by search_knowledge", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const helper = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "not JSON", usage: zeroUsage })) })
+    const rag = yield* makeRag({ graph: true, maxAttempts: 2 }, undefined, undefined, helper)
+    const job = yield* rag.knowledge.ingest(enqueue("guide", "The release lane is blue."))
+    expect(yield* rag.knowledge.process(scope, 1)).toBe(1)
+    const status = yield* rag.knowledge.status(scope, job.id)
+    expect(Option.flatMap(status, (value) => value.stage).pipe(Option.map((stage) => stage.notes?.map((note) => note._tag)))).toEqual(Option.some(["GraphOmitted"]))
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    yield* sessions.create({ owner: session.owner, id: session.id })
+    const seen = yield* Ref.make<ReadonlyArray<string>>([])
+    const calls = yield* Ref.make(0)
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Effect.gen(function* () {
+        yield* Ref.update(seen, (all) => [...all, JSON.stringify(request.prompt.content)])
+        if ((yield* Ref.getAndUpdate(calls, (count) => count + 1)) === 0) return [{ type: "tool-call", id: "search", name: "search_knowledge", params: { query: "release lane" } }, { type: "finish", reason: "tool-calls", usage }] as const
+        return [{ type: "text", text: "The guide says blue." }, { type: "finish", reason: "stop", usage }] as const
+      }), streamText: () => Stream.die("not scripted"),
+    })
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: ragPlugin, options: { worker: false, embeddingDimensions: 2, graph: true, queryPlanning: false, rerank: false } }], services: rag.services,
+      turnServices: [LanguageModel.LanguageModel, Sessions], limits: { streaming: false, maxSteps: 3 } })
+    const result = yield* agent.turn({ turn: { session, runId: RunId.make("rag-search-without-graph"), userMessage: new UserMessage({ text: "Find the release lane." }) }, services: Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model)) },
+      (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((answer) => ({ outcome: answer.outcome, reply: Option.some(answer.text) }))))
+    expect(result.reply).toEqual(Option.some("The guide says blue."))
+    expect((yield* Ref.get(seen))[1]).toContain("revision 1, characters 0-25")
   }))))
 })

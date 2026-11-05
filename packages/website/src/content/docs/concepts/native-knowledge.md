@@ -175,6 +175,16 @@ publish no partial facts or document revisions. Successful staged extraction is
 reused after an embedding failure. Scope-version conflicts trigger reconciliation
 against the updated graph.
 
+A document's graph is optional; its chunks are not. When graph extraction or its
+review fails, or the helper's answer is invalid, the failure is recorded on the
+job and the job is retried within `maxAttempts`: an invalid model answer is not
+an invalid source. The last attempt stages and publishes the source's chunks
+without entities or assertions, and the completed job's stage carries a
+`GraphOmitted` note with the failure's reason and message
+(`stage.notes`, read through `status`). Ingest the next revision to extract its
+graph again. A source that is itself invalid or unavailable still fails without
+retry.
+
 ## Graph, time and evidence
 
 The graph stores typed entities and directed subject/predicate/object
@@ -302,8 +312,8 @@ RAG accepts host-supplied text or Markdown. The host handles file parsing, URLs
 and connectors. Chunking preserves UTF-16 offsets into the exact source revision
 and prefers structural boundaries. Replace a document with the next integer
 revision and `expectedRevision: Option.some(previousRevision)`. Its prior index
-remains searchable until the new chunks and optional graph are ready to publish
-atomically. Obsolete chunk locators become unavailable; source revisions remain
+remains searchable until the new chunks, and the graph unless its last attempt
+omitted it, are ready to publish atomically. Obsolete chunk locators become unavailable; source revisions remain
 explicitly addressable until forgotten.
 
 Memory tools are `recall_memory`, `read_memory`, `remember_memory` and

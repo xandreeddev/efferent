@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { KnowledgeError } from "@xandreed/core"
 
 const Positive = Schema.Int.check(Schema.isGreaterThan(0))
 /** Native document ingestion, retrieval, and optional temporal GraphRAG. @public */
@@ -56,3 +57,5 @@ export const ragDefaults: RagConfig = {
   maxSourceChars: 200_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, chunkChars: 2_000, overlapChars: 200, embeddingBatchSize: 32,
   searchLimit: 8, evidenceChars: 8_000, readChars: 8_000, graphDepth: 2, recall: false, sectionOrder: 720, tools: true,
 }
+/** Optional graph extraction failed on an attempt the job may still retry: the helper or its answer, not the source, was at fault. */
+export class RagGraphFailed extends Schema.TaggedError<RagGraphFailed>()("RagGraphFailed", { failure: KnowledgeError }) {}

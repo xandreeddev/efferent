@@ -1,5 +1,5 @@
 import { EmbeddingModel } from "effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Predicate, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
   BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
@@ -10,10 +10,12 @@ import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
   KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeSubgraph, KnowledgeVector,
 } from "@xandreed/core"
+import { RagGraphFailed } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
 import { chunkDocument } from "./rag.entity.functions.js"
 
 const unavailable = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
+const knowledgeFailure = (failure: KnowledgeError | RagGraphFailed): KnowledgeError => Predicate.isTagged(failure, "RagGraphFailed") ? failure.failure : failure
 
 /** Native staged ingestion and hybrid retrieval over the host's document store. @public */
 export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(function* () {
@@ -61,16 +63,24 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       Effect.option,
     ),
   })
-  const extract = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
-    const graphStage = config.graph ? yield* Effect.gen(function* () {
-      const reviewed = yield* extractKnowledge({
-        source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
-        consolidate: true, review: config.review, complete: complete(job),
-      })
-      if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories" }))
-      return yield* stageKnowledgeExtraction(source, snapshot, reviewed, yield* Clock.currentTimeMillis)
-    }) : { expectedVersion: snapshot.version, memories: [], chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [] }
-    return { ...graphStage, chunks: chunkDocument(source, config.chunkChars, config.overlapChars) }
+  const extractGraph = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
+    const reviewed = yield* extractKnowledge({
+      source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
+      consolidate: true, review: config.review, complete: complete(job),
+    })
+    if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories" }))
+    return yield* stageKnowledgeExtraction(source, snapshot, reviewed, yield* Clock.currentTimeMillis)
+  }).pipe(Effect.catchDefect((cause) => Effect.fail(unavailable("Document graph extraction encountered an unexpected failure", cause))))
+  // The graph is optional: a failed extraction is retried with the job, and its last attempt publishes the chunks without it.
+  const extract = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot, last: boolean): Effect.Effect<KnowledgeStage, KnowledgeError | RagGraphFailed> => Effect.gen(function* () {
+    const chunks = chunkDocument(source, config.chunkChars, config.overlapChars)
+    const plain: KnowledgeStage = { expectedVersion: snapshot.version, memories: [], chunks, entities: [], assertions: [], retireMemories: [], retireAssertions: [] }
+    if (!config.graph) return plain
+    const graph = yield* Effect.result(extractGraph(job, source, snapshot))
+    if (Result.isSuccess(graph)) return { ...graph.success, chunks }
+    if (!last) return yield* Effect.fail(new RagGraphFailed({ failure: graph.failure }))
+    yield* Effect.logWarning("Document graph extraction failed on the last attempt; the source's chunks publish without its graph", graph.failure)
+    return { ...plain, notes: [{ _tag: "GraphOmitted" as const, reason: graph.failure.reason, message: graph.failure.message }] }
   })
   const embed = (stage: KnowledgeStage): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
     const missing = stage.chunks.filter((chunk) => Option.isNone(chunk.embedding))
@@ -84,12 +94,12 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     return { ...stage, chunks: stage.chunks.map((chunk) => ({ ...chunk, embedding: Option.orElse(chunk.embedding, () => Option.fromNullishOr(vectors.get(chunk.id))) })) }
   })
   const lease = (job: KnowledgeJob, token: KnowledgeLeaseToken): Effect.Effect<KnowledgeLease> => Clock.currentTimeMillis.pipe(Effect.map((now) => ({ scope: job.scope, jobId: job.id, token, now })))
-  const work = (job: KnowledgeJob, token: KnowledgeLeaseToken): Effect.Effect<void, KnowledgeError> => Effect.gen(function* () {
+  const work = (job: KnowledgeJob, token: KnowledgeLeaseToken): Effect.Effect<void, KnowledgeError | RagGraphFailed> => Effect.gen(function* () {
     const snapshot = yield* store.snapshot(job.scope)
     const previous = Option.filter(job.stage, (stage) => stage.expectedVersion === snapshot.version)
     const stage = yield* Option.match(previous, { onSome: Effect.succeed, onNone: () => store.source(job.scope, job.source).pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.fail(new KnowledgeError({ reason: "Invalid", message: "The document source is unavailable" })),
-      onSome: (source) => extract(job, source, snapshot),
+      onSome: (source) => extract(job, source, snapshot, job.attempt >= config.maxAttempts),
     }))) })
     yield* store.stage(yield* lease(job, token), stage)
     const embedded = yield* embed(stage)
@@ -120,14 +130,19 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
             const interrupted = Cause.hasInterrupts(cause)
             const status = yield* store.status(scope, job.id).pipe(Effect.result)
             if (!interrupted && Result.isSuccess(status) && Option.exists(status.success, (current) => current.phase._tag === "Complete")) return Option.some(Option.none<KnowledgeJob>())
-            const error = Option.getOrElse(Cause.findErrorOption(cause), () => unavailable(interrupted ? "Document processing was interrupted before publication" : "Document processing stopped unexpectedly", cause))
+            const found = Cause.findErrorOption(cause)
+            const graphFailed = Option.exists(found, Predicate.isTagged("RagGraphFailed"))
+            const error = Option.match(found, {
+              onNone: () => unavailable(interrupted ? "Document processing was interrupted before publication" : "Document processing stopped unexpectedly", cause),
+              onSome: knowledgeFailure,
+            })
             const recorded = yield* store.fail(yield* lease(job, token), error.message).pipe(Effect.result)
             if (Result.isFailure(recorded)) yield* Effect.logWarning("The document processing failure could not be recorded", recorded.failure)
             if (interrupted) {
               if (Result.isSuccess(recorded)) yield* store.retry(scope, job.id).pipe(Effect.ignore({ log: "Warn", message: "Interrupted document work could not be returned to the processing queue" }))
-              return yield* Effect.failCause(cause)
+              return yield* Effect.failCause(Cause.map(cause, knowledgeFailure))
             }
-            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && error.reason !== "Invalid" && error.reason !== "Tombstoned" && error.reason !== "EmbeddingMismatch") {
+            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && (graphFailed || error.reason !== "Invalid" && error.reason !== "Tombstoned" && error.reason !== "EmbeddingMismatch")) {
               yield* store.retry(scope, job.id)
               return Option.some(Option.some(job))
             }
