@@ -56,6 +56,18 @@ durable session journal
                                       -> evidence in a later turn
 ```
 
+A host that shows the conversation can read the same journal one record at a
+time. `storedRecordOf(event)` from `@xandreed/core` decodes a record by its own
+kind into a typed value told apart by `kind`: the user's message
+(`turn.started`), a message of the conversation (`memory.message`), a tool
+call's admission, completion or refusal (`tool.started`, `tool.completed`,
+`tool.refused`) and how the turn ended (`turn.ended`), among the kinds in
+`StoredData`. Any other record reads as none. The stored `tool.completed`
+holds whether the handler succeeded and how long it took, not its input or
+result: the call is in the assistant's `memory.message` and the result is the
+`memory.tool-result` with the same `toolCallId`. A record that does not decode
+fails with its `SchemaError` rather than being skipped.
+
 Before a real model step, `request.prepared` and any required `request.part`
 records describe the request's system text, tool declarations, policies and
 memory render recipe. Its messages remain in their original memory events.

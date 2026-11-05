@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { readFile, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
-import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData } from "@xandreed/core"
+import { ConversationId, entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData, storedRecordOf } from "@xandreed/core"
 import type { StoredKind } from "@xandreed/core"
 import { TASK_ANSWERED, TASK_QUESTIONED, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskQuestioned, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
@@ -72,6 +72,29 @@ test("development retains current format and reserved-kind coverage independentl
   expect(current?.reserved).toContain("model.called")
 })
 
+/** The golden conversation's journal (`golden/agent-turn.journal.json`), each line a stored event without its session and time. */
+const GoldenJournal = Schema.Struct({ journal: Schema.Array(Schema.fromJsonString(Schema.Struct({
+  seq: Schema.Int, turn: Schema.NullOr(Schema.Int), kind: Schema.String, data: Schema.Record(Schema.String, Schema.Json),
+}))) })
+const golden = await Effect.runPromise(Effect.tryPromise(() => Bun.file(join(import.meta.dir, "../golden/agent-turn.journal.json")).text()).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(GoldenJournal))),
+))
+
+test("the golden conversation's tool lifecycle and messages decode typed, record by record", async () => {
+  const session = ConversationId.make("00000000-0000-4000-8000-000000000001")
+  const events: ReadonlyArray<SessionLogEvent> = golden.journal.map((line) => ({ session, seq: line.seq, turn: Option.fromNullishOr(line.turn), kind: line.kind, at: 0, data: line.data }))
+  const typed = (await Effect.runPromise(Effect.forEach(events, storedRecordOf, { concurrency: 1 }))).flatMap((record) => Option.toArray(record))
+  const lifecycle = typed.flatMap((record) => record.kind === "tool.started" ? [`${record.data.toolCallId} ${record.data.tool} started`]
+    : record.kind === "tool.completed" ? [`${record.data.toolCallId} ${record.data.tool} ok=${record.data.ok}`] : [])
+  expect(lifecycle).toEqual([
+    "c1 lookup started", "c1 lookup ok=true", "c2 load_skill started", "c2 load_skill ok=true", "c3 deliver started", "c3 deliver ok=true",
+    "call_4_0_p0 lookup started", "call_4_0_p0 lookup ok=true", "e1 note started", "e1 note ok=true", "e2 deliver started", "e2 deliver ok=true",
+  ])
+  const messages = typed.flatMap((record) => record.kind === "memory.message" ? [record.data.body.message.role] : [])
+  expect(messages).toHaveLength(events.filter((event) => event.kind === "memory.message").length)
+  expect(new Set(messages)).toEqual(new Set(["assistant"]))
+})
+
 fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal`, () => {
   const events = fixture.sessions.flatMap((session) => session.events)
   const kinds = new Set(events.map((event) => event.kind))
@@ -104,6 +127,18 @@ fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal
     const starts = await Effect.runPromise(readStoredKeys("turn.started", events))
     const headers = await Effect.runPromise(readStoredKeys("request.prepared", events))
     expect([starts.length, headers.length]).toEqual([events.filter((event) => event.kind === "turn.started").length, events.filter((event) => event.kind === "request.prepared").length])
+  })
+
+  test("every event decodes one at a time through storedRecordOf: typed by its own kind exactly when readStored reads it", async () => {
+    const records = await Effect.runPromise(Effect.forEach(events, storedRecordOf, { concurrency: 1 }))
+    expect(records.flatMap((record, index) => Option.match(record, {
+      onNone: () => events[index]!.kind in StoredData ? [`${events[index]!.kind}: not read`] : [],
+      onSome: (found) => found.kind === events[index]!.kind && found.event === events[index] ? [] : [`${events[index]!.kind}: read as ${found.kind}`],
+    }))).toEqual([])
+    const kinds = ["tool.started", "tool.completed", "tool.refused", "memory.message"] as const
+    const typed = records.flatMap((record) => Option.toArray(record))
+    const whole = await Effect.runPromise(Effect.forEach(kinds, (kind) => readStored(kind, events).pipe(Effect.map((read) => read.map((stored) => stored.data))), { concurrency: 1 }))
+    expect(kinds.map((kind) => typed.filter((record) => record.kind === kind).map((record) => record.data))).toEqual(whole)
   })
 
   test("the memory log rebuilds from the stored events", async () => {

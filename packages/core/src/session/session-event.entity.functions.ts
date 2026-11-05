@@ -10,16 +10,21 @@ import { ModelRequestHeader } from "../turn/model-request.entity.js"
 import { MemorySnapshotData } from "../memory/memory-snapshot.entity.js"
 import { StoredModelRequestHeader } from "../turn/model-request-header.entity.js"
 import { RequestPartData } from "../turn/request-part.entity.js"
-import { ContextBuiltEvent, ToolCompletedEvent, ToolRefusedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { ContextBuiltEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
   InboxDroppedData,
   InboxQueuedData,
   InboxTakenData,
   MemoryKindOf,
+  OMITTED_FROM_TOOL_COMPLETED,
+  OMITTED_FROM_TOOL_REFUSED,
   RECORDED_ELSEWHERE,
   RESERVED_KINDS,
   StepUsageData,
+  ToolCompletedData,
+  ToolRefusedData,
+  ToolStartedData,
   TransactKeyedData,
   TURN_EVENT_KINDS,
   TurnEndedData,
@@ -91,9 +96,40 @@ export const turnEndedDraft = (turn: number, data: TurnEnded): Effect.Effect<Ses
   Schema.encodeEffect(TurnEndedData)(data).pipe(Effect.map((encoded) => ({ kind: "turn.ended", turn: Option.some(turn), data: { ...encoded } })))
 
 /**
- * The schema of each kind the framework reads back by its fields (the
- * session's own records, a step's usage, a request's header): a reader
- * decodes the data with it (`readStored`), never reads `event.data` unchecked.
+ * The stored form of a memory entry (`memory.*`, `turn.reply`): the entry's
+ * id, run, step and time, and `body`, the entry's body without its `_tag`
+ * (the kind names it, see `MemoryKindOf`).
+ *
+ * @public
+ */
+export const StoredMemoryData = <Body extends Schema.Top>(body: Body) => Schema.Struct({
+  entry: EntryId,
+  runId: RunId,
+  step: Schema.Int,
+  at: Schema.Number,
+  body,
+})
+
+/** A memory body as stored: its fields without the `_tag` its kind names. */
+const storedBody = <Fields extends Schema.Struct.Fields & { readonly _tag: Schema.Top }>(fields: Fields) => Schema.Struct(Struct.omit(fields, ["_tag"]))
+
+/**
+ * A message of the conversation as stored (`memory.message`): a user,
+ * assistant or tool message (`body.message`), with the loop run that
+ * recorded it and the queued input it answers when there are some.
+ *
+ * @public
+ */
+export const MemoryMessageData = StoredMemoryData(storedBody(LogBody.cases.Message.fields))
+export type MemoryMessageData = typeof MemoryMessageData.Type
+
+/**
+ * The schema of each kind the framework or a host reads back by its fields
+ * (the session's own records, a step's usage, a request's header, a tool
+ * call's lifecycle, a conversation message): a reader decodes the data with
+ * it (`readStored`, `decodeStored`, `storedRecordOf`), never reads
+ * `event.data` unchecked. Each is the kind's journal schema
+ * (`journalSchemaOf`); a kind is added here, never removed.
  */
 export const StoredData = {
   "turn.started": TurnStartedData,
@@ -107,6 +143,10 @@ export const StoredData = {
   "request.part": RequestPartData,
   "memory.snapshot": MemorySnapshotData,
   "transact.keyed": TransactKeyedData,
+  "tool.started": ToolStartedData,
+  "tool.completed": ToolCompletedData,
+  "tool.refused": ToolRefusedData,
+  "memory.message": MemoryMessageData,
 } as const
 export type StoredKind = keyof typeof StoredData
 
@@ -133,10 +173,23 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "request.part": Schema.decodeUnknownEffect(RequestPartData),
   "memory.snapshot": Schema.decodeUnknownEffect(MemorySnapshotData),
   "transact.keyed": Schema.decodeUnknownEffect(TransactKeyedData),
+  "tool.started": Schema.decodeUnknownEffect(ToolStartedData),
+  "tool.completed": Schema.decodeUnknownEffect(ToolCompletedData),
+  "tool.refused": Schema.decodeUnknownEffect(ToolRefusedData),
+  "memory.message": Schema.decodeUnknownEffect(MemoryMessageData),
 }
 
-/** One event's data decoded as `kind`'s, read with sorted keys (`canonical`), whatever its own kind. */
-const decodeStored = <K extends StoredKind>(kind: K, event: SessionLogEvent): Effect.Effect<(typeof StoredData)[K]["Type"], Schema.SchemaError> =>
+/**
+ * One stored event's data decoded with `kind`'s schema (`StoredData`), read
+ * with sorted keys as every reader does: the per-record form of `readStored`,
+ * for a host that projects a journal one record at a time. It decodes
+ * whatever the event's own kind is, so the caller matches `event.kind`
+ * first, or uses `storedRecordOf`. Data that does not decode fails with its
+ * `SchemaError`.
+ *
+ * @public
+ */
+export const decodeStored = <K extends StoredKind>(kind: K, event: SessionLogEvent): Effect.Effect<(typeof StoredData)[K]["Type"], Schema.SchemaError> =>
   canonical(event.data).pipe(Effect.flatMap(storedDecoders[kind]))
 
 /**
@@ -148,6 +201,55 @@ const decodeStored = <K extends StoredKind>(kind: K, event: SessionLogEvent): Ef
 export const readStored = <K extends StoredKind>(kind: K, events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlyArray<Stored<K>>, Schema.SchemaError> =>
   Effect.forEach(events.filter((event) => event.kind === kind), (event) =>
     decodeStored(kind, event).pipe(Effect.map((data): Stored<K> => ({ event, data }))), { concurrency: 1 })
+
+/**
+ * One stored event of any `StoredData` kind, its data decoded, told apart by
+ * `kind`: a projection matches it with `Match.discriminators("kind")` and
+ * reads each kind's own fields.
+ *
+ * @public
+ */
+export type StoredRecord = { readonly [K in StoredKind]: { readonly kind: K } & Stored<K> }[StoredKind]
+
+const recordOf = <K extends StoredKind>(kind: K) => (event: SessionLogEvent) =>
+  decodeStored(kind, event).pipe(Effect.map((data) => ({ kind, event, data })))
+
+/** Each kind's record decoder, built once. */
+const recordDecoders: { readonly [K in StoredKind]: (event: SessionLogEvent) => Effect.Effect<StoredRecord, Schema.SchemaError> } = {
+  "turn.started": recordOf("turn.started"),
+  "turn.ended": recordOf("turn.ended"),
+  "inbox.queued": recordOf("inbox.queued"),
+  "inbox.taken": recordOf("inbox.taken"),
+  "inbox.dropped": recordOf("inbox.dropped"),
+  "step.usage": recordOf("step.usage"),
+  "request.prepared": recordOf("request.prepared"),
+  "model.called": recordOf("model.called"),
+  "request.part": recordOf("request.part"),
+  "memory.snapshot": recordOf("memory.snapshot"),
+  "transact.keyed": recordOf("transact.keyed"),
+  "tool.started": recordOf("tool.started"),
+  "tool.completed": recordOf("tool.completed"),
+  "tool.refused": recordOf("tool.refused"),
+  "memory.message": recordOf("memory.message"),
+}
+
+const isStoredKind = (kind: string): kind is StoredKind => Object.hasOwn(StoredData, kind)
+
+/**
+ * One stored event, decoded by its own kind when that kind is one of
+ * `StoredData`'s: the typed record a projection reads (a tool's lifecycle,
+ * a message, a turn's start and end), without the whole history. None for
+ * any other kind (another memory kind, a bus event read by
+ * `journalSchemaOf`, a host's or a plugin's record). A record of a
+ * `StoredData` kind that does not decode fails with its `SchemaError`,
+ * never reads as none.
+ *
+ * @public
+ */
+export const storedRecordOf = (event: SessionLogEvent): Effect.Effect<Option.Option<StoredRecord>, Schema.SchemaError> => {
+  const kind = event.kind
+  return isStoredKind(kind) ? recordDecoders[kind](event).pipe(Effect.map(Option.some)) : Effect.succeed(Option.none())
+}
 
 /**
  * What a lookup of a `turn.started` decodes: its run, key, entry and optional
@@ -223,21 +325,6 @@ export const replyEndingOf = (drafts: ReadonlyArray<{ readonly kind: string; rea
     Option.flatMap((stored) => stored.body.outcome === "failed" ? Option.none() : Option.some<TurnEnded>({ reason: stored.body.outcome, failure: Option.none() })),
   )
 
-/**
- * The stored form of a memory entry (`memory.*`, `turn.reply`): the entry's
- * id, run, step and time, and `body`, the entry's body without its `_tag`
- * (the kind names it, see `MemoryKindOf`).
- *
- * @public
- */
-export const StoredMemoryData = <Body extends Schema.Top>(body: Body) => Schema.Struct({
-  entry: EntryId,
-  runId: RunId,
-  step: Schema.Int,
-  at: Schema.Number,
-  body,
-})
-
 /** A memory kind's stored data with its body as JSON: the entry's own schema decodes the body. */
 const decodeMemoryData = Schema.decodeUnknownEffect(StoredMemoryData(JsonObjectSchema))
 
@@ -264,12 +351,6 @@ export const entryOfEvent = (event: SessionLogEvent): Effect.Effect<Option.Optio
 /** The memory log held in a session's events, in log order. */
 export const entriesOfEvents = (events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlyArray<LogEntry>, Schema.SchemaError> =>
   Effect.forEach(events, entryOfEvent, { concurrency: 1 }).pipe(Effect.map((entries) => entries.flatMap(Option.toArray)))
-
-/** A completed tool's input and result are in the memory log (the call and its `memory.tool-result`). */
-const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
-
-/** A refused call's input is in the memory log too (the model's call); the refusal keeps why. */
-const OMITTED_FROM_TOOL_REFUSED = ["input"] as const
 
 const without = (omitted: ReadonlyArray<string>) => (data: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> =>
   Object.fromEntries(Object.entries(data).filter(([key]) => !omitted.includes(key)))
@@ -354,7 +435,7 @@ export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Eff
 
 /** Each memory kind's stored schema, from the log body it holds. */
 const memorySchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = LogBody.members.flatMap((member) =>
-  "fields" in member ? [[MemoryKindOf[member.fields._tag.schema.literal], StoredMemoryData(Schema.Struct(Struct.omit(member.fields, ["_tag"])))] as const] : [])
+  "fields" in member ? [[MemoryKindOf[member.fields._tag.schema.literal], StoredMemoryData(storedBody(member.fields))] as const] : [])
 
 /**
  * Stored bus events whose later keys older records lack: `context.built`
@@ -377,19 +458,19 @@ const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>
   return [[tag, laterKeys.get(tag) ?? Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
 })
 
+/** Every journal kind's schema; a kind read back by its fields takes its `StoredData` schema, the one `readStored` decodes. */
 const journalSchemas: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([
-  ...Object.entries(StoredData),
-  ["tool.completed", Schema.Struct(Struct.omit(ToolCompletedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_COMPLETED]))],
-  ["tool.refused", Schema.Struct(Struct.omit(ToolRefusedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_REFUSED]))],
   ...memorySchemas,
   ...busSchemas,
+  ...Object.entries(StoredData),
 ])
 
 /**
  * The schema the framework stores a journal kind's `data` with: every kind
- * in `JOURNAL_KINDS` has one. None for any other kind: a host's records, a
- * plugin's own (such as the tasks plugin's `task.*`), and the reserved bus
- * names never stored under their own name (`assistant.message`,
- * `tool.progress`…).
+ * in `JOURNAL_KINDS` has one, untyped; the kinds of `StoredData` decode
+ * typed through `decodeStored`, `readStored` or `storedRecordOf`. None for
+ * any other kind: a host's records, a plugin's own (such as the tasks
+ * plugin's `task.*`), and the reserved bus names never stored under their
+ * own name (`assistant.message`, `tool.progress`…).
  */
 export const journalSchemaOf = (kind: string): Option.Option<Schema.Codec<unknown, unknown>> => Option.fromNullishOr(journalSchemas.get(kind))

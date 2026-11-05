@@ -39,7 +39,8 @@ when they do not. Work through this list instead.
 |---|---|
 | Live rendering only | add it to `TransientTurnEvents`; its description says "Transient" |
 | Stored from the bus | add the name to `TURN_EVENT_KINDS` (`core/src/session/session-event.entity.ts`); it is stored whole under its name |
-| Stored without some keys (they are in memory already) | also add an entry to `storedPayload` and its journal schema to `journalSchemas` (`session-event.entity.functions.ts`), as `tool.completed` does |
+| Stored without some keys (they are in memory already) | also add an entry to `storedPayload` (`session-event.entity.functions.ts`) and its stored schema (`<Name>Data` in `session-event.entity.ts`) to `StoredData`, as `tool.completed` does |
+| Read back by its fields (by the framework or a host) | add its stored schema to `StoredData` and its decoder to `storedDecoders` and `recordDecoders`: `readStored`, `decodeStored` and `storedRecordOf` then type it, and `journalSchemaOf` returns that same schema |
 | Already recorded by memory or the session | add it to `RECORDED_ELSEWHERE` |
 
 - Append new kinds after the existing ones; never remove or reorder a
