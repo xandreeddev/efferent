@@ -101,7 +101,7 @@ naming belongs to the export layer.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-telemetry` · Version **0.16.2** · Plugin API **3** · Scope **session**
+Plugin: `@xandreed/plugin-telemetry` · Version **0.17.0** · Plugin API **3** · Scope **session**
 
 | Contract | Services |
 | --- | --- |

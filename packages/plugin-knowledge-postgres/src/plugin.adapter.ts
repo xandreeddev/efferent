@@ -25,7 +25,7 @@ export const KnowledgePostgresLive = (url: Redacted.Redacted<string>, options: P
 
 /** Native stores backed by PostgreSQL and pgvector; credentials are read through Config. @public */
 export const knowledgePostgresPlugin = definePlugin({
-  id: "@xandreed/plugin-knowledge-postgres", version: "0.16.2", scope: "runtime",
+  id: "@xandreed/plugin-knowledge-postgres", version: "0.17.0", scope: "runtime",
   config: KnowledgePostgresConfig, defaults: knowledgePostgresDefaults,
   provides: [MemoryStore, KnowledgeStore, TemporalGraph],
   layer: (config) => Layer.effectContext(Effect.gen(function* () {
