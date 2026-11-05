@@ -578,6 +578,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | Text | Source | Pinned by |
 |---|---|---|
 | Native memory and document extraction prompts, output schema, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
+| Part note of an extraction prompt over one window of a longer source (`window`, `knowledgeExtractionWindows`) | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Independent extraction evidence-review prompt | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Bounded query-planning and evidence-reranking prompts | `src/knowledge/knowledge-query.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:97` |

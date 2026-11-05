@@ -1,13 +1,13 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeBm25,
-  fuseKnowledgeCandidates, knowledgeExtractionPrompt, knowledgeQueryPrompt, knowledgeRerankPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction,
+  extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeJob, KnowledgeLease,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSnapshot, KnowledgeStage, KnowledgeVector,
   KnowledgeCandidate,
 } from "@xandreed/core"
@@ -38,7 +38,14 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   const bounded = <A, E>(effect: Effect.Effect<A, E>, description: string) => effect.pipe(
     Effect.timeoutOrElse({ duration: config.modelTimeoutMs, orElse: () => Effect.fail(failure(description)) }),
   )
-  const complete = (prompt: string) => bounded(utility.complete(prompt).pipe(Effect.mapError((cause) => failure("The memory model could not complete extraction", cause))), "The memory model exceeded its time budget").pipe(
+  /** One helper completion, with what it is for in `CurrentKnowledgeHelperCall`. */
+  const ask = (prompt: string, purpose: KnowledgeHelperPurpose, scope: KnowledgeScope, job: Option.Option<KnowledgeJob>) => utility.complete(prompt).pipe(
+    Effect.provideService(CurrentKnowledgeHelperCall, Option.some({
+      purpose, scope, job: Option.map(job, (value) => ({ id: value.id, attempt: value.attempt })),
+      maxOutputTokens: Option.fromNullishOr(config.maxHelperOutputTokens),
+    })),
+  )
+  const complete = (job: KnowledgeJob) => (prompt: string, purpose: KnowledgeHelperPurpose) => bounded(ask(prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => failure("The memory model could not complete extraction", cause))), "The memory model exceeded its time budget").pipe(
     Effect.flatMap((result) => decodeExtraction(result.text)),
   )
   const vector = (values: ReadonlyArray<number>): Effect.Effect<KnowledgeVector, KnowledgeError> =>
@@ -62,9 +69,10 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const source = yield* store.source(job.scope, job.source)
     if (Option.isNone(source)) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "The source of the memory job is unavailable" }))
     if (source.value.text.length > config.maxSourceChars) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Split the source into smaller evidence records before capture" }))
-    const prompt = knowledgeExtractionPrompt(source.value, snapshot, "memory", config.maxCandidateChars, config.consolidate)
-    const extracted = yield* complete(prompt)
-    const reviewed = config.review ? yield* complete(knowledgeReviewPrompt(prompt, extracted)) : extracted
+    const reviewed = yield* extractKnowledge({
+      source: source.value, snapshot, mode: "memory", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
+      consolidate: config.consolidate, review: config.review, complete: complete(job),
+    })
     const reconciled = config.consolidate ? reviewed : {
       ...reviewed,
       memories: reviewed.memories.filter((memory) => memory.evidence._tag === "Stated").map((memory) => ({ ...memory, supersedes: [] })),
@@ -146,7 +154,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     yield* inScope(input.scope)
     const now = yield* Clock.currentTimeMillis
     const fallback: KnowledgeQueryPlan = { queries: [input.query], entities: [], validAt: Option.none(), knownAt: Option.none() }
-    const plan = config.queryPlanning ? yield* utility.complete(knowledgeQueryPrompt(input.query, now)).pipe(
+    const plan = config.queryPlanning ? yield* ask(knowledgeQueryPrompt(input.query, now), "plan", input.scope, Option.none()).pipe(
       Effect.flatMap((completion) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeQueryPlan))(completion.text)),
       Effect.timeout(Math.max(1, Math.floor(config.retrievalTimeoutMs / 4))),
       Effect.catch((error) => Effect.logWarning("Memory query planning failed; using the original question", error).pipe(Effect.as(fallback))),
@@ -173,7 +181,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const graph = input.graph === false || seeds.length === 0
       ? { entities: [], assertions: [], truncated: false }
       : yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
-    const ranked: ReadonlyArray<KnowledgeCandidate> = config.rerank && fused.length > 0 ? yield* utility.complete(knowledgeRerankPrompt(input.query, fused, graph, config.maxCandidateChars)).pipe(
+    const ranked: ReadonlyArray<KnowledgeCandidate> = config.rerank && fused.length > 0 ? yield* ask(knowledgeRerankPrompt(input.query, fused, graph, config.maxCandidateChars), "rerank", input.scope, Option.none()).pipe(
       Effect.flatMap((completion) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeRerank))(completion.text)),
       Effect.flatMap((order) => Option.match(applyKnowledgeRerank(fused, order), { onNone: () => Effect.fail(failure("Memory reranking returned an unknown evidence key")), onSome: Effect.succeed })),
       Effect.timeout(Math.max(1, Math.floor(config.retrievalTimeoutMs / 4))),

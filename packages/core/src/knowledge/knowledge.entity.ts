@@ -184,6 +184,28 @@ export type KnowledgeRecall = typeof KnowledgeRecall.Type
 /** @public */
 export const KnowledgeRecallResult = Schema.Struct({ candidates: Schema.Array(KnowledgeCandidate), graph: KnowledgeSubgraph })
 export type KnowledgeRecallResult = typeof KnowledgeRecallResult.Type
+/** What a knowledge engine asks of a `UtilityLlm` helper call: extract a source part, review that extraction, plan a search or rerank its evidence. @public */
+export const KnowledgeHelperPurpose = Schema.Literals(["extract", "review", "plan", "rerank"])
+export type KnowledgeHelperPurpose = typeof KnowledgeHelperPurpose.Type
+/** The processing job a helper call works for, at the attempt that claimed it (1 for the first claim). @public */
+export const KnowledgeHelperJob = Schema.Struct({ id: KnowledgeJobId, attempt: Count })
+export type KnowledgeHelperJob = typeof KnowledgeHelperJob.Type
+/**
+ * What one helper call is for, set by a knowledge engine around each
+ * `UtilityLlm.complete` it makes (`CurrentKnowledgeHelperCall`): the purpose,
+ * the scope it reads and writes, the job for extraction and review (none for
+ * a search's planning and reranking), and the output cap the engine was
+ * configured with, if any. A `UtilityLlm` adapter can read it to budget,
+ * attribute or refuse a call; the output cap is advisory, applied only by an
+ * adapter that reads it (the models plugin's `UtilityLlmLive` does not).
+ * @public
+ */
+export const KnowledgeHelperCall = Schema.Struct({
+  purpose: KnowledgeHelperPurpose, scope: KnowledgeScope,
+  job: Schema.OptionFromNullOr(KnowledgeHelperJob),
+  maxOutputTokens: Schema.OptionFromNullOr(Positive),
+})
+export type KnowledgeHelperCall = typeof KnowledgeHelperCall.Type
 /** @public */
 export const KnowledgeErrorReason = Schema.Literals(["Conflict", "LeaseLost", "Tombstoned", "Invalid", "Unavailable", "Corrupt", "EmbeddingMismatch"])
 export type KnowledgeErrorReason = typeof KnowledgeErrorReason.Type

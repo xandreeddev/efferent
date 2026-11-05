@@ -18,6 +18,12 @@ through KnowledgeStore. Node 24 and Bun.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is
   opt-in and requires UtilityLlm; extracted entity identities and evidence
   are validated by core before publication. Review is enabled by default.
+  Extraction runs through core's `extractKnowledge`: one call (and one
+  review) per `maxExtractionChars` window, merged before staging.
+- Every UtilityLlm call runs inside `CurrentKnowledgeHelperCall` (purpose,
+  scope, job and attempt for extraction and review, `maxHelperOutputTokens`).
+  The cap is advisory: only a host's own UtilityLlm that reads the reference
+  applies it; the models plugin's `UtilityLlmLive` does not.
 - Query planning and reranking use the optional UtilityLlm with a separate
   bound. Invalid or unavailable assistance keeps hybrid evidence; a reranker
   cannot introduce a candidate identity. Explicit traversal coordinates win.
@@ -61,7 +67,8 @@ prompts. This package owns the following text contracts:
 
 - `src/rag-engine.adapter.test.ts`: exact chunk spans, Unicode, source
   replacement failure/retry, worker restart, owner isolation, forgetting,
-  temporal two-hop GraphRAG, document/personal-memory separation, query
+  temporal two-hop GraphRAG, document/personal-memory separation, windowed
+  graph extraction with exact provenance, helper call contexts, query
   planning, reranking and bounded model-assistance fallback.
 - `src/rag-capability.adapter.test.ts`: exact text pins.
 - `src/rag.journey.test.ts`: real Agent search/read tools, source citations,

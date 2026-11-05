@@ -23,6 +23,14 @@ export const MemoryConfig = Schema.Struct({
   leaseMs: Positive,
   modelTimeoutMs: Positive,
   maxSourceChars: Positive,
+  /** The most source characters one extraction call reads; a longer source is extracted in bounded windows and merged. */
+  maxExtractionChars: Positive.check(Schema.isGreaterThanOrEqualTo(1_000)),
+  /**
+   * Advisory: an output cap carried with each helper call in `CurrentKnowledgeHelperCall`, for a
+   * host's own `UtilityLlm` that reads it. Nothing enforces it: the models plugin's `UtilityLlmLive`
+   * does not read it, and sends helper calls at the model's own output limit. Absent by default.
+   */
+  maxHelperOutputTokens: Schema.optionalKey(Positive),
   maxCandidateChars: Positive,
   recallChars: Positive,
   recallLimit: Positive.check(Schema.isLessThanOrEqualTo(100)),
@@ -35,7 +43,7 @@ export type MemoryConfig = typeof MemoryConfig.Type
 export const memoryDefaults: MemoryConfig = {
   namespace: "default", collection: "memory", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
   review: true, consolidate: true, queryPlanning: true, rerank: true, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
-  maxSourceChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
+  maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   sectionOrder: 700, tools: true,
 }
 

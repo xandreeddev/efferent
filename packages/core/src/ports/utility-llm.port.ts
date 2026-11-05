@@ -1,5 +1,6 @@
-import { Context, Schema } from "effect"
+import { Context, Option, Schema } from "effect"
 import type { Effect } from "effect"
+import type { KnowledgeHelperCall } from "../knowledge/knowledge.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { ModelSelection } from "../domain/model-selection.entity.js"
 
@@ -20,7 +21,19 @@ export class UtilityCompletion extends Schema.Class<UtilityCompletion>("UtilityC
  * One-shot helper completions OFF the agent loop (session titles, digests,
  * quick judgments) — backed by the fast-role model so a helper call is cheap
  * and can never park a turn. Never a substitute for the loop's LanguageModel.
+ * An adapter reads what a knowledge engine's call is for from
+ * `CurrentKnowledgeHelperCall`.
  */
 export class UtilityLlm extends Context.Service<UtilityLlm, {
     readonly complete: (prompt: string) => Effect.Effect<UtilityCompletion, UtilityError>
   }>()("@xandreed/core/UtilityLlm") {}
+
+/**
+ * What the current helper call is for, when a knowledge engine makes it: the
+ * memory and document engines provide it around each `UtilityLlm.complete`
+ * (extraction, review, search planning, reranking), so an adapter can budget,
+ * attribute or refuse the call by purpose, scope, job or output cap. Absent
+ * for any other helper call.
+ * @public
+ */
+export const CurrentKnowledgeHelperCall = Context.Reference<Option.Option<KnowledgeHelperCall>>("@xandreed/core/CurrentKnowledgeHelperCall", { defaultValue: () => Option.none() })

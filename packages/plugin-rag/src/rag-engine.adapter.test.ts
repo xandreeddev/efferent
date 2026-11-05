@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, makeKnowledgeIndexMemory, UtilityLlm } from "@xandreed/core"
+import { CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
+import type { KnowledgeHelperCall } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { enqueue, makeEmbeddings, makeRag, scope, scriptedUtility } from "./rag.testing.js"
 
@@ -144,6 +145,68 @@ describe("native temporal GraphRAG", () => {
     expect((yield* store.snapshot(scope)).memories).toEqual([])
     expect((yield* Ref.get(prompts))).toHaveLength(2)
     expect((yield* knowledge.retrieve({ scope, query: "Guide", limit: 3, maxChars: 1000 })).candidates).toHaveLength(1)
+  }))))
+})
+
+describe("bounded document extraction", () => {
+  const filler = (word: string, count: number) => Array.from({ length: count }, (_, index) => `${word} ${index}.`).join(" ")
+  const text = [`Atlas owns Beacon. ${filler("Planning", 60)}`, `Beacon serves Atlas. ${filler("Logistics", 55)}`, `Atlas depends on Beacon. ${filler("Review", 70)}`].join("\n\n")
+  const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+  const at = (part: string, quote: string) => ({ start: part.indexOf(quote), end: part.indexOf(quote) + quote.length, quote })
+  const extraction = (part: string) => ({
+    entities: [
+      { key: "atlas", name: "Atlas", type: "project", aliases: [], existing: null, spans: [at(part, "Atlas")] },
+      { key: "beacon", name: "Beacon", type: "service", aliases: [], existing: null, spans: [at(part, "Beacon")] },
+    ],
+    memories: [],
+    assertions: [{ key: "related", subject: "atlas", predicate: "related_to", object: { _tag: "Entity", key: "beacon" }, text: "Atlas relates to Beacon", spans: [at(part, "Atlas")], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
+  })
+  /** A helper that answers each purpose and records what each call was for. */
+  const contextUtility = Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<{ readonly call: Option.Option<KnowledgeHelperCall>; readonly part: string }>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.gen(function* () {
+      const call = yield* Effect.service(CurrentKnowledgeHelperCall)
+      yield* Ref.update(calls, (all) => [...all, { call, part: frame("knowledge-source", prompt) }])
+      const purpose = Option.map(call, (value) => value.purpose)
+      const reply = Option.contains(purpose, "extract") || Option.contains(purpose, "review") ? JSON.stringify(extraction(frame("knowledge-source", prompt)))
+        : Option.contains(purpose, "plan") ? JSON.stringify({ queries: [], entities: [], validAt: null, knownAt: null })
+        : "not JSON"
+      return new UtilityCompletion({ text: reply, usage: zeroUsage })
+    }) })
+    return { utility, calls }
+  })
+
+  test("a long document is extracted in bounded calls whose merged graph cites exact source offsets", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { utility, calls } = yield* contextUtility
+    const { knowledge, store } = yield* makeRag({ graph: true, review: true, maxExtractionChars: 1_000, maxHelperOutputTokens: 512 }, undefined, undefined, utility)
+    yield* knowledge.ingest(enqueue("long", text))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    const windows = knowledgeExtractionWindows(text, 1_000)
+    expect(windows.length).toBeGreaterThan(1)
+    const seen = yield* Ref.get(calls)
+    expect(seen.map(({ call }) => Option.map(call, (value) => value.purpose))).toEqual(windows.flatMap(() => [Option.some("extract"), Option.some("review")]))
+    expect(seen.map(({ part }) => part)).toEqual(windows.flatMap((window) => [text.slice(window.start, window.end), text.slice(window.start, window.end)]))
+    expect(seen.every(({ call }) => Option.exists(call, (value) => value.scope === scope
+      && Option.exists(value.job, (job) => job.id === KnowledgeJobId.make("long:1") && job.attempt === 1)
+      && Option.contains(value.maxOutputTokens, 512)))).toBe(true)
+    const graph = (yield* store.snapshot(scope)).graph
+    expect(graph.entities.map((entity) => entity.name)).toEqual(["Atlas", "Beacon"])
+    expect(graph.assertions).toHaveLength(windows.length)
+    const spans = [...graph.entities.flatMap((entity) => entity.provenance), ...graph.assertions.flatMap((assertion) => assertion.provenance)]
+    expect(spans.every((span) => text.slice(span.start, span.end) === span.quote)).toBe(true)
+    expect(graph.entities[0]?.provenance.map((span) => span.start)).toEqual(windows.map((window) => window.start + text.slice(window.start, window.end).indexOf("Atlas")))
+  }))))
+
+  test("search planning and reranking carry their purpose and scope but no job", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { utility, calls } = yield* contextUtility
+    const { knowledge } = yield* makeRag({ queryPlanning: true, rerank: true }, undefined, undefined, utility)
+    yield* knowledge.ingest(enqueue("guide", "stable evidence"))
+    yield* knowledge.process(scope, 1)
+    yield* knowledge.retrieve({ scope, query: "stable", limit: 3, maxChars: 1000 })
+    expect((yield* Ref.get(calls)).map(({ call }) => call)).toEqual([
+      Option.some({ purpose: "plan", scope, job: Option.none(), maxOutputTokens: Option.none() }),
+      Option.some({ purpose: "rerank", scope, job: Option.none(), maxOutputTokens: Option.none() }),
+    ])
   }))))
 })
 

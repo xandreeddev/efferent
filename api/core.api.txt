@@ -123,6 +123,7 @@ const ConversationId
 const CurrentAgentRun
 const CurrentAgentStep
 const CurrentEmptyResponseTolerance
+const CurrentKnowledgeHelperCall
 const CurrentModelCallPolicy
 const CurrentModelCallRecorder
 const CurrentPromptCacheKey
@@ -186,6 +187,10 @@ const KnowledgeExtractedEntity
 const KnowledgeExtractedMemory
 const KnowledgeExtraction
 const KnowledgeExtractionSpan
+const KnowledgeExtractionWindow
+const KnowledgeHelperCall
+const KnowledgeHelperJob
+const KnowledgeHelperPurpose
 const KnowledgeJob
 const KnowledgeJobId
 const KnowledgeJobPhase
@@ -437,6 +442,7 @@ const errorCodeOf
 const escapeFrame
 const estimateMessageTokens
 const externalSpanOf
+const extractKnowledge
 const fingerprintOf
 const fitTarget
 const formatModelSelection
@@ -463,6 +469,7 @@ const knowledgeCandidateText
 const knowledgeCosine
 const knowledgeEngineId
 const knowledgeExtractionPrompt
+const knowledgeExtractionWindows
 const knowledgeQueryPrompt
 const knowledgeRerankPrompt
 const knowledgeReviewPrompt
@@ -722,6 +729,10 @@ type KnowledgeEntityId
 type KnowledgeErrorReason
 type KnowledgeEvidence
 type KnowledgeExtraction
+type KnowledgeExtractionWindow
+type KnowledgeHelperCall
+type KnowledgeHelperJob
+type KnowledgeHelperPurpose
 type KnowledgeJob
 type KnowledgeJobId
 type KnowledgeJobPhase

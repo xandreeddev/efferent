@@ -59,6 +59,16 @@ embedding and atomic publication. Facts and graph entities retain literal
 source evidence. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
+One extraction call reads at most `maxExtractionChars` of a source (48,000 by
+default, the same as `maxSourceChars`, so a default source is one call). A
+longer source is extracted window by window and the results are merged with
+exact whole-source offsets before staging. Each helper call (extraction,
+review, planning, reranking) runs with `CurrentKnowledgeHelperCall` set to its
+purpose, scope, job and attempt where there is one, and the optional
+`maxHelperOutputTokens`, so a host's `UtilityLlm` can budget or refuse it.
+That cap is advisory: only a `UtilityLlm` that reads the reference applies
+it, and the models plugin's own `UtilityLlmLive` does not.
+
 The graph distinguishes when a fact holds in the world from when it became
 known. Queries can specify `validAt` and `knownAt` independently. Changes and
 corrections preserve historical beliefs; provenance and temporal filters apply
@@ -150,6 +160,7 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
   "leaseMs": 180000,
   "modelTimeoutMs": 60000,
   "maxSourceChars": 48000,
+  "maxExtractionChars": 48000,
   "maxCandidateChars": 32000,
   "recallChars": 8000,
   "recallLimit": 8,
@@ -244,6 +255,16 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
       "maximum": 9007199254740991,
       "exclusiveMinimum": 0
     },
+    "maxExtractionChars": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "minimum": 1000
+    },
+    "maxHelperOutputTokens": {
+      "type": "integer",
+      "maximum": 9007199254740991,
+      "exclusiveMinimum": 0
+    },
     "maxCandidateChars": {
       "type": "integer",
       "maximum": 9007199254740991,
@@ -291,6 +312,7 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
     "leaseMs",
     "modelTimeoutMs",
     "maxSourceChars",
+    "maxExtractionChars",
     "maxCandidateChars",
     "recallChars",
     "recallLimit",

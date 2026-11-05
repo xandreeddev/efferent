@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Ref, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId,
 } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
-import { KNOWLEDGE_EXTRACTION_VERSION, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
+import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
 import { applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeQueryPrompt, knowledgeRerankPrompt } from "./knowledge-query.entity.functions.js"
 
@@ -24,6 +24,8 @@ describe("native extraction and retrieval contracts", () => {
     expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("1")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
+    expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
+    expect(knowledgeExtractionPrompt(source, empty, "memory", 1000, true, { part: 1, parts: 1, start: 0, end: source.text.length })).toBe(prompt)
     expect(knowledgeReviewPrompt(prompt, decoded)).toBe(await Bun.file(new URL("../../golden/knowledge-review.prompt.txt", import.meta.url)).text())
     expect(knowledgeQueryPrompt("Who works on Atlas?", 100)).toBe(await Bun.file(new URL("../../golden/knowledge-query.prompt.txt", import.meta.url)).text())
     expect(knowledgeRerankPrompt("Who?", [], empty.graph, 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-rerank.prompt.txt", import.meta.url)).text())
@@ -92,5 +94,103 @@ describe("native extraction and retrieval contracts", () => {
     const decoded = yield* Schema.decodeUnknownEffect(KnowledgeRerank)({ order: ["unknown"] })
     expect(applyKnowledgeRerank([], decoded)).toEqual(Option.none())
     expect(applyKnowledgeRerank([], { order: [] })).toEqual(Option.some([]))
+  })))
+})
+
+const filler = (word: string, count: number) => Array.from({ length: count }, (_, index) => `${word} ${index}.`).join(" ")
+/** Three paragraphs, each naming Atlas once, with Ada in the first and last: about 2,100 characters. */
+const longText = [`Ada leads Atlas. ${filler("Planning", 60)}`, `Atlas moved to the north site. ${filler("Logistics", 55)}`, `Ada reviewed Atlas again. ${filler("Review", 70)}`].join("\n\n")
+const longSource: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("long"), revision: 1 }, text: longText }
+const sourceFrame = (prompt: string) => /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+/** An extractor that names Atlas, and Ada where the part mentions her, at offsets within the part it reads. */
+const windowExtractor = (part: string) => ({
+  entities: [
+    { key: "atlas", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: part.indexOf("Atlas"), end: part.indexOf("Atlas") + 5, quote: "Atlas" }] },
+    ...(part.includes("Ada") ? [{ key: "ada", name: "Ada", type: "person", aliases: [], existing: null, spans: [{ start: part.indexOf("Ada"), end: part.indexOf("Ada") + 3, quote: "Ada" }] }] : []),
+  ],
+  memories: [],
+  assertions: [{ key: "mention", subject: "atlas", predicate: "mentioned", object: { _tag: "Value", value: true }, text: "Atlas is mentioned.", spans: [{ start: part.indexOf("Atlas"), end: part.indexOf("Atlas") + 5, quote: "Atlas" }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
+})
+
+describe("bounded extraction windows", () => {
+  test("windows cover the text in order within the bound, cut at paragraphs and never split a surrogate pair", () => {
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    expect(windows.length).toBeGreaterThan(2)
+    expect(windows.map((window) => [window.part, window.parts])).toEqual(windows.map((_, index) => [index + 1, windows.length]))
+    expect(windows[0]?.start).toBe(0)
+    expect(windows.at(-1)?.end).toBe(longText.length)
+    expect(windows.every((window, index) => window.end - window.start <= 1_000 && window.end > window.start && (index === 0 || windows[index - 1]?.end === window.start))).toBe(true)
+    expect(windows.slice(0, -1).every((window) => longText.slice(window.end - 2, window.end) === "\n\n" || longText.charAt(window.end - 1) === " ")).toBe(true)
+    expect(knowledgeExtractionWindows("short", 1_000)).toEqual([{ part: 1, parts: 1, start: 0, end: 5 }])
+    expect(knowledgeExtractionWindows("", 1_000)).toEqual([{ part: 1, parts: 1, start: 0, end: 0 }])
+    const emoji = "🙂".repeat(1_500)
+    const pairs = knowledgeExtractionWindows(emoji, 1_001)
+    expect(pairs.every((window) => window.end - window.start <= 1_001 && (window.end - window.start) % 2 === 0)).toBe(true)
+    expect(pairs.map((window) => emoji.slice(window.start, window.end)).join("")).toBe(emoji)
+  })
+
+  test("a long source makes one bounded call per window and merges exact whole-source provenance", () => Effect.runPromise(Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly part: string }>>([])
+    const merged = yield* extractKnowledge({
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: true,
+      complete: (prompt, purpose) => Ref.update(calls, (all) => [...all, { purpose, part: sourceFrame(prompt) }]).pipe(
+        Effect.andThen(Schema.decodeUnknownEffect(KnowledgeExtraction)(windowExtractor(sourceFrame(prompt)))), Effect.orDie,
+      ),
+    })
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    const seen = yield* Ref.get(calls)
+    expect(seen.map((call) => call.purpose)).toEqual(windows.flatMap(() => ["extract", "review"]))
+    expect(seen.filter((call) => call.purpose === "extract").map((call) => call.part)).toEqual(windows.map((window) => longText.slice(window.start, window.end)))
+    expect(seen.every((call) => call.part.length > 0 && call.part.length <= 1_000)).toBe(true)
+    expect(merged.entities.map((entity) => entity.key)).toEqual(["atlas", "ada"])
+    expect(merged.assertions.map((assertion) => assertion.key)).toEqual(["mention", ...windows.slice(1).map((window) => `mention~${window.part}`)])
+    const stage = yield* stageKnowledgeExtraction(longSource, empty, merged, 30)
+    const atlas = stage.entities.find((entity) => entity.name === "Atlas")
+    expect(atlas?.provenance.map((span) => span.start)).toEqual(windows.map((window) => window.start + longText.slice(window.start, window.end).indexOf("Atlas")))
+    expect(stage.entities.flatMap((entity) => entity.provenance).every((span) => longText.slice(span.start, span.end) === span.quote)).toBe(true)
+    expect(stage.assertions.flatMap((assertion) => assertion.provenance).every((span) => longText.slice(span.start, span.end) === span.quote)).toBe(true)
+  })))
+
+  test("a source that fits one window makes the whole-source calls and keeps their result", () => Effect.runPromise(Effect.gen(function* () {
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const decoded = yield* extraction
+    const result = yield* extractKnowledge({
+      source, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: (prompt) => Ref.update(prompts, (all) => [...all, prompt]).pipe(Effect.as(decoded)),
+    })
+    expect(result).toBe(decoded)
+    expect(yield* Ref.get(prompts)).toEqual([knowledgeExtractionPrompt(source, empty, "memory", 1000)])
+  })))
+
+  test("a window's offsets are repaired within that window, and a conflicting identity keeps its own key", () => Effect.runPromise(Effect.gen(function* () {
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    const merged = yield* extractKnowledge({
+      source: longSource, snapshot: { ...empty, graph: { ...empty.graph, entities: [
+        { id: KnowledgeEntityId.make("known-a"), name: "Atlas", type: "project", aliases: [], provenance: [] },
+        { id: KnowledgeEntityId.make("known-b"), name: "Atlas", type: "project", aliases: [], provenance: [] },
+      ] } }, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: (prompt) => {
+        const part = sourceFrame(prompt)
+        const value = windowExtractor(part)
+        const first = part === longText.slice(0, windows[0]!.end)
+        return Schema.decodeUnknownEffect(KnowledgeExtraction)({
+          ...value,
+          entities: value.entities.map((entity) => entity.key === "atlas" ? { ...entity, existing: first ? "known-a" : "known-b", spans: [{ start: 0, end: 5, quote: "Atlas" }] } : entity),
+          assertions: value.assertions.map((assertion) => ({ ...assertion, spans: [{ start: 1, end: 6, quote: "Atlas" }] })),
+        }).pipe(Effect.orDie)
+      },
+    })
+    expect(merged.entities.map((entity) => [entity.key, Option.getOrElse(entity.existing, () => "")])).toEqual([["atlas", "known-a"], ["ada", ""], ["atlas~2", "known-b"]])
+    expect(merged.assertions.map((assertion) => assertion.subject)).toEqual(["atlas", ...windows.slice(1).map(() => "atlas~2")])
+    expect(merged.entities.flatMap((entity) => entity.spans).every((span) => longText.slice(span.start, span.end) === span.quote)).toBe(true)
+    expect(merged.assertions.flatMap((assertion) => assertion.spans).map((span) => span.start)).toEqual(windows.map((window) => window.start + longText.slice(window.start, window.end).indexOf("Atlas")))
+  })))
+
+  test("a window that names an undefined entity key is refused before anything is merged", () => Effect.runPromise(Effect.gen(function* () {
+    const result = yield* extractKnowledge({
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: (prompt) => Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...windowExtractor(sourceFrame(prompt)), entities: [] }).pipe(Effect.orDie),
+    }).pipe(Effect.result)
+    expect(result._tag === "Failure" && result.failure.reason).toBe("Invalid")
   })))
 })

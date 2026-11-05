@@ -2123,6 +2123,7 @@
       "leaseMs": 180000,
       "modelTimeoutMs": 60000,
       "maxSourceChars": 48000,
+      "maxExtractionChars": 48000,
       "maxCandidateChars": 32000,
       "recallChars": 8000,
       "recallLimit": 8,
@@ -2209,6 +2210,16 @@
           "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
+        "maxExtractionChars": {
+          "type": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 1000
+        },
+        "maxHelperOutputTokens": {
+          "type": "integer",
+          "maximum": 9007199254740991,
+          "exclusiveMinimum": 0
+        },
         "maxCandidateChars": {
           "type": "integer",
           "maximum": 9007199254740991,
@@ -2256,6 +2267,7 @@
         "leaseMs",
         "modelTimeoutMs",
         "maxSourceChars",
+        "maxExtractionChars",
         "maxCandidateChars",
         "recallChars",
         "recallLimit",
@@ -2373,6 +2385,7 @@
       "leaseMs": 180000,
       "modelTimeoutMs": 60000,
       "maxSourceChars": 200000,
+      "maxExtractionChars": 48000,
       "maxCandidateChars": 32000,
       "chunkChars": 2000,
       "overlapChars": 200,
@@ -2464,6 +2477,16 @@
           "maximum": 2000000,
           "exclusiveMinimum": 0
         },
+        "maxExtractionChars": {
+          "type": "integer",
+          "maximum": 9007199254740991,
+          "minimum": 1000
+        },
+        "maxHelperOutputTokens": {
+          "type": "integer",
+          "maximum": 9007199254740991,
+          "exclusiveMinimum": 0
+        },
         "maxCandidateChars": {
           "type": "integer",
           "maximum": 9007199254740991,
@@ -2534,6 +2557,7 @@
         "leaseMs",
         "modelTimeoutMs",
         "maxSourceChars",
+        "maxExtractionChars",
         "maxCandidateChars",
         "chunkChars",
         "overlapChars",

@@ -1,12 +1,12 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
-  KnowledgeLeaseToken, knowledgeExtractionPrompt, knowledgeReviewPrompt, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
+  BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
+  KnowledgeLeaseToken, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
   applyKnowledgeRerank, knowledgeCandidateText, KnowledgeQueryPlan, knowledgeQueryPrompt, KnowledgeRerank, knowledgeRerankPrompt,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeJob, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
   KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeSubgraph, KnowledgeVector,
 } from "@xandreed/core"
 import type { RagConfig } from "./rag.entity.js"
@@ -35,17 +35,24 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     ? Effect.void : Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Use the collection configured for this retrieval engine" }))
   const vector = (values: ReadonlyArray<number>): Effect.Effect<KnowledgeVector, KnowledgeError> => values.length === space.dimensions && values.every(Number.isFinite)
     ? Effect.succeed({ space, values }) : Effect.fail(new KnowledgeError({ reason: "EmbeddingMismatch", message: "The embedding service returned an incompatible vector" }))
-  const complete = (prompt: string) => Option.match(utility, {
+  /** One helper completion, with what it is for in `CurrentKnowledgeHelperCall`. */
+  const ask = (model: typeof UtilityLlm.Service, prompt: string, purpose: KnowledgeHelperPurpose, scope: KnowledgeScope, job: Option.Option<KnowledgeJob>) => model.complete(prompt).pipe(
+    Effect.provideService(CurrentKnowledgeHelperCall, Option.some({
+      purpose, scope, job: Option.map(job, (value) => ({ id: value.id, attempt: value.attempt })),
+      maxOutputTokens: Option.fromNullishOr(config.maxHelperOutputTokens),
+    })),
+  )
+  const complete = (job: KnowledgeJob) => (prompt: string, purpose: KnowledgeHelperPurpose) => Option.match(utility, {
     onNone: () => Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Graph extraction requires a UtilityLlm" })),
-    onSome: (model) => bounded(model.complete(prompt).pipe(Effect.mapError((cause) => unavailable("Document graph extraction failed", cause))), "Document graph extraction exceeded its time budget").pipe(
+    onSome: (model) => bounded(ask(model, prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => unavailable("Document graph extraction failed", cause))), "Document graph extraction exceeded its time budget").pipe(
       Effect.flatMap((result) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(result.text).pipe(
         Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The document model returned an invalid graph extraction", cause })),
       )),
     ),
   })
-  const askQuery = <A, I>(schema: Schema.Codec<A, I>, prompt: string) => Option.match(utility, {
+  const askQuery = <A, I>(schema: Schema.Codec<A, I>, prompt: string, purpose: KnowledgeHelperPurpose, scope: KnowledgeScope) => Option.match(utility, {
     onNone: () => Effect.succeed(Option.none<A>()),
-    onSome: (model) => model.complete(prompt).pipe(
+    onSome: (model) => ask(model, prompt, purpose, scope, Option.none()).pipe(
       Effect.timeout(Math.max(1, Math.floor(config.queryTimeoutMs / 4))),
       Effect.flatMap((result) => Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(result.text)),
       Effect.catchDefect((cause) => Effect.fail(unavailable("Document query assistance encountered an unexpected failure", cause))),
@@ -53,11 +60,12 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       Effect.option,
     ),
   })
-  const extract = (source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
+  const extract = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
     const graphStage = config.graph ? yield* Effect.gen(function* () {
-      const prompt = knowledgeExtractionPrompt(source, snapshot, "document", config.maxCandidateChars)
-      const extracted = yield* complete(prompt)
-      const reviewed = config.review ? yield* complete(knowledgeReviewPrompt(prompt, extracted)) : extracted
+      const reviewed = yield* extractKnowledge({
+        source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
+        consolidate: true, review: config.review, complete: complete(job),
+      })
       if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories" }))
       return yield* stageKnowledgeExtraction(source, snapshot, reviewed, yield* Clock.currentTimeMillis)
     }) : { expectedVersion: snapshot.version, memories: [], chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [] }
@@ -80,7 +88,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     const previous = Option.filter(job.stage, (stage) => stage.expectedVersion === snapshot.version)
     const stage = yield* Option.match(previous, { onSome: Effect.succeed, onNone: () => store.source(job.scope, job.source).pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.fail(new KnowledgeError({ reason: "Invalid", message: "The document source is unavailable" })),
-      onSome: (source) => extract(source, snapshot),
+      onSome: (source) => extract(job, source, snapshot),
     }))) })
     yield* store.stage(yield* lease(job, token), stage)
     const embedded = yield* embed(stage)
@@ -140,7 +148,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   const retrieve = Effect.fn("rag.retrieve")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
     const now = yield* Clock.currentTimeMillis
-    const plan = config.queryPlanning ? yield* askQuery(KnowledgeQueryPlan, knowledgeQueryPrompt(input.query, now)) : Option.none()
+    const plan = config.queryPlanning ? yield* askQuery(KnowledgeQueryPlan, knowledgeQueryPrompt(input.query, now), "plan", input.scope) : Option.none()
     const queries = [...new Set([input.query, ...Option.match(plan, { onNone: () => [], onSome: (value) => value.queries })])].slice(0, 4)
     const expansion = typeof input.graph === "object" ? input.graph : undefined
     const plannedValid = Option.flatMap(plan, (value) => value.validAt)
@@ -170,7 +178,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       const seeds: ReadonlyArray<KnowledgeEntityId> = [...new Set(named.length > 0 ? named : evidenceEdges.map((edge) => edge.subject))].slice(0, 100)
       return seeds.length === 0 ? { entities: [], assertions: [], truncated: false } : yield* store.traverse({ scope: input.scope, seeds, perspective, depth: expansion.depth, limit: poolLimit })
     })
-    const rerank = config.rerank && pooled.length > 0 ? yield* askQuery(KnowledgeRerank, knowledgeRerankPrompt(input.query, pooled, graph, config.maxCandidateChars)) : Option.none()
+    const rerank = config.rerank && pooled.length > 0 ? yield* askQuery(KnowledgeRerank, knowledgeRerankPrompt(input.query, pooled, graph, config.maxCandidateChars), "rerank", input.scope) : Option.none()
     const checkedOrder = Option.flatMap(rerank, (result) => applyKnowledgeRerank(pooled, result))
     if (Option.isSome(rerank) && Option.isNone(checkedOrder)) yield* Effect.logWarning("Document reranking proposed an unknown or repeated identity; hybrid evidence was retained")
     const ordered = Option.getOrElse(checkedOrder, () => pooled)

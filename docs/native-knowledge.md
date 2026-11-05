@@ -17,6 +17,16 @@ reranking use it when available. Supply a model suitable for extraction and
 relationship reasoning. The models plugin's `fastModel` configures its helper
 model independently of the main conversation model.
 
+Each helper call a knowledge engine makes runs with `CurrentKnowledgeHelperCall`
+set: its purpose (`extract`, `review`, `plan` or `rerank`), the scope, the
+processing job and attempt for extraction and review (none for a search's
+planning and reranking), and the engine's `maxHelperOutputTokens` when it is
+configured. A host's `UtilityLlm` reads it with
+`Effect.service(CurrentKnowledgeHelperCall)` to budget, attribute or refuse a
+call; the reference is `Option.none()` for any other helper call. The models
+plugin's own `UtilityLlm` does not read it, so `maxHelperOutputTokens` is
+advisory: it caps nothing unless the host's `UtilityLlm` applies it.
+
 `embeddingModel`, `embeddingVersion` and `embeddingDimensions` identify the
 host's actual embedding space. Configure the same identity on both engines when
 sharing a model. Incompatible stored and query vectors fail explicitly. Changing
@@ -177,6 +187,19 @@ records, or publish invalid intervals. Every extracted span includes a literal q
 errors (its occurrence nearest the proposed start); invented quotes are rejected. A review pass checks extraction
 against the source before embedding and publication. This validates evidence links;
 semantic entailment still depends on model quality and evaluation.
+
+Extraction calls are bounded by `maxExtractionChars` (48,000 by default on both
+engines), separately from `maxSourceChars`, the largest source an engine
+accepts. A longer source is split into windows at paragraph, line or word
+boundaries (`knowledgeExtractionWindows`); each window is extracted, and
+reviewed, in its own helper calls, one window after another, and its prompt
+frames that part alone and says which part it is. The engine merges the
+windows' results before staging: spans are checked and repaired within their
+window, then moved to exact offsets into the whole source; an entity named in
+several windows becomes one entity when its key and existing identity agree,
+and any other repeated key is renamed (`key~2`). A source that fits one window
+makes exactly the calls of a whole-source extraction. `extractKnowledge` runs
+this for a host that builds its own engine.
 
 Profiles and routines are evidence-backed memory kinds. Explicit preferences
 need no recurrence threshold. Inferred routines need support from at least three

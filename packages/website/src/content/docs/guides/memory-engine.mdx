@@ -72,6 +72,15 @@ proposed existing identity actually exists.
 The [extraction instructions and staging code](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge-extraction.entity.functions.ts)
 define these rules.
 
+S1 fits in one call. A source longer than `maxExtractionChars` (48,000
+characters by default) is extracted in bounded windows instead, one helper
+call (and one review) per window, and the windows' proposals are merged into
+one before the checks below: spans move to exact offsets in the whole source,
+and within that one source an entity proposed under the same key in several
+windows becomes one entity. The helper sees what each call is for through
+`CurrentKnowledgeHelperCall`: here `extract`, then `review`, with S1's scope
+and job.
+
 ## 3. Check the proposal, then embed it
 
 By default, a second helper call reviews the proposal against its source.
