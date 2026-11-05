@@ -85,7 +85,7 @@ their helper outputs are recorded and how later requests use them.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-models` · Version **0.17.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-models` · Version **0.17.1** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
