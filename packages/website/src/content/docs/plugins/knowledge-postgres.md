@@ -78,7 +78,8 @@ or a value; the driver's error is kept as the `cause` for logs.
 Memory and document retrieval occupy separate logical domains, even when
 owner, namespace and collection strings match. Every operation is scoped by
 those three coordinates. `TemporalGraph` reads the memory domain; the document
-store exposes its own graph traversal.
+store exposes its own graph traversal. `sourceInfo` reads the times and metadata
+of every source revision a retrieval cites in one query, without their text.
 
 A search's `sources` filter is applied in SQL, before ranking and limits: a
 chunk's source must be listed, and a memory is returned only when none of its

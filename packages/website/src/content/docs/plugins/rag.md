@@ -80,6 +80,11 @@ to index it under the new one.
 
 The read-only tools are `search_knowledge` and `read_knowledge`. Results carry
 source references and bounded excerpts; a source read can continue by offset.
+A `retrieve` result's `sources` give the times and host metadata of each source
+revision it cites, read in one store call. The package exports the tools' text,
+`knowledgeEvidenceText` and `knowledgeSourcePage`, so a host's own retrieval
+tool shows the model evidence in the same form
+([cited sources](/docs/concepts/native-knowledge/#cited-sources-and-evidence-text)).
 Tool scope derives from the session owner, unless the host narrows it per turn
 with `KnowledgeNarrowing`: another owner and, optionally, the only sources the
 turn's search, reads and recall may reach (see

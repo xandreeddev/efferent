@@ -274,6 +274,28 @@ Host calls take the same filter: `Knowledge.retrieve` and
 store, in SQL for PostgreSQL. The engine's namespace and collection stay the
 configured ones.
 
+## Cited sources and evidence text
+
+A `retrieve` or `recall` result names, beside its candidates and graph, the
+source revisions its evidence cites. `sources` holds one `KnowledgeSourceInfo`
+per cited revision, once each, in order of first citation (candidates, then
+relations, then entities): its `ref`, `occurredAt`, `recordedAt` and the
+host's `metadata` as ingested, without the text. A host shows a title, link,
+page or date beside a citation without a source read per hit; `source(scope,
+ref)` still returns the text. `citedKnowledgeSources(result)` lists the cited
+references themselves. The engines read the info in one call,
+`KnowledgeIndex.sourceInfo(scope, refs)`, which leaves out absent and forgotten
+revisions; a result encoded before `sources` existed decodes with none.
+
+The text the tools give the model is exported for a host's own tools:
+`knowledgeEvidenceText` (the evidence `search_knowledge` and the
+`knowledge.evidence` section show) and `knowledgeSourcePage` (a
+`read_knowledge` page) from `@xandreed/plugin-rag`, and `renderMemoryRecall`
+and `memorySourcePage` from `@xandreed/plugin-memory`. A host tool that
+retrieves evidence its own way and renders it with them gives the model the
+same framing, citations and data rule as the built-in tools; the metadata is
+for the host and is not added to that text.
+
 ## Documents, tools and lifecycle
 
 RAG accepts host-supplied text or Markdown. The host handles file parsing, URLs

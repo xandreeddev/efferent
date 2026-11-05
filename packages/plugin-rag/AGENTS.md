@@ -50,7 +50,9 @@ through KnowledgeStore. Node 24 and Bun.
 
 ## Public surface
 
-ragPlugin (also default), RagPluginLive, RagLive, RagConfig and ragDefaults.
+ragPlugin (also default), RagPluginLive, RagLive, RagConfig and ragDefaults;
+knowledgeEvidenceText and knowledgeSourcePage, the evidence and source-page
+text the tools show, for a host's own tools.
 The main plugin provides Knowledge and contributes Capabilities and
 BackgroundWorkers. It requires KnowledgeStore and EmbeddingModel; UtilityLlm
 is optional unless graph extraction is enabled.
@@ -63,9 +65,9 @@ prompts. This package owns the following text contracts:
 | Text | Source | Pinned by |
 |---|---|---|
 | Tool descriptions, parameter descriptions, skill summary and failure messages | `src/rag-capability.adapter.ts:12` | exact, `src/rag-capability.adapter.test.ts:11` |
-| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:28` | exact, `src/rag-capability.adapter.test.ts:33` |
-| Traversal result-limit note | `src/rag.entity.functions.ts:37` | exact, `src/rag-capability.adapter.test.ts:34` |
-| Source page framing and continuation | `src/rag.entity.functions.ts:42` | exact, `src/rag-capability.adapter.test.ts:35`; exact, `src/rag-capability.adapter.test.ts:36` |
+| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:33` | exact, `src/rag-capability.adapter.test.ts:33` |
+| Traversal result-limit note | `src/rag.entity.functions.ts:42` | exact, `src/rag-capability.adapter.test.ts:34` |
+| Source page framing and continuation | `src/rag.entity.functions.ts:51` | exact, `src/rag-capability.adapter.test.ts:35`; exact, `src/rag-capability.adapter.test.ts:36` |
 
 ## Tests
 
@@ -76,7 +78,8 @@ prompts. This package owns the following text contracts:
   planning, reranking and bounded model-assistance fallback.
 - `src/rag-capability.adapter.test.ts`: exact text pins.
 - `src/rag.journey.test.ts`: real Agent search/read tools, source citations,
-  model requests and recorded turn context, with no keys or network.
+  cited sources' metadata, the exported evidence text, model requests and
+  recorded turn context, with no keys or network.
 - `src/rag-narrowing.journey.test.ts`: two conversations of one owner, each
   narrowed by the host to its own sources, search, read and recall only them.
 - `src/rag-worker.test.ts`: lease heartbeats, durable defect handling and

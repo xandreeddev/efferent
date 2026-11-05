@@ -24,8 +24,13 @@ export const chunkDocument = (source: KnowledgeSource, size: number, overlap: nu
   return chunks
 }
 
-/** Shared by the search view and the optional recorded turn section. */
-export const knowledgeEvidenceText = (result: KnowledgeRecallResult, maxChars: number): string => {
+/**
+ * The evidence text `search_knowledge` and the `knowledge.evidence` section show the model: the
+ * data rule, then each excerpt and relation with its source id, revision and character range,
+ * framed and clipped to `maxChars`. A host's own tools render evidence the same way with it.
+ * @public
+ */
+export const knowledgeEvidenceText = (result: Pick<KnowledgeRecallResult, "candidates" | "graph">, maxChars: number): string => {
   const candidates = result.candidates.flatMap((candidate) => Match.valueTags(candidate, {
     Memory: () => [],
     Chunk: ({ chunk }) => [`Source ${JSON.stringify(chunk.provenance.source.id)}, revision ${chunk.provenance.source.revision}, characters ${chunk.provenance.start}-${chunk.provenance.end}:\n${chunk.text}`],
@@ -38,7 +43,11 @@ export const knowledgeEvidenceText = (result: KnowledgeRecallResult, maxChars: n
   ].join("\n\n")
 }
 
-/** One bounded page of the exact stored source revision. */
+/**
+ * One bounded page of the exact stored source revision, as `read_knowledge` shows it: its
+ * coordinates and data rule, the framed text from `offset`, and the offset to continue at.
+ * @public
+ */
 export const knowledgeSourcePage = (source: KnowledgeSource, offset: number, chars: number): string => {
   const end = Math.min(source.text.length, offset + chars)
   return [

@@ -4,7 +4,7 @@ import type {
   KnowledgeCandidates, KnowledgeChunk, KnowledgeChunkId, KnowledgeClaim, KnowledgeEnqueue,
   KnowledgeError, KnowledgeJob, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
   KnowledgePending, KnowledgeReach, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
-  KnowledgeSourceId, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
+  KnowledgeSourceId, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
 } from "../knowledge/knowledge.entity.js"
 import type { RunContext } from "./run-context.port.js"
 
@@ -33,6 +33,11 @@ export interface KnowledgeIndex {
   readonly snapshot: (scope: KnowledgeScope) => Effect.Effect<KnowledgeSnapshot, KnowledgeError>
   readonly search: (query: KnowledgeSearch) => Effect.Effect<KnowledgeCandidates, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
+  /**
+   * The info of the listed revisions, without their text, in one read: once each, in the order
+   * first listed. A revision that is absent from the scope or forgotten is left out.
+   */
+  readonly sourceInfo: (scope: KnowledgeScope, refs: ReadonlyArray<KnowledgeSourceRef>) => Effect.Effect<ReadonlyArray<KnowledgeSourceInfo>, KnowledgeError>
   /** Explicit immutable identity reads include retired history until its evidence is forgotten. */
   readonly memory: (scope: KnowledgeScope, id: KnowledgeMemoryId) => Effect.Effect<Option.Option<KnowledgeMemory>, KnowledgeError>
   readonly chunk: (scope: KnowledgeScope, id: KnowledgeChunkId) => Effect.Effect<Option.Option<KnowledgeChunk>, KnowledgeError>
@@ -51,6 +56,7 @@ export class TemporalGraph extends Context.Service<TemporalGraph, {
 export class LongTermMemory extends Context.Service<LongTermMemory, {
   readonly capture: (input: KnowledgeEnqueue) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly process: (scope: KnowledgeScope, limit: number) => Effect.Effect<number, KnowledgeError>
+  /** Bounded evidence; its `sources` hold the info (times, metadata) of every revision it cites. */
   readonly recall: (input: KnowledgeRecall) => Effect.Effect<KnowledgeRecallResult, KnowledgeError>
   readonly profile: (scope: KnowledgeScope) => Effect.Effect<ReadonlyArray<KnowledgeMemory>, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
@@ -62,6 +68,7 @@ export class LongTermMemory extends Context.Service<LongTermMemory, {
 export class Knowledge extends Context.Service<Knowledge, {
   readonly ingest: (input: KnowledgeEnqueue) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly process: (scope: KnowledgeScope, limit: number) => Effect.Effect<number, KnowledgeError>
+  /** Bounded evidence; its `sources` hold the info (times, metadata) of every revision it cites. */
   readonly retrieve: (input: KnowledgeRecall) => Effect.Effect<KnowledgeRecallResult, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>

@@ -103,6 +103,10 @@ for the scores, graph expansion and final prompt path.
 
 Read tools are `recall_memory` and `read_memory`. The separate management skill
 exposes `remember_memory` and `forget_memory` under the `memory.write` grant.
+A `recall` result's `sources` give the times and metadata of each source
+revision it cites. `renderMemoryRecall` and `memorySourcePage`, the text those
+tools show, are exported for a host's own tools
+([cited sources](/docs/concepts/native-knowledge/#cited-sources-and-evidence-text)).
 Model-facing scope comes from the current session's owner, unless the host
 narrows it per turn with `KnowledgeNarrowing`: another owner and, optionally,
 the only sources recall, reads and the turn-context section may reach, its

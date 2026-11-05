@@ -9,7 +9,7 @@ const scope = { owner: "fixture", namespace: "assistant", collection: "memory" }
 const careless: Context.Service.Shape<typeof LongTermMemory> = {
   capture: (input) => Effect.succeed({ id: input.jobId, scope: input.source.scope, source: input.source.ref, engine: input.engine, attempt: 0, phase: { _tag: "Queued" }, stage: Option.none() }),
   process: () => Effect.succeed(0),
-  recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false } }),
+  recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }),
   profile: () => Effect.succeed([]), source: () => Effect.succeed(Option.none()), status: () => Effect.succeed(Option.none()),
   retry: () => Effect.fail(new KnowledgeError({ reason: "Conflict", message: "Nothing was recorded" })), forget: () => Effect.void,
 }
@@ -17,7 +17,7 @@ const careless: Context.Service.Shape<typeof LongTermMemory> = {
 test("facade kits expose stable contract names and reject a careless service on every check", async () => {
   const memory = longTermMemoryConformance({ open: Effect.succeed({ memory: careless, scope }) })
   const knowledge = knowledgeConformance({ open: Effect.succeed({ knowledge: { ...careless, ingest: careless.capture, retrieve: careless.recall }, scope }) })
-  const names = ["accepted-source", "processing", "source-replay", "owner-isolation", "forget-tombstone", "source-filter", "retrieval-bounds"]
+  const names = ["accepted-source", "processing", "source-replay", "owner-isolation", "forget-tombstone", "source-filter", "cited-sources", "retrieval-bounds"]
   expect(memory.map((check) => check.name)).toEqual(names.map((name) => `long_term_memory.${name}`))
   expect(knowledge.map((check) => check.name)).toEqual(names.map((name) => `knowledge_facade.${name}`))
   const results = await Effect.runPromise(Effect.forEach([...memory, ...knowledge], (check) => Effect.result(check.run), { concurrency: 1 }))

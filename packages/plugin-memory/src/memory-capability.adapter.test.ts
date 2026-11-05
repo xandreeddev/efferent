@@ -119,7 +119,7 @@ describe("memory model-facing contracts", () => {
     const profileOf = (name: string, text: string) => ({ id: KnowledgeMemoryId.make(name), kind: "preference" as const, text, entities: [], provenance: [{ source: { id: KnowledgeSourceId.make(name), revision: 1 }, start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" as const }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none() })
     const memory = LongTermMemory.of({
       ...fixture.memory,
-      recall: (input) => Ref.update(recalls, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false } })),
+      recall: (input) => Ref.update(recalls, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })),
       profile: () => Effect.succeed([profileOf("kept", "Prefers tea."), profileOf("other", "Prefers coffee.")]),
       source: (scope, ref) => Ref.update(reads, (all) => [...all, scope]).pipe(Effect.as(Option.some({ scope, ref, text: "Prefers tea.", occurredAt: 1, recordedAt: 1, metadata: {} }))),
       forget: (scope) => Ref.update(forgotten, (all) => [...all, scope]),

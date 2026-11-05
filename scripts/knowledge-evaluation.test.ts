@@ -130,6 +130,7 @@ test("native graph ablation requests graph:false and reserves graph context befo
       return {
         candidates: [0, 1, 2, 3].map((index) => ({ _tag: "Chunk" as const, chunk: { id: KnowledgeChunkId.make(`memory-${index}`), text: `Memory ${index}`, provenance, embedding: Option.none() }, score: 1 })),
         graph: { entities: [], assertions: [{ id: KnowledgeAssertionId.make("graph-edge"), subject: KnowledgeEntityId.make("alice"), predicate: "prefers", object: { _tag: "Value" as const, value: "coffee" }, text: "Graph evidence", provenance: [provenance], knownFrom: 1, knownTo: Option.none(), validFrom: Option.none(), validTo: Option.none() }], truncated: false },
+        sources: [],
       }
     }),
     profile: () => Effect.succeed([]), source: () => Effect.succeed(Option.none()), status: () => Effect.succeed(Option.none()), retry: () => Effect.die("unused"), forget: () => Effect.void,

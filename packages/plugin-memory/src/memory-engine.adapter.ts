@@ -3,7 +3,7 @@ import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue
 import {
   BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
-  KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeBm25,
+  KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
   narrowKnowledgeGraph, traverseKnowledgeGraph,
 } from "@xandreed/core"
@@ -154,7 +154,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
     const sources = input.sources
-    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false } } satisfies KnowledgeRecallResult
+    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] } satisfies KnowledgeRecallResult
     const now = yield* Clock.currentTimeMillis
     const fallback: KnowledgeQueryPlan = { queries: [input.query], entities: [], validAt: Option.none(), knownAt: Option.none() }
     const plan = config.queryPlanning ? yield* ask(knowledgeQueryPrompt(input.query, now), "plan", input.scope, Option.none()).pipe(
@@ -198,7 +198,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       return current.items.length < input.limit && current.used + text.length <= input.maxChars
         ? { items: [...current.items, candidate], used: current.used + text.length } : current
     }, { items: [] as ReadonlyArray<KnowledgeCandidate>, used: 0 })
-    return budgetKnowledgeRecall({ candidates: selected.items, graph }, input.maxChars, input.limit)
+    const bounded = budgetKnowledgeRecall({ candidates: selected.items, graph, sources: [] }, input.maxChars, input.limit)
+    return { ...bounded, sources: yield* store.sourceInfo(input.scope, citedKnowledgeSources(bounded)) }
   }, Effect.timeoutOrElse({ duration: config.retrievalTimeoutMs, orElse: () => Effect.fail(failure("Memory retrieval exceeded its time budget")) }))
   const capture = Effect.fn("memory.capture")(function* (input: KnowledgeEnqueue) {
     yield* inScope(input.source.scope)

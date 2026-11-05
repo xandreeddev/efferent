@@ -503,7 +503,7 @@ export { imageSizeOf } from "./domain/media.entity.functions.js"
 export {
   KnowledgeSourceId, KnowledgeJobId, KnowledgeMemoryId, KnowledgeChunkId,
   KnowledgeEntityId, KnowledgeAssertionId, KnowledgeLeaseToken, KnowledgeScope,
-  KnowledgeSourceRef, KnowledgeSource, KnowledgeProvenance, KnowledgeEmbeddingSpace,
+  KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStage,
   KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
@@ -518,7 +518,7 @@ export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
-  knowledgeCandidateText, fuseKnowledgeCandidates, traverseKnowledgeGraph,
+  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, traverseKnowledgeGraph,
   validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"

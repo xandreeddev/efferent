@@ -1,7 +1,7 @@
 import { Effect, Option, Order, Result } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect } from "../conformance.functions.js"
+import { check, expect, sameJson } from "../conformance.functions.js"
 import type { KnowledgeIndex, TemporalGraph } from "../ports/knowledge.port.js"
 import { knowledgeCandidateKey } from "./knowledge.entity.functions.js"
 import type { Context } from "effect"
@@ -10,7 +10,7 @@ import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
   type KnowledgeCandidates, type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
-  type KnowledgeSource, type KnowledgeStage,
+  type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
 } from "./knowledge.entity.js"
 
 /**
@@ -45,6 +45,7 @@ const memoryOf = (source: KnowledgeSource, name = "memory"): KnowledgeMemory => 
 const stageOf = (source: KnowledgeSource, version = 0, name = "memory"): KnowledgeStage => ({
   expectedVersion: version, memories: [memoryOf(source, name)], chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [],
 })
+const infoOf = (source: KnowledgeSource): KnowledgeSourceInfo => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata })
 const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source: KnowledgeSource = sourceOf(fixture.scope)) {
   const job = yield* enqueue(fixture, source)
   yield* claim(fixture)
@@ -58,7 +59,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
- * revision replacement, engine-scoped discovery and claims, and bitemporal traversal. Each check
+ * revision replacement, batched source info, engine-scoped discovery and claims, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
  */
@@ -317,6 +318,20 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const exhausted = yield* claim(fixture, 20, "first-again", first)
       const own = yield* claim(fixture, 20, "second-token", second)
       yield* expect("knowledge.engine-isolation", Option.isNone(requested) && Option.exists(taken, (job) => job.id === firstJob.id && job.engine === first) && Option.isNone(exhausted) && Option.exists(own, (job) => job.id === secondJob.id && job.engine === second), "a worker claimed a job recorded under another engine")
+    })),
+    indexCheck("knowledge.source-info", (fixture) => Effect.gen(function* () {
+      const first = { ...sourceOf(fixture.scope), metadata: { kind: "note", tags: ["kit", "evidence"], origin: { system: "kit", page: 3 }, reviewed: true, score: null } }
+      const second = { ...sourceOf(fixture.scope, "Bob prefers tea", "second-source"), occurredAt: 30, recordedAt: 40, metadata: { kind: "guide" } }
+      yield* enqueue(fixture, first)
+      yield* enqueue(fixture, second, "second-job")
+      const listed = [second.ref, first.ref, first.ref, { ...first.ref, revision: 2 }, { id: KnowledgeSourceId.make("absent-source"), revision: 1 }]
+      const read = yield* fixture.index.sourceInfo(fixture.scope, listed)
+      const other = yield* fixture.index.sourceInfo({ ...fixture.scope, owner: `${fixture.scope.owner}-other` }, listed)
+      const none = yield* fixture.index.sourceInfo(fixture.scope, [])
+      yield* fixture.index.forget(fixture.scope, first.ref.id, 50)
+      const forgotten = yield* fixture.index.sourceInfo(fixture.scope, listed)
+      yield* expect("knowledge.source-info", sameJson(read, [infoOf(second), infoOf(first)]) && other.length === 0 && none.length === 0 && sameJson(forgotten, [infoOf(second)]),
+        "source info lost a revision's times or metadata, kept a duplicate, an absent or forgotten revision, or the listed order, or crossed owner scope")
     })),
     indexCheck("knowledge.bitemporal-change", (fixture) => Effect.gen(function* () {
       const first = sourceOf(fixture.scope, "Alice works at Acme", "employment-one")
