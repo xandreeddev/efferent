@@ -77,6 +77,8 @@ export {
   socketResumeOf,
   ssePreamble,
 } from "./domain/feed-frame.entity.functions.js"
+export { SseContentEncoding } from "./domain/sse-encoding.entity.js"
+export { sseContentEncodingOf } from "./domain/sse-encoding.entity.functions.js"
 /**
  * Core's kit failure, which the render kits fail with.
  *

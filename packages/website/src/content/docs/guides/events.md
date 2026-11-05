@@ -802,6 +802,7 @@ import type { SsePeer } from "@xandreed/plugin-render"
  * An SSE peer over a Web stream: a write never fails, and `closed` completes
  * when the client leaves, or once a write has waited `timeout` on a client
  * that stopped reading: the stream is then aborted, and the feed stops.
+ * `end` closes the stream when the feed ends.
  */
 export const webSsePeer = (writer: WritableStreamDefaultWriter<Uint8Array>, signal: AbortSignal, timeout: Duration.Input = "2 seconds"): SsePeer => {
   const encoder = new TextEncoder()
@@ -818,6 +819,7 @@ export const webSsePeer = (writer: WritableStreamDefaultWriter<Uint8Array>, sign
       left.addEventListener("abort", leave, { once: true })
       writer.closed.then(leave, leave) // the client cancelled the stream
     }),
+    end: closeStream(writer).pipe(Effect.asVoid),
   }
 }
 

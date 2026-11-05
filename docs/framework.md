@@ -3729,6 +3729,20 @@ require services, which the feed's stream then requires, so the connection
 provides them where it runs the stream; it fails with `RenderError`, and
 `payloadOf(schema)` builds its payload from the host's own schema.
 
+**Serving a feed over SSE.** `SseTransport.serve(frames, peer)` writes to an
+`SsePeer`: `write`, `closed` (the client left) and `end`, which it runs once
+when the frames end, at the feed's `maxDurationMs` or on a failed feed (the
+failure is logged, never sent), and never after the client left. The client
+then reconnects with `Last-Event-ID`. `sseNodePeer(response, headers,
+timeout, { compress })` is the peer over a Node response: `end` ends the
+response, and with `compress`, the request's `Accept-Encoding`, it sends
+Brotli when the client takes it, else gzip, else no coding
+(`sseContentEncodingOf`), with `content-encoding` and `vary:
+accept-encoding`. One compression window serves the whole connection, so a
+long feed of similar frames shrinks well, and it is flushed after every
+write, so each frame reaches the client as it is written. Without
+`compress` the response is the uncompressed one it always was.
+
 ### Busy signal and graceful shutdown
 
 A process that serves turns needs to say whether it is busy (a `/ping` a

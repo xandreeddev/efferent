@@ -151,6 +151,11 @@ export interface SsePeer {
   readonly write: (chunk: string) => Effect.Effect<void>
   /** Completes when the client disconnects. */
   readonly closed: Effect.Effect<void>
+  /**
+   * Ends the response after the last frame: `SseTransport` runs it once when the frames end (the
+   * feed's `maxDurationMs`, or a failed feed), and never for a client that left.
+   */
+  readonly end: Effect.Effect<void>
 }
 
 /** @public */

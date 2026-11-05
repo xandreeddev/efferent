@@ -19,10 +19,11 @@ const renderPage = (tasks: { fork: (tag: string, work: Effect.Effect<void>) => E
   yield* surface.freeze("completion")
 })
 
-// The HTTP edge: project journal records to client events and serve them over SSE.
-const serveEvents = (response, feedScope, after: number) => Effect.gen(function* () {
+// The HTTP edge: project journal records to client events and serve them over SSE, compressed as the
+// request accepts; the response ends when the feed does.
+const serveEvents = (request, response, feedScope, after: number) => Effect.gen(function* () {
   const feed = yield* RenderFeed
-  const peer = yield* sseNodePeer(response)
+  const peer = yield* sseNodePeer(response, {}, "2 seconds", { compress: request.headers["accept-encoding"] })
   yield* SseTransport.serve(feed.frames(feedScope, after, project), peer)
 })
 ```
@@ -59,10 +60,15 @@ const serveEvents = (response, feedScope, after: number) => Effect.gen(function*
   store's error into one). `payloadOf(schema)(event, value)` encodes a value with the host's schema
   into a `FeedPayload`, dropping `undefined` fields, and fails with `invalid` when it has no JSON form.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
-  transient `event: <event>` / `data: <json>` blocks with no `id`, `event: ready`, and `: heartbeat`
-  comments. `decodeSse(text)` reads them back as a `Result`: a
-  malformed record or transient frame fails with `RenderError` code `invalid`. `sseNodePeer(response, headers, timeout)`
-  drops a client that has not taken a write within `timeout` (2 seconds). A feed that fails ends the
+  transient `event: <event>` / `data: <json>` blocks with no `id`, `event: ready`, and `: heartbeat` comments. `decodeSse(text)` reads them back as a `Result`: a
+  malformed record or transient frame fails with `RenderError` code `invalid`. An `SsePeer` writes, says when the client
+  left (`closed`) and ends the response (`end`): `SseTransport` ends it once when the frames end (the
+  feed's `maxDurationMs`, or a failed feed), never after the client left. `sseNodePeer(response,
+  headers, timeout, { compress })` drops a client that has not taken a write within `timeout` (2
+  seconds), and ends the response itself. Given the request's `Accept-Encoding` as `compress`, it
+  sends Brotli when the client takes it, else gzip, else no coding (`sseContentEncodingOf`), with
+  `content-encoding` and `vary: accept-encoding`, over one compression window for the connection,
+  flushed after every write so no frame waits for the next. A feed that fails ends the
   connection like a finished one, and the transport logs the failure as a warning. WebSocket wire: one JSON object per frame
   (`{"type":"record","sequence":n,"event":…,"data":{…}}`, `{"type":"transient","event":…,"data":{…}}`,
   `{"type":"ready"}`, `{"type":"heartbeat"}`);
