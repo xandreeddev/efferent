@@ -20,6 +20,7 @@ const modelCatalogConformance
 const modelRequestHookConformance
 const probeCall
 const requestHeaderConformance
+const sessionChannelConformance
 const sessionLogConformance
 const sessionLogRecoveryConformance
 const sessionsConformance
@@ -47,6 +48,7 @@ interface ModelCallRecorderFixture
 interface ModelCallRecorderSubject
 interface ModelRequestHookSubject
 interface RequestHeaderSubject
+interface SessionChannelSubject
 interface SessionLogSubject
 interface SessionsInstance
 interface SessionsProcess

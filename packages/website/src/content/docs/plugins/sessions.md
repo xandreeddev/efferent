@@ -128,6 +128,45 @@ The host supplies its owners and `InboxRunner`, and explicitly decides any
 startup takeover authority. Keep that worker and the agent in an appropriate
 Effect scope. Existing journal data remains in the selected backend.
 
+## Live events for every follower
+
+The journal holds what a turn did; a turn's token deltas and tool progress
+are transient and exist only on its own bus. To show them to every follower
+of the session (a second tab, a reconnecting client, the request that did
+not start a turn run in the background), provide core's `SessionChannel`
+and attach `shareTransient` to the turn. The package exports
+`SessionChannelMemoryLive`, the channel for one process: one sliding hub
+per followed session, 256 payloads by default (`capacity`), so a follower
+that falls behind keeps the newest and never holds the turn up. The hub is
+released with the session's last follower, and a payload published while
+nobody follows is dropped. Nothing is stored or replayed: a follower that
+reconnects reads the journal.
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { SessionChannel, shareTransient, subscribeAll } from "@xandreed/core"
+import type { SessionAddress, Turn } from "@xandreed/core"
+import { SessionChannelMemoryLive } from "@xandreed/plugin-sessions"
+
+declare const address: SessionAddress
+declare const turn: Turn
+
+const channel = Layer.build(SessionChannelMemoryLive({ capacity: 512 })).pipe(
+  Effect.map((context) => Context.get(context, SessionChannel)),
+)
+// In the turn's `use`, before it runs: its deltas and progress go to the session's followers.
+const share = subscribeAll(turn.events, [shareTransient(address)])
+```
+
+Several instances share a session's followers only through an adapter over
+the host's own broker. `shareTransient` never waits on such a broker: the
+bus hands each payload to a queue (`capacity`, 256 by default, the oldest
+dropped when it is full) and one fiber publishes them in order, each within
+`publishTimeoutMs` (2000 by default), so a slow or hung broker drops
+payloads rather than holding the turn. `sessionChannelConformance`
+(`@xandreed/core/conformance`) checks one. Serve the channel to clients
+with the [render feed](/docs/plugins/render-feed/#live-frames).
+
 ## Related guides
 
 - [File-backed sessions](/docs/plugins/session-files/)

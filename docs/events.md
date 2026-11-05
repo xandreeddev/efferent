@@ -36,7 +36,9 @@ Use the bus for what the process running the turn shows or decides now:
 tokens and tool activity for the user who asked, reactions that steer the
 turn, in-process metrics. Use the journal for everything else: a browser
 that reconnects or opens the conversation later, another instance, an audit
-trail, an export.
+trail, an export. Between the two, a session's channel (`SessionChannel`)
+carries transient events to every follower of the session while they
+happen, without storing them ([below](#serving-turns-over-http)).
 
 ## Streaming a turn to a client
 
@@ -880,6 +882,44 @@ export const eventsRoute = (host: Host, owner: string, id: string, request: Requ
     SessionMissing: () => Effect.succeed(problem(404, turnBeginCodes.SessionMissing)),
     SessionLogError: () => Effect.succeed(problem(503, turnBeginCodes.SessionLogError)),
   })))
+```
+
+The turn's own stream reaches only the client that asked. A turn run in the
+background, or a second tab, a reconnecting client, another device, sees the
+reply only once the journal has it, at the end. To show every follower the
+reply as it streams, give the agent a `SessionChannel` (in one process,
+`SessionChannelMemoryLive` from `@xandreed/plugin-sessions`; across
+instances, an adapter over your own broker, checked by
+`sessionChannelConformance`), share the turn's transient events with it
+(`shareTransient`: `assistant.delta` and `tool.progress`, or those you name),
+and pass the session's channel to the feed as its `live` stream
+(`sessionLive`). A follower sees what is published from the time its feed
+starts, after its backlog's `ready`; nothing is stored or replayed, so a
+client that reconnects reads the reply from the journal. Your own live
+payloads (a preview, a progress bar) go to the same channel with
+`SessionChannel.publish`.
+
+<!-- snippet: packages/sdk/src/events-guide.test.ts#share -->
+```ts
+import { Effect } from "effect"
+import { subscribeAll } from "@xandreed/sdk"
+import type { SessionAddress, Turn } from "@xandreed/sdk"
+import { shareTransient } from "@xandreed/core"
+import { PrincipalId, sessionLive, ThreadId } from "@xandreed/plugin-render"
+
+/**
+ * `use` for a turn the client that asked may not be watching (a turn run in
+ * the background, a tab closed): its token deltas and tool progress also go
+ * to the session's channel, for every follower of the session.
+ */
+export const streamAndShare = (address: SessionAddress, push: Push) => (turn: Turn) =>
+  subscribeAll(turn.events, [shareTransient(address)]).pipe(Effect.andThen(streamTo(push)(turn)))
+
+/** The journal route's frames, with what the session's channel carries as live frames after `ready`. */
+export const followedFrames = (host: Host, address: SessionAddress, after: number) => {
+  const feed = { threadId: ThreadId.make(address.id), principalId: PrincipalId.make(address.owner) }
+  return sessionLive(feed).pipe(Effect.map((live) => host.feed.frames(feed, after, clientProjection, { live })))
+}
 ```
 
 And a `/ping` for a load balancer, or a deploy waiting to stop the instance:

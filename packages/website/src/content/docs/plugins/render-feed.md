@@ -206,6 +206,33 @@ const live: Stream.Stream<FeedPayload, RenderError> = replyDeltas.pipe(
 const frames = RenderFeed.pipe(Effect.map((feed) => feed.frames(scope, 0, project, { live })))
 ```
 
+When the live frames are a session's, and the turn that makes them may run
+in another request, take them from the session's channel: `sessionLive`
+follows core's `SessionChannel` for the feed's session (`threadId` the
+session, `principalId` its owner, as `SessionsJournalTailLive` reads them),
+so every feed open on the session shows what a turn shares with
+`shareTransient` and what the host publishes there itself. A feed sees
+what is published from the time it starts; nothing is replayed.
+
+```ts
+import { Effect } from "effect"
+import { RenderFeed, sessionLive } from "@xandreed/plugin-render"
+import type { FeedProjection, FeedScope } from "@xandreed/plugin-render"
+
+declare const scope: FeedScope
+declare const project: FeedProjection
+declare const after: number
+
+const frames = Effect.all([RenderFeed, sessionLive(scope)], { concurrency: 1 }).pipe(
+  Effect.map(([feed, live]) => feed.frames(scope, after, project, { live })),
+)
+```
+
+A name that is not a session fails the feed with `invalid`; a channel whose
+transport cannot be reached, with `unavailable`. Provide the channel with
+`SessionChannelMemoryLive` from [sessions](/docs/plugins/sessions/#live-events-for-every-follower)
+in one process, or an adapter over the host's broker across instances.
+
 The stream ends after `maxDurationMs`; clients reconnect with their last
 cursor. `SseTransport` and `WebSocketTransport` carry equivalent frame
 content. Serve them at the host edge and close their scoped work when the

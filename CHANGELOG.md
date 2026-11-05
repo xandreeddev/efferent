@@ -65,8 +65,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   past other kinds), its services check covers the fold, and
   `makeMemoryJournal`'s tails read only the kinds asked for. New types:
   `FeedFramesOptions`, `FeedSnapshot`, `SnapshotFold`, `FoldReplaySubject`.
+- A session's live channel: its transient events reach every follower of
+  the session, not only the call that runs the turn. `assistant.delta` and
+  `tool.progress` existed only on the turn's own bus, and `Sessions.changes`
+  signals commits only, so a feed opened by another request (a second tab,
+  a reconnecting client, the request that did not start a turn run in the
+  background) saw a reply only once the journal had it, and each host built
+  its own per-session hub. `@xandreed/core` adds the `SessionChannel` port
+  (`@xandreed/core/SessionChannel`: `publish(address, payload)` and
+  `subscribe(address)`, `SessionChannelPayload`, `SessionChannelError`),
+  `shareTransient(address, options?)`, an opt-in turn subscription that
+  publishes the chosen transient events (`TransientTurnEventName`; all by
+  default) through a queue of its own, so it never fails or holds the turn
+  (a full queue drops its oldest payload; a publish that fails or takes
+  longer than `publishTimeoutMs` is logged and dropped), and
+  `sessionChannelConformance` (`@xandreed/core/conformance`: order,
+  isolation by id and owner, no replay, a bounded backlog, release).
+  `@xandreed/plugin-sessions` adds `SessionChannelMemoryLive` and
+  `makeMemorySessionChannel`, one process's channel (a sliding hub of
+  `capacity` payloads, 256 by default, per followed session, released with
+  its last follower), and `@xandreed/plugin-render` adds `sessionLive(feed)`,
+  a session's channel as the `live` stream of `RenderFeed.frames` (passed
+  in its options: `frames(scope, after, project, { live })`). Nothing
+  is stored: the journal, the stored format and the event reference are
+  unchanged, and a client that reconnects reads only journaled records.
 
 ### Changed
+
 
 
 
@@ -90,7 +115,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -116,7 +143,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
   options instead of as the fourth argument: `frames(scope, after,
@@ -125,6 +154,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 ## 0.17.1 — 2026-11-05
 

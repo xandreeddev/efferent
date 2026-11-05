@@ -3795,7 +3795,39 @@ record with sequence `head` (a session's `seq` when the client connects)
 carrying `fold` of the records up to it, then the records after it; a
 client resuming at a cursor up to the head is not sent it.
 `foldEqualsReplay` checks a fold against its projection at every head of a
-sample journal. The events guide
+sample journal. 
+
+**A session's live channel.** A turn's transient events (`assistant.delta`,
+`tool.progress`) exist only on its own bus, in the call that runs it.
+`SessionChannel` (core's port, `@xandreed/core/SessionChannel`) shares them
+with every follower of the session: `publish(address, payload)` hands a
+`SessionChannelPayload` (`{ event, data }`, JSON) to whoever follows that
+address at the time, and `subscribe(address)` follows it from its first
+pull on, in publish order, never replaying what came before and never
+another session's (the same id under another owner is another session).
+A follower that falls behind keeps the adapter's capacity, the newest; a
+session's state lives only while someone follows it; a failure of the
+adapter's transport is `SessionChannelError` (`unavailable`). The channel
+stores nothing and authorizes nothing: the host checks a follower as it
+does before `Sessions.read`. `shareTransient(address, options?)` is an
+opt-in turn subscription that publishes the chosen transient events (all
+by default), named as the event with its other fields as data. It never
+fails or holds the turn: the bus hands each payload to a queue of
+`capacity` (256; the oldest waiting payload dropped when it is full)
+without waiting, and one fiber publishes them in order, each within
+`publishTimeoutMs` (2000); a publish that fails or takes longer is logged
+and dropped, and as the turn's scope closes what still waits gets one more
+timeout. The host
+publishes its own live payloads directly. plugin-sessions'
+`SessionChannelMemoryLive({ capacity })` is one process's adapter (a
+sliding hub of 256 payloads per followed session, released with its last
+follower), and plugin-render's `sessionLive(feed)` turns a session's
+channel into a feed's `live` stream (`frames(scope, after, project, { live })`), so a feed opened by any request shows
+a turn another request runs, while a reconnect reads only the journal.
+`sessionChannelConformance` (`@xandreed/core/conformance`) checks an
+adapter: order, isolation, no replay, a bounded backlog and release.
+
+The events guide
 [serves it over SSE](events.md#serving-turns-over-http) with a projection
 that keeps prompts and tool input and output on the server, and shows
 [what another process needs to follow a session](events.md#reading-the-journal)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Match, Option, Ref, Schema, Scope, Stream } from "effect"
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Match, Option, Ref, Schedule, Schema, Scope, Stream } from "effect"
 import { LanguageModel, Tool } from "effect/ai"
 import {
   ActionPolicy,
@@ -31,9 +31,10 @@ import {
 import type { Capability, SessionAddress, SessionLog, Turn, TurnBeginError, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { decodeSse, foldEqualsReplay, PrincipalId, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
-import type { FeedOptions, FeedPayload, FeedProjection, JournalRecord, SnapshotFold, SsePeer } from "@xandreed/plugin-render"
-import { SessionsPluginLive } from "@xandreed/plugin-sessions"
+import { SessionChannel, shareTransient } from "@xandreed/core"
+import { decodeSse, foldEqualsReplay, PrincipalId, RenderFeed, RenderFeedLive, renderFeedDefaults, sessionLive, SessionsJournalTailLive, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
+import type { FeedFrame, FeedOptions, FeedPayload, FeedProjection, JournalRecord, SnapshotFold, SsePeer } from "@xandreed/plugin-render"
+import { makeMemorySessionChannel, SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 
 /*
@@ -440,6 +441,22 @@ export const eventsRoute = (host: Host, owner: string, id: string, request: Requ
   })))
 // #endregion events-route
 
+// #region share
+/**
+ * `use` for a turn the client that asked may not be watching (a turn run in
+ * the background, a tab closed): its token deltas and tool progress also go
+ * to the session's channel, for every follower of the session.
+ */
+export const streamAndShare = (address: SessionAddress, push: Push) => (turn: Turn) =>
+  subscribeAll(turn.events, [shareTransient(address)]).pipe(Effect.andThen(streamTo(push)(turn)))
+
+/** The journal route's frames, with what the session's channel carries as live frames after `ready`. */
+export const followedFrames = (host: Host, address: SessionAddress, after: number) => {
+  const feed = { threadId: ThreadId.make(address.id), principalId: PrincipalId.make(address.owner) }
+  return sessionLive(feed).pipe(Effect.map((live) => host.feed.frames(feed, after, clientProjection, { live })))
+}
+// #endregion share
+
 // #region ping
 /** GET /ping: what this instance has in flight, for a deploy waiting to stop it; 503 once it is stopping, so a load balancer sends it no more turns. */
 export const pingRoute = (host: Host): Promise<Response> => Effect.runPromise(host.agent.activity.pipe(Effect.map((now) =>
@@ -677,6 +694,31 @@ describe("the journal", () => {
     const page = yield* readAfter(readerHost.sessions, address, 0)
     expect(page.events.map((event) => event.seq)).toEqual(page.events.map((_, index) => index + 1))
     expect((yield* readAfter(readerHost.sessions, address, page.cursor)).events).toEqual([])
+  })))
+})
+
+describe("sharing a turn's live events with every follower", () => {
+  test("a follower that never asked sees the reply stream after its backlog, and a reconnect sees only the journal", () => run(Effect.gen(function* () {
+    const host = yield* hostWith(yield* scripted([says("Hello there.")]))
+    const { channel, retained } = yield* makeMemorySessionChannel()
+    const withChannel = Effect.provideService(SessionChannel, channel)
+    const seen = yield* Ref.make<ReadonlyArray<FeedFrame>>([])
+    const following = yield* (yield* withChannel(followedFrames(host, address, 0))).pipe(
+      Stream.tap((frame) => Ref.update(seen, (all) => [...all, frame])),
+      Stream.takeUntil((frame) => frame._tag === "FeedRecord" && frame.event === "turn.ended"),
+      Stream.runCollect,
+      Effect.forkChild,
+    )
+    const followed = Effect.all([Ref.get(seen), retained], { concurrency: 1 }).pipe(Effect.map(([frames, held]) => frames.some((frame) => frame._tag === "FeedReady") && held === 1))
+    yield* followed.pipe(Effect.repeat({ until: (ready) => ready, schedule: Schedule.spaced("5 millis") }))
+    const result = yield* withChannel(host.agent.turn({ ...ask("hi"), services: Context.make(LanguageModel.LanguageModel, host.model) }, streamAndShare(address, () => Effect.void)))
+    expect(result.outcome).toBe("completed")
+    const frames = yield* Fiber.join(following)
+    const live = frames.flatMap((frame) => frame._tag === "FeedTransient" ? [frame] : [])
+    expect(live.map((frame) => frame.data.delta).join("")).toBe("Hello there.")
+    expect(frames.findIndex((frame) => frame._tag === "FeedReady")).toBeLessThan(frames.findIndex((frame) => frame._tag === "FeedTransient"))
+    const again = yield* (yield* withChannel(followedFrames(host, address, 0))).pipe(Stream.takeUntil((frame) => frame._tag === "FeedReady"), Stream.runCollect)
+    expect(again.map((frame): string => frame._tag)).toEqual([...frames.filter((frame) => frame._tag === "FeedRecord").map(() => "FeedRecord"), "FeedReady"])
   })))
 })
 
