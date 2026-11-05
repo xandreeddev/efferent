@@ -67,6 +67,15 @@ Use `status`, `retry`, and `process` for host-controlled operation. With
 `worker: false`, the host must schedule processing. Workers otherwise recover
 durable jobs after restart and renew leases during processing.
 
+Jobs are recorded under an engine id derived from the embedding options
+(`knowledgeEngineId("rag:1", { model, version, dimensions })`, for example
+`rag:1/host-embedding/1/768`). The worker and `process` discover and claim only
+jobs of that id, so engines configured with different embedding spaces on one
+store never index each other's documents. After changing the embedding
+options, a job queued under the earlier configuration is processed only by an
+engine still configured that way; ingest the source again as its next revision
+to index it under the new one.
+
 ## Search, graph and model context
 
 The read-only tools are `search_knowledge` and `read_knowledge`. Results carry

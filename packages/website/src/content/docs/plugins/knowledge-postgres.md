@@ -101,6 +101,12 @@ the source revision, lease and scope checks pass. The database transaction
 never stays open while a model runs. Restarted workers can recover durable
 pending work and reuse valid stages.
 
+Each job row records its engine id, which names the engine and its embedding
+space. Discovery and claims, a claim by job id included, filter on it, so
+workers configured with different embedding spaces can share the database
+without taking each other's jobs. The adapter passes
+`knowledgeStoreConformance`, including its `knowledge.engine-isolation` check.
+
 The runtime-scoped pool closes with its owning scope. Keep engines and their
 workers inside that scope, and use the agent's bounded shutdown before closing
 host services. Sleeping workers and queued jobs are not active work.

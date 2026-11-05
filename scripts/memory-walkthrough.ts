@@ -5,12 +5,12 @@ import { join } from "node:path"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { EmbeddingModel, LanguageModel, Prompt } from "effect/ai"
 import type { Response } from "effect/ai"
-import { ConversationId, LongTermMemory, MemoryStore, RunId, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, entriesOfEvents, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
+import { ConversationId, KNOWLEDGE_EXTRACTION_VERSION, LongTermMemory, MemoryStore, RunId, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, entriesOfEvents, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { memoryCapturePlugin, memoryPlugin } from "@xandreed/plugin-memory"
+import { memoryCapturePlugin, memoryDefaults, memoryPlugin } from "@xandreed/plugin-memory"
 import { SessionLogFilesLive } from "@xandreed/plugin-session-files"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -24,6 +24,7 @@ const preference = "I prefer concise release summaries."
 const owner = "example-user"
 const scope = { owner, namespace: "walkthrough", collection: "memory" }
 const config = { namespace: scope.namespace, worker: false, review: false, consolidate: false, queryPlanning: false, rerank: false, embeddingDimensions: 2, recallChars: 800, recallLimit: 2 }
+const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: memoryDefaults.embeddingModel, version: memoryDefaults.embeddingVersion, dimensions: config.embeddingDimensions })
 const first = { owner, id: ConversationId.make("00000000-0000-4000-8000-0000000000a1") }
 const second = { owner, id: ConversationId.make("00000000-0000-4000-8000-0000000000b1") }
 
@@ -111,7 +112,7 @@ export const runMemoryWalkthrough = Effect.fn("example.memory_walkthrough")(func
       const stored = yield* sessions.read(address)
       const entries = yield* entriesOfEvents(stored)
       const snapshot = yield* store.snapshot(scope)
-      const queued = yield* store.pending({ engine: "memory:1", namespace: scope.namespace, now: yield* Clock.currentTimeMillis, limit: 50 })
+      const queued = yield* store.pending({ engine, namespace: scope.namespace, now: yield* Clock.currentTimeMillis, limit: 50 })
       snapshots.push({ number, session: address.id === second.id ? "B (new conversation)" : fresh ? "A (reopened journal)" : "A", user: text, reply: Option.getOrElse(result.reply, () => ""),
         deploymentFile: yield* io(() => readFile(join(workspace, "deployment.md"), "utf8")),
         requests: yield* Ref.get(requests), journalEvents: stored.length,

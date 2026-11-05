@@ -1,7 +1,7 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeBm25,
   fuseKnowledgeCandidates, knowledgeExtractionPrompt, knowledgeQueryPrompt, knowledgeRerankPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction,
@@ -13,7 +13,6 @@ import type {
 } from "@xandreed/core"
 import type { MemoryConfig } from "./memory.entity.js"
 
-const ENGINE = `memory:${KNOWLEDGE_EXTRACTION_VERSION}`
 const failure = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const decodeExtraction = (text: string) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(text).pipe(
   Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The extraction model returned an invalid knowledge object", cause })),
@@ -32,6 +31,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   const execution = yield* Semaphore.make(1)
   const active = yield* Ref.make<ReadonlyArray<Fiber.Fiber<unknown, unknown>>>([])
   const space: KnowledgeEmbeddingSpace = { model: config.embeddingModel, version: config.embeddingVersion, dimensions: config.embeddingDimensions }
+  const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, space)
   const inScope = (scope: KnowledgeScope) => scope.namespace === config.namespace && scope.collection === config.collection
     ? Effect.void : Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Use the collection configured for this memory engine" }))
 
@@ -101,7 +101,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       if (!admitted) return { _tag: "Empty" as const }
       return yield* Effect.gen(function* () {
         // Count uncertain claims before storage I/O; stop never waits on that I/O while holding admission.
-        const claimed = yield* store.claim({ scope, worker: workerName, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
+        const claimed = yield* store.claim({ scope, engine, worker: workerName, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
         if (Option.isNone(claimed)) return { _tag: "Empty" as const }
         const job = claimed.value
         const heartbeat = Effect.forever(Effect.sleep(Math.max(1, Math.floor(config.leaseMs / 3))).pipe(
@@ -189,7 +189,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   const capture = Effect.fn("memory.capture")(function* (input: KnowledgeEnqueue) {
     yield* inScope(input.source.scope)
     if (input.source.text.length > config.maxSourceChars) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Split the source into smaller evidence records before capture" }))
-    const job = yield* store.enqueue({ ...input, engine: ENGINE })
+    const job = yield* store.enqueue({ ...input, engine })
     yield* Queue.offer(wake, undefined)
     return job
   })
@@ -204,7 +204,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
 
   const drain = Effect.gen(function* () {
     // The idle scan runs every poll: untraced, so an idle worker records nothing; each claimed job is traced.
-    const pending = yield* store.pending({ engine: ENGINE, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize }).pipe(Effect.withTracerEnabled(false))
+    const pending = yield* store.pending({ engine, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize }).pipe(Effect.withTracerEnabled(false))
     yield* Effect.forEach(pending.filter((job) => job.scope.collection === config.collection), (job) => processOne(job.scope, job).pipe(
       Effect.ignore({ log: "Warn", message: "A memory source remains unprocessed; inspect its processing status before retrying" }),
     ), { concurrency: 1 })

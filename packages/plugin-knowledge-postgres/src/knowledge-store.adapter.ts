@@ -254,8 +254,8 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
       return yield* db.transaction((tx) => Effect.gen(function* () {
         const rows = yield* payloads(tx, KnowledgeJob, `SELECT j.payload FROM efferent_knowledge.jobs j JOIN efferent_knowledge.heads h USING (${KEY},source_id)
           WHERE j.domain=$1 AND j.owner=$2 AND j.namespace=$3 AND j.collection=$4 AND h.tombstone_at IS NULL AND j.source_revision=h.accepted_revision
-          AND (j.phase='Queued' OR (j.phase='Processing' AND j.lease_until <= $5)) AND ($6::text IS NULL OR j.id=$6)
-          ORDER BY j.ordinal LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, [...params(domain, input.scope), input.now, input.jobId ?? null])
+          AND (j.phase='Queued' OR (j.phase='Processing' AND j.lease_until <= $5)) AND ($6::text IS NULL OR j.id=$6) AND j.engine=$7
+          ORDER BY j.ordinal LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, [...params(domain, input.scope), input.now, input.jobId ?? null, input.engine])
         const prior = rows[0]
         if (!prior) return Option.none()
         const job: KnowledgeJob = { ...prior, attempt: prior.attempt + 1, phase: { _tag: "Processing", token: input.token, worker: input.worker, leaseUntil: input.now + input.leaseMs } }

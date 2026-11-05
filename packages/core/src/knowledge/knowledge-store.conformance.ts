@@ -4,6 +4,7 @@ import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect } from "../conformance.functions.js"
 import type { KnowledgeIndex, TemporalGraph } from "../ports/knowledge.port.js"
 import type { Context } from "effect"
+import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
@@ -11,7 +12,12 @@ import {
   type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 
-/** A fresh isolated scope per check; the index may share physical storage. @public */
+/**
+ * A fresh scope per check: no two checks share owner, namespace and collection together, and the
+ * index may share physical storage. Discovery (`pending`) reads across owners, so the kit's
+ * discovery checks record their jobs under engine ids derived from the whole scope, which no other
+ * check uses. @public
+ */
 export interface KnowledgeIndexFixture {
   readonly index: KnowledgeIndex
   readonly scope: KnowledgeScope
@@ -24,9 +30,12 @@ export interface KnowledgeIndexSubject { readonly open: Effect.Effect<KnowledgeI
 const sourceOf = (scope: KnowledgeScope, text = "Alice prefers coffee", name = "source", revision = 1): KnowledgeSource => ({
   scope, ref: { id: KnowledgeSourceId.make(name), revision }, text, occurredAt: 10, recordedAt: 20, metadata: {},
 })
-const enqueue = (fixture: KnowledgeIndexFixture, source: KnowledgeSource, name = "job", previous: Option.Option<number> = Option.none()) => fixture.index.enqueue({ jobId: KnowledgeJobId.make(name), source, engine: "kit", expectedRevision: previous })
+const KIT_ENGINE = "kit"
+const enqueue = (fixture: KnowledgeIndexFixture, source: KnowledgeSource, name = "job", previous: Option.Option<number> = Option.none(), engine = KIT_ENGINE) => fixture.index.enqueue({ jobId: KnowledgeJobId.make(name), source, engine, expectedRevision: previous })
 const leaseOf = (scope: KnowledgeScope, job: KnowledgeJob, now = 21): KnowledgeLease => ({ scope, jobId: job.id, token: KnowledgeLeaseToken.make("token"), now })
-const claim = (fixture: KnowledgeIndexFixture, now = 20, token = "token") => fixture.index.claim({ scope: fixture.scope, worker: "kit", token: KnowledgeLeaseToken.make(token), now, leaseMs: 100 })
+const claim = (fixture: KnowledgeIndexFixture, now = 20, token = "token", engine = KIT_ENGINE) => fixture.index.claim({ scope: fixture.scope, engine, worker: "kit", token: KnowledgeLeaseToken.make(token), now, leaseMs: 100 })
+/** An engine id no other check (and no other fixture) records jobs under, so cross-owner discovery sees only this check's jobs. */
+const scopedEngine = (scope: KnowledgeScope, name: string) => `${KIT_ENGINE}-${name}:${knowledgeScopeKey(scope)}`
 const memoryOf = (source: KnowledgeSource, name = "memory"): KnowledgeMemory => ({
   id: KnowledgeMemoryId.make(name), kind: "preference", text: source.text,
   provenance: [{ source: source.ref, start: 0, end: source.text.length, quote: source.text }],
@@ -48,7 +57,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging, CAS atomicity, exact evidence, isolation, hybrid candidates, forgetting,
- * revision replacement, and bitemporal traversal. Each check opens a fresh fixture.
+ * revision replacement, engine-scoped discovery and claims, and bitemporal traversal. Each check
+ * opens a fresh fixture.
  * @public
  */
 export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): ReadonlyArray<ConformanceCheck> => {
@@ -237,8 +247,8 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* fixture.index.stage(leaseOf(fixture.scope, job), staged)
       const otherScope = { ...fixture.scope, owner: `${fixture.scope.owner}-other` }
       const otherSource = sourceOf(otherScope, "Other owner evidence", "survivor")
-      const otherJob = yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make("other-owner-job"), source: otherSource, engine: "kit", expectedRevision: Option.none() })
-      yield* fixture.index.claim({ scope: otherScope, worker: "kit", token: KnowledgeLeaseToken.make("token"), now: 20, leaseMs: 100 })
+      const otherJob = yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make("other-owner-job"), source: otherSource, engine: KIT_ENGINE, expectedRevision: Option.none() })
+      yield* fixture.index.claim({ scope: otherScope, engine: KIT_ENGINE, worker: "kit", token: KnowledgeLeaseToken.make("token"), now: 20, leaseMs: 100 })
       yield* fixture.index.stage(leaseOf(otherScope, otherJob), stageOf(otherSource, 0, "other-owner-memory"))
       yield* fixture.index.forget(fixture.scope, initial.source.ref.id, 50)
       const status = yield* fixture.index.status(fixture.scope, job.id)
@@ -257,15 +267,31 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* expect("knowledge.unpublished-stage-privacy", Option.isSome(yield* fixture.index.memory(fixture.scope, KnowledgeMemoryId.make("survivor-memory"))), "a cleared unpublished extraction could not be rebuilt from its surviving source")
     })),
     indexCheck("knowledge.pending-discovery", (fixture) => Effect.gen(function* () {
+      const engine = scopedEngine(fixture.scope, "discovery")
       const foreign = { ...sourceOf(fixture.scope, "Other collection", "foreign-source"), scope: { ...fixture.scope, collection: `${fixture.scope.collection}-other` } }
-      yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make("foreign-job"), source: foreign, engine: "kit", expectedRevision: Option.none() })
+      yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make("foreign-job"), source: foreign, engine, expectedRevision: Option.none() })
       const source = sourceOf(fixture.scope)
-      const job = yield* enqueue(fixture, source)
-      yield* claim(fixture)
-      const live = yield* fixture.index.pending({ engine: "kit", namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 21, limit: 1 })
-      const expired = yield* fixture.index.pending({ engine: "kit", namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 121, limit: 1 })
-      const other = yield* fixture.index.pending({ engine: "different", namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 121, limit: 1 })
+      const job = yield* enqueue(fixture, source, "job", Option.none(), engine)
+      yield* claim(fixture, 20, "token", engine)
+      const live = yield* fixture.index.pending({ engine, namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 21, limit: 1 })
+      const expired = yield* fixture.index.pending({ engine, namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 121, limit: 1 })
+      const other = yield* fixture.index.pending({ engine: `${engine}-different`, namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 121, limit: 1 })
       yield* expect("knowledge.pending-discovery", live.length === 0 && expired.length === 1 && expired[0]?.id === job.id && other.length === 0, "durable discovery lost expired work, filtered collection after its limit, or crossed engine boundaries")
+    })),
+    indexCheck("knowledge.engine-isolation", (fixture) => Effect.gen(function* () {
+      const first = scopedEngine(fixture.scope, "first")
+      const second = scopedEngine(fixture.scope, "second")
+      const firstJob = yield* enqueue(fixture, sourceOf(fixture.scope, "First engine evidence", "first-source"), "first-job", Option.none(), first)
+      const secondJob = yield* enqueue(fixture, sourceOf(fixture.scope, "Second engine evidence", "second-source"), "second-job", Option.none(), second)
+      const discover = (engine: string) => fixture.index.pending({ engine, namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 20, limit: 10 })
+      const firstFound = yield* discover(first)
+      const secondFound = yield* discover(second)
+      yield* expect("knowledge.engine-isolation", firstFound.length === 1 && firstFound[0]?.id === firstJob.id && secondFound.length === 1 && secondFound[0]?.id === secondJob.id, "discovery returned another engine's job in the same collection")
+      const requested = yield* fixture.index.claim({ scope: fixture.scope, engine: second, worker: "kit", token: KnowledgeLeaseToken.make("requested"), now: 20, leaseMs: 100, jobId: firstJob.id })
+      const taken = yield* claim(fixture, 20, "first-token", first)
+      const exhausted = yield* claim(fixture, 20, "first-again", first)
+      const own = yield* claim(fixture, 20, "second-token", second)
+      yield* expect("knowledge.engine-isolation", Option.isNone(requested) && Option.exists(taken, (job) => job.id === firstJob.id && job.engine === first) && Option.isNone(exhausted) && Option.exists(own, (job) => job.id === secondJob.id && job.engine === second), "a worker claimed a job recorded under another engine")
     })),
     indexCheck("knowledge.bitemporal-change", (fixture) => Effect.gen(function* () {
       const first = sourceOf(fixture.scope, "Alice works at Acme", "employment-one")

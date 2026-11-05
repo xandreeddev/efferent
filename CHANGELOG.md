@@ -10,15 +10,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
-
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
   runner provides a `ModelSpend`.
-
+- A host that calls `KnowledgeIndex.claim` passes `engine`, the id its jobs
+  were enqueued under. A host's own `KnowledgeIndex` claims only jobs of
+  that engine; rerun `knowledgeStoreConformance` (new check
+  `knowledge.engine-isolation`).
+- Jobs that `plugin-rag` or `plugin-memory` queued under `rag:1` or
+  `memory:1` and never completed (queued, failed, or processing under an
+  expired lease) are no longer discovered or claimed, and `retry` keeps a
+  job's engine id. Ingest or capture each such source again as its next
+  revision (`expectedRevision: Option.some(<current revision>)`) under a new
+  job id: the engine records it under its current id, and the new revision
+  cancels the old job. Published knowledge is unaffected.
 
 ### Added
-
 
 - `@xandreed/core`: stored tool lifecycle and conversation message records
   decode with typed schemas. `StoredData` adds `tool.started`,
@@ -150,9 +158,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `skipped` and `spend` when it recorded spend. `positiveAmount` reads such
   a flag. `@xandreed/evals` now depends on `@xandreed/core`, for the ledger
   alone.
-
+- `@xandreed/core`: `knowledgeEngineId(processor, space)`, the engine id of
+  a processor and the embedding space it indexes with
+  (`<processor>/<model>/<version>/<dimensions>`, a `/` or `%` in a part
+  escaped); distinct spaces always give distinct ids.
+- `@xandreed/core`: `knowledgeStoreConformance` checks
+  `knowledge.engine-isolation`: two engines in one collection neither
+  discover nor claim each other's jobs, a claim by job id included.
 
 ### Changed
+
 
 
 
@@ -176,6 +191,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   what plugins and each turn add is known only then. Nothing changes at run
   time; `AgentConfig` and `Agent` without a type argument are the same types
   as before.
+
 
 
 
@@ -209,8 +225,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   statement and lock deadlines and every other error stay `Unavailable` with
   the same message; concurrent writes stay `Conflict`. The classification is
   one mapping by SQLSTATE and the step a statement runs in.
+- `@xandreed/plugin-rag`, `@xandreed/plugin-memory`: a knowledge worker
+  processes only the jobs of its own embedding space. Each engine recorded
+  its jobs under a constant engine id (`rag:1`, `memory:1`) whatever its
+  embedding options; discovery (`KnowledgeIndex.pending`) filtered only by
+  that id, namespace and collection, and `claim` filtered by no engine at
+  all. Two processes configured with different embedding models on one store
+  therefore discovered, claimed and embedded each other's jobs in the wrong
+  space. Each engine now enqueues, discovers and claims under
+  `knowledgeEngineId("rag:1" | "memory:1", space)`, the space being its
+  `embeddingModel`, `embeddingVersion` and `embeddingDimensions` (the
+  defaults give `rag:1/host/1/1536`).
+- `@xandreed/core`, `@xandreed/plugin-knowledge-postgres`: `KnowledgeClaim`
+  has a required `engine`. The in-memory index and the PostgreSQL store
+  claim only a job recorded under it, with or without `jobId` (the jobs
+  table already held the engine; no migration).
+- `@xandreed/core`: `knowledgeStoreConformance`'s
+  `knowledge.pending-discovery` check passes against a store whose other
+  checks share its namespace and collection. Discovery reads across owners
+  and the check reads with a limit of one, so another check's job could
+  answer it; it now records its jobs under an engine id derived from the
+  fixture's whole scope. `KnowledgeIndexFixture` states the fixture
+  contract: no two checks share owner, namespace and collection together.
 
 ### Breaking
+
 
 
 
@@ -223,6 +262,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 

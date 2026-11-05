@@ -100,6 +100,13 @@ or set `worker: false` and schedule bounded `process(scope, limit)` calls.
 Model or embedding failures publish no partial knowledge; valid staged
 extraction can survive retry. Shutdown stops new claims and bounds active work.
 
+Captured jobs are recorded under an engine id derived from the embedding
+options (`knowledgeEngineId("memory:1", { model, version, dimensions })`). The
+worker and `process` discover and claim only jobs of that id, so engines
+configured with different embedding spaces on one store never learn from each
+other's sources. After changing the embedding options, capture the source again
+as its next revision to process it under the new configuration.
+
 `forget` tombstones a source and removes its text and dependent learned
 knowledge, including historical graph evidence. Backfill cannot resurrect that
 source. Original session journals and database backups require their own

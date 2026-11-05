@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Result } from "effect"
+import { Effect, Option, Ref, Result } from "effect"
 import type { KnowledgeIndex } from "../ports/knowledge.port.js"
 import { makeKnowledgeIndexMemory } from "./knowledge.memory.adapter.js"
 import { knowledgeStoreConformance, temporalGraphConformance } from "./knowledge-store.conformance.js"
-import { KnowledgeLeaseToken, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
+import { KnowledgeLeaseToken, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
 
 const scope: KnowledgeScope = { owner: "test", namespace: "assistant", collection: "memory" }
 const checks = knowledgeStoreConformance({ open: Effect.map(makeKnowledgeIndexMemory(), (index) => ({ index, scope })) })
@@ -16,7 +16,7 @@ describe("knowledge index reference conformance", () => {
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
       "knowledge.hybrid-candidates", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
-      "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
+      "knowledge.engine-isolation", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
   })
 })
@@ -42,4 +42,31 @@ test("the graph kit rejects a separate view that ignores the backing index", asy
   expect(graphChecks.map((check) => check.name)).toEqual(["knowledge.bitemporal-change", "knowledge.bitemporal-traversal"])
   const results = await Effect.runPromise(Effect.forEach(graphChecks, (check) => Effect.result(check.run), { concurrency: 1 }))
   expect(results.every(Result.isFailure)).toBe(true)
+})
+
+test("every check passes when all of them share one index, namespace and collection", async () => {
+  const shared = await Effect.runPromise(makeKnowledgeIndexMemory())
+  const owners = await Effect.runPromise(Ref.make(0))
+  const sharing = knowledgeStoreConformance({ open: Effect.map(Ref.updateAndGet(owners, (count) => count + 1), (count) => ({ index: shared, scope: { ...scope, owner: `owner-${count}` } })) })
+  const results = await Effect.runPromise(Effect.forEach(sharing, (check) => Effect.result(check.run), { concurrency: 1 }))
+  expect(sharing.filter((_, index) => !Result.isSuccess(results[index]!)).map((check) => check.name)).toEqual([])
+})
+
+test("a store that claims jobs of any engine fails the engine isolation check alone", async () => {
+  const engineBlind = Effect.gen(function* () {
+    const real = yield* makeKnowledgeIndexMemory()
+    const engines = yield* Ref.make<ReadonlyArray<string>>([])
+    const claimAny = (input: KnowledgeClaim, remaining: ReadonlyArray<string>): Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError> => remaining.length === 0
+      ? Effect.succeed(Option.none())
+      : real.claim({ ...input, engine: remaining[0]! }).pipe(Effect.flatMap((found) => Option.isSome(found) ? Effect.succeed(found) : claimAny(input, remaining.slice(1))))
+    const index: KnowledgeIndex = {
+      ...real,
+      enqueue: (input) => Ref.update(engines, (all) => all.includes(input.engine) ? all : [...all, input.engine]).pipe(Effect.andThen(real.enqueue(input))),
+      claim: (input) => Ref.get(engines).pipe(Effect.flatMap((all) => claimAny(input, all))),
+    }
+    return { index, scope }
+  })
+  const broken = knowledgeStoreConformance({ open: engineBlind })
+  const results = await Effect.runPromise(Effect.forEach(broken, (check) => Effect.result(check.run), { concurrency: 1 }))
+  expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.engine-isolation"])
 })

@@ -4,7 +4,7 @@ import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId, KnowledgeVector,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
-import { fuseKnowledgeCandidates, knowledgeBm25, knowledgeCosine, knowledgeScopeKey, traverseKnowledgeGraph, validateKnowledgeStage } from "./knowledge.entity.functions.js"
+import { fuseKnowledgeCandidates, knowledgeBm25, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, traverseKnowledgeGraph, validateKnowledgeStage } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
 const source = (name: string): KnowledgeSource => ({ scope, ref: { id: KnowledgeSourceId.make(name), revision: 1 }, text: "Visits the cafe every Monday", occurredAt: 1, recordedAt: 2, metadata: {} })
@@ -17,6 +17,19 @@ const stage = (record: KnowledgeMemory): KnowledgeStage => ({ expectedVersion: 0
 
 test("scope keys resist delimiters and Unicode boundary confusion", () => {
   expect(knowledgeScopeKey({ owner: "a/b", namespace: "c", collection: "d" })).not.toBe(knowledgeScopeKey({ owner: "a", namespace: "b/c", collection: "d" }))
+})
+test("engine ids name the processor and its embedding space, distinct for every space", () => {
+  const space = { model: "embed", version: "1", dimensions: 768 }
+  expect(knowledgeEngineId("rag:1", space)).toBe("rag:1/embed/1/768")
+  expect(knowledgeEngineId("rag:1", { ...space, model: "vendor/embed" })).toBe("rag:1/vendor%2Fembed/1/768")
+  const ids = [
+    knowledgeEngineId("rag:1", space), knowledgeEngineId("memory:1", space),
+    knowledgeEngineId("rag:1", { ...space, model: "other" }), knowledgeEngineId("rag:1", { ...space, version: "2" }),
+    knowledgeEngineId("rag:1", { ...space, dimensions: 1536 }),
+    knowledgeEngineId("rag:1", { ...space, model: "a/b", version: "c" }), knowledgeEngineId("rag:1", { ...space, model: "a", version: "b/c" }),
+    knowledgeEngineId("rag:1", { ...space, model: "a%2Fb", version: "c" }),
+  ]
+  expect(new Set(ids).size).toBe(ids.length)
 })
 test("vectors reject mismatched dimensions and nonfinite values at the schema edge", async () => {
   const decode = Schema.decodeUnknownEffect(KnowledgeVector)

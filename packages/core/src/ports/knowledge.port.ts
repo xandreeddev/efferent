@@ -10,6 +10,7 @@ import type {
 /**
  * Durable source processing and derived indexes. Replaying identical source/revision/engine
  * returns its original job. Conflicting content or source/job reuse fails without changes.
+ * Discovery (`pending`) and `claim` see only jobs recorded under the requested engine.
  * Staging verifies the unexpired lease, current scope version and source provenance.
  * Publication verifies the unexpired lease, current source revision, provenance and scope CAS,
  * atomically replaces that source's indexes, retires requested records, and completes the job.

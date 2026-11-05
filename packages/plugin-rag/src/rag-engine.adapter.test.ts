@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { KnowledgeJobId, KnowledgeSourceId, makeKnowledgeIndexMemory, UtilityLlm } from "@xandreed/core"
+import { KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, makeKnowledgeIndexMemory, UtilityLlm } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { enqueue, makeEmbeddings, makeRag, scope, scriptedUtility } from "./rag.testing.js"
 
@@ -34,6 +34,27 @@ describe("native document ingestion", () => {
     yield* knowledge.forget(scope, source.source.ref.id)
     expect((yield* knowledge.retrieve({ scope, query: "blue", limit: 3, maxChars: 1000 })).candidates).toEqual([])
     expect((yield* Effect.result(knowledge.ingest(source)))._tag).toBe("Failure")
+  }))))
+
+  test("two embedding configurations on one store each discover and process only the jobs of their own space", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { knowledge, store } = yield* makeRag()
+    const { knowledge: otherSpace } = yield* makeRag({ embeddingModel: "other-embedder" }, store)
+    const otherOwner = { ...scope, owner: "other-owner" }
+    const job = yield* knowledge.ingest(enqueue("guide", "Atlas deploys through the blue release lane."))
+    const manual = enqueue("manual", "Borealis deploys through the green release lane.")
+    const otherJob = yield* otherSpace.ingest({ ...manual, source: { ...manual.source, scope: otherOwner } })
+    expect(job.engine).toBe(knowledgeEngineId("rag:1", { model: "host", version: "1", dimensions: 2 }))
+    expect(otherJob.engine).toBe(knowledgeEngineId("rag:1", { model: "other-embedder", version: "1", dimensions: 2 }))
+    const discovered = (engine: string) => store.pending({ engine, namespace: scope.namespace, collection: scope.collection, now: 0, limit: 10 }).pipe(Effect.map((jobs) => jobs.map((entry) => entry.id)))
+    expect(yield* discovered(job.engine)).toEqual([job.id])
+    expect(yield* discovered(otherJob.engine)).toEqual([otherJob.id])
+    expect(yield* otherSpace.process(scope, 10)).toBe(0)
+    expect(Option.map(yield* store.status(scope, job.id), (current) => current.phase._tag)).toEqual(Option.some("Queued"))
+    expect(yield* knowledge.process(otherOwner, 10)).toBe(0)
+    expect(yield* knowledge.process(scope, 10)).toBe(1)
+    expect(yield* otherSpace.process(otherOwner, 10)).toBe(1)
+    expect(Option.map(yield* store.status(scope, job.id), (current) => current.phase._tag)).toEqual(Option.some("Complete"))
+    expect(Option.map(yield* store.status(otherOwner, otherJob.id), (current) => current.phase._tag)).toEqual(Option.some("Complete"))
   }))))
 
   test("a failed replacement preserves the old published revision and resumes its staged chunks", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
