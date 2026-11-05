@@ -2,12 +2,16 @@ const HolderProcess
 const InboxDrainConfig
 const InboxDrainLive
 const Ownership
+const SessionChannelMemoryLive
+const SessionChannelOptions
 const SessionsConfig
 const SessionsLive
 const SessionsPluginLive
 const default
 const inboxDrainDefaults
+const makeMemorySessionChannel
 const processLiveness
+const sessionChannelDefaults
 const sessionsDefaults
 const sessionsPlugin
 interface ProcessLiveness
@@ -15,4 +19,5 @@ type HolderProcess
 type InboxDrainConfig
 type InboxDrainOptions
 type Ownership
+type SessionChannelOptions
 type SessionsConfig

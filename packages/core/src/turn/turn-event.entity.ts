@@ -298,8 +298,17 @@ export type TurnEvent = typeof TurnEvent.Type
 export type TurnEventName = TurnEvent["_tag"]
 export type TurnEventOf<Name extends TurnEventName> = Extract<TurnEvent, { readonly _tag: Name }>
 
+/**
+ * The name of a transient event: one that exists only for live rendering
+ * and is never journaled.
+ *
+ * @public
+ */
+export const TransientTurnEventName = Schema.Literals(["assistant.delta", "tool.progress"])
+export type TransientTurnEventName = typeof TransientTurnEventName.Type
+
 /** Events that exist only for live rendering and are never journaled. */
-export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.delta", "tool.progress"]
+export const TransientTurnEvents: ReadonlyArray<TurnEventName> = TransientTurnEventName.literals
 
 /**
  * Every bus event's name, in the union's order (its tags, as the union

@@ -529,6 +529,11 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 })))
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
+// A session's live channel on Node: the packed in-memory adapter passes core's kit.
+const { makeMemorySessionChannel } = await import("@xandreed/plugin-sessions")
+const { sessionChannelConformance } = await import("@xandreed/core/conformance")
+const channelChecks = await runKit("SessionChannel", sessionChannelConformance({ open: () => makeMemorySessionChannel({ capacity: 8 }).pipe(Effect.map(({ channel, retained }) => ({ channel, capacity: 8, retained }))) }))
+console.log("The packed in-memory SessionChannel passes " + channelChecks + " checks on Node")
 const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")

@@ -213,6 +213,10 @@ export type { TurnError } from "./session/sessions.entity.js"
 export { isShutdownRefusal, isTurnError, resumeRefusal, sessionAttributes, shutdownRefusal, turnAttributes, turnEndingOf } from "./session/sessions.entity.functions.js"
 export type { ResumableTurn } from "./session/sessions.entity.functions.js"
 export { Sessions } from "./ports/sessions.port.js"
+export { SessionChannel } from "./ports/session-channel.port.js"
+export { SessionChannelError, SessionChannelPayload } from "./session/session-channel.entity.js"
+export { shareTransient } from "./session/session-channel.entity.functions.js"
+export type { ShareTransientOptions } from "./session/session-channel.entity.functions.js"
 export { InboxRunner } from "./ports/inbox-runner.port.js"
 export type { Decided, Decision, TransactOptions, TransactRefusal, TurnDraft, TurnWriter } from "./ports/sessions.port.js"
 export { TurnAdmission } from "./ports/turn-admission.port.js"
@@ -380,6 +384,7 @@ export {
   ToolInterceptedEvent,
   ToolProgressEvent,
   ToolStartedEvent,
+  TransientTurnEventName,
   TransientTurnEvents,
   TurnEndedEvent,
   TurnEvent,

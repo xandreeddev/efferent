@@ -105,6 +105,7 @@ export { makeMemoryRenderStore, MemoryRenderStoreLive } from "./render-store.mem
 export type { MemoryAnnotation } from "./render-store.memory.adapter.js"
 export { makeRenderFeed, RenderFeedLive } from "./render-feed.adapter.js"
 export { SessionsJournalTailLive } from "./render-tail.sessions.adapter.js"
+export { sessionLive } from "./render-live.sessions.adapter.js"
 export { SseTransport, sseHeaders, sseNodePeer, WebSocketTransport } from "./render-transport.adapter.js"
 export { renderFeedDefaults, renderFeedPlugin, renderSurfaceDefaults, renderSurfacePlugin } from "./plugin.adapter.js"
 export { renderSurfaceConformance } from "./render-surface.conformance.js"

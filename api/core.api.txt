@@ -37,6 +37,8 @@ class RevisionConflict
 class RunContext
 class RunIdReused
 class SessionBusy
+class SessionChannel
+class SessionChannelError
 class SessionContended
 class SessionEnvironment
 class SessionExists
@@ -285,6 +287,7 @@ const STORED_FORMAT
 const SUPPORTED_PLUGIN_API_VERSIONS
 const SectionId
 const SessionAddress
+const SessionChannelPayload
 const SessionCommit
 const SessionCommitted
 const SessionDraft
@@ -365,6 +368,7 @@ const ToolStartedEvent
 const TraceId
 const TraceParent
 const TransactKeyedData
+const TransientTurnEventName
 const TransientTurnEvents
 const TurnAdmissionOpen
 const TurnBeginError
@@ -507,6 +511,7 @@ const sameUserMessage
 const scaledSize
 const scaledTokens
 const sessionAttributes
+const shareTransient
 const shutdownGracefully
 const shutdownRefusal
 const skillIssuesText
@@ -590,6 +595,7 @@ interface RenderOptions
 interface RequestSnapshot
 interface ResumableTurn
 interface RunTools
+interface ShareTransientOptions
 interface ShutdownOptions
 interface SkillMatch
 interface StepDirective
@@ -798,6 +804,7 @@ type RunResult
 type SectionId
 type ServiceKeys
 type SessionAddress
+type SessionChannelPayload
 type SessionCommit
 type SessionCommitted
 type SessionDraft
@@ -865,6 +872,7 @@ type TraceId
 type TraceParent
 type TransactKeyedData
 type TransactRefusal
+type TransientTurnEventName
 type TurnBeginError
 type TurnContextBody
 type TurnEndReason

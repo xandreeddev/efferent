@@ -92,6 +92,19 @@ engine needs stays in core (`sessionAttributes` and `turnAttributes`, which
 the in-memory log and the sessions plugin use, are session functions; the
 turn's bus is a core adapter).
 
+`SessionChannel` (`ports/session-channel.port.ts`) carries a session's live
+payloads (`SessionChannelPayload`, `session/session-channel.entity.ts`) to
+every follower of that address and stores nothing; its only failure is
+`SessionChannelError` (`unavailable`). `shareTransient`
+(`session/session-channel.entity.functions.ts`) is the opt-in turn
+subscription that publishes the chosen `TransientTurnEventName`s there
+through its own sliding queue and one sender fiber, each publish bounded by
+`publishTimeoutMs`, logging and dropping a failed or slow publish, so
+sharing never fails or holds a turn.
+`sessionChannelConformance` checks order, isolation by the whole address,
+no replay, a bounded backlog (`capacity`) and release (`retained`), with
+careless-channel self-tests; the in-memory adapter is plugin-sessions'.
+
 `ImageResizer` is the host-neutral optional image fitting port. Its input,
 target and typed error live in `domain/image-resize.entity.ts`; `fitTarget`
 and `scaledSize` are pure. `imageResizerConformance` ships pure valid PNG
