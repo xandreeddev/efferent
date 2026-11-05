@@ -72,6 +72,12 @@ their codes and guards. The rest of core (a port to implement and its
 entities, memory, model requests, stored payloads) is imported from
 `@xandreed/core`.
 
+Process-lifetime host services (a store, a client, a `Sessions`) go in
+`Agent.define({ services })` as the host built them, any `Context`, with no
+cast. The agent keeps their type (`Agent<S>`): a turn's `use` reads them
+without providing them again, and a tool that requires one still has it
+checked by key when a turn opens it (`requires.missing`).
+
 A plugin declares an Effect Schema, defaults, required/provided service tags,
 and a scoped Layer. The runtime rejects invalid options, missing dependencies,
 cycles, ambiguous providers, and incompatible plugin API versions before use.

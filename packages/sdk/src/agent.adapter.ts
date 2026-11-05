@@ -79,10 +79,12 @@ export interface AgentPluginEntry {
 
 /**
  * Everything an agent is made of. Swapping a strategy is swapping one entry.
+ * `Services` is what `services` carries, inferred from it by `Agent.define`
+ * (`never` without it).
  *
  * @public
  */
-export interface AgentConfig {
+export interface AgentConfig<Services = never> {
   /** Memory log and strategy, tool registry, step loop, and any capability plugins. */
   readonly plugins: ReadonlyArray<Plugin | AgentPluginEntry>
   /** Which instance provides a service several plugins provide. */
@@ -90,11 +92,16 @@ export interface AgentConfig {
   /** The host's own tools, views, skills and prompt sections. */
   readonly capabilities?: ReadonlyArray<Capability>
   /**
-   * Process-lifetime host services plugins may require. Their trace state
-   * is not replayed into turns (`replayableContext`): a parent span, span
+   * Process-lifetime host services plugins, tools, prompt sections and
+   * every turn's `use` may read, as the host built them: any
+   * `Context.Context<Services>`, its type kept (`Agent<Services>`). Plugins
+   * receive the ones they declare and tools check theirs by key when a
+   * turn opens them (`requires.missing`), since what plugins and the
+   * turn's own services add is known only then. Their trace state is not
+   * replayed into turns (`replayableContext`): a parent span, span
    * annotations or `CurrentTraceContent` among them are ignored.
    */
-  readonly services?: Context.Context<never>
+  readonly services?: Context.Context<Services>
   /** Keys every turn's services must carry; session plugins may require them. */
   readonly turnServices?: ReadonlyArray<{ readonly key: string }>
   /** The system prompt prefix, before the contributed sections. */
@@ -151,8 +158,12 @@ export interface AgentConfig {
   readonly shutdown?: ShutdownOptions
 }
 
-/** A defined agent: its graph is built; each turn is composed by the host. */
-export interface Agent {
+/**
+ * A defined agent: its graph is built; each turn is composed by the host.
+ * `Services` is what `AgentConfig.services` carried: every turn has them,
+ * so `use` may read them without providing them again.
+ */
+export interface Agent<Services = never> {
   readonly fingerprint: string
   /**
    * What this process is busy with (`processActivity`), as the agent's
@@ -212,12 +223,29 @@ export interface Agent {
    * counted in the `efferent.turns` and `efferent.turn.duration` metrics by
    * its `efferent.outcome`. A turn begun here begins under its own
    * `agent.turn.begin` span beside it (`traceTurnBegin`), which ends with
-   * the refusal's code when the turn cannot begin.
+   * the refusal's code when the turn cannot begin. `use` may read the
+   * agent's `services` (`Services`) too: the turn does not require them.
    */
-  readonly turn: <A = never, E = never, R = never>(
+  readonly turn: AgentTurn<Services>
+}
+
+/**
+ * `Agent.turn`: it requires what `use` reads that neither the agent's
+ * `services` (`Services`), the input's `layer` nor the turn provide. Its
+ * second signature is `TurnRunner.turn`'s, so an agent is a `TurnRunner`
+ * whatever its services; a call always resolves to the first.
+ *
+ * @public
+ */
+export interface AgentTurn<Services> {
+  <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
-  ) => Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | Services | TurnServices | Scope.Scope>>
+  <A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -322,7 +350,7 @@ const turnDependentNodes = (graph: PluginGraph): ReadonlyArray<PluginNode> => gr
  * none declared in `turnServices`) fails here with `config.graph`, naming
  * it, rather than at its first turn.
  */
-const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> => Effect.gen(function* () {
+const makeAgent = <Services>(config: AgentConfig<Services>): Effect.Effect<Agent<Services>, HarnessError, Scope.Scope> => Effect.gen(function* () {
   if (config.budgetTokens !== undefined && !isBudgetTokens(config.budgetTokens)) {
     return yield* Effect.fail(failure("config.budget", `budgetTokens must be an integer of at least 1, not ${config.budgetTokens}`))
   }
@@ -347,7 +375,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     ...(config.bindings === undefined ? {} : { bindings: { ...config.bindings } }),
     system: config.system ?? "",
   }
-  const services = config.services ?? Context.empty()
+  // Read by key from here on: plugins, tools and sections check what they need when they open.
+  const services: Context.Context<never> = config.services ?? Context.empty()
   const turnKeys = (config.turnServices ?? []).map((tag) => tag.key)
   const external = [SessionEnvironment.key, ...services.mapUnsafe.keys(), ...turnKeys, ...builtInTurnKeys]
   const graph = yield* resolveGraph(harness, plugins, external)
@@ -397,12 +426,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    an end not stored is tried again, the same, when the turn's scope closes.
    * 1 to 9 run under the turn's `agent.turn` span (`traceTurn`), opened once
    * the turn is admitted (after 0), with the turn's ids on their logs, and
-   * are counted and timed by outcome.
+   * are counted and timed by outcome. The implementation's requirements
+   * are left open: the turn's services, the agent's and the host layer's
+   * meet them where it runs, and the two signatures (`AgentTurn`) type them.
    */
-  const turn = <A = never, E = never, R = never>(
+  const runTurn = <A, E, R>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
-  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, unknown> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
@@ -497,7 +528,18 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end,
     // and every log line in it carries the turn's ids.
     return yield* admitted.pipe(Effect.annotateLogs(turnAttributes(writer.admitted)), measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
-  }))) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  })))
+  function turn<A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | Services | TurnServices | Scope.Scope>>
+  function turn<A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  function turn<A, E, R>(input: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>) {
+    return runTurn(input, use)
+  }
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others), but
   // the inbox drainer's: it is built beside the agent (it runs the agent), so it is never in the runtime,
@@ -519,4 +561,16 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   return { fingerprint: graphFingerprint(graph), activity, shutdown, turn }
 })
 
-export const Agent = { define: makeAgent }
+/**
+ * Define an agent (see `makeAgent`). Given `services`, it is an agent of
+ * their type (`Agent<S>`, `S` inferred); otherwise, `services` absent or
+ * optional, an `Agent` of none, so an agent never claims services it might
+ * not have been given.
+ */
+function define<Services>(config: AgentConfig<Services> & { readonly services: Context.Context<Services> }): Effect.Effect<Agent<Services>, HarnessError, Scope.Scope>
+function define(config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope>
+function define(config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> {
+  return makeAgent(config)
+}
+
+export const Agent = { define }
