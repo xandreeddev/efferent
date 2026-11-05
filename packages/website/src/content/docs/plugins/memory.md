@@ -12,6 +12,10 @@ conversations should recall relevant earlier interactions.
 It complements a window or summary conversation policy. It neither replaces
 the session journal nor indexes workspace files automatically.
 
+For a concrete explanation of extraction, graph construction and storage,
+indexes, ranking scores and reranking, read
+[how memory learns and retrieves](/docs/guides/memory-engine/).
+
 ## Install
 
 ```sh
@@ -71,6 +75,17 @@ The engine combines lexical and vector retrieval, graph expansion, and bounded
 model-assisted query planning and reranking. A turn-context section includes
 relevant evidence and a small profile. It shares a retrieval deadline and is
 recorded as turn context, outside the stable system prefix.
+
+Text and vector search contribute equally through reciprocal rank fusion;
+their raw score magnitudes are not combined. Graph traversal adds a bounded
+neighborhood separately. Graph assertions have no numeric importance or edge
+weight. The helper-model reranker can reorder or omit memory candidates; it
+does not rerank the graph assertions themselves.
+
+Automatic context also prepends up to four active preference/profile records,
+independently of the question's search ranking. See the
+[worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
+for the scores, graph expansion and final prompt path.
 
 Read tools are `recall_memory` and `read_memory`. The separate management skill
 exposes `remember_memory` and `forget_memory` under the `memory.write` grant.

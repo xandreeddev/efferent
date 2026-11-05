@@ -64,6 +64,11 @@ The vector arm uses exact pgvector cosine ranking. This is not a BM25 or an
 approximate-nearest-neighbor implementation. Measure corpus size and query cost
 before relying on large-scale performance.
 
+The migrations create GIN full-text indexes and scoped indexes on graph
+assertion subjects and entity objects. They do not create HNSW or IVFFlat
+vector indexes. See [the memory engine walkthrough](/docs/guides/memory-engine/)
+for example stored rows and how those indexes serve different retrieval steps.
+
 Each domain and scope records an embedding identity and dimensions. Configure
 the engine to match the actual host embedding service. A model change requires
 a new collection or deliberate reindexing, not merely a new option value.

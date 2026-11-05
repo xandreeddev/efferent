@@ -5,6 +5,12 @@ description: Evidence-backed conversation memory, temporal graphs and cited docu
 
 # Native memory, temporal graphs, and RAG
 
+Start with [how memory learns and retrieves](/docs/guides/memory-engine/): one
+statement becomes source records, memory sentences, graph edges and vectors,
+then a question passes through search, rank fusion, traversal and reranking.
+It shows the stored rows, actual ranking formula and current implementation limits.
+This page is the composition and lifecycle reference.
+
 Efferent provides its own knowledge engines. `plugin-memory` learns reusable
 knowledge from interactions. `plugin-rag` retrieves original document passages.
 Both use the native PostgreSQL/pgvector adapter, host-supplied models and shared

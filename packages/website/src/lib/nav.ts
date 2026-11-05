@@ -38,6 +38,7 @@ export const docsNav: DocGroup[] = [
   {
     group: "Guides",
     items: [
+      { slug: "guides/memory-engine", label: "How memory learns & retrieves" },
       { slug: "guides/memory-walkthrough", label: "Memory over five turns" },
       { slug: "concepts/context-journal", label: "Context, memory & the journal" },
       { slug: "guides/events", label: "Events" },

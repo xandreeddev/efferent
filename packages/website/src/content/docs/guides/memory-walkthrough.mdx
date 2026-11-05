@@ -5,6 +5,11 @@ description: Watch real files, a durable journal, bounded context, and learned m
 
 import MemoryWalkthrough from '../../../components/MemoryWalkthrough.astro'
 
+For what happens **inside** extraction and retrieval—graph rows, vectors,
+indexes, rank fusion and reranking—start with
+[how memory learns and retrieves](/docs/guides/memory-engine/).
+This playback concentrates on file and conversation state across turns.
+
 Follow one assistant as it reads a file, edits it, inspects a large log,
 reopens its journal, and starts a new conversation. The important question at
 each step is: **what is in the file, what is stored, and what does the model see?**
@@ -104,6 +109,9 @@ release summaries should be written and which lane the file currently uses.
 
 Before the model's first call, native memory adds a recorded
 `recalled-memory` context section containing the preference and its source.
+Automatic context also prepends up to four active preference/profile memories;
+this preference can arrive through that profile path as well as search.
+Its presence does not by itself prove semantic search quality.
 The assistant then calls `read` to establish the current file state: blue.
 It answers with the concise-summary preference and the current lane.
 
