@@ -1,19 +1,31 @@
 /**
  * Static link checker for the built site (dist/). Crawls every .html file,
  * extracts internal links + ids, and verifies:
- *   - every internal <a href> resolves to a built page (no 404s),
+ *   - every internal <a href> resolves to a built page or static file,
  *   - root-absolute links carry the project base (/efferent),
  *   - every #anchor (cross-page and same-page) targets an id that exists.
  * Exits non-zero if anything is broken. Zero deps.
  *
  *   bun scripts/linkcheck.mjs [distDir] [base]
  */
-import { readdir, readFile } from "node:fs/promises"
-import { existsSync } from "node:fs"
-import { join, resolve, dirname, posix } from "node:path"
+import { readdir, readFile, realpath, stat } from "node:fs/promises"
+import { isAbsolute, join, relative, resolve, posix, sep } from "node:path"
 
 const DIST = resolve(process.argv[2] || "dist")
 const BASE = (process.argv[3] || "/efferent").replace(/\/$/, "")
+const REAL_DIST = await realpath(DIST)
+const inside = (root, file) => {
+  const rel = relative(root, file)
+  return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + sep)
+}
+const builtFile = async (file) => {
+  if (!inside(DIST, file)) return false
+  try {
+    return (await stat(file)).isFile() && inside(REAL_DIST, await realpath(file))
+  } catch {
+    return false
+  }
+}
 
 async function htmlFiles(dir) {
   const out = []
@@ -41,6 +53,7 @@ const distCandidates = (urlPath) => {
     join(DIST, p, "index.html"),
     join(DIST, p + ".html"),
     p === "" ? join(DIST, "index.html") : null,
+    join(DIST, p),
   ].filter(Boolean)
 }
 
@@ -67,21 +80,17 @@ for (const f of files) {
     const raw = m[1]
     if (/^(https?:|mailto:|tel:|data:)/.test(raw) || raw.startsWith("//")) continue
 
-    let [path, hash] = raw.split("#")
-    // same-page anchor
-    if (path === "" && hash) {
-      const here = fromUrl.replace(/\/$/, "") || BASE
-      if (!(ids.get(here) || new Set()).has(hash)) {
-        report.push(`✗ ${fromUrl}  →  #${hash}  (no such id on this page)`)
-        broken++
-      }
+    let target, hash
+    try {
+      const url = new URL(raw, `https://linkcheck.invalid${fromUrl}`)
+      target = decodeURIComponent(url.pathname)
+      hash = decodeURIComponent(url.hash.slice(1))
+      if (url.origin !== "https://linkcheck.invalid" || /[\\\0]/.test(target)) throw new Error("invalid internal path")
+      target = posix.normalize(target)
+    } catch {
+      report.push(`✗ ${fromUrl}  →  ${raw}  (invalid internal URL)`)
+      broken++
       continue
-    }
-
-    // resolve relative -> absolute served path
-    let target = path
-    if (!target.startsWith("/")) {
-      target = posix.normalize(posix.join(dirname(fromUrl), target))
     }
 
     // root-absolute must carry the base
@@ -92,14 +101,15 @@ for (const f of files) {
     }
 
     const cands = distCandidates(target)
-    const hit = cands.find((c) => existsSync(c))
+    const valid = await Promise.all(cands.map(builtFile))
+    const hit = cands.find((_candidate, index) => valid[index])
     if (!hit) {
-      report.push(`✗ ${fromUrl}  →  ${raw}  (no built page; tried ${cands.map((c) => posix.relative(DIST, c)).join(", ")})`)
+      report.push(`✗ ${fromUrl}  →  ${raw}  (no built page or static file; tried ${cands.map((c) => posix.relative(DIST, c)).join(", ")})`)
       broken++
       continue
     }
     // verify cross-page anchor id exists
-    if (hash) {
+    if (hash && hit.endsWith(".html")) {
       const targetUrl = urlOf(hit).replace(/\/$/, "") || BASE
       if (!(ids.get(targetUrl) || new Set()).has(hash)) {
         report.push(`✗ ${fromUrl}  →  ${raw}  (page ok, but no id="${hash}")`)

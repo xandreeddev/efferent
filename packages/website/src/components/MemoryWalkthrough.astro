@@ -1,0 +1,238 @@
+---
+import recording from "../data/memory-walkthrough.json"
+
+const pretty = (value: unknown): string => JSON.stringify(value, null, 2) ?? ""
+const text = (value: unknown): string => typeof value === "string" ? value : pretty(value)
+const partText = (part: unknown): string => {
+  if (typeof part !== "object" || part === null) return text(part)
+  if ("type" in part && part.type === "text" && "text" in part) return text(part.text)
+  if ("type" in part && part.type === "tool-call") {
+    return `TOOL CALL ${"name" in part ? part.name : ""}\n${pretty("params" in part ? part.params : part)}`
+  }
+  if ("type" in part && part.type === "tool-result") {
+    return `TOOL RESULT ${"name" in part ? part.name : ""}${"isFailure" in part && part.isFailure ? " (failure)" : ""}\n${text("result" in part ? part.result : part)}`
+  }
+  return pretty(part)
+}
+const stages = recording.snapshots.map((snapshot, index) => {
+  const turn = "number" in snapshot ? snapshot : undefined
+  const prior = recording.snapshots.slice(0, index).reverse().find((item) => "number" in item)
+  const counts: Record<string, number> = {}
+  for (const event of turn?.addedEvents ?? []) counts[event.kind] = (counts[event.kind] ?? 0) + 1
+  return {
+    label: turn ? `Turn ${turn.number}` : "Process memory jobs",
+    title: turn ? `Turn ${turn.number} · Session ${turn.session}` : snapshot.checkpoint,
+    turn,
+    checkpoint: "checkpoint" in snapshot ? snapshot : undefined,
+    file: turn?.deploymentFile ?? (prior && "deploymentFile" in prior ? prior.deploymentFile : ""),
+    facts: snapshot.learnedFacts,
+    kinds: Object.entries(counts),
+    requests: (turn?.requests ?? []).map((request, requestIndex) => ({
+      raw: pretty(request),
+      tools: request.tools,
+      budget: turn?.context?.[requestIndex],
+      messages: request.prompt.content.map((message) => ({
+        role: message.role,
+        body: typeof message.content === "string" ? message.content : message.content.map(partText).join("\n\n"),
+      })),
+    })),
+  }
+})
+const manifest = JSON.stringify(stages.map(({ label, requests }) => ({ label, requests: requests.length }))).replaceAll("<", "\\u003c")
+---
+
+<section class="walkthrough" data-memory-walkthrough aria-label="Recorded five-turn memory walkthrough">
+  <p class="recording-note"><strong>Recorded execution, scripted models.</strong> Real plugins, filesystem,
+    file journal and memory engine. Model choices, extraction and embeddings are scripted.
+    The reference knowledge adapter is in memory: retained across agent reopen, not process-persistent.
+    Recorded SDK: {recording.sdkVersion}.</p>
+  <p class="recording-note">Playback only. Selecting a step makes no model calls and changes no files.</p>
+
+  <nav class="step-controls" data-controls hidden aria-label="Walkthrough steps">
+    {stages.map((stage, index) => <button type="button" data-jump={index}>{stage.label}</button>)}
+  </nav>
+  <div class="paging" data-controls hidden>
+    <button type="button" data-back>← Back</button>
+    <span data-position></span>
+    <button type="button" data-next>Next →</button>
+  </div>
+  <p class="status" role="status" aria-live="polite" aria-atomic="true" data-status>
+    All six recorded states are available below. Expand a request to inspect what the model received.
+  </p>
+
+  {stages.map((stage, index) => (
+    <section class="stage" data-stage data-index={index}>
+      <details open data-stage-body>
+        <summary class="stage-title">{stage.title}</summary>
+        {stage.turn && <div class="exchange">
+          <p><strong>User:</strong> {stage.turn.user}</p>
+          <p><strong>Scripted reply:</strong> {stage.turn.reply}</p>
+        </div>}
+        <div class="state-grid">
+          <section class="card">
+            <h3>1. Workspace file</h3>
+            <p class="caption"><code>deployment.md</code> · real file bytes</p>
+            {!stage.turn && <p class="caption">Last observed after turn 3; not reread at this checkpoint.</p>}
+            <pre class="file-bytes">{stage.file}</pre>
+            <p class="caption">Changing model context does not undo this file.</p>
+          </section>
+          <section class="card">
+            <h3>2. Long-term memory</h3>
+            <p class="metric">{stage.turn ? `${stage.turn.pendingMemoryJobs} pending jobs` : `${stage.checkpoint?.processed} jobs processed`}</p>
+            {stage.facts.length > 0 ? <ul>{stage.facts.map((fact) => <li>{fact}</li>)}</ul> : <p>No learned facts yet.</p>}
+            {stage.checkpoint && <details><summary>Recorded graph assertions</summary><pre>{pretty(stage.checkpoint.graphAssertions)}</pre></details>}
+            {stage.checkpoint && <details>
+              <summary>Scripted extractor source / response ({stage.checkpoint.extractions.length} calls)</summary>
+              <p class="caption">Captured source text and response bodies, not the extractor's full instructions.</p>
+              {stage.checkpoint.extractions.map((extraction, callIndex) => <details>
+                <summary>Extraction {callIndex + 1}</summary>
+                <p class="caption">Source text</p><pre>{extraction.source}</pre>
+                <p class="caption">JSON response body</p><pre>{extraction.output}</pre>
+              </details>)}
+            </details>}
+            <p class="caption">Reference store in this process, separate from the file journal.</p>
+          </section>
+          <section class="card journal-card">
+            <h3>3. Journal and context changes</h3>
+            {stage.turn ? <>
+              <p><strong>{stage.turn.addedEvents.length} new events</strong> · {stage.turn.journalEvents} total in this session</p>
+              <ul class="event-kinds">{stage.kinds.map(([kind, count]) => <li><code>{kind}</code> × {count}</li>)}</ul>
+              <p class="caption">Compactions recorded this turn: {stage.turn.compactions.length}.
+                These change context projection, not workspace bytes.</p>
+              {stage.turn.compactions.map((compaction) => <details>
+                <summary>{compaction.action._tag}</summary><pre>{pretty(compaction)}</pre>
+              </details>)}
+              <details><summary>New journal sequences and kinds</summary><pre>{pretty(stage.turn.addedEvents)}</pre></details>
+            </> : <p>The host processes the queued memory jobs. No journal delta or agent context request was captured at this checkpoint.</p>}
+          </section>
+          <section class="card model-card">
+            <h3>4. What the agent model receives</h3>
+            {stage.requests.length > 0 ? <>
+              <label class="request-selector" data-request-controls hidden>
+                Inspect request
+                <select data-request-select aria-label={`${stage.label}: model request`}>
+                  {stage.requests.map((_, requestIndex) => <option value={requestIndex} selected={requestIndex === stage.requests.length - 1}>
+                    Request {requestIndex + 1} of {stage.requests.length}{requestIndex === stage.requests.length - 1 ? " (last)" : ""}
+                  </option>)}
+                </select>
+              </label>
+              <p class="caption">Captured prompt and tool names, not a reconstruction or hidden reasoning.
+                Choose an earlier request to inspect the prompt before later tool results arrived.</p>
+              {stage.requests.map((request, requestIndex) => <details class="request" data-request data-request-index={requestIndex} open={requestIndex === stage.requests.length - 1}>
+                <summary>Request {requestIndex + 1} of {stage.requests.length}</summary>
+                {request.budget && <dl class="budgets">
+                  <div><dt>Estimated tokens</dt><dd>{request.budget.estimatedTokens}</dd></div>
+                  <div><dt>Reserved tokens</dt><dd>{request.budget.reservedTokens}</dd></div>
+                  <div><dt>Configured budget</dt><dd>{request.budget.budgetTokens}</dd></div>
+                </dl>}
+                <p class="caption">Context-build estimates for this request, not billed provider usage.</p>
+                <details><summary>Available tools ({request.tools.length})</summary><pre>{request.tools.join("\n")}</pre></details>
+                <div class="messages" aria-label="Recorded prompt messages">
+                  {request.messages.map((message) => <div class="message">
+                    <p class="role">{message.role}</p><pre>{message.body}</pre>
+                  </div>)}
+                </div>
+                <details><summary>Raw recorded request JSON</summary><pre>{request.raw}</pre></details>
+              </details>)}
+            </> : <p>No agent model request at this step. The host runs the memory engine with scripted extraction and embeddings.</p>}
+          </section>
+        </div>
+      </details>
+    </section>
+  ))}
+  <script is:inline type="application/json" data-playback set:html={manifest} />
+</section>
+
+<script>
+  for (const root of Array.from(document.querySelectorAll<HTMLElement>("[data-memory-walkthrough]"))) {
+    const payload = root.querySelector("[data-playback]")
+    const metadata: Array<{ label: string; requests: number }> = JSON.parse(payload?.textContent ?? "[]")
+    const panels = Array.from(root.querySelectorAll<HTMLElement>("[data-stage]"))
+    const jumps = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-jump]"))
+    const back = root.querySelector<HTMLButtonElement>("[data-back]")
+    const next = root.querySelector<HTMLButtonElement>("[data-next]")
+    const status = root.querySelector<HTMLElement>("[data-status]")
+    const position = root.querySelector<HTMLElement>("[data-position]")
+    if (!panels.length || metadata.length !== panels.length || !back || !next || !status || !position) continue
+    let current = 0
+    const show = (index: number, announce = true) => {
+      current = Math.max(0, Math.min(panels.length - 1, index))
+      panels.forEach((panel, at) => {
+        panel.hidden = at !== current
+        const details = panel.querySelector<HTMLDetailsElement>("[data-stage-body]")
+        if (at === current && details) details.open = true
+      })
+      jumps.forEach((button, at) => at === current ? button.setAttribute("aria-current", "step") : button.removeAttribute("aria-current"))
+      back.disabled = current === 0
+      next.disabled = current === panels.length - 1
+      position.textContent = `Step ${current + 1} of ${panels.length}`
+      const step = metadata[current]
+      if (announce && step) status.textContent = `${step.label}. Step ${current + 1} of ${panels.length}. ${step.requests} recorded agent model requests.`
+    }
+    panels.forEach((panel, stageIndex) => {
+      const selector = panel.querySelector<HTMLSelectElement>("[data-request-select]")
+      const requests = Array.from(panel.querySelectorAll<HTMLDetailsElement>("[data-request]"))
+      if (!selector || !requests.length) return
+      const select = (index: number, announce: boolean) => {
+        requests.forEach((request, at) => { request.hidden = at !== index; if (at === index) request.open = true })
+        selector.value = String(index)
+        if (announce) status.textContent = `${metadata[stageIndex]?.label}, request ${index + 1} of ${requests.length}.`
+      }
+      select(requests.length - 1, false)
+      selector.addEventListener("change", () => select(Number(selector.value), true))
+      panel.querySelector<HTMLElement>("[data-request-controls]")?.removeAttribute("hidden")
+    })
+    jumps.forEach((button, index) => button.addEventListener("click", () => show(index)))
+    back.addEventListener("click", () => show(current - 1))
+    next.addEventListener("click", () => show(current + 1))
+    root.querySelector(".step-controls")?.addEventListener("keydown", (event) => {
+      if (!(event instanceof KeyboardEvent) || !(event.target instanceof HTMLButtonElement)) return
+      const target = new Map([["ArrowLeft", current - 1], ["ArrowRight", current + 1], ["Home", 0], ["End", panels.length - 1]]).get(event.key)
+      if (target === undefined) return
+      event.preventDefault(); show(target); jumps[current]?.focus()
+    })
+    show(0, false)
+    status.textContent = "Turn 1 selected. Use the step buttons to compare the recorded states."
+    root.querySelectorAll<HTMLElement>("[data-controls]").forEach((control) => { control.hidden = false })
+  }
+</script>
+
+<style>
+  .walkthrough { margin: 1.5rem 0 2rem; color: var(--text); font-size: 0.92rem; }
+  .walkthrough [hidden] { display: none !important; }
+  .recording-note, .caption, .status { color: var(--text-dim); font-size: 0.83rem; line-height: 1.6; }
+  .recording-note { padding: 0.75rem 1rem; background: var(--bg-soft); border-left: 3px solid var(--accent-2); }
+  .step-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0; }
+  button, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.65rem; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled), button[aria-current="step"] { border-color: var(--accent); background: var(--surface-2); }
+  button[aria-current="step"] { box-shadow: inset 0 -2px var(--accent); font-weight: 700; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+  .paging { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+  .paging span { color: var(--text-dim); font-size: 0.8rem; }
+  .stage { margin: 1rem 0; min-width: 0; }
+  summary { cursor: pointer; padding: 0.45rem 0; overflow-wrap: anywhere; }
+  .stage-title { font-size: 1.1rem; font-weight: 700; border-bottom: 1px solid var(--border); margin-bottom: 0.8rem; }
+  .exchange { border-left: 2px solid var(--accent); padding-left: 1rem; margin-bottom: 1rem; }
+  .exchange p { margin: 0.5rem 0; }
+  .state-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.85rem; }
+  .card { border: 1px solid var(--border); border-radius: 9px; padding: 1rem; min-width: 0; background: var(--surface); }
+  .card h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
+  .card p { margin: 0.5rem 0; }
+  .card ul { padding-left: 1.15rem; margin: 0.5rem 0; }
+  .metric { font-weight: 650; }
+  .journal-card, .model-card { grid-column: 1 / -1; }
+  .event-kinds { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; list-style: none; padding: 0 !important; font-size: 0.76rem; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 22rem; margin: 0.6rem 0; padding: 0.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-soft); color: var(--text); font-family: var(--font-mono); font-size: 0.76rem; line-height: 1.65; }
+  .file-bytes { border-left: 3px solid var(--accent-2); }
+  .request-selector { display: flex; align-items: center; flex-wrap: wrap; gap: 0.65rem; margin: 0.75rem 0; }
+  .budgets { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin: 0.8rem 0; }
+  .budgets dt { color: var(--text-dim); font-size: 0.75rem; }
+  .budgets dd { margin: 0; font-family: var(--font-mono); font-size: 0.95rem; }
+  .messages { max-height: 38rem; overflow: auto; overscroll-behavior: contain; border-block: 1px solid var(--border); padding: 0.4rem 0; }
+  .message { margin: 0.65rem 0; }
+  .message pre { max-height: none; margin-top: 0.3rem; }
+  .role { text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent-2); font-weight: 700; }
+  @media (max-width: 640px) { .state-grid { grid-template-columns: minmax(0, 1fr); } .card { padding: 0.8rem; } .step-controls button { flex: 1 1 28%; } select { max-width: 100%; } }
+</style>

@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Add an executable five-turn memory and filesystem walkthrough with an
+  interactive docs playback, recorded model requests and journal changes,
+  queued versus learned memory, compaction and a fresh-conversation recall.
 - Add individual guides and navigation for every first-party plugin, with
   configuration generated from exported definitions and checked examples.
   Explain how conversation context, persistent memory, files and the session
