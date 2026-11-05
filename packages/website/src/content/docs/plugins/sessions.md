@@ -141,7 +141,7 @@ Effect scope. Existing journal data remains in the selected backend.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-sessions` · Version **0.16.2** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-sessions` · Version **0.17.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

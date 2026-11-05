@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.17.0 — 2026-11-05
+
 ### Fixed
 
 - `@xandreed/plugin-models`: an OpenAI-compatible endpoint's streamed tool
@@ -186,6 +188,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Prepare bot-authored release PRs as previews, then hand their reviewed source
   to a new maintainer-owned PR before squashing, preserving the required author
   identity. Use its PR-event CI and remove redundant branch dispatch permissions.
+
+### Changes
+
+- Tool discovery's catalogue section lists the references of always-on skills, which no `load_skill` result shows, so the model can read them with `read_skill_reference`; the skills directory's always-on section no longer repeats them.
+
+- A streamed tool call's first `assistant.delta` on the `tool-params` channel now carries `toolName`, the tool it calls, and the event documents that a `tool-params` `id` is the call's `toolCallId`.
+
+- `CompatConfig` accepts `extensions`, extra request-body fields an OpenAI-compatible endpoint understands, and `maxOutputTokens`, an output cap for every call; both are part of the model's settings fingerprint.
+
+- Stream OpenAI-compatible tool-call arguments as `tool-params` parts while the reply streams, so `assistant.delta` carries them on the `tool-params` channel.
+
+- `payloadOf(schema)` builds a feed payload from a host's own schema without a cast, and a `FeedProjection<R>` may require services that `RenderFeed.frames` passes on to its stream.
+
+- A host event's `draft(data)` gives the record the turn's writer stores for it, encoded through the event's schema and JSON exactly as `make` is, as a `TurnDraft` that `Sessions.transact` (or a turn writer's `append` or `transact`) takes without a cast, so a record written outside a turn reads back through `select` like one published in a turn.
+
+- A render feed carries live, non-durable frames beside its journal records: `RenderFeed.frames` takes an optional `live` stream, sent as `FeedTransient` frames after the ready frame, with no SSE `id` and no sequence, so they never move the resume cursor.
+
+- `SseTransport` ends its peer through the new `SsePeer.end` when the frames end, and `sseNodePeer` takes `{ compress }`, the request's `Accept-Encoding`, to send the feed in Brotli or gzip with a flush after every write.
+
+- `Sessions.transact(address, decide, { key, command })` is idempotent by an optional key: the commit that records the decision stores the key and its command (`transact.keyed`, stored format 18), and a later transact under the key calls no `decide`, writes nothing and fails with `TransactDuplicate` (the first one's events) or, with another command, `TransactConflict`. Racing retries commit once; transact keys are apart from turn keys. `sessionsConformance` checks a retried key, a conflicting retry and racing retries.
 
 ## 0.16.2 — 2026-11-04
 

@@ -88,7 +88,7 @@ and SDK lifecycle.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-agent-loop/steps` · Version **0.16.2** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-agent-loop/steps` · Version **0.17.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
