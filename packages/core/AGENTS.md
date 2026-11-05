@@ -260,6 +260,14 @@ Untaken queued input survives failed, partial and interrupted turns without an
 attempt ceiling; completion, waiting for an answer or explicit cancellation
 acknowledges the input claimed by that turn. An early answer remains queued
 for its own later turn.
+
+`Sessions.transact` takes an optional `TransactOptions` (`key`, `command`):
+its keyed refusals, `TransactDuplicate` and `TransactConflict` (mapped by
+`TAGGED_CODES` to `session.transact-duplicate` and
+`session.transact-conflict`), are in the error type only of a call given a
+key (`TransactRefusal<O>`), so unkeyed callers' types are unchanged. The key
+is stored as the framework's `transact.keyed` record (`TransactKeyedData`,
+stored format 18), its own namespace apart from `turn.started` keys.
 An explicit user resume reclaims its pending input in the opening commit.
 `drain.take` selects all work, inputs or notices; the tasks plugin's
 reaction executor selects notices. Keep these distinctions in

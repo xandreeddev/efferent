@@ -1,5 +1,5 @@
 import { Effect, Equivalence, Option, Schema } from "effect"
-import { InboxDroppedData, InboxQueuedData, STORED_FORMAT } from "@xandreed/core"
+import { InboxDroppedData, InboxQueuedData, STORED_FORMAT, TransactKeyedData } from "@xandreed/core"
 import type { InboxItem, InboxItemId, JsonObject, OpenTurn, QueuedInput, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
 import type { HeldTurn, HolderProcess, InboxSlot, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
@@ -56,6 +56,12 @@ export const queuedInputData = (input: QueuedInput): Effect.Effect<JsonObject, S
 /** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
 export const droppedData = (id: InboxItemId): Effect.Effect<JsonObject, Schema.SchemaError> =>
   Effect.map(encodeDropped({ id, reason: "attempts" }), (encoded) => ({ ...encoded }))
+
+const encodeKeyed = Schema.encodeEffect(TransactKeyedData)
+
+/** What `transact.keyed` stores of a keyed transact: its key, its command and how many events its decision recorded after it. */
+export const keyedData = (key: string, command: JsonObject, events: number): Effect.Effect<JsonObject, Schema.SchemaError> =>
+  Effect.map(encodeKeyed({ key, command, events }), (encoded) => ({ ...encoded }))
 
 /**
  * Who asks whether a turn is held: this Sessions instance, the process it

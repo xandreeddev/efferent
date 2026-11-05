@@ -27,6 +27,7 @@
     "inbox.queued",
     "inbox.dropped",
     "inbox.taken",
+    "transact.keyed",
     "model.called",
     "request.part",
     "memory.snapshot",
@@ -7250,6 +7251,52 @@
       }
     },
     {
+      "kind": "transact.keyed",
+      "writer": "plugin-sessions: `Sessions.transact` given a `key`, first in the commit that stores the decision's events",
+      "sensitive": "The host's idempotency key and its `command` (what the keyed request asked for).",
+      "fields": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "command",
+          "type": "object",
+          "required": true
+        },
+        {
+          "name": "events",
+          "type": "integer",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "command": {
+            "type": "object"
+          },
+          "events": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "key",
+          "command",
+          "events"
+        ],
+        "additionalProperties": true
+      }
+    },
+    {
       "kind": "model.called",
       "writer": "The turn-owned model-call recorder, directly appended and flushed before notification",
       "sensitive": "Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies.",
@@ -9707,6 +9754,16 @@
       "code": "inbox.input-conflict",
       "where": "`Sessions.enqueue` (`InputConflict`)",
       "meaning": "The input id already names another normalized message, delivery or source, or a legacy notice. Nothing was replaced or queued; retry with the original input or a new id."
+    },
+    {
+      "code": "session.transact-duplicate",
+      "where": "`Sessions.transact` given a `key` (`TransactDuplicate`)",
+      "meaning": "The session recorded a transact under the key before, with the same `command`: that one is the answer. Nothing was decided or written; the error carries the events the first one recorded."
+    },
+    {
+      "code": "session.transact-conflict",
+      "where": "`Sessions.transact` given a `key` (`TransactConflict`)",
+      "meaning": "The session recorded a transact under the key before, with another `command`. Nothing was written; retry with the original command or a new key."
     },
     {
       "code": "session.state",

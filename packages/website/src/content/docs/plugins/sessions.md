@@ -79,6 +79,43 @@ records. Later parent activity does not appear in the fork.
 The journal remains distinct from the bounded context rendered for a model;
 see [context, memory and the journal](/docs/concepts/context-journal/).
 
+## Host actions outside a turn
+
+`Sessions.transact(address, decide)` records a host action (a choice on a
+rendered control, a setting) as check-then-append, beside an open turn
+too: `decide` sees the session and returns the drafts to store, and is
+called again when another writer commits first. Give it the request's
+idempotency key so a retried request records once:
+
+```ts
+import { Effect } from "effect"
+import type { Context } from "effect"
+import type { SessionAddress, Sessions } from "@xandreed/core"
+
+declare const sessions: Context.Service.Shape<typeof Sessions>
+declare const address: SessionAddress
+declare const requestId: string
+declare const proposal: string
+
+const approve = sessions.transact(
+  address,
+  () => Effect.succeed({ drafts: [{ kind: "app.approved", data: { proposal } }], result: proposal }),
+  { key: requestId, command: { approve: proposal } },
+).pipe(
+  Effect.map((done) => done.events),
+  // A retried request: what the first one recorded is the answer.
+  Effect.catchTag("TransactDuplicate", (repeat) => Effect.succeed(repeat.events)),
+)
+```
+
+The commit that stores the decision opens with a `transact.keyed` record of
+the key and its `command`. A later transact under the key, on any instance,
+calls no `decide` and writes nothing: it fails with `TransactDuplicate`,
+which carries the events the first one recorded, or with
+`TransactConflict` when its `command` differs. Racing retries commit once.
+Transact keys are separate from the keys turns begin with, and a decision
+that fails stores no key.
+
 ## Host lifecycle
 
 `TurnActivity` tracks turns this instance is beginning or holds open.

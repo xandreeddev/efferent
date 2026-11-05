@@ -84,6 +84,8 @@ export const HARNESS_CODES = [
   "session.missing",
   "session.nothing-pending",
   "session.state",
+  "session.transact-conflict",
+  "session.transact-duplicate",
   "session.version",
   "settings.corrupt",
   "skills.duplicate",
@@ -159,6 +161,8 @@ export type HarnessCode = typeof HarnessCode.Type
 export const TAGGED_CODES = {
   ...turnBeginCodes,
   InputConflict: "inbox.input-conflict",
+  TransactDuplicate: "session.transact-duplicate",
+  TransactConflict: "session.transact-conflict",
   TurnClosed: "turn.closed",
   ReservedKind: "events.reserved",
   TaskMissing: "task.missing",

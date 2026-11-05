@@ -14,6 +14,8 @@ import {
   RunIdReused,
   SessionBusy,
   SessionContended,
+  TransactConflict,
+  TransactDuplicate,
   TurnClosed,
   turnBeginCodes,
   TurnDuplicate,
@@ -37,6 +39,8 @@ class StoreUnreadable extends Schema.TaggedError<StoreUnreadable>()("StoreUnread
 const tagged = [
   new AttachmentRejected({ reason: "Empty", message: "no bytes" }),
   new InputConflict({ session, id: InboxItemId.make("input-1") }),
+  new TransactDuplicate({ session, key: "k", events: [] }),
+  new TransactConflict({ session, key: "k" }),
   new SessionBusy({ session, turn: 2 }),
   new TurnDuplicate({ session, turn: 2, open: true }),
   new KeyConflict({ session, key: "k", turn: 2 }),

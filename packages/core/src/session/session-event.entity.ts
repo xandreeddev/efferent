@@ -28,6 +28,7 @@ const StoredInboxItemId = Schema.String.pipe(Schema.brand("InboxItemId"))
  *   `decision.recorded`, `completion.evaluated`, `stream.fallback`),
  *   written from the bus;
  * - the inbox (`inbox.*`);
+ * - a keyed transact's key (`transact.keyed`), before the records it keys;
  * - anything else: a host's own records, under the host's own names.
  * `journalSchemaOf(kind)` (the paired functions file) gives the schema each
  * of the framework's kinds is stored with.
@@ -106,6 +107,25 @@ export const InboxTakenData = Schema.Struct({ id: StoredInboxItemId, entry: Entr
 export type InboxTakenData = typeof InboxTakenData.Type
 
 /**
+ * A keyed `Sessions.transact` (`transact.keyed`), stored first in its own
+ * commit: the host's idempotency key, the `command` that is the key's
+ * fingerprint, and how many events the decision recorded after it in the
+ * same commit. A later transact under the key reads it instead of deciding
+ * again.
+ *
+ * @public
+ */
+export const TransactKeyedData = Schema.Struct({
+  /** The host's idempotency key (a request id); the session's own, apart from turn keys. */
+  key: Schema.String,
+  /** What the keyed request asked for (`{}` when none was given): a repeat with another is a conflict. */
+  command: JsonObject,
+  /** The events the decision recorded, directly after this one. */
+  events: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+})
+export type TransactKeyedData = typeof TransactKeyedData.Type
+
+/**
  * One step's provider response as stored (`step.usage`): its step, run (a
  * record written before runs were counted reads 0), model, token usage and
  * why it ended (absent in records stored before format 2). The rest of
@@ -155,11 +175,11 @@ export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
 export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventName>(["turn.started", "turn.ended", "skills.activated", "model.called"])
 
 /**
- * The inbox and the session's own records.
+ * The inbox and the session's own records, a keyed transact's included.
  *
  * @public
  */
-export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped", "inbox.taken"]
+export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped", "inbox.taken", "transact.keyed"]
 
 /**
  * Every kind the framework writes to a session's journal: memory's, the

@@ -56,6 +56,8 @@ class Tasks
 class TemporalGraph
 class ToolInterceptor
 class ToolRegistry
+class TransactConflict
+class TransactDuplicate
 class TurnActivity
 class TurnAdmission
 class TurnClosed
@@ -358,6 +360,7 @@ const ToolResultPart
 const ToolStartedEvent
 const TraceId
 const TraceParent
+const TransactKeyedData
 const TransientTurnEvents
 const TurnAdmissionOpen
 const TurnBeginError
@@ -599,6 +602,7 @@ interface ToolView
 interface ToolViewDefinition
 interface ToolViewInput
 interface ToolViews
+interface TransactOptions
 interface Turn
 interface TurnContextEntry
 interface TurnDraft
@@ -848,6 +852,8 @@ type ToolResultInterception
 type ToolResultPart
 type TraceId
 type TraceParent
+type TransactKeyedData
+type TransactRefusal
 type TurnBeginError
 type TurnContextBody
 type TurnEndReason
