@@ -135,8 +135,31 @@ content. Serve them at the host edge and close their scoped work when the
 peer disconnects. Feed failures are logged and end the connection rather
 than exposing an internal error to the client.
 
+When the frames end, by `maxDurationMs` or a failed feed, `SseTransport`
+ends its peer once (`SsePeer.end`), so the response completes and the client
+reconnects; a client that already left is never ended.
+
 The package supports Node 24 and Bun. `sseNodePeer` is the Node response
-adapter; another host can implement the small peer interface itself.
+adapter; another host can implement the small peer interface (`write`,
+`closed`, `end`) itself. Pass the request's `Accept-Encoding` as `compress`
+to send the feed in Brotli, else gzip, else uncompressed, as the client
+accepts (`sseContentEncodingOf` decides). One compression window covers the
+connection and every write is flushed, so frames are not held back:
+
+```ts
+import type { IncomingMessage, ServerResponse } from "node:http"
+import { Effect, Stream } from "effect"
+import { SseTransport, sseNodePeer } from "@xandreed/plugin-render"
+import type { FeedFrame, RenderError } from "@xandreed/plugin-render"
+
+declare const frames: Stream.Stream<FeedFrame, RenderError>
+
+const serve = (request: IncomingMessage, response: ServerResponse) =>
+  sseNodePeer(response, {}, "2 seconds", { compress: request.headers["accept-encoding"] }).pipe(
+    Effect.flatMap((peer) => SseTransport.serve(frames, peer)),
+  )
+```
+
 `renderFeedConformance` and `renderTransportConformance` exercise adapters.
 
 ## Related guides

@@ -1,11 +1,11 @@
-import { Context, Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
+import { Context, Effect, Fiber, Logger, Option, PubSub, Ref, Stream } from "effect"
 import { canonicalJson } from "@xandreed/core"
 import { ConformanceFailure } from "@xandreed/core/conformance"
 import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
 import type { FeedFrame, FeedOptions, FeedPayload, JournalRecord } from "./domain/feed-frame.entity.js"
 import { decodeSocketFrame, decodeSse } from "./domain/feed-frame.entity.functions.js"
 import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
-import type { RenderError } from "./domain/render-surface.entity.js"
+import { RenderError } from "./domain/render-surface.entity.js"
 import type { FeedProjection, JournalTail, RenderFeed, RenderTransport, SocketPeer, SsePeer } from "./ports/render.port.js"
 import type { ConformanceCheck } from "./render-surface.conformance.js"
 
@@ -21,8 +21,16 @@ const sample: ReadonlyArray<FeedFrame> = [
   FeedTransient.make({ event: "preview", data: {} }),
 ]
 
+/** How many times an SSE transport ends a peer whose client leaves when `closed` completes. */
+const endsOf = (transport: RenderTransport<SsePeer>, frames: Stream.Stream<FeedFrame, RenderError>, closed: Effect.Effect<void>) => Effect.gen(function* () {
+  const ended = yield* Ref.make(0)
+  yield* transport.serve(frames, { write: () => Effect.void, closed, end: Ref.update(ended, (count) => count + 1) })
+  return yield* Ref.get(ended)
+})
+
 /**
- * The two shipped wires must carry the same frames.
+ * The two shipped wires must carry the same frames, and SSE must end its peer
+ * exactly when the frames end.
  *
  * @public
  */
@@ -35,12 +43,25 @@ export const renderTransportConformance = (transports: {
     const expect = holds("SSE and WebSocket carry identical frames")
     const written = yield* Ref.make<ReadonlyArray<string>>([])
     const sent = yield* Ref.make<ReadonlyArray<string>>([])
-    yield* transports.sse.serve(Stream.fromIterable(sample), { write: (chunk) => Ref.update(written, (all) => [...all, chunk]), closed: Effect.never })
+    yield* transports.sse.serve(Stream.fromIterable(sample), { write: (chunk) => Ref.update(written, (all) => [...all, chunk]), closed: Effect.never, end: Effect.void })
     yield* transports.socket.serve(Stream.fromIterable(sample), { send: (text) => Ref.update(sent, (all) => [...all, text]), closed: Effect.never })
     const viaSse = yield* Effect.fromResult(decodeSse((yield* Ref.get(written)).join("")))
     const viaSocket = (yield* Ref.get(sent)).flatMap((text) => Option.toArray(decodeSocketFrame(text)))
     yield* expect(canonicalJson(viaSse) === canonicalJson(sample), `SSE frames differ: ${canonicalJson(viaSse)}`)
     yield* expect(canonicalJson(viaSocket) === canonicalJson(sample), `WebSocket frames differ: ${canonicalJson(viaSocket)}`)
+  }),
+}, {
+  name: "ends the peer when the frames end",
+  run: Effect.gen(function* () {
+    const expect = holds("ends the peer when the frames end")
+    const finished = yield* endsOf(transports.sse, Stream.fromIterable(sample), Effect.never)
+    // The failure is logged by the transport; the check needs only its count.
+    const failed = yield* endsOf(transports.sse, Stream.fail(new RenderError({ code: "storage", message: "the journal is unreachable" })), Effect.never).pipe(
+      Effect.provide(Logger.layer([])))
+    const left = yield* endsOf(transports.sse, Stream.never, Effect.void)
+    yield* expect(finished === 1, `frames that end end the peer once, ended ${finished} times`)
+    yield* expect(failed === 1, `a failed feed ends the peer once, ended ${failed} times`)
+    yield* expect(left === 0, `a client that left is never ended, ended ${left} times`)
   }),
 }]
 

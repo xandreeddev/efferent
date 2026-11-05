@@ -83,6 +83,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   context captured per connection. `R` defaults to `never`, so existing
   projections and calls are unchanged. `renderFeedConformance` checks that
   a feed runs the projection with the stream's services.
+- `@xandreed/plugin-render`: a Server-Sent Events feed ends its response
+  when its frames end and can be compressed. `SseTransport.serve` runs the
+  peer's `end` once when the frames end, at the feed's `maxDurationMs` or on
+  a failed feed, and never after the client left; `renderTransportConformance`
+  checks it ("ends the peer when the frames end"). `sseNodePeer` ends the
+  Node response there, waiting up to its `timeout` for it to finish. Given
+  `{ compress: <the request's Accept-Encoding> }` as a fourth argument, it
+  sends Brotli when the client takes it, else gzip, else no coding, with
+  `content-encoding` and `vary: accept-encoding`, over one compression
+  window for the whole connection, flushed after every write so no frame
+  waits for the next; `node:zlib` is loaded only then. Without `compress`
+  it sends the same headers and bytes as before. `sseContentEncodingOf`
+  (and its `SseContentEncoding`) is that negotiation, for a host's own peer.
 
 ### Migration
 
@@ -96,6 +109,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   services, `<R>(feed, after, project: FeedProjection<R>) =>
   Stream<FeedFrame, RenderError, R>`, and runs the projection inside that
   stream.
+- `@xandreed/plugin-render`: `SsePeer` has a third member, `end`. A host
+  that writes its own peer adds it, the effect that ends its response or
+  stream (`end: Effect.void` keeps its current behaviour); a host that ended
+  the response itself after `SseTransport.serve` may keep doing so, and with
+  `sseNodePeer` no longer needs to.
 
 ### Repository
 
