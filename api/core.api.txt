@@ -222,6 +222,7 @@ const MediaSlot
 const MediaStoreBytes
 const MediaStoreMemoryLive
 const MemoryKindOf
+const MemoryMessageData
 const MemoryObservation
 const MemoryRenderRecipe
 const MemorySnapshotCandidate
@@ -343,6 +344,7 @@ const ToolCallId
 const ToolCallPart
 const ToolCallState
 const ToolChoice
+const ToolCompletedData
 const ToolCompletedEvent
 const ToolInterceptAfterInput
 const ToolInterceptAudit
@@ -354,9 +356,11 @@ const ToolInterceptedEvent
 const ToolMessage
 const ToolProgressEvent
 const ToolRefusalReason
+const ToolRefusedData
 const ToolRefusedEvent
 const ToolResultInterception
 const ToolResultPart
+const ToolStartedData
 const ToolStartedEvent
 const TraceId
 const TraceParent
@@ -399,6 +403,7 @@ const collectBashResult
 const collectSkillFiles
 const compileGlob
 const costOf
+const decodeStored
 const defineCapability
 const defineHostEvent
 const definePlugin
@@ -515,6 +520,7 @@ const stampPartModel
 const stampResponseFailure
 const stampResponseModel
 const storedJson
+const storedRecordOf
 const strictJsonSchema
 const subscribeAll
 const sumUsage
@@ -733,6 +739,7 @@ type MediaReference
 type MediaSlot
 type MediaStoreBytes
 type MemoryFileSystem
+type MemoryMessageData
 type MemoryObservation
 type MemoryRenderRecipe
 type MemorySeed
@@ -822,6 +829,7 @@ type StepStatus
 type StepUsageData
 type StoredKind
 type StoredModelRequestHeader
+type StoredRecord
 type StreamPartId
 type Subject
 type SubjectId
@@ -839,6 +847,7 @@ type ToolCallId
 type ToolCallPart
 type ToolCallState
 type ToolChoice
+type ToolCompletedData
 type ToolHandlers
 type ToolInterceptAfterInput
 type ToolInterceptAudit
@@ -848,8 +857,10 @@ type ToolInterceptOutcome
 type ToolInterceptOutcomeKind
 type ToolMessage
 type ToolRefusalReason
+type ToolRefusedData
 type ToolResultInterception
 type ToolResultPart
+type ToolStartedData
 type TraceId
 type TraceParent
 type TransactKeyedData

@@ -1,10 +1,10 @@
-import { Schema } from "effect"
+import { Schema, Struct } from "effect"
 import { RunId, RunKey } from "../domain/run.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { FinishReason, TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
-import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
+import { ToolCompletedEvent, ToolRefusedEvent, ToolStartedEvent, TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
 import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
@@ -141,6 +141,42 @@ export const StepUsageData = Schema.Struct({
   finishReason: Schema.optionalKey(FinishReason),
 })
 export type StepUsageData = typeof StepUsageData.Type
+
+/**
+ * A tool call's admission as stored (`tool.started`): the bus event whole,
+ * its decoded `input` included.
+ *
+ * @public
+ */
+export const ToolStartedData = Schema.Struct(Struct.omit(ToolStartedEvent.fields, ["_tag"]))
+export type ToolStartedData = typeof ToolStartedData.Type
+
+/** What `tool.completed` leaves out: memory keeps the call's input and its result (`memory.message`, `memory.tool-result`). */
+export const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
+
+/** What `tool.refused` leaves out: memory keeps the call's input (the model's call); the refusal keeps why. */
+export const OMITTED_FROM_TOOL_REFUSED = ["input"] as const
+
+/**
+ * A handler's exit as stored (`tool.completed`): the call's step, ids, tool,
+ * `ok`, duration, labels and stage, without its input and result
+ * (`OMITTED_FROM_TOOL_COMPLETED`). The result is the call's
+ * `memory.tool-result`, found by `toolCallId`.
+ *
+ * @public
+ */
+export const ToolCompletedData = Schema.Struct(Struct.omit(ToolCompletedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_COMPLETED]))
+export type ToolCompletedData = typeof ToolCompletedData.Type
+
+/**
+ * A refused call as stored (`tool.refused`): the call's step, ids and tool,
+ * the reason and the message the model was told, without its input
+ * (`OMITTED_FROM_TOOL_REFUSED`).
+ *
+ * @public
+ */
+export const ToolRefusedData = Schema.Struct(Struct.omit(ToolRefusedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_REFUSED]))
+export type ToolRefusedData = typeof ToolRefusedData.Type
 
 /** The kind each memory entry is stored under. `TurnStarted` is the turn's own `turn.started`. */
 export const MemoryKindOf = {

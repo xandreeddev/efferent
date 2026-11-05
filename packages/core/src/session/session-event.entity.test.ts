@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Match, Option, Schema } from "effect"
 import fc from "fast-check"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
@@ -12,8 +12,9 @@ import { StreamPartId, TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { ModelCallId } from "../domain/model-call.entity.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
-import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, replyEndingOf, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
+import { decodeStored, draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, replyEndingOf, StoredData, storedRecordOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
+import type { StoredRecord } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 import { InboxItemId } from "./sessions.entity.js"
 
@@ -390,7 +391,10 @@ describe("stored events read by their kind", () => {
   const failed = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect)).then((result) => result._tag === "Failure")
 
   test("the kinds read back by their fields are the journal's, with the same schemas", () => {
-    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared", "model.called", "request.part", "memory.snapshot", "transact.keyed"])
+    expect(Object.keys(StoredData)).toEqual([
+      "turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared", "model.called", "request.part", "memory.snapshot", "transact.keyed",
+      "tool.started", "tool.completed", "tool.refused", "memory.message",
+    ])
     expect(Object.entries(StoredData).every(([kind, schema]) => Option.contains(journalSchemaOf(kind), schema))).toBe(true)
   })
 
@@ -440,6 +444,83 @@ describe("stored events read by their kind", () => {
     const [read] = await Effect.runPromise(readStored("request.prepared", [event(1, "request.prepared", header("run-1", 0, "system"))]))
     expect([read?.data.runId, read?.data.step, read?.data.system, read?.data.render.media.maxChars]).toEqual(["run-1", 0, "system", 20_000_000])
     expect([read?.data.run, read?.data.render.run]).toEqual([run, run])
+  })
+})
+
+describe("one stored record decoded by its own kind", () => {
+  const toolEvents: ReadonlyArray<Extract<TurnEvent, { readonly _tag: "tool.started" | "tool.refused" | "tool.completed" }>> = [
+    { _tag: "tool.started", step: 2, invocationId: InvocationId.make("run-1:call:0"), toolCallId: ToolCallId.make("c1"), tool: "lookup", input: { query: "a" }, labels: { area: "x" }, stage: Option.some("read") },
+    { _tag: "tool.completed", step: 2, invocationId: InvocationId.make("run-1:call:0"), toolCallId: ToolCallId.make("c1"), tool: "lookup", input: { query: "a" }, ok: false, result: "no", encoded: "no", durationMs: 3, labels: {}, stage: Option.none() },
+    { _tag: "tool.refused", step: 2, invocationId: InvocationId.make("run-1:call:1"), tool: "write", input: { path: "a" }, reason: "forbidden", message: "Not allowed." },
+  ]
+  /** Each tool event as the journal stores it, read back as a row. */
+  const stored = Effect.forEach(toolEvents, (event, index) => draftOfTurnEvent(1, event).pipe(
+    Effect.map((draft): SessionLogEvent => {
+      const { kind, data } = Option.getOrThrow(draft)
+      return { session, seq: index + 1, turn: Option.some(1), kind, at: 0, data: JSON.parse(JSON.stringify(data)) }
+    }),
+  ), { concurrency: 1 })
+
+  test("a tool's lifecycle decodes typed: its stored fields, without the input and result the journal leaves out", async () => {
+    const [started, completed, refused] = await Effect.runPromise(stored)
+    const decoded = await Effect.runPromise(Effect.all([
+      decodeStored("tool.started", started!), decodeStored("tool.completed", completed!), decodeStored("tool.refused", refused!),
+    ], { concurrency: 1 }))
+    expect(decoded).toEqual([
+      { step: 2, invocationId: InvocationId.make("run-1:call:0"), toolCallId: ToolCallId.make("c1"), tool: "lookup", input: { query: "a" }, labels: { area: "x" }, stage: Option.some("read") },
+      { step: 2, invocationId: InvocationId.make("run-1:call:0"), toolCallId: ToolCallId.make("c1"), tool: "lookup", ok: false, durationMs: 3, labels: {}, stage: Option.none() },
+      { step: 2, invocationId: InvocationId.make("run-1:call:1"), tool: "write", reason: "forbidden", message: "Not allowed." },
+    ])
+    // The same records through the whole-history reader.
+    const all = await Effect.runPromise(stored)
+    expect((await Effect.runPromise(readStored("tool.completed", all))).map((record) => record.data)).toEqual([decoded[1]])
+  })
+
+  test("a memory.message decodes typed: the entry's id, run, step, time and message", async () => {
+    const entry: LogEntry = {
+      id: EntryId.make("run-1:4"), runId: RunId.make("run-1"), turn: 1, step: 1, at: 9,
+      body: { _tag: "Message", message: { role: "assistant", content: [{ type: "text", text: "Found it." }] }, run: RunOrdinal.make(1) },
+    }
+    const draft = Option.getOrThrow(await Effect.runPromise(draftOfEntry(entry)))
+    const event: SessionLogEvent = { session, seq: 1, turn: Option.some(1), kind: draft.kind, at: 0, data: JSON.parse(JSON.stringify(draft.data)) }
+    const data = await Effect.runPromise(decodeStored("memory.message", event))
+    expect([data.entry, data.runId, data.step, data.at, data.body.run]).toEqual([entry.id, entry.runId, 1, 9, RunOrdinal.make(1)])
+    expect(data.body.message.role).toBe("assistant")
+    // The memory log reads the same message from the same record.
+    const [logged] = await Effect.runPromise(entriesOfEvents([event]))
+    expect(logged?.body._tag === "Message" ? logged.body.message : undefined).toEqual(data.body.message)
+  })
+
+  test("storedRecordOf tells a record's kind with its data, and gives none for a kind it does not type", async () => {
+    const events = await Effect.runPromise(stored)
+    const host: SessionLogEvent = { session, seq: 9, turn: Option.some(1), kind: "note.prepared", at: 0, data: { text: "x" } }
+    const section: SessionLogEvent = { session, seq: 10, turn: Option.some(1), kind: "memory.section", at: 0, data: {} }
+    const records = await Effect.runPromise(Effect.forEach([...events, host, section], storedRecordOf, { concurrency: 1 }))
+    const label = Match.type<StoredRecord>().pipe(
+      Match.discriminators("kind")({
+        "tool.started": (found) => `${found.kind} ${found.data.tool}`,
+        "tool.completed": (found) => `${found.kind} ok=${found.data.ok}`,
+        "tool.refused": (found) => `${found.kind} ${found.data.reason}`,
+      }),
+      Match.orElse((found) => found.kind),
+    )
+    const described = records.map((record) => Option.match(record, { onNone: () => "none", onSome: label }))
+    expect(described).toEqual(["tool.started lookup", "tool.completed ok=false", "tool.refused forbidden", "none", "none"])
+    expect(records.flatMap((record) => Option.toArray(record)).map((found) => found.event.seq)).toEqual([1, 2, 3])
+  })
+
+  test("a record of a typed kind that does not decode fails with its SchemaError, never reads as none", async () => {
+    const broken: SessionLogEvent = { session, seq: 1, turn: Option.some(1), kind: "tool.completed", at: 0, data: { step: 1, invocationId: "i", tool: "t", ok: "yes" } }
+    const failure = await Effect.runPromise(Effect.flip(storedRecordOf(broken)))
+    expect(failure._tag).toBe("SchemaError")
+    const message: SessionLogEvent = { session, seq: 2, turn: Option.some(1), kind: "memory.message", at: 0, data: { entry: "e", runId: "r", step: 0, at: 0, body: { message: { role: "nobody" } } } }
+    expect((await Effect.runPromise(Effect.flip(decodeStored("memory.message", message))))._tag).toBe("SchemaError")
+  })
+
+  test("a record written before a lifecycle event carried its provider call id still decodes typed", async () => {
+    const old: SessionLogEvent = { session, seq: 1, turn: Option.some(1), kind: "tool.started", at: 0, data: { step: 0, invocationId: "run-1:call:0", tool: "lookup", input: { query: "alpha" }, labels: {}, stage: null } }
+    const record = Option.getOrThrow(await Effect.runPromise(storedRecordOf(old)))
+    expect(record.kind === "tool.started" ? [record.data.toolCallId, record.data.stage] : []).toEqual([undefined, Option.none()])
   })
 })
 

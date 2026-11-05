@@ -140,6 +140,9 @@ export {
   RESERVED_KINDS,
   SESSION_KINDS,
   StepUsageData,
+  ToolCompletedData,
+  ToolRefusedData,
+  ToolStartedData,
   TransactKeyedData,
   TURN_EVENT_KINDS,
   TurnEndedData,
@@ -164,8 +167,18 @@ export {
 } from "./session/session-event.entity.functions.js"
 export { turnUsageOf, turnModelCallsOf, turnBilledUsageOf } from "./session/session-event.entity.functions.js"
 // stored records read by their fields: decoded whole, or by their keys alone for a lookup
-export { readStored, readStoredKeys, RequestPreparedKeys, StoredData, StoredKeys, TurnStartedKeys } from "./session/session-event.entity.functions.js"
-export type { KeyedKind, Stored, StoredKeysOf, StoredKind } from "./session/session-event.entity.functions.js"
+export {
+  decodeStored,
+  MemoryMessageData,
+  readStored,
+  readStoredKeys,
+  RequestPreparedKeys,
+  StoredData,
+  StoredKeys,
+  storedRecordOf,
+  TurnStartedKeys,
+} from "./session/session-event.entity.functions.js"
+export type { KeyedKind, Stored, StoredKeysOf, StoredKind, StoredRecord } from "./session/session-event.entity.functions.js"
 export { ToolCallState } from "./session/tool-call-state.entity.js"
 export { toolCallStatesOf } from "./session/tool-call-state.entity.functions.js"
 export {

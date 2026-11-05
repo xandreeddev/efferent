@@ -2,46 +2,34 @@ import { Effect, Match, Option, Schema, Struct } from "effect"
 import type { ToolCallId } from "../domain/message.entity.js"
 import { RunOrdinal } from "../domain/run.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
-import { StepStartedEvent, ToolCompletedEvent, ToolInterceptedEvent, ToolRefusedEvent, ToolStartedEvent } from "../turn/turn-event.entity.js"
+import { StepStartedEvent, ToolInterceptedEvent } from "../turn/turn-event.entity.js"
 import { entryOfEvent, journalSchemaOf } from "./session-event.entity.functions.js"
+import { ToolCompletedData, ToolRefusedData, ToolStartedData } from "./session-event.entity.js"
 import type { SessionLogEvent } from "./session-log.entity.js"
 import type { ToolCallResult, ToolCallReturn, ToolCallStart, ToolCallState } from "./tool-call-state.entity.js"
 
-// These are typed views of the fields read after the journal's own decoder.
-const started = Schema.Struct(Struct.pick(ToolStartedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "input"]))
-const returned = Schema.Struct(Struct.pick(ToolCompletedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "ok"]))
-const refused = Schema.Struct(Struct.pick(ToolRefusedEvent.fields, ["toolCallId", "invocationId", "step", "tool", "reason", "message"]))
+// A typed view of the fields read after the journal's own decoder.
 const intercepted = Schema.Struct(Struct.omit(ToolInterceptedEvent.fields, ["_tag"]))
 const stepStarted = Schema.Struct(Struct.pick(StepStartedEvent.fields, ["step", "run"]))
-const facts = {
-  "tool.started": started,
-  "tool.completed": returned,
-  "tool.refused": refused,
-} as const
-
 type Request = Extract<ToolCallState, { readonly _tag: "Requested" }>
 type Lifecycle =
-  | { readonly kind: "tool.started"; readonly event: SessionLogEvent; readonly data: typeof started.Type }
-  | { readonly kind: "tool.completed"; readonly event: SessionLogEvent; readonly data: typeof returned.Type }
-  | { readonly kind: "tool.refused"; readonly event: SessionLogEvent; readonly data: typeof refused.Type }
+  | { readonly kind: "tool.started"; readonly event: SessionLogEvent; readonly data: ToolStartedData }
+  | { readonly kind: "tool.completed"; readonly event: SessionLogEvent; readonly data: ToolCompletedData }
+  | { readonly kind: "tool.refused"; readonly event: SessionLogEvent; readonly data: ToolRefusedData }
 type MemoryFact = { readonly event: SessionLogEvent; readonly entry: LogEntry }
 type RunBoundary = { readonly event: SessionLogEvent; readonly run: RunOrdinal }
 
-const isLifecycleKind = (kind: string): kind is keyof typeof facts => Object.hasOwn(facts, kind)
+const decodeStarted = Schema.decodeUnknownEffect(ToolStartedData)
+const decodeCompleted = Schema.decodeUnknownEffect(ToolCompletedData)
+const decodeRefused = Schema.decodeUnknownEffect(ToolRefusedData)
 
-const lifecycleOf = (event: SessionLogEvent): Effect.Effect<ReadonlyArray<Lifecycle>, Schema.SchemaError> => {
-  if (!isLifecycleKind(event.kind)) return Effect.succeed([])
-  const kind = event.kind
-  return Option.match(journalSchemaOf(kind), {
-    onNone: () => Effect.die("A tool lifecycle kind has no journal schema"),
-    onSome: (schema) => Schema.decodeUnknownEffect(schema)(event.data).pipe(Effect.flatMap((data) => Match.value(kind).pipe(
-      Match.when("tool.started", () => Schema.decodeUnknownEffect(started)(data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.started", event, data }]))),
-      Match.when("tool.completed", () => Schema.decodeUnknownEffect(returned)(data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.completed", event, data }]))),
-      Match.when("tool.refused", () => Schema.decodeUnknownEffect(refused)(data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.refused", event, data }]))),
-      Match.exhaustive,
-    ))),
-  })
-}
+/** A tool lifecycle record, decoded with its stored schema (`StoredData`) as it was stored; any other kind is none of them. */
+const lifecycleOf = (event: SessionLogEvent): Effect.Effect<ReadonlyArray<Lifecycle>, Schema.SchemaError> => Match.value(event.kind).pipe(
+  Match.when("tool.started", () => decodeStarted(event.data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.started", event, data }]))),
+  Match.when("tool.completed", () => decodeCompleted(event.data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.completed", event, data }]))),
+  Match.when("tool.refused", () => decodeRefused(event.data).pipe(Effect.map((data): ReadonlyArray<Lifecycle> => [{ kind: "tool.refused", event, data }]))),
+  Match.orElse(() => Effect.succeed([])),
+)
 
 const scopeOf = (request: Request, event: SessionLogEvent, call: { readonly toolCallId?: ToolCallId; readonly step: number; readonly tool: string }): boolean =>
   event.session === request.session && Option.contains(event.turn, request.turn)

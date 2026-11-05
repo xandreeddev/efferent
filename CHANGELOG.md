@@ -8,7 +8,24 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/core`: stored tool lifecycle and conversation message records
+  decode with typed schemas. `StoredData` adds `tool.started`,
+  `tool.completed`, `tool.refused` and `memory.message`, with their stored
+  shapes exported as `ToolStartedData`, `ToolCompletedData` (without the
+  call's input and result), `ToolRefusedData` (without the input) and
+  `MemoryMessageData`, so `readStored` types them. A host that projects a
+  journal one record at a time no longer needs the whole history or a copy
+  of these shapes: `storedRecordOf(event)` decodes a record by its own kind
+  into a `StoredRecord` told apart by `kind` (none for a kind outside
+  `StoredData`), and `decodeStored(kind, event)` decodes one record as a
+  given kind. A record of a typed kind that does not decode fails with its
+  `SchemaError`. `journalSchemaOf` returns these same schemas, so the stored
+  format is unchanged (still 18) and every older journal decodes as before.
+
 ### Changed
+
 
 - `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
   `AgentConfig<S>.services` is a `Context.Context<S>`, which `Agent.define`
@@ -26,7 +43,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   time; `AgentConfig` and `Agent` without a type argument are the same types
   as before.
 
+
 ### Fixed
+
 
 
 - Releases wait up to about fifteen minutes (was three) for every package to
@@ -40,6 +59,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `knowledge_store.pending` trace, tens of thousands a day per process, and
   filled tracing quotas with empty traces. Each job a worker claims is traced
   as before.
+
+
 
 
 

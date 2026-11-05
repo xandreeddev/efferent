@@ -3377,8 +3377,19 @@ SQLite and key-reordering stores against the golden requests.
 A record is read by its fields only once decoded. `readStored(kind, events)`
 decodes the events of one of the kinds in `StoredData` (`turn.started`,
 `turn.ended`, `inbox.queued`, `inbox.dropped`, `inbox.taken`, `step.usage`,
-`request.prepared`, `model.called`) with that kind's schema and fails with the first
-`SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
+`request.prepared`, `model.called`, `request.part`, `memory.snapshot`,
+`tool.started`, `tool.completed`, `tool.refused`, `memory.message`) with that
+kind's schema and fails with the first `SchemaError`. Each of these schemas
+is the kind's `journalSchemaOf`, typed: `ToolStartedData`,
+`ToolCompletedData` (without the call's input and result, which memory
+keeps), `ToolRefusedData` (without the input) and `MemoryMessageData` (the
+entry's id, run, step and time, and the message). A host that projects a
+journal one record at a time decodes each record by its own kind with
+`storedRecordOf(event)`, which gives none for a kind outside `StoredData`
+and a record told apart by `kind` otherwise, or with
+`decodeStored(kind, event)` once it has matched the kind; neither needs the
+whole history, and a record of a typed kind that does not decode fails with
+its `SchemaError`. A lookup by key goes through `readStoredKeys`, which decodes
 a `turn.started`'s `runId`, `key`, `entry` and optional `input` and `resumes`
 (`TurnStartedKeys`) or a `request.prepared`'s `runId`, `run` and `step` (`RequestPreparedKeys`), never a
 user's message and its images. The framework's readers fail on a row that

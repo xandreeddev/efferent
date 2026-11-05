@@ -264,7 +264,7 @@ Published by the registry after a host interceptor decision and authored input o
 
 ## Journal kinds
 
-Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.part`, historical `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
+Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`; the kinds of `StoredData` (a turn's start and end, the inbox, usage, requests, model calls, a tool call's lifecycle and the conversation's messages) also decode typed, one record at a time, through `storedRecordOf(event)`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.part`, historical `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
