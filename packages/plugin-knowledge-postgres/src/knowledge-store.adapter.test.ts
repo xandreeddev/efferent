@@ -42,7 +42,7 @@ const stageOf = (version: number, memories: ReadonlyArray<KnowledgeMemory> = [])
 const prepare = Effect.fnUntraced(function* (index: KnowledgeIndex, source: KnowledgeSource, stage: KnowledgeStage, expectedRevision = Option.none<number>()) {
   const job = yield* index.enqueue({ source, jobId: KnowledgeJobId.make(`job-${source.ref.id}-${source.ref.revision}`), engine: "integration", expectedRevision })
   const token = KnowledgeLeaseToken.make(`token-${job.id}`)
-  yield* index.claim({ scope: source.scope, jobId: job.id, worker: "integration", token, now: 20, leaseMs: 1000 })
+  yield* index.claim({ scope: source.scope, engine: "integration", jobId: job.id, worker: "integration", token, now: 20, leaseMs: 1000 })
   const lease = { scope: source.scope, jobId: job.id, token, now: 22 }
   yield* index.stage(lease, stage)
   return lease
@@ -123,11 +123,11 @@ test.skipIf(url.length === 0)("PostgreSQL lease races are fenced across two inde
   const source = sourceOf(scope, "race", "Only one worker may publish")
   const job = yield* first.memory.enqueue({ jobId: KnowledgeJobId.make("race-job"), source, engine: "integration", expectedRevision: Option.none() })
   const claims = yield* Effect.all([
-    first.memory.claim({ scope, worker: "one", token: KnowledgeLeaseToken.make("one"), now: 10, leaseMs: 10 }),
-    second.memory.claim({ scope, worker: "two", token: KnowledgeLeaseToken.make("two"), now: 10, leaseMs: 10 }),
+    first.memory.claim({ scope, engine: "integration", worker: "one", token: KnowledgeLeaseToken.make("one"), now: 10, leaseMs: 10 }),
+    second.memory.claim({ scope, engine: "integration", worker: "two", token: KnowledgeLeaseToken.make("two"), now: 10, leaseMs: 10 }),
   ], { concurrency: 2 })
   expect(claims.filter(Option.isSome)).toHaveLength(1)
-  const takeover = yield* second.memory.claim({ scope, worker: "three", token: KnowledgeLeaseToken.make("three"), now: 21, leaseMs: 100 })
+  const takeover = yield* second.memory.claim({ scope, engine: "integration", worker: "three", token: KnowledgeLeaseToken.make("three"), now: 21, leaseMs: 100 })
   expect(Option.isSome(takeover)).toBe(true)
   const stale = yield* Effect.result(first.memory.publish({ scope, jobId: job.id, token: KnowledgeLeaseToken.make("one"), now: 22 }))
   expect(Result.isFailure(stale) && stale.failure.reason).toBe("LeaseLost")

@@ -16,7 +16,8 @@ Extraction and query protocols are core's shared native knowledge helpers. Stage
 validated extraction before embedding. Publish through the store's lease and
 scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
-unfinished processing through leases. Profile and routine memories retain their
+unfinished processing through leases. Jobs are enqueued, discovered and claimed
+under the engine id of the configured embedding space (`knowledgeEngineId`). Profile and routine memories retain their
 evidence; inferred routines require three distinct source episodes.
 Count admitted claims before masked storage I/O and keep that I/O outside the
 local admission permit. Shutdown remains bounded and reports a stalled claim

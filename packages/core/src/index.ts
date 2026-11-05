@@ -514,7 +514,7 @@ export {
 export { MemoryStore, KnowledgeStore, TemporalGraph, LongTermMemory, Knowledge } from "./ports/knowledge.port.js"
 export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
-  knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace,
+  knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, traverseKnowledgeGraph,
   validateKnowledgeStage,

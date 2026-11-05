@@ -16,6 +16,15 @@ export const sameKnowledgeScope = (left: KnowledgeScope, right: KnowledgeScope):
 /** @public */
 export const sameEmbeddingSpace = (left: KnowledgeEmbeddingSpace, right: KnowledgeEmbeddingSpace): boolean =>
   left.model === right.model && left.version === right.version && left.dimensions === right.dimensions
+const enginePart = (text: string): string => text.replaceAll("%", "%25").replaceAll("/", "%2F")
+/**
+ * The engine identity a processor records on its jobs: its name and version, then the embedding
+ * space it indexes with (`rag:1/<model>/<version>/<dimensions>`). Distinct spaces always give
+ * distinct ids, so workers of two embedding configurations never discover or claim each other's jobs.
+ * @public
+ */
+export const knowledgeEngineId = (processor: string, space: KnowledgeEmbeddingSpace): string =>
+  [processor, space.model, space.version].map(enginePart).concat(String(space.dimensions)).join("/")
 /** Exact cosine, including a defined zero-norm score. @public */
 export const knowledgeCosine = (left: KnowledgeVector, right: KnowledgeVector): number => {
   if (!sameEmbeddingSpace(left.space, right.space)) return 0

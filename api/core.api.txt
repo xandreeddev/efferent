@@ -461,6 +461,7 @@ const knowledgeBm25
 const knowledgeCandidateKey
 const knowledgeCandidateText
 const knowledgeCosine
+const knowledgeEngineId
 const knowledgeExtractionPrompt
 const knowledgeQueryPrompt
 const knowledgeRerankPrompt

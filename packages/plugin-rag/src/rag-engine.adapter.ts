@@ -1,7 +1,7 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, Knowledge, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, knowledgeExtractionPrompt, knowledgeReviewPrompt, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
   applyKnowledgeRerank, knowledgeCandidateText, KnowledgeQueryPlan, knowledgeQueryPrompt, KnowledgeRerank, knowledgeRerankPrompt,
 } from "@xandreed/core"
@@ -12,7 +12,6 @@ import type {
 import type { RagConfig } from "./rag.entity.js"
 import { chunkDocument } from "./rag.entity.functions.js"
 
-const ENGINE = `rag:${KNOWLEDGE_EXTRACTION_VERSION}`
 const unavailable = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 
 /** Native staged ingestion and hybrid retrieval over the host's document store. @public */
@@ -30,6 +29,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   const execution = yield* Semaphore.make(1)
   const active = yield* Ref.make<ReadonlyArray<Fiber.Fiber<unknown, unknown>>>([])
   const space: KnowledgeEmbeddingSpace = { model: config.embeddingModel, version: config.embeddingVersion, dimensions: config.embeddingDimensions }
+  const engine = knowledgeEngineId(`rag:${KNOWLEDGE_EXTRACTION_VERSION}`, space)
   const bounded = <A, E>(effect: Effect.Effect<A, E>, message: string) => effect.pipe(Effect.timeoutOrElse({ duration: config.modelTimeoutMs, orElse: () => Effect.fail(unavailable(message)) }))
   const inScope = (scope: KnowledgeScope) => scope.namespace === config.namespace && scope.collection === config.collection
     ? Effect.void : Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Use the collection configured for this retrieval engine" }))
@@ -100,7 +100,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       if (!admitted) return Option.none<Option.Option<KnowledgeJob>>()
       return yield* Effect.gen(function* () {
         // Count uncertain claims before storage I/O; stop never waits on that I/O while holding admission.
-        const claimed = yield* store.claim({ scope, worker: name, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
+        const claimed = yield* store.claim({ scope, engine, worker: name, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
         if (Option.isNone(claimed)) return Option.none<Option.Option<KnowledgeJob>>()
         const job = claimed.value
         const heartbeat = Effect.forever(Effect.sleep(Math.max(1, Math.floor(config.leaseMs / 3))).pipe(Effect.andThen(Effect.suspend(() => lease(job, token).pipe(Effect.flatMap((current) => store.renew(current, config.leaseMs)))))))
@@ -184,7 +184,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   const ingest = Effect.fn("rag.ingest")(function* (input: KnowledgeEnqueue) {
     yield* inScope(input.source.scope)
     if (input.source.text.length > config.maxSourceChars) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Split the document into smaller sources before ingestion" }))
-    const job = yield* store.enqueue({ ...input, engine: ENGINE })
+    const job = yield* store.enqueue({ ...input, engine })
     yield* Queue.offer(wake, undefined)
     return job
   })
@@ -195,7 +195,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   })
   const drain = Effect.gen(function* () {
     // The idle scan runs every poll: untraced, so an idle worker records nothing; each claimed job is traced.
-    const pending = yield* store.pending({ engine: ENGINE, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize }).pipe(Effect.withTracerEnabled(false))
+    const pending = yield* store.pending({ engine, namespace: config.namespace, collection: config.collection, now: yield* Clock.currentTimeMillis, limit: config.batchSize }).pipe(Effect.withTracerEnabled(false))
     yield* Effect.forEach(pending.filter((job) => job.scope.collection === config.collection), (job) => processOne(job.scope, job).pipe(Effect.ignore({ log: "Warn", message: "A document source remains unprocessed; inspect its processing status before retrying" })), { concurrency: 1, discard: true })
   })
   const fiber = config.worker ? Option.some(yield* Effect.forkScoped(Effect.forever(Effect.gen(function* () {

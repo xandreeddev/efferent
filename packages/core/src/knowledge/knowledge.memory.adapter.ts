@@ -130,7 +130,7 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
     }),
     claim: Effect.fn("knowledge_store.claim")(function* (input) {
       return yield* change((current) => {
-        const job = current.jobs.find((entry) => sameKnowledgeScope(entry.scope, input.scope) && (!input.jobId || entry.id === input.jobId) && claimable(entry, input.now))
+        const job = current.jobs.find((entry) => sameKnowledgeScope(entry.scope, input.scope) && entry.engine === input.engine && (!input.jobId || entry.id === input.jobId) && claimable(entry, input.now))
         if (!job) return Result.succeed({ state: current, value: Option.none<KnowledgeJob>() })
         const claimed: KnowledgeJob = { ...job, attempt: job.attempt + 1, phase: { _tag: "Processing", token: input.token, worker: input.worker, leaseUntil: input.now + input.leaseMs } }
         return Result.succeed({ state: replaceJob(current, claimed), value: Option.some(claimed) })

@@ -114,7 +114,10 @@ export const KnowledgeJobPhase = Schema.Union([
   Schema.TaggedStruct("Cancelled", { cancelledAt: Count }),
 ])
 export type KnowledgeJobPhase = typeof KnowledgeJobPhase.Type
-/** @public */
+/**
+ * A processing job. `engine` names the processor and the embedding space it indexes with
+ * (`knowledgeEngineId`); only workers of that engine discover or claim it. @public
+ */
 export const KnowledgeJob = Schema.Struct({
   id: KnowledgeJobId, scope: KnowledgeScope, source: KnowledgeSourceRef, engine: Text,
   attempt: Count, phase: KnowledgeJobPhase, stage: Schema.OptionFromNullOr(KnowledgeStage),
@@ -126,13 +129,16 @@ export const KnowledgeEnqueue = Schema.Struct({
   expectedRevision: Schema.OptionFromNullOr(Positive),
 })
 export type KnowledgeEnqueue = typeof KnowledgeEnqueue.Type
-/** @public */
+/**
+ * A worker's lease request in one scope. Only a job recorded under `engine` is claimable, with or
+ * without `jobId`, so engines that share a collection never take each other's work. @public
+ */
 export const KnowledgeClaim = Schema.Struct({
-  scope: KnowledgeScope, worker: Text, token: KnowledgeLeaseToken, now: Count,
+  scope: KnowledgeScope, engine: Text, worker: Text, token: KnowledgeLeaseToken, now: Count,
   leaseMs: Positive, jobId: Schema.optionalKey(KnowledgeJobId),
 })
 export type KnowledgeClaim = typeof KnowledgeClaim.Type
-/** Host worker discovery across owners within one engine namespace. @public */
+/** Host worker discovery across owners within one engine and namespace (and collection, when given). @public */
 export const KnowledgePending = Schema.Struct({ engine: Text, namespace: Text, collection: Schema.optionalKey(Text), now: Count, limit: Positive.check(Schema.isLessThanOrEqualTo(100)) })
 export type KnowledgePending = typeof KnowledgePending.Type
 /** @public */

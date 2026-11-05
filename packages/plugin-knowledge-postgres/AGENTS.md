@@ -33,6 +33,7 @@ three ports. Node 24 and Bun use the same `postgres` driver.
   at publication; extraction output cannot backdate knowledge.
 - Claim jobs with `FOR UPDATE SKIP LOCKED`; a stale or expired lease cannot
   stage or publish. Never hold a SQL transaction while calling a model.
+- Discovery and claims (by job id too) see only jobs of the requested engine.
 - Persist and validate embedding profiles and dimensions before storing vectors.
 - The migration version only advances transactionally. Never modify a shipped
   migration or silently reset an unsupported schema version.

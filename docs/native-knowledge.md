@@ -22,6 +22,16 @@ host's actual embedding space. Configure the same identity on both engines when
 sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
+Each engine records its jobs under an engine id that names the engine and its
+embedding space: `knowledgeEngineId("rag:1", space)` is
+`rag:1/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
+only jobs recorded under its own id, so processes configured with different
+embedding spaces can share one store without indexing each other's sources. A
+job queued under another configuration waits for a worker of that
+configuration. The engine sets the id on `ingest` and `capture`, whatever
+`engine` the caller passes.
+
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
 worker contribution:
@@ -65,7 +75,7 @@ const indexed = Effect.scoped(Effect.gen(function* () {
   const memory = Context.get(services, LongTermMemory)
   const scope = { owner: "user-1", namespace: "assistant", collection: "knowledge" }
   const job = yield* documents.ingest({
-    jobId: KnowledgeJobId.make("handbook:1"), engine: "rag:1",
+    jobId: KnowledgeJobId.make("handbook:1"), engine: "rag", // replaced by the engine's own id
     expectedRevision: Option.none(),
     source: {
       scope, ref: { id: KnowledgeSourceId.make("handbook"), revision: 1 },
