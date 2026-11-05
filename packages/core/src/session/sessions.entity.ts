@@ -5,7 +5,7 @@ import { RunId } from "../domain/run.entity.js"
 import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionMissing } from "./session-log.entity.js"
+import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
 import { TaskRef } from "./tasks.entity.js"
 
 /*
@@ -225,6 +225,25 @@ export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict"
   session: ConversationId,
   key: Schema.String,
   turn: Schema.Int,
+}) {}
+
+/**
+ * A keyed `Sessions.transact` repeated a key the session recorded before,
+ * with the same `command`: that first transact is the answer. `decide` was
+ * not called and nothing was written; `events` are what the first one
+ * recorded, as stored (its `Decided.events`). Transact keys are the
+ * session's own, apart from the keys turns are begun with.
+ */
+export class TransactDuplicate extends Schema.TaggedError<TransactDuplicate>()("TransactDuplicate", {
+  session: ConversationId,
+  key: Schema.String,
+  events: Schema.Array(SessionLogEvent),
+}) {}
+
+/** A keyed `Sessions.transact` repeated a key the session recorded before with another `command`: nothing was written. */
+export class TransactConflict extends Schema.TaggedError<TransactConflict>()("TransactConflict", {
+  session: ConversationId,
+  key: Schema.String,
 }) {}
 
 /**

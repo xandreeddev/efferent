@@ -3167,7 +3167,23 @@ decide)` is the same check-then-append (a page action, a setting); the
 framework's journal kinds (`JOURNAL_KINDS`; among them `request.prepared`
 holds each request's full system text and tool declarations, see durable
 model requests) and every bus event's name are refused there
-(`RESERVED_KINDS`). A `Sessions` call whose commit keeps losing to other
+(`RESERVED_KINDS`). With a key, `Sessions.transact(address, decide, { key,
+command })` is idempotent, so a retried request records its action once:
+the commit that stores the decision's events opens with a `transact.keyed`
+record of the key, its `command` (the key's fingerprint, compared as
+canonical JSON, `{}` when left out) and how many events follow. A later
+transact under the key, on any instance, finds that record instead of
+deciding: it calls no `decide`, writes nothing, and fails with
+`TransactDuplicate` (`session.transact-duplicate`), carrying the events
+the first one recorded, when its `command` is the same, or with
+`TransactConflict` (`session.transact-conflict`) when it is not. Of
+transacts racing under one key, exactly one commits; a decision that
+fails or is refused stores no key. Transact keys are the session's own
+and apart from the keys turns are begun with: a begin never finds a
+transact's key, nor a transact a turn's. `Decided.events` are the
+decision's events, without the key's record, and the two refusals are in
+the type only of a call given a key (`TransactRefusal`). A keyed transact
+writes beside an open turn like any other, and the turn writes on. A `Sessions` call whose commit keeps losing to other
 writers (planned again from the new head each time, `retries` times, 8 by
 default) fails with `SessionContended` (`session.contended`; a host answers
 503) and stores nothing. `SessionLogError` is the store's own failure only:
@@ -3324,6 +3340,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `model.called` (terminal physical attempt, actual model, purpose, reported usage and outcome) | the turn's recorder, appended and flushed before its bus notification |
 | `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
 | `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
+| `transact.keyed` (`key`, `command`, `events`: how many follow it) | `Sessions.transact` given a `key`, first in the commit of the decision's events |
 | `task.started`, `task.questioned`, `task.answered`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
 | anything else | the host, through the writer or `transact` |
 

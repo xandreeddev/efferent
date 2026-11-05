@@ -118,6 +118,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   waits for the next; `node:zlib` is loaded only then. Without `compress`
   it sends the same headers and bytes as before. `sseContentEncodingOf`
   (and its `SseContentEncoding`) is that negotiation, for a host's own peer.
+- `Sessions.transact` takes an optional idempotency key:
+  `transact(address, decide, { key, command })`. The commit that records
+  the decision opens with a `transact.keyed` record of the key, its
+  `command` (the key's fingerprint, compared as canonical JSON) and how many
+  events follow. A later transact under the key, on any instance and beside
+  an open turn, calls no `decide` and writes nothing: it fails with
+  `TransactDuplicate` (`session.transact-duplicate`), carrying the events the
+  first one recorded, or with `TransactConflict`
+  (`session.transact-conflict`) when its command differs. Of transacts racing
+  under one key exactly one commits; a decision that fails or is refused
+  stores no key. Transact keys are apart from the keys turns begin with.
+  The two refusals are in the error type only of a call given a key
+  (`TransactRefusal`), so existing callers' types are unchanged.
+  `sessionsConformance` gains the `transact-key`, `transact-key-conflict`
+  and `transact-key-race` checks; a custom `Sessions` (or a wrapper of one)
+  passes `options` through to keep them.
+- Stored format 18 adds the `transact.keyed` journal kind
+  (`TransactKeyedData`: `key`, `command`, `events`), a reserved kind a host
+  record cannot use. As with every format, an earlier release refuses to
+  write to a session this release has written to (`session.version`), and
+  still reads it; sessions stored before read as they were.
 
 ### Migration
 

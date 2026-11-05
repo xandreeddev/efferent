@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 17,
+  "storedFormat": 18,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -31,6 +31,7 @@
     "inbox.queued",
     "inbox.dropped",
     "inbox.taken",
+    "transact.keyed",
     "model.called",
     "request.part",
     "memory.snapshot",
@@ -48,7 +49,7 @@
         "origin": "user",
         "createdAt": 1767225600000,
         "meta": {
-          "recorded": "0.14.0"
+          "recorded": "0.16.2"
         },
         "parent": null
       },
@@ -1844,7 +1845,7 @@
                 "content": [
                   {
                     "type": "tool-call",
-                    "toolCallId": "4.0.planned:0",
+                    "toolCallId": "call_4_0_p0",
                     "toolName": "lookup",
                     "input": {
                       "query": "gamma"
@@ -1887,7 +1888,7 @@
           "data": {
             "step": 0,
             "invocationId": "run-4:call:0",
-            "toolCallId": "4.0.planned:0",
+            "toolCallId": "call_4_0_p0",
             "tool": "lookup",
             "input": {
               "query": "gamma"
@@ -1905,7 +1906,7 @@
           "data": {
             "step": 0,
             "invocationId": "run-4:call:0",
-            "toolCallId": "4.0.planned:0",
+            "toolCallId": "call_4_0_p0",
             "tool": "lookup",
             "ok": true,
             "durationMs": 0,
@@ -1925,7 +1926,7 @@
             "step": 0,
             "at": 1767225600000,
             "body": {
-              "toolCallId": "4.0.planned:0",
+              "toolCallId": "call_4_0_p0",
               "run": 0,
               "toolName": "lookup",
               "isError": false,
@@ -2040,7 +2041,7 @@
             "results": [
               {
                 "entry": "run-4:8",
-                "toolCallId": "4.0.planned:0",
+                "toolCallId": "call_4_0_p0",
                 "tool": "lookup",
                 "ok": true
               }
@@ -2133,9 +2134,9 @@
             "run": 0,
             "strategy": "window",
             "strategyVersion": "2",
-            "fingerprint": "3623b0a2add",
+            "fingerprint": "4a6af3b8ad9",
             "systemFingerprint": "e35b4014ef",
-            "estimatedTokens": 926,
+            "estimatedTokens": 925,
             "reservedTokens": 482,
             "budgetTokens": 64000,
             "compactions": 1,
@@ -2207,7 +2208,7 @@
               }
             },
             "through": "run-4:10",
-            "contextFingerprint": "3623b0a2add",
+            "contextFingerprint": "4a6af3b8ad9",
             "stableMessages": 17,
             "tools": [
               "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
@@ -2502,9 +2503,9 @@
             "run": 0,
             "strategy": "window",
             "strategyVersion": "2",
-            "fingerprint": "475b1e18db6",
+            "fingerprint": "d0d77d3edb2",
             "systemFingerprint": "e35b4014ef",
-            "estimatedTokens": 1169,
+            "estimatedTokens": 1168,
             "reservedTokens": 482,
             "budgetTokens": 64000,
             "compactions": 1,
@@ -2546,7 +2547,7 @@
               }
             },
             "through": "run-4:13",
-            "contextFingerprint": "475b1e18db6",
+            "contextFingerprint": "d0d77d3edb2",
             "stableMessages": 19,
             "tools": [
               "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
@@ -3146,9 +3147,9 @@
             "run": 0,
             "strategy": "window",
             "strategyVersion": "2",
-            "fingerprint": "e06ef7181005",
+            "fingerprint": "a4f478781001",
             "systemFingerprint": "e35b4014ef",
-            "estimatedTokens": 1366,
+            "estimatedTokens": 1365,
             "reservedTokens": 482,
             "budgetTokens": 64000,
             "compactions": 2,
@@ -3190,7 +3191,7 @@
               }
             },
             "through": "run-8:3",
-            "contextFingerprint": "e06ef7181005",
+            "contextFingerprint": "a4f478781001",
             "stableMessages": 27,
             "tools": [
               "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
@@ -5795,6 +5796,42 @@
           "data": {
             "reason": "completed",
             "failure": null
+          }
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000006025",
+        "owner": "fixture",
+        "origin": "user",
+        "createdAt": 1767225600000,
+        "meta": {},
+        "parent": null
+      },
+      "events": [
+        {
+          "session": "00000000-0000-4000-8000-000000006025",
+          "seq": 1,
+          "turn": null,
+          "kind": "transact.keyed",
+          "at": 1767225600000,
+          "data": {
+            "key": "fixture-action-1",
+            "command": {
+              "choice": "approve"
+            },
+            "events": 1
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006025",
+          "seq": 2,
+          "turn": null,
+          "kind": "note.prepared",
+          "at": 1767225600000,
+          "data": {
+            "id": "keyed-action"
           }
         }
       ]

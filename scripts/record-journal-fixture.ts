@@ -480,12 +480,20 @@ const record = Effect.gen(function* () {
     Effect.withTracerEnabled(true),
   )
 
+  // A host action recorded under an idempotency key (`transact.keyed`), and its retry, which records nothing.
+  const keyedAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6025)), owner: address.owner }
+  yield* sessions.create(keyedAddress)
+  const keyedAction = sessions.transact(keyedAddress, () => Effect.succeed({ drafts: [{ kind: "note.prepared", data: { id: "keyed-action" } }], result: undefined }),
+    { key: "fixture-action-1", command: { choice: "approve" } })
+  yield* keyedAction
+  if ((yield* Effect.flip(keyedAction))._tag !== "TransactDuplicate") return yield* Effect.die("the fixture's keyed action was not answered as a duplicate")
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild, ...traceSessions], journal)
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild, ...traceSessions, keyedAddress], journal)
 }).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock), Effect.withTracerEnabled(false))
 
 const sessions = await Effect.runPromise(record)

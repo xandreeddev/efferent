@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Match, Option, PubSub, Schema, Stream } from "effect"
+import { Context, Effect, Layer, Match, Option, Predicate, PubSub, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
+import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TransactDuplicate, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { BeginTurn, JsonObject, SessionAddress, SessionContended, SessionLogError, SessionMissing, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
@@ -78,7 +78,7 @@ describe("the Sessions kit catches careless backends", () => {
         ),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "takeover-named", "tenure"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "takeover-named", "tenure", "transact-key"])
   })
 
   test("one over a log that ignores a commit's incarnation fails only the recreate check: a removed session's writer writes into the one created again", async () => {
@@ -181,6 +181,24 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, trusting)))).toEqual(["transact"])
   })
 
+  test("one whose transact drops its key, recording every retry, fails the keyed-transact checks", async () => {
+    const keyless = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      transact: (address, decide) => instance.sessions.transact(address, decide),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, keyless)))).toEqual(["transact-key", "transact-key-conflict", "transact-key-race"])
+  })
+
+  test("one that answers a retry under another command as a duplicate fails only the transact-key-conflict check", async () => {
+    const lenient = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      // The type of the failure is the key's (`TransactRefusal`): a stand-in duplicate is cast to it.
+      transact: (address, decide, options) => instance.sessions.transact(address, decide, options).pipe(
+        Effect.mapError((error) => (Predicate.isTagged(error, "TransactConflict") ? new TransactDuplicate({ session: address.id, key: options?.key ?? "", events: [] }) : error) as never)),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lenient)))).toEqual(["transact-key-conflict"])
+  })
+
   test("one whose turn writers raise their refusals as HarnessError codes fails the checks that read them", async () => {
     const asCode = (error: TurnError): TurnError => isHarnessError(error) ? error
       : new HarnessError({ code: Option.getOrElse(harnessCodeOf(error), () => error._tag), message: error._tag })
@@ -250,7 +268,7 @@ describe("the Sessions kit catches careless backends", () => {
     ...instance,
     sessions: Sessions.of({
       ...instance.sessions,
-      transact: (address, decide) => instance.sessions.transact(address, decide).pipe(Effect.tap(() => PubSub.publish(hub, address.id))),
+      transact: (address, decide, options) => instance.sessions.transact(address, decide, options).pipe(Effect.tap(() => PubSub.publish(hub, address.id))),
       changes: (address) => Stream.fromPubSub(hub).pipe(Stream.filter((id) => !perSession || id === address.id), Stream.map(() => undefined)),
     }),
   })

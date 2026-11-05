@@ -1,6 +1,6 @@
 {
-  "format": 17,
-  "fingerprint": "28c842f59e32fd0554bcdd3fe33d65a5cf775ccef54d732a92f206e7a23578b5",
+  "format": 18,
+  "fingerprint": "200f1119fb9d436a5b2f2fbb18d528caebb5e29f10ea297c54592a629747815d",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -32,6 +32,7 @@
     "journal tool.intercepted": "06463567bd351a48cdb36ea7114e5fe19d3a80aabf6595fc6985eebf65d44906",
     "journal tool.refused": "f1fb338103827be3fae543dea536565b05ce10667fa43b35b116f97beb636fc3",
     "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
+    "journal transact.keyed": "d6d398684016c4193cd42263351d9b4517fd1cb51894ab20e8055197bbd306df",
     "journal turn.ended": "7ddfbba6f34158c41040e24ebb84e87a6af8fc1bd1f286e5ea0b22626464e556",
     "journal turn.reply": "f717e492b2d31cdf544cb224ba114e94e03cdc5a1fa43fa0412a5b198805f5a1",
     "journal turn.started": "4a1677b02831623bf526e85353c9882181e926a26cd32b3ea99c9340fbcc2b52",
@@ -111,6 +112,10 @@
     {
       "format": 17,
       "fingerprint": "28c842f59e32fd0554bcdd3fe33d65a5cf775ccef54d732a92f206e7a23578b5"
+    },
+    {
+      "format": 18,
+      "fingerprint": "200f1119fb9d436a5b2f2fbb18d528caebb5e29f10ea297c54592a629747815d"
     }
   ]
 }

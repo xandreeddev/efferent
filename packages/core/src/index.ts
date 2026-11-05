@@ -140,6 +140,7 @@ export {
   RESERVED_KINDS,
   SESSION_KINDS,
   StepUsageData,
+  TransactKeyedData,
   TURN_EVENT_KINDS,
   TurnEndedData,
   TurnStartedData,
@@ -187,6 +188,8 @@ export {
   SessionContended,
   SessionPage,
   SessionView,
+  TransactConflict,
+  TransactDuplicate,
   turnBeginCodes,
   TurnBeginError,
   TurnClosed,
@@ -198,7 +201,7 @@ export { isShutdownRefusal, isTurnError, resumeRefusal, sessionAttributes, shutd
 export type { ResumableTurn } from "./session/sessions.entity.functions.js"
 export { Sessions } from "./ports/sessions.port.js"
 export { InboxRunner } from "./ports/inbox-runner.port.js"
-export type { Decided, Decision, TurnDraft, TurnWriter } from "./ports/sessions.port.js"
+export type { Decided, Decision, TransactOptions, TransactRefusal, TurnDraft, TurnWriter } from "./ports/sessions.port.js"
 export { TurnAdmission } from "./ports/turn-admission.port.js"
 export type { TurnToAdmit } from "./ports/turn-admission.port.js"
 export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"

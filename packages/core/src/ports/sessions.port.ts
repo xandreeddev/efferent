@@ -17,6 +17,8 @@ import type {
   SessionContended,
   SessionPage,
   SessionView,
+  TransactConflict,
+  TransactDuplicate,
   TurnBeginError,
   TurnClosed,
   TurnError,
@@ -39,6 +41,29 @@ export interface Decided<A> {
   readonly result: A
   readonly events: ReadonlyArray<SessionLogEvent>
 }
+
+/**
+ * What makes a `Sessions.transact` idempotent: a host action retried (a
+ * request sent again after a timeout) records once.
+ */
+export interface TransactOptions {
+  /**
+   * The host's idempotency key (a request or command id). Its first
+   * transact stores it, in the same commit as the decision's events; a
+   * later one under it does not decide again. Transact keys are the
+   * session's own, apart from the keys turns are begun with.
+   */
+  readonly key: string
+  /** What the request asked for, the key's fingerprint, compared as canonical JSON (`{}` when left out). */
+  readonly command?: JsonObject
+}
+
+/**
+ * What a transact given these options adds to its failures: a keyed one's
+ * refusals of a repeat (`TransactDuplicate`, `TransactConflict`), none
+ * without a key.
+ */
+export type TransactRefusal<O> = O extends TransactOptions ? TransactDuplicate | TransactConflict : never
 
 /**
  * The open turn's only way to write. Writes are queued and stored in queue
@@ -207,9 +232,21 @@ export class Sessions extends Context.Service<Sessions, {
   readonly changes: (address: SessionAddress) => Stream.Stream<void>
   /** The turn begun with this key, if any. */
   readonly lookup: (address: SessionAddress, key: string) => Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError>
-  /** Check, then append outside a turn (a user's action on a page, a setting): decided again on a conflict. */
-  readonly transact: <A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>) =>
-    Effect.Effect<Decided<A>, E | ReservedKind | SessionMissing | SessionContended | SessionLogError>
+  /**
+   * Check, then append outside a turn (a user's action on a page, a
+   * setting), beside an open turn too: decided again on a conflict. With a
+   * `key` (`TransactOptions`), the commit that records the decision also
+   * stores the key and its `command` (`transact.keyed`, before the
+   * decision's events), so a retried action records once: a later transact
+   * under the key, on any instance, calls no `decide` and writes nothing,
+   * failing with `TransactDuplicate` (the first one's `events`) when its
+   * `command` is the same and `TransactConflict` when it is not. Of
+   * transacts racing under one key, exactly one commits. A decision that
+   * fails, or is refused (`ReservedKind`), stores no key. `Decided.events`
+   * are the decision's own, never the key's record.
+   */
+  readonly transact: <A, E, O extends TransactOptions | undefined = undefined>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>, options?: O) =>
+    Effect.Effect<Decided<A>, E | ReservedKind | TransactRefusal<O> | SessionMissing | SessionContended | SessionLogError>
   /**
    * End exactly `turn` as cancelled, if it is the open one and still held:
    * its inbox items are done. A turn nobody holds any more (its lease ran

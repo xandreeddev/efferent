@@ -171,7 +171,12 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * its end's commit, right before `turn.ended` (by its scope's end too,
  * ending as a held reply implies; dropped by a cancel); writing outside a turn and the reserved kinds,
  * refused as `ReservedKind` there and to a turn's writer unless the
- * framework's turn wrote them (`frameworkDraft`); `changes` signalling a
+ * framework's turn wrote them (`frameworkDraft`); a keyed transact
+ * recorded once, beside an open turn and apart from turn keys: a retry
+ * under its key, on any instance, deciding nothing and writing nothing
+ * (`TransactDuplicate`, the first one's events), one with another command
+ * a `TransactConflict`, exactly one of several racing committed;
+ * `changes` signalling a
  * follower after its own session's commits only, the signals it did not
  * take merged into one; cancel and removal closing
  * the writer, a writer of a session removed and created again under its id
@@ -671,6 +676,72 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* writer.end(completed)
       const turn = kindsOf(yield* sessions.read(address, { after: 1 }))
       yield* expect("transact", turn === "turn.started@1,step.started@1,conformance.answer@1,turn.ended@1", `the turn stored ${turn}`)
+    })),
+
+    scoped("a keyed transact records once: a retry under its key, on any instance and beside an open turn, decides nothing, writes nothing and is TransactDuplicate with the first one's events; transact keys are apart from turn keys", "transact-key", (owner) => Effect.gen(function* () {
+      const [one, two] = [yield* leased(), yield* leased()]
+      const address = yield* created(one.sessions, owner)
+      // The turn is begun under the key the first action uses: a transact never reads a turn's key, nor a begin a transact's.
+      const writer = yield* one.sessions.begin(address, say("an open turn", "action-1"))
+      const decided = yield* Ref.make(0)
+      const act = (sessions: Service, key: string, choice: string) => sessions.transact(address, () => Ref.update(decided, (count) => count + 1).pipe(
+        Effect.as({ drafts: [{ kind: "conformance.action", data: { choice } }], result: choice })), { key, command: { choice } })
+      const first = yield* act(one.sessions, "action-1", "a")
+      yield* expect("transact-key", first.result === "a" && kindsOf(first.events) === "conformance.action", `the keyed transact returned ${first.result} with ${kindsOf(first.events)}`)
+      const retries = [yield* Effect.flip(act(one.sessions, "action-1", "a")), yield* Effect.flip(act(two.sessions, "action-1", "a"))]
+      const seqs = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => `${event.kind}#${event.seq}`).join()
+      yield* expect("transact-key", retries.every((error) => error._tag === "TransactDuplicate" && error.key === "action-1" && seqs(error.events) === seqs(first.events)),
+        `a retry on either instance gave ${retries.map((error) => error._tag === "TransactDuplicate" ? `TransactDuplicate(${seqs(error.events)})` : error._tag).join()}, not the first one's ${seqs(first.events)}`)
+      yield* expect("transact-key", (yield* Ref.get(decided)) === 1, `the decision ran ${yield* Ref.get(decided)} times for one key`)
+      // A decision that records nothing still keeps its key; one that fails, or is refused, keeps none.
+      const empty = yield* one.sessions.transact(address, () => Effect.succeed({ drafts: [], result: "nothing" }), { key: "action-2" })
+      const emptyAgain = yield* Effect.flip(one.sessions.transact(address, () => Effect.die("a repeat decided again"), { key: "action-2" }))
+      yield* expect("transact-key", empty.events.length === 0 && emptyAgain._tag === "TransactDuplicate" && emptyAgain.events.length === 0,
+        `a keyed transact that recorded nothing, retried, gave ${emptyAgain._tag}`)
+      const failed = yield* Effect.flip(one.sessions.transact(address, () => Effect.fail("not now" as const), { key: "action-3" }))
+      const reserved = yield* Effect.flip(one.sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "turn.ended", data: {} }], result: undefined }), { key: "action-3" }))
+      const later = yield* act(two.sessions, "action-3", "c")
+      yield* expect("transact-key", failed === "not now" && reserved._tag === "ReservedKind" && later.result === "c",
+        `a failed and a refused decision kept their key: the next transact under it gave ${String(later.result)}`)
+      const actions = (yield* one.sessions.read(address, { kinds: ["conformance.action"] })).map((event) => event.data["choice"]).join()
+      yield* expect("transact-key", actions === "a,c", `the session holds the actions ${actions}`)
+      yield* expect("transact-key", Option.contains(yield* openTurn(one.sessions, address), 1), "a keyed transact closed the open turn")
+      const begun = yield* refusal(two.sessions, address, say("an open turn", "action-1"))
+      yield* writer.end(completed)
+      const next = yield* refusal(one.sessions, address, say("a turn under a transact's key", "action-2"))
+      yield* expect("transact-key", begun === "TurnDuplicate" && next === "opened turn 2",
+        `a begin retried under its key beside the transacts gave ${begun}, and one under a transact's key gave ${next}`)
+    })),
+
+    scoped("a keyed transact retried with another command is TransactConflict and writes nothing; the command is compared as canonical JSON", "transact-key-conflict", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const act = (command?: JsonObject) => sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.action", data: {} }], result: "acted" }),
+        command === undefined ? { key: "action" } : { key: "action", command })
+      yield* act({ choice: "a", at: { row: 1, column: 2 } })
+      const answers = [
+        yield* answerOf(act({ choice: "b", at: { row: 1, column: 2 } })),
+        yield* answerOf(act()),
+        yield* answerOf(act({ at: { column: 2, row: 1 }, choice: "a" })),
+      ]
+      yield* expect("transact-key-conflict", answers.join() === "TransactConflict,TransactConflict,TransactDuplicate",
+        `retries under the key with another command, with none and with the same one in another key order gave ${answers.join()}`)
+      const conflict = yield* Effect.flip(act({ choice: "b" }))
+      const stored = (yield* sessions.read(address, { kinds: ["conformance.action"] })).length
+      yield* expect("transact-key-conflict", conflict._tag === "TransactConflict" && conflict.key === "action" && conflict.session === address.id && stored === 1,
+        `a conflicting retry gave ${conflict._tag}, and the session holds ${stored} actions`)
+    })),
+
+    scoped("of keyed transacts racing under one key from several instances, exactly one commits and the others are TransactDuplicate", "transact-key-race", (owner) => Effect.gen(function* () {
+      const instances = [yield* leased(), yield* leased(), yield* leased()]
+      const address = yield* created(instances[0]!.sessions, owner)
+      const attempts = yield* Effect.forEach(instances, (instance, n) => Effect.result(instance.sessions.transact(address,
+        () => Effect.succeed({ drafts: [{ kind: "conformance.action", data: { by: n } }], result: n }), { key: "race", command: { choice: "a" } })), { concurrency: "unbounded" })
+      const won = attempts.filter((attempt) => attempt._tag === "Success").length
+      const duplicates = attempts.filter((attempt) => attempt._tag === "Failure" && attempt.failure._tag === "TransactDuplicate").length
+      const stored = (yield* instances[1]!.sessions.read(address, { kinds: ["conformance.action"] })).length
+      yield* expect("transact-key-race", won === 1 && duplicates === 2 && stored === 1,
+        `of three racing transacts under one key ${won} committed and ${duplicates} were duplicates, and the session holds ${stored} actions`)
     })),
 
     scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, and a commit to another session does not wake it", "changes", (owner) => Effect.gen(function* () {

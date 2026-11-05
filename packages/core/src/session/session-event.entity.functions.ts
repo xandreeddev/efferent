@@ -20,6 +20,7 @@ import {
   RECORDED_ELSEWHERE,
   RESERVED_KINDS,
   StepUsageData,
+  TransactKeyedData,
   TURN_EVENT_KINDS,
   TurnEndedData,
   TurnStartedData,
@@ -105,6 +106,7 @@ export const StoredData = {
   "model.called": ModelCallData,
   "request.part": RequestPartData,
   "memory.snapshot": MemorySnapshotData,
+  "transact.keyed": TransactKeyedData,
 } as const
 export type StoredKind = keyof typeof StoredData
 
@@ -130,6 +132,7 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "model.called": Schema.decodeUnknownEffect(ModelCallData),
   "request.part": Schema.decodeUnknownEffect(RequestPartData),
   "memory.snapshot": Schema.decodeUnknownEffect(MemorySnapshotData),
+  "transact.keyed": Schema.decodeUnknownEffect(TransactKeyedData),
 }
 
 /** One event's data decoded as `kind`'s, read with sorted keys (`canonical`), whatever its own kind. */

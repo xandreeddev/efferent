@@ -41,6 +41,8 @@ import {
   TurnStartedData,
   turnStartedOf,
   turnAttributes,
+  TransactConflict,
+  TransactDuplicate,
   TurnShutdown,
   UserMessage,
   WaitingInput,
@@ -63,7 +65,10 @@ import type {
   SessionHead,
   SessionLogEvent,
   SessionView,
+  Stored,
   TaskRef,
+  TransactOptions,
+  TransactRefusal,
   TurnDraft,
   TurnEnding,
   TurnFailure,
@@ -72,7 +77,7 @@ import type {
   WaitingInputCount,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged, withFormat } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, heldTurn, isNewerFormat, keyedData, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged, withFormat } from "./sessions-state.entity.functions.js"
 import type { Holder, ReleasedTurn } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SealedTurn, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
@@ -466,6 +471,44 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }))), { concurrency: 1 })
     }).pipe(Effect.mapError(storage("session.decode")))),
   )
+
+  /** The session's keyed transact under `key`, its record decoded, if it recorded one. */
+  const keyedTransact = (id: ConversationId, key: string) => log.read(id, { after: 0, limit: Option.none(), kinds: ["transact.keyed"] }).pipe(
+    Effect.flatMap((events) => readStored("transact.keyed", events).pipe(Effect.mapError(storage("session.decode")))),
+    Effect.map((keyed) => Option.fromNullishOr(keyed.find((found) => found.data.key === key))),
+  )
+
+  /** A repeat of a keyed transact: the first one's events (directly after its record, in its commit), or a conflict when its command differs. */
+  const repeated = (address: SessionAddress, options: TransactOptions, found: Stored<"transact.keyed">) =>
+    canonicalJson(found.data.command) !== canonicalJson(options.command ?? {})
+      ? Effect.fail(new TransactConflict({ session: address.id, key: options.key }))
+      : (found.data.events === 0 ? Effect.succeed([]) : log.read(address.id, { after: found.event.seq, through: found.event.seq + found.data.events, limit: Option.none(), kinds: [] })).pipe(
+        Effect.flatMap((events) => Effect.fail(new TransactDuplicate({ session: address.id, key: options.key, events }))),
+      )
+
+  // A keyed transact's record opens its commit: a repeat finds it (a racing one, after its commit conflicts) and decides nothing.
+  const runTransact = Effect.fn("sessions.transact")(<A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>, options?: TransactOptions) => guarded(address, (head, state) => Effect.gen(function* () {
+    if (options !== undefined) {
+      const earlier = yield* keyedTransact(address.id, options.key)
+      if (Option.isSome(earlier)) return yield* repeated(address, options, earlier.value)
+    }
+    const decision = yield* decide(yield* viewOf(head, state, holder))
+    const reserved = decision.drafts.find((draft) => RESERVED_KINDS.includes(draft.kind))
+    if (reserved !== undefined) return yield* Effect.fail(new ReservedKind({ kind: reserved.kind }))
+    const keyed = options === undefined ? [] : [{
+      kind: "transact.keyed", turn: Option.none(), data: yield* keyedData(options.key, options.command ?? {}, decision.drafts.length).pipe(Effect.orDie),
+    } satisfies SessionDraft]
+    return { drafts: [...keyed, ...standalone(decision.drafts)], next: Option.none<SessionsState>(), result: decision.result }
+  })).pipe(Effect.map((done): Decided<A> => ({
+    result: done.result,
+    events: Option.match(done.committed, { onNone: () => [], onSome: (committed) => committed.events.filter((event) => event.kind !== "transact.keyed") }),
+  }))), onSession)
+  /** `Sessions.transact`: a keyed one's refusals only in the type of a call given a key (`TransactRefusal`). */
+  function transact<A, E, O extends TransactOptions | undefined = undefined>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>, options?: O):
+    Effect.Effect<Decided<A>, E | ReservedKind | TransactRefusal<O> | SessionMissing | SessionContended | SessionLogError>
+  function transact<A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>, options?: TransactOptions) {
+    return runTransact(address, decide, options)
+  }
 
   /** The session's `inbox.queued` records, decoded. */
   const queuedIn = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
@@ -1012,12 +1055,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     waiting: Stream.unwrap(PubSub.subscribe(waitingHub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
     changes: (address) => Stream.unwrap(RcMap.get(followers, address.id).pipe(Effect.map(Stream.fromPubSub))),
     lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap(() => keyed(address.id, key)), Effect.map(Option.map((found) => found.turn))), onSession),
-    transact: Effect.fn("sessions.transact")(<A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>) => guarded(address, (head, state) => Effect.gen(function* () {
-      const decision = yield* decide(yield* viewOf(head, state, holder))
-      const reserved = decision.drafts.find((draft) => RESERVED_KINDS.includes(draft.kind))
-      if (reserved !== undefined) return yield* Effect.fail(new ReservedKind({ kind: reserved.kind }))
-      return { drafts: standalone(decision.drafts), next: Option.none<SessionsState>(), result: decision.result }
-    })).pipe(Effect.map((done): Decided<A> => ({ result: done.result, events: Option.match(done.committed, { onNone: () => [], onSome: (committed) => committed.events }) }))), onSession),
+    transact,
     // A turn nobody holds any more is reaped, as by a begin or a delivery, whichever comes first: it is not open, so the
     // cancel cancels nothing, and the outcome (interrupted, its items waiting again) does not depend on the order.
     cancel: Effect.fn("sessions.cancel")((address, turn) => closeOpen(address, turn, { reason: "cancelled", failure: Option.none(), tried: true, closedBy: "cancelled" }).pipe(

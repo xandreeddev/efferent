@@ -292,6 +292,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
 | `inbox.taken` | plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer | None: the input id and raw memory entry id; message and image bytes stay in memory.message. | `id`, `entry` |
+| `transact.keyed` | plugin-sessions: `Sessions.transact` given a `key`, first in the commit that stores the decision's events | The host's idempotency key and its `command` (what the keyed request asked for). | `key`, `command`, `events` |
 | `model.called` | The turn-owned model-call recorder, directly appended and flushed before notification | Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies. | `callId`, `attempt`, `purpose`, `method`, `model`, `runId`, `run`, `step`, `durationMs`, `usage`, `outcome` |
 | `request.part` | The turn, in the same append batch before a version 2 request header (`TurnMemory.prepareRequest`) | A system prompt (including system-mode step context) or one active tool declaration. Provider-tool argument values remain excluded. | `hash`, `part` |
 | `memory.snapshot` | Opted-in memory after a reducing summary and digest acknowledgments; the turn writer publishes its head pointer in the same commit | Copies of retained raw memory, including tool output, reasoning, host context, image values and compaction facts. Treat these copies like their original records and retain referenced media. | `version`, `strategy`, `anchor`, `through`, `entries` |
@@ -345,6 +346,7 @@ turn.ended
 inbox.queued
 inbox.dropped
 inbox.taken
+transact.keyed
 model.called
 request.part
 memory.snapshot
@@ -460,6 +462,8 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `session.log` | the turn writer, a turn failing with a `SessionLogError` | The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed. |
 | `session.contended` | the turn writer, plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`) | Too many conflicting writes to the session in a row: nothing was written, and a retry may succeed. |
 | `inbox.input-conflict` | `Sessions.enqueue` (`InputConflict`) | The input id already names another normalized message, delivery or source, or a legacy notice. Nothing was replaced or queued; retry with the original input or a new id. |
+| `session.transact-duplicate` | `Sessions.transact` given a `key` (`TransactDuplicate`) | The session recorded a transact under the key before, with the same `command`: that one is the answer. Nothing was decided or written; the error carries the events the first one recorded. |
+| `session.transact-conflict` | `Sessions.transact` given a `key` (`TransactConflict`) | The session recorded a transact under the key before, with another `command`. Nothing was written; retry with the original command or a new key. |
 | `session.state` | the turn writer (a `HarnessError`); plugin-sessions' `Sessions` (a `SessionLogError`) | The session's state, kept in its head, did not decode. |
 | `session.encode` | the turn writer | The writer's closing `turn.ended` did not encode. plugin-sessions' `Sessions` no longer raises it for a record or a state of its own since `SessionLogError` became storage only (it is a defect now); older journals may hold it. |
 | `session.decode` | `Sessions.begin` and selected memory checkpoint validation (a `SessionLogError`) | A stored turn did not decode during key/resume checks, or a selected memory snapshot has invalid identity, schema, frontier or retained contents. The pointed-record reader reports that the stored memory snapshot is invalid; other checkpoint decoders name the failed invariant. Malformed overall head state retains session.state. |
