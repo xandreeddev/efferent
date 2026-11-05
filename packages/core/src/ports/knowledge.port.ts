@@ -12,7 +12,8 @@ import type { RunContext } from "./run-context.port.js"
  * Durable source processing and derived indexes. Replaying identical source/revision/engine
  * returns its original job. Conflicting content or source/job reuse fails without changes.
  * Discovery (`pending`) and `claim` see only jobs recorded under the requested engine.
- * Staging verifies the unexpired lease, current scope version and source provenance.
+ * Staging verifies the unexpired lease, current scope version and source provenance, and keeps
+ * the stage, its notes included, on the job through retry and publication.
  * Publication verifies the unexpired lease, current source revision, provenance and scope CAS,
  * atomically replaces that source's indexes, retires requested records, and completes the job.
  * Forget tombstones every revision, cancels its jobs, removes dependent derivations, and clears

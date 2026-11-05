@@ -58,7 +58,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
+ * durable staging (its notes included), CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
  * revision replacement, batched source info, engine-scoped discovery and claims, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -89,12 +89,14 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const job = yield* enqueue(fixture, source)
       yield* claim(fixture)
       const lease = leaseOf(fixture.scope, job)
-      yield* fixture.index.stage(lease, stageOf(source))
+      const notes = [{ _tag: "GraphOmitted" as const, reason: "Invalid" as const, message: "graph left out" }]
+      yield* fixture.index.stage(lease, { ...stageOf(source), notes })
       yield* fixture.index.fail(lease, "retryable")
       const queued = yield* fixture.index.retry(fixture.scope, job.id)
       yield* claim(fixture, 30)
       const resumed = yield* fixture.index.status(fixture.scope, job.id)
-      yield* expect("knowledge.stage-retry", queued.phase._tag === "Queued" && Option.exists(resumed, (value) => Option.isSome(value.stage) && value.attempt === 2), "retry discarded staged extraction or attempts")
+      const kept = Option.exists(resumed, (value) => Option.exists(value.stage, (stage) => stage.notes?.length === 1 && stage.notes[0]?.reason === "Invalid" && stage.notes[0].message === "graph left out"))
+      yield* expect("knowledge.stage-retry", queued.phase._tag === "Queued" && kept && Option.exists(resumed, (value) => value.attempt === 2), "retry discarded staged extraction, its notes or attempts")
     })),
     indexCheck("knowledge.atomic-cas", (fixture) => Effect.gen(function* () {
       yield* seed(fixture)

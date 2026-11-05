@@ -100,12 +100,27 @@ export const KnowledgeAssertion = Schema.Struct({
   (edge.knownTo._tag === "None" || edge.knownTo.value >= edge.knownFrom) &&
   (edge.validFrom._tag === "None" || edge.validTo._tag === "None" || edge.validTo.value >= edge.validFrom.value) || "temporal interval ends before it starts"))
 export type KnowledgeAssertion = typeof KnowledgeAssertion.Type
-/** Extraction is staged durably before embedding/publication. Scope CAS protects all derived writes. @public */
+/** @public */
+export const KnowledgeErrorReason = Schema.Literals(["Conflict", "LeaseLost", "Tombstoned", "Invalid", "Unavailable", "Corrupt", "EmbeddingMismatch"])
+export type KnowledgeErrorReason = typeof KnowledgeErrorReason.Type
+/**
+ * A derivation an engine left out of a stage, and why. `GraphOmitted`: optional graph extraction
+ * failed on the job's last attempt, so the source's chunks publish without entities or assertions.
+ * @public
+ */
+export const KnowledgeStageNote = Schema.TaggedStruct("GraphOmitted", { reason: KnowledgeErrorReason, message: Schema.String })
+export type KnowledgeStageNote = typeof KnowledgeStageNote.Type
+/**
+ * Extraction is staged durably before embedding/publication. Scope CAS protects all derived writes.
+ * `notes` is written only when a derivation was left out, and stays on the job after publication.
+ * @public
+ */
 export const KnowledgeStage = Schema.Struct({
   expectedVersion: Count,
   memories: Schema.Array(KnowledgeMemory), chunks: Schema.Array(KnowledgeChunk),
   entities: Schema.Array(KnowledgeEntity), assertions: Schema.Array(KnowledgeAssertion),
   retireMemories: Schema.Array(KnowledgeMemoryId), retireAssertions: Schema.Array(KnowledgeAssertionId),
+  notes: Schema.optionalKey(Schema.Array(KnowledgeStageNote)),
 })
 export type KnowledgeStage = typeof KnowledgeStage.Type
 /** @public */
@@ -234,9 +249,6 @@ export const KnowledgeHelperCall = Schema.Struct({
   maxOutputTokens: Schema.OptionFromNullOr(Positive),
 })
 export type KnowledgeHelperCall = typeof KnowledgeHelperCall.Type
-/** @public */
-export const KnowledgeErrorReason = Schema.Literals(["Conflict", "LeaseLost", "Tombstoned", "Invalid", "Unavailable", "Corrupt", "EmbeddingMismatch"])
-export type KnowledgeErrorReason = typeof KnowledgeErrorReason.Type
 /** Expected storage/extraction errors preserve the original cause. @public */
 export class KnowledgeError extends Schema.TaggedError<KnowledgeError>()("KnowledgeError", {
   reason: KnowledgeErrorReason, message: Schema.String, cause: Schema.optionalKey(Schema.Defect()),

@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Result } from "effect"
+import { UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
 import { knowledgeConformance } from "@xandreed/core/conformance"
 import { makeRag, scope } from "./rag.testing.js"
 
-const checks = knowledgeConformance({ open: Effect.map(makeRag(), ({ knowledge }) => ({ knowledge, scope })) })
+const invalidHelper = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "not JSON", usage: zeroUsage })) })
+const checks = knowledgeConformance({
+  open: Effect.map(makeRag(), ({ knowledge }) => ({ knowledge, scope })),
+  failingExtraction: Effect.map(makeRag({ graph: true, maxAttempts: 2 }, undefined, undefined, invalidHelper), ({ knowledge }) => ({ knowledge, scope })),
+})
 
 describe("native document facade conformance", () => {
   checks.forEach((check) => test(check.name, () => Effect.runPromise(check.run)))

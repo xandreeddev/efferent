@@ -11,9 +11,16 @@ import { citedKnowledgeSources } from "./knowledge.entity.functions.js"
 export interface LongTermMemorySubject {
   readonly open: Effect.Effect<{ readonly memory: Context.Service.Shape<typeof LongTermMemory>; readonly scope: KnowledgeScope }, unknown, Scope.Scope>
 }
+type KnowledgeFixture = { readonly knowledge: Context.Service.Shape<typeof Knowledge>; readonly scope: KnowledgeScope }
 /** Fresh document service, with workers disabled and valid scripted extraction if enabled. @public */
 export interface KnowledgeSubject {
-  readonly open: Effect.Effect<{ readonly knowledge: Context.Service.Shape<typeof Knowledge>; readonly scope: KnowledgeScope }, unknown, Scope.Scope>
+  readonly open: Effect.Effect<KnowledgeFixture, unknown, Scope.Scope>
+  /**
+   * A fresh service like `open` whose optional graph extraction fails on every attempt (an
+   * unavailable helper or an invalid answer). Without it, `failed-extraction` runs on `open`
+   * and shows only that plain retrieval completes.
+   */
+  readonly failingExtraction?: Effect.Effect<KnowledgeFixture, unknown, Scope.Scope>
 }
 type Memory = Context.Service.Shape<typeof LongTermMemory>
 type Facade = Omit<Memory, "capture" | "profile"> & { readonly accept: Memory["capture"]; readonly profile?: Memory["profile"] }
@@ -114,5 +121,27 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
 
 /** Async processing, isolation, source retention, deletion, cited source info and retrieval contracts; no model-quality assertions. @public */
 export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => facadeConformance("long_term_memory", Effect.map(subject.open, ({ memory, scope }) => ({ scope, facade: { ...memory, accept: memory.capture } })))
-/** Async document processing, isolation, source retention, deletion, cited source info and retrieval contracts. @public */
-export const knowledgeConformance = (subject: KnowledgeSubject): ReadonlyArray<ConformanceCheck> => facadeConformance("knowledge_facade", Effect.map(subject.open, ({ knowledge, scope }) => ({ scope, facade: { ...knowledge, accept: knowledge.ingest, recall: knowledge.retrieve } })))
+const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
+  const id = "knowledge_facade.failed-extraction"
+  return check(id, id, () => Effect.scoped(Effect.gen(function* () {
+    const { knowledge, scope } = yield* (subject.failingExtraction ?? subject.open)
+    const source = sourceOf(scope)
+    const job = yield* knowledge.ingest({ jobId: KnowledgeJobId.make("facade-job"), source, engine: "facade-kit", expectedRevision: Option.none() })
+    const processed = yield* knowledge.process(scope, 1)
+    const status = yield* knowledge.status(scope, job.id)
+    const recalled = yield* knowledge.retrieve({ scope, query: "tea", limit: 10, maxChars: 1000, graph: false })
+    const cited = recalled.candidates.some((candidate) => Match.valueTags(candidate, { Memory: () => false, Chunk: ({ chunk }) => chunk.provenance.source.id === source.ref.id && chunk.provenance.source.revision === source.ref.revision }))
+    yield* expect(id, processed === 1 && Option.exists(status, (value) => value.phase._tag === "Complete") && cited, "a failed optional extraction kept the source's chunks from publication or plain retrieval")
+    if (subject.failingExtraction !== undefined) yield* expect(id, Option.exists(Option.flatMap(status, (value) => value.stage), (stage) => (stage.notes ?? []).some((note) => note._tag === "GraphOmitted")), "the completed job did not record that its graph was omitted")
+  })))
+}
+
+/**
+ * Async document processing, isolation, source retention, deletion, cited source info and retrieval contracts;
+ * a failed optional graph extraction still publishes the source's chunks.
+ * @public
+ */
+export const knowledgeConformance = (subject: KnowledgeSubject): ReadonlyArray<ConformanceCheck> => [
+  ...facadeConformance("knowledge_facade", Effect.map(subject.open, ({ knowledge, scope }) => ({ scope, facade: { ...knowledge, accept: knowledge.ingest, recall: knowledge.retrieve } }))),
+  failedExtraction(subject),
+]

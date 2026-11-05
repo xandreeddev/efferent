@@ -505,7 +505,7 @@ export {
   KnowledgeEntityId, KnowledgeAssertionId, KnowledgeLeaseToken, KnowledgeScope,
   KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
-  KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStage,
+  KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeStage,
   KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
