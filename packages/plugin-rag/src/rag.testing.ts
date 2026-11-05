@@ -29,6 +29,6 @@ export const makeRag = (options: Partial<RagConfig> = {}, ownStore?: KnowledgeIn
   const embeddings = ownEmbeddings ?? (yield* makeEmbeddings())
   const context = Context.make(KnowledgeStore, store).pipe(Context.add(EmbeddingModel.EmbeddingModel, embeddings))
   const services = utility === undefined ? context : Context.add(context, UtilityLlm, utility)
-  const built = yield* Layer.build(RagLive({ ...ragDefaults, worker: false, queryPlanning: false, rerank: false, embeddingDimensions: 2, maxAttempts: 1, ...options }).pipe(Layer.provide(Layer.succeedContext(services))))
+  const built = yield* Layer.build(RagLive({ ...ragDefaults, worker: false, embeddingDimensions: 2, maxAttempts: 1, ...options }).pipe(Layer.provide(Layer.succeedContext(services))))
   return { store, embeddings, services, knowledge: Context.get(built, Knowledge), built }
 })

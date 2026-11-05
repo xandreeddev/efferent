@@ -8,14 +8,16 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { ragPlugin } from "./plugin.adapter.js"
-import { enqueue, makeRag, scope } from "./rag.testing.js"
+import { enqueue, makeRag, scope, scriptedUtility } from "./rag.testing.js"
 
 const session = { owner: scope.owner, id: ConversationId.make("00000000-0000-4000-8000-0000000000d1") }
 const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
 
 describe("document retrieval through Agent", () => {
   test("search and source reads use the turn owner and present exact cited evidence", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const rag = yield* makeRag()
+    // A UtilityLlm is present, yet default options spend no helper call on query planning or reranking.
+    const helper = yield* scriptedUtility([])
+    const rag = yield* makeRag({}, undefined, undefined, helper.utility)
     yield* rag.knowledge.ingest(enqueue("guide", "The release lane is blue."))
     yield* rag.knowledge.process(scope, 1)
     const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
@@ -43,6 +45,7 @@ describe("document retrieval through Agent", () => {
     const journal = yield* sessions.read(session)
     expect(journal.filter((row) => row.kind === "tool.completed").map((row) => row.data.tool)).toEqual(["search_knowledge", "read_knowledge"])
     expect(journal.some((row) => row.kind === "memory.section" && JSON.stringify(row.data).includes("knowledge.evidence"))).toBe(true)
+    expect(yield* Ref.get(helper.prompts)).toEqual([])
     // The graph's own service is independent of the host service used to ingest.
     expect(Context.get(rag.built, Knowledge)).toBe(rag.knowledge)
   }))))

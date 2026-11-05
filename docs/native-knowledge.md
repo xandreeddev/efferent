@@ -12,8 +12,10 @@ Keep one window/summary strategy when adding long-term memory or RAG.
 
 The memory engine requires `MemoryStore`, `UtilityLlm` and Effect's
 `EmbeddingModel.EmbeddingModel`. Plain RAG requires `KnowledgeStore` and the
-embedding service. GraphRAG also requires `UtilityLlm`; query planning and
-reranking use it when available. Supply a model suitable for extraction and
+embedding service. GraphRAG also requires `UtilityLlm`. Query planning and
+reranking are opt-in on both engines (`queryPlanning: true`, `rerank: true`):
+each adds one `UtilityLlm` call to every search, and RAG skips them when no
+`UtilityLlm` is supplied. Supply a model suitable for extraction and
 relationship reasoning. The models plugin's `fastModel` configures its helper
 model independently of the main conversation model.
 
@@ -211,11 +213,11 @@ are hidden while surviving evidence is rebuilt.
 control for evaluation: it suppresses inferred memories and supersession. Use a
 separate collection/build for this control. Normal operation enables consolidation.
 
-Memory recall and RAG combine lexical/vector candidates, optional query planning,
-graph expansion and evidence reranking. Traversal defaults to two hops and is
-capped at three. Results expose truncation and retain citations. Query/model work
-has explicit budgets; invalid planner/reranker output falls back to deterministic
-retrieval. Retrieved text is framed as data in a recorded turn-tier section.
+Memory recall and RAG combine lexical/vector candidates, graph expansion and,
+when enabled, query planning and evidence reranking. Traversal defaults to two
+hops and is capped at three. Results expose truncation and retain citations.
+Query/model work has explicit budgets; invalid planner/reranker output falls
+back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section.
 
 ## Documents, tools and lifecycle
 

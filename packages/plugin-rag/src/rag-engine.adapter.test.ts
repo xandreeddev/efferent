@@ -4,6 +4,8 @@ import { TestClock } from "effect/testing"
 import { CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
 import type { KnowledgeHelperCall } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
+import { ragDefaults } from "./rag.entity.js"
+import type { RagConfig } from "./rag.entity.js"
 import { enqueue, makeEmbeddings, makeRag, scope, scriptedUtility } from "./rag.testing.js"
 
 describe("native document ingestion", () => {
@@ -211,6 +213,25 @@ describe("bounded document extraction", () => {
 })
 
 describe("document query assistance", () => {
+  test("query planning and reranking are opt-in: by default a search makes no helper call", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    expect([ragDefaults.queryPlanning, ragDefaults.rerank]).toEqual([false, false])
+    const helperCalls = (options: Partial<RagConfig>) => Effect.gen(function* () {
+      const { utility, prompts } = yield* scriptedUtility([
+        ...(options.queryPlanning === true ? [JSON.stringify({ queries: ["stable"], entities: [], validAt: null, knownAt: null })] : []),
+        ...(options.rerank === true ? [JSON.stringify({ order: [] })] : []),
+      ])
+      const { knowledge } = yield* makeRag(options, undefined, undefined, utility)
+      yield* knowledge.ingest(enqueue("guide", "stable evidence"))
+      yield* knowledge.process(scope, 1)
+      yield* knowledge.retrieve({ scope, query: "stable", limit: 3, maxChars: 1000 })
+      return (yield* Ref.get(prompts)).map((prompt) => prompt.startsWith("Plan evidence retrieval") ? "plan" : prompt.startsWith("Rank candidate evidence") ? "rerank" : "other")
+    })
+    expect(yield* helperCalls({})).toEqual([])
+    expect(yield* helperCalls({ queryPlanning: true })).toEqual(["plan"])
+    expect(yield* helperCalls({ rerank: true })).toEqual(["rerank"])
+    expect(yield* helperCalls({ queryPlanning: true, rerank: true })).toEqual(["plan", "rerank"])
+  }))))
+
   test("planning adds complementary searches and reranking preserves only supplied cited evidence", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const index = yield* makeKnowledgeIndexMemory()
     const searches = yield* Ref.make<ReadonlyArray<string>>([])

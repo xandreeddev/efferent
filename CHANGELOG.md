@@ -10,7 +10,6 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
-
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
@@ -26,9 +25,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   revision (`expectedRevision: Option.some(<current revision>)`) under a new
   job id: the engine records it under its current id, and the new revision
   cancels the old job. Published knowledge is unaffected.
-
+- `@xandreed/plugin-rag` and `@xandreed/plugin-memory`: `queryPlanning`
+  and `rerank` default to `false` (`ragDefaults`, `memoryDefaults`). Both
+  defaulted to `true`, so whenever a `UtilityLlm` was present every search
+  and recall, automatic turn context included, spent two helper-model calls
+  (a query plan before searching and a rerank of the fused evidence) that
+  the host had never asked for, adding their cost and latency to each
+  request. A search now runs lexical and vector retrieval, fusion and graph
+  expansion with no helper call unless the host opts in; with either option
+  on, it behaves exactly as before. A host that relies on planning or
+  reranking sets `queryPlanning: true` and `rerank: true` in the plugin's
+  options (or in `RagLive`/`MemoryLive` config). Extraction, review and
+  graph options are unchanged.
 
 ### Added
+
 
 - `@xandreed/core`: stored tool lifecycle and conversation message records
   decode with typed schemas. `StoredData` adds `tool.started`,
@@ -195,7 +206,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that reads the reference, and the models plugin's `UtilityLlmLive` does
   not apply it.
 
+
 ### Changed
+
 
 
 
@@ -231,7 +244,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 - Releases wait up to about fifteen minutes (was three) for every package to
@@ -281,7 +296,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   contract: no two checks share owner, namespace and collection together.
 
 
+
 ### Breaking
+
 
 
 
@@ -296,6 +313,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
+
+
 
 
 
