@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Match, Option, Ref, Result, Schema, Scope, Semaphore } from "effect"
+import { Cause, Context, Effect, Layer, Match, Option, Ref, Result, Schema, Scope, Semaphore } from "effect"
 import {
   addUsage,
   canonicalJson,
@@ -7,6 +7,7 @@ import {
   CurrentAgentRun,
   CurrentAgentStep,
   CurrentModelCallRecorder,
+  CurrentTurnRunId,
   entriesOfEvents,
   fingerprintOf,
   frameworkDraft,
@@ -14,6 +15,8 @@ import {
   makeTurnEvents,
   makeTurnTasks,
   MEMORY_KINDS,
+  ModelSpend,
+  reasonOf,
   RequestPartData,
   RequestPartHash,
   readStoredKeys,
@@ -39,6 +42,7 @@ import type {
   PromptContext,
   PromptSection,
   RequestSnapshot,
+  RunId,
   RunOrdinal,
   RunTools,
   SessionLogEvent,
@@ -83,6 +87,12 @@ type ToolSlot =
   | { readonly _tag: "Opening" }
   | { readonly _tag: "Open"; readonly tools: RunTools }
 
+/** Forget the ended turn in the `ModelSpend` ledger among its services, if any; a ledger that cannot record it is logged. */
+const forgetTurnSpend = (ledger: Option.Option<ModelSpend["Service"]>, runId: RunId): Effect.Effect<void> => Option.match(ledger, {
+  onNone: () => Effect.void,
+  onSome: (spend) => spend.forget(runId).pipe(Effect.catch((error) => Effect.logWarning(`the model spend ledger did not forget an ended turn: ${reasonOf(Cause.fail(error))}`))),
+})
+
 /**
  * One admitted turn's services, over the turn's writer, built in this order:
  * the event bus and the tasks, with the writer as the bus's FIRST
@@ -120,6 +130,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const admitted = writer.admitted
   const events = yield* makeTurnEvents({ maxDepth: input.maxEventDepth ?? 8 })
   const modelCalls = yield* makeTurnModelCallRecorder(writer, (data) => events.publish({ _tag: "model.called", ...data }))
+  // Registered before billing closes, so it runs after it: the turn's own
+  // entry in the spend ledger goes once its last model call has ended.
+  const spend = yield* Effect.serviceOption(ModelSpend)
+  yield* Effect.addFinalizer(() => forgetTurnSpend(spend, admitted.runId))
   // Registered before the turn's tasks/subscriptions: their teardown finishes
   // first, then billing closes while the writer and turn span are still open.
   yield* Effect.addFinalizer(() => modelCalls.close)
@@ -200,6 +214,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   }
   const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log }).pipe(
     Effect.provideService(CurrentModelCallRecorder, modelCalls.recorder),
+    Effect.provideService(CurrentTurnRunId, Option.some(admitted.runId)),
     Effect.provideService(CurrentAgentRun, Option.none()),
     Effect.provideService(CurrentAgentStep, Option.none()),
   )
@@ -429,6 +444,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
 
   return Context.make(RunContext, run).pipe(
     Context.add(CurrentModelCallRecorder, modelCalls.recorder),
+    Context.add(CurrentTurnRunId, Option.some(admitted.runId)),
     Context.add(CurrentAgentRun, Option.none()),
     Context.add(CurrentAgentStep, Option.none()),
     Context.add(TurnEvents, events),

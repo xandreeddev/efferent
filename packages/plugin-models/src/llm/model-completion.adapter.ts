@@ -9,6 +9,9 @@ import { claimModelCompletion } from "./model-completion.entity.functions.js"
 import { noProviderUsage, ProviderUsageBody } from "./model-usage.entity.js"
 import type { ProviderUsageObservation } from "./model-usage.entity.js"
 import { modelCallUsageOf, observeProviderUsage, providerUsageCounts } from "./model-usage.entity.functions.js"
+import { settleSend } from "./model-spend-guard.adapter.js"
+import type { AttemptSpend } from "./model-spend-guard.adapter.js"
+import type { SendReach } from "./model-spend.entity.js"
 
 export interface ModelCompletionCall {
   readonly callId: ModelCallId
@@ -29,20 +32,25 @@ export interface ModelAttempt {
   readonly usage: Ref.Ref<ProviderUsageObservation>
   readonly phase: Ref.Ref<ModelCompletionState>
   readonly ack: Deferred.Deferred<void, TurnError>
+  /** What the attempt reserved in the spend guard's ledger, settled once with its terminal record. */
+  readonly spend: Option.Option<AttemptSpend>
+  /** How far its request got (`Unsent` until the request engine sends it), which decides what a hold without usage settles at. */
+  readonly reach: Ref.Ref<SendReach>
 }
 const attempts = new WeakMap<object, ModelAttempt>()
 
 export const makeCompletionCall = Effect.fnUntraced(function* (): Effect.fn.Return<ModelCompletionCall> {
   return { callId: ModelCallId.make(yield* randomUuid), attempts: yield* Ref.make<ReadonlyArray<ModelAttempt>>([]) }
 })
-export const beginModelAttempt = Effect.fnUntraced(function* (call: ModelCompletionCall, ordinal: number, protocol: ProviderFailureProtocol): Effect.fn.Return<ModelAttempt> {
+export const beginModelAttempt = Effect.fnUntraced(function* (call: ModelCompletionCall, ordinal: number, protocol: ProviderFailureProtocol, spend: Option.Option<AttemptSpend> = Option.none()): Effect.fn.Return<ModelAttempt> {
   const run = yield* CurrentAgentRun
   const attempt: ModelAttempt = {
     callId: call.callId, ordinal, protocol, startedAt: yield* Clock.currentTimeMillis,
     purpose: yield* CurrentModelCallPurpose, method: yield* CurrentModelCallMethod,
     model: yield* CurrentModelCallSelection, runId: Option.map(run, (value) => value.id), run: Option.map(run, (value) => value.ordinal),
     step: Option.isSome(run) ? yield* CurrentAgentStep : Option.none(), recorder: yield* CurrentModelCallRecorder,
-    usage: yield* Ref.make(noProviderUsage), phase: yield* Ref.make<ModelCompletionState>({ _tag: "Open" }), ack: yield* Deferred.make<void, TurnError>(),
+    usage: yield* Ref.make(noProviderUsage), phase: yield* Ref.make<ModelCompletionState>({ _tag: "Open" }), ack: yield* Deferred.make<void, TurnError>(), spend,
+    reach: yield* Ref.make<SendReach>("Unsent"),
   }
   yield* Ref.update(call.attempts, (before) => [...before, attempt])
   return attempt
@@ -63,11 +71,14 @@ export const completeModelAttempt = Effect.fn("models.record_attempt")(function*
   return yield* Effect.uninterruptible(Effect.gen(function* () {
     const claimed = yield* Ref.modify(attempt.phase, claimModelCompletion)
     if (!claimed) return yield* Deferred.await(attempt.ack)
+    const usage = modelCallUsageOf(attempt.protocol, yield* Ref.get(attempt.usage))
     const data: ModelCallData = {
       callId: attempt.callId, attempt: attempt.ordinal, purpose: attempt.purpose, method: attempt.method, model: attempt.model,
       runId: attempt.runId, run: attempt.run, step: attempt.step, durationMs: Math.max(0, (yield* Clock.currentTimeMillis) - attempt.startedAt),
-      usage: modelCallUsageOf(attempt.protocol, yield* Ref.get(attempt.usage)), outcome,
+      usage, outcome,
     }
+    // The ledger settles before the fact is recorded: it holds what the attempt cost by the time `model.called` is published.
+    yield* settleSend(attempt.spend, usage, yield* Ref.get(attempt.reach))
     const result = yield* Effect.exit(recordCompletion(data).pipe(Effect.provideService(CurrentModelCallRecorder, attempt.recorder)))
     const phase: ModelCompletionState = Exit.isSuccess(result) ? { _tag: "Recorded" } : { _tag: "RecordFailed" }
     yield* Ref.set(attempt.phase, phase)

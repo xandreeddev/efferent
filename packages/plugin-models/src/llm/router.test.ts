@@ -14,7 +14,7 @@ test("managed direct routing preserves an explicitly provided global Fetch while
   const transport = { fetch: () => Promise.resolve(new Response("managed route")) }
   const services: ProviderServices = {
     endpoints: {}, modelSettings: {}, transport: Option.some(transport), managedTransport: Option.some(transport),
-    sessions: Option.none(), thinkingPrefixMismatch: "drop_block",
+    sessions: Option.none(), thinkingPrefixMismatch: "drop_block", spend: Option.none(),
   }
   const explicitlyProvided = await Effect.runPromise(throughTransport(services)(Effect.service(FetchHttpClient.Fetch)).pipe(
     Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),

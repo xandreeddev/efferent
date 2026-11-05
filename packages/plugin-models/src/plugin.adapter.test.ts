@@ -7,6 +7,7 @@ import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import {
   ModelCatalog,
+  ModelSpend,
   ProviderId,
   SessionEnvironment,
   UtilityLlm,
@@ -114,10 +115,10 @@ describe("models plugin endpoints", () => {
 })
 
 describe("models plugin scope", () => {
-  test("is built once per agent (runtime) and may use the host's HostCredentials", () => {
+  test("is built once per agent (runtime) and may use the host's HostCredentials, transport and spend ledger", () => {
     expect(modelsPlugin.scope).toBe("runtime")
     expect(modelsPlugin.requires).toEqual([SessionEnvironment.key])
-    expect(modelsPlugin.optional).toEqual([HostCredentials.key, ModelsTransport.key])
+    expect(modelsPlugin.optional).toEqual([HostCredentials.key, ModelsTransport.key, ModelSpend.key])
   })
 })
 

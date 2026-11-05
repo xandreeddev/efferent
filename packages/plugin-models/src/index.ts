@@ -24,6 +24,7 @@ export { makeOpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.j
 export { LLM_CALL_BUDGET_MS, LLM_REQUEST_TIMEOUT_MS } from "./llm/retry.js"
 export { ModelRetryPolicy, modelRetryDefaults } from "./llm/model-retry-policy.entity.js"
 export { CurrentModelRetryPolicy } from "./ports/model-retry-policy.port.js"
+export { ModelSpendOptions } from "./llm/model-spend.entity.js"
 export { LanguageModelLive, LanguageModelSelectionLive } from "./llm/router.js"
 export { ConfiguredModelCatalogLive, imageInputFor, reasoningEffortsFor } from "./llm/modelCatalog.js"
 export type { ReasoningEffort } from "./llm/modelCatalog.js"

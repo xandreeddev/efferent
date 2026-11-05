@@ -11,6 +11,8 @@ import { ProviderErrorBody } from "../llm/provider-failure.entity.js"
 import type { ProviderFailureProtocol } from "../llm/provider-failure.entity.js"
 import { classifyAiError } from "../llm/provider-failure.entity.functions.js"
 import { classifyLlmError } from "../llm/retry.js"
+import { reserveSend } from "../llm/model-spend-guard.adapter.js"
+import { neverConnected, reachOfStatus } from "../llm/model-spend.entity.functions.js"
 import { attachModelAttempt, beginModelAttempt, completeModelAttempt, completePendingAttempts, makeCompletionCall, observeModelBody, retainModelAttempt } from "../llm/model-completion.adapter.js"
 import type { ModelAttempt, ModelCompletionCall } from "../llm/model-completion.adapter.js"
 import { CurrentModelCallMetadataOwner, CurrentModelCallMethod, CurrentModelCallSelection } from "../ports/model-call-completion.port.js"
@@ -222,7 +224,8 @@ const requestCall = Effect.fnUntraced(function* (): Effect.fn.Return<ModelReques
  * How one request is sent: its error vocabulary, whether its response is
  * settled (headers arrive only once the whole response is generated; absent:
  * every call method but a stream's is settled) and the caller's admission
- * before each physical send.
+ * before each physical send. The models plugin's spend guard
+ * (`CurrentModelSpendGuard`) reserves after the admission, before the send.
  */
 export interface ResilientRequestOptions {
   readonly protocol: ProviderFailureProtocol
@@ -248,16 +251,21 @@ export const resilientRequest = Effect.fn("models.request")(function* <R>(client
     const started = yield* Ref.modify(call.state, (state) => Option.match(startAttemptState(state, call.policy, call.reserveFallback), { onNone: () => [Option.none<number>(), state] as const, onSome: (next) => [Option.some(next.attempts), next] as const }))
     if (Option.isNone(started)) return yield* Option.match(previous, { onNone: () => Effect.fail(stampAiErrorFailure(AiError.make({ module: "Models", method: "request", reason: new AiError.InvalidRequestError({ description: modelFailureMessageOf("InvalidRequest") }) }), "InvalidRequest")), onSome: Effect.fail })
     const ordinal = started.value
-    const attempt = yield* beginModelAttempt(call.completion, ordinal, options.protocol)
-    const execute = client.execute(request).pipe(Effect.provideService(CurrentModelRequestCall, Option.some(call)), Effect.catchTag("HttpClientError", (error) => error.reason._tag === "StatusCodeError" ? Effect.succeed(error.reason.response) : Effect.fail(error)))
+    // The spend guard's hold is taken before the send and belongs to the attempt from then on: the two run
+    // uninterruptibly, so an interruption never leaves a hold the ledger took without an attempt to close it.
+    const attempt = yield* Effect.uninterruptible(reserveSend(request).pipe(
+      Effect.flatMap((spend) => beginModelAttempt(call.completion, ordinal, options.protocol, spend)),
+    ))
+    const execute = Ref.set(attempt.reach, "Sent").pipe(Effect.andThen(client.execute(request)), Effect.provideService(CurrentModelRequestCall, Option.some(call)), Effect.catchTag("HttpClientError", (error) => error.reason._tag === "StatusCodeError" ? Effect.succeed(error.reason.response) : Effect.fail(error)))
     const result = yield* Effect.result(pendingRead(execute, call, headerBound).pipe(Effect.flatMap((response): Effect.Effect<ResilientHttpResponse, ResilientHttpError> => response.status >= 200 && response.status < 300
       ? Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal ? { _tag: "Committed", rung: state.rung, attempts: ordinal } : state).pipe(Effect.andThen(wrapResponse(response, call, ordinal, attempt)))
-      : errorBody(response, call, attempt).pipe(Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol)))),
+      : Ref.set(attempt.reach, reachOfStatus(response.status)).pipe(Effect.andThen(errorBody(response, call, attempt)), Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol)))),
     )))
     if (result._tag === "Success") return result.success
     const failure = result.failure
     if (isTurnError(failure)) return yield* Effect.fail(failure)
     const kind = errorKind(failure)
+    if (HttpClientError.isHttpClientError(failure) && failure.reason._tag === "TransportError" && neverConnected(failure.reason.cause)) yield* Ref.set(attempt.reach, "Unsent")
     yield* completeModelAttempt(attempt, { _tag: "Failed", failure: Option.some(kind) })
     const now = yield* Clock.currentTimeMillis
     const hint = AiError.isAiError(failure) && "http" in failure.reason ? retryHintMillis(failure.reason.http?.response?.headers ?? {}, now) : Option.none()

@@ -849,6 +849,17 @@ if (await recorderBun.exited !== 0 || !recorderBunReport.includes('model-call-re
   console.error("the packed Bun model-call recorder failed its public conformance kit"); process.exit(1)
 }
 console.log(recorderBunReport.trim())
+// The public ModelSpend kit over the packed in-memory ledger, and the models
+// plugin's spend option decoded as a host writes it.
+await writeFile(join(consumer, "model-spend-consumer.mjs"), await readFile(join(root, "scripts/model-spend-consumer.fixture.mjs"), "utf8"))
+for (const [runtime, command] of [["Node", "node"], ["Bun", "bun"]] as const) {
+  const spend = Bun.spawn([command, "model-spend-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const spendReport = await new Response(spend.stdout).text()
+  if (await spend.exited !== 0 || !spendReport.includes(`model-spend {"runtime":"${runtime}","checks":9,"optionsDecoded":true}`)) {
+    console.error(`the packed ${runtime} ModelSpend ledger failed its public conformance kit`); process.exit(1)
+  }
+  console.log(spendReport.trim())
+}
 // Maintenance runs after the turn's sealed reply on the run's reported input;
 // a manual composition shares that lifecycle.
 await writeFile(join(consumer, "memory-maintenance-consumer.mjs"), await readFile(join(root, "scripts/memory-maintenance-consumer.fixture.mjs"), "utf8"))

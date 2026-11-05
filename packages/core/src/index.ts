@@ -71,6 +71,20 @@ export {
   zeroUsage,
 } from "./domain/token-usage.entity.functions.js"
 export {
+  ModelSpendExceeded,
+  ModelSpendUnavailable,
+  SpendAmount,
+  SpendCaps,
+  SpendHold,
+  SpendHoldId,
+  SpendLimit,
+  SpendRequest,
+  SpendTotals,
+} from "./domain/model-spend.entity.js"
+export { modelSpendExceededOf } from "./domain/model-spend.entity.functions.js"
+export { ModelSpend } from "./ports/model-spend.port.js"
+export { ModelSpendMemoryLive } from "./turn/model-spend.memory.adapter.js"
+export {
   ModelId,
   ModelSelection,
   ProviderId,
@@ -261,7 +275,7 @@ export { PromptId, PromptProvenance } from "./domain/prompt-provenance.entity.js
 
 export { CurrentPromptProvenance } from "./loop/promptProvenance.js"
 
-export { CurrentAgentRun, CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
+export { CurrentAgentRun, CurrentAgentStep, CurrentToolInvocation, CurrentTurnRunId } from "./loop/stepContext.js"
 export { DegeneratePolicy, InvalidCallPolicy, LoopProtection, MalformedLimit } from "./domain/loop-limits.entity.js"
 export type { ToolInvocation } from "./loop/stepContext.js"
 

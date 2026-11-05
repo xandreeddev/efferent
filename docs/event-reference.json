@@ -9656,6 +9656,11 @@
       "meaning": "The model request was rate limited. The original error or failed response is kept as cause, including available retry timing."
     },
     {
+      "code": "model.spend",
+      "where": "`@xandreed/plugin-models`, before a physical model send",
+      "meaning": "The models plugin's spend guard (its `spend` option) refused the send: its worst case would take the turn's or the ledger's settled and held spend past a cap (the cause is the `ModelSpendExceeded` refusal, `modelSpendExceededOf`), or the `ModelSpend` ledger could not be reached (the cause is its `ModelSpendUnavailable`). Nothing is sent, the call is neither retried nor sent to a fallback, and the turn fails."
+    },
+    {
       "code": "model.timeout",
       "where": "the step loop",
       "meaning": "The model request exceeded a request or call deadline, established by an explicit failure stamp."
@@ -9664,6 +9669,11 @@
       "code": "model.unavailable",
       "where": "the step loop",
       "meaning": "The model service or transport was temporarily unavailable. The original error or failed response is kept as cause."
+    },
+    {
+      "code": "model.unpriced",
+      "where": "`@xandreed/plugin-models`, before a physical model send",
+      "meaning": "The models plugin's spend guard refused a send to a model its `spend.prices` table has no price for (or a call that names no model): its spend could not be capped. Nothing is sent, and the turn fails."
     },
     {
       "code": "loop.truncated",

@@ -1,6 +1,7 @@
 import type { Context, Effect, Layer, Option, Scope } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { RunId } from "../domain/run.entity.js"
+import type { SpendTotals } from "../domain/model-spend.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
@@ -84,6 +85,13 @@ export interface TurnResult extends TurnOutcome {
    * whose own `end` returns the count.
    */
   readonly pending?: number
+  /**
+   * The turn's model spend, when a `ModelSpend` ledger is among its
+   * services (the models plugin's `spend` option reserves and settles in
+   * it): what its physical model sends settled, and what sends still under
+   * way hold (none once its calls have ended). Absent without a ledger.
+   */
+  readonly spend?: SpendTotals
 }
 
 /** @public */

@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { LanguageModel } from "effect/ai"
 import { Config as EffectConfig, Context, Effect, Layer, Match, Option, Redacted, Schema } from "effect"
-import { definePlugin, HarnessError, ModelCatalog, SessionEnvironment, UtilityLlm } from "@xandreed/core"
+import { definePlugin, HarnessError, ModelCatalog, ModelSpend, SessionEnvironment, UtilityLlm } from "@xandreed/core"
 import { AuthStore } from "./ports/auth-store.port.js"
 import { EngineSettings, SettingsError, SettingsStore } from "./ports/settings-store.port.js"
 import type { Credential } from "./ports/auth-store.port.js"
@@ -23,6 +23,8 @@ import { ThinkingPrefixMismatch } from "./llm/thinking-binding.entity.js"
 import { CurrentManagedModelsTransport, ModelsTransport } from "./ports/models-transport.port.js"
 import { ProxyUrlOption } from "./transport/http-proxy.entity.js"
 import { modelsTransportContextFor } from "./transport/models-transport.adapter.js"
+import { ModelSpendOptions } from "./llm/model-spend.entity.js"
+import { CurrentModelSpendGuard } from "./ports/model-spend-guard.port.js"
 
 const Config = Schema.Struct({
   model: Schema.String,
@@ -52,6 +54,13 @@ const Config = Schema.Struct({
    * `llm.thinking.dropped`), `error` has it refuse the request.
    */
   thinkingPrefixMismatch: ThinkingPrefixMismatch,
+  /**
+   * Reserve and settle every physical model send in the `ModelSpend` ledger
+   * among the agent's services, within a cap per turn and a cap in all
+   * (`ModelSpendOptions`); a send past a cap fails the turn (`model.spend`).
+   * Absent: nothing is reserved.
+   */
+  spend: Schema.optionalKey(ModelSpendOptions),
   // An unknown key is named, never its value: a misspelt `credentials` may hold a secret.
 }).annotate({ messageUnexpectedKey: "not an option of the models plugin" }).check(Schema.makeFilter((config) =>
   config.storage === "memory" || (Object.keys(config.credentials).length === 0 && Object.keys(config.credentialEnv).length === 0)
@@ -106,6 +115,19 @@ const localStores = (config: Config, workspace: string) => {
 const optionError = (message: string) => new HarnessError({ code: "config.options", plugin: "@xandreed/plugin-models", message })
 
 /**
+ * The spend guard of the `spend` option, over the host's `ModelSpend`
+ * ledger: the option without a ledger among the agent's services is
+ * refused. Without the option, no guard.
+ */
+const spendGuardLayer = (config: Config): Effect.Effect<Layer.Layer<never>, HarnessError> => Option.match(Option.fromNullishOr(config.spend), {
+  onNone: () => Effect.succeed(Layer.empty),
+  onSome: (options) => Effect.flatMap(Effect.serviceOption(ModelSpend), Option.match({
+    onNone: () => Effect.fail(optionError("the spend option needs a ModelSpend ledger among the agent's services (ModelSpendMemoryLive, or the host's own)")),
+    onSome: (ledger) => Effect.succeed(Layer.succeed(CurrentModelSpendGuard, Option.some({ ledger, options }))),
+  })),
+})
+
+/**
  * The network path of every call the plugin makes: the host's own
  * `ModelsTransport` when it provides one (then the `proxy` and `noProxy`
  * options would not apply, so setting them is refused), else the transport
@@ -134,7 +156,9 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  * it makes (the providers, the OpenAI-compatible endpoints, OAuth token
  * refreshes, the OpenAI subscription's WebSocket) goes through one
  * `ModelsTransport`, the `noProxy` / `NO_PROXY` hosts and loopback direct;
- * so do they through a host's own transport.
+ * so do they through a host's own transport. With the `spend` option, each
+ * physical send reserves its worst case in the agent's `ModelSpend` ledger
+ * first and settles at what it cost after (`ModelSpendOptions`).
  *
  * @public
  */
@@ -142,7 +166,7 @@ export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.17.1", scope: "runtime", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, modelSettings: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "", thinkingPrefixMismatch: "drop_block" },
   requires: [SessionEnvironment],
-  optional: [HostCredentials, ModelsTransport],
+  optional: [HostCredentials, ModelsTransport, ModelSpend],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment
@@ -155,8 +179,9 @@ export const modelsPlugin = definePlugin({
       Match.exhaustive,
     )
     const transport = yield* transportLayer(config)
+    const spend = yield* spendGuardLayer(config)
     // The transport sits beneath everything that calls out: the stores' token refreshes, the routed model and the utility model.
-    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentModelSettings, config.modelSettings), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch)).pipe(Layer.provideMerge(transport))
+    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentModelSettings, config.modelSettings), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch), spend).pipe(Layer.provideMerge(transport))
     return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
   })),
 })

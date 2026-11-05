@@ -129,6 +129,67 @@ instead of being retried. `requests` lists every request with the step that
 answered it, and `remaining` the steps no request has used. A script can be
 kept as JSON and decoded with the `ScriptedReply` schema.
 
+## Spend caps
+
+The `spend` option caps what model calls may cost, per turn and in all. It
+guards every physical send the plugin makes (a first attempt, a retry, a
+fallback's, a helper call) through a `ModelSpend` ledger the host passes in
+the agent's `services`:
+
+```ts
+import { Context } from "effect"
+import { ModelSpend, ModelSpendMemoryLive } from "@xandreed/core"
+import { modelsPlugin } from "@xandreed/plugin-models"
+
+declare const ledger: ModelSpend["Service"] // built once from ModelSpendMemoryLive
+
+const agentConfig = {
+  plugins: [
+    { plugin: modelsPlugin, options: {
+      model: "anthropic:claude-sonnet-4-5",
+      spend: {
+        prices: { "anthropic:claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+        turnCap: 0.5,
+        totalCap: 20,
+      },
+    } },
+  ],
+  services: Context.make(ModelSpend, ledger),
+}
+```
+
+Before a send goes out, the plugin reserves its worst case: the request
+body's bytes as input tokens (`inputBytesPerToken`, 1 by default) at the
+dearest input price, and the request's output cap (else
+`uncappedOutputTokens`, 32 000 by default) at the dearest output price. When
+the attempt ends it settles at what its reported usage cost (`costOf`).
+Without a final usage report, a request that went out settles at its worst
+case, whether it completed, failed or was cut off: a timeout, a connection
+lost after the send, a gateway's timeout status (408, 504, 524) or a stream
+cut before its usage may all have been generated and billed. A request the
+provider refused with another error status, or one that never went out (a
+connection that never opened, an interruption before the send), releases
+its hold.
+
+A send whose worst case would take the turn's or the ledger's settled and
+held spend past `turnCap` or `totalCap` is not sent: the turn fails with a
+`HarnessError` of code `model.spend`, whose cause `modelSpendExceededOf`
+returns (which cap, its amount, what was committed and what was asked). A
+model missing from `prices` is refused with `model.unpriced`. `TurnResult.spend`
+reports the turn's settled spend, and `ledger.totals` reads the whole
+ledger's, or a turn's while it runs: as a turn's scope closes, the turn
+calls `ledger.forget`, which drops what the ledger keeps for that turn
+alone (its total keeps the spend), so a ledger that lives as long as its
+process does not grow with every turn. One ledger is one run of spend:
+build it once per process or evaluation run and share it between agents
+that share its caps. The
+`spend` option without a ledger fails when the agent is defined. A host's
+own ledger, such as a shared store, implements the `ModelSpend` port and is
+checked with `modelSpendConformance` from `@xandreed/core/conformance`. The
+plugin reserves uninterruptibly, so a hold the ledger has taken always
+reaches the attempt that closes it: such a ledger bounds its own wait on
+the store and fails with `ModelSpendUnavailable` past it.
+
 <!-- plugin-reference:start -->
 
 ## Generated configuration reference
@@ -141,7 +202,7 @@ Plugin: `@xandreed/plugin-models` · Version **0.17.1** · Plugin API **3** · S
 | --- | --- |
 | Provides | `effect/ai/LanguageModel`, `@xandreed/core/UtilityLlm`, `@xandreed/core/AuthStore`, `@xandreed/core/SettingsStore`, `@xandreed/core/ModelCatalog` |
 | Requires | `efferent/SessionEnvironment` |
-| Uses when available | `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/ModelsTransport` |
+| Uses when available | `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/ModelsTransport`, `@xandreed/core/ModelSpend` |
 | Contributes | none |
 
 ### Default options
@@ -578,6 +639,67 @@ Plugin: `@xandreed/plugin-models` · Version **0.17.1** · Plugin API **3** · S
         "drop_block",
         "error"
       ]
+    },
+    "spend": {
+      "type": "object",
+      "properties": {
+        "prices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheRead": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWrite": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reasoning": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "turnCap": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalCap": {
+          "type": "number",
+          "minimum": 0
+        },
+        "uncappedOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "inputBytesPerToken": {
+          "type": "number",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "additionalProperties": true
     }
   },
   "required": [

@@ -28,6 +28,9 @@ class MemoryStore
 class ModelCatalog
 class ModelRequestHook
 class ModelSelection
+class ModelSpend
+class ModelSpendExceeded
+class ModelSpendUnavailable
 class NotResumable
 class NothingPending
 class PermissionGrants
@@ -126,6 +129,7 @@ const CurrentPromptCacheKey
 const CurrentPromptProvenance
 const CurrentToolInvocation
 const CurrentTraceContent
+const CurrentTurnRunId
 const DEFAULT_SHUTDOWN_DEADLINE
 const DEFAULT_SHUTDOWN_RESERVE
 const DecisionId
@@ -254,6 +258,7 @@ const ModelRequestHeaderV2
 const ModelRequestPatch
 const ModelRequestPreparation
 const ModelRequestTool
+const ModelSpendMemoryLive
 const OpenTurn
 const PLUGIN_API_VERSION
 const PluginEntry
@@ -314,6 +319,13 @@ const SkillTree
 const SkillTreeEntry
 const SkillsActivatedEvent
 const SpanId
+const SpendAmount
+const SpendCaps
+const SpendHold
+const SpendHoldId
+const SpendLimit
+const SpendRequest
+const SpendTotals
 const StatOptions
 const StepEndedEvent
 const StepLoopReferences
@@ -474,6 +486,7 @@ const modelFailureMessageOf
 const modelFailureOf
 const modelOverflowEvidenceOf
 const modelRequestDescriptorOf
+const modelSpendExceededOf
 const noMaintenance
 const normalizeUserMessage
 const notifyCommittedTurn
@@ -830,6 +843,13 @@ type SkillReferenceId
 type SkillTree
 type SkillTreeEntry
 type SpanId
+type SpendAmount
+type SpendCaps
+type SpendHold
+type SpendHoldId
+type SpendLimit
+type SpendRequest
+type SpendTotals
 type StatOptions
 type StepResult
 type StepStatus

@@ -668,7 +668,9 @@ Where the counts appear:
 - `RunContext.usage` and `Turn.usage`: the turn's running total, every run
   of it included.
 - `TurnResult.usage`, returned by `Agent.turn` (and by `guardTurn` in a
-  host's own composition): the turn's total. The bus `turn.ended` event
+  host's own composition): the turn's total. With a `ModelSpend` ledger among
+  the turn's services, `TurnResult.spend` is the turn's settled and
+  reserved spend in it (see [spend caps](#spend-caps)). The bus `turn.ended` event
   carries the same total, but only a subscription still open when it is
   published sees it (see [the turn as services](#the-turn-as-services)).
 - `turnUsageOf(events, turn)`: the same total read back from a session's
@@ -757,6 +759,95 @@ What each provider reports:
 | OpenCode's other models (chat completions) | `prompt_tokens`; reads: `prompt_cache_hit_tokens`, `cached_tokens` or `prompt_tokens_details.cached_tokens` | `prompt_tokens_details.cache_write_tokens` when sent, else 0 | `completion_tokens_details.reasoning_tokens` |
 | `google` (Gemini's OpenAI-compatible API) | as chat completions | as chat completions | 0: not read (Gemini's `completion_tokens` may leave its thoughts out) |
 | configured chat endpoints and `local` credentials | as chat completions | as chat completions | `completion_tokens_details.reasoning_tokens`, whatever `standardOnly` says |
+
+### Spend caps
+
+Usage says what calls cost after the fact; a cap must decide before a call
+is sent. Core's `ModelSpend` port is the ledger for that: a send reserves
+its worst case (`reserve`), then settles at what it cost (`settle`) or
+releases the hold (`release`); `totals(runId)` reads one turn's settled and
+reserved spend, `totals(Option.none())` the whole ledger's, and
+`forget(runId)` drops what the ledger keeps for an ended turn (the turn
+calls it as its scope closes, so a ledger that lives as long as its process
+does not grow with every turn; a hold the turn still has keeps counting
+until it closes, and the ledger's total keeps what the turn settled). Callers
+run `reserve` uninterruptibly, so a hold the ledger has taken always reaches
+the attempt that closes it; a ledger that waits on a shared store bounds
+that wait itself. A reservation
+names its turn (`runId`, absent outside a turn) and its caps (`SpendCaps`:
+`turn`, what the turn may settle and hold; `total`, what the ledger may),
+and is refused with `ModelSpendExceeded` (`reason` `"turn"` or `"total"`,
+the `cap`, what was `committed` and what was `requested`) when it would
+pass one; a refusal holds nothing, and concurrent reservations never pass a
+cap. One ledger is one run of spend: a process, or an evaluation run.
+`ModelSpendMemoryLive` is the in-memory ledger; a host's own (a store shared
+between processes) passes `modelSpendConformance` from
+`@xandreed/core/conformance`, and may fail with `ModelSpendUnavailable`.
+
+The models plugin's `spend` option (`ModelSpendOptions`) guards every
+physical send it makes, a retry, a fallback's and a helper call included,
+with the ledger the host passes in `AgentConfig.services`:
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { ModelSpend, ModelSpendMemoryLive, modelSpendExceededOf } from "@xandreed/core"
+import { Agent } from "@xandreed/sdk"
+import { modelsPlugin } from "@xandreed/plugin-models"
+
+const program = Effect.gen(function* () {
+  const ledger = Context.get(yield* Layer.build(ModelSpendMemoryLive), ModelSpend)
+  const agent = yield* Agent.define({
+    plugins: [{ plugin: modelsPlugin, options: {
+      model: "anthropic:claude-sonnet-4-5",
+      spend: {
+        prices: { "anthropic:claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+        turnCap: 0.5,
+        totalCap: 20,
+      },
+    } }],
+    services: Context.make(ModelSpend, ledger),
+  })
+  return { agent, ledger, refusalOf: modelSpendExceededOf }
+})
+```
+
+Before each send, the guard reserves the send's worst case at the price of
+its `"<provider>:<modelId>"` selection (the same keys as the telemetry
+plugin's `prices`): the request body's bytes as input tokens
+(`inputBytesPerToken`, 1 by default, a bound for byte-level tokenizers) at
+the dearest of the input and cache prices, plus the output cap the request
+names (`max_tokens`, `max_completion_tokens` or `max_output_tokens`, else
+`uncappedOutputTokens`, 32 000 by default) at the dearer of the output and
+reasoning prices. The hold is the attempt's: when the attempt's terminal
+`model.called` fact is recorded, the ledger first settles it at
+`costOf(usage, price)` of its `Known` usage. Without known usage, how far
+the request got decides. One that went out may have been generated and
+billed whether it completed, failed or was interrupted (a timeout, a
+connection lost after the send, a gateway's timeout status 408, 504 or 524,
+a stream cut before its usage), so it settles at the amount held, or at
+what its `Partial` usage already cost when that is more. One the provider
+refused with another error status (a rate limit, an overload) or that
+never went out (interrupted before its send, a connection that never
+opened) settles at the cost of the usage it reported, and releases the
+hold when it reported none. A ledger that cannot record a settlement is
+logged and the hold stays reserved.
+
+A send the ledger refuses is never sent: the call is neither retried nor
+sent to a fallback, and the turn fails with a `HarnessError` of code
+`model.spend` whose cause is the `ModelSpendExceeded` (`modelSpendExceededOf`
+finds it; `harnessCodeOf` of the refusal itself is `model.spend` too). A
+ledger that cannot be reached refuses the same way, its
+`ModelSpendUnavailable` as the cause. A send to a model `prices` leaves out
+is refused with `model.unpriced`. The turn's spend comes back as
+`TurnResult.spend` (`{ settled, reserved }`) whenever a `ModelSpend` is among
+the turn's services. Without the `spend` option nothing is reserved; with it
+and no ledger, `Agent.define` fails with `config.options`.
+
+The per-turn share is keyed by `CurrentTurnRunId`, the turn's run id, which
+the turn sets from its memory's opening to its last finalizer, so helper
+calls outside the step loop count toward their turn. Telemetry's reported
+cost and the settled spend agree for calls with known usage; telemetry
+reports no cost for an unknown usage, where the ledger keeps the worst case.
 
 ## Host-planned initial tool batch
 
