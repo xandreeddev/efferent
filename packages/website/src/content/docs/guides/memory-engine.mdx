@@ -88,7 +88,8 @@ supersession targets and source spans. For M2, one citation is:
 ```
 
 Offsets count UTF-16 characters; the end is exclusive. The exact substring
-must match. A unique quote can repair incorrect offsets. Records can retain
+must match. A quote found in the source repairs incorrect offsets: it is
+re-anchored to its occurrence nearest the proposed start. Records can retain
 additional provenance from their linked entities and supporting memories.
 
 **A matching quote proves that text exists, not that every proposed claim

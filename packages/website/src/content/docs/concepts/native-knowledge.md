@@ -165,8 +165,8 @@ original source revisions are read explicitly by their reference.
 Entity identities are resolved conservatively from supplied candidates. Every
 entity and assertion retains exact source evidence. Ambiguous identities remain
 distinct. The extractor cannot invent source identities, retire another scope's
-records, or publish invalid intervals. Every extracted span includes a literal quote. Unique quotes can repair offset
-errors; ambiguous or invented quotes are rejected. A review pass checks extraction
+records, or publish invalid intervals. Every extracted span includes a literal quote. A quote found in the source repairs offset
+errors (its occurrence nearest the proposed start); invented quotes are rejected. A review pass checks extraction
 against the source before embedding and publication. This validates evidence links;
 semantic entailment still depends on model quality and evaluation.
 

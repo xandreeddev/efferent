@@ -88,10 +88,16 @@ const invalid = (message: string) => Effect.fail(new KnowledgeError({ reason: "I
 export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   source: KnowledgeSource, snapshot: KnowledgeSnapshot, proposed: KnowledgeExtraction, now: number,
 ) {
+  // Models quote reliably but count characters badly: a literal quote is re-anchored to its
+  // occurrence nearest the proposed offset (the only one when it is unique). A quote that is not
+  // in the source keeps its offsets and fails below.
+  const occurrences = (quote: string): ReadonlyArray<number> => source.text.split(quote).slice(0, -1).reduce<ReadonlyArray<number>>(
+    (found, before) => [...found, (found.length === 0 ? 0 : found[found.length - 1]! + quote.length) + before.length], [])
   const anchored = <S extends { readonly start: number; readonly end: number; readonly quote?: string }>(spans: ReadonlyArray<S>): ReadonlyArray<S> => spans.map((span) => {
-    if (span.quote === undefined || source.text.slice(span.start, span.end) === span.quote) return span
-    const start = source.text.indexOf(span.quote)
-    return start >= 0 && source.text.indexOf(span.quote, start + 1) < 0 ? { ...span, start, end: start + span.quote.length } : span
+    if (span.quote === undefined || span.quote.length === 0 || source.text.slice(span.start, span.end) === span.quote) return span
+    const nearest = occurrences(span.quote).reduce<number | undefined>(
+      (best, at) => best === undefined || Math.abs(at - span.start) < Math.abs(best - span.start) ? at : best, undefined)
+    return nearest === undefined ? span : { ...span, start: nearest, end: nearest + span.quote.length }
   })
   const extraction: KnowledgeExtraction = {
     entities: proposed.entities.map((entity) => ({ ...entity, spans: anchored(entity.spans) })),

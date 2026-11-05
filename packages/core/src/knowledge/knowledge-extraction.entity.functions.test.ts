@@ -49,11 +49,15 @@ describe("native extraction and retrieval contracts", () => {
     ), { concurrency: 1 })
   })))
 
-  test("unique literal evidence repairs offset errors while invented or ambiguous quotes are rejected", () => Effect.runPromise(Effect.gen(function* () {
+  test("literal evidence repairs offset errors at the nearest occurrence while invented quotes are rejected", () => Effect.runPromise(Effect.gen(function* () {
     const repaired = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 1, end: 2, quote: "A note." }] }] })
     expect((yield* stageKnowledgeExtraction(source, empty, repaired, 30)).memories[0]?.provenance[0]).toEqual({ source: source.ref, start: 0, end: 7, quote: "A note." })
-    const ambiguous = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 2, end: 3, quote: "note" }] }] })
-    expect((yield* stageKnowledgeExtraction({ ...source, text: "A note and another note." }, empty, ambiguous, 30).pipe(Effect.result))._tag).toBe("Failure")
+    const repeated = { ...source, text: "A note and another note." }
+    const near = (start: number) => Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start, end: start + 1, quote: "note" }] }] })
+    expect((yield* stageKnowledgeExtraction(repeated, empty, yield* near(4), 30)).memories[0]?.provenance[0]).toEqual({ source: source.ref, start: 2, end: 6, quote: "note" })
+    expect((yield* stageKnowledgeExtraction(repeated, empty, yield* near(17), 30)).memories[0]?.provenance[0]).toEqual({ source: source.ref, start: 19, end: 23, quote: "note" })
+    const invented = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 2, end: 6, quote: "nothing" }] }] })
+    expect((yield* stageKnowledgeExtraction(repeated, empty, invented, 30).pipe(Effect.result))._tag).toBe("Failure")
     expect((yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 0, end: 7 }] }] }).pipe(Effect.result))._tag).toBe("Failure")
   })))
 
