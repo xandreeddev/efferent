@@ -86,7 +86,7 @@ through a feed and a host transport when clients need updates.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-render/surface` · Version **0.17.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-render/surface` · Version **0.17.1** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

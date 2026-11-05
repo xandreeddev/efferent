@@ -106,7 +106,7 @@ Retain its returned cursor to continue. Persistence depends on both the
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-memory/capture` · Version **0.17.0** · Plugin API **3** · Scope **session**
+Plugin: `@xandreed/plugin-memory/capture` · Version **0.17.1** · Plugin API **3** · Scope **session**
 
 | Contract | Services |
 | --- | --- |

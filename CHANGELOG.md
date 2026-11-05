@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.17.1 — 2026-11-05
+
 ### Fixed
 
 - `@xandreed/core`: knowledge extraction re-anchors a quote that occurs more
@@ -17,6 +19,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   count characters exactly, so any name repeated in a conversation (said by
   the user and echoed in the reply) failed every memory job that cited it.
   A quote that is not in the source is still rejected.
+
+### Changes
+
+- Knowledge extraction re-anchors a quote that occurs more than once in the source to its occurrence nearest the proposed offset, instead of rejecting the whole extraction. Extraction models quote reliably but rarely count characters exactly, so a name repeated in a conversation (said by the user and echoed in the reply) failed every memory job that cited it. A quote that is not in the source is still rejected.
 
 ## 0.17.0 — 2026-11-05
 
