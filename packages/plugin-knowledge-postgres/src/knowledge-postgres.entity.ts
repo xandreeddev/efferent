@@ -20,3 +20,14 @@ export const knowledgePostgresDefaults: KnowledgePostgresConfig = {
   statementTimeoutMs: 15_000,
   connectTimeoutSeconds: 10,
 }
+
+/**
+ * The step a PostgreSQL statement runs in, which decides what a misconfiguration means: an
+ * ordinary `query`, the migration's `extension` step (pgvector) or its `layout` step (the
+ * `efferent_knowledge` schema, its tables and its layout version).
+ */
+export const PostgresStep = Schema.Literals(["query", "extension", "layout"])
+export type PostgresStep = typeof PostgresStep.Type
+
+/** The extension that stores and ranks embeddings. */
+export const VECTOR_EXTENSION = "vector"

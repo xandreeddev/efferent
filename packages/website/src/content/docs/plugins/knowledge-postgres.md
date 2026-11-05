@@ -49,10 +49,31 @@ conversation context strategy and session backend.
 ## Schema, isolation and retrieval
 
 First open runs versioned migrations under an advisory transaction lock.
-The initial role needs permission to create the extension, schema and tables,
-or those objects must already be provisioned. Use an administrative role to
-install pgvector before running with a restricted application role.
+It first checks that pgvector is installed in the database or available on
+the server. Use an administrative role to install pgvector before running
+with a restricted application role. The role that opens the store needs
+CREATE on the database and on the `efferent_knowledge` schema, which the
+migration's `IF NOT EXISTS` statements check even when the objects exist,
+and read and write access to its tables.
 Efferent owns its tables under `efferent_knowledge`.
+
+## Failures
+
+Every store method fails with a `KnowledgeError` whose `reason` says what a
+caller can do about it:
+
+| Reason | When | Retry? |
+| --- | --- | --- |
+| `Unavailable` | The server cannot be reached, a connection closes, the pool is exhausted, a statement or lock deadline elapses | Yes, with a backoff |
+| `Conflict` | A concurrent write won: a unique violation, a serialization failure, a deadlock | Yes, after reading again |
+| `Invalid` | pgvector is not installed on the server, the role may not create the extension or the schema, the role lacks a privilege on the tables, or the existing `efferent_knowledge` objects do not fit the layout (an object of another shape, or the `vector` type outside the role's search path) | No: fix the setup the message names |
+| `Corrupt` | A stored row no longer matches its schema | No |
+
+The reason comes from the server's SQLSTATE and the step that failed: the
+same privilege error reads as an uncreatable extension while migration
+installs pgvector, and as a missing table grant in an ordinary query. An
+`Invalid` message names the cause and the fix, never the connection string
+or a value; the driver's error is kept as the `cause` for logs.
 
 Memory and document retrieval occupy separate logical domains, even when
 owner, namespace and collection strings match. Every operation is scoped by
