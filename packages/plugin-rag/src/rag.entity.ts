@@ -12,8 +12,9 @@ export const RagConfig = Schema.Struct({
   /** Extract and reconcile document relationships with an optional UtilityLlm. */
   graph: Schema.Boolean,
   review: Schema.Boolean,
-  /** Plan complementary searches and rerank source evidence when UtilityLlm is available. */
+  /** Opt in to one UtilityLlm call per search that plans complementary searches; ignored without a UtilityLlm. */
   queryPlanning: Schema.Boolean,
+  /** Opt in to one UtilityLlm call per search that reranks the fused evidence; ignored without a UtilityLlm. */
   rerank: Schema.Boolean,
   /** Total foreground deadline, including helpers, embeddings, storage and traversal. */
   queryTimeoutMs: Positive,
@@ -50,7 +51,7 @@ export type RagConfig = typeof RagConfig.Type
 /** Plain RAG needs only KnowledgeStore and the host's embedding service. @public */
 export const ragDefaults: RagConfig = {
   namespace: "default", collection: "knowledge", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
-  graph: false, review: true, queryPlanning: true, rerank: true, queryTimeoutMs: 10_000,
+  graph: false, review: true, queryPlanning: false, rerank: false, queryTimeoutMs: 10_000,
   worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 200_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, chunkChars: 2_000, overlapChars: 200, embeddingBatchSize: 32,
   searchLimit: 8, evidenceChars: 8_000, readChars: 8_000, graphDepth: 2, recall: false, sectionOrder: 720, tools: true,

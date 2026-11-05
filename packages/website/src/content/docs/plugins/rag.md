@@ -85,10 +85,13 @@ Set `recall: true` to inject bounded retrieved evidence into recorded turn
 context automatically; the default leaves retrieval to tools or host calls.
 
 `graph: true` enables document entity and relationship extraction and requires
-`UtilityLlm`. Review is enabled by default. Optional query planning and reranking
-use that helper when available; invalid or unavailable assistance falls back
-to deterministic lexical/vector retrieval. The total foreground query,
-including embedding and graph traversal, is bounded by `queryTimeoutMs`.
+`UtilityLlm`. Review is enabled by default. Query planning (`queryPlanning`)
+and evidence reranking (`rerank`) are off by default: each adds one helper-model
+call to every search, so turn one on only when its quality is worth that cost
+and latency. Enabled, they use `UtilityLlm` when it is available; invalid or
+unavailable assistance falls back to deterministic lexical/vector retrieval.
+The total foreground query, including helper calls, embedding and graph
+traversal, is bounded by `queryTimeoutMs`.
 
 One extraction call reads at most `maxExtractionChars` of a document (48,000
 by default; `maxSourceChars`, 200,000 by default, bounds the document). A
@@ -141,8 +144,8 @@ Plugin: `@xandreed/plugin-rag` · Version **0.17.1** · Plugin API **3** · Scop
   "embeddingDimensions": 1536,
   "graph": false,
   "review": true,
-  "queryPlanning": true,
-  "rerank": true,
+  "queryPlanning": false,
+  "rerank": false,
   "queryTimeoutMs": 10000,
   "worker": true,
   "pollMs": 2000,

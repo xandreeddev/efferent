@@ -3,6 +3,8 @@ import { EmbeddingModel } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref } from "effect"
 import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, knowledgeExtractionWindows } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
+import { memoryDefaults } from "./memory.entity.js"
+import type { MemoryConfig } from "./memory.entity.js"
 import { fixtureEnqueue, fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
 describe("native memory engine", () => {
@@ -81,6 +83,27 @@ describe("native memory engine", () => {
     const now = yield* Clock.currentTimeMillis
     const past = yield* fixture.memory.recall({ scope: fixtureScope, query: "User", limit: 8, maxChars: 8_000, graph: { perspective: { validAt: 20, knownAt: now }, depth: 2 } })
     expect(past.graph.assertions.map((assertion) => assertion.object)).toEqual([{ _tag: "Value", value: "tea" }])
+  }))))
+
+  test("query planning and reranking are opt-in: by default recall makes no helper call", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    expect([memoryDefaults.queryPlanning, memoryDefaults.rerank]).toEqual([false, false])
+    const text = "I prefer tea."
+    const helperCalls = (options: Partial<MemoryConfig>) => Effect.gen(function* () {
+      const fixture = yield* makeMemoryFixture([
+        JSON.stringify(fixtureExtraction(text)),
+        ...(options.queryPlanning === true ? [JSON.stringify({ queries: ["tea"], entities: [], validAt: null, knownAt: null })] : []),
+        ...(options.rerank === true ? [JSON.stringify({ order: [] })] : []),
+      ], options)
+      yield* fixture.memory.capture(fixtureEnqueue("helpers", text))
+      yield* fixture.memory.process(fixtureScope, 1)
+      const processed = (yield* Ref.get(fixture.calls)).length
+      yield* fixture.memory.recall({ scope: fixtureScope, query: "tea", limit: 8, maxChars: 8_000 })
+      return (yield* Ref.get(fixture.calls)).slice(processed).map((prompt) => prompt.startsWith("Plan evidence retrieval") ? "plan" : prompt.startsWith("Rank candidate evidence") ? "rerank" : "other")
+    })
+    expect(yield* helperCalls({})).toEqual([])
+    expect(yield* helperCalls({ queryPlanning: true })).toEqual(["plan"])
+    expect(yield* helperCalls({ rerank: true })).toEqual(["rerank"])
+    expect(yield* helperCalls({ queryPlanning: true, rerank: true })).toEqual(["plan", "rerank"])
   }))))
 
   test("explicit graph opt-out performs no graph traversal", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

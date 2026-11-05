@@ -19,7 +19,7 @@ const input = (id = "source") => ({ jobId: KnowledgeJobId.make(`${id}:1`), sourc
 const embeddingResponse = (inputs: ReadonlyArray<string>) => ({ results: inputs.map(() => [1, 0]), usage: { inputTokens: inputs.length } })
 const embeddings = (work: (inputs: ReadonlyArray<string>) => Effect.Effect<EmbeddingModel.ProviderResponse> = (inputs) => Effect.succeed(embeddingResponse(inputs))) => EmbeddingModel.make({ embedMany: ({ inputs }) => work(inputs) })
 const open = Effect.fnUntraced(function* (index: KnowledgeIndex, utility: typeof UtilityLlm.Service, model: EmbeddingModel.EmbeddingModel, options: Partial<MemoryConfig> = {}) {
-  const services = yield* Layer.build(MemoryLive({ ...memoryDefaults, namespace: scope.namespace, collection: scope.collection, embeddingDimensions: 2, worker: false, review: false, queryPlanning: false, rerank: false, modelTimeoutMs: 10_000, leaseMs: 30, ...options }).pipe(
+  const services = yield* Layer.build(MemoryLive({ ...memoryDefaults, namespace: scope.namespace, collection: scope.collection, embeddingDimensions: 2, worker: false, review: false, modelTimeoutMs: 10_000, leaseMs: 30, ...options }).pipe(
     Layer.provide(Layer.mergeAll(Layer.succeed(MemoryStore, index), Layer.succeed(UtilityLlm, utility), Layer.succeed(EmbeddingModel.EmbeddingModel, model))),
   ))
   const worker = Context.get(services, BackgroundWorkers)[0]!

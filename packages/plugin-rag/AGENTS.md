@@ -24,8 +24,9 @@ through KnowledgeStore. Node 24 and Bun.
   scope, job and attempt for extraction and review, `maxHelperOutputTokens`).
   The cap is advisory: only a host's own UtilityLlm that reads the reference
   applies it; the models plugin's `UtilityLlmLive` does not.
-- Query planning and reranking use the optional UtilityLlm with a separate
-  bound. Invalid or unavailable assistance keeps hybrid evidence; a reranker
+- Query planning and reranking are opt-in (`queryPlanning`, `rerank`, both
+  false by default: each costs a helper call per search) and use the
+  optional UtilityLlm with a separate bound. Invalid or unavailable assistance keeps hybrid evidence; a reranker
   cannot introduce a candidate identity. Explicit traversal coordinates win.
 - Keep the original query in the bounded search plan. Combine lexical and
   semantic arms with core's deterministic reciprocal rank fusion. Graph

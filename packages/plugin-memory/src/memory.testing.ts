@@ -29,7 +29,7 @@ export const makeMemoryFixture = (responses: ReadonlyArray<string> | ((prompt: s
     )),
   ) })
   const services = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
-  const config = { ...memoryDefaults, namespace: fixtureScope.namespace, embeddingDimensions: 2, worker: false, review: false, queryPlanning: false, rerank: false, ...options }
+  const config = { ...memoryDefaults, namespace: fixtureScope.namespace, embeddingDimensions: 2, worker: false, review: false, ...options }
   const live = yield* Layer.build(MemoryLive(config).pipe(Layer.provide(Layer.succeedContext(services))))
   return { store, calls, helperCalls, services, config, memory: Context.get(live, LongTermMemory) }
 })

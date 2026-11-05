@@ -20,9 +20,11 @@ describe("memory through the real agent", () => {
     const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
     const prompts = yield* Ref.make<ReadonlyArray<string>>([])
     const helperCalls = yield* Ref.make<ReadonlyArray<Option.Option<KnowledgeHelperCall>>>([])
+    const helperPrompts = yield* Ref.make<ReadonlyArray<string>>([])
     const utility = UtilityLlm.of({ complete: (prompt) => {
       const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
-      return Effect.service(CurrentKnowledgeHelperCall).pipe(
+      return Ref.update(helperPrompts, (all) => [...all, prompt]).pipe(
+        Effect.andThen(Effect.service(CurrentKnowledgeHelperCall)),
         Effect.flatMap((call) => Ref.update(helperCalls, (all) => [...all, call])),
         Effect.as(new UtilityCompletion({ text: JSON.stringify(fixtureExtraction(text)), usage: zeroUsage })),
       )
@@ -35,7 +37,7 @@ describe("memory through the real agent", () => {
       ] as never)), streamText: () => Stream.die("streaming unused") as never,
     })
     const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin,
-      { plugin: memoryPlugin, options: { worker: false, review: false, queryPlanning: false, rerank: false, embeddingDimensions: 2 } }, memoryCapturePlugin],
+      { plugin: memoryPlugin, options: { worker: false, review: false, embeddingDimensions: 2 } }, memoryCapturePlugin],
       services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
     })
     const first = { owner: "same-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d1") }
@@ -50,7 +52,7 @@ describe("memory through the real agent", () => {
     expect(pending[0]?.engine).toBe(engine)
     const raw = yield* store.source(pending[0]!.scope, pending[0]!.source)
     expect(Option.map(raw, (source) => source.text)).toEqual(Option.some("User: I prefer tea.\n\nAssistant final reply: I will keep that in mind."))
-    const live = yield* Layer.build(MemoryPluginLive({ worker: false, review: false, queryPlanning: false, rerank: false, embeddingDimensions: 2 }).pipe(Layer.provide(Layer.succeedContext(runtime))))
+    const live = yield* Layer.build(MemoryPluginLive({ worker: false, review: false, embeddingDimensions: 2 }).pipe(Layer.provide(Layer.succeedContext(runtime))))
     const memory = Context.get(live, LongTermMemory)
     const otherSpace = yield* Layer.build(MemoryPluginLive({ worker: false, review: false, queryPlanning: false, rerank: false, embeddingModel: "other-embedder", embeddingDimensions: 2 }).pipe(Layer.provide(Layer.succeedContext(runtime))))
     expect(yield* Context.get(otherSpace, LongTermMemory).process(pending[0]!.scope, 10)).toBe(0)
@@ -70,5 +72,7 @@ describe("memory through the real agent", () => {
     expect((yield* Ref.get(prompts))[0]).toContain("I prefer tea.")
     const journal = yield* sessions.read(second, { kinds: ["memory.section"] })
     expect(journal.some((event) => JSON.stringify(event.data).includes("recalled-memory"))).toBe(true)
+    // Default options: the recall above spent no helper call on query planning or reranking; only extraction did.
+    expect((yield* Ref.get(helperPrompts)).map((prompt) => prompt.includes("<knowledge-source>"))).toEqual([true])
   }))))
 })

@@ -145,10 +145,12 @@ A durable journal alone does not make that adapter durable.
 
 ## 5. Find memories for a new question
 
-For “What database does the project I maintain use?”, retrieval can make a
-helper planning call for complementary queries, entity names and explicitly supported time
-coordinates. It keeps the original question and searches at most four
-distinct queries. Planner failure falls back to the original question.
+For “What database does the project I maintain use?”, retrieval with
+`queryPlanning: true` makes a helper planning call for complementary queries,
+entity names and explicitly supported time coordinates. It keeps the original
+question and searches at most four distinct queries. Planner failure falls
+back to the original question. By default planning is off and retrieval
+searches the original question alone.
 
 Each query has two retrieval paths:
 
@@ -205,8 +207,8 @@ with separate caps of 100 entities and 100 assertions, and time checks at every 
 numeric weights and are selected in stable ID order. **Graph evidence is
 separate from the two fused search lists.**
 
-By default, a helper reranker receives the question, candidate keys/text and
-graph relationship text. It can return:
+With `rerank: true`, a helper reranker receives the question, candidate
+keys/text and graph relationship text. It can return:
 
 ```json
 { "order": ["memory:M2", "memory:M1"] }
@@ -268,8 +270,9 @@ recurrence inference, and neither authorizes an action.
 
 ## Defaults and current limits
 
-Review, consolidation, query planning, reranking and the processing worker are
-on by default. The worker scans queued work; the host can instead process
+Review, consolidation and the processing worker are on by default. Query
+planning and reranking are off: each would add a helper-model call to every
+recall. The worker scans queued work; the host can instead process
 jobs explicitly. Embedding labels describe the host-supplied model's identity;
 they do not instantiate an embedding model. See [memory configuration](/docs/plugins/memory/).
 

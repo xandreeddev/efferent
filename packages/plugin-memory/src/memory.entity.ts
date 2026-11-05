@@ -12,7 +12,9 @@ export const MemoryConfig = Schema.Struct({
   review: Schema.Boolean,
   /** Reconcile updates and derive profiles/routines; false is an additive extraction ablation. */
   consolidate: Schema.Boolean,
+  /** Opt in to one UtilityLlm call per recall that plans complementary searches. */
   queryPlanning: Schema.Boolean,
+  /** Opt in to one UtilityLlm call per recall that reranks the fused evidence. */
   rerank: Schema.Boolean,
   retrievalTimeoutMs: Positive,
   /** Run a scoped worker; hosts can instead call process explicitly. */
@@ -42,7 +44,7 @@ export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
 export const memoryDefaults: MemoryConfig = {
   namespace: "default", collection: "memory", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
-  review: true, consolidate: true, queryPlanning: true, rerank: true, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
+  review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   sectionOrder: 700, tools: true,
 }

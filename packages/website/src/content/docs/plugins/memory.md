@@ -81,16 +81,20 @@ prove that a real-world action succeeded.
 
 ## Retrieval and tools
 
-The engine combines lexical and vector retrieval, graph expansion, and bounded
-model-assisted query planning and reranking. A turn-context section includes
+The engine combines lexical and vector retrieval and graph expansion. Bounded
+model-assisted query planning (`queryPlanning`) and evidence reranking
+(`rerank`) are off by default: each adds one `UtilityLlm` call to every recall,
+automatic turn context included, so enable one only when its quality is worth
+that cost and latency. A failed or late helper call keeps the deterministic
+retrieval. A turn-context section includes
 relevant evidence and a small profile. It shares a retrieval deadline and is
 recorded as turn context, outside the stable system prefix.
 
 Text and vector search contribute equally through reciprocal rank fusion;
 their raw score magnitudes are not combined. Graph traversal adds a bounded
 neighborhood separately. Graph assertions have no numeric importance or edge
-weight. The helper-model reranker can reorder or omit memory candidates; it
-does not rerank the graph assertions themselves.
+weight. When enabled, the helper-model reranker can reorder or omit memory
+candidates; it does not rerank the graph assertions themselves.
 
 Automatic context also prepends up to four active preference/profile records,
 independently of the question's search ranking. See the
@@ -150,8 +154,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
   "embeddingDimensions": 1536,
   "review": true,
   "consolidate": true,
-  "queryPlanning": true,
-  "rerank": true,
+  "queryPlanning": false,
+  "rerank": false,
   "retrievalTimeoutMs": 10000,
   "worker": true,
   "pollMs": 2000,
