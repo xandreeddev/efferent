@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
-import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import {
   BackgroundWorkers, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, makeKnowledgeIndexMemory,
@@ -219,3 +219,26 @@ test("a stalled memory store remains bounded by the complete retrieval deadline"
   const result = yield* Fiber.join(query)
   expect(Result.isFailure(result) && result.failure.message).toBe("Memory retrieval exceeded its time budget")
 })))
+
+test("an idle memory worker records no spans while each claimed job is traced", () => {
+  const names: Array<string> = []
+  const tracer = Tracer.make({ span: (options) => {
+    names.push(options.name)
+    return new Tracer.NativeSpan(options)
+  } })
+  return run(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const { memory, worker } = yield* open(index, UtilityLlm.of({ complete: () => Effect.succeed(completion) }), yield* embeddings(), { worker: true, pollMs: 10 })
+    yield* TestClock.adjust(100)
+    expect(names.filter((name) => name.startsWith("knowledge_store."))).toEqual([])
+    const job = yield* memory.capture(input())
+    yield* TestClock.adjust(10)
+    yield* worker.idle
+    expect(Option.exists(yield* memory.status(scope, job.id), (current) => current.phase._tag === "Complete")).toBe(true)
+    expect(names).toContain("knowledge_store.claim")
+    const traced = names.length
+    yield* TestClock.adjust(100)
+    expect(names.slice(traced)).toEqual([])
+    expect(names).not.toContain("knowledge_store.pending")
+  }).pipe(Effect.withTracer(tracer)))
+})
