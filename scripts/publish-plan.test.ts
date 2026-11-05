@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { ciAuthentication, confirmSchedule, confirmation, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
+import { ciAuthentication, confirmSchedule, confirmation, tagConfirmSchedule, notCleanTree, planPublish, publishCommand, registry, registryAnswer, registryProvenance, releaseSteps, remoteTagCommit, tagPlan } from "./publish-plan.js"
 import type { BuildStamp, Built, Manifest, PublishState } from "./publish-plan.js"
 
 const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
@@ -139,6 +139,12 @@ describe("confirmation", () => {
   const found = Result.succeed(true)
   const absent = Result.succeed(false)
   const { attempts } = confirmSchedule
+
+  test("tagging waits about fifteen minutes for packages the registry's CDN still hides", () => {
+    expect(tagConfirmSchedule.attempts * tagConfirmSchedule.intervalMillis).toBe(900_000)
+    expect(confirmation(core, [...Array.from({ length: 60 }, () => absent), found], tagConfirmSchedule.attempts)).toEqual({ _tag: "Published" })
+    expect(confirmation(core, Array.from({ length: tagConfirmSchedule.attempts }, () => absent), tagConfirmSchedule.attempts)._tag).toBe("Missing")
+  })
 
   test("permits registry propagation beyond a minute within a three-minute bound", () => {
     expect(attempts * confirmSchedule.intervalMillis).toBe(180_000)

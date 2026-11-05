@@ -10,6 +10,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Fixed
 
+- Releases wait up to about fifteen minutes (was three) for every package to
+  appear on the registry before tagging. 0.17.0 and 0.17.1 each refused to tag
+  with packages the registry's CDN showed a few minutes later, and needed a
+  manual re-run. The check after an ambiguous upload failure stays at three
+  minutes.
 - `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: the background worker
   scans for pending jobs untraced, so an idle worker records no spans. Each
   scan (every `pollMs`, 2 s by default) exported a root

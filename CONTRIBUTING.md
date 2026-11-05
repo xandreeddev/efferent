@@ -348,7 +348,9 @@ resume, and another same-version checkout is refused.
 
 Every registry read and upload uses `https://registry.npmjs.org` explicitly.
 After an ambiguous npm failure, the publisher checks the registry for about
-three minutes before deciding whether the upload succeeded. A retry uses the same
+three minutes before deciding whether the upload succeeded. Before tagging, it
+asks for every package for up to about fifteen minutes, because a fresh version
+can stay hidden behind the registry's CDN for several minutes. A retry uses the same
 source commit and skips versions already uploaded. It never moves a pushed
 release tag. The workflow uses one publication concurrency group and does
 not cancel a release in progress.
