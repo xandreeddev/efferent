@@ -849,6 +849,20 @@ calls outside the step loop count toward their turn. Telemetry's reported
 cost and the settled spend agree for calls with known usage; telemetry
 reports no cost for an unknown usage, where the ledger keeps the worst case.
 
+A host that builds the OpenAI-compatible model itself
+(`makeCompatLanguageModel` from `@xandreed/plugin-models/compat`) rather
+than routing through the plugin gives it the same guard as
+`CompatConfig.spend` (`ModelSpendGuard`: the ledger and decoded
+`ModelSpendOptions`, priced by `"<moduleName>:<model>"`). Each physical send
+of that model, every retry included, reserves and settles exactly as a
+routed send does, after the config's `beforeRequest`; a refused send is
+never sent, and the call dies with the `HarnessError`, which the turn fails
+with, typed. That guard is the model's own: the plugin's `spend` option
+guards only the calls the plugin routes, and the plugin keeps it out of the
+services it provides, so a model the host builds is never priced or capped
+by it, even beside the plugin in one agent (`Agent.define` or
+`stackPlugins`); a host model without `spend` is not guarded.
+
 An evaluation run is one run of spend too: `@xandreed/evals` opens one
 ledger per run and gives each trial its own account in it as the
 `ModelSpend` its runnable reads, so a runnable passes it to the agents it

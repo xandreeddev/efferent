@@ -181,8 +181,9 @@ export const modelsPlugin = definePlugin({
     const transport = yield* transportLayer(config)
     const spend = yield* spendGuardLayer(config)
     // The transport sits beneath everything that calls out: the stores' token refreshes, the routed model and the utility model.
-    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentModelSettings, config.modelSettings), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch), spend).pipe(Layer.provideMerge(transport))
-    return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
+    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentModelSettings, config.modelSettings), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch)).pipe(Layer.provideMerge(transport))
+    // The spend guard goes to the routed and utility models as they are built, never into the agent's services: a model the host builds itself and calls in the same turn is not guarded by it.
+    return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provide(spend), Layer.provideMerge(base))
   })),
 })
 export default modelsPlugin
