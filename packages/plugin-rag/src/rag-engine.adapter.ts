@@ -1,13 +1,13 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Predicate, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
   applyKnowledgeRerank, citedKnowledgeSources, knowledgeCandidateText, KnowledgeQueryPlan, knowledgeQueryPrompt, KnowledgeRerank, knowledgeRerankPrompt,
   narrowKnowledgeGraph, traverseKnowledgeGraph,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
   KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeSubgraph, KnowledgeVector,
 } from "@xandreed/core"
 import { RagGraphFailed } from "./rag.entity.js"
@@ -136,13 +136,14 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
               onNone: () => unavailable(interrupted ? "Document processing was interrupted before publication" : "Document processing stopped unexpectedly", cause),
               onSome: knowledgeFailure,
             })
-            const recorded = yield* store.fail(yield* lease(job, token), error.message).pipe(Effect.result)
+            const failure: KnowledgeJobFailure = { reason: error.reason, message: error.message, step: graphFailed ? "Graph" : "Required" }
+            const recorded = yield* store.fail(yield* lease(job, token), failure).pipe(Effect.result)
             if (Result.isFailure(recorded)) yield* Effect.logWarning("The document processing failure could not be recorded", recorded.failure)
             if (interrupted) {
               if (Result.isSuccess(recorded)) yield* store.retry(scope, job.id).pipe(Effect.ignore({ log: "Warn", message: "Interrupted document work could not be returned to the processing queue" }))
               return yield* Effect.failCause(Cause.map(cause, knowledgeFailure))
             }
-            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && (graphFailed || error.reason !== "Invalid" && error.reason !== "Tombstoned" && error.reason !== "EmbeddingMismatch")) {
+            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && isRetryableKnowledgeFailure(failure)) {
               yield* store.retry(scope, job.id)
               return Option.some(Option.some(job))
             }

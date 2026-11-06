@@ -2,7 +2,7 @@ import { Context, Effect } from "effect"
 import type { Option } from "effect"
 import type {
   KnowledgeCandidates, KnowledgeChunk, KnowledgeChunkId, KnowledgeClaim, KnowledgeEnqueue,
-  KnowledgeError, KnowledgeJob, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
+  KnowledgeError, KnowledgeJob, KnowledgeJobFailure, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
   KnowledgePending, KnowledgeReach, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
   KnowledgeSourceId, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
 } from "../knowledge/knowledge.entity.js"
@@ -12,6 +12,8 @@ import type { RunContext } from "./run-context.port.js"
  * Durable source processing and derived indexes. Replaying identical source/revision/engine
  * returns its original job. Conflicting content or source/job reuse fails without changes.
  * Discovery (`pending`) and `claim` see only jobs recorded under the requested engine.
+ * `fail` records why the leased attempt failed (`KnowledgeJobFailure`) on its `Failed` phase, which
+ * `status` returns; `retry` requeues a failed job.
  * Staging verifies the unexpired lease, current scope version and source provenance, and keeps
  * the stage, its notes included, on the job through retry and publication.
  * Publication verifies the unexpired lease, current source revision, provenance and scope CAS,
@@ -28,7 +30,7 @@ export interface KnowledgeIndex {
   readonly renew: (lease: KnowledgeLease, leaseMs: number) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly stage: (lease: KnowledgeLease, stage: KnowledgeStage) => Effect.Effect<void, KnowledgeError>
   readonly publish: (lease: KnowledgeLease) => Effect.Effect<void, KnowledgeError>
-  readonly fail: (lease: KnowledgeLease, message: string) => Effect.Effect<void, KnowledgeError>
+  readonly fail: (lease: KnowledgeLease, failure: KnowledgeJobFailure) => Effect.Effect<void, KnowledgeError>
   readonly retry: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
   readonly snapshot: (scope: KnowledgeScope) => Effect.Effect<KnowledgeSnapshot, KnowledgeError>

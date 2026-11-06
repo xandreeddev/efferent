@@ -35,12 +35,16 @@ describe("native memory engine", () => {
     expect((yield* fixture.store.snapshot(fixtureScope)).memories).toHaveLength(1)
   }))))
 
-  test("invalid model output leaves a failed retryable job and publishes no facts", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const fixture = yield* makeMemoryFixture(["This is not JSON"])
+  test("invalid model output fails the job with reason Invalid, unretried, and publishes no facts", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeMemoryFixture(["This is not JSON"], { maxAttempts: 3 })
     const job = yield* fixture.memory.capture(fixtureEnqueue("invalid", "I prefer tea."))
     const result = yield* fixture.memory.process(fixtureScope, 1).pipe(Effect.result)
     expect(result._tag).toBe("Failure")
-    expect(Option.map(yield* fixture.memory.status(fixtureScope, job.id), (status) => status.phase._tag)).toEqual(Option.some("Failed"))
+    expect(Option.map(yield* fixture.memory.status(fixtureScope, job.id), (status) => [status.phase, status.attempt])).toEqual(Option.some([
+      { _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required" }, 1,
+    ]))
+    expect(yield* Ref.get(fixture.calls)).toHaveLength(1)
+    expect((yield* fixture.memory.retry(fixtureScope, job.id)).phase._tag).toBe("Queued")
     expect((yield* fixture.store.snapshot(fixtureScope)).memories).toEqual([])
     expect(yield* fixture.memory.source(fixtureScope, job.source)).not.toEqual(Option.none())
   }))))

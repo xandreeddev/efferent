@@ -200,13 +200,25 @@ reads, the admission decides what capture learns from it.
 Memory processing is asynchronous. `capture` or `ingest` returning a job means
 the source is durably accepted. Inspect `status`, call `process` explicitly, or
 let the worker publish it. `retry` requeues a failed job. Model/embedding errors
-publish no partial facts or document revisions. Successful staged extraction is
+publish no partial facts or document revisions.
+
+A failed job's `Failed` phase (read through `status`) records why its last
+attempt failed, as a `KnowledgeJobFailure`: the `KnowledgeError` reason, its
+message, and the `step` that failed, `Graph` for the optional graph extraction
+and `Required` for anything the job cannot publish without.
+`isRetryableKnowledgeFailure(phase)` is the rule the engines retry by within
+`maxAttempts`, and the one a host applies before calling `retry`: a failed
+graph step is always retryable; otherwise `Invalid`, `Tombstoned` and
+`EmbeddingMismatch` are final and every other reason is transient. A job that
+failed before reasons were recorded reads as `Unavailable` at step `Required`,
+so it counts as retryable and its next failure records its own reason. A store
+records a failure with `KnowledgeIndex.fail(lease, { reason, message, step })`. Successful staged extraction is
 reused after an embedding failure. Scope-version conflicts trigger reconciliation
 against the updated graph.
 
 A document's graph is optional; its chunks are not. When graph extraction or its
 review fails, or the helper's answer is invalid, the failure is recorded on the
-job and the job is retried within `maxAttempts`: an invalid model answer is not
+job with step `Graph` and the job is retried within `maxAttempts`: an invalid model answer is not
 an invalid source. The last attempt stages and publishes the source's chunks
 without entities or assertions, and the completed job's stage carries a
 `GraphOmitted` note with the failure's reason and message

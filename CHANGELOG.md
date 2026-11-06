@@ -10,9 +10,6 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
-
-
-
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -50,9 +47,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `sourceInfo(scope, refs)`, the batched read `knowledge.source-info`
   checks; a host's own `Knowledge` or `LongTermMemory` returns `sources` in
   each `KnowledgeRecallResult` it builds (`[]` when it cites nothing).
-
-
-
+- A host's own `KnowledgeIndex` (a `MemoryStore` or `KnowledgeStore` other
+  than the in-memory and PostgreSQL ones) takes a `KnowledgeJobFailure` in
+  `fail(lease, failure)` and keeps its `reason`, `message` and `step` on the
+  job's `Failed` phase; rerun `knowledgeStoreConformance` (new check
+  `knowledge.failure-reason`). A caller of `fail` passes
+  `{ reason, message, step }` instead of the message. A host that decided
+  whether to retry a failed job by matching its message calls
+  `isRetryableKnowledgeFailure(job.phase)` instead.
 
 ### Added
 
@@ -356,8 +358,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `Sessions`, and a view that hid a turn also hid its closing record, so the
   checkpoint could never pass it. The default admits every turn as is:
   captured text, source identities and the checkpoint format are unchanged.
+- `@xandreed/core`: a failed knowledge job records why it failed. Its
+  `Failed` phase is a `KnowledgeJobFailure`: the `KnowledgeError` reason
+  and message, and the `step` that failed (`KnowledgeFailureStep`: `Graph`
+  for the optional graph extraction, `Required` for anything else), so a
+  host reads `status` and no longer classifies a failure by its message
+  text. `isRetryableKnowledgeFailure` is the one rule the RAG and memory
+  engines retry a failed attempt by within `maxAttempts`, exported for hosts
+  deciding whether to call `retry`: a failed graph step always is, `Invalid`,
+  `Tombstoned` and `EmbeddingMismatch` are final, every other reason is
+  transient; the engines retry exactly the failures they did before. A job
+  stored before this change, its payload holding only a message, decodes
+  with reason `Unavailable` at step `Required`. The PostgreSQL store keeps
+  the failure in the job's payload; its layout and `phase` column are
+  unchanged. `knowledgeStoreConformance` adds `knowledge.failure-reason`.
 
 ### Changed
+
 
 
 
@@ -405,7 +422,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 
@@ -495,19 +514,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
-
-
-
-
-
-
-
-
-
-
-
-
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
   options instead of as the fourth argument: `frames(scope, after,
@@ -516,19 +524,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   declares `frames` as `<R, RF>(feed, after, project: FeedProjection<R>,
   options?: FeedFramesOptions<RF>) => Stream<FeedFrame, RenderError, R |
   RF>`, and honours `kinds` and `snapshot` to pass `renderFeedConformance`.
-
-
-
-
-
-
-
-
-
-
-
+- `@xandreed/core`: `KnowledgeIndex.fail(lease, message)` becomes
+  `fail(lease, failure)`, where `failure` is a `KnowledgeJobFailure`
+  (`{ reason, message, step }`); a job's `Failed` phase carries the same
+  three fields. Migration above.
 
 ### Repository
+
 
 
 
@@ -540,6 +542,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

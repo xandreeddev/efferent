@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector,
+  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector,
+  type KnowledgeErrorReason, type KnowledgeFailureStep,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
+  citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
   narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
 } from "./knowledge.entity.functions.js"
 
@@ -91,6 +92,25 @@ test("a recall result encoded before sources existed decodes with none", async (
   expect(decoded.sources).toEqual([])
   const info = { ref: { id: KnowledgeSourceId.make("guide"), revision: 1 }, occurredAt: 1, recordedAt: 2, metadata: { kind: "note", tags: ["a"] } }
   expect((await Effect.runPromise(Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: emptyGraph, sources: [info] }))).sources).toEqual([info])
+})
+test("a failure is retryable unless its reason is final, and always when the optional graph step failed", () => {
+  const table: ReadonlyArray<readonly [KnowledgeErrorReason, KnowledgeFailureStep, boolean]> = [
+    ["Unavailable", "Required", true], ["Conflict", "Required", true], ["LeaseLost", "Required", true], ["Corrupt", "Required", true],
+    ["Invalid", "Required", false], ["Tombstoned", "Required", false], ["EmbeddingMismatch", "Required", false],
+    ["Invalid", "Graph", true], ["Unavailable", "Graph", true], ["Tombstoned", "Graph", true],
+  ]
+  expect(table.map(([reason, step]) => isRetryableKnowledgeFailure({ reason, step }))).toEqual(table.map(([, , retryable]) => retryable))
+})
+test("a failed job records its reason and step, and one stored before reasons decodes as a transient failure", async () => {
+  const stored = { id: "job", scope, source: { id: "source", revision: 1 }, engine: "kit", attempt: 1, stage: null }
+  const decode = Schema.decodeUnknownEffect(KnowledgeJob)
+  const older = await Effect.runPromise(decode({ ...stored, phase: { _tag: "Failed", message: "the embedding service was unreachable" } }))
+  expect(older.phase).toEqual({ _tag: "Failed", reason: "Unavailable", message: "the embedding service was unreachable", step: "Required" })
+  expect(older.phase._tag === "Failed" && isRetryableKnowledgeFailure(older.phase)).toBe(true)
+  const job: KnowledgeJob = { ...older, id: KnowledgeJobId.make("job"), phase: { _tag: "Failed", reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" } }
+  const encoded = await Effect.runPromise(Schema.encodeEffect(KnowledgeJob)(job))
+  expect(encoded.phase).toEqual({ _tag: "Failed", reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" })
+  expect((await Effect.runPromise(decode(encoded))).phase).toEqual(job.phase)
 })
 test("graph intervals are half-open on both timelines and traversal cannot cross invalid edges", () => {
   const ids = [KnowledgeEntityId.make("one"), KnowledgeEntityId.make("two"), KnowledgeEntityId.make("three")]

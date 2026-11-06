@@ -1,7 +1,7 @@
 import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
-  type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace,
+  type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
   type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal,
   type KnowledgeVector,
@@ -25,6 +25,18 @@ const enginePart = (text: string): string => text.replaceAll("%", "%25").replace
  */
 export const knowledgeEngineId = (processor: string, space: KnowledgeEmbeddingSpace): string =>
   [processor, space.model, space.version].map(enginePart).concat(String(space.dimensions)).join("/")
+/** Reasons no retry of the same source revision and configuration can change. */
+const FINAL_REASONS: ReadonlyArray<KnowledgeErrorReason> = ["Invalid", "Tombstoned", "EmbeddingMismatch"]
+/**
+ * Whether retrying a failed job can succeed. A failure of the optional graph step can, whatever its
+ * reason: the job's last attempt publishes without the graph. Otherwise an invalid source or output
+ * (`Invalid`), a forgotten source (`Tombstoned`) or an incompatible embedding (`EmbeddingMismatch`)
+ * cannot; every other reason is transient. The native engines retry a failed attempt by it within
+ * `maxAttempts`; a host deciding whether to `retry` a failed job (its `Failed` phase) reads the same rule.
+ * @public
+ */
+export const isRetryableKnowledgeFailure = (failure: Pick<KnowledgeJobFailure, "reason" | "step">): boolean =>
+  failure.step === "Graph" || !FINAL_REASONS.includes(failure.reason)
 /** Exact cosine, including a defined zero-norm score. @public */
 export const knowledgeCosine = (left: KnowledgeVector, right: KnowledgeVector): number => {
   if (!sameEmbeddingSpace(left.space, right.space)) return 0

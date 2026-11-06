@@ -112,6 +112,12 @@ workers configured with different embedding spaces can share the database
 without taking each other's jobs. The adapter passes
 `knowledgeStoreConformance`, including its `knowledge.engine-isolation` check.
 
+A failed job keeps the failure it was failed with (`KnowledgeJobFailure`:
+reason, message and step) in its stored payload; the row's `phase` column
+still reads `Failed`, and the layout is unchanged. A job failed by an earlier
+release, whose payload has only a message, decodes with reason `Unavailable`
+at step `Required`.
+
 The runtime-scoped pool closes with its owning scope. Keep engines and their
 workers inside that scope, and use the agent's bounded shutdown before closing
 host services. Sleeping workers and queued jobs are not active work.

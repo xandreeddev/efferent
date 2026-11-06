@@ -123,11 +123,32 @@ export const KnowledgeStage = Schema.Struct({
   notes: Schema.optionalKey(Schema.Array(KnowledgeStageNote)),
 })
 export type KnowledgeStage = typeof KnowledgeStage.Type
+/**
+ * The step of a job's processing that failed. `Graph`: the optional graph extraction, which an
+ * engine leaves out on the job's last attempt (`GraphOmitted`). `Required`: anything the job cannot
+ * publish without (reading its source, the extraction it needs, embedding, storage).
+ * @public
+ */
+export const KnowledgeFailureStep = Schema.Literals(["Required", "Graph"])
+export type KnowledgeFailureStep = typeof KnowledgeFailureStep.Type
+/**
+ * Why a processing attempt failed, as `KnowledgeIndex.fail` records it on the job's `Failed` phase:
+ * the `KnowledgeError` reason, its message and the step that failed (`isRetryableKnowledgeFailure`
+ * tells whether retrying can help). A job failed before reasons were recorded decodes with reason
+ * `Unavailable` at step `Required`, so it counts as retryable and its next failure records its own reason.
+ * @public
+ */
+export const KnowledgeJobFailure = Schema.Struct({
+  reason: KnowledgeErrorReason.pipe(Schema.withDecodingDefaultKey(Effect.succeed("Unavailable" as const))),
+  message: Schema.String,
+  step: KnowledgeFailureStep.pipe(Schema.withDecodingDefaultKey(Effect.succeed("Required" as const))),
+})
+export type KnowledgeJobFailure = typeof KnowledgeJobFailure.Type
 /** @public */
 export const KnowledgeJobPhase = Schema.Union([
   Schema.TaggedStruct("Queued", {}),
   Schema.TaggedStruct("Processing", { token: KnowledgeLeaseToken, worker: Text, leaseUntil: Count }),
-  Schema.TaggedStruct("Failed", { message: Schema.String }),
+  Schema.TaggedStruct("Failed", KnowledgeJobFailure.fields),
   Schema.TaggedStruct("Complete", { publishedAt: Count }),
   Schema.TaggedStruct("Cancelled", { cancelledAt: Count }),
 ])

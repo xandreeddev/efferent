@@ -12,7 +12,7 @@ describe("knowledge index reference conformance", () => {
   checks.forEach((check) => test(check.name, () => Effect.runPromise(check.run)))
   test("pins the checks provided to independent adapters", () => {
     expect(checks.map((check) => check.name)).toEqual([
-      "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry",
+      "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry", "knowledge.failure-reason",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
       "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",

@@ -188,10 +188,12 @@ const KnowledgeExtractedMemory
 const KnowledgeExtraction
 const KnowledgeExtractionSpan
 const KnowledgeExtractionWindow
+const KnowledgeFailureStep
 const KnowledgeHelperCall
 const KnowledgeHelperJob
 const KnowledgeHelperPurpose
 const KnowledgeJob
+const KnowledgeJobFailure
 const KnowledgeJobId
 const KnowledgeJobPhase
 const KnowledgeLease
@@ -465,6 +467,7 @@ const imageSizeOf
 const isBudgetTokens
 const isHarnessError
 const isMediaValue
+const isRetryableKnowledgeFailure
 const isRevisionConflict
 const isShutdownRefusal
 const isStoreBusy
@@ -738,10 +741,12 @@ type KnowledgeErrorReason
 type KnowledgeEvidence
 type KnowledgeExtraction
 type KnowledgeExtractionWindow
+type KnowledgeFailureStep
 type KnowledgeHelperCall
 type KnowledgeHelperJob
 type KnowledgeHelperPurpose
 type KnowledgeJob
+type KnowledgeJobFailure
 type KnowledgeJobId
 type KnowledgeJobPhase
 type KnowledgeLease

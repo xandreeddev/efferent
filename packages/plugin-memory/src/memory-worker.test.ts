@@ -175,7 +175,7 @@ test("memory exhausted defects remain inspectable and manually retryable", () =>
   const result = yield* Effect.result(memory.process(scope, 1))
   expect(Result.isFailure(result) && result.failure.reason).toBe("Unavailable")
   const failed = yield* memory.status(scope, job.id)
-  expect(Option.isSome(failed) && failed.value.phase._tag).toBe("Failed")
+  expect(Option.isSome(failed) && failed.value.phase).toEqual({ _tag: "Failed", reason: "Unavailable", message: "Memory processing stopped unexpectedly", step: "Required" })
   expect(Option.isSome(failed) && failed.value.attempt).toBe(2)
   expect(yield* worker.running).toBe(0)
   expect((yield* memory.retry(scope, job.id)).phase._tag).toBe("Queued")
