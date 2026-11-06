@@ -49,9 +49,15 @@ through KnowledgeStore. Node 24 and Bun.
   jobs and sleeping pollers are idle.
 - The engine id derives from the embedding options (`knowledgeEngineId`):
   enqueue, discover and claim only under it, never a constant.
+- The engine's own retries within `maxAttempts` use the store's `retry`
+  (engine and attempts kept). The service's `retry` is the host's: it checks
+  the scope is the engine's collection and calls the store's `requeue` with
+  the engine id, resetting attempts and taking over a job failed under an
+  older id.
 - A stopped worker accepts durable ingestion but starts no new work. Scope
   closure interrupts its fiber before its store dependency closes. A failed
-  job retains its staged chunks; another worker can resume after retry.
+  job retains its staged chunks; another worker of the same engine id can
+  resume from them after retry.
 - Tools are read-only. Optional recall is a turn-tier recorded section;
   retrieved text never enters the stable system prefix.
 

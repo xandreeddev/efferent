@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { CurrentKnowledgeHelperCall, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
+import { CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
 import type { KnowledgeHelperCall, KnowledgeJobFailure } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { ragDefaults } from "./rag.entity.js"
@@ -81,6 +81,24 @@ describe("native document ingestion", () => {
     expect(current.candidates).toHaveLength(1)
     expect(current.candidates[0]?._tag === "Chunk" && current.candidates[0].chunk.provenance.source.revision).toBe(2)
     expect(Option.isSome(yield* knowledge.source(scope, { id: KnowledgeSourceId.make("guide"), revision: 1 }))).toBe(true)
+  }))))
+
+  test("a host retry requeues a job failed under the previous embedding version for the current engine, with its attempts reset", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const previous = yield* makeRag({}, store, yield* makeEmbeddings(() => [1, 0, 0]))
+    const job = yield* previous.knowledge.ingest(enqueue("upgrade", "Evidence indexed again after an upgrade."))
+    expect((yield* Effect.result(previous.knowledge.process(scope, 1)))._tag).toBe("Failure")
+    const listed = yield* store.failed({ namespace: scope.namespace, collection: scope.collection, reasons: ["EmbeddingMismatch"], limit: 10 })
+    expect(listed.jobs.map((failed) => [failed.id, failed.attempt])).toEqual([[job.id, 1]])
+    const current = yield* makeRag({ embeddingVersion: "2" }, store)
+    expect((yield* Effect.flip(current.knowledge.retry({ ...scope, collection: "elsewhere" }, job.id))).reason).toBe("Invalid")
+    const requeued = yield* current.knowledge.retry(scope, job.id)
+    expect({ engine: requeued.engine, attempt: requeued.attempt, staged: Option.isSome(requeued.stage) })
+      .toEqual({ engine: knowledgeEngineId(`rag:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: ragDefaults.embeddingModel, version: "2", dimensions: 2 }), attempt: 0, staged: false })
+    expect(yield* previous.knowledge.process(scope, 1)).toBe(0)
+    expect(yield* current.knowledge.process(scope, 1)).toBe(1)
+    expect(Option.map(yield* current.knowledge.status(scope, job.id), (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 1]))
+    expect((yield* store.failed({ namespace: scope.namespace, limit: 10 })).jobs).toEqual([])
   }))))
 
   test("an interrupted job is resumed by a new scoped worker from its durable stage", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

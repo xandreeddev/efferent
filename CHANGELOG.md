@@ -55,6 +55,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `{ reason, message, step }` instead of the message. A host that decided
   whether to retry a failed job by matching its message calls
   `isRetryableKnowledgeFailure(job.phase)` instead.
+- A host's own `KnowledgeIndex` (a `MemoryStore` or `KnowledgeStore` other
+  than the in-memory and PostgreSQL ones) adds `failed(query)` and
+  `requeue({ scope, jobId, engine })`; rerun `knowledgeStoreConformance`
+  (new checks `knowledge.failed-listing` and `knowledge.requeue`). A host's
+  own `Knowledge` or `LongTermMemory` makes `retry` requeue the job under
+  its engine id with the attempts reset (`requeue`). A host that kept every
+  job id to find failures later can page through `failed` instead, and a
+  failed job recorded under an engine's earlier id (`rag:1`, `memory:1` or
+  an earlier embedding space) is retried with the service's `retry` rather
+  than ingested again as a new revision. The PostgreSQL store creates the
+  partial index `jobs_failed` on open when it is missing; its layout stays
+  1, so an earlier release still opens the database. Creating the index
+  blocks writes to the jobs table while it builds, once: on a large table,
+  create it beforehand with `CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  jobs_failed ON efferent_knowledge.jobs (domain, namespace, ordinal) WHERE
+  phase = 'Failed'`.
 
 ### Added
 
@@ -372,24 +388,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   with reason `Unavailable` at step `Required`. The PostgreSQL store keeps
   the failure in the job's payload; its layout and `phase` column are
   unchanged. `knowledgeStoreConformance` adds `knowledge.failure-reason`.
+- `@xandreed/core`: hosts find failed knowledge jobs and start them over for
+  the current engine. `KnowledgeIndex.failed(query)` lists failed jobs across
+  owners in one namespace, oldest first, narrowed to an `engine`, a
+  `collection` and the failure `reasons` when given, one page of at most
+  `limit` jobs per call with a `next` cursor (`KnowledgeFailedQuery`,
+  `KnowledgeFailedPage`, `KnowledgeJobCursor`), so a host no longer keeps
+  every job id to find failures. `KnowledgeIndex.requeue({ scope, jobId,
+  engine })` (`KnowledgeRequeue`) puts a failed job back in the queue under
+  `engine` with its attempts reset: the engine's automatic retries apply
+  again, and a job failed under an older engine id (a changed extraction
+  version or embedding space), which that engine never claims and whose
+  deterministic job id could not be enqueued again under the new one, is
+  taken over by the current engine. The stage is kept under the same engine
+  and discarded under another. A job whose source was forgotten is refused
+  with `Tombstoned`, checked before its phase since forgetting cancels the
+  source's jobs; a superseded source, a job that is not failed and a
+  revision another job already holds under `engine` with `Conflict`. `retry` keeps its meaning (engine and attempts kept), the
+  engines' bounded retries. The in-memory and PostgreSQL stores implement
+  both; the PostgreSQL store reads the listing from the jobs table's phase,
+  engine and collection columns over a new partial index `jobs_failed`,
+  created on open when missing with the layout left at 1, so an earlier
+  release still opens the database. `knowledgeStoreConformance` adds
+  `knowledge.failed-listing` and `knowledge.requeue`.
 
 ### Changed
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 - `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
   `AgentConfig<S>.services` is a `Context.Context<S>`, which `Agent.define`
@@ -406,24 +429,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   what plugins and each turn add is known only then. Nothing changes at run
   time; `AgentConfig` and `Agent` without a type argument are the same types
   as before.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+- `@xandreed/plugin-rag` and `@xandreed/plugin-memory`: the services'
+  `retry` (`Knowledge.retry`, `LongTermMemory.retry`) starts a failed job
+  over under the engine's current id: the attempts reset, so the job gets
+  `maxAttempts` again, and a job failed under the engine's earlier
+  embedding options or extraction version is taken over instead of waiting
+  for a worker of the old configuration. A job requeued for the same engine
+  keeps its staged extraction. `retry` now refuses (`Invalid`) a scope
+  outside the engine's namespace and collection, as `ingest`, `capture` and
+  `process` do.
 
 ### Fixed
+
 
 
 
@@ -515,6 +532,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
@@ -528,8 +546,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `fail(lease, failure)`, where `failure` is a `KnowledgeJobFailure`
   (`{ reason, message, step }`); a job's `Failed` phase carries the same
   three fields. Migration above.
+- `@xandreed/core`: `KnowledgeIndex` adds `failed` and `requeue`. Migration
+  above.
 
 ### Repository
+
 
 
 
@@ -542,6 +563,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

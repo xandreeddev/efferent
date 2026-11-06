@@ -151,6 +151,18 @@ CREATE TABLE IF NOT EXISTS efferent_knowledge.identities (
 `
 
 /**
+ * Indexes added after layout 1 that change no table or row: the failed-job listing reads failed
+ * jobs across owners by recording order over `jobs_failed`. They leave the layout at 1, so an
+ * earlier release, which refuses a newer layout, still opens the store (PostgreSQL maintains an
+ * index whether its reader knows it or not). Each open creates one that is missing, after reading
+ * the catalog, so an open that finds them takes no lock on their tables; a host with a large table
+ * may create one beforehand with `CREATE INDEX CONCURRENTLY` and the same definition.
+ */
+const ADDITIVE_INDEXES: ReadonlyArray<{ readonly name: string; readonly create: string }> = [
+  { name: "efferent_knowledge.jobs_failed", create: "CREATE INDEX IF NOT EXISTS jobs_failed ON efferent_knowledge.jobs (domain, namespace, ordinal) WHERE phase = 'Failed'" },
+]
+
+/**
  * Whether the database can have the extension `name`: installed in it already, or available on
  * the server for `CREATE EXTENSION`. Read from the catalogs, which every role may read.
  */
@@ -182,5 +194,7 @@ export const migratePostgres = Effect.fn("knowledge_postgres.migrate")(function*
       yield* layout.execute(LAYOUT_ONE)
       yield* layout.execute("INSERT INTO efferent_knowledge.layout (singleton, version) VALUES (true, 1)")
     }
+    yield* Effect.forEach(ADDITIVE_INDEXES, (index) => layout.rows(Schema.Struct({ present: Schema.Boolean }), "SELECT to_regclass($1) IS NOT NULL AS present", [index.name]).pipe(
+      Effect.flatMap((rows) => rows.some((row) => row.present) ? Effect.void : layout.execute(index.create))), { concurrency: 1, discard: true })
   }))
 })

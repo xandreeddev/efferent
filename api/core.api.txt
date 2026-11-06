@@ -188,11 +188,14 @@ const KnowledgeExtractedMemory
 const KnowledgeExtraction
 const KnowledgeExtractionSpan
 const KnowledgeExtractionWindow
+const KnowledgeFailedPage
+const KnowledgeFailedQuery
 const KnowledgeFailureStep
 const KnowledgeHelperCall
 const KnowledgeHelperJob
 const KnowledgeHelperPurpose
 const KnowledgeJob
+const KnowledgeJobCursor
 const KnowledgeJobFailure
 const KnowledgeJobId
 const KnowledgeJobPhase
@@ -210,6 +213,7 @@ const KnowledgeQueryPlan
 const KnowledgeReach
 const KnowledgeRecall
 const KnowledgeRecallResult
+const KnowledgeRequeue
 const KnowledgeRerank
 const KnowledgeScope
 const KnowledgeSearch
@@ -741,11 +745,14 @@ type KnowledgeErrorReason
 type KnowledgeEvidence
 type KnowledgeExtraction
 type KnowledgeExtractionWindow
+type KnowledgeFailedPage
+type KnowledgeFailedQuery
 type KnowledgeFailureStep
 type KnowledgeHelperCall
 type KnowledgeHelperJob
 type KnowledgeHelperPurpose
 type KnowledgeJob
+type KnowledgeJobCursor
 type KnowledgeJobFailure
 type KnowledgeJobId
 type KnowledgeJobPhase
@@ -762,6 +769,7 @@ type KnowledgeQueryPlan
 type KnowledgeReach
 type KnowledgeRecall
 type KnowledgeRecallResult
+type KnowledgeRequeue
 type KnowledgeRerank
 type KnowledgeScope
 type KnowledgeSearch

@@ -9,13 +9,13 @@ import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
-  type KnowledgeCandidates, type KnowledgeJob, type KnowledgeJobFailure, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
+  type KnowledgeCandidates, type KnowledgeError, type KnowledgeFailedQuery, type KnowledgeJob, type KnowledgeJobCursor, type KnowledgeJobFailure, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
   type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
 } from "./knowledge.entity.js"
 
 /**
  * A fresh scope per check: no two checks share owner, namespace and collection together, and the
- * index may share physical storage. Discovery (`pending`) reads across owners, so the kit's
+ * index may share physical storage. Discovery (`pending`, `failed`) reads across owners, so the kit's
  * discovery checks record their jobs under engine ids derived from the whole scope, which no other
  * check uses. @public
  */
@@ -59,7 +59,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
- * revision replacement, batched source info, engine-scoped discovery and claims, and bitemporal traversal. Each check
+ * revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
+ * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
  */
@@ -335,6 +336,92 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const exhausted = yield* claim(fixture, 20, "first-again", first)
       const own = yield* claim(fixture, 20, "second-token", second)
       yield* expect("knowledge.engine-isolation", Option.isNone(requested) && Option.exists(taken, (job) => job.id === firstJob.id && job.engine === first) && Option.isNone(exhausted) && Option.exists(own, (job) => job.id === secondJob.id && job.engine === second), "a worker claimed a job recorded under another engine")
+    })),
+    indexCheck("knowledge.failed-listing", (fixture) => Effect.gen(function* () {
+      const engine = scopedEngine(fixture.scope, "failed")
+      const otherEngine = scopedEngine(fixture.scope, "failed-other")
+      const collection = fixture.scope.collection
+      const invalid: KnowledgeJobFailure = { reason: "Invalid", message: "the source was invalid", step: "Required" }
+      const transient: KnowledgeJobFailure = { reason: "Unavailable", message: "the service was unreachable", step: "Required" }
+      const failJob = (scope: KnowledgeScope, name: string, jobEngine: string, failure: KnowledgeJobFailure) => Effect.gen(function* () {
+        const job = yield* fixture.index.enqueue({ jobId: KnowledgeJobId.make(name), source: sourceOf(scope, `Evidence of ${name}`, `${name}-source`), engine: jobEngine, expectedRevision: Option.none() })
+        const token = KnowledgeLeaseToken.make(`${name}-token`)
+        yield* fixture.index.claim({ scope, engine: jobEngine, worker: "kit", token, now: 20, leaseMs: 100, jobId: job.id })
+        yield* fixture.index.fail({ scope, jobId: job.id, token, now: 21 }, failure)
+        return job
+      })
+      const first = yield* failJob(fixture.scope, "failed-first", engine, invalid)
+      const foreign = yield* failJob({ ...fixture.scope, collection: `${collection}-other` }, "failed-foreign", engine, transient)
+      const second = yield* failJob(fixture.scope, "failed-second", engine, transient)
+      const other = yield* failJob(fixture.scope, "failed-other-engine", otherEngine, transient)
+      const queued = yield* enqueue(fixture, sourceOf(fixture.scope, "Queued evidence", "queued-source"), "queued-job", Option.none(), engine)
+      const list = (query: Omit<KnowledgeFailedQuery, "namespace">) => fixture.index.failed({ namespace: fixture.scope.namespace, ...query })
+      const ids = (jobs: ReadonlyArray<KnowledgeJob>) => jobs.map((job) => `${knowledgeScopeKey(job.scope)}/${job.id}`)
+      const idOf = (job: KnowledgeJob) => ids([job])[0]
+      const inCollection = yield* list({ engine, collection, limit: 100 })
+      const inNamespace = yield* list({ engine, limit: 100 })
+      const transientOnly = yield* list({ engine, collection, reasons: ["Unavailable"], limit: 100 })
+      const noReason = yield* list({ engine, reasons: [], limit: 100 })
+      const firstPage = yield* list({ engine, collection, limit: 1 })
+      const secondPage = yield* Option.match(firstPage.next, { onNone: () => Effect.succeed({ jobs: [], next: Option.none() }), onSome: (after) => list({ engine, collection, limit: 1, after }) })
+      // Without an engine the listing may hold other checks' jobs when storage is shared: page through all of it.
+      const everyEngine = (after: Option.Option<KnowledgeJobCursor>, seen: ReadonlyArray<KnowledgeJob>, pages: number): Effect.Effect<ReadonlyArray<KnowledgeJob>, KnowledgeError> =>
+        list({ collection, limit: 100, ...Option.match(after, { onNone: () => ({}), onSome: (cursor) => ({ after: cursor }) }) }).pipe(Effect.flatMap((page) => Option.isSome(page.next) && pages < 50
+          ? everyEngine(page.next, [...seen, ...page.jobs], pages + 1) : Effect.succeed([...seen, ...page.jobs])))
+      const unfiltered = ids(yield* everyEngine(Option.none(), [], 0))
+      yield* expect("knowledge.failed-listing", sameJson(ids(inCollection.jobs), ids([first, second])) && sameJson(ids(inNamespace.jobs), ids([first, foreign, second])) && Option.isNone(inCollection.next) &&
+        sameJson(ids(transientOnly.jobs), ids([second])) && noReason.jobs.length === 0 && sameJson(inCollection.jobs.map((job) => job.phase), [{ _tag: "Failed", ...invalid }, { _tag: "Failed", ...transient }]) &&
+        sameJson(ids(firstPage.jobs), ids([first])) && sameJson(ids(secondPage.jobs), ids([second])) && Option.isNone(secondPage.next) &&
+        [first, second, other].every((job) => unfiltered.includes(idOf(job) ?? "")) && !unfiltered.includes(idOf(queued) ?? "") && !unfiltered.includes(idOf(foreign) ?? ""),
+      "the failed listing missed a failed job, listed a queued one, ignored its engine, collection or reason filters or their order, or lost a page")
+    })),
+    indexCheck("knowledge.requeue", (fixture) => Effect.gen(function* () {
+      const older = scopedEngine(fixture.scope, "requeue-older")
+      const current = scopedEngine(fixture.scope, "requeue-current")
+      const source = sourceOf(fixture.scope)
+      const failure: KnowledgeJobFailure = { reason: "Unavailable", message: "the service was unreachable", step: "Required" }
+      const job = yield* enqueue(fixture, source, "job", Option.none(), older)
+      yield* claim(fixture, 20, "token", older)
+      yield* fixture.index.stage(leaseOf(fixture.scope, job), stageOf(source))
+      yield* fixture.index.fail(leaseOf(fixture.scope, job), failure)
+      const absent = yield* Effect.result(fixture.index.requeue({ scope: fixture.scope, jobId: KnowledgeJobId.make("absent-job"), engine: current }))
+      const moved = yield* fixture.index.requeue({ scope: fixture.scope, jobId: job.id, engine: current })
+      const again = yield* Effect.result(fixture.index.requeue({ scope: fixture.scope, jobId: job.id, engine: current }))
+      const discover = (engine: string) => fixture.index.pending({ engine, namespace: fixture.scope.namespace, collection: fixture.scope.collection, now: 200, limit: 10 })
+      const olderFound = yield* discover(older)
+      const olderClaim = yield* claim(fixture, 200, "older-token", older)
+      const currentFound = yield* discover(current)
+      const taken = yield* claim(fixture, 200, "current-token", current)
+      yield* expect("knowledge.requeue", Result.isFailure(absent) && Result.isFailure(again) && moved.phase._tag === "Queued" && moved.engine === current && moved.attempt === 0 && Option.isNone(moved.stage) &&
+        olderFound.length === 0 && Option.isNone(olderClaim) && sameJson(currentFound.map((found) => found.id), [job.id]) &&
+        Option.exists(taken, (value) => value.id === job.id && value.engine === current && value.attempt === 1),
+      "a failed job requeued under another engine kept its attempts or the older engine's stage, stayed claimable by the older engine, was not claimable by the new one, or a job that was not failed could be requeued")
+      const lease = { ...leaseOf(fixture.scope, job, 201), token: KnowledgeLeaseToken.make("current-token") }
+      yield* fixture.index.stage(lease, stageOf(source))
+      yield* fixture.index.fail(lease, failure)
+      const reset = yield* fixture.index.requeue({ scope: fixture.scope, jobId: job.id, engine: current })
+      const retaken = yield* claim(fixture, 202, "third-token", current)
+      yield* expect("knowledge.requeue", reset.attempt === 0 && Option.isSome(reset.stage) && Option.exists(retaken, (value) => value.attempt === 1 && Option.isSome(value.stage)),
+        "a failed job requeued under its own engine kept its attempts or lost its staged extraction")
+      // Forgetting cancels a source's jobs: requeueing a failed one afterwards says the source is gone (Tombstoned), not that the job is not failed.
+      const failedOf = Effect.fnUntraced(function* (source: KnowledgeSource, name: string, now: number) {
+        const engine = scopedEngine(fixture.scope, name)
+        const failing = yield* enqueue(fixture, source, `${name}-job`, Option.none(), engine)
+        yield* claim(fixture, now, `${name}-token`, engine)
+        yield* fixture.index.fail({ ...leaseOf(fixture.scope, failing, now + 1), token: KnowledgeLeaseToken.make(`${name}-token`) }, failure)
+        return { job: failing, engine }
+      })
+      const gone = sourceOf(fixture.scope, "Alice prefers green tea", "requeue-forgotten-source")
+      const forgotten = yield* failedOf(gone, "requeue-forgotten", 210)
+      yield* fixture.index.forget(fixture.scope, gone.ref.id, 212)
+      const tombstoned = yield* Effect.flip(fixture.index.requeue({ scope: fixture.scope, jobId: forgotten.job.id, engine: forgotten.engine }))
+      // A newer revision of the source supersedes a failed job of the older one: requeueing it is a Conflict.
+      const earlier = sourceOf(fixture.scope, "Alice prefers black tea", "requeue-superseded-source")
+      const outdated = yield* failedOf(earlier, "requeue-superseded", 220)
+      yield* enqueue(fixture, sourceOf(fixture.scope, "Alice prefers oolong", "requeue-superseded-source", 2), "requeue-superseded-newer-job", Option.some(1), outdated.engine)
+      const superseded = yield* Effect.flip(fixture.index.requeue({ scope: fixture.scope, jobId: outdated.job.id, engine: outdated.engine }))
+      yield* expect("knowledge.requeue", tombstoned.reason === "Tombstoned" && superseded.reason === "Conflict",
+        `a failed job of a forgotten source was not refused as Tombstoned (got ${tombstoned.reason}), or one a newer revision superseded not as Conflict (got ${superseded.reason})`)
     })),
     indexCheck("knowledge.source-info", (fixture) => Effect.gen(function* () {
       const first = { ...sourceOf(fixture.scope), metadata: { kind: "note", tags: ["kit", "evidence"], origin: { system: "kit", page: 3 }, reviewed: true, score: null } }

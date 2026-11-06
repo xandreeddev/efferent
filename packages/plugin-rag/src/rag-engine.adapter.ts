@@ -222,7 +222,8 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   })
   const service = Knowledge.of({
     ingest, process, retrieve, source: store.source, status: store.status,
-    retry: Effect.fn("rag.retry")((scope, id) => store.retry(scope, id).pipe(Effect.tap(() => Queue.offer(wake, undefined)))),
+    // A host's retry starts the job over under this engine's id: its attempts reset, a job failed under an older id included.
+    retry: Effect.fn("rag.retry")((scope, id) => inScope(scope).pipe(Effect.andThen(store.requeue({ scope, jobId: id, engine })), Effect.tap(() => Queue.offer(wake, undefined)))),
     forget: Effect.fn("rag.forget")((scope, id) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => store.forget(scope, id, now)))),
   })
   const drain = Effect.gen(function* () {

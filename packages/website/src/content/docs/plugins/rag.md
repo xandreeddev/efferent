@@ -80,7 +80,18 @@ jobs of that id, so engines configured with different embedding spaces on one
 store never index each other's documents. After changing the embedding
 options, a job queued under the earlier configuration is processed only by an
 engine still configured that way; ingest the source again as its next revision
-to index it under the new one.
+to index it under the new one, or, for a job that failed, `retry` it.
+
+`retry` starts a failed job over: it requeues the job under the engine's
+current id with its attempts reset, so the job gets `maxAttempts` again, and a
+job that failed under the engine's earlier embedding options is taken over by
+the reconfigured engine (the job's staged chunks are kept only when the id is
+unchanged). To find failed jobs without keeping their ids, page through
+`KnowledgeStore.failed({ namespace, collection, reasons, limit, after })`,
+which lists them across owners with the reason each failed with, and `retry`
+those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
+reasons a configuration change can fix). `retry` refuses a scope outside the
+engine's namespace and collection.
 
 ## Search, graph and model context
 

@@ -191,6 +191,40 @@ the source is durably accepted. Inspect `status`, call `process` explicitly, or
 let the worker publish it. `retry` requeues a failed job. Model/embedding errors
 publish no partial facts or document revisions.
 
+A host finds failed jobs without keeping their ids: `KnowledgeIndex.failed`
+(on `MemoryStore` or `KnowledgeStore`) lists them across owners in one
+namespace, oldest first, optionally narrowed to an `engine`, a `collection`
+and the failure `reasons` to look for, a page of at most `limit` jobs at a
+time; pass the page's `next` cursor as `after` to read on. `retry` on
+`LongTermMemory` or `Knowledge` starts a failed job of the engine's collection
+over: it requeues the job under the engine's current id with its attempts
+reset, so the engine's automatic retries apply again, and a job that failed
+under an older id of the engine (before its extraction version or embedding
+space changed) is taken over instead of waiting for a worker of the old
+configuration. The staged extraction is kept when the id is unchanged and
+discarded otherwise. Forgotten or superseded sources are never requeued: a
+job whose source was forgotten fails with `Tombstoned`, whatever its phase
+(forgetting cancels the source's jobs), and one a newer revision superseded,
+or that is not failed, with `Conflict`.
+
+```ts
+import { Effect, Option } from "effect"
+import { isRetryableKnowledgeFailure, Knowledge, KnowledgeStore } from "@xandreed/core"
+import type { KnowledgeJobCursor } from "@xandreed/core"
+
+/** Requeues every failed document job a retry can help, page by page. */
+const requeueRetryable = (after?: KnowledgeJobCursor): Effect.Effect<void, unknown, Knowledge | KnowledgeStore> => Effect.gen(function* () {
+  const page = yield* (yield* KnowledgeStore).failed({ namespace: "default", collection: "knowledge", limit: 100, ...(after === undefined ? {} : { after }) })
+  const knowledge = yield* Knowledge
+  yield* Effect.forEach(page.jobs, (job) => job.phase._tag === "Failed" && isRetryableKnowledgeFailure(job.phase) ? knowledge.retry(job.scope, job.id) : Effect.void, { concurrency: 1, discard: true })
+  if (Option.isSome(page.next)) yield* requeueRetryable(page.next.value)
+})
+```
+
+An engine's own retries within `maxAttempts` use `KnowledgeIndex.retry`,
+which keeps the job's engine and attempts; `KnowledgeIndex.requeue({ scope,
+jobId, engine })` is the reset the services' `retry` calls.
+
 A failed job's `Failed` phase (read through `status`) records why its last
 attempt failed, as a `KnowledgeJobFailure`: the `KnowledgeError` reason, its
 message, and the `step` that failed, `Graph` for the optional graph extraction

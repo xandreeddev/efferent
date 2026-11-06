@@ -1,7 +1,7 @@
 import { Effect, Match, Option, Order, Schema } from "effect"
 import {
   KnowledgeAssertion, KnowledgeChunk, KnowledgeEmbeddingSpace, KnowledgeEntity, KnowledgeError,
-  KnowledgeJob, KnowledgeMemory, KnowledgeSource, KnowledgeSourceInfo, sameEmbeddingSpace, validateKnowledgeStage,
+  KnowledgeJob, KnowledgeJobCursor, KnowledgeMemory, KnowledgeSource, KnowledgeSourceInfo, sameEmbeddingSpace, validateKnowledgeStage,
 } from "@xandreed/core"
 import type {
   KnowledgeCandidate, KnowledgeCandidates, KnowledgeIndex, KnowledgeLease,
@@ -30,6 +30,13 @@ const ScopeRow = Schema.Struct({ version: Schema.Number, embedding_profile: Sche
 const CountRow = Schema.Struct({ count: Schema.Number })
 const IdentityRow = Schema.Struct({ source_id: Schema.String, source_revision: Schema.Number })
 const IdRow = Schema.Struct({ id: Schema.String })
+const FailedRow = Schema.Struct({ payload: KnowledgeJob, ordinal: Schema.Number })
+/** A failed-job cursor is the ordinal of the last job a page returned. */
+const cursorOrdinal = (cursor: KnowledgeJobCursor | undefined): Effect.Effect<number, KnowledgeError> => {
+  if (cursor === undefined) return Effect.succeed(0)
+  const ordinal = Number(cursor)
+  return Number.isSafeInteger(ordinal) && ordinal >= 0 && String(ordinal) === cursor ? Effect.succeed(ordinal) : invalid("Invalid", "the failed-job cursor was not returned by this store")
+}
 const memoryScore = Schema.Struct({ payload: KnowledgeMemory, score: Schema.Number })
 const chunkScore = Schema.Struct({ payload: KnowledgeChunk, score: Schema.Number })
 const vectorText = (vector: KnowledgeVector): string => `[${vector.values.join(",")}]`
@@ -56,7 +63,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
     })
     yield* tx.execute(`INSERT INTO efferent_knowledge.jobs (${KEY}, id, source_id, source_revision, engine, phase, lease_token, lease_until, payload)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text::jsonb)
-      ON CONFLICT (${KEY}, id) DO UPDATE SET phase=EXCLUDED.phase, lease_token=EXCLUDED.lease_token, lease_until=EXCLUDED.lease_until, payload=EXCLUDED.payload`,
+      ON CONFLICT (${KEY}, id) DO UPDATE SET engine=EXCLUDED.engine, phase=EXCLUDED.phase, lease_token=EXCLUDED.lease_token, lease_until=EXCLUDED.lease_until, payload=EXCLUDED.payload`,
     [...params(domain, job.scope), job.id, job.source.id, job.source.revision, job.engine, job.phase._tag, lease.token, lease.until, data])
   })
   const sources = (tx: PostgresQueries, scope: KnowledgeScope) => payloads(tx, KnowledgeSource,
@@ -341,6 +348,37 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         yield* saveJob(tx, job)
         return job
       }))
+    }),
+    requeue: Effect.fn("knowledge_store.requeue")(function* (input) {
+      return yield* db.transaction((tx) => Effect.gen(function* () {
+        const found = yield* status(tx, input.scope, input.jobId, true)
+        if (Option.isNone(found)) return yield* invalid("Conflict", "only a failed job can be requeued")
+        const prior = found.value
+        // Before the phase: forgetting cancels the source's jobs, and a host should learn the source is gone, not that the job is not failed.
+        const current = yield* head(tx, input.scope, prior.source.id)
+        if (Option.isNone(current) || current.value.tombstone_at !== null) return yield* invalid("Tombstoned", "the source has been forgotten")
+        if (prior.phase._tag !== "Failed") return yield* invalid("Conflict", "only a failed job can be requeued")
+        if (current.value.accepted_revision !== prior.source.revision) return yield* invalid("Conflict", "a newer source revision superseded this job")
+        const held = yield* tx.rows(CountRow, `SELECT count(*)::float8 AS count FROM efferent_knowledge.jobs WHERE ${WHERE} AND source_id=$5 AND source_revision=$6 AND engine=$7 AND id<>$8`,
+          [...params(domain, input.scope), prior.source.id, prior.source.revision, input.engine, prior.id])
+        if ((held[0]?.count ?? 0) > 0) return yield* invalid("Conflict", "another job already holds this source revision under the engine")
+        const job: KnowledgeJob = { ...prior, engine: input.engine, attempt: 0, phase: { _tag: "Queued" }, stage: prior.engine === input.engine ? prior.stage : Option.none() }
+        yield* saveJob(tx, job)
+        return job
+      }))
+    }),
+    failed: Effect.fn("knowledge_store.failed")(function* (query) {
+      const after = yield* cursorOrdinal(query.after)
+      const reasons = query.reasons === undefined ? null : yield* strings(query.reasons)
+      // A job failed before reasons were recorded has none in its payload and decodes as `Unavailable`.
+      const rows = yield* db.rows(FailedRow, `SELECT j.payload, j.ordinal::float8 AS ordinal FROM efferent_knowledge.jobs j
+        WHERE j.domain=$1 AND j.namespace=$2 AND j.phase='Failed' AND j.ordinal > $3::bigint
+        AND ($4::text IS NULL OR j.engine=$4) AND ($5::text IS NULL OR j.collection=$5)
+        AND ($6::text IS NULL OR coalesce(j.payload#>>'{phase,reason}','Unavailable') IN (SELECT jsonb_array_elements_text($6::text::jsonb)))
+        ORDER BY j.ordinal LIMIT $7`, [domain, query.namespace, after, query.engine ?? null, query.collection ?? null, reasons, query.limit + 1])
+      const page = rows.slice(0, query.limit)
+      const last = page.at(-1)
+      return { jobs: page.map((row) => row.payload), next: rows.length > page.length && last !== undefined ? Option.some(KnowledgeJobCursor.make(String(last.ordinal))) : Option.none() }
     }),
     status: Effect.fn("knowledge_store.status")((scope, id) => status(db, scope, id)),
     snapshot: Effect.fn("knowledge_store.snapshot")((scope) => db.transaction((tx) => lockScope(tx, scope).pipe(Effect.andThen(snapshot(tx, scope))))),

@@ -34,6 +34,9 @@ three ports. Node 24 and Bun use the same `postgres` driver.
 - Claim jobs with `FOR UPDATE SKIP LOCKED`; a stale or expired lease cannot
   stage or publish. Never hold a SQL transaction while calling a model.
 - Discovery and claims (by job id too) see only jobs of the requested engine.
+  The failed-job listing reads across owners (and engines unless one is
+  given) over the `jobs_failed` index; `requeue` rewrites a job's `engine`
+  column with its payload in one transaction.
 - Persist and validate embedding profiles and dimensions before storing vectors.
 - The migration version only advances transactionally. Never modify a shipped
   migration or silently reset an unsupported schema version.
@@ -81,7 +84,11 @@ separate migration and must preserve tenant-filtered recall.
   define connection count and bounded connect/statement deadlines.
 
 First open runs migration layout 1 under a PostgreSQL advisory transaction
-lock. It first probes the catalogs for pgvector (installed in the database or
+lock, and every open then creates the additive indexes it lacks (the partial
+index `jobs_failed` that the failed-job listing reads), after reading the
+catalog. An index that changes no table or row never bumps the layout, so an
+earlier release, which refuses a newer layout, still opens the database; a
+change to a table or a row's meaning does bump it. It first probes the catalogs for pgvector (installed in the database or
 available on the server) and refuses with `Invalid` when it is neither. The
 extension may be installed in advance by a privileged role; the role that
 opens the store needs CREATE on the database and on `efferent_knowledge`
@@ -97,6 +104,8 @@ pgvector extension installed; tests isolate data by owner, namespace and
 collection. Both store conformance kits run against the real server. Extra
 checks cover pool reopen after durable staging, two-pool lease races, atomic
 revision cutover, stale chunk identity fences, recursive forgetting, memory/RAG
-domain isolation, publication timestamps and decoding corrupt rows. The
+domain isolation, publication timestamps, decoding corrupt rows, listing a
+job failed before reasons and requeueing it under a new engine column, and a
+layout-1 database gaining the failed-job index with its layout unchanged. The
 failure mapping is a table test over driver-shaped errors; against a server,
 the extension probe and the refusal of an absent extension are checked.

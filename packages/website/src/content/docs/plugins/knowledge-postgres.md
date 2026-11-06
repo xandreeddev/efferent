@@ -118,6 +118,25 @@ still reads `Failed`, and the layout is unchanged. A job failed by an earlier
 release, whose payload has only a message, decodes with reason `Unavailable`
 at step `Required`.
 
+`failed` lists failed jobs across owners from the row's `phase`, `engine` and
+`collection` columns, in the rows' recording order; its cursor is the last
+row's ordinal. A reasons filter reads the reason in the payload, and a job
+failed before reasons were recorded matches `Unavailable`. It reads the
+partial index `jobs_failed` (`domain, namespace, ordinal` over failed rows),
+which opening the store creates when it is missing. The index changes no table
+or row, so the layout stays 1 and an earlier release still opens the database
+(a rollback, or an older instance during a rolling deploy). Creating it blocks
+writes to the jobs table while it builds, once; for a large table, create it
+beforehand without blocking writes, and the open finds it:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS jobs_failed
+  ON efferent_knowledge.jobs (domain, namespace, ordinal) WHERE phase = 'Failed';
+```
+
+`requeue` rewrites the row's `engine` column with its payload, so
+discovery and claims of the new engine find the job at once.
+
 The runtime-scoped pool closes with its owning scope. Keep engines and their
 workers inside that scope, and use the agent's bounded shutdown before closing
 host services. Sleeping workers and queued jobs are not active work.
