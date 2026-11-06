@@ -275,7 +275,10 @@ export const makeSessionLogSqlite = Effect.fnUntraced(function* (path: string): 
       const through = query.through === undefined ? "" : " AND seq <= ?"
       const ceiling = query.through === undefined ? [] : [query.through]
       const limit = Option.match(query.limit, { onNone: () => -1, onSome: (value) => Math.max(0, value) })
-      const rows = yield* operation(() => db.query<Record<string, unknown>, Array<string | number>>(`SELECT seq, turn, kind, at, data FROM session_log_events WHERE session_id = ? AND seq > ?${through}${kinds} ORDER BY seq LIMIT ?`)
+      const selected = `SELECT seq, turn, kind, at, data FROM session_log_events WHERE session_id = ? AND seq > ?${through}${kinds}`
+      // From the end, the primary key (and the kind index) is walked backwards for the newest `limit` rows, put back in order.
+      const statement = query.from === "end" ? `SELECT * FROM (${selected} ORDER BY seq DESC LIMIT ?) ORDER BY seq` : `${selected} ORDER BY seq LIMIT ?`
+      const rows = yield* operation(() => db.query<Record<string, unknown>, Array<string | number>>(statement)
         .all(id, query.after, ...ceiling, ...query.kinds, limit))
       return yield* Effect.forEach(rows, (row) => decodeEvent(row).pipe(Effect.map(eventOf(id))), { concurrency: 1 })
     }, onSession),

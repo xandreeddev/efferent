@@ -32,7 +32,8 @@ const keepsUnset = (value: unknown): boolean =>
  * numbers, one revision per commit, compare-and-swap, the `notAfter` clock
  * check, JSON kept by value, an event as large as a turn's images may make
  * it (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and
- * kind, listing order, children and their removal, and incarnations (a
+ * kind, limited from either end (`from: "end"`: the newest matches, still
+ * ascending), listing order, children and their removal, and incarnations (a
  * commit naming a session removed and created again under its id lands
  * nowhere). Every check uses fresh ids and a fresh owner, so the kit is safe
  * on a shared database.
@@ -196,12 +197,32 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       yield* expect("read-through", (yield* log.read(id, { after: 3, through: 3, limit: Option.none(), kinds: [] })).length === 0, "a closed range returned events")
       yield* expect("read-through", (yield* log.read(id, { after: 0, through: 0, limit: Option.none(), kinds: [] })).length === 0, "an empty prefix returned events")
     })),
+    check("a read from the end keeps the newest matches of its kinds, below its ceiling, ascending, across commits", "read-latest", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      yield* log.create(headerOf(id, owner))
+      // Three commits, so a backend that walks its commits backwards crosses them: a b a | c a | b.
+      yield* Effect.forEach([["a", "b", "a"], ["c", "a"], ["b"]], (kinds, revision) =>
+        log.commit(id, { expect: revision, ...noEvents, events: kinds.map((kind, n) => draft(kind, { revision, n })) }), { concurrency: 1, discard: true })
+      const seqs = (events: ReadonlyArray<{ readonly seq: number }>) => events.map((event) => event.seq).join()
+      const latest = (query: { readonly after?: number; readonly through?: number; readonly limit?: number; readonly kinds?: ReadonlyArray<string> }) =>
+        log.read(id, { after: query.after ?? 0, limit: Option.fromNullishOr(query.limit), kinds: query.kinds ?? [], from: "end", ...(query.through === undefined ? {} : { through: query.through }) }).pipe(Effect.map(seqs))
+      yield* expect("read-latest", (yield* latest({ limit: 2 })) === "5,6", "the newest events were not returned, or not ascending")
+      yield* expect("read-latest", (yield* latest({ limit: 2, kinds: ["a"] })) === "3,5", "the newest events of a kind were not returned")
+      yield* expect("read-latest", (yield* latest({ limit: 2, kinds: ["a", "c"] })) === "4,5", "the limit applied before the kinds filter")
+      yield* expect("read-latest", (yield* latest({ limit: 3, kinds: ["a"] })) === "1,3,5", "the newest matches did not span the commits")
+      yield* expect("read-latest", (yield* latest({ kinds: ["a"] })) === "1,3,5", "without a limit, not every match was returned")
+      yield* expect("read-latest", (yield* latest({ through: 4, limit: 1, kinds: ["a"] })) === "3", "the inclusive ceiling was ignored")
+      yield* expect("read-latest", (yield* latest({ after: 3, limit: 5, kinds: ["a"] })) === "5", "events at or before after were returned")
+      yield* expect("read-latest", (yield* latest({ limit: 0 })) === "", "a zero limit returned events")
+      const fromStart = seqs(yield* log.read(id, { after: 0, limit: Option.some(2), kinds: ["a"], from: "start" }))
+      yield* expect("read-latest", fromStart === "1,3", "from: start did not read as an omitted from")
+    })),
     check("a key-only read (media: references) selects the same events with the same data", "read-references", (owner) => Effect.gen(function* () {
       const id = yield* freshId
       yield* log.create(headerOf(id, owner))
       yield* log.commit(id, { expect: 0, ...noEvents, events: ["a", "b", "a"].map((kind, n) => draft(kind, { n, nested: { kept: [n, "value"] } })) })
       const rows = (events: ReadonlyArray<{ readonly seq: number; readonly kind: string; readonly data: unknown }>) => JSON.stringify(events.map((event) => [event.seq, event.kind, event.data]))
-      const queries = [{ after: 0, limit: Option.none<number>(), kinds: [] }, { after: 1, through: 3, limit: Option.some(1), kinds: ["a"] }]
+      const queries = [{ after: 0, limit: Option.none<number>(), kinds: [] }, { after: 1, through: 3, limit: Option.some(1), kinds: ["a"] }, { after: 0, limit: Option.some(1), kinds: ["a"], from: "end" as const }]
       yield* Effect.forEach(queries, (query) => Effect.gen(function* () {
         const hydrated = yield* log.read(id, query)
         const keyed = yield* log.read(id, { ...query, media: "references" })

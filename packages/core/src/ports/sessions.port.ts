@@ -4,7 +4,7 @@ import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
-import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
+import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing, SessionReadQuery } from "../session/session-log.entity.js"
 import type {
   AdmittedTurn,
   BeginTurn,
@@ -217,10 +217,17 @@ export class Sessions extends Context.Service<Sessions, {
   }) => Effect.Effect<SessionPage, SessionLogError>
   /** Remove a session and its children; an open turn on this instance is closed. */
   readonly remove: (address: SessionAddress) => Effect.Effect<void, SessionMissing | SessionLogError>
+  /**
+   * The session's own events after `after` (0), of `kinds` (all), ascending.
+   * `limit` keeps the oldest matches, or with `from: "end"` the newest
+   * (kinds filtered first), still ascending: the latest records of a few
+   * kinds without reading the session from its start.
+   */
   readonly read: (address: SessionAddress, query?: {
     readonly after?: number
     readonly kinds?: ReadonlyArray<string>
     readonly limit?: number
+    readonly from?: SessionReadQuery["from"]
   }) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
   /**
    * At least one signal after each commit this instance makes; signals not

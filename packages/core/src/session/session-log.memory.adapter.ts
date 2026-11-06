@@ -89,7 +89,12 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         const session = all.get(id)
         if (session === undefined) return Effect.fail(missing(id))
         const events = session.events.filter((event) => event.seq > query.after && (query.through === undefined || event.seq <= query.through) && (query.kinds.length === 0 || query.kinds.includes(event.kind)))
-        return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
+        // From the end, the newest `limit` matches, still ascending.
+        const kept = Option.match(query.limit, {
+          onNone: () => events,
+          onSome: (limit) => query.from === "end" ? events.slice(Math.max(0, events.length - Math.max(0, limit))) : events.slice(0, Math.max(0, limit)),
+        })
+        return Effect.succeed(kept.map(copyEvent))
       }))
     }, onSession),
     commit: Effect.fn("session_log.commit")(function* (id, commit) {

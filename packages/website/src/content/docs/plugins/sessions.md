@@ -73,6 +73,13 @@ their own bounded attempt policy. `Sessions.drain` can select inputs,
 notices or both; background task reactions select notices so they do not
 consume the host's queued user work.
 
+`Sessions.read(address, { after, kinds, limit, from })` reads a session's
+own events in sequence order. A `limit` keeps the oldest matches, or with
+`from: "end"` the newest, its kinds filtered first: `{ kinds: ["turn.ended"],
+limit: 1, from: "end" }` is the last turn's ending, however long the
+session. The query reaches the storage, which serves it without scanning
+from the first event.
+
 Forks retain a sequence boundary into their ancestors. Reading a child
 includes eligible ancestor history through that boundary and its own new
 records. Later parent activity does not appear in the fork.

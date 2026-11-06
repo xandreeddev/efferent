@@ -371,7 +371,11 @@ lock, so instances sharing a lease over them need clocks in step; a host's
 own store may read its server's clock instead. A turn keeps how it was
 taken, and every instance judges it by that, whatever its own ownership, so
 changing the ownership neither holds a turn forever nor reaps one still
-held. Reading or following a session never runs anything.
+held. Reading or following a session never runs anything. `Sessions.read`
+takes a cursor (`after`), `kinds` and a `limit`; with `from: "end"` the
+limit keeps the newest matches instead of the oldest, still in sequence
+order, so the latest records of a few kinds come back without reading the
+session from its start.
 
 By default a turn's lease is 60 s, extended by each of its writes and by a
 keep-alive every 20 s while its writer is open (`ownership: { mode: "lease",

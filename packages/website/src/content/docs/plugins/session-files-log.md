@@ -69,6 +69,9 @@ See [context, memory and the journal](/docs/concepts/context-journal/).
 ## Read, fork and restart behavior
 
 The storage port reads one session with sequence, kind and limit filters.
+A read from the end (`from: "end"`) opens commit files newest first and
+stops once it holds its limit, so the latest records of a few kinds cost
+the commits that hold them, not the whole session.
 Fork ancestry and its sequence ceilings are applied by `Sessions`, so a child
 does not inherit subsequent parent activity. Reuse the same configured root
 to reopen a conversation after restart.

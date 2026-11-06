@@ -34,14 +34,42 @@ describe("the kit catches a backend that breaks the contract", () => {
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
     expect(failed.flat()).toEqual(["incarnation"])
   })
-  test("a backend that ignores the read ceiling fails its own conformance check", async () => {
+  test("a backend that ignores the read ceiling fails the checks that read below one", async () => {
     const careless = SessionLog.of({
       ...log,
       read: (id, { through: _through, ...query }) => log.read(id, query),
     })
     const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
-    expect(failed.flat()).toEqual(["read-through"])
+    expect(failed.flat()).toEqual(["read-through", "read-latest"])
+  })
+  test("a backend that always reads from the start fails only the read-latest check", async () => {
+    const careless = SessionLog.of({
+      ...log,
+      read: (id, { from: _from, ...query }) => log.read(id, query),
+    })
+    const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
+    expect(failed.flat()).toEqual(["read-latest"])
+  })
+  test("a backend that reads from the end but returns the events newest first fails only the read-latest check", async () => {
+    const careless = SessionLog.of({
+      ...log,
+      read: (id, query) => log.read(id, query).pipe(Effect.map((events) => query.from === "end" ? [...events].reverse() : events)),
+    })
+    const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
+    expect(failed.flat()).toEqual(["read-latest"])
+  })
+  test("a backend that limits from the end before filtering by kind fails only the read-latest check", async () => {
+    const careless = SessionLog.of({
+      ...log,
+      read: (id, query) => query.from !== "end" || query.kinds.length === 0 ? log.read(id, query) : log.read(id, { ...query, kinds: [] }).pipe(
+        Effect.map((events) => events.filter((event) => query.kinds.includes(event.kind)))),
+    })
+    const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
+    expect(failed.flat()).toEqual(["read-latest"])
   })
   test("a backend that treats a key-only read as a filter fails its own conformance check", async () => {
     const careless = SessionLog.of({

@@ -10,6 +10,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
+  newest `limit` matching events, kinds filtered first, still ascending.
+  A backend that ignores the key reads from the start and returns the
+  oldest matches instead; rerun `sessionLogConformance` (new check
+  `read-latest`), and `sessionsConformance` for a host's own `Sessions`.
 - `@xandreed/evals`: a host's own `EvaluationServices` (not
   `EvaluationServicesLive`) adds `spend(budget)`, the run's spend ledger in
   the run's scope; a caller of `TrialExecution.execute` other than the
@@ -45,6 +50,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/core`, `@xandreed/plugin-sessions`,
+  `@xandreed/plugin-session-files`, `@xandreed/plugin-session-sqlite`: a
+  session read can count its limit from the end. `SessionReadQuery` read
+  only ascending from `after`, so a host that needed the newest record of a
+  few kinds (the last turn's ending, the latest checkpoint or setting) read
+  the whole session and kept its last match, a cost that grew with every
+  turn. `SessionReadQuery.from: "end"` (and `from` on `Sessions.read`'s
+  query) returns the newest `limit` events of the given kinds, at most
+  `through` and after `after`, still in ascending order; without a limit,
+  every match. The in-memory log and the media-store decorator serve it,
+  the file log opens its commits newest first and stops once it holds the
+  limit, and the SQLite log walks its sequence and kind indexes backwards.
+  `sessionLogConformance` and `sessionsConformance` gain the `read-latest`
+  check (the newest matches of the kinds, the ceiling, the kinds filtered
+  before the limit, every match without a limit). Omitting `from` (or
+  `from: "start"`) reads as before; nothing stored changes, and the stored
+  format is unchanged.
 - `@xandreed/core`: stored tool lifecycle and conversation message records
   decode with typed schemas. `StoredData` adds `tool.started`,
   `tool.completed`, `tool.refused` and `memory.message`, with their stored

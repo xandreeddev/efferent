@@ -428,8 +428,11 @@ const published = yield* Clash.publish(turn.events, { text: "50%" }).pipe(
 
 ## Reading the journal
 
-`Sessions.read(address, { after, kinds, limit })` returns a session's
-events after a cursor, `seq` order. Reads never write: following a session
+`Sessions.read(address, { after, kinds, limit, from })` returns a session's
+events after a cursor, `seq` order. `limit` keeps the oldest matches, or
+with `from: "end"` the newest (of `kinds`, filtered first), still in `seq`
+order: the latest records of a few kinds come back without reading the
+session from its start (`lastEndingOf` below). Reads never write: following a session
 runs nothing. An address whose owner is not the session's finds nothing
 (`SessionMissing`). `Sessions.get(address)` is the session's view: `seq`,
 the cursor of its last event, and `open`, the turn it has open, if any.
@@ -454,6 +457,13 @@ export const endingsOf = (sessions: typeof Sessions.Service, address: SessionAdd
       reason: ended.reason,
       code: Option.getOrNull(Option.map(ended.failure, (failure) => failure.code)),
     }))))))
+
+/** How the session's last turn ended: its newest `turn.ended` alone, read from the end, however long the session is. */
+export const lastEndingOf = (sessions: typeof Sessions.Service, address: SessionAddress) =>
+  sessions.read(address, { kinds: ["turn.ended"], limit: 1, from: "end" }).pipe(Effect.flatMap((events) => Option.match(Option.fromNullishOr(events[0]), {
+    onNone: () => Effect.succeed(Option.none<{ readonly turn: number | null; readonly reason: string }>()),
+    onSome: (event) => turnEndedOf(event).pipe(Effect.map((ended) => Option.some({ turn: Option.getOrNull(event.turn), reason: ended.reason }))),
+  })))
 
 const StoredReply = Schema.Struct({ body: Schema.Struct({ outcome: Schema.String, reply: Schema.NullOr(Schema.String) }) })
 

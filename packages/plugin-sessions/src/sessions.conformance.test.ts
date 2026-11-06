@@ -86,6 +86,16 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(careless)))).toEqual(["recreate"])
   })
 
+  test("one whose read drops from: end, or over a log that ignores it, fails only the read-latest check", async () => {
+    const fromStart = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      read: (address, { from: _from, ...query } = {}) => instance.sessions.read(address, query),
+    }) })
+    const startOnlyLog = SessionLog.of({ ...memoryLog, read: (id, { from: _from, ...query }) => memoryLog.read(id, query) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, fromStart)))).toEqual(["read-latest"])
+    expect(await failedChecks(sessionsConformance(subjectOver(startOnlyLog)))).toEqual(["read-latest"])
+  })
+
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
     const blind = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
