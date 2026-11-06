@@ -244,6 +244,13 @@ The agent receives readable claims and source locators in a framed
 `recalled-memory` section. It can answer “Postgres” or use `read_memory` to
 inspect the original source. It does not receive the whole database.
 
+That section is recorded as the turn's context. A host that would rather end
+every step's request with the evidence, resent each step and kept out of the
+recorded turn context, sets `recallSection: "off"` and passes
+`memoryRecallNote`'s text, the same text built from the same evidence, as its
+turn policy's step context
+([place memory recall yourself](/docs/concepts/native-knowledge/#place-memory-recall-yourself)).
+
 ## What happens when Beacon changes?
 
 Suppose a later source says Beacon migrated to SQLite on November 1, 2026.

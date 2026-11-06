@@ -125,6 +125,52 @@ export const renderMemoryRecall = (result: Pick<KnowledgeRecallResult, "candidat
   ].join("\n\n")
 }
 
+const noRecall: KnowledgeRecallResult = { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }
+
+/**
+ * The run's recall within its reach (sources and metadata, `narrowingOf`): up to four profile records
+ * (`profileWithin`), then the evidence recalled for the user's message; none when there is nothing.
+ */
+const recalledEvidence = Effect.fnUntraced(function* (config: MemoryConfig) {
+  const run = yield* RunContext
+  const memory = yield* LongTermMemory
+  const reach = yield* reachOf().pipe(Effect.tapError((cause) => Effect.logWarning("The memory reach is unavailable; no memory is recalled this turn", cause)), Effect.option)
+  if (Option.isNone(reach)) return Option.none<string>()
+  const scope = scopeOf(reach.value.owner, config)
+  const result: KnowledgeRecallResult = yield* memory.recall({ scope, query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...narrowingOf(reach.value) }).pipe(
+    Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as(noRecall))),
+  )
+  const profile = yield* memory.profile(scope).pipe(
+    Effect.flatMap((memories) => profileWithin(memory, scope, reach.value, memories, 4)),
+    Effect.catch((error) => Effect.logWarning("The memory profile is unavailable", error).pipe(Effect.as([]))),
+  )
+  const preferred = profile.map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
+  const combined = { ...result, candidates: [...preferred, ...result.candidates.filter((candidate) => candidate._tag !== "Memory" || !preferred.some((item) => item.memory.id === candidate.memory.id))] }
+  return combined.candidates.length === 0 && combined.graph.assertions.length === 0 ? Option.none<string>() : Option.some(renderMemoryRecall(combined, config.recallChars))
+})
+
+/** One retrieval deadline over all of it; a late or failed recall is left out, an interruption or a turn's own failure is not. */
+const withinRecallBudget = (config: MemoryConfig) => <E, R>(recall: Effect.Effect<Option.Option<string>, E, R>): Effect.Effect<Option.Option<string>, E, R> => recall.pipe(
+  Effect.timeoutOption(config.retrievalTimeoutMs),
+  Effect.flatMap((result) => Option.isSome(result) ? Effect.succeed(result.value) : Effect.logWarning("The memory recall section exceeded its time budget").pipe(Effect.as(Option.none<string>()))),
+  Effect.catchCause((cause) => Cause.hasInterrupts(cause) || cause.reasons.some((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect))
+    ? Effect.failCause(cause)
+    : Effect.logWarning("The memory recall section could not be prepared", cause).pipe(Effect.as(Option.none<string>()))),
+)
+
+/**
+ * The `memory.recalled` section's text for this run, without the section: the same profile records
+ * and evidence recalled for the user's message, within the run's `KnowledgeNarrowing` (its source
+ * list and metadata filter, as the section reads them), bounded by
+ * `recallChars` and `retrievalTimeoutMs` and rendered by `renderMemoryRecall`; none when nothing is
+ * recalled or recall fails. With `recallSection: "off"`, a host places it where it chooses: a turn
+ * policy's `step` context (resent at the request's tail each step, never recorded as turn context)
+ * or a `ModelRequestHook`'s `context`. It recalls on each run: evaluate it once per turn and reuse
+ * the text across steps (`Effect.cached`). It runs no capture catch-up. @public
+ */
+export const memoryRecallNote = (config: MemoryConfig): Effect.Effect<Option.Option<string>, never, RunContext | LongTermMemory> =>
+  recalledEvidence(config).pipe(withinRecallBudget(config))
+
 /** Runtime capability; declared per-turn services supply the calling owner's identity. */
 export const memoryCapability = (config: MemoryConfig) => defineCapability({
   id: "@xandreed/plugin-memory/recall", version: "1",
@@ -186,33 +232,14 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
     defineSkill({ id: "memory.long-term", summary: memoryCapabilityText.recallSkill, tools: ["recall_memory", "read_memory"], always: true }),
     defineSkill({ id: "memory.manage", summary: memoryCapabilityText.manageSkill, tools: ["remember_memory", "forget_memory"], permissions: ["memory.write"] }),
   ] : [],
-  promptSections: [definePromptSection({
+  promptSections: config.recallSection === "turn" ? [definePromptSection({
     id: "memory.recalled", version: "1", tier: "turn", order: config.sectionOrder,
     requires: [RunContext, LongTermMemory, Sessions],
     render: () => Effect.gen(function* () {
       const run = yield* RunContext
-      const memory = yield* LongTermMemory
       const captured = yield* Effect.scoped(Layer.build(MemoryCaptureLive({ namespace: config.namespace, collection: config.collection, maxSourceChars: config.maxSourceChars, maxTurns: config.batchSize, pageSize: 500, maxPages: 100 })))
       yield* Context.get(captured, MemoryCapture).sync(run.session).pipe(Effect.ignore({ log: "Warn", message: "Memory catch-up will be retried after the turn" }))
-      const reach = yield* reachOf().pipe(Effect.tapError((cause) => Effect.logWarning("The memory reach is unavailable; no memory is recalled this turn", cause)), Effect.option)
-      if (Option.isNone(reach)) return Option.none<string>()
-      const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(reach.value.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...narrowingOf(reach.value) }).pipe(
-        Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }))),
-      )
-      const scope = scopeOf(reach.value.owner, config)
-      const profile = yield* memory.profile(scope).pipe(
-        Effect.flatMap((memories) => profileWithin(memory, scope, reach.value, memories, 4)),
-        Effect.catch((error) => Effect.logWarning("The memory profile is unavailable", error).pipe(Effect.as([]))),
-      )
-      const preferred = profile.map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
-      const combined = { ...result, candidates: [...preferred, ...result.candidates.filter((candidate) => candidate._tag !== "Memory" || !preferred.some((item) => item.memory.id === candidate.memory.id))] }
-      return combined.candidates.length === 0 && combined.graph.assertions.length === 0 ? Option.none() : Option.some(renderMemoryRecall(combined, config.recallChars))
-    }).pipe(
-      Effect.timeoutOption(config.retrievalTimeoutMs),
-      Effect.flatMap((result) => Option.isSome(result) ? Effect.succeed(result.value) : Effect.logWarning("The memory recall section exceeded its time budget").pipe(Effect.as(Option.none<string>()))),
-      Effect.catchCause((cause) => Cause.hasInterrupts(cause) || cause.reasons.some((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect))
-        ? Effect.failCause(cause)
-        : Effect.logWarning("The memory recall section could not be prepared", cause).pipe(Effect.as(Option.none<string>()))),
-    ),
-  })],
+      return yield* recalledEvidence(config)
+    }).pipe(withinRecallBudget(config)),
+  })] : [],
 })

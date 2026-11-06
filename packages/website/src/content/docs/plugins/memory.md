@@ -88,7 +88,12 @@ automatic turn context included, so enable one only when its quality is worth
 that cost and latency. A failed or late helper call keeps the deterministic
 retrieval. A turn-context section includes
 relevant evidence and a small profile. It shares a retrieval deadline and is
-recorded as turn context, outside the stable system prefix.
+recorded as turn context, outside the stable system prefix. Before recalling,
+it catches up capture of the session's committed turns. `recallSection: "off"`
+contributes no section and runs no catch-up: `memoryRecallNote` renders the
+same text for a host that closes each step's request with it instead, or the
+host leaves automatic recall out
+([place memory recall yourself](/docs/concepts/native-knowledge/#place-memory-recall-yourself)).
 
 Text and vector search contribute equally through reciprocal rank fusion;
 their raw score magnitudes are not combined. Graph traversal adds a bounded
@@ -200,6 +205,7 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
   "recallChars": 8000,
   "recallLimit": 8,
   "graphDepth": 2,
+  "recallSection": "turn",
   "sectionOrder": 700,
   "tools": true
 }
@@ -320,6 +326,13 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
       "maximum": 3,
       "exclusiveMinimum": 0
     },
+    "recallSection": {
+      "type": "string",
+      "enum": [
+        "turn",
+        "off"
+      ]
+    },
     "sectionOrder": {
       "type": "integer",
       "minimum": -9007199254740991,
@@ -352,6 +365,7 @@ Plugin: `@xandreed/plugin-memory` · Version **0.17.1** · Plugin API **3** · S
     "recallChars",
     "recallLimit",
     "graphDepth",
+    "recallSection",
     "sectionOrder",
     "tools"
   ],
