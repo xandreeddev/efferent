@@ -8,6 +8,7 @@ import { FetchHttpClient } from "effect/http"
 import {
   ModelCatalog,
   ModelSpend,
+  ModelSpendMemoryLive,
   ProviderId,
   SessionEnvironment,
   UtilityLlm,
@@ -17,6 +18,7 @@ import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { authStoreConformance } from "./auth/auth-store.conformance.js"
 import { AuthStore, Credential } from "./ports/auth-store.port.js"
 import { HostCredentials } from "./ports/host-credentials.port.js"
+import { CurrentModelSpendGuard } from "./ports/model-spend-guard.port.js"
 import { ModelsTransport } from "./ports/models-transport.port.js"
 import type { ModelsFetch } from "./ports/models-transport.port.js"
 import { SettingsStore } from "./ports/settings-store.port.js"
@@ -111,6 +113,22 @@ describe("models plugin endpoints", () => {
     })).pipe(Effect.ensuring(Effect.sync(server.stop))))
     expect(text).toBe("from the endpoint")
     expect(server.seen).toEqual([{ auth: null, model: "tiny" }])
+  })
+})
+
+describe("models plugin spend", () => {
+  test("the spend option's guard reaches the routed and utility models only: what the plugin builds never carries it", async () => {
+    const workspace = tempDir("efferent-spend-workspace-")
+    const carried = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const ledger = yield* Effect.service(ModelSpend).pipe(Effect.provide(ModelSpendMemoryLive))
+      const services = yield* build(workspace, {
+        storage: "memory", model: "stub:m", endpoints: { stub: { url: "https://stub.invalid/v1" } },
+        spend: { prices: { "stub:m": { input: 0, output: 1, cacheRead: 0, cacheWrite: 0 } } },
+      }, Context.make(ModelSpend, ledger))
+      // A host that stacks this context under its own model (stackPlugins) would otherwise guard that model with the plugin's prices and caps.
+      return services.mapUnsafe.has(CurrentModelSpendGuard.key)
+    })))
+    expect(carried).toBe(false)
   })
 })
 

@@ -70,6 +70,9 @@
       "@xandreed/plugin-models": [
         "packages/plugin-models/src/index.ts"
       ],
+      "@xandreed/plugin-models/compat": [
+        "packages/plugin-models/src/compat/index.ts"
+      ],
       "@xandreed/plugin-models/conformance": [
         "packages/plugin-models/src/conformance/index.ts"
       ],

@@ -153,6 +153,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   settled and reserved spend whenever a ledger is among the turn's services,
   and the turn sets `CurrentTurnRunId` for every call it makes, helper calls
   included. Without the `spend` option nothing changes.
+- `@xandreed/plugin-models`: a compat model the host builds itself
+  settles each send's spend. A host that builds the OpenAI-compatible model
+  with `makeCompatLanguageModel` (`@xandreed/plugin-models/compat`) instead
+  of having the models plugin route its calls had no spend guard:
+  `beforeRequest` could reserve before each send, but nothing could settle
+  a send at its exact cost, since `aroundRequest` wraps the whole logical
+  call and sees a streamed body before its usage. `CompatConfig.spend` (a
+  `ModelSpendGuard`, exported from the same entry: a `ModelSpend` ledger and
+  decoded `ModelSpendOptions`, priced by `"<moduleName>:<model>"`) guards
+  every physical send of that model exactly as the plugin's `spend` option
+  guards a routed one: after `beforeRequest`, each send, every retry
+  included, reserves its worst case for the turn (`CurrentTurnRunId`), and
+  its attempt settles at `costOf` of its reported usage (a streamed call's
+  once its final chunk is read), at the hold or nothing without usage; a
+  send past a cap or unpriced is never sent, and the call dies with the
+  `HarnessError` (`model.spend`, `model.unpriced`), which the turn fails
+  with, typed. `TurnResult.spend` reports the turn's spend when the same
+  ledger is among the turn's services. The guard is the model's own: the
+  plugin's `spend` option guards only the calls the plugin routes, and the
+  plugin's built services no longer carry its guard, so a host model
+  composed beside the plugin by `stackPlugins` (which keeps every service a
+  plugin builds) is no longer reserved in the plugin's ledger at its prices
+  (`model.unpriced` for a key they lack) or held to its caps; a host model
+  without `spend` is not guarded. `Agent.define`, which keeps only a
+  plugin's declared services, behaves as before.
 - `@xandreed/evals`, `@xandreed/evals-cli`: an evaluation run's spend
   budget. Nothing capped what a run's trials could spend on models, and
   reports recorded no spend. `efferent-eval run` and `calibrate` take

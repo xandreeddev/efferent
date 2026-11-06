@@ -40,8 +40,10 @@ its approved toolkit explicitly.
 
 `@xandreed/plugin-models/compat` provides the Effect LanguageModel port over a
 compatible chat-completions endpoint. It supports structured-output schemas,
-AbortSignal propagation through response consumption, and request hooks for
-budget reservations/accounting. Provider-specific decisions stay in adapters.
+AbortSignal propagation through response consumption, request hooks for a
+host's own admission and accounting, and a spend guard (`spend`) that
+reserves each send's worst case in a `ModelSpend` ledger and settles it at
+the cost of its reported usage. Provider-specific decisions stay in adapters.
 
 `@xandreed/evals` defines tasks, journeys (a fixture and ordered actions),
 trials, graders, calibration cases and candidates. The application's runnable

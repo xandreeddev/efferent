@@ -18,6 +18,8 @@ import { ProviderUsageBody } from "./model-usage.entity.js"
 import { resilientRequest, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { annotateCompatRequest, observeCompatUsage } from "./compat-telemetry.adapter.js"
+import { CurrentModelSpendGuard } from "../ports/model-spend-guard.port.js"
+import type { ModelSpendGuard } from "../ports/model-spend-guard.port.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -106,15 +108,30 @@ export interface CompatConfig {
    * `extensions`, since a fetch that rewrites the body sends what neither
    * `beforeRequest` nor the request descriptor saw. */
   readonly fetchImpl?: ModelsFetch
-  /** Host-owned admission (e.g. reserve a worst-case cost) before every
-   * physical send: the first and each retry the request policy makes. A
-   * failure ends the call without that send. */
+  /** Host-owned admission before every physical send: the first and each
+   * retry the request policy makes. A failure ends the call without that
+   * send. To reserve and settle each send's cost, set `spend`. */
   readonly beforeRequest?: (body: Readonly<Record<string, unknown>>) => Effect.Effect<void, AiError.AiError>
   /** Per-call accounting/resource boundary around the whole logical call,
    * its retries included: it sees the final response or failure once.
    * Non-streaming responses are fully buffered inside request so
    * interruption also aborts body consumption. */
   readonly aroundRequest?: (body: Readonly<Record<string, unknown>>, request: Effect.Effect<Response, AiError.AiError>) => Effect.Effect<Response, AiError.AiError>
+  /** The spend guard every physical send of this model reserves with, as
+   * the models plugin's `spend` option guards a routed call: a `ModelSpend`
+   * ledger and its `ModelSpendOptions` (prices keyed
+   * `"<moduleName>:<model>"`, caps). Each send, every retry included,
+   * reserves its worst case for the current turn (`CurrentTurnRunId`)
+   * after `beforeRequest` and before it goes out; its attempt settles at
+   * the cost of its reported usage, a streamed one once its final usage is
+   * read, or at the hold or nothing when no usage came, as on a routed
+   * call. A refused send is never sent: the call dies with the
+   * `HarnessError` (`model.spend`, `model.unpriced`), which the agent loop
+   * fails the turn with. This guard is the model's own: the models plugin's
+   * `spend` option guards only the calls the plugin routes, so a model the
+   * host builds is never priced or capped by it, in the same agent or not;
+   * without `spend`, the model's sends are not guarded. */
+  readonly spend?: ModelSpendGuard
 }
 
 /** A request that failed before any response, described by the failure's text as `reasonOf` reads it (never a stack: an `AiError` reason has no slot for the failure itself), proxy credentials redacted (the description can reach a session log). */
@@ -498,6 +515,15 @@ const chatRequestBody = (
     }),
   )
 
+/**
+ * The spend guard a call's physical sends reserve with: the config's own
+ * (`CompatConfig.spend`) when it has one, whatever guard the caller runs
+ * under; else the one the call runs under, which only the models plugin's
+ * router provides, to the compat models it builds (they set no `spend`).
+ */
+const withSpendGuard = (config: CompatConfig) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  config.spend === undefined ? effect : Effect.provideService(effect, CurrentModelSpendGuard, Option.some(config.spend))
+
 const postChat = (
   config: CompatConfig,
   method: string,
@@ -522,7 +548,7 @@ const postChat = (
         ...(config.apiKey === undefined || config.apiKey.length === 0 ? {} : { authorization: `Bearer ${config.apiKey}` }),
       }),
       HttpClientRequest.bodyJsonUnsafe(body),
-    ), { protocol: "compat", settled: buffered, ...(config.beforeRequest === undefined ? {} : { beforeSend: config.beforeRequest(body) }) }).pipe(Effect.provideService(FetchHttpClient.Fetch, trackedFetch))
+    ), { protocol: "compat", settled: buffered, ...(config.beforeRequest === undefined ? {} : { beforeSend: config.beforeRequest(body) }) }).pipe(withSpendGuard(config), Effect.provideService(FetchHttpClient.Fetch, trackedFetch))
     // Buffer settled calls within the public accounting hook. Streaming calls
     // expose a new Web body backed only by the guarded reader, never its source.
     const content = buffered ? yield* response.arrayBuffer : yield* Stream.toReadableStreamEffect(response.stream)

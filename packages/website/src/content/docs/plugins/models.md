@@ -189,10 +189,58 @@ checked with `modelSpendConformance` from `@xandreed/core/conformance`. The
 plugin reserves uninterruptibly, so a hold the ledger has taken always
 reaches the attempt that closes it: such a ledger bounds its own wait on
 the store and fails with `ModelSpendUnavailable` past it.
+
 In an evaluation run, `@xandreed/evals` builds that ledger and gives each
 trial's runnable its account in it as `ModelSpend`; pass it to the agent the
 trial defines, and `efferent-eval run --budget-usd` caps the whole run
 ([spend budget](/docs/concepts/evals/#spend-budget)).
+
+### A compat model the host builds
+
+A host that builds the OpenAI-compatible model itself with
+`makeCompatLanguageModel` (`@xandreed/plugin-models/compat`), instead of
+having the plugin route its calls, guards it the same way through
+`CompatConfig.spend`: a `ModelSpendGuard`, the ledger and the decoded
+`ModelSpendOptions`, whose `prices` key the model as
+`"<moduleName>:<model>"`. Each physical send of that model, every retry
+included, reserves its worst case for the turn (`CurrentTurnRunId`) after
+the config's `beforeRequest`, and its attempt settles at the cost of its
+reported usage, a streamed call's once its final chunk is read, exactly as
+above. Put the same ledger among the agent's services and `TurnResult.spend`
+returns what the turn settled:
+
+```ts
+import { Effect, Schema } from "effect"
+import type { ModelSpend } from "@xandreed/core"
+import { ModelSpendOptions } from "@xandreed/plugin-models"
+import { makeCompatLanguageModel } from "@xandreed/plugin-models/compat"
+import type { ModelSpendGuard } from "@xandreed/plugin-models/compat"
+
+declare const ledger: ModelSpend["Service"] // also in AgentConfig.services
+
+const model = Effect.gen(function* () {
+  const spend: ModelSpendGuard = {
+    ledger,
+    options: yield* Schema.decodeUnknownEffect(ModelSpendOptions)({
+      prices: { "Gateway:my-model": { input: 0.6, output: 2.4, cacheRead: 0.15, cacheWrite: 0.6 } },
+      turnCap: 0.25,
+    }),
+  }
+  return yield* makeCompatLanguageModel({
+    moduleName: "Gateway", chatUrl: "https://gateway.example/v1/chat/completions", model: "my-model",
+    maxOutputTokens: 8192, spend,
+  })
+})
+```
+
+A refused send is never sent: the call dies with the `HarnessError`
+(`model.spend` or `model.unpriced`), which the turn fails with, typed. The
+guard is the model's own: the plugin's `spend` option guards only the calls
+the plugin routes and never reaches a model the host builds, even one that
+runs in the same agent as the plugin, so each keeps its own ledger, prices
+and caps (a model without `spend` is not guarded). `beforeRequest` and
+`aroundRequest` remain for a host's own admission and accounting, but
+neither sees each send's final usage, which `spend` settles with.
 
 <!-- plugin-reference:start -->
 
