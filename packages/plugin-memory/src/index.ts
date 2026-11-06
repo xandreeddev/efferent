@@ -1,6 +1,6 @@
 export { memoryPlugin, MemoryPluginLive, default } from "./plugin.adapter.js"
 export { MemoryLive } from "./memory-engine.adapter.js"
 export { memoryCapturePlugin, MemoryCaptureLive } from "./memory-capture.adapter.js"
-export { MemoryCapture } from "./ports/memory-capture.port.js"
-export { MemoryConfig, memoryDefaults, MemoryCaptureConfig, memoryCaptureDefaults, MemorySyncResult } from "./memory.entity.js"
+export { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
+export { MemoryConfig, memoryDefaults, MemoryCaptureConfig, memoryCaptureDefaults, MemoryCaptureDecision, MemoryCaptureTurn, MemorySyncResult } from "./memory.entity.js"
 export { renderMemoryRecall, memorySourcePage } from "./memory-capability.adapter.js"

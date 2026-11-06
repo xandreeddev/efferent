@@ -39,6 +39,11 @@ Large turns split into exact UTF-16 source ranges with one metadata.episode
 across every part; partial enqueue and lost ACKs replay the same source IDs.
 Remembered notes use the tool invocation ID and the original TurnStarted
 timestamp, and share the containing turn's episode identity.
+Every sync (the observer's, the recall section's catch-up, a host's sync and
+backfill) asks the `MemoryCaptureAdmission` reference, read where it runs, once
+per closed turn before enqueuing it: admitted text replaces the evidence only
+when given, a refused turn enqueues nothing yet is acknowledged, and a failed or
+invalid decision fails the sync before that turn's checkpoint.
 
 Handler receipts describe execution only. Keep accepted tool results and their
 run/step/name-correlated arguments as separate evidence; arbitrary host labels
@@ -67,9 +72,10 @@ those dependencies to production. See the repository skills and definition of do
 
 ## Layout
 
-- `memory.entity.ts`: configuration and plugin checkpoint schemas.
+- `memory.entity.ts`: configuration, plugin checkpoint and capture admission schemas.
 - `memory-engine.adapter.ts`: native memory orchestration and processing worker.
-- `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture.
+- `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture and
+  its per-turn admission reference.
 - `memory-capability.adapter.ts`: recall, source read, explicit save/forget and turn evidence;
   `renderMemoryRecall` and `memorySourcePage` are exported for a host's own tools.
 - `plugin.adapter.ts`, `index.ts`: registered plugins and named host API.

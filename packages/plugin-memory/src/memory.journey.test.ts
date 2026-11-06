@@ -10,7 +10,7 @@ import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { memoryPlugin, MemoryPluginLive } from "./plugin.adapter.js"
 import { memoryCapturePlugin, MemoryCaptureLive } from "./memory-capture.adapter.js"
-import { MemoryCapture } from "./ports/memory-capture.port.js"
+import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
 import { fixtureExtraction } from "./memory.testing.js"
 import { memoryCaptureDefaults } from "./memory.entity.js"
 
@@ -74,5 +74,62 @@ describe("memory through the real agent", () => {
     expect(journal.some((event) => JSON.stringify(event.data).includes("recalled-memory"))).toBe(true)
     // Default options: the recall above spent no helper call on query planning or reranking; only extraction did.
     expect((yield* Ref.get(helperPrompts)).map((prompt) => prompt.includes("<knowledge-source>"))).toEqual([true])
+  }))))
+
+  test("a turn the host's admission refuses is never captured, recalled or read again, while the turns around it are", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: JSON.stringify(fixtureExtraction(/<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? "")), usage: zeroUsage })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    // The host's screening: a turn the user marks off the record is never kept across conversations.
+    const asked = yield* Ref.make<ReadonlyArray<number>>([])
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings), Context.add(MemoryCaptureAdmission, {
+      admit: (turn) => Ref.update(asked, (all) => [...all, turn.turn]).pipe(Effect.as(turn.text.startsWith("User: Off the record") ? { _tag: "Refuse" as const } : { _tag: "Admit" as const })),
+    }))
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(prompts, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin,
+      { plugin: memoryPlugin, options: { worker: false, review: false, embeddingDimensions: 2 } }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const first = { owner: "screened-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000f1") }
+    const second = { owner: "screened-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000f2") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const say = (session: typeof first, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    yield* say(first, "kept-before", "I prefer tea.")
+    yield* say(first, "withheld", "Off the record: the spare key is under the blue pot.")
+    yield* say(first, "kept-after", "I walk every morning.")
+    // Each committed turn was asked about once, by the observer after its commit.
+    expect(yield* Ref.get(asked)).toEqual([1, 2, 3])
+    const engine = knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 })
+    const pending = yield* store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })
+    const texts = yield* Effect.forEach(pending, (job) => store.source(job.scope, job.source).pipe(Effect.map(Option.map((source) => source.text))), { concurrency: 1 })
+    expect(texts.map((text) => Option.getOrElse(text, () => "")).toSorted()).toEqual([
+      "User: I prefer tea.\n\nAssistant final reply: Noted.",
+      "User: I walk every morning.\n\nAssistant final reply: Noted.",
+    ])
+    // The checkpoint is past the refused turn: a later sync, even one that admits everything, reads nothing.
+    const live = yield* Layer.build(MemoryPluginLive({ worker: false, review: false, embeddingDimensions: 2 }).pipe(Layer.provide(Layer.succeedContext(runtime))))
+    const memory = Context.get(live, LongTermMemory)
+    const captureContext = yield* Layer.build(MemoryCaptureLive(memoryCaptureDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(Sessions, sessions), Layer.succeed(LongTermMemory, memory)))))
+    expect(yield* Context.get(captureContext, MemoryCapture).sync(first)).toMatchObject({ sources: 0, hasMore: false })
+    expect(yield* memory.process(pending[0]!.scope, 10)).toBe(2)
+    yield* Ref.set(prompts, [])
+    yield* say(second, "asking", "Where is the spare key?")
+    const recalled = (yield* Ref.get(prompts))[0] ?? ""
+    expect(recalled).toContain("I prefer tea.")
+    expect(recalled).toContain("I walk every morning.")
+    expect(recalled).not.toContain("spare key is under")
+    expect(recalled).not.toContain("blue pot")
   }))))
 })

@@ -1,6 +1,9 @@
 class MemoryCapture
+const MemoryCaptureAdmission
 const MemoryCaptureConfig
+const MemoryCaptureDecision
 const MemoryCaptureLive
+const MemoryCaptureTurn
 const MemoryConfig
 const MemoryLive
 const MemoryPluginLive
@@ -13,5 +16,7 @@ const memoryPlugin
 const memorySourcePage
 const renderMemoryRecall
 type MemoryCaptureConfig
+type MemoryCaptureDecision
+type MemoryCaptureTurn
 type MemoryConfig
 type MemorySyncResult

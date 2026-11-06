@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
 import {
-  ConversationId, InboxItemId, InvocationId, KnowledgeSourceId, RunId, RunOrdinal, SectionId, SessionLogError, Sessions, ToolCallId, frameworkDraft,
+  ConversationId, InboxItemId, InvocationId, KnowledgeError, KnowledgeSourceId, RunId, RunOrdinal, SectionId, SessionLogError, Sessions, ToolCallId, frameworkDraft,
 } from "@xandreed/core"
 import { capturedTurnText, splitCapturedEvidence } from "./memory-capture.adapter.js"
-import { appendCapturedEntries, captureAddress, capturedEntry, captureRun, closeCaptureTurn, makeCaptureFixture, openCaptureTurn } from "./memory-capture.testing.js"
+import { admissionLog, admittingWith, appendCapturedEntries, captureAddress, capturedEntry, captureRun, closeCaptureTurn, makeCaptureFixture, openCaptureTurn } from "./memory-capture.testing.js"
 
 const callId = ToolCallId.make("reused")
 const call = (index: number, target: string, ordinal: number, tool = "deliver") => capturedEntry(index, { _tag: "Message", run: RunOrdinal.make(ordinal), message: { role: "assistant", content: [{ type: "tool-call", toolCallId: callId, toolName: tool, input: { target } }] } })
@@ -186,5 +186,77 @@ describe("committed conversation capture", () => {
     expect(sources).toHaveLength(2)
     expect(sources[0]!.metadata.episode).toBe(`conversation:${captureAddress.id}:${captureRun}`)
     expect(sources[1]!.metadata.episode).toBe(`conversation:${child.id}:fork-local-turn`)
+  }))))
+
+  test("a refused turn enqueues nothing, and the checkpoint moves past it so no later sync reads it again", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    const kept = RunId.make("capture-kept")
+    yield* closeCaptureTurn(yield* openCaptureTurn(fixture.sessions), "Withheld reply.")
+    yield* closeCaptureTurn(yield* openCaptureTurn(fixture.sessions, kept), "Kept reply.")
+    const seen = yield* admissionLog
+    const capture = yield* fixture.build()
+    const synced = yield* capture.sync(captureAddress).pipe(admittingWith(seen, (turn) => Effect.succeed(turn.runId === captureRun ? { _tag: "Refuse" } : { _tag: "Admit" })))
+    expect(synced).toMatchObject({ sources: 1, hasMore: false, refused: [1] })
+    // The admission is asked once per committed turn, with the evidence capture would store.
+    const asked = yield* Ref.get(seen)
+    expect(asked.map((turn) => [turn.session, turn.runId, turn.turn])).toEqual([[captureAddress, captureRun, 1], [captureAddress, kept, 2]])
+    expect(asked.map((turn) => turn.text)).toEqual([
+      "User: Please update the record.\n\nAssistant final reply: Withheld reply.",
+      "User: Please update the record.\n\nAssistant final reply: Kept reply.",
+    ])
+    expect(asked.every((turn) => turn.entries.some((entry) => entry.body._tag === "TurnEnded"))).toBe(true)
+    expect(asked[0]!.text).toBe(capturedTurnText(asked[0]!.entries))
+    const sources = (yield* Ref.get(fixture.calls)).map((input) => input.source)
+    expect(sources.map((source) => source.text)).toEqual(["User: Please update the record.\n\nAssistant final reply: Kept reply."])
+    expect(sources[0]!.metadata.run).toBe(kept)
+    // Admitting everything afterwards finds nothing left to read: the refused turn is behind the checkpoint.
+    expect(yield* capture.sync(captureAddress)).toEqual({ sources: 0, through: synced.through, hasMore: false })
+    expect(yield* Ref.get(fixture.calls)).toHaveLength(1)
+  }))))
+
+  test("a refused last turn still moves the checkpoint, and backfill counts refused turns", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    yield* closeCaptureTurn(yield* openCaptureTurn(fixture.sessions))
+    const seen = yield* admissionLog
+    const capture = yield* fixture.build()
+    const refuse = admittingWith(seen, () => Effect.succeed({ _tag: "Refuse" }))
+    const backfilled = yield* capture.backfill({ owner: captureAddress.owner }).pipe(refuse)
+    expect(backfilled).toEqual({ sources: 0, next: Option.none(), refused: 1 })
+    expect(yield* Ref.get(fixture.calls)).toEqual([])
+    const acks = yield* fixture.sessions.read(captureAddress, { kinds: ["@xandreed/plugin-memory/capture.ack"] })
+    expect(acks).toHaveLength(1)
+    expect((yield* capture.sync(captureAddress)).sources).toBe(0)
+    expect(yield* Ref.get(seen)).toHaveLength(1)
+  }))))
+
+  test("an admitted replacement is the evidence enqueued, split and measured as the source", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    yield* closeCaptureTurn(yield* openCaptureTurn(fixture.sessions), "Reply with a detail to withhold.")
+    const seen = yield* admissionLog
+    const replacement = "User: Please update the record.\n\nAssistant final reply: [withheld]"
+    const capture = yield* fixture.build({ maxSourceChars: 40 })
+    const synced = yield* capture.sync(captureAddress).pipe(admittingWith(seen, () => Effect.succeed({ _tag: "Admit", text: replacement })))
+    const sources = (yield* Ref.get(fixture.calls)).map((input) => input.source)
+    expect(synced.sources).toBe(sources.length)
+    expect(synced.refused).toBeUndefined()
+    expect(sources.map((source) => source.text).join("")).toBe(replacement)
+    expect(sources.every((source) => source.metadata.totalChars === replacement.length)).toBe(true)
+    expect(sources.some((source) => source.text.includes("withhold."))).toBe(false)
+  }))))
+
+  test("a failing or invalid admission fails the sync without moving the checkpoint past the turn", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    yield* closeCaptureTurn(yield* openCaptureTurn(fixture.sessions))
+    const seen = yield* admissionLog
+    const capture = yield* fixture.build()
+    const failed = yield* Effect.result(capture.sync(captureAddress).pipe(admittingWith(seen, () => Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "The host's screening service is unavailable" })))))
+    expect(failed._tag === "Failure" && failed.failure.reason).toBe("Unavailable")
+    const invalid = yield* Effect.result(capture.sync(captureAddress).pipe(admittingWith(seen, () => Effect.succeed({ _tag: "Admit", text: "" }))))
+    expect(invalid._tag === "Failure" && invalid.failure.reason).toBe("Invalid")
+    expect(yield* Ref.get(fixture.calls)).toEqual([])
+    expect(yield* fixture.sessions.read(captureAddress, { kinds: ["@xandreed/plugin-memory/capture.ack"] })).toEqual([])
+    // The turn is asked again on the next sync, and the default admission captures it as is.
+    expect((yield* capture.sync(captureAddress)).sources).toBe(1)
+    expect(yield* Ref.get(seen)).toHaveLength(2)
   }))))
 })

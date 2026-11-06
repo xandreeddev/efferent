@@ -114,6 +114,11 @@ profile records included (see
 [narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)).
 Narrowing scopes reads only: saving, forgetting and conversation capture keep
 the session owner, and a source outside the listed ones cannot be forgotten.
+What conversation capture stores of each committed turn is the host's to
+screen with `MemoryCaptureAdmission`: admit it, admit replacement text, or
+refuse it, so it is never recalled (see
+[screen turns before capture](/docs/plugins/memory-capture/#screen-turns-before-capture)).
+The catch-up the recall section runs before recalling asks it too.
 Host APIs explicitly name owner, namespace and collection, and `recall` takes a
 `sources` filter.
 

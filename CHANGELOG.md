@@ -12,6 +12,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -49,6 +50,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `sourceInfo(scope, refs)`, the batched read `knowledge.source-info`
   checks; a host's own `Knowledge` or `LongTermMemory` returns `sources` in
   each `KnowledgeRecallResult` it builds (`[]` when it cites nothing).
+
 
 
 
@@ -336,8 +338,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   its version becomes `2+current-turn-first`, which every request's
   `strategyVersion` and `context.built` carry. The default order, its
   version `2` and the stored format are unchanged.
+- `@xandreed/plugin-memory`: a host screens each committed turn before
+  conversation capture stores it. `MemoryCaptureAdmission`, a reference
+  provided among the agent's or a turn's services (or around a host's own
+  `MemoryCapture.sync` and `backfill`), is asked once per closed turn every
+  sync reaches (the committed-turn observer's, the `memory.recalled`
+  section's catch-up, `sync` and `backfill`) with a `MemoryCaptureTurn`: the
+  session address, run id, turn number, the evidence text capture would
+  store and the committed entries it comes from. It answers a
+  `MemoryCaptureDecision`: `Admit`, optionally with replacement text stored
+  in the evidence's place under the same source identities, or `Refuse`,
+  which enqueues nothing while the checkpoint still moves past the turn, so
+  no later sync reads it again. `MemorySyncResult.refused` lists the turns
+  refused in a sync and `backfill` counts them. A failing hook, or a
+  decision that does not decode (`Invalid`), fails the sync before that
+  turn's checkpoint. Before, a host could only screen turns by wrapping
+  `Sessions`, and a view that hid a turn also hid its closing record, so the
+  checkpoint could never pass it. The default admits every turn as is:
+  captured text, source identities and the checkpoint format are unchanged.
 
 ### Changed
+
 
 
 
@@ -383,7 +404,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 
 - `@xandreed/plugin-render`: a render feed follows its `live` stream
@@ -471,7 +494,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   arguments as given. `cliArguments` adds `list` and `singleValued`.
 
 
+
 ### Breaking
+
 
 
 
@@ -502,7 +527,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Repository
+
 
 
 
@@ -513,6 +540,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

@@ -3,12 +3,12 @@ import {
   ConversationId, EntryId, LongTermMemory, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage,
   draftsOfEntries, frameworkDraft, makeKnowledgeIndexMemory,
 } from "@xandreed/core"
-import type { KnowledgeEnqueue, KnowledgeIndex, LogBody, LogEntry, TurnWriter } from "@xandreed/core"
+import type { KnowledgeEnqueue, KnowledgeError, KnowledgeIndex, LogBody, LogEntry, TurnWriter } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { memoryCaptureDefaults } from "./memory.entity.js"
-import type { MemoryCaptureConfig } from "./memory.entity.js"
-import { MemoryCapture } from "./ports/memory-capture.port.js"
+import type { MemoryCaptureConfig, MemoryCaptureDecision, MemoryCaptureTurn } from "./memory.entity.js"
+import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
 
 export const captureAddress = { owner: "capture-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000e1") }
 export const captureRun = RunId.make("capture-fixture")
@@ -35,3 +35,8 @@ export const makeCaptureFixture = Effect.gen(function* () {
   )).pipe(Effect.map((context) => Context.get(context, MemoryCapture)))
   return { sessions, store, calls, memory, build }
 })
+/** The turns an admission was asked about, in order. */
+export const admissionLog = Ref.make<ReadonlyArray<MemoryCaptureTurn>>([])
+/** Run `effect` with `decide` as the capture admission, recording every turn it is asked about. */
+export const admittingWith = (seen: Ref.Ref<ReadonlyArray<MemoryCaptureTurn>>, decide: (turn: MemoryCaptureTurn) => Effect.Effect<MemoryCaptureDecision, KnowledgeError>) =>
+  Effect.provideService(MemoryCaptureAdmission, { admit: (turn) => Ref.update(seen, (all) => [...all, turn]).pipe(Effect.andThen(decide(turn))) })
