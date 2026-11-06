@@ -66,7 +66,7 @@ data in `foundry.config.ts`.
 ```ts
 // packages/plugin-tasks/src/plugin.adapter.ts
 export const tasksPlugin = definePlugin({
-  id: "@xandreed/plugin-tasks", version: "0.17.1", scope: "runtime",
+  id: "@xandreed/plugin-tasks", version: "0.18.0", scope: "runtime",
   config: TasksConfig, defaults: tasksDefaults,
   requires: [Sessions, TaskRunner, TaskExecutor],
   provides: [Tasks],
