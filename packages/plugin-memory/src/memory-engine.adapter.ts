@@ -211,8 +211,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       )
       return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }) })
     }), { concurrency: 2 })
-    const arms = { lexical: results.flatMap((result) => result.lexical), semantic: results.flatMap((result) => result.semantic) }
-    const fused = fuseKnowledgeCandidates(arms, candidateLimit, input.maxChars * 4)
+    // Each query's lexical and semantic lists are ranked on their own: a memory a planned query finds first ranks as one the question finds first.
+    const fused = fuseKnowledgeCandidates(results, candidateLimit, input.maxChars * 4)
     const stored = yield* store.snapshot(input.scope)
     // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata
     // filter reads the info of the revisions the graph cites.

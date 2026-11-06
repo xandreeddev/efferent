@@ -368,7 +368,13 @@ control for evaluation: it suppresses inferred memories and supersession. Use a
 separate collection/build for this control. Normal operation enables consolidation.
 
 Memory recall and RAG combine lexical/vector candidates, graph expansion and,
-when enabled, query planning and evidence reranking. Traversal defaults to two
+when enabled, query planning and evidence reranking. Reciprocal rank fusion
+ranks every list on its own: each query's lexical and semantic results (the
+question's, and with planning each planned query's) give a candidate
+`1 / (61 + rank)` at its 0-based rank there, and its score is the sum over the
+lists that hold it, so a candidate a planned query finds first ranks with the
+question's best and one several queries find gains from each
+(`fuseKnowledgeCandidates` takes one pair or one per query). Traversal defaults to two
 hops and is capped at three. Results expose truncation and retain citations.
 Query/model work has explicit budgets; invalid planner/reranker output falls
 back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section;

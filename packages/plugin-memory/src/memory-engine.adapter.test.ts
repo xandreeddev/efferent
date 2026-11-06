@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
 import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
-import type { KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult } from "@xandreed/core"
+import type { KnowledgeCandidate, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -165,6 +165,30 @@ describe("native memory engine", () => {
     expect(yield* helperCalls({ queryPlanning: true })).toEqual(["plan"])
     expect(yield* helperCalls({ rerank: true })).toEqual(["rerank"])
     expect(yield* helperCalls({ queryPlanning: true, rerank: true })).toEqual(["plan", "rerank"])
+  }))))
+
+  test("with query planning, each query's lists are ranked on their own and a memory several queries find sums their votes", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const texts = { first: "I prefer tea.", second: "I prefer juice.", third: "I prefer water.", later: "I prefer milk." }
+    const plan = JSON.stringify({ queries: ["milk"], entities: [], validAt: null, knownAt: null })
+    const fixture = yield* makeMemoryFixture((prompt) => prompt.startsWith("Plan evidence retrieval") ? plan
+      : JSON.stringify(fixtureExtraction(/<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? "")))
+    yield* Effect.forEach(Object.entries(texts), ([id, text]) => fixture.memory.capture(fixtureEnqueue(id, text)), { concurrency: 1 })
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(4)
+    const stored = new Map((yield* fixture.store.snapshot(fixtureScope)).memories.map((memory) => [memory.text, memory] as const))
+    const listed = (...named: ReadonlyArray<keyof typeof texts>): ReadonlyArray<KnowledgeCandidate> => named.map((name) => ({ _tag: "Memory", memory: stored.get(texts[name])!, score: 1 }))
+    // The asked question finds three memories in both arms; the planned query finds `later` first, then `third`.
+    const lists = (query: KnowledgeSearch) => query.query === "drink"
+      ? { lexical: listed("first", "second", "third"), semantic: listed("first", "second", "third") }
+      : { lexical: listed("later", "third"), semantic: listed("later") }
+    const searched = yield* Ref.make<ReadonlyArray<string>>([])
+    const services = Context.add(fixture.services, MemoryStore, { ...fixture.store, search: (query) => Ref.update(searched, (all) => [...all, query.query]).pipe(Effect.as(lists(query))) })
+    const context = yield* Layer.build(MemoryLive({ ...fixture.config, queryPlanning: true }).pipe(Layer.provide(Layer.succeedContext(services))))
+    const result = yield* Context.get(context, LongTermMemory).recall({ scope: fixtureScope, query: "drink", limit: 8, maxChars: 8_000, graph: false })
+    expect(yield* Ref.get(searched)).toEqual(["drink", "milk"])
+    // third: 2/63 + 1/62; first and later: 2/61 each, tied by key; second: 2/62. Concatenated lists ranked later last.
+    expect(result.candidates.map((candidate) => [candidate._tag === "Memory" ? candidate.memory.text : "", candidate.score])).toEqual([
+      [texts.third, 1 / 63 + 1 / 63 + 1 / 62], [texts.first, 2 / 61], [texts.later, 2 / 61], [texts.second, 2 / 62],
+    ])
   }))))
 
   test("explicit graph opt-out performs no graph traversal", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
