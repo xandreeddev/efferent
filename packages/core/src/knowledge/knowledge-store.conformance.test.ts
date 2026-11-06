@@ -3,7 +3,7 @@ import { Effect, Option, Ref, Result } from "effect"
 import type { KnowledgeIndex } from "../ports/knowledge.port.js"
 import { makeKnowledgeIndexMemory } from "./knowledge.memory.adapter.js"
 import { knowledgeStoreConformance, temporalGraphConformance } from "./knowledge-store.conformance.js"
-import { KnowledgeLeaseToken, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
+import { KnowledgeJobCursor, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeSourceId, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
 
 const scope: KnowledgeScope = { owner: "test", namespace: "assistant", collection: "memory" }
 const checks = knowledgeStoreConformance({ open: Effect.map(makeKnowledgeIndexMemory(), (index) => ({ index, scope })) })
@@ -16,7 +16,7 @@ describe("knowledge index reference conformance", () => {
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
       "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
-      "knowledge.engine-isolation", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
+      "knowledge.engine-isolation", "knowledge.failed-listing", "knowledge.requeue", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
   })
 })
@@ -52,7 +52,7 @@ test("every check passes when all of them share one index, namespace and collect
   expect(sharing.filter((_, index) => !Result.isSuccess(results[index]!)).map((check) => check.name)).toEqual([])
 })
 
-test("a store that claims jobs of any engine fails the engine isolation check alone", async () => {
+test("a store that claims jobs of any engine fails the engine isolation and requeue checks alone", async () => {
   const engineBlind = Effect.gen(function* () {
     const real = yield* makeKnowledgeIndexMemory()
     const engines = yield* Ref.make<ReadonlyArray<string>>([])
@@ -62,13 +62,14 @@ test("a store that claims jobs of any engine fails the engine isolation check al
     const index: KnowledgeIndex = {
       ...real,
       enqueue: (input) => Ref.update(engines, (all) => all.includes(input.engine) ? all : [...all, input.engine]).pipe(Effect.andThen(real.enqueue(input))),
+      requeue: (input) => Ref.update(engines, (all) => all.includes(input.engine) ? all : [...all, input.engine]).pipe(Effect.andThen(real.requeue(input))),
       claim: (input) => Ref.get(engines).pipe(Effect.flatMap((all) => claimAny(input, all))),
     }
     return { index, scope }
   })
   const broken = knowledgeStoreConformance({ open: engineBlind })
   const results = await Effect.runPromise(Effect.forEach(broken, (check) => Effect.result(check.run), { concurrency: 1 }))
-  expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.engine-isolation"])
+  expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.engine-isolation", "knowledge.requeue"])
 })
 
 test("the source-filter check rejects a store that ignores the filter", async () => {
@@ -76,4 +77,39 @@ test("the source-filter check rejects a store that ignores the filter", async ()
   const sourceFilter = knowledgeStoreConformance({ open: Effect.map(unfiltered, (index) => ({ index, scope })) }).filter((check) => check.name === "knowledge.source-filter")
   const results = await Effect.runPromise(Effect.forEach(sourceFilter, (check) => Effect.result(check.run), { concurrency: 1 }))
   expect(results.length === 1 && results.every(Result.isFailure)).toBe(true)
+})
+
+const failingAlone = async (name: string, change: (real: KnowledgeIndex) => Partial<KnowledgeIndex>) => {
+  const changed = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, ...change(real) }))
+  const all = knowledgeStoreConformance({ open: Effect.map(changed, (index) => ({ index, scope })) })
+  const results = await Effect.runPromise(Effect.forEach(all, (check) => Effect.result(check.run), { concurrency: 1 }))
+  expect(all.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual([name])
+}
+
+test("the failed-listing check rejects a store that ignores the reason filter or lists every phase", async () => {
+  await failingAlone("knowledge.failed-listing", (real) => ({ failed: ({ reasons: _ignored, ...query }) => real.failed(query) }))
+  await failingAlone("knowledge.failed-listing", (real) => ({
+    failed: (query) => real.pending({ engine: query.engine ?? "kit", namespace: query.namespace, now: 1_000, limit: query.limit }).pipe(Effect.map((jobs) => ({ jobs, next: Option.none() }))),
+  }))
+})
+
+test("the requeue check rejects a store whose requeue keeps the job's attempts and engine", async () => {
+  await failingAlone("knowledge.requeue", (real) => ({ requeue: (input) => real.retry(input.scope, input.jobId) }))
+})
+
+test("the reference store refuses a requeue onto an engine that already holds the revision, and a foreign cursor", async () => {
+  const outcome = await Effect.runPromise(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const source = { scope, ref: { id: KnowledgeSourceId.make("held"), revision: 1 }, text: "Held evidence", occurredAt: 1, recordedAt: 2, metadata: {} }
+    const failed = yield* index.enqueue({ jobId: KnowledgeJobId.make("older"), source, engine: "older", expectedRevision: Option.none() })
+    yield* index.enqueue({ jobId: KnowledgeJobId.make("current"), source, engine: "current", expectedRevision: Option.none() })
+    const token = KnowledgeLeaseToken.make("token")
+    yield* index.claim({ scope, engine: "older", worker: "test", token, now: 1, leaseMs: 10 })
+    yield* index.fail({ scope, jobId: failed.id, token, now: 2 }, { reason: "Unavailable", message: "unreachable", step: "Required" })
+    const held = yield* Effect.flip(index.requeue({ scope, jobId: failed.id, engine: "current" }))
+    const cursor = yield* Effect.flip(index.failed({ namespace: scope.namespace, limit: 1, after: KnowledgeJobCursor.make("not-a-position") }))
+    const listed = yield* index.failed({ namespace: scope.namespace, limit: 10 })
+    return { held: held.reason, cursor: cursor.reason, listed: listed.jobs.map((job) => job.id) }
+  }))
+  expect(outcome).toEqual({ held: "Conflict", cursor: "Invalid", listed: [KnowledgeJobId.make("older")] })
 })

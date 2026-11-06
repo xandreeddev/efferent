@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect, Redacted } from "effect"
+import { Effect, Redacted, Schema } from "effect"
 import { knowledgePostgresDefaults, VECTOR_EXTENSION } from "./knowledge-postgres.entity.js"
 import { extensionAvailable, makePostgresDatabase, migratePostgres } from "./postgres-connection.adapter.js"
 
@@ -20,6 +20,20 @@ test.skipIf(url.length === 0)("the server's refusal of an extension it lacks rea
   const error = yield* database.transaction((tx) => tx.at("extension").execute(`CREATE EXTENSION IF NOT EXISTS ${ABSENT}`)).pipe(Effect.flip)
   expect(error.reason).toBe("Invalid")
   expect(error.message).toBe("the PostgreSQL server does not have the pgvector extension installed: install pgvector on the server, then open the store again")
+}))))
+
+test.skipIf(url.length === 0)("a database at layout 1 gains the failed-job index and stays at layout 1, which earlier releases open", () => run(Effect.scoped(Effect.gen(function* () {
+  const database = yield* open
+  yield* migratePostgres(database)
+  const Layout = Schema.Struct({ version: Schema.Int, indexed: Schema.Boolean })
+  const read = database.rows(Layout, "SELECT (SELECT version FROM efferent_knowledge.layout) AS version, to_regclass('efferent_knowledge.jobs_failed') IS NOT NULL AS indexed")
+  expect(yield* read).toEqual([{ version: 1, indexed: true }])
+  // A database an earlier release opened or created has no index: the next open adds it, the layout unchanged.
+  yield* database.transaction((tx) => tx.execute("SELECT pg_advisory_xact_lock(787418260114)").pipe(
+    Effect.andThen(tx.execute("DROP INDEX efferent_knowledge.jobs_failed")),
+  ))
+  yield* migratePostgres(database)
+  expect(yield* read).toEqual([{ version: 1, indexed: true }])
 }))))
 
 test("an unreachable server stays unavailable, and its message carries no connection detail", () => run(Effect.scoped(Effect.gen(function* () {

@@ -180,6 +180,31 @@ export type KnowledgeClaim = typeof KnowledgeClaim.Type
 /** Host worker discovery across owners within one engine and namespace (and collection, when given). @public */
 export const KnowledgePending = Schema.Struct({ engine: Text, namespace: Text, collection: Schema.optionalKey(Text), now: Count, limit: Positive.check(Schema.isLessThanOrEqualTo(100)) })
 export type KnowledgePending = typeof KnowledgePending.Type
+/** Where a failed-job listing stopped: opaque, read only by the store that returned it. @public */
+export const KnowledgeJobCursor = Text.pipe(Schema.brand("KnowledgeJobCursor"))
+export type KnowledgeJobCursor = typeof KnowledgeJobCursor.Type
+/**
+ * Host discovery of failed jobs across owners within one namespace: of every engine, or of
+ * `engine` when given; of one collection when given; failed with one of `reasons` when given (an
+ * empty list matches none). Oldest job first, at most `limit`, after `after` (a page's `next`).
+ * @public
+ */
+export const KnowledgeFailedQuery = Schema.Struct({
+  engine: Schema.optionalKey(Text), namespace: Text, collection: Schema.optionalKey(Text),
+  reasons: Schema.optionalKey(Schema.Array(KnowledgeErrorReason)),
+  limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
+  after: Schema.optionalKey(KnowledgeJobCursor),
+})
+export type KnowledgeFailedQuery = typeof KnowledgeFailedQuery.Type
+/** One page of failed jobs, and the cursor of the next page while more jobs match. @public */
+export const KnowledgeFailedPage = Schema.Struct({ jobs: Schema.Array(KnowledgeJob), next: Schema.OptionFromNullOr(KnowledgeJobCursor) })
+export type KnowledgeFailedPage = typeof KnowledgeFailedPage.Type
+/**
+ * Puts a failed job back in the queue under `engine`, the requeueing engine's own id, with its
+ * attempts reset, so that engine claims it and its automatic retries apply again. @public
+ */
+export const KnowledgeRequeue = Schema.Struct({ scope: KnowledgeScope, jobId: KnowledgeJobId, engine: Text })
+export type KnowledgeRequeue = typeof KnowledgeRequeue.Type
 /** @public */
 export const KnowledgeLease = Schema.Struct({ scope: KnowledgeScope, jobId: KnowledgeJobId, token: KnowledgeLeaseToken, now: Count })
 export type KnowledgeLease = typeof KnowledgeLease.Type

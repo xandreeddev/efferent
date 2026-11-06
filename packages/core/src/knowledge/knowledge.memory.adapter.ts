@@ -1,8 +1,8 @@
 import { Effect, Layer, Match, Option, Order, Ref, Result } from "effect"
 import {
-  KnowledgeError,
+  KnowledgeError, KnowledgeJobCursor,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeChunk, type KnowledgeEntity,
-  type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
+  type KnowledgeFailedQuery, type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
   type KnowledgeSource, type KnowledgeSourceId, type KnowledgeSnapshot, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
@@ -38,6 +38,16 @@ const claimable = (job: KnowledgeJob, now: number): boolean => Match.valueTags(j
   Queued: () => true, Processing: ({ leaseUntil }) => leaseUntil <= now,
   Failed: () => false, Complete: () => false, Cancelled: () => false,
 })
+/** Whether a job is failed and matches a failed-job listing's filters. */
+const listedFailure = (job: KnowledgeJob, query: KnowledgeFailedQuery): boolean => job.phase._tag === "Failed" &&
+  job.scope.namespace === query.namespace && (query.engine === undefined || job.engine === query.engine) &&
+  (query.collection === undefined || job.scope.collection === query.collection) && (query.reasons === undefined || query.reasons.includes(job.phase.reason))
+/** A cursor is the position, in recording order, where the next page starts. */
+const cursorPosition = (cursor: KnowledgeJobCursor | undefined): Result.Result<number, KnowledgeError> => {
+  if (cursor === undefined) return Result.succeed(0)
+  const position = Number(cursor)
+  return Number.isSafeInteger(position) && position >= 0 && String(position) === cursor ? Result.succeed(position) : Result.fail(error("Invalid", "The failed-job cursor was not returned by this store"))
+}
 const ownedJob = (state: State, lease: KnowledgeLease): Result.Result<KnowledgeJob, KnowledgeError> => {
   const job = state.jobs.find((entry) => entry.id === lease.jobId && sameKnowledgeScope(entry.scope, lease.scope))
   if (!job) return Result.fail(error("LeaseLost", "The processing job does not exist in this scope"))
@@ -198,6 +208,27 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
       const queued: KnowledgeJob = { ...job, phase: { _tag: "Queued" } }
       return Result.succeed({ state: replaceJob(current, queued), value: queued })
     })),
+    requeue: Effect.fn("knowledge_store.requeue")((input) => change((current) => {
+      const job = current.jobs.find((entry) => entry.id === input.jobId && sameKnowledgeScope(entry.scope, input.scope))
+      if (!job) return Result.fail(error("Conflict", "Only a failed job may be requeued"))
+      // Before the phase: forgetting cancels the source's jobs, and a host should learn the source is gone, not that the job is not failed.
+      if (tombstoned(current, input.scope, job.source.id)) return Result.fail(error("Tombstoned", "The source was forgotten"))
+      if (job.phase._tag !== "Failed") return Result.fail(error("Conflict", "Only a failed job may be requeued"))
+      if (!Option.exists(latest(current, input.scope, job.source.id), (source) => source.ref.revision === job.source.revision)) return Result.fail(error("Conflict", "A newer source revision superseded this job"))
+      const taken = current.jobs.some((entry) => entry.id !== job.id && sameKnowledgeScope(entry.scope, input.scope) && entry.engine === input.engine && entry.source.id === job.source.id && entry.source.revision === job.source.revision)
+      if (taken) return Result.fail(error("Conflict", "Another job already holds this source revision under the engine"))
+      const queued: KnowledgeJob = { ...job, engine: input.engine, attempt: 0, phase: { _tag: "Queued" }, stage: job.engine === input.engine ? job.stage : Option.none() }
+      return Result.succeed({ state: replaceJob(current, queued), value: queued })
+    })),
+    failed: Effect.fn("knowledge_store.failed")(function* (query) {
+      const start = yield* Effect.fromResult(cursorPosition(query.after))
+      return yield* read((current) => {
+        const matching = current.jobs.flatMap((job, position) => position >= start && listedFailure(job, query) ? [{ job, position }] : [])
+        const page = matching.slice(0, query.limit)
+        const last = page.at(-1)
+        return { jobs: page.map((entry) => entry.job), next: matching.length > page.length && last !== undefined ? Option.some(KnowledgeJobCursor.make(String(last.position + 1))) : Option.none() }
+      })
+    }),
     status: Effect.fn("knowledge_store.status")((scope, id) => read((current) => Option.fromNullishOr(current.jobs.find((job) => job.id === id && sameKnowledgeScope(job.scope, scope))))),
     snapshot: Effect.fn("knowledge_store.snapshot")((scope) => read((current) => snapshotOf(scoped(current, scope)))),
     search: Effect.fn("knowledge_store.search")(function* (query) {

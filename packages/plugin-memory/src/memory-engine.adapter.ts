@@ -213,7 +213,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     capture, process, recall,
     forget: Effect.fn("memory.forget")((scope, id) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => store.forget(scope, id, now)))),
     status: store.status,
-    retry: Effect.fn("memory.retry")((scope, id) => store.retry(scope, id).pipe(Effect.tap(() => Queue.offer(wake, undefined)))),
+    // A host's retry starts the job over under this engine's id: its attempts reset, a job failed under an older id included.
+    retry: Effect.fn("memory.retry")((scope, id) => inScope(scope).pipe(Effect.andThen(store.requeue({ scope, jobId: id, engine })), Effect.tap(() => Queue.offer(wake, undefined)))),
     source: store.source,
     profile: Effect.fn("memory.profile")((scope) => store.snapshot(scope).pipe(Effect.map((snapshot) => snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && (memory.kind === "preference" || memory.kind === "profile"))))),
   })

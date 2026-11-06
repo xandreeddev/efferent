@@ -24,7 +24,11 @@ validated extraction before embedding. Publish through the store's lease and
 scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
 unfinished processing through leases. Jobs are enqueued, discovered and claimed
-under the engine id of the configured embedding space (`knowledgeEngineId`). Profile and routine memories retain their
+under the engine id of the configured embedding space (`knowledgeEngineId`). The
+engine's own retries within `maxAttempts` use the store's `retry` (engine and
+attempts kept); the service's `retry` is the host's: it checks the scope is the
+engine's collection and calls the store's `requeue` with the engine id, so
+attempts reset and a job failed under an older id is taken over. Profile and routine memories retain their
 evidence; inferred routines require three distinct source episodes.
 Count admitted claims before masked storage I/O and keep that I/O outside the
 local admission permit. Shutdown remains bounded and reports a stalled claim

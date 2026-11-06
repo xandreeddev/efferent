@@ -2,9 +2,9 @@ import { Context, Effect } from "effect"
 import type { Option } from "effect"
 import type {
   KnowledgeCandidates, KnowledgeChunk, KnowledgeChunkId, KnowledgeClaim, KnowledgeEnqueue,
-  KnowledgeError, KnowledgeJob, KnowledgeJobFailure, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
+  KnowledgeError, KnowledgeFailedPage, KnowledgeFailedQuery, KnowledgeJob, KnowledgeJobFailure, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
   KnowledgePending, KnowledgeReach, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
-  KnowledgeSourceId, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
+  KnowledgeRequeue, KnowledgeSourceId, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
 } from "../knowledge/knowledge.entity.js"
 import type { RunContext } from "./run-context.port.js"
 
@@ -13,7 +13,8 @@ import type { RunContext } from "./run-context.port.js"
  * returns its original job. Conflicting content or source/job reuse fails without changes.
  * Discovery (`pending`) and `claim` see only jobs recorded under the requested engine.
  * `fail` records why the leased attempt failed (`KnowledgeJobFailure`) on its `Failed` phase, which
- * `status` returns; `retry` requeues a failed job.
+ * `status` returns; `retry` requeues a failed job, `requeue` resets it for an engine, and `failed`
+ * lists failed jobs across owners (of any engine) so a host need not remember their ids.
  * Staging verifies the unexpired lease, current scope version and source provenance, and keeps
  * the stage, its notes included, on the job through retry and publication.
  * Publication verifies the unexpired lease, current source revision, provenance and scope CAS,
@@ -31,7 +32,19 @@ export interface KnowledgeIndex {
   readonly stage: (lease: KnowledgeLease, stage: KnowledgeStage) => Effect.Effect<void, KnowledgeError>
   readonly publish: (lease: KnowledgeLease) => Effect.Effect<void, KnowledgeError>
   readonly fail: (lease: KnowledgeLease, failure: KnowledgeJobFailure) => Effect.Effect<void, KnowledgeError>
+  /** Requeues a failed job under its own engine, keeping its attempts: an engine's bounded automatic retry. */
   readonly retry: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<KnowledgeJob, KnowledgeError>
+  /**
+   * Requeues a failed job under `engine` with its attempts reset: a host's retry after the
+   * engine's own retries ran out, or after its engine id changed (a new extraction version or
+   * embedding space). The stage is kept only when `engine` is the job's own; another engine's stage
+   * is discarded. Fails `Tombstoned` when its source was forgotten, whatever its phase (forgetting
+   * cancels the source's jobs); else `Conflict` unless the job is failed, when a newer revision
+   * superseded its source revision, or when another job already holds that revision under `engine`.
+   */
+  readonly requeue: (input: KnowledgeRequeue) => Effect.Effect<KnowledgeJob, KnowledgeError>
+  /** Failed jobs across owners in one namespace, oldest first, page by page (`KnowledgeFailedQuery`). */
+  readonly failed: (query: KnowledgeFailedQuery) => Effect.Effect<KnowledgeFailedPage, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
   readonly snapshot: (scope: KnowledgeScope) => Effect.Effect<KnowledgeSnapshot, KnowledgeError>
   readonly search: (query: KnowledgeSearch) => Effect.Effect<KnowledgeCandidates, KnowledgeError>
@@ -64,6 +77,10 @@ export class LongTermMemory extends Context.Service<LongTermMemory, {
   readonly profile: (scope: KnowledgeScope) => Effect.Effect<ReadonlyArray<KnowledgeMemory>, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
+  /**
+   * Requeues a failed job of the engine's collection under the engine's current id with its
+   * attempts reset (`KnowledgeIndex.requeue`), a job failed under an older id of the engine included.
+   */
   readonly retry: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly forget: (scope: KnowledgeScope, id: KnowledgeSourceId) => Effect.Effect<void, KnowledgeError>
 }>()("@xandreed/core/LongTermMemory") {}
@@ -75,6 +92,10 @@ export class Knowledge extends Context.Service<Knowledge, {
   readonly retrieve: (input: KnowledgeRecall) => Effect.Effect<KnowledgeRecallResult, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
+  /**
+   * Requeues a failed job of the engine's collection under the engine's current id with its
+   * attempts reset (`KnowledgeIndex.requeue`), a job failed under an older id of the engine included.
+   */
   readonly retry: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<KnowledgeJob, KnowledgeError>
   readonly forget: (scope: KnowledgeScope, id: KnowledgeSourceId) => Effect.Effect<void, KnowledgeError>
 }>()("@xandreed/core/Knowledge") {}

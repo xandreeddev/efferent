@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import postgres from "postgres"
 import { Effect, Option, Redacted, Result } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeMemoryId, KnowledgeSourceId,
+  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobCursor, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeMemoryId, KnowledgeSourceId,
 } from "@xandreed/core"
 import type { KnowledgeIndex, KnowledgeMemory, KnowledgeScope, KnowledgeSource, KnowledgeStage } from "@xandreed/core"
 import { knowledgeStoreConformance, memoryStoreConformance } from "@xandreed/core/conformance"
@@ -173,6 +173,23 @@ test.skipIf(url.length === 0)("PostgreSQL keeps a failed job's reason in its pay
   const older = yield* index.status(scope, lease.jobId)
   expect(Option.map(older, (job) => job.phase)).toEqual(Option.some({ _tag: "Failed", reason: "Unavailable", message: "the graph extraction was invalid", step: "Required" }))
   expect((yield* index.retry(scope, lease.jobId)).phase._tag).toBe("Queued")
+}))))
+
+test.skipIf(url.length === 0)("PostgreSQL lists a job failed before reasons as unavailable and requeues it under a new engine column", () => run(Effect.scoped(Effect.gen(function* () {
+  const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const lease = yield* prepare(index, sourceOf(scope, "older", "Failed before reasons were recorded"), stageOf(0))
+  yield* index.fail(lease, { reason: "Invalid", message: "the extraction was invalid", step: "Required" })
+  const where = sql`domain='knowledge' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection} AND id=${lease.jobId}`
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.jobs SET payload = payload #- '{phase,reason}' #- '{phase,step}' WHERE ${where}`)
+  const listed = (reasons: ReadonlyArray<"Unavailable" | "Invalid">) => index.failed({ namespace: scope.namespace, reasons, limit: 10 }).pipe(Effect.map((page) => page.jobs.map((job) => job.id)))
+  expect(yield* listed(["Unavailable"])).toEqual([lease.jobId])
+  expect(yield* listed(["Invalid"])).toEqual([])
+  expect((yield* Effect.flip(index.failed({ namespace: scope.namespace, limit: 10, after: KnowledgeJobCursor.make("-1") }))).reason).toBe("Invalid")
+  const requeued = yield* index.requeue({ scope, jobId: lease.jobId, engine: "integration-next" })
+  const [row] = yield* Effect.tryPromise(() => sql<ReadonlyArray<{ readonly engine: string; readonly phase: string }>>`SELECT engine, phase FROM efferent_knowledge.jobs WHERE ${where}`)
+  expect({ engine: requeued.engine, attempt: requeued.attempt, stage: Option.isSome(requeued.stage), row }).toEqual({ engine: "integration-next", attempt: 0, stage: false, row: { engine: "integration-next", phase: "Queued" } })
 }))))
 
 test.skipIf(url.length === 0)("PostgreSQL scope CAS permits one concurrent publication across pools", () => run(Effect.scoped(Effect.gen(function* () {

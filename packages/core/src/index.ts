@@ -507,6 +507,7 @@ export {
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeStage,
   KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
+  KnowledgeJobCursor, KnowledgeFailedQuery, KnowledgeFailedPage, KnowledgeRequeue,
   KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,

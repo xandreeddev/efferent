@@ -137,6 +137,16 @@ configured with different embedding spaces on one store never learn from each
 other's sources. After changing the embedding options, capture the source again
 as its next revision to process it under the new configuration.
 
+`retry` starts a failed job over: it requeues the job under the engine's
+current id with its attempts reset, so the job gets `maxAttempts` again, and a
+job that failed under the engine's earlier embedding options is taken over by
+the reconfigured engine; a scope outside the engine's namespace and
+collection is refused. To find failed jobs without keeping their ids, page
+through `MemoryStore.failed({ namespace, collection, reasons, limit, after })`,
+which lists them across owners with the reason each failed with, and `retry`
+those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
+reasons a configuration change can fix).
+
 `forget` tombstones a source and removes its text and dependent learned
 knowledge, including historical graph evidence. Backfill cannot resurrect that
 source. Original session journals and database backups require their own

@@ -132,4 +132,48 @@ describe("memory through the real agent", () => {
     expect(recalled).not.toContain("spare key is under")
     expect(recalled).not.toContain("blue pot")
   }))))
+
+  test("a capture whose extraction failed for good is listed, requeued by the engine of a new embedding version, and published", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    const answersInvalid = yield* Ref.make(true)
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.get(answersInvalid).pipe(Effect.map((invalid) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      return new UtilityCompletion({ text: invalid ? "not an extraction" : JSON.stringify(fixtureExtraction(text)), usage: zeroUsage })
+    })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const model = yield* LanguageModel.make({
+      generateText: () => Effect.succeed([{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }] as never),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const session = { owner: "requeue-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000e1") }
+    yield* sessions.create(session)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    yield* agent.turn({ turn: { session, runId: RunId.make("requeue"), userMessage: new UserMessage({ text: "I prefer tea." }) }, services }, (turn) => turn.reply("I will keep that in mind."))
+    const memoryOf = (embeddingVersion: string) => Layer.build(MemoryPluginLive({ ...options, embeddingVersion }).pipe(Layer.provide(Layer.succeedContext(runtime)))).pipe(Effect.map((live) => Context.get(live, LongTermMemory)))
+    const before = yield* memoryOf("1")
+    const scope = { owner: session.owner, namespace: "default", collection: "memory" }
+    expect((yield* Effect.result(before.process(scope, 10)))._tag).toBe("Failure")
+    // The host finds the job without having kept its id: every failed job of the namespace whose extraction was invalid.
+    const listed = yield* store.failed({ namespace: "default", reasons: ["Invalid"], limit: 10 })
+    expect(listed.jobs.map((job) => ({ owner: job.scope.owner, engine: job.engine, attempt: job.attempt, reason: job.phase._tag === "Failed" ? job.phase.reason : job.phase._tag })))
+      .toEqual([{ owner: session.owner, engine: knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 }), attempt: 1, reason: "Invalid" }])
+    yield* Ref.set(answersInvalid, false)
+    const after = yield* memoryOf("2")
+    const failed = listed.jobs[0]!
+    const requeued = yield* after.retry(failed.scope, failed.id)
+    expect({ engine: requeued.engine, attempt: requeued.attempt, phase: requeued.phase._tag })
+      .toEqual({ engine: knowledgeEngineId("memory:1", { model: "host", version: "2", dimensions: 2 }), attempt: 0, phase: "Queued" })
+    expect(yield* before.process(scope, 10)).toBe(0)
+    expect(yield* after.process(scope, 10)).toBe(1)
+    expect(Option.map(yield* after.status(scope, failed.id), (job) => job.phase._tag)).toEqual(Option.some("Complete"))
+    expect((yield* store.failed({ namespace: "default", limit: 10 })).jobs).toEqual([])
+    const recalled = yield* after.recall({ scope, query: "tea", limit: 5, maxChars: 1000, graph: false })
+    expect(recalled.sources.map((source) => source.ref)).toEqual([failed.source])
+  }))))
 })
