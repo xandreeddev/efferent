@@ -308,6 +308,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `recall_memory`, the `memory.recalled` section and `read_memory` show).
   The evidence formatters take only a result's candidates and graph. Tool
   and section text, versions and stored formats are unchanged.
+- `@xandreed/plugin-telemetry`: `OtlpTelemetryOptions` takes `spans`, an
+  `OtlpSpanPolicy` that decides what the traces export sends, so a host
+  with an export policy (an attribute allow-list, metadata-only traces for
+  sensitive work) can use the OTLP layers. `keep(span)` drops a span: it is
+  never sent, and its children are sent under its nearest kept ancestor.
+  `attribute(span, key, value)` returns the value a span or span-event
+  attribute is sent with, or `Option.none()` to leave it out; it runs as
+  the attribute is set, so a value it leaves out never reaches the
+  exporter. A hook that throws drops what it was asked about.
+  `OtlpTelemetryFromEnv` and `OtlpTelemetryHttpFromEnv` apply
+  `defaults.spans`. Without `spans`, the export is unchanged. A host that
+  already runs its own OpenTelemetry provider bridges Effect's tracer into
+  it instead and leaves these layers out.
 
 
 ### Changed

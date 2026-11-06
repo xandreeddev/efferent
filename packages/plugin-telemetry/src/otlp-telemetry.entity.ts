@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import type { Duration, Option } from "effect"
+import type { Duration, Option, Tracer } from "effect"
 
 /**
  * How a signal's batches are encoded: OTLP/HTTP protobuf (the OpenTelemetry default) or JSON. gRPC is not supported.
@@ -50,6 +50,8 @@ export type OtlpSignal = "traces" | "metrics"
  *   traces, 10 s for metrics); `shutdownTimeout`: how long closing the layer
  *   waits for the last export (3 s).
  * - `metricsTemporality`: `"cumulative"` by default.
+ * - `spans`: what of each span the traces export sends (`OtlpSpanPolicy`);
+ *   every span, whole, by default.
  *
  * @public
  */
@@ -70,6 +72,35 @@ export interface OtlpTelemetryOptions {
   readonly exportInterval?: Duration.Input
   readonly shutdownTimeout?: Duration.Input
   readonly metricsTemporality?: OtlpTemporality
+  readonly spans?: OtlpSpanPolicy
+}
+
+/**
+ * What the traces export sends of each span, for a host with an export
+ * policy (attribute allow-lists, metadata-only traces for sensitive work).
+ * Both hooks are synchronous, read the span they are given and leave it
+ * as it is; a hook that throws drops what it was asked about. The span
+ * they read, like the one the program holds, has every attribute set on
+ * it: the policy filters what is sent, not what the program sees.
+ * - `keep`: whether the span is sent. It runs once per span, when the
+ *   span's first child starts or else when it ends, and sees the
+ *   attributes the span has then (those it was opened with at least). A
+ *   dropped span is never sent; its
+ *   children are sent under its nearest kept ancestor (the children of a
+ *   dropped root start traces of their own). Every span by default.
+ * - `attribute`: the value a span attribute or a span event's attribute
+ *   is sent with, `Option.none()` to leave it out. It runs as the
+ *   attribute is set (the span already holding it), so a value it leaves
+ *   out never reaches the exporter. Every attribute as it is by default.
+ *
+ * Span and event names, links, and the status and `exception` events a
+ * failed span gets from its exit are sent as they are.
+ *
+ * @public
+ */
+export interface OtlpSpanPolicy {
+  readonly keep?: (span: Tracer.Span) => boolean
+  readonly attribute?: (span: Tracer.Span, key: string, value: unknown) => Option.Option<unknown>
 }
 
 /** One signal's export, resolved: the URL it is posted to and how. */

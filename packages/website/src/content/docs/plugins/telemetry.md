@@ -93,6 +93,15 @@ Run and close the host's Effect scope so exporters can flush. The package
 supports Node 24 and Bun; `OtlpTelemetryLive` supplies a fetch HTTP client,
 while `OtlpTelemetryHttpLive` accepts the host's client. Environment-based
 and LangSmith export layers are covered in the observability guide.
+
+A host with an export policy passes `spans` (`OtlpSpanPolicy`): `keep`
+drops spans (their children are sent under the nearest kept ancestor) and
+`attribute` rewrites or leaves out span and span-event attributes before
+they reach the exporter. A host that runs its own OpenTelemetry provider
+bridges Effect's tracer into it instead and leaves the export layers out;
+the plugin's span events and metrics work with any tracer. The
+[observability guide](/docs/concepts/observability/#export-traces-and-metrics)
+covers both.
 The old plugin options `enabled` and `serviceName` are rejected: service
 naming belongs to the export layer.
 

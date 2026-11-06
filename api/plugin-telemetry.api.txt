@@ -18,6 +18,7 @@ const flushTelemetry
 const telemetryDefaults
 const telemetryPlugin
 interface LangSmithTelemetryOptions
+interface OtlpSpanPolicy
 interface OtlpTelemetryOptions
 type LangSmithAgentId
 type LangSmithEnvironment
