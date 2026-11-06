@@ -85,6 +85,13 @@ A search's `sources` filter is applied in SQL, before ranking and limits: a
 chunk's source must be listed, and a memory is returned only when none of its
 recorded source links names an unlisted source. An empty list returns nothing.
 
+A search's `metadata` filter is applied in SQL as well, inside the lexical and
+semantic statements, before `ORDER BY` and `LIMIT`: each chunk is joined to the
+source revision it cites, and a memory is returned only when every source
+revision its recorded links name matches. Each key is compared by JSON equality
+with the revision's top-level metadata value. The joins use the tables' primary
+keys, so the filter needs no layout change and no new index.
+
 The lexical arm uses PostgreSQL text ranking with the `simple` configuration.
 The vector arm uses exact pgvector cosine ranking. This is not a BM25 or an
 approximate-nearest-neighbor implementation. Measure corpus size and query cost

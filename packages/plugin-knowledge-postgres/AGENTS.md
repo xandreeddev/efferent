@@ -10,6 +10,11 @@ three ports. Node 24 and Bun use the same `postgres` driver.
   writing them. Parameterize all values; schema and table names are fixed.
 - Every domain query carries owner, namespace and collection. Graph traversal
   applies the scope and temporal predicates at every hop.
+- A search's `sources` and `metadata` filters are predicates of its lexical
+  and semantic statements, before `ORDER BY` and `LIMIT`, never a filter over
+  their rows: a metadata filter joins each record to the source revisions it
+  cites (`chunks.source_revision`, `record_sources`) and compares top-level
+  metadata values by JSON equality.
 - New derived indexes remain invisible until publication commits. Publication,
   graph revision comparison and leased-job completion share one transaction.
 - Deleted sources retain tombstones. Pending work and derived facts cannot

@@ -5,7 +5,7 @@ import {
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
-  isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph,
+  isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph, knowledgeNarrowingAdmits, narrowKnowledgeGraphBy,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
@@ -154,7 +154,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
   })
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
-    const sources = input.sources
+    const { sources, metadata } = input
     if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] } satisfies KnowledgeRecallResult
     const now = yield* Clock.currentTimeMillis
     const fallback: KnowledgeQueryPlan = { queries: [input.query], entities: [], validAt: Option.none(), knownAt: Option.none() }
@@ -174,19 +174,23 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
         Effect.flatMap((response) => vector(response.vector)), Effect.map(Option.some),
         Effect.catchIf((error) => error.reason === "Unavailable", (error) => Effect.logWarning("Memory query embedding is unavailable; using lexical evidence", error).pipe(Effect.as(Option.none()))),
       )
-      return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }) })
+      return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }) })
     }), { concurrency: 2 })
     const arms = { lexical: results.flatMap((result) => result.lexical), semantic: results.flatMap((result) => result.semantic) }
     const fused = fuseKnowledgeCandidates(arms, candidateLimit, input.maxChars * 4)
     const stored = yield* store.snapshot(input.scope)
-    // A source filter narrows the graph before seeding and traverses it here, as the store would.
-    const snapshot = sources === undefined ? stored : { ...stored, graph: narrowKnowledgeGraph(stored.graph, sources) }
+    // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata
+    // filter reads the info of the revisions the graph cites.
+    const narrowed = metadata !== undefined
+      ? narrowKnowledgeGraphBy(stored.graph, knowledgeNarrowingAdmits(input, yield* store.sourceInfo(input.scope, citedKnowledgeSources({ candidates: [], graph: stored.graph }))))
+      : sources === undefined ? stored.graph : narrowKnowledgeGraph(stored.graph, sources)
+    const snapshot = { ...stored, graph: narrowed }
     const scores = knowledgeBm25([input.query, ...plan.entities].join(" "), snapshot.graph.entities.map((entity) => [entity.name, ...entity.aliases].join(" ")))
     const matched = snapshot.graph.entities.filter((_, index) => (scores[index] ?? 0) > 0).map((entity) => entity.id)
     const seeds = [...matched, ...fused.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.entities, Chunk: () => [] }))]
     const graph = input.graph === false || seeds.length === 0
       ? { entities: [], assertions: [], truncated: false }
-      : sources === undefined ? yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
+      : sources === undefined && metadata === undefined ? yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
         : traverseKnowledgeGraph(snapshot.graph, { scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })
     const ranked: ReadonlyArray<KnowledgeCandidate> = config.rerank && fused.length > 0 ? yield* ask(knowledgeRerankPrompt(input.query, fused, graph, config.maxCandidateChars), "rerank", input.scope, Option.none()).pipe(
       Effect.flatMap((completion) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeRerank))(completion.text)),

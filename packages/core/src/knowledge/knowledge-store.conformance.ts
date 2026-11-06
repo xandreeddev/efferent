@@ -9,8 +9,9 @@ import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
-  type KnowledgeCandidates, type KnowledgeError, type KnowledgeFailedQuery, type KnowledgeJob, type KnowledgeJobCursor, type KnowledgeJobFailure, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
-  type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
+  type KnowledgeCandidates, type KnowledgeError, type KnowledgeFailedQuery, type KnowledgeJob, type KnowledgeJobCursor, type KnowledgeJobFailure,
+  type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope, type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
+  type KnowledgeMetadataFilter, type KnowledgeSearch,
 } from "./knowledge.entity.js"
 
 /**
@@ -58,7 +59,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging (its notes included), failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
+ * durable staging (its notes included), failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
  * revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
  * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
@@ -177,6 +178,57 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const everything = "chunk:first-chunk,chunk:second-chunk,memory:joint-memory,memory:memory,memory:second-memory"
       yield* expect("knowledge.source-filter", firstOnly.every((arm) => arm === "chunk:first-chunk,memory:memory") && both.every((arm) => arm === everything) && none.every((arm) => arm === "") && all.every((arm) => arm === everything),
         "a source filter returned evidence citing an unlisted source, dropped a listed one, or an empty filter returned anything")
+    })),
+    indexCheck("knowledge.metadata-filter", (fixture) => Effect.gen(function* () {
+      const space = { model: "kit", version: "1", dimensions: 2 }
+      const near = { space, values: [1, 0] }
+      const far = { space, values: [1, 8] }
+      // Each source publishes a memory and a chunk; the report's are the farthest and weakest matches for "coffee".
+      const publish = Effect.fnUntraced(function* (name: string, text: string, metadata: KnowledgeSource["metadata"], embedding: typeof near, step: number, extra: ReadonlyArray<KnowledgeMemory> = [], revision = 1) {
+        const source = { ...sourceOf(fixture.scope, text, name, revision), metadata }
+        const job = yield* enqueue(fixture, source, `${name}-job-${revision}`, revision === 1 ? Option.none() : Option.some(revision - 1))
+        yield* claim(fixture, 20 + step * 10)
+        const lease = leaseOf(fixture.scope, job, 21 + step * 10)
+        const records = revision === 1 ? name : `${name}-${revision}`
+        const memory = { ...memoryOf(source, `${records}-memory`), embedding: Option.some(embedding) }
+        const chunk = { id: KnowledgeChunkId.make(`${records}-chunk`), text, provenance: memory.provenance[0]!, embedding: Option.some(embedding) }
+        yield* fixture.index.stage(lease, { ...stageOf(source, step), memories: [memory, ...extra], chunks: [chunk] })
+        yield* fixture.index.publish(lease)
+        return source
+      })
+      const notes = yield* Effect.forEach([0, 1, 2], (step) => publish(`note-${step}`, "coffee coffee coffee", { kind: "note", lang: "en" }, near, step), { concurrency: 1 })
+      const reportText = "A long quarterly report on travel, tea, budgets and staffing that mentions coffee once"
+      const report = { ...sourceOf(fixture.scope, reportText, "report"), metadata: { kind: "report", lang: "en", pages: 3 } }
+      const joint = { ...memoryOf(report, "joint-memory"), text: "The report and the first note both mention coffee", embedding: Option.some(far), provenance: [...memoryOf(report).provenance, ...memoryOf(notes[0]!).provenance] }
+      yield* publish("report", reportText, report.metadata, far, 3, [joint])
+      const search = (limit: number, narrowing: Pick<KnowledgeSearch, "sources" | "metadata">) => fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.some(near), limit, knownAt: Option.none(), ...narrowing })
+      const keys = (found: KnowledgeCandidates) => [found.lexical, found.semantic].map((arm) => arm.map(knowledgeCandidateKey).toSorted(Order.String).join(","))
+      const target = "chunk:report-chunk,memory:report-memory"
+      const everything = "chunk:note-0-chunk,chunk:note-1-chunk,chunk:note-2-chunk,chunk:report-chunk,memory:joint-memory,memory:note-0-memory,memory:note-1-memory,memory:note-2-memory,memory:report-memory"
+      const results = yield* Effect.forEach([
+        // The report's records rank below the three notes' six in both arms, so a filter applied after the limit finds none of them.
+        [3, { metadata: { kind: "report" } }, target],
+        [3, { metadata: { kind: ["memo", "report"] } }, target],
+        [3, { metadata: { pages: 3, lang: "en" } }, target],
+        [3, { metadata: { kind: "report", lang: "fr" } }, ""],
+        [3, { metadata: { kind: [] } }, ""],
+        [3, { metadata: { missing: null } }, ""],
+        [3, { metadata: { kind: "report" }, sources: [notes[0]!.ref.id] }, ""],
+        [3, { metadata: { kind: "report" }, sources: [report.ref.id, notes[0]!.ref.id] }, target],
+        [20, { metadata: { kind: ["note", "report"] } }, everything],
+        [20, { metadata: {} }, everything],
+      ] as const, ([limit, narrowing, expected]) => search(limit, narrowing).pipe(Effect.map((found) => keys(found).every((arm) => arm === expected))), { concurrency: 1 })
+      // A record is judged by the metadata of the revision it cites: the first revision's memory, retired by the second's
+      // publication, still matches the first revision's metadata when read as of a time it was known.
+      yield* publish("versioned", "coffee coffee coffee", { stage: "draft" }, near, 4)
+      yield* publish("versioned", "coffee coffee coffee", { stage: "final" }, near, 5, [], 2)
+      const asOf = (knownAt: Option.Option<number>, metadata: KnowledgeMetadataFilter) => fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.some(near), limit: 3, knownAt, metadata }).pipe(Effect.map(keys))
+      const revisions = [
+        yield* asOf(Option.some(65), { stage: "draft" }), yield* asOf(Option.none(), { stage: "draft" }), yield* asOf(Option.none(), { stage: "final" }),
+      ]
+      yield* expect("knowledge.metadata-filter", results.every(Boolean) && sameJson(revisions, [
+        ["memory:versioned-memory", "memory:versioned-memory"], ["", ""], ["chunk:versioned-2-chunk,memory:versioned-2-memory", "chunk:versioned-2-chunk,memory:versioned-2-memory"],
+      ]), "a metadata filter dropped matching evidence ranked outside the unfiltered limit, returned evidence citing a revision that does not match, judged a record by another revision's metadata, or ignored the source filter beside it")
     })),
     indexCheck("knowledge.forget-tombstone", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

@@ -311,9 +311,10 @@ attachments or one workspace of a team, narrows retrieval without replacing
 the tools or sections. `KnowledgeNarrowing` is a reference the document and
 memory capabilities ask, once per tool call or section render, for the run's
 `KnowledgeReach`: the owner whose knowledge it reads and, optionally, the only
-source ids it may read. The default reaches the session owner's whole
-collection. Provide your own among the agent's `services` or a turn's
-services:
+source ids it may read, the metadata those sources must carry
+([narrow by source metadata](#narrow-by-source-metadata)), or both. The
+default reaches the session owner's whole collection. Provide your own among
+the agent's `services` or a turn's services:
 
 ```ts
 import { Context, Effect } from "effect"
@@ -347,6 +348,54 @@ Host calls take the same filter: `Knowledge.retrieve` and
 1000 ids), and `KnowledgeIndex.search` applies `KnowledgeSearch.sources` in the
 store, in SQL for PostgreSQL. The engine's namespace and collection stay the
 configured ones.
+
+### Narrow by source metadata
+
+A host that marks its sources with metadata at ingestion (a project, a kind,
+a visibility) narrows by it instead of turning those marks into id lists of
+its own. `KnowledgeReach.metadata`, `KnowledgeRecall.metadata` and
+`KnowledgeSearch.metadata` take a `KnowledgeMetadataFilter`: top-level keys of
+`KnowledgeSource.metadata`, each with a JSON scalar or a list of alternatives.
+Every key must hold; a key holds when the metadata's value equals the scalar,
+or one of the alternatives, exactly. A key the metadata lacks matches nothing,
+`null` matches only a stored `null`, an array or object value matches no
+scalar, and an empty list of alternatives matches nothing. A filter names at
+most 16 keys and 100 alternatives a key; an empty filter matches every source.
+
+```ts
+import { Context, Effect } from "effect"
+import { KnowledgeNarrowing } from "@xandreed/core"
+
+const narrowing = Context.make(KnowledgeNarrowing, {
+  reach: (run) => Effect.succeed({
+    owner: run.session.owner,
+    metadata: { project: "atlas", kind: ["notes", "spec"] },
+  }),
+})
+```
+
+A record is judged by the metadata of the source revisions it cites, the
+same rule as for `sources`: a chunk when the revision it quotes matches, a
+memory or a relation only when every revision its spans cite does, and a graph
+entity with only its spans in matching revisions. A record from an older
+revision is judged by that revision's metadata, so a memory read as of an
+earlier time still matches what its revision said then. With both `sources`
+and `metadata`, both must hold. `read_knowledge` and `read_memory` answer a
+revision outside the filter as not found, and the memory section's profile
+keeps only memories within it. Forgetting removes every revision of a
+source, which a filter on revisions cannot vouch for, so while a metadata
+filter is set `forget_memory` answers every source as not found: a host that
+isolates by metadata gets the same isolation for deletes. A turn that should
+forget narrows by a source list instead, which `forget_memory` checks.
+
+The stores apply the filter before ranking and the limit, so a narrow filter
+still returns its best matches when the unfiltered nearest neighbours all lie
+outside it: the in-memory store filters before scoring, and the PostgreSQL
+store joins each candidate to the source revision it cites, inside the lexical
+and semantic statements, before `ORDER BY` and `LIMIT`. The engines narrow the
+graph with the info of the revisions it cites (`KnowledgeIndex.sourceInfo`).
+`matchesKnowledgeMetadata`, `admitsKnowledgeSource`, `knowledgeNarrowingAdmits`
+and `narrowKnowledgeGraphBy` state the rule for a host's own store or tools.
 
 ## Cited sources and evidence text
 

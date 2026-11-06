@@ -3,15 +3,15 @@ import { Context, Effect, Layer, Option, Ref } from "effect"
 import {
   Knowledge, KnowledgeJobId, KnowledgeSourceId, KnowledgeStore, makeKnowledgeIndexMemory, UtilityCompletion, UtilityError, UtilityLlm, zeroUsage,
 } from "@xandreed/core"
-import type { KnowledgeEnqueue, KnowledgeIndex, KnowledgeScope } from "@xandreed/core"
+import type { KnowledgeEnqueue, KnowledgeIndex, KnowledgeScope, KnowledgeSource } from "@xandreed/core"
 import { RagLive } from "./rag-engine.adapter.js"
 import { ragDefaults } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
 
 export const scope: KnowledgeScope = { owner: "fixture", namespace: "default", collection: "knowledge" }
-export const enqueue = (name: string, text: string, revision = 1): KnowledgeEnqueue => ({
+export const enqueue = (name: string, text: string, revision = 1, metadata: KnowledgeSource["metadata"] = {}): KnowledgeEnqueue => ({
   jobId: KnowledgeJobId.make(`${name}:${revision}`), engine: "host", expectedRevision: revision === 1 ? Option.none() : Option.some(revision - 1),
-  source: { scope, ref: { id: KnowledgeSourceId.make(name), revision }, text, occurredAt: 10, recordedAt: 20, metadata: {} },
+  source: { scope, ref: { id: KnowledgeSourceId.make(name), revision }, text, occurredAt: 10, recordedAt: 20, metadata },
 })
 export const makeEmbeddings = (map: (text: string) => Array<number> = () => [1, 0]) => EmbeddingModel.make({
   embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(map), usage: { inputTokens: inputs.length } }),

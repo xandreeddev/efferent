@@ -3,7 +3,8 @@ import {
   KnowledgeError,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
   type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
-  type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal,
+  type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
+  type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo,
   type KnowledgeVector,
 } from "./knowledge.entity.js"
 
@@ -134,25 +135,67 @@ export const traverseKnowledgeGraph = (graph: KnowledgeSubgraph, query: Knowledg
 /** Whether every span of a record's provenance cites one of the listed sources. @public */
 export const citesKnowledgeSources = (provenance: ReadonlyArray<KnowledgeProvenance>, sources: KnowledgeSourceFilter): boolean =>
   provenance.length > 0 && provenance.every((span) => sources.includes(span.source.id))
+/** Whether every span of a record's provenance cites a revision the predicate admits (`knowledgeNarrowingAdmits`). @public */
+export const citesAdmittedKnowledge = (provenance: ReadonlyArray<KnowledgeProvenance>, admits: (ref: KnowledgeSourceRef) => boolean): boolean =>
+  provenance.length > 0 && provenance.every((span) => admits(span.source))
 /** Whether a candidate is evidence from the listed sources only (`KnowledgeSearch.sources`). */
 export const knowledgeCandidateWithin = (candidate: KnowledgeCandidate, sources: KnowledgeSourceFilter): boolean => Match.valueTags(candidate, {
   Memory: ({ memory }) => citesKnowledgeSources(memory.provenance, sources),
   Chunk: ({ chunk }) => citesKnowledgeSources([chunk.provenance], sources),
 })
+/** Whether a candidate is evidence from admitted revisions only (`knowledgeNarrowingAdmits`). */
+export const knowledgeCandidateAdmitted = (candidate: KnowledgeCandidate, admits: (ref: KnowledgeSourceRef) => boolean): boolean => Match.valueTags(candidate, {
+  Memory: ({ memory }) => citesAdmittedKnowledge(memory.provenance, admits),
+  Chunk: ({ chunk }) => citesAdmittedKnowledge([chunk.provenance], admits),
+})
+/**
+ * Whether a source revision's metadata matches a filter (`KnowledgeMetadataFilter`): every key
+ * holds, at the top level, a value equal to the key's scalar or to one of its alternatives.
+ * @public
+ */
+export const matchesKnowledgeMetadata = (metadata: KnowledgeSource["metadata"], filter: KnowledgeMetadataFilter): boolean =>
+  Object.entries(filter).every(([key, expected]) => {
+    const alternatives: ReadonlyArray<KnowledgeMetadataValue> = Array.isArray(expected) ? expected : [expected]
+    const value = metadata[key]
+    return Object.hasOwn(metadata, key) && alternatives.some((alternative) => alternative === value)
+  })
+/**
+ * A read's narrowing as a predicate on the revisions its evidence cites: listed in its `sources`,
+ * when given, and, when it has a `metadata` filter, one of `infos` whose metadata matches. Pass
+ * the info of the revisions the evidence cites (`KnowledgeIndex.sourceInfo`); a revision missing
+ * from it, as a forgotten one is, matches no metadata filter.
+ * @public
+ */
+export const knowledgeNarrowingAdmits = (narrowing: Pick<KnowledgeRecall, "sources" | "metadata">, infos: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "metadata">>): (ref: KnowledgeSourceRef) => boolean => {
+  const { sources, metadata } = narrowing
+  return (ref) => (sources === undefined || sources.includes(ref.id)) &&
+    (metadata === undefined || infos.some((info) => info.ref.id === ref.id && info.ref.revision === ref.revision && matchesKnowledgeMetadata(info.metadata, metadata)))
+}
+/** Whether one source revision is within a read's narrowing (`KnowledgeRecall.sources` and `.metadata`: both must hold). @public */
+export const admitsKnowledgeSource = (narrowing: Pick<KnowledgeRecall, "sources" | "metadata">, source: Pick<KnowledgeSourceInfo, "ref" | "metadata">): boolean =>
+  knowledgeNarrowingAdmits(narrowing, [source])(source.ref)
 /**
  * The part of a graph the listed sources support: an entity they mention, keeping only its spans
  * in them, and an assertion every span of which cites them, between entities that remain.
  * @public
  */
-export const narrowKnowledgeGraph = (graph: KnowledgeSubgraph, sources: KnowledgeSourceFilter): KnowledgeSubgraph => {
+export const narrowKnowledgeGraph = (graph: KnowledgeSubgraph, sources: KnowledgeSourceFilter): KnowledgeSubgraph =>
+  narrowKnowledgeGraphBy(graph, (ref) => sources.includes(ref.id))
+/**
+ * The part of a graph the admitted revisions support (`knowledgeNarrowingAdmits`): an entity
+ * they mention, keeping only its spans in them, and an assertion every span of which cites
+ * them, between entities that remain.
+ * @public
+ */
+export const narrowKnowledgeGraphBy = (graph: KnowledgeSubgraph, admits: (ref: KnowledgeSourceRef) => boolean): KnowledgeSubgraph => {
   const entities = graph.entities.flatMap((entity) => {
-    const provenance = entity.provenance.filter((span) => sources.includes(span.source.id))
+    const provenance = entity.provenance.filter((span) => admits(span.source))
     return provenance.length === 0 ? [] : [{ ...entity, provenance }]
   })
   const kept: ReadonlyArray<string> = entities.map((entity) => entity.id)
   return {
     entities,
-    assertions: graph.assertions.filter((edge) => citesKnowledgeSources(edge.provenance, sources) && endpoints(edge).every((id) => kept.includes(id))),
+    assertions: graph.assertions.filter((edge) => citesAdmittedKnowledge(edge.provenance, admits) && endpoints(edge).every((id) => kept.includes(id))),
     truncated: graph.truncated,
   }
 }

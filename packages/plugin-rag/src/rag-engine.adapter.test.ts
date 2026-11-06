@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
 import { CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
-import type { KnowledgeHelperCall, KnowledgeJobFailure } from "@xandreed/core"
+import type { KnowledgeHelperCall, KnowledgeJobFailure, KnowledgeMetadataFilter } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { ragDefaults } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
@@ -133,9 +133,9 @@ describe("native temporal GraphRAG", () => {
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(first), JSON.stringify(second)])
     const embeddings = yield* makeEmbeddings((text) => text.includes("Cedar") ? [0, 1] : [1, 0])
     const { knowledge } = yield* makeRag({ graph: true, review: false }, undefined, embeddings, utility)
-    yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon.", 1, { team: "red" }))
     yield* knowledge.process(scope, 1)
-    yield* knowledge.ingest(enqueue("two", "Beacon serves Cedar."))
+    yield* knowledge.ingest(enqueue("two", "Beacon serves Cedar.", 1, { team: "blue" }))
     yield* knowledge.process(scope, 1)
     const perspective = { validAt: 20, knownAt: yield* Clock.currentTimeMillis }
     const plain = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000 })
@@ -157,6 +157,14 @@ describe("native temporal GraphRAG", () => {
     const listed = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000, graph: { perspective, depth: 2 }, sources: [KnowledgeSourceId.make("one"), KnowledgeSourceId.make("two")] })
     expect(listed).toEqual(two)
     expect((yield* Ref.get(prompts))).toHaveLength(2)
+    // A metadata filter narrows candidates and the graph the same way, by the metadata of each cited revision, and composes with sources.
+    const narrowed = (metadata: KnowledgeMetadataFilter, sources?: ReadonlyArray<string>) => knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000, graph: { perspective, depth: 2 }, metadata,
+      ...(sources === undefined ? {} : { sources: sources.map((id) => KnowledgeSourceId.make(id)) }) })
+    expect(yield* narrowed({ team: "red" })).toEqual(onlyOne)
+    expect(yield* narrowed({ team: ["red", "blue"] })).toEqual(two)
+    const blue = yield* narrowed({ team: "blue" })
+    const redElsewhere = yield* narrowed({ team: "red" }, ["two"])
+    expect([blue.candidates, blue.graph.assertions, blue.graph.entities, redElsewhere.candidates, redElsewhere.graph.entities]).toEqual([[], [], [], [], []])
     const before = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000, graph: { perspective: { ...perspective, validAt: 9 }, depth: 2 } })
     expect(before.graph.assertions).toEqual([])
   }))))

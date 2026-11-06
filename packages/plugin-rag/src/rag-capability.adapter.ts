@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { Tool } from "effect/ai"
 import {
-  defineCapability, definePromptSection, defineSkill, defineTool, Failure, Knowledge, KnowledgeNarrowing, KnowledgeRecallResult,
+  admitsKnowledgeSource, defineCapability, definePromptSection, defineSkill, defineTool, Failure, Knowledge, KnowledgeNarrowing, KnowledgeRecallResult,
   KnowledgeSourceId, RunContext, userMessageText,
 } from "@xandreed/core"
 import type { KnowledgeReach, KnowledgeScope } from "@xandreed/core"
@@ -33,7 +33,9 @@ export const ragCapability = (config: RagConfig) => {
     const run = yield* RunContext
     return yield* (yield* KnowledgeNarrowing).reach(run)
   })
-  const sourcesOf = (reach: KnowledgeReach) => reach.sources === undefined ? {} : { sources: reach.sources }
+  const narrowingOf = (reach: KnowledgeReach) => ({
+    ...(reach.sources === undefined ? {} : { sources: reach.sources }), ...(reach.metadata === undefined ? {} : { metadata: reach.metadata }),
+  })
   const Search = Tool.make("search_knowledge", {
     description: text.search,
     parameters: Schema.Struct({
@@ -62,7 +64,7 @@ export const ragCapability = (config: RagConfig) => {
             ? { perspective: { ...(params.validAt === undefined ? {} : { validAt: params.validAt }), ...(params.knownAt === undefined ? {} : { knownAt: params.knownAt }) }, depth: config.graphDepth }
             : undefined
           return yield* knowledge.retrieve({ scope: scopeOf(reach.owner), query: params.query, limit: config.searchLimit, maxChars: config.evidenceChars,
-            ...(graph === undefined ? {} : { graph }), ...sourcesOf(reach),
+            ...(graph === undefined ? {} : { graph }), ...narrowingOf(reach),
           }).pipe(Effect.mapError(() => text.unavailable))
         }),
         view: { version: "1", render: (result) => knowledgeEvidenceText(result, config.evidenceChars) },
@@ -73,7 +75,8 @@ export const ragCapability = (config: RagConfig) => {
           const source = reach.sources === undefined || reach.sources.includes(params.sourceId)
             ? yield* (yield* Knowledge).source(scopeOf(reach.owner), { id: params.sourceId, revision: params.revision }).pipe(Effect.mapError(() => text.unavailable))
             : Option.none()
-          return yield* Option.match(source, {
+          // A revision outside the reach's metadata filter is not found, as one outside its source list is.
+          return yield* Option.match(Option.filter(source, (found) => admitsKnowledgeSource(reach, found)), {
             onNone: () => Effect.fail(text.missing),
             onSome: (found) => (params.offset ?? 0) > found.text.length ? Effect.fail(text.offsetError) : Effect.succeed(knowledgeSourcePage(found, params.offset ?? 0, config.readChars)),
           })
@@ -87,7 +90,7 @@ export const ragCapability = (config: RagConfig) => {
         const run = yield* RunContext
         const knowledge = yield* Knowledge
         const evidence = yield* reachOf().pipe(Effect.flatMap((reach) => knowledge.retrieve({ scope: scopeOf(reach.owner), query: userMessageText(run.userMessage), limit: config.searchLimit, maxChars: config.evidenceChars,
-          ...(config.graph ? { graph: { perspective: {}, depth: config.graphDepth } } : {}), ...sourcesOf(reach),
+          ...(config.graph ? { graph: { perspective: {}, depth: config.graphDepth } } : {}), ...narrowingOf(reach),
         })), Effect.tapError((cause) => Effect.logWarning("Document evidence was unavailable for this turn", cause)), Effect.option)
         return Option.flatMap(evidence, (result) => result.candidates.length === 0 && result.graph.assertions.length === 0 ? Option.none() : Option.some(knowledgeEvidenceText(result, config.evidenceChars)))
       }),

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
-import { Clock, Context, Effect, Layer, Option, Ref } from "effect"
-import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, knowledgeExtractionWindows } from "@xandreed/core"
+import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
+import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
+import type { KnowledgeMetadataFilter, KnowledgeRecallResult } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -21,6 +22,27 @@ describe("native memory engine", () => {
     expect((yield* fixture.memory.profile(fixtureScope)).map((memory) => memory.text)).toEqual([text])
     const other = yield* fixture.memory.recall({ scope: { ...fixtureScope, owner: "other-owner" }, query: "preferred drink", limit: 8, maxChars: 8_000 })
     expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })
+  }))))
+
+  test("a metadata filter recalls memories and graph evidence only from source revisions whose metadata matches", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const tea = "I prefer tea."
+    const coffee = "I prefer coffee."
+    const fixture = yield* makeMemoryFixture((prompt) => JSON.stringify(fixtureExtraction(prompt.includes(coffee) ? coffee : tea)))
+    yield* fixture.memory.capture(fixtureEnqueue("session-a", tea))
+    yield* fixture.memory.capture(fixtureEnqueue("session-b", coffee))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(2)
+    const cited = (result: KnowledgeRecallResult) => [...new Set(citedKnowledgeSources(result).map((ref) => String(ref.id)))].toSorted(Order.String)
+    const recall = (metadata: KnowledgeMetadataFilter) => fixture.memory.recall({ scope: fixtureScope, query: "prefer", limit: 8, maxChars: 8_000, metadata })
+    const onlyA = yield* recall({ session: "session-a" })
+    expect([cited(onlyA), onlyA.candidates.map((candidate) => candidate._tag === "Memory" ? candidate.memory.text : ""), onlyA.graph.assertions.map((edge) => edge.text)]).toEqual([["session-a"], [tea], [tea]])
+    expect(onlyA.sources.map((source) => source.metadata)).toEqual([{ kind: "conversation", session: "session-a" }])
+    expect(cited(yield* recall({ kind: "conversation" }))).toEqual(["session-a", "session-b"])
+    expect(cited(yield* recall({ kind: "conversation", session: ["session-b", "session-c"] }))).toEqual(["session-b"])
+    const none = yield* recall({ session: "session-c" })
+    expect([none.candidates, none.graph.assertions, none.graph.entities, none.sources]).toEqual([[], [], [], []])
+    // Beside a source list, both must hold.
+    const both = yield* fixture.memory.recall({ scope: fixtureScope, query: "prefer", limit: 8, maxChars: 8_000, metadata: { session: "session-a" }, sources: [KnowledgeSourceId.make("session-b")] })
+    expect([both.candidates, both.graph.assertions, both.graph.entities]).toEqual([[], [], []])
   }))))
 
   test("duplicate capture retains one job and runs extraction once", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
