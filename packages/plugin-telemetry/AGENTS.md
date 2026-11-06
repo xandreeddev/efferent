@@ -62,6 +62,19 @@ on Node and Bun in `bun run verify:packages`).
   value elsewhere never fails a host that exports nothing. The export is a
   Layer around the host's program, not a plugin: the `Tracer` and the
   metric registry are fiber references a plugin's `provides` cannot reach.
+- Span policy (`otlp-span-policy.adapter.ts`, `OtlpSpanPolicy` in
+  `otlp-telemetry.entity.ts`): with `spans`, the traces layer is Effect's
+  `OtlpTracer.make` behind `spanPolicyTracer`; without it, Effect's
+  `OtlpTracer.layer` as before. Each span Effect holds is a `PolicySpan`
+  with its own status, logical parent and every attribute (what the
+  program and the hooks read) over the OTLP span, which is opened under
+  the nearest kept ancestor. `keep` is asked once (first
+  child or end); a dropped span never ends its OTLP span, so it is never
+  pushed. `attribute` runs as each span or span-event attribute is set,
+  so a value it refuses is never stored on the OTLP span. Hooks are
+  wrapped in `Option.liftThrowable`: a throw drops (fails closed). The
+  wrapper keeps no `_tag` class check (`no-instanceof-tagged-error`): its
+  own spans are found through a per-tracer `WeakMap`.
 - LangSmith (`langsmith-telemetry.adapter.ts`): `LangSmithTelemetryHttpLive`
   installs the same Effect OTLP tracer over a host HttpClient, with
   `langSmithTracer` mapping run types before the original span's end exports
@@ -120,6 +133,7 @@ on Node and Bun in `bun run verify:packages`).
   options (`TelemetryOptions`, `telemetryDefaults`), `TelemetryMetrics`,
   the export's layers (`OtlpTelemetryHttpLive`, `OtlpTelemetryHttpFromEnv`,
   `OtlpTelemetryFromEnv`) and their options (`OtlpTelemetryOptions`,
+  `OtlpSpanPolicy`,
   `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`), plus the LangSmith
   layers, `LangSmithTelemetryOptions`, `LangSmithTarget`, `LangSmithAgentId`
   and `LangSmithEnvironment`. How a usage splits

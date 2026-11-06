@@ -1,9 +1,10 @@
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Tracer } from "effect"
 import type { Config } from "effect"
 import { FetchHttpClient } from "effect/http"
 import type { HttpClient } from "effect/http"
 import { OtlpExporter, OtlpMetrics, OtlpSerialization, OtlpTracer } from "effect/observability"
-import type { OtlpExport, OtlpProtocol, OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
+import { spanPolicyTracer } from "./otlp-span-policy.adapter.js"
+import type { OtlpExport, OtlpProtocol, OtlpSpanPolicy, OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
 import { otlpExportFromEnv, otlpExportOf } from "./otlp-telemetry.entity.functions.js"
 
 const serialization = (protocol: OtlpProtocol): Layer.Layer<OtlpSerialization.OtlpSerialization> =>
@@ -12,23 +13,34 @@ const serialization = (protocol: OtlpProtocol): Layer.Layer<OtlpSerialization.Ot
 /**
  * Effect's OTLP tracer and metrics exporters for a resolved export: each
  * signal that has a URL, with one `Flusher` for both (`layerFlusher` is
- * memoized by reference, so the signals and the output share it).
+ * memoized by reference, so the signals and the output share it). With a
+ * span policy, the tracer is Effect's OTLP tracer behind it.
  */
-const exportLayer = (target: OtlpExport): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> => {
+const exportLayer = (target: OtlpExport, spans: Option.Option<OtlpSpanPolicy>): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> => {
   const resource = {
     serviceName: target.serviceName,
     serviceVersion: Option.getOrUndefined(target.serviceVersion),
     attributes: target.resourceAttributes,
   }
   const shutdownTimeout = Option.getOrUndefined(target.shutdownTimeout)
-  const traces = Option.map(target.traces, (signal) => OtlpTracer.layer({
-    url: signal.url,
-    resource,
-    headers: signal.headers,
-    compression: signal.compression,
-    exportInterval: Option.getOrUndefined(signal.exportInterval),
-    shutdownTimeout,
-  }).pipe(Layer.provide(serialization(signal.protocol))))
+  const traces = Option.map(target.traces, (signal) => {
+    const options = {
+      url: signal.url,
+      resource,
+      headers: signal.headers,
+      compression: signal.compression,
+      exportInterval: Option.getOrUndefined(signal.exportInterval),
+      shutdownTimeout,
+    }
+    return Option.match(spans, {
+      onNone: () => OtlpTracer.layer(options),
+      onSome: (policy) => OtlpTracer.make(options).pipe(
+        Effect.map(spanPolicyTracer(policy)),
+        Layer.effect(Tracer.Tracer),
+        Layer.provideMerge(OtlpExporter.layerFlusher),
+      ),
+    }).pipe(Layer.provide(serialization(signal.protocol)))
+  })
   const metrics = Option.map(target.metrics, (signal) => OtlpMetrics.layer({
     url: signal.url,
     resource,
@@ -57,11 +69,13 @@ const exportLayer = (target: OtlpExport): Layer.Layer<OtlpExporter.Flusher, neve
  * what is left, waiting up to `shutdownTimeout`; a serverless host flushes
  * before it responds (`flushTelemetry`). A failed export is retried and
  * then turns that signal off for 60 seconds; it never fails the program.
+ * `options.spans` (`OtlpSpanPolicy`) drops spans and leaves attributes
+ * out before they reach the exporter.
  *
  * @public
  */
 export const OtlpTelemetryHttpLive = (options: OtlpTelemetryOptions): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> =>
-  exportLayer(otlpExportOf(options))
+  exportLayer(otlpExportOf(options), Option.fromNullishOr(options.spans))
 
 /** `OtlpTelemetryHttpLive` over the global `fetch` (`FetchHttpClient`), on Node 24 and Bun. */
 export const OtlpTelemetryLive = (options: OtlpTelemetryOptions): Layer.Layer<OtlpExporter.Flusher> =>
@@ -75,12 +89,13 @@ export const OtlpTelemetryLive = (options: OtlpTelemetryOptions): Layer.Layer<Ot
  * with the host's `HttpClient`. With no endpoint, or with
  * `OTEL_SDK_DISABLED=true`, it exports nothing and reads nothing further,
  * so a host can always provide it. A variable it reads that is set to an
- * invalid value fails the layer with its `ConfigError`.
+ * invalid value fails the layer with its `ConfigError`. No variable sets
+ * a span policy: `defaults.spans` applies whatever the environment says.
  *
  * @public
  */
 export const OtlpTelemetryHttpFromEnv = (defaults: OtlpTelemetryOptions = {}): Layer.Layer<OtlpExporter.Flusher, Config.ConfigError, HttpClient.HttpClient> =>
-  Layer.unwrap(otlpExportFromEnv(defaults).pipe(Effect.map(exportLayer)))
+  Layer.unwrap(otlpExportFromEnv(defaults).pipe(Effect.map((target) => exportLayer(target, Option.fromNullishOr(defaults.spans)))))
 
 /**
  * `OtlpTelemetryHttpFromEnv` over the global `fetch` (`FetchHttpClient`), on Node 24 and Bun.

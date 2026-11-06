@@ -1,6 +1,6 @@
 export { flushTelemetry, OtlpTelemetryFromEnv, OtlpTelemetryHttpFromEnv, OtlpTelemetryHttpLive, OtlpTelemetryLive } from "./otlp-telemetry.adapter.js"
 export { OtlpCompression, OtlpProtocol, OtlpTemporality } from "./otlp-telemetry.entity.js"
-export type { OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
+export type { OtlpSpanPolicy, OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
 export { LangSmithTelemetryHttpLive, LangSmithTelemetryLive } from "./langsmith-telemetry.adapter.js"
 export { LangSmithAgentId, LangSmithEnvironment, LangSmithTarget } from "./langsmith-telemetry.entity.js"
 export type { LangSmithTelemetryOptions } from "./langsmith-telemetry.entity.js"

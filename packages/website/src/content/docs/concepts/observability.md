@@ -55,6 +55,7 @@ Effect.runFork(program.pipe(Effect.provide(OtlpTelemetryLive({
 | `exportInterval` | 5 s traces, 10 s metrics | how often batches are posted |
 | `shutdownTimeout` | 3 s | how long closing the layer waits for the last post |
 | `metricsTemporality` | `"cumulative"` | or `"delta"`, for backends that want deltas |
+| `spans` | every span, whole | an `OtlpSpanPolicy`: which spans and attribute values the traces export sends (below) |
 
 These layers take their options as given. They ignore `OTEL_SERVICE_NAME`
 and the `service.name` in `OTEL_RESOURCE_ATTRIBUTES`: `serviceName` (or the
@@ -68,6 +69,51 @@ metric the program updated, the framework's and the plugin's) is posted whole
 each interval. Closing the layer posts what is left. A post that fails is
 retried, then that signal pauses for 60 seconds; export never fails the
 program.
+
+**An export policy.** `spans` decides what of each span leaves the
+process, for a host whose policy allows only some attributes, or only
+metadata for sensitive work. Its two hooks are synchronous and read the
+span they are given, which holds every attribute set on it (the policy
+filters what is sent, not what the program sees):
+
+```ts
+import { Effect, Option } from "effect"
+import { OtlpTelemetryLive } from "@xandreed/plugin-telemetry"
+
+declare const program: Effect.Effect<void>
+const allowed = new Set(["efferent.session.id", "efferent.run.id", "efferent.turn", "efferent.outcome"])
+
+const observed = program.pipe(Effect.provide(OtlpTelemetryLive({
+  baseUrl: "http://localhost:4318",
+  spans: {
+    // Spans the host marks as internal are not sent.
+    keep: (span) => span.attributes.get("app.internal") !== true,
+    // Only allow-listed attributes leave the process, and none from work marked sensitive.
+    attribute: (span, key, value) =>
+      allowed.has(key) && span.attributes.get("app.sensitive") !== true ? Option.some(value) : Option.none(),
+  },
+})))
+```
+
+- `keep(span)` runs once per span, when its first child starts or else when
+  it ends, and sees the attributes it has then (those it was opened with at
+  least). A dropped span is never sent; its children are sent under its
+  nearest kept ancestor, so the trace stays connected. The children of a
+  dropped root start traces of their own.
+- `attribute(span, key, value)` returns the value an attribute is sent
+  with, or `Option.none()` to leave it out. It runs as the attribute is set,
+  on span attributes and on span events' attributes alike, so a value it
+  leaves out never reaches the exporter. An attribute set through
+  `Effect.annotateSpans` reaches every span opened inside, before any other,
+  which is how a host marks a whole turn (`app.sensitive` above) for the
+  hooks to read.
+- A hook that throws drops the span or the attribute it was asked about.
+- Span and event names, links, and the status and `exception` events a
+  failed span gets from its exit are sent as they are.
+
+`OtlpTelemetryFromEnv(defaults)` applies `defaults.spans`; no variable sets
+a policy. The policy is a host's own rule on top of `captureTraceContent`,
+which still decides whether prompts and responses reach a span at all.
 
 **A host's HTTP client.** `OtlpTelemetryLive` and `OtlpTelemetryFromEnv`
 post with the global `fetch`. `OtlpTelemetryHttpLive(options)` and
@@ -125,6 +171,18 @@ The export layer joins Effect's tracer only. A host already running the
 OpenTelemetry Node SDK (with HTTP or database auto-instrumentation) gets two
 separate pipelines; traces from both reach a collector but are not
 parent-linked.
+
+**A host with its own OpenTelemetry provider.** To get one pipeline, the
+host bridges Effect's `Tracer` into its provider and leaves the
+`OtlpTelemetry*` layers out: it provides a `Tracer` (`Tracer.make`, or an
+Effect–OpenTelemetry bridge for its Effect version) whose spans start and
+end its provider's spans, and its provider's processors, samplers and
+exporters then apply to the framework's spans as to its own. Nothing in the
+packages depends on the OTLP layers: `Agent.turn`'s spans, the telemetry
+plugin's span events and its metrics work with any tracer and any metric
+exporter the host provides. The metrics then need an exporter of the host's
+own reading Effect's metric registry, or `OtlpTelemetryLive({ traces: false,
+... })` beside the bridge for metrics alone.
 
 ## LangSmith
 

@@ -446,7 +446,11 @@ provides an exporter around its program: `@xandreed/plugin-telemetry`'s
 `OtlpTelemetryLive({ baseUrl })` (or `OtlpTelemetryFromEnv()`, configured by
 the standard `OTEL_EXPORTER_OTLP_*` variables) posts traces and metrics over
 OTLP/HTTP with Effect's own exporters (`effect/observability`), and a
-serverless host flushes before it responds (`flushTelemetry`). The same
+serverless host flushes before it responds (`flushTelemetry`). Their
+`spans` option (`OtlpSpanPolicy`) drops spans, their children reparented to
+the nearest kept ancestor, and rewrites or leaves out attributes before
+they reach the exporter; a host with its own OpenTelemetry provider bridges
+Effect's tracer into it and leaves these layers out. The same
 package's `telemetryPlugin` records each turn's token usage by billed kind,
 its cost at the host's prices, tool calls, refusals and durations, steps and
 stream fallbacks as metrics, and the turn's usage and refusals as events on
