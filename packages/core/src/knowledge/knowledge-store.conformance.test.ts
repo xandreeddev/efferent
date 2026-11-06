@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Ref, Result } from "effect"
+import { Effect, Match, Option, Ref, Result } from "effect"
 import type { KnowledgeIndex } from "../ports/knowledge.port.js"
 import { makeKnowledgeIndexMemory } from "./knowledge.memory.adapter.js"
+import { admitsKnowledgeSource, knowledgeCandidateAdmitted } from "./knowledge.entity.functions.js"
 import { knowledgeStoreConformance, temporalGraphConformance } from "./knowledge-store.conformance.js"
 import { KnowledgeJobCursor, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeSourceId, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
 
@@ -14,7 +15,7 @@ describe("knowledge index reference conformance", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry", "knowledge.failure-reason",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
-      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
+      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.forget-tombstone", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
       "knowledge.engine-isolation", "knowledge.failed-listing", "knowledge.requeue", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
@@ -112,4 +113,24 @@ test("the reference store refuses a requeue onto an engine that already holds th
     return { held: held.reason, cursor: cursor.reason, listed: listed.jobs.map((job) => job.id) }
   }))
   expect(outcome).toEqual({ held: "Conflict", cursor: "Invalid", listed: [KnowledgeJobId.make("older")] })
+})
+
+test("the metadata-filter check rejects a store that ignores the filter or applies it after the limit", async () => {
+  const ignoring = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, search: ({ metadata: _ignored, ...query }) => real.search(query) }))
+  // Ranks unfiltered, keeps the nearest `limit`, then drops what the filter refuses: narrow scopes lose their matches.
+  const afterLimit = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({
+    ...real,
+    search: ({ metadata, ...query }) => real.search(query).pipe(Effect.flatMap((found) => metadata === undefined ? Effect.succeed(found) : Effect.gen(function* () {
+      const admitted = (arm: typeof found.lexical) => Effect.filter(arm, (candidate) => Effect.map(
+        Effect.forEach(Match.valueTags(candidate, { Memory: ({ memory }) => memory.provenance, Chunk: ({ chunk }) => [chunk.provenance] }), (span) => real.source(query.scope, span.source), { concurrency: 1 }),
+        (sources) => knowledgeCandidateAdmitted(candidate, (ref) => sources.some((source) => Option.exists(source, (value) => value.ref.id === ref.id && value.ref.revision === ref.revision && admitsKnowledgeSource({ metadata }, value)))),
+      ), { concurrency: 1 })
+      return { lexical: yield* admitted(found.lexical), semantic: yield* admitted(found.semantic) }
+    }))),
+  }))
+  const results = await Effect.runPromise(Effect.forEach([ignoring, afterLimit], (open) => Effect.forEach(
+    knowledgeStoreConformance({ open: Effect.map(open, (index) => ({ index, scope })) }).filter((check) => check.name === "knowledge.metadata-filter"),
+    (check) => Effect.result(check.run), { concurrency: 1 },
+  ), { concurrency: 1 }))
+  expect(results.map((found) => found.length === 1 && found.every(Result.isFailure))).toEqual([true, true])
 })

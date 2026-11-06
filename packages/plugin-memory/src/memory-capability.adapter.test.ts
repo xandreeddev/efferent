@@ -158,6 +158,48 @@ describe("memory model-facing contracts", () => {
     }))
   })).pipe(Effect.provide(TestClock.layer()))))
 
+  test("a reach's metadata filter narrows recall, reads and the section by each cited revision's metadata, and refuses forgetting as not found", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    const recalls = yield* Ref.make<ReadonlyArray<KnowledgeRecall>>([])
+    const reads = yield* Ref.make<ReadonlyArray<string>>([])
+    const forgotten = yield* Ref.make<ReadonlyArray<string>>([])
+    const topicOf = (id: string) => id.startsWith("tea") ? "tea" : "coffee"
+    const profileOf = (name: string, text: string, sources: ReadonlyArray<string>) => ({ id: KnowledgeMemoryId.make(name), kind: "preference" as const, text, entities: [], evidence: { _tag: "Stated" as const }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none(),
+      provenance: sources.map((source) => ({ source: { id: KnowledgeSourceId.make(source), revision: 1 }, start: 0, end: text.length, quote: text })) })
+    const memory = LongTermMemory.of({
+      ...fixture.memory,
+      recall: (input) => Ref.update(recalls, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })),
+      profile: () => Effect.succeed([profileOf("coffee", "Prefers coffee.", ["coffee-1"]), profileOf("mixed", "Prefers tea with coffee.", ["tea-1", "coffee-1"]), profileOf("tea", "Prefers tea.", ["tea-1", "tea-2"])]),
+      source: (scope, ref) => Ref.update(reads, (all) => [...all, String(ref.id)]).pipe(Effect.as(Option.some({ scope, ref, text: "Prefers tea.", occurredAt: 1, recordedAt: 1, metadata: { topic: topicOf(ref.id) } }))),
+      forget: (_scope, id) => Ref.update(forgotten, (all) => [...all, String(id)]),
+    })
+    const narrowing = { reach: () => Effect.succeed({ owner: "workspace-owner", metadata: { topic: "tea" } }) }
+    const capability = memoryCapability(memoryDefaults)
+    const tool = (name: string) => capability.tools.find((entry) => entry.tool.name === name)!
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [Sessions, LongTermMemory] })
+    const services = Context.make(Sessions, fixture.sessions).pipe(Context.add(LongTermMemory, memory), Context.add(KnowledgeNarrowing, narrowing))
+    yield* agent.turn({ turn: { session: captureAddress, runId: RunId.make("metadata-memory"), userMessage: new UserMessage({ text: "What do I prefer?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* tool("recall_memory").handler({ query: "prefer" }).pipe(Effect.orDie)
+      expect((yield* Ref.get(recalls)).map((input) => [input.scope.owner, input.metadata, input.sources])).toEqual([["workspace-owner", { topic: "tea" }, undefined]])
+      const outside = yield* tool("read_memory").handler({ source: "coffee-1", revision: 1 }).pipe(Effect.result)
+      expect(outside._tag === "Failure" && outside.failure).toEqual(memoryCapabilityText.missing)
+      yield* tool("read_memory").handler({ source: "tea-1", revision: 1 }).pipe(Effect.orDie)
+      // The section keeps a profile memory only when every revision it cites matches, reading each revision once.
+      yield* Ref.set(reads, [])
+      const text = yield* capability.promptSections[0]!.render({ variant: Option.none(), active: [], skills: [] })
+      expect(Option.isSome(text) && text.value.includes("Prefers tea.") && !text.value.includes("coffee")).toBe(true)
+      expect((yield* Ref.get(recalls)).at(-1)?.metadata).toEqual({ topic: "tea" })
+      expect(yield* Ref.get(reads)).toEqual(["coffee-1", "tea-1", "tea-2"])
+      // Forgetting removes every revision of a source, which a filter on revisions cannot vouch for: no source is forgotten, inside the filter or out.
+      const outsideForget = yield* tool("forget_memory").handler({ source: "coffee-1" }).pipe(Effect.result)
+      expect(outsideForget._tag === "Failure" && outsideForget.failure).toEqual(memoryCapabilityText.missing)
+      const insideForget = yield* tool("forget_memory").handler({ source: "tea-1" }).pipe(Effect.result)
+      expect(insideForget._tag === "Failure" && insideForget.failure).toEqual(memoryCapabilityText.missing)
+      expect(yield* Ref.get(forgotten)).toEqual([])
+      return yield* turn.reply("Tea.")
+    }))
+  })).pipe(Effect.provide(TestClock.layer()))))
+
   test("evidence budgets retain complete source citations or omit the entire memory", () => {
     const source = { id: KnowledgeSourceId.make("turn-budget"), revision: 1 }
     const memory = { id: KnowledgeMemoryId.make("budget-memory"), kind: "preference" as const, text: "Prefers tea.", entities: [],

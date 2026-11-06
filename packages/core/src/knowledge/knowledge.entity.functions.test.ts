@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector,
-  type KnowledgeErrorReason, type KnowledgeFailureStep,
+  KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId,
+  KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector, type KnowledgeErrorReason, type KnowledgeFailureStep, KnowledgeMetadataFilter,
+  KnowledgeSearch,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin, knowledgeCosine, knowledgeEngineId, knowledgeScopeKey,
-  narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
+  citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
+  knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
+  admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -152,4 +154,72 @@ test("a narrowed graph keeps listed spans of mentioned entities and relations wh
   expect(narrowed.truncated).toBe(true)
   expect(narrowKnowledgeGraph(graph, [])).toEqual({ entities: [], assertions: [], truncated: true })
   expect(narrowKnowledgeGraph(graph, [KnowledgeSourceId.make("one"), KnowledgeSourceId.make("two")]).assertions.map((assertion) => String(assertion.id))).toEqual(["from-one", "from-both", "to-place"])
+})
+
+test("a metadata filter matches top-level keys by exact value, every key and any alternative", () => {
+  const metadata = { kind: "report", pages: 3, draft: false, owner: null, tags: ["a", "b"], nested: { kind: "report" } }
+  const cases: ReadonlyArray<readonly [KnowledgeMetadataFilter, boolean]> = [
+    [{}, true],
+    [{ kind: "report" }, true],
+    [{ kind: "Report" }, false],
+    [{ kind: ["memo", "report"] }, true],
+    [{ kind: [] }, false],
+    [{ kind: "report", pages: 3 }, true],
+    [{ kind: "report", pages: 4 }, false],
+    [{ pages: "3" }, false],
+    [{ draft: false }, true],
+    [{ draft: 0 }, false],
+    [{ owner: null }, true],
+    [{ missing: null }, false],
+    [{ tags: "a" }, false],
+    [{ "nested.kind": "report" }, false],
+  ]
+  expect(cases.map(([filter]) => matchesKnowledgeMetadata(metadata, filter))).toEqual(cases.map(([, expected]) => expected))
+})
+
+test("a metadata filter's schema bounds its keys and alternatives and refuses non-scalar values", () => {
+  const decode = Schema.decodeUnknownOption(KnowledgeMetadataFilter)
+  expect(Option.isSome(decode({ kind: ["a", 1, true, null] }))).toBe(true)
+  expect(Option.isNone(decode({ kind: { nested: "a" } }))).toBe(true)
+  expect(Option.isNone(decode({ kind: [["a"]] }))).toBe(true)
+  expect(Option.isNone(decode({ pages: Number.POSITIVE_INFINITY }))).toBe(true)
+  expect(Option.isSome(decode(Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`key-${index}`, index]))))).toBe(true)
+  expect(Option.isNone(decode(Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`key-${index}`, index]))))).toBe(true)
+  expect(Option.isNone(decode({ kind: Array.from({ length: 101 }, (_, index) => index) }))).toBe(true)
+  // Search, recall and reach take it beside `sources`; a search without it decodes unchanged.
+  const search = { scope, query: "q", vector: null, limit: 1, knownAt: null }
+  expect(Option.map(Schema.decodeUnknownOption(KnowledgeSearch)(search), (value) => "metadata" in value)).toEqual(Option.some(false))
+  expect(Option.isSome(Schema.decodeUnknownOption(KnowledgeSearch)({ ...search, metadata: { kind: "report" } }))).toBe(true)
+})
+
+test("a narrowing admits a cited revision when both its source list and its metadata filter hold for that revision", () => {
+  const info = (name: string, revision: number, metadata: KnowledgeSource["metadata"]) => ({ ref: { id: KnowledgeSourceId.make(name), revision }, metadata })
+  const infos = [info("one", 1, { kind: "report" }), info("one", 2, { kind: "memo" }), info("two", 1, { kind: "report" })]
+  const refOf = (name: string, revision: number) => ({ id: KnowledgeSourceId.make(name), revision })
+  const byMetadata = knowledgeNarrowingAdmits({ metadata: { kind: "report" } }, infos)
+  // The revision a span cites decides, and a revision without info (forgotten or unknown) matches no filter.
+  expect([byMetadata(refOf("one", 1)), byMetadata(refOf("one", 2)), byMetadata(refOf("two", 1)), byMetadata(refOf("three", 1))]).toEqual([true, false, true, false])
+  const both = knowledgeNarrowingAdmits({ metadata: { kind: "report" }, sources: [KnowledgeSourceId.make("two")] }, infos)
+  expect([both(refOf("one", 1)), both(refOf("two", 1))]).toEqual([false, true])
+  // Without a metadata filter, the source list alone decides, as it always has; without either, everything is admitted.
+  expect(knowledgeNarrowingAdmits({ sources: [KnowledgeSourceId.make("three")] }, [])(refOf("three", 1))).toBe(true)
+  expect(knowledgeNarrowingAdmits({}, [])(refOf("three", 1))).toBe(true)
+  expect([admitsKnowledgeSource({ metadata: { kind: "memo" } }, infos[1]!), admitsKnowledgeSource({ metadata: { kind: "memo" } }, infos[0]!)]).toEqual([true, false])
+  const joint: KnowledgeMemory = { ...memory("joint"), provenance: [...memory("one").provenance, ...memory("two").provenance] }
+  expect([citesAdmittedKnowledge(joint.provenance, byMetadata), citesAdmittedKnowledge(joint.provenance, both), citesAdmittedKnowledge([], byMetadata)]).toEqual([true, false, false])
+  const chunk: KnowledgeCandidate = { _tag: "Chunk", score: 1, chunk: { id: KnowledgeChunkId.make("chunk"), text: "Visits the", provenance: memory("two").provenance[0]!, embedding: Option.none() } }
+  expect([knowledgeCandidateAdmitted(chunk, both), knowledgeCandidateAdmitted({ _tag: "Memory", score: 1, memory: joint }, both)]).toEqual([true, false])
+})
+
+test("a graph narrowed by a predicate keeps admitted spans and wholly admitted relations, as the source-list form does", () => {
+  const spanOf = (name: string) => memory(name).provenance[0]!
+  const person = { id: KnowledgeEntityId.make("person"), name: "Person", type: "person", aliases: [], provenance: [spanOf("one"), spanOf("two")] }
+  const edge = (name: string, spans: KnowledgeMemory["provenance"]) => ({
+    id: KnowledgeAssertionId.make(name), subject: person.id, predicate: "visits", text: name, provenance: spans, object: { _tag: "Value" as const, value: "Monday" },
+    validFrom: Option.none<number>(), validTo: Option.none<number>(), knownFrom: 1, knownTo: Option.none<number>(),
+  })
+  const graph = { entities: [person], assertions: [edge("from-one", [spanOf("one")]), edge("from-both", [spanOf("one"), spanOf("two")])], truncated: false }
+  const admits = knowledgeNarrowingAdmits({ metadata: { kind: "report" } }, [{ ref: spanOf("one").source, metadata: { kind: "report" } }, { ref: spanOf("two").source, metadata: { kind: "memo" } }])
+  expect(narrowKnowledgeGraphBy(graph, admits)).toEqual(narrowKnowledgeGraph(graph, [KnowledgeSourceId.make("one")]))
+  expect(narrowKnowledgeGraphBy(graph, () => false)).toEqual({ entities: [], assertions: [], truncated: false })
 })

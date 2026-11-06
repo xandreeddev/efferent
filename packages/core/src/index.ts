@@ -512,7 +512,7 @@ export {
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
   KnowledgeHelperPurpose, KnowledgeHelperJob, KnowledgeHelperCall,
-  KnowledgeSourceFilter, KnowledgeReach,
+  KnowledgeSourceFilter, KnowledgeMetadataValue, KnowledgeMetadataFilter, KnowledgeReach,
 } from "./knowledge/knowledge.entity.js"
 export { MemoryStore, KnowledgeStore, TemporalGraph, LongTermMemory, Knowledge, KnowledgeNarrowing } from "./ports/knowledge.port.js"
 export type { KnowledgeIndex } from "./ports/knowledge.port.js"
@@ -521,6 +521,7 @@ export {
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, traverseKnowledgeGraph,
   validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph, isRetryableKnowledgeFailure,
+  citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
 export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow } from "./knowledge/knowledge-extraction.entity.js"

@@ -225,12 +225,33 @@ export type KnowledgeCandidate = typeof KnowledgeCandidate.Type
  */
 export const KnowledgeSourceFilter = Schema.Array(KnowledgeSourceId).check(Schema.isMaxLength(1000))
 export type KnowledgeSourceFilter = typeof KnowledgeSourceFilter.Type
+/** A JSON scalar a metadata filter compares a source's metadata value with. @public */
+export const KnowledgeMetadataValue = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])
+export type KnowledgeMetadataValue = typeof KnowledgeMetadataValue.Type
+/**
+ * The only source revisions a read may return evidence from, by their host metadata
+ * (`KnowledgeSource.metadata`), within its scope. Each key names a top-level metadata key whose
+ * value must equal the given JSON scalar, or one of the listed alternatives; every key must
+ * match. Equality is exact and by value: a key the metadata lacks matches nothing, `null` matches
+ * only a stored `null`, an array or object value matches no scalar, and an empty list of
+ * alternatives matches nothing. A record is kept when every span of its provenance cites a
+ * revision that matches, judged by the metadata of the revision it cites. At most 16 keys and 100
+ * alternatives a key; an empty filter matches every source.
+ * @public
+ */
+export const KnowledgeMetadataFilter = Schema.Record(
+  Schema.String,
+  Schema.Union([KnowledgeMetadataValue, Schema.Array(KnowledgeMetadataValue).check(Schema.isMaxLength(100))]),
+).check(Schema.isMaxProperties(16))
+export type KnowledgeMetadataFilter = typeof KnowledgeMetadataFilter.Type
 /** @public */
 export const KnowledgeSearch = Schema.Struct({
   scope: KnowledgeScope, query: Schema.String, vector: Schema.OptionFromNullOr(KnowledgeVector),
   limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
   knownAt: Schema.OptionFromNullOr(Count),
   sources: Schema.optionalKey(KnowledgeSourceFilter),
+  /** Candidates only from source revisions whose metadata matches, applied before `limit`; with `sources`, both must hold. */
+  metadata: Schema.optionalKey(KnowledgeMetadataFilter),
 })
 export type KnowledgeSearch = typeof KnowledgeSearch.Type
 /** @public */
@@ -254,14 +275,17 @@ export const KnowledgeRecall = Schema.Struct({
   maxChars: Positive, graph: Schema.optionalKey(Schema.Union([Schema.Literal(false), Schema.Struct({ perspective: Schema.Struct({ validAt: Schema.optionalKey(Count), knownAt: Schema.optionalKey(Count) }), depth: Positive.check(Schema.isLessThanOrEqualTo(3)) })])),
   /** Candidates and graph evidence only from these sources; graph entities keep only their spans in them. */
   sources: Schema.optionalKey(KnowledgeSourceFilter),
+  /** Candidates and graph evidence only from source revisions whose metadata matches; with `sources`, both must hold. */
+  metadata: Schema.optionalKey(KnowledgeMetadataFilter),
 })
 export type KnowledgeRecall = typeof KnowledgeRecall.Type
 /**
  * How far one turn's retrieval reaches: the owner whose knowledge it reads and, when given,
- * the only sources it may read (`KnowledgeNarrowing` returns it).
+ * the only sources it may read, by id (`sources`), by their metadata (`metadata`), or both
+ * (`KnowledgeNarrowing` returns it).
  * @public
  */
-export const KnowledgeReach = Schema.Struct({ owner: Text, sources: Schema.optionalKey(KnowledgeSourceFilter) })
+export const KnowledgeReach = Schema.Struct({ owner: Text, sources: Schema.optionalKey(KnowledgeSourceFilter), metadata: Schema.optionalKey(KnowledgeMetadataFilter) })
 export type KnowledgeReach = typeof KnowledgeReach.Type
 /**
  * Ranked evidence, its graph, and `sources`: the info of every source revision the evidence cites,

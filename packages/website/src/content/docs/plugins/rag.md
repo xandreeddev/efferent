@@ -104,9 +104,13 @@ tool shows the model evidence in the same form
 ([cited sources](/docs/concepts/native-knowledge/#cited-sources-and-evidence-text)).
 Tool scope derives from the session owner, unless the host narrows it per turn
 with `KnowledgeNarrowing`: another owner and, optionally, the only sources the
-turn's search, reads and recall may reach (see
-[narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)).
-The host APIs accept explicit scopes, and `retrieve` a `sources` filter.
+turn's search, reads and recall may reach, by id, by their metadata or both
+(see [narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)
+and [narrow by source metadata](/docs/concepts/native-knowledge/#narrow-by-source-metadata)).
+A chunk matches a metadata filter when the source revision it quotes does, and
+the store applies the filter before its candidate limit, so a narrow filter
+still finds its best excerpts. The host APIs accept explicit scopes, and
+`retrieve` a `sources` filter and a `metadata` filter.
 Set `recall: true` to inject bounded retrieved evidence into recorded turn
 context automatically; the default leaves retrieval to tools or host calls.
 

@@ -109,18 +109,23 @@ tools show, are exported for a host's own tools
 ([cited sources](/docs/concepts/native-knowledge/#cited-sources-and-evidence-text)).
 Model-facing scope comes from the current session's owner, unless the host
 narrows it per turn with `KnowledgeNarrowing`: another owner and, optionally,
-the only sources recall, reads and the turn-context section may reach, its
-profile records included (see
-[narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)).
-Narrowing scopes reads only: saving, forgetting and conversation capture keep
-the session owner, and a source outside the listed ones cannot be forgotten.
-What conversation capture stores of each committed turn is the host's to
+the only sources recall, reads and the turn-context section may reach, by id,
+by their metadata or both, its profile records included (see
+[narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)
+and [narrow by source metadata](/docs/concepts/native-knowledge/#narrow-by-source-metadata)).
+A memory matches a metadata filter only when every source revision it cites
+does, and the store applies the filter before its candidate limit. Narrowing
+scopes reads only: saving, forgetting and conversation capture keep the session
+owner, and a source outside the listed ones cannot be forgotten (it is not
+found). Forgetting removes every revision of a source, so while a metadata
+filter is set no source can be forgotten: `forget_memory` answers each as not
+found. What conversation capture stores of each committed turn is the host's to
 screen with `MemoryCaptureAdmission`: admit it, admit replacement text, or
 refuse it, so it is never recalled (see
 [screen turns before capture](/docs/plugins/memory-capture/#screen-turns-before-capture)).
-The catch-up the recall section runs before recalling asks it too.
-Host APIs explicitly name owner, namespace and collection, and `recall` takes a
-`sources` filter.
+The catch-up the recall section runs before recalling asks it too. Host APIs
+explicitly name owner, namespace and collection, and `recall` takes a `sources`
+filter and a `metadata` filter.
 
 ## Processing, persistence and forgetting
 

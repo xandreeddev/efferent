@@ -10,6 +10,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -71,6 +72,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   create it beforehand with `CREATE INDEX CONCURRENTLY IF NOT EXISTS
   jobs_failed ON efferent_knowledge.jobs (domain, namespace, ordinal) WHERE
   phase = 'Failed'`.
+
 
 ### Added
 
@@ -411,8 +413,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   created on open when missing with the layout left at 1, so an earlier
   release still opens the database. `knowledgeStoreConformance` adds
   `knowledge.failed-listing` and `knowledge.requeue`.
+- `@xandreed/core`, `@xandreed/plugin-rag`, `@xandreed/plugin-memory`,
+  `@xandreed/plugin-knowledge-postgres`: knowledge search narrows by source
+  metadata before its nearest-neighbour limit. A host that marked its
+  sources at ingestion (a project, a kind, a visibility) could only filter
+  the candidates a search returned, after the store had cut them to its N
+  nearest, so a narrow scope lost its matches; or it resolved the marks to
+  id lists itself. `KnowledgeSearch`, `KnowledgeRecall` and `KnowledgeReach`
+  take an optional `metadata` filter (`KnowledgeMetadataFilter`): top-level
+  keys of `KnowledgeSource.metadata`, each with a JSON scalar or a list of
+  alternatives (`KnowledgeMetadataValue`), every key required, compared by
+  exact value; at most 16 keys and 100 alternatives a key. A record is
+  judged by the metadata of the revisions it cites, as for `sources`: a
+  chunk by the revision it quotes, a memory or relation only when every
+  revision it cites matches, a graph entity with only its matching spans;
+  with `sources` too, both must hold. The in-memory store filters before
+  ranking, the PostgreSQL store joins each candidate to its cited revision
+  inside the lexical and semantic statements, before `ORDER BY` and
+  `LIMIT` (by primary key: no layout change), and both engines pass the
+  filter to `search` and narrow the graph with `sourceInfo`. Through
+  `KnowledgeNarrowing`, the reach's filter reaches `search_knowledge`,
+  `recall_memory` and both recall sections; `read_knowledge` and
+  `read_memory` answer a revision outside it as not found, and the memory
+  section's profile keeps only memories within it. `forget_memory` answers
+  every source as not found while the reach has a metadata filter: it
+  removes every revision of a source, which a filter on revisions cannot
+  vouch for, so a turn isolated by metadata cannot delete outside it (a
+  turn that should forget narrows by a source list, which it checks).
+  `matchesKnowledgeMetadata`, `admitsKnowledgeSource`,
+  `knowledgeNarrowingAdmits`, `citesAdmittedKnowledge` and
+  `narrowKnowledgeGraphBy` state the rule. Without a filter nothing changes:
+  tool and section text, versions, stored formats and SQL are unchanged.
+  `knowledgeStoreConformance` gains `knowledge.metadata-filter`, which a
+  store that filters after its limit fails.
 
 ### Changed
+
 
 - `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
   `AgentConfig<S>.services` is a `Context.Context<S>`, which `Agent.define`
@@ -439,7 +475,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   outside the engine's namespace and collection, as `ingest`, `capture` and
   `process` do.
 
+
 ### Fixed
+
 
 
 
@@ -533,7 +571,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
   options instead of as the fourth argument: `frames(scope, after,
@@ -549,7 +589,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: `KnowledgeIndex` adds `failed` and `requeue`. Migration
   above.
 
+
 ### Repository
+
 
 
 
@@ -563,6 +605,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

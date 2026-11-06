@@ -4,7 +4,7 @@ import {
   BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
   applyKnowledgeRerank, citedKnowledgeSources, knowledgeCandidateText, KnowledgeQueryPlan, knowledgeQueryPrompt, KnowledgeRerank, knowledgeRerankPrompt,
-  narrowKnowledgeGraph, traverseKnowledgeGraph,
+  knowledgeNarrowingAdmits, narrowKnowledgeGraph, narrowKnowledgeGraphBy, traverseKnowledgeGraph,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
@@ -164,7 +164,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   })
   const retrieve = Effect.fn("rag.retrieve")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
-    const sources = input.sources
+    const { sources, metadata } = input
     if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }
     const now = yield* Clock.currentTimeMillis
     const plan = config.queryPlanning ? yield* askQuery(KnowledgeQueryPlan, knowledgeQueryPrompt(input.query, now), "plan", input.scope) : Option.none()
@@ -185,13 +185,17 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     )
     const arms = yield* Effect.forEach(queries, (query, index) => store.search({ scope: input.scope, query,
       vector: Option.flatMap(queryVectors, (vectors) => Option.fromNullishOr(vectors[index])), limit: poolLimit,
-      knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }),
+      knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }),
     }), { concurrency: 1 })
     const pooled = fuseKnowledgeCandidates({ lexical: arms.flatMap((arm) => arm.lexical.filter((entry) => entry._tag === "Chunk")), semantic: arms.flatMap((arm) => arm.semantic.filter((entry) => entry._tag === "Chunk")) }, poolLimit, config.maxCandidateChars)
     const graph = expansion === undefined ? { entities: [], assertions: [], truncated: false } : yield* Effect.gen(function* () {
       const stored = yield* store.snapshot(input.scope)
-      // A source filter narrows the graph before seeding and traverses it here, as the store would.
-      const snapshot = sources === undefined ? stored : { ...stored, graph: narrowKnowledgeGraph(stored.graph, sources) }
+      // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata
+      // filter reads the info of the revisions the graph cites.
+      const narrowed = metadata !== undefined
+        ? narrowKnowledgeGraphBy(stored.graph, knowledgeNarrowingAdmits(input, yield* store.sourceInfo(input.scope, citedKnowledgeSources({ candidates: [], graph: stored.graph }))))
+        : sources === undefined ? stored.graph : narrowKnowledgeGraph(stored.graph, sources)
+      const snapshot = { ...stored, graph: narrowed }
       const spans = pooled.flatMap((candidate) => Match.valueTags(candidate, { Memory: () => [], Chunk: ({ chunk }) => [chunk.provenance] }))
       const evidenceEdges = snapshot.graph.assertions.filter((edge) => edge.provenance.some((span) => spans.some((chunk) => chunk.source.id === span.source.id && chunk.source.revision === span.source.revision && chunk.start < span.end && span.start < chunk.end)))
       const names = [input.query, ...Option.match(plan, { onNone: () => [], onSome: (value) => value.entities })].join(" ").toLowerCase()
@@ -199,7 +203,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       const seeds: ReadonlyArray<KnowledgeEntityId> = [...new Set(named.length > 0 ? named : evidenceEdges.map((edge) => edge.subject))].slice(0, 100)
       const traversal = { scope: input.scope, seeds, perspective, depth: expansion.depth, limit: poolLimit }
       return seeds.length === 0 ? { entities: [], assertions: [], truncated: false }
-        : sources === undefined ? yield* store.traverse(traversal) : traverseKnowledgeGraph(snapshot.graph, traversal)
+        : sources === undefined && metadata === undefined ? yield* store.traverse(traversal) : traverseKnowledgeGraph(snapshot.graph, traversal)
     })
     const rerank = config.rerank && pooled.length > 0 ? yield* askQuery(KnowledgeRerank, knowledgeRerankPrompt(input.query, pooled, graph, config.maxCandidateChars), "rerank", input.scope) : Option.none()
     const checkedOrder = Option.flatMap(rerank, (result) => applyKnowledgeRerank(pooled, result))

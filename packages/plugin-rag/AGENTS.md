@@ -9,10 +9,12 @@ through KnowledgeStore. Node 24 and Bun.
 
 - Keep personal memory separate: document extraction returns no memories.
 - Every operation names owner, namespace and collection. Model tools and the
-  recall section take owner and any source filter from the run's
+  recall section take owner and any source or metadata filter from the run's
   `KnowledgeNarrowing` (by default `RunContext.session.owner`, no filter); they
-  accept no owner or source parameter, and a source read outside the filter is
-  not found.
+  accept no owner, source or metadata parameter, and a source revision read
+  outside the filters is not found. Retrieval passes both filters to
+  `KnowledgeStore.search`, which applies them before its limit, and narrows the
+  graph by the metadata of the revisions it cites.
 - Ingestion enqueues immutable source revisions. Do not replace the published
   document until all chunks, vectors and graph extraction are staged and the
   store accepts the lease, source revision and scope CAS atomically.
@@ -100,7 +102,8 @@ prompts. This package owns the following text contracts:
   recorded turn context, and search over a document whose graph extraction
   failed, with no keys or network.
 - `src/rag-narrowing.journey.test.ts`: two conversations of one owner, each
-  narrowed by the host to its own sources, search, read and recall only them.
+  narrowed by the host to its own sources, by id and by source metadata,
+  search, read and recall only them.
 - `src/rag-worker.test.ts`: lease heartbeats, durable defect handling and
   interruption of explicit processing with staged-job recovery.
 - Run `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/plugin-rag`.

@@ -47,6 +47,10 @@ export interface KnowledgeIndex {
   readonly failed: (query: KnowledgeFailedQuery) => Effect.Effect<KnowledgeFailedPage, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
   readonly snapshot: (scope: KnowledgeScope) => Effect.Effect<KnowledgeSnapshot, KnowledgeError>
+  /**
+   * Ranked lexical and semantic arms of at most `limit` each. A `sources` or `metadata` narrowing
+   * applies before ranking and the limit, so a narrow filter still returns its best matches.
+   */
   readonly search: (query: KnowledgeSearch) => Effect.Effect<KnowledgeCandidates, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
   /**
@@ -104,10 +108,13 @@ export class Knowledge extends Context.Service<Knowledge, {
  * Narrows one turn's retrieval without replacing the tools or sections that read it: the
  * document and memory capabilities ask it, once per tool call or section render, for the
  * run's `KnowledgeReach`, and read the owner it names (in the engine's own namespace and
- * collection) and, when it lists sources, only those sources (`KnowledgeRecall.sources`; a
- * source read outside them is not found). It scopes reads only: a saved or forgotten memory
- * stays on the session owner's memory, and a source outside the listed ones cannot be
- * forgotten (it is not found). The default reaches the session owner's whole collection. A host provides its own
+ * collection) and, when it lists sources or a metadata filter, only those sources
+ * (`KnowledgeRecall.sources` and `.metadata`; a source read outside them is not found). It
+ * never widens a write: a saved or forgotten memory stays on the session owner's memory, and a
+ * source outside the listed ones cannot be forgotten (it is not found). Forgetting removes every
+ * revision of a source, which a metadata filter (judging revisions) cannot vouch for, so while
+ * one is set no source can be forgotten: each is not found. The default reaches the
+ * session owner's whole collection. A host provides its own
  * among the agent's or the turn's services; a failure is the capability's unavailability.
  * @public
  */

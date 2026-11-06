@@ -204,6 +204,8 @@ const KnowledgeLeaseToken
 const KnowledgeMemory
 const KnowledgeMemoryId
 const KnowledgeMemoryKind
+const KnowledgeMetadataFilter
+const KnowledgeMetadataValue
 const KnowledgeNarrowing
 const KnowledgeObject
 const KnowledgePending
@@ -422,6 +424,7 @@ const WriteOptions
 const acceptedModelInputOf
 const activationsOf
 const addUsage
+const admitsKnowledgeSource
 const applyKnowledgeRerank
 const assistantModel
 const assistantUsage
@@ -430,6 +433,7 @@ const budgetKnowledgeRecall
 const canonicalJson
 const catalogOf
 const citedKnowledgeSources
+const citesAdmittedKnowledge
 const citesKnowledgeSources
 const clipTo
 const clippedMarker
@@ -484,6 +488,7 @@ const knowledgeCosine
 const knowledgeEngineId
 const knowledgeExtractionPrompt
 const knowledgeExtractionWindows
+const knowledgeNarrowingAdmits
 const knowledgeQueryPrompt
 const knowledgeRerankPrompt
 const knowledgeReviewPrompt
@@ -495,6 +500,7 @@ const makeKnowledgeIndexMemory
 const makeMemoryFileSystem
 const makeTurnEvents
 const makeTurnTasks
+const matchesKnowledgeMetadata
 const mediaAvailable
 const mediaFromBase64
 const mediaFromBytes
@@ -510,6 +516,7 @@ const modelOverflowEvidenceOf
 const modelRequestDescriptorOf
 const modelSpendExceededOf
 const narrowKnowledgeGraph
+const narrowKnowledgeGraphBy
 const noMaintenance
 const normalizeUserMessage
 const notifyCommittedTurn
@@ -761,6 +768,8 @@ type KnowledgeLeaseToken
 type KnowledgeMemory
 type KnowledgeMemoryId
 type KnowledgeMemoryKind
+type KnowledgeMetadataFilter
+type KnowledgeMetadataValue
 type KnowledgeObject
 type KnowledgePending
 type KnowledgePerspective

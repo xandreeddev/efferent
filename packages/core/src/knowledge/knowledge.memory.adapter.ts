@@ -6,8 +6,8 @@ import {
   type KnowledgeSource, type KnowledgeSourceId, type KnowledgeSnapshot, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  knowledgeBm25, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCandidateWithin, knowledgeCosine,
-  sameEmbeddingSpace, sameKnowledgeScope, traverseKnowledgeGraph, validateKnowledgeStage,
+  knowledgeBm25, knowledgeCandidateAdmitted, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCandidateWithin, knowledgeCosine,
+  knowledgeNarrowingAdmits, sameEmbeddingSpace, sameKnowledgeScope, traverseKnowledgeGraph, validateKnowledgeStage,
 } from "./knowledge.entity.functions.js"
 import { KnowledgeStore, MemoryStore, TemporalGraph, type KnowledgeIndex } from "../ports/knowledge.port.js"
 
@@ -232,14 +232,20 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
     status: Effect.fn("knowledge_store.status")((scope, id) => read((current) => Option.fromNullishOr(current.jobs.find((job) => job.id === id && sameKnowledgeScope(job.scope, scope))))),
     snapshot: Effect.fn("knowledge_store.snapshot")((scope) => read((current) => snapshotOf(scoped(current, scope)))),
     search: Effect.fn("knowledge_store.search")(function* (query) {
-      const data = yield* read((current) => scoped(current, query.scope))
+      const { data, revisions } = yield* read((current) => ({
+        data: scoped(current, query.scope),
+        revisions: current.sources.filter((source) => sameKnowledgeScope(source.scope, query.scope) && !tombstoned(current, query.scope, source.ref.id)),
+      }))
       const memories = data.memories.filter((memory) => Option.match(query.knownAt, {
         onNone: () => Option.isNone(memory.knownTo),
         onSome: (time) => memory.knownFrom <= time && Option.match(memory.knownTo, { onNone: () => true, onSome: (until) => time < until }),
       }))
       const stored: ReadonlyArray<KnowledgeCandidate> = [...memories.map((memory): KnowledgeCandidate => ({ _tag: "Memory", memory, score: 0 })), ...data.chunks.map((chunk): KnowledgeCandidate => ({ _tag: "Chunk", chunk, score: 0 }))]
       const sources = query.sources
-      const candidates = sources === undefined ? stored : stored.filter((candidate) => knowledgeCandidateWithin(candidate, sources))
+      // Narrowing applies before ranking and the limit: a metadata filter reads the metadata of the revision each span cites.
+      const admits = knowledgeNarrowingAdmits(query, revisions)
+      const candidates = query.metadata !== undefined ? stored.filter((candidate) => knowledgeCandidateAdmitted(candidate, admits))
+        : sources === undefined ? stored : stored.filter((candidate) => knowledgeCandidateWithin(candidate, sources))
       const scores = knowledgeBm25(query.query, candidates.map(knowledgeCandidateText))
       const lexical = candidates.map((candidate, position) => ({ ...candidate, score: scores[position] ?? 0 })).filter((candidate) => candidate.score > 0).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a), knowledgeCandidateKey(b))).slice(0, query.limit)
       const embeddings = stored.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => Option.toArray(memory.embedding), Chunk: ({ chunk }) => Option.toArray(chunk.embedding) }))

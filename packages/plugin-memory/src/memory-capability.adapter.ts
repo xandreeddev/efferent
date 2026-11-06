@@ -2,9 +2,10 @@ import { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Match, Option, Schema } from "effect"
 import {
   CurrentToolInvocation, Failure, KnowledgeJobId, KnowledgeNarrowing, KnowledgeSourceId, LongTermMemory, RunContext, Sessions,
-  budgetKnowledgeRecall, citesKnowledgeSources, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError, userMessageText,
+  admitsKnowledgeSource, budgetKnowledgeRecall, citesAdmittedKnowledge, citesKnowledgeSources, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError,
+  knowledgeNarrowingAdmits, userMessageText,
 } from "@xandreed/core"
-import type { KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource } from "@xandreed/core"
+import type { KnowledgeMemory, KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource } from "@xandreed/core"
 import { MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture } from "./ports/memory-capture.port.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -84,7 +85,26 @@ const reachOf = Effect.fnUntraced(function* () {
   const run = yield* RunContext
   return yield* (yield* KnowledgeNarrowing).reach(run)
 })
-const sourcesOf = (reach: KnowledgeReach) => reach.sources === undefined ? {} : { sources: reach.sources }
+const narrowingOf = (reach: KnowledgeReach) => ({
+  ...(reach.sources === undefined ? {} : { sources: reach.sources }), ...(reach.metadata === undefined ? {} : { metadata: reach.metadata }),
+})
+/**
+ * The profile memories within the reach, in order, at most `limit`: each cites only listed sources and, under a
+ * metadata filter, only revisions whose metadata matches, read one revision at a time until `limit` are kept.
+ */
+const profileWithin = Effect.fnUntraced(function* (memory: Context.Service.Shape<typeof LongTermMemory>, scope: KnowledgeScope, reach: KnowledgeReach, memories: ReadonlyArray<KnowledgeMemory>, limit: number) {
+  const { sources, metadata } = reach
+  const listed = sources === undefined ? memories : memories.filter((record) => citesKnowledgeSources(record.provenance, sources))
+  if (metadata === undefined) return listed.slice(0, limit)
+  const initial: { readonly kept: ReadonlyArray<KnowledgeMemory>; readonly read: ReadonlyArray<KnowledgeSource> } = { kept: [], read: [] }
+  const kept = yield* Effect.reduce(listed, () => initial, (state, record) => state.kept.length >= limit ? Effect.succeed(state) : Effect.gen(function* () {
+    const unread = record.provenance.map((span) => span.source).filter((ref, index, refs) => refs.findIndex((other) => other.id === ref.id && other.revision === ref.revision) === index &&
+      !state.read.some((source) => source.ref.id === ref.id && source.ref.revision === ref.revision))
+    const read = [...state.read, ...(yield* Effect.forEach(unread, (ref) => memory.source(scope, ref), { concurrency: 1 })).flatMap(Option.toArray)]
+    return { read, kept: citesAdmittedKnowledge(record.provenance, knowledgeNarrowingAdmits({ metadata }, read)) ? [...state.kept, record] : state.kept }
+  }))
+  return kept.kept
+})
 
 /**
  * The recalled evidence `recall_memory` and the `memory.recalled` section show the model: bounded
@@ -115,7 +135,7 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       const result = yield* memory.recall({ scope: scopeOf(reach.owner, config), query: input.query, limit: config.recallLimit, maxChars: config.recallChars,
         ...(input.validAt === undefined && input.knownAt === undefined ? {} : { graph: { perspective: {
           ...(input.validAt === undefined ? {} : { validAt: input.validAt }), ...(input.knownAt === undefined ? {} : { knownAt: input.knownAt }),
-        }, depth: config.graphDepth } }), ...sourcesOf(reach),
+        }, depth: config.graphDepth } }), ...narrowingOf(reach),
       }).pipe(Effect.mapError(toolFailure))
       return renderMemoryRecall(result, config.recallChars)
     }) }),
@@ -123,9 +143,11 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
       const memory = yield* LongTermMemory
       const id = KnowledgeSourceId.make(input.source)
-      const source = reach.sources === undefined || reach.sources.includes(id)
+      const read = reach.sources === undefined || reach.sources.includes(id)
         ? yield* memory.source(scopeOf(reach.owner, config), { id, revision: input.revision }).pipe(Effect.mapError(toolFailure))
         : Option.none<KnowledgeSource>()
+      // A revision outside the reach's metadata filter is not found, as one outside its source list is.
+      const source = Option.filter(read, (found) => admitsKnowledgeSource(reach, found))
       if (Option.isNone(source)) return yield* Effect.fail(memoryCapabilityText.missing)
       const offset = input.offset ?? 0
       if (offset >= source.value.text.length && offset > 0) return yield* Effect.fail(memoryCapabilityText.offsetError)
@@ -147,13 +169,15 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       } }).pipe(Effect.mapError(toolFailure))
       return savedMemoryReceipt(key)
     }) }),
-    // Narrowing scopes what a turn reads, never what it may delete: forgetting acts on the session owner's
-    // memory, as saving does, and a source outside the reach's filter is not found, as a read of it is.
+    // Narrowing never widens what a turn may delete: forgetting acts on the session owner's memory, as saving
+    // does, and a source outside the reach's source list is not found, as a read of it is. Forgetting removes
+    // every revision of a source while a metadata filter judges revisions one at a time, so under a metadata
+    // filter no source is known to lie wholly within the reach: every source is not found.
     defineTool({ tool: Forget, requires: [RunContext, LongTermMemory], annotations: { permissions: ["memory.write"] }, handler: ({ source }) => Effect.gen(function* () {
       const run = yield* RunContext
       const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
       const id = KnowledgeSourceId.make(source)
-      if (reach.sources !== undefined && !reach.sources.includes(id)) return yield* Effect.fail(memoryCapabilityText.missing)
+      if (reach.metadata !== undefined || (reach.sources !== undefined && !reach.sources.includes(id))) return yield* Effect.fail(memoryCapabilityText.missing)
       yield* (yield* LongTermMemory).forget(scopeOf(run.session.owner, config), id).pipe(Effect.mapError(toolFailure))
       return memoryCapabilityText.forgotten
     }) }),
@@ -172,15 +196,15 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       yield* Context.get(captured, MemoryCapture).sync(run.session).pipe(Effect.ignore({ log: "Warn", message: "Memory catch-up will be retried after the turn" }))
       const reach = yield* reachOf().pipe(Effect.tapError((cause) => Effect.logWarning("The memory reach is unavailable; no memory is recalled this turn", cause)), Effect.option)
       if (Option.isNone(reach)) return Option.none<string>()
-      const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(reach.value.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...sourcesOf(reach.value) }).pipe(
+      const result: KnowledgeRecallResult = yield* memory.recall({ scope: scopeOf(reach.value.owner, config), query: run.userMessage.text, limit: config.recallLimit, maxChars: config.recallChars, ...narrowingOf(reach.value) }).pipe(
         Effect.catch((error) => Effect.logWarning("Memory recall is unavailable", error).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }))),
       )
-      const sources = reach.value.sources
-      const profile = yield* memory.profile(scopeOf(reach.value.owner, config)).pipe(
-        Effect.map((memories) => sources === undefined ? memories : memories.filter((memory) => citesKnowledgeSources(memory.provenance, sources))),
+      const scope = scopeOf(reach.value.owner, config)
+      const profile = yield* memory.profile(scope).pipe(
+        Effect.flatMap((memories) => profileWithin(memory, scope, reach.value, memories, 4)),
         Effect.catch((error) => Effect.logWarning("The memory profile is unavailable", error).pipe(Effect.as([]))),
       )
-      const preferred = profile.slice(0, 4).map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
+      const preferred = profile.map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
       const combined = { ...result, candidates: [...preferred, ...result.candidates.filter((candidate) => candidate._tag !== "Memory" || !preferred.some((item) => item.memory.id === candidate.memory.id))] }
       return combined.candidates.length === 0 && combined.graph.assertions.length === 0 ? Option.none() : Option.some(renderMemoryRecall(combined, config.recallChars))
     }).pipe(
