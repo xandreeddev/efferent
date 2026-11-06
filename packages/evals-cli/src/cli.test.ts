@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Array as Arr, Deferred, Effect, Fiber, Layer, Option, Order, Schema, Tracer } from "effect"
-import { evaluationCli } from "./cli.adapter.js"
+import { cliArguments, evaluationCli } from "./cli.adapter.js"
 import { EvaluationRunStoreFsLive, readRun, readText, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
 import { loadEvaluationApp } from "./config-loader.adapter.js"
 import { cliFixture } from "./cli-fixture.testing.js"
@@ -224,6 +224,80 @@ test("--flag=value reads as --flag value, and a default directory is named after
   const report = await Effect.runPromise(readRun(join(workspace, ".eval-results", "runs", runs[0]!, "report.json")))
   expect(runs).toEqual([report.id])
   expect(report.trials[0]?.id.startsWith(`${report.id}/`)).toBe(true)
+})
+
+test("a list flag merges its repeated and comma forms, repeats dropped in first-seen order; ids are unaffected", () => {
+  const line = cliArguments(["run", "first", "second", "--task", "b,a", "--task=c", "--split", "all", "--task", "a,,b", "--task="])
+  expect(line.list("--task")).toEqual(["b", "a", "c"])
+  expect(line.list("--candidate")).toEqual([])
+  expect(line.ids).toEqual(["first", "second"])
+  expect(line.value("--split", "validation")).toBe("all")
+})
+
+/** The fixture app with three tasks and two candidates in its suite, so a selection shows in the trials. */
+const wideApp: EvaluationApp = {
+  ...app,
+  suites: app.suites.map((suite) => ({
+    ...suite,
+    tasks: ["case", "second", "third"].map((id) => ({ ...suite.tasks[0]!, id: EvalId.make(id) })),
+    candidates: ["code", "other"].map((id) => ({ ...suite.candidates[0]!, id: EvalId.make(id) }))
+  }))
+}
+
+test("repeated --task, --candidate and --exporter flags select every value given, each once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-list-flags-"))
+  const exported: Array<string> = []
+  const exporter = (id: string) => ({
+    id,
+    layer: Layer.succeed(EvaluationExport, {
+      exportRun: () => Effect.sync(() => exported.push(id)).pipe(Effect.as({ provider: id, runId: "run", url: "", exported: 0, at: 0, mappings: {} }))
+    })
+  })
+  const code = await Effect.runPromise(evaluationCli(
+    ["run", "suite", "--directory", directory, "--task", "case", "--task=third", "--task", "case,third",
+      "--candidate", "other", "--exporter", "second", "--exporter", "first,second"],
+    { config: wideApp, output, exporters: [exporter("first"), exporter("second")] }
+  ))
+  expect(code).toBe(0)
+  const run = await Effect.runPromise(readRun(join(directory, "report.json")))
+  expect(run.trials.map((trial): ReadonlyArray<string> => [trial.candidate.id, trial.task.id])).toEqual([["other", "case"], ["other", "third"]])
+  expect(exported).toEqual(["second", "first"])
+})
+
+test("a single-valued flag given twice with different values is a usage error, never its first value", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-single-flags-"))
+  const refused = (args: ReadonlyArray<string>, config: EvaluationApp | undefined = app) =>
+    Effect.runPromise(evaluationCli(args, { ...(config ? { config } : {}), output }).pipe(
+      Effect.flip,
+      Effect.map((error) => [error.code, error.message])
+    ))
+  expect(await refused(["run", "suite", "--directory", directory, "--split", "validation", "--split=calibration"])).toEqual(
+    ["invalid", "--split takes one value, not \"validation\" and \"calibration\""]
+  )
+  expect(await refused(["run", "suite", "--directory", directory, "--repetitions", "1", "--repetitions", "3"])).toEqual(
+    ["invalid", "--repetitions takes one value, not \"1\" and \"3\""]
+  )
+  expect(await refused(["run", "suite", "--directory", directory, "--budget-usd", "1", "--budget-usd"])).toEqual(
+    ["invalid", "--budget-usd takes one value, not \"1\" and \"\""]
+  )
+  expect(await refused(["inspect", "--report", "a.json", "--report", "b.json"], undefined)).toEqual(
+    ["invalid", "--report takes one value, not \"a.json\" and \"b.json\""]
+  )
+  expect(await refused(["list", "--config", "a.ts", "--config=b.ts"])).toEqual(
+    ["invalid", "--config takes one value, not \"a.ts\" and \"b.ts\""]
+  )
+  // Nothing ran: the refused commands wrote nothing.
+  expect(await readdir(directory)).toEqual([])
+  // The same value twice is one value.
+  expect(await Effect.runPromise(evaluationCli(
+    ["run", "suite", "--directory", directory, "--split", "validation", "--split=validation"],
+    { config: app, output }
+  ))).toBe(0)
+  // An app command reads its own flags as given.
+  const echoed: Array<ReadonlyArray<string>> = []
+  const echoing: EvaluationApp = { ...app, commands: { echo: (args) => Effect.sync(() => echoed.push(args)).pipe(Effect.as("echoed")) } }
+  expect(await Effect.runPromise(evaluationCli(["echo", "--split", "a", "--split", "b"], { config: echoing, output }))).toBe(0)
+  expect(echoed).toEqual([["--split", "a", "--split", "b"]])
 })
 
 test("a bad count flag is a usage error naming the flag, never a silent default", async () => {

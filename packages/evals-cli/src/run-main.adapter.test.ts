@@ -1,4 +1,4 @@
-import { EvaluationError, TranscriptEvent, Trial } from "@xandreed/evals"
+import { EvalId, EvaluationError, TranscriptEvent, Trial, type EvaluationApp } from "@xandreed/evals"
 import { expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 import { mkdtemp, readdir, readFile } from "node:fs/promises"
@@ -6,6 +6,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Schedule, Schema } from "effect"
 import { runCliMain, type CliProcess } from "./run-main.adapter.js"
+import { evaluationCli } from "./cli.adapter.js"
+import { readRun } from "./adapters/evaluation-store.fs.adapter.js"
+import { cliFixture } from "./cli-fixture.testing.js"
 
 /** A process stand-in: signals are emitted by the test, the exit code resolves `exited`. */
 const fakeProcess = () => {
@@ -48,6 +51,27 @@ test("the command's own exit code is kept, and a typed failure prints code: mess
   runCliMain(Effect.fail(new EvaluationError({ code: "invalid", message: "Unknown command x" })), failed.host)
   expect(await failed.exited).toBe(1)
   expect(failed.errors).toEqual(["invalid: Unknown command x"])
+})
+
+test("a command with repeated --task flags runs as main over exactly the tasks selected; conflicting values exit 1", async () => {
+  const base = cliFixture()
+  const config: EvaluationApp = {
+    ...base,
+    suites: base.suites.map((suite) => ({
+      ...suite,
+      tasks: ["case", "second", "third"].map((id) => ({ ...suite.tasks[0]!, id: EvalId.make(id) }))
+    }))
+  }
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-main-tasks-"))
+  const ran = fakeProcess()
+  runCliMain(evaluationCli(["run", "suite", "--directory", directory, "--task", "third", "--task=case"], { config, output: () => undefined }), ran.host)
+  expect(await ran.exited).toBe(0)
+  const run = await Effect.runPromise(readRun(join(directory, "report.json")))
+  expect(run.trials.map((trial): string => trial.task.id)).toEqual(["case", "third"])
+  const refused = fakeProcess()
+  runCliMain(evaluationCli(["run", "suite", "--directory", directory, "--directory", join(directory, "other")], { config, output: () => undefined }), refused.host)
+  expect(await refused.exited).toBe(1)
+  expect(refused.errors).toEqual([`invalid: --directory takes one value, not ${JSON.stringify(directory)} and ${JSON.stringify(join(directory, "other"))}`])
 })
 
 /**

@@ -1,7 +1,7 @@
 import { mkdir, readdir } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { join, resolve } from "node:path"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Option, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationRun,
@@ -52,6 +52,9 @@ export const cliArguments = (raw: ReadonlyArray<string>) => {
     const at = args.indexOf(flag)
     return Option.fromNullishOr(at < 0 ? undefined : args[at + 1])
   }
+  /** The argument after each occurrence of `flag`, in order: none for one given last. */
+  const occurrences = (flag: string) =>
+    args.flatMap((item, at) => (item === flag ? [Option.fromNullishOr(args[at + 1])] : []))
   return {
     command,
     /** Every argument, `--flag=value` split in two. */
@@ -72,6 +75,32 @@ export const cliArguments = (raw: ReadonlyArray<string>) => {
         }
       ),
     has: (flag: string) => args.includes(flag),
+    /**
+     * A list flag's values: every occurrence (`--flag a --flag b`, `--flag=a`),
+     * each split at commas, empty entries and repeats dropped in first-seen order.
+     */
+    list: (flag: string): ReadonlyArray<string> =>
+      Arr.dedupe(
+        occurrences(flag).flatMap((value) =>
+          Option.match(value, { onNone: () => [], onSome: (text) => text.split(",").filter(Boolean) })
+        )
+      ),
+    /**
+     * A usage error (`invalid`) when one of `flags`, each read once, is given
+     * more than once with different values: never the first one silently.
+     */
+    singleValued: (flags: ReadonlyArray<string>) =>
+      Effect.forEach(flags, (flag) => {
+        const given = Arr.dedupe(occurrences(flag).map(Option.getOrElse(() => "")))
+        return given.length > 1
+          ? Effect.fail(
+              new EvaluationError({
+                code: "invalid",
+                message: `${flag} takes one value, not ${given.map((value) => JSON.stringify(value)).join(" and ")}`
+              })
+            )
+          : Effect.void
+      }, { concurrency: 1, discard: true }),
     ids: args.slice(
       1,
       args.findIndex((item, index) => index > 0 && item.startsWith("--")) < 0
@@ -80,8 +109,28 @@ export const cliArguments = (raw: ReadonlyArray<string>) => {
     )
   }
 }
+/**
+ * The built-in commands' single-valued flags: one given twice with different
+ * values is a usage error. The list flags (`--task`, `--candidate`,
+ * `--grader`, `--exporter`) merge every occurrence instead.
+ */
+const SINGLE_VALUED_FLAGS = [
+  "--config",
+  "--directory",
+  "--split",
+  "--repetitions",
+  "--concurrency",
+  "--timeout-ms",
+  "--environment",
+  "--budget-usd",
+  "--report",
+  "--from",
+  "--import",
+  "--baseline",
+  "--candidate-report"
+]
 const help =
-  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--execute-only] [--budget-usd amount] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
+  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--candidate id] [--execute-only] [--budget-usd amount] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\n--task, --candidate, --grader and --exporter repeat or take a comma list (--task a --task b, --task a,b); any other flag takes one value.\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
 /** A run's spend and the trials its budget skipped, for a summary: nothing for a run that recorded no spend. */
 const spendSummary = (run: EvaluationRun) =>
   run.spend === undefined
@@ -122,6 +171,7 @@ export const evaluationCli = Effect.fnUntraced(
       return 0
     }
     if (line.command === "inspect") {
+      yield* line.singleValued(SINGLE_VALUED_FLAGS)
       const run = yield* readRun(
         yield* line.required("--report", Option.fromNullishOr(line.ids[0]))
       )
@@ -156,6 +206,7 @@ export const evaluationCli = Effect.fnUntraced(
       return 0
     }
     if (line.command === "compare") {
+      yield* line.singleValued(SINGLE_VALUED_FLAGS)
       const baseline = yield* readRun(yield* line.required("--baseline"))
       const candidate = yield* readRun(
         yield* line.required("--candidate-report")
@@ -174,6 +225,8 @@ export const evaluationCli = Effect.fnUntraced(
       })
       return issues.length ? 2 : 0
     }
+    // App commands read their own flags; the configuration path is the CLI's.
+    yield* line.singleValued(["--config"])
     const app =
       options.config ??
       (yield* loadEvaluationApp(line.value("--config", "eval.config.ts"), line.tokens))
@@ -204,6 +257,7 @@ const appCommand = Effect.fn("eval.cli")(
       output(result)
       return typeof result === "number" ? result : 0
     }
+    yield* line.singleValued(SINGLE_VALUED_FLAGS)
     if (line.command === "list") {
       output({
         application: app.id,
@@ -247,7 +301,7 @@ const appCommand = Effect.fn("eval.cli")(
     )
     if (line.command === "export") {
       const run = yield* readRun(yield* line.required("--report"))
-      const selected = line.value("--exporter", "").split(",").filter(Boolean)
+      const selected = line.list("--exporter")
       if (!selected.length)
         return yield* Effect.fail(
           new EvaluationError({
@@ -311,7 +365,7 @@ const appCommand = Effect.fn("eval.cli")(
       const saved = yield* readRun(yield* line.required("--from"))
       yield* requireFreshDirectory(directory)
       const run = yield* gradeEvaluation(app, saved, runId, {
-        graders: line.value("--grader", "").split(",").filter(Boolean)
+        graders: line.list("--grader")
       }).pipe(
         Effect.provide(
           Layer.merge(
@@ -338,9 +392,9 @@ const appCommand = Effect.fn("eval.cli")(
     }
     const selection: EvaluationSelection = {
       ids: line.ids,
-      tasks: line.value("--task", "").split(",").filter(Boolean),
+      tasks: line.list("--task"),
       executeOnly: line.has("--execute-only"),
-      candidates: line.value("--candidate", "").split(",").filter(Boolean),
+      candidates: line.list("--candidate"),
       split: line.value(
         "--split",
         line.command === "calibrate" ? "calibration" : "validation"
@@ -382,10 +436,7 @@ const appCommand = Effect.fn("eval.cli")(
         )
       )
     )
-    const selectedExporters = line
-      .value("--exporter", "")
-      .split(",")
-      .filter(Boolean)
+    const selectedExporters = line.list("--exporter")
     const exports = yield* Effect.forEach(selectedExporters, (id) => {
       const exporter = (options.exporters ?? app.exporters)?.find(
         (entry) => entry.id === id
