@@ -187,7 +187,8 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       vector: Option.flatMap(queryVectors, (vectors) => Option.fromNullishOr(vectors[index])), limit: poolLimit,
       knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }),
     }), { concurrency: 1 })
-    const pooled = fuseKnowledgeCandidates({ lexical: arms.flatMap((arm) => arm.lexical.filter((entry) => entry._tag === "Chunk")), semantic: arms.flatMap((arm) => arm.semantic.filter((entry) => entry._tag === "Chunk")) }, poolLimit, config.maxCandidateChars)
+    // Each query's lists, narrowed to passages, are ranked on their own: a passage a planned query finds first ranks as one the question finds first.
+    const pooled = fuseKnowledgeCandidates(arms.map((arm) => ({ lexical: arm.lexical.filter((entry) => entry._tag === "Chunk"), semantic: arm.semantic.filter((entry) => entry._tag === "Chunk") })), poolLimit, config.maxCandidateChars)
     const graph = expansion === undefined ? { entities: [], assertions: [], truncated: false } : yield* Effect.gen(function* () {
       const stored = yield* store.snapshot(input.scope)
       // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata

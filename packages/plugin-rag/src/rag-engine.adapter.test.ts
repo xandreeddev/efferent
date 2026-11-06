@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
-import type { KnowledgeHelperCall, KnowledgeJobFailure, KnowledgeMetadataFilter } from "@xandreed/core"
+import { CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeChunkId, KnowledgeError, KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
+import type { KnowledgeCandidate, KnowledgeHelperCall, KnowledgeJobFailure, KnowledgeMetadataFilter, KnowledgeSearch } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { ragDefaults } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
@@ -372,6 +372,31 @@ describe("document query assistance", () => {
     expect(yield* Ref.get(searches)).toEqual(["alpha", "beta"])
     expect(found.candidates).toHaveLength(1)
     expect(found.candidates[0]?._tag === "Chunk" && found.candidates[0].chunk.text).toBe("beta evidence")
+  }))))
+
+  test("with planning, each query's passage lists are ranked on their own after memories are left out", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const passage = (name: string): KnowledgeCandidate => ({ _tag: "Chunk", score: 1, chunk: {
+      id: KnowledgeChunkId.make(name), text: `${name} evidence`, embedding: Option.none(),
+      provenance: { source: { id: KnowledgeSourceId.make(name), revision: 1 }, start: 0, end: name.length + 9, quote: `${name} evidence` },
+    } })
+    const remembered: KnowledgeCandidate = { _tag: "Memory", score: 1, memory: {
+      id: KnowledgeMemoryId.make("remembered"), text: "remembered evidence", kind: "fact", entities: [], evidence: { _tag: "Stated" }, embedding: Option.none(),
+      knownFrom: 1, knownTo: Option.none(), provenance: [{ source: { id: KnowledgeSourceId.make("remembered"), revision: 1 }, start: 0, end: 10, quote: "remembered" }],
+    } }
+    const [first, second, third, later] = ["first", "second", "third", "later"].map(passage) as [KnowledgeCandidate, KnowledgeCandidate, KnowledgeCandidate, KnowledgeCandidate]
+    // The planned query's lists lead with a memory, which a document search leaves out before ranking: `later` is its rank 0.
+    const lists = (query: KnowledgeSearch) => query.query === "alpha"
+      ? { lexical: [first, second, third], semantic: [first, second, third] }
+      : { lexical: [remembered, later, third], semantic: [remembered, later] }
+    const store = { ...index, search: (query: KnowledgeSearch) => Effect.succeed(lists(query)) }
+    const { utility } = yield* scriptedUtility([JSON.stringify({ queries: ["beta"], entities: [], validAt: null, knownAt: null })])
+    const { knowledge } = yield* makeRag({ queryPlanning: true }, store, undefined, utility)
+    const found = yield* knowledge.retrieve({ scope, query: "alpha", limit: 4, maxChars: 1000 })
+    // third: 2/63 + 1/62; first and later: 2/61 each, tied by key; second: 2/62.
+    expect(found.candidates.map((candidate) => [candidate._tag === "Chunk" ? String(candidate.chunk.id) : "", candidate.score])).toEqual([
+      ["third", 1 / 63 + 1 / 63 + 1 / 62], ["first", 2 / 61], ["later", 2 / 61], ["second", 2 / 62],
+    ])
   }))))
 
   test("invalid plans and fabricated reranker identities fall back to original hybrid evidence", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

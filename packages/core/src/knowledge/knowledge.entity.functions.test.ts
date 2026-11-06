@@ -73,6 +73,25 @@ test("rank fusion rewards agreement, deduplicates and obeys the complete-result 
   expect(fused.map((entry) => entry._tag === "Memory" ? String(entry.memory.id) : String(entry.chunk.id))).toEqual(["two", "one"])
   expect(fuseKnowledgeCandidates({ lexical: [one, two], semantic: [two] }, 10, 20)).toHaveLength(1)
 })
+test("rank fusion ranks each query's lists on their own and sums a candidate's votes across them", () => {
+  const candidate = (id: string): KnowledgeCandidate => ({ _tag: "Memory", memory: memory(id), score: 0 })
+  const ids = (fused: ReadonlyArray<KnowledgeCandidate>) => fused.map((entry) => [entry._tag === "Memory" ? String(entry.memory.id) : String(entry.chunk.id), entry.score])
+  const [first, second, third, later] = [candidate("first"), candidate("second"), candidate("third"), candidate("later")]
+  // The second query finds `later` first: rank 0 of its list, 1/61, not rank 3 of the first query's list after it.
+  const asked = { lexical: [first, second, third], semantic: [] }
+  const planned = { lexical: [later], semantic: [] }
+  expect(ids(fuseKnowledgeCandidates([asked, planned], 10, 1_000))).toEqual([["first", 1 / 61], ["later", 1 / 61], ["second", 1 / 62], ["third", 1 / 63]])
+  // A candidate both queries find sums both queries' votes: 1/63 from the first, 1/62 from the second.
+  const both = fuseKnowledgeCandidates([asked, { lexical: [later, third], semantic: [] }], 10, 1_000)
+  expect(ids(both)).toEqual([["third", 1 / 63 + 1 / 62], ["first", 1 / 61], ["later", 1 / 61], ["second", 1 / 62]])
+  // One pair, alone or in a list, fuses as before: per arm, a candidate's first rank there; a single list's repeat adds nothing.
+  const pair = { lexical: [first, second, first], semantic: [second, third] }
+  expect(ids(fuseKnowledgeCandidates([pair], 10, 1_000))).toEqual(ids(fuseKnowledgeCandidates(pair, 10, 1_000)))
+  expect(ids(fuseKnowledgeCandidates(pair, 10, 1_000))).toEqual([["second", 1 / 62 + 1 / 61], ["first", 1 / 61], ["third", 1 / 62]])
+  // Limit and character budget select after scoring; no pair fuses to nothing.
+  expect(ids(fuseKnowledgeCandidates([asked, planned], 2, 1_000))).toEqual([["first", 1 / 61], ["later", 1 / 61]])
+  expect(fuseKnowledgeCandidates([], 10, 1_000)).toEqual([])
+})
 test("BM25 finds exact tokens and cosine defines zero norms without NaN", () => {
   const scores = knowledgeBm25("ticket-123", ["ticket-123 resolved", "unrelated ticket"])
   expect(scores[0]).toBeGreaterThan(0)

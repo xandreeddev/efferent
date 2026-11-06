@@ -181,6 +181,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   call. The default text changes only when a recalled record replaced
   something. `@xandreed/plugin-rag`'s `retrieve` returns no earlier states.
 
+### Fixed
+
+- `@xandreed/plugin-memory`, `@xandreed/plugin-rag`, `@xandreed/core`:
+  with `queryPlanning` on, recall and document search rank each planned
+  query's lexical and semantic lists on their own. Both engines joined
+  every query's lists into one lexical and one semantic list before
+  reciprocal rank fusion, so a candidate only a planned query found was
+  ranked after all of the question's candidates (`1 / (61 + n)` behind
+  the question's `n`, rather than `1 / 61` at the first place of its own
+  query) and lost its slot to the question's weaker matches, and a candidate several queries found scored only its
+  first place in each joined list. A candidate now scores
+  `1 / (61 + rank)` in every list that holds it, at its 0-based rank in
+  that list alone, summed. `fuseKnowledgeCandidates` takes one
+  `KnowledgeCandidates` pair or one pair per query; a single pair fuses as
+  before, so a search without planning (the default) ranks exactly as it
+  did. Ties still go by candidate key, `limit` and the character budget
+  select after scoring, and fusion is one pass over the lists instead of a
+  search of each list per candidate.
+
 ## 0.18.0 — 2026-11-06
 
 ### Migration

@@ -12,7 +12,7 @@ import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { memoryPlugin, MemoryPluginLive } from "./plugin.adapter.js"
 import { memoryCapturePlugin, MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
-import { fixtureExtraction } from "./memory.testing.js"
+import { fixtureEnqueue, fixtureExtraction } from "./memory.testing.js"
 import { memoryCaptureDefaults, memoryDefaults } from "./memory.entity.js"
 import { memoryRecallNote } from "./memory-capability.adapter.js"
 
@@ -467,4 +467,56 @@ describe("memory through the real agent", () => {
     expect(toolResult).toContain("The user now drinks tea in the morning, no longer coffee.")
     expect([toolResult.includes("Earlier states"), toolResult.includes("usually")]).toEqual([false, false])
   })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("with query planning, a memory only the planned query finds reaches the turn's recall ahead of the question's weaker matches", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    // Two directions: the team's practices and the release schedule, so each query's vector finds only its own memories.
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({
+      results: inputs.map((text) => /friday|release/i.test(text) ? [0, 1] : [1, 0]), usage: { inputTokens: undefined },
+    }) })
+    const helperPrompts = yield* Ref.make<ReadonlyArray<string>>([])
+    // The scripted helper model: a plan adds one complementary query; an extraction keeps the source as one stated fact.
+    const plan = JSON.stringify({ queries: ["Friday releases"], entities: [], validAt: null, knownAt: null })
+    const extraction = (text: string) => JSON.stringify({ entities: [], assertions: [], memories: [{
+      key: "fact", kind: "fact", text, entities: [], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change",
+    }] })
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.update(helperPrompts, (all) => [...all, prompt]).pipe(Effect.as(new UtilityCompletion({
+      text: prompt.startsWith("Plan evidence retrieval") ? plan : extraction(/<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""), usage: zeroUsage,
+    }))) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const options = { worker: false, review: false, embeddingDimensions: 2, queryPlanning: true, recallLimit: 2 }
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const session = { owner: "same-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d5") }
+    const scope = { owner: session.owner, namespace: "default", collection: "memory" }
+    const practices = ["The team deploys with containers.", "The team reviews code in pairs.", "The team builds nightly."]
+    const schedule = "Releases ship every Friday."
+    yield* Effect.forEach([...practices, schedule], (text, index) => memory.capture(fixtureEnqueue(`note-${index}`, text, scope)), { concurrency: 1 })
+    expect(yield* memory.process(scope, 10)).toBe(4)
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Containers, and releases on Friday." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 2 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    yield* sessions.create(session)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    yield* agent.turn({ turn: { session, runId: RunId.make("planned"), userMessage: new UserMessage({ text: "What does the team do?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    // The planner ran once for the turn's recall, after the four extractions.
+    expect((yield* Ref.get(helperPrompts)).map((prompt) => prompt.startsWith("Plan evidence retrieval"))).toEqual([false, false, false, false, true])
+    // Two recall slots: the question's best match and the release schedule, which the planned query found first. Ranked
+    // after every one of the question's matches, as one concatenated list, it would have lost its slot to a second practice.
+    const sent = (yield* Ref.get(requests))[0] ?? ""
+    expect(sent).toContain(schedule)
+    expect(practices.filter((text) => sent.includes(text))).toHaveLength(1)
+    const journal = yield* sessions.read(session, { kinds: ["memory.section"] })
+    expect(journal.some((event) => JSON.stringify(event.data).includes(schedule))).toBe(true)
+  }))))
 })

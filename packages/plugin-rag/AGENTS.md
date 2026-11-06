@@ -43,7 +43,8 @@ through KnowledgeStore. Node 24 and Bun.
   optional UtilityLlm with a separate bound. Invalid or unavailable assistance keeps hybrid evidence; a reranker
   cannot introduce a candidate identity. Explicit traversal coordinates win.
 - Keep the original query in the bounded search plan. Combine lexical and
-  semantic arms with core's deterministic reciprocal rank fusion. Graph
+  semantic arms with core's deterministic reciprocal rank fusion, one pair
+  per query (`fuseKnowledgeCandidates`), never one joined list. Graph
   expansion applies both temporal coordinates at every hop and shares the
   evidence budget with excerpts.
 - Renew processing leases throughout model and embedding work. Serialize

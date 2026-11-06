@@ -96,7 +96,10 @@ host leaves automatic recall out
 ([place memory recall yourself](/docs/concepts/native-knowledge/#place-memory-recall-yourself)).
 
 Text and vector search contribute equally through reciprocal rank fusion;
-their raw score magnitudes are not combined. Graph traversal adds a bounded
+their raw score magnitudes are not combined. With `queryPlanning`, each
+query's two lists are ranked on their own and a memory's votes are summed
+across them, so a memory a planned query finds first is not ranked behind
+every match of the original question. Graph traversal adds a bounded
 neighborhood separately. Graph assertions have no numeric importance or edge
 weight. When enabled, the helper-model reranker can reorder or omit memory
 candidates; it does not rerank the graph assertions themselves.

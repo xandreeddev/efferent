@@ -128,6 +128,10 @@ and evidence reranking (`rerank`) are off by default: each adds one helper-model
 call to every search, so turn one on only when its quality is worth that cost
 and latency. Enabled, they use `UtilityLlm` when it is available; invalid or
 unavailable assistance falls back to deterministic lexical/vector retrieval.
+With planning, each query's lexical and semantic passage lists are ranked on
+their own in reciprocal rank fusion and a passage's votes are summed across
+them, so a passage a planned query finds first is not ranked behind every
+match of the original question.
 The total foreground query, including helper calls, embedding and graph
 traversal, is bounded by `queryTimeoutMs`.
 

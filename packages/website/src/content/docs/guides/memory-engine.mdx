@@ -190,10 +190,13 @@ For arithmetic alone, suppose the three memories receive these ranks.
 | M3 | absent | 2 | 0.016129 |
 
 M2 wins through strong placement in both lists. Its score is a ranking value,
-**not a 3.25% confidence estimate**. With multiple queries, the
-implementation concatenates their lexical lists and semantic lists, then uses
-each candidate's first position in each arm. It does not sum a separate vote
-for every query. See the [fusion function](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge.entity.functions.ts#L49).
+**not a 3.25% confidence estimate**. With multiple queries, every query's
+lexical and semantic lists are ranked on their own, and a memory's score sums
+one vote per list that holds it, at its rank in that list. A memory only the
+planned query finds, first in both of its lists, scores 0.032787, as one
+first in both of the question's lists does; ranked behind the question's 32
+candidates in one joined list, at rank 33 of each arm, it would score only
+0.021505. See the [fusion function](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge.entity.functions.ts#L110).
 
 ## 7. Expand relationships, then ask what evidence helps
 

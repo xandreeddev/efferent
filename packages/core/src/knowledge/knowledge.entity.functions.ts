@@ -69,23 +69,51 @@ export const knowledgeAssertionKey = (assertion: Pick<KnowledgeAssertion, "id">)
 export const knowledgeCandidateText = (candidate: KnowledgeCandidate): string => Match.valueTags(candidate, {
   Memory: ({ memory }) => memory.text, Chunk: ({ chunk }) => chunk.text,
 })
-/** Reciprocal rank fusion with deterministic ties and one shared character budget. @public */
-export const fuseKnowledgeCandidates = (arms: KnowledgeCandidates, limit: number, maxChars: number): ReadonlyArray<KnowledgeCandidate> => {
-  const ranked = [...arms.lexical, ...arms.semantic].reduce((scores, candidate) => {
-    const key = knowledgeCandidateKey(candidate)
-    if (!scores.some((entry) => knowledgeCandidateKey(entry.candidate) === key)) {
-      const lexical = arms.lexical.findIndex((item) => knowledgeCandidateKey(item) === key)
-      const semantic = arms.semantic.findIndex((item) => knowledgeCandidateKey(item) === key)
-      return [...scores, { candidate, score: (lexical < 0 ? 0 : 1 / (61 + lexical)) + (semantic < 0 ? 0 : 1 / (61 + semantic)) }]
-    }
+/** One candidate and its fused score, between scoring and selection. */
+interface ScoredKnowledgeCandidate { readonly candidate: KnowledgeCandidate; readonly key: string; readonly score: number }
+/** Reciprocal rank fusion's constant: a candidate at 0-based rank `r` of a list scores `1 / (RRF_K + 1 + r)` there. */
+const RRF_K = 60
+/**
+ * Score: every ranked list votes for each candidate it holds, `1 / (61 + rank)` at its 0-based rank in that list
+ * alone, and a candidate's score is the sum of its votes. A candidate listed twice in one list keeps its first rank;
+ * the candidate kept is its first occurrence over the lists, in their order.
+ */
+const scoreKnowledgeLists = (lists: ReadonlyArray<ReadonlyArray<KnowledgeCandidate>>): ReadonlyArray<ScoredKnowledgeCandidate> =>
+  [...lists.reduce((scores, list) => {
+    list.reduce((seen, candidate, rank) => {
+      const key = knowledgeCandidateKey(candidate)
+      if (seen.has(key)) return seen
+      const vote = 1 / (RRF_K + 1 + rank)
+      const scored = scores.get(key)
+      scores.set(key, scored === undefined ? { candidate, key, score: vote } : { ...scored, score: scored.score + vote })
+      return seen.add(key)
+    }, new Set<string>())
     return scores
-  }, [] as ReadonlyArray<{ readonly candidate: KnowledgeCandidate; readonly score: number }>).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a.candidate), knowledgeCandidateKey(b.candidate)))
-  return ranked.reduce((result, entry) => {
+  }, new Map<string, ScoredKnowledgeCandidate>()).values()]
+/** Sort: the highest score first, ties by candidate key. */
+const byKnowledgeScore = (scored: ReadonlyArray<ScoredKnowledgeCandidate>): ReadonlyArray<ScoredKnowledgeCandidate> =>
+  scored.toSorted((a, b) => b.score - a.score || Order.String(a.key, b.key))
+/** Select: in order, each candidate that still fits `limit` and the shared character budget, carrying its fused score. */
+const selectKnowledgeCandidates = (ranked: ReadonlyArray<ScoredKnowledgeCandidate>, limit: number, maxChars: number): ReadonlyArray<KnowledgeCandidate> =>
+  ranked.reduce((result, entry) => {
     const length = knowledgeCandidateText(entry.candidate).length
     return result.items.length < limit && result.used + length <= maxChars
       ? { used: result.used + length, items: [...result.items, { ...entry.candidate, score: entry.score }] }
       : result
   }, { used: 0, items: [] as ReadonlyArray<KnowledgeCandidate> }).items
+/**
+ * Reciprocal rank fusion with deterministic ties and one shared character budget. Takes one search's lexical and
+ * semantic lists, or one such pair per query of a planned search: every list is ranked on its own, so a candidate
+ * a later query finds first scores as highly as one the first query finds first, and a candidate several lists
+ * find sums its votes, `1 / (61 + rank)` per list at its 0-based rank there. Ties go by candidate key; `limit` and
+ * `maxChars` select from the ranked result.
+ * @public
+ */
+export const fuseKnowledgeCandidates = (
+  arms: KnowledgeCandidates | ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number,
+): ReadonlyArray<KnowledgeCandidate> => {
+  const pairs: ReadonlyArray<KnowledgeCandidates> = "lexical" in arms ? [arms] : arms
+  return selectKnowledgeCandidates(byKnowledgeScore(scoreKnowledgeLists(pairs.flatMap((pair) => [pair.lexical, pair.semantic]))), limit, maxChars)
 }
 
 /**
