@@ -53,8 +53,13 @@ const serveEvents = (request, response, feedScope, after: number) => Effect.gen(
   the journal never stores (a reply as it is written, a preview, a build handshake) passes it as
   `live` in the options, the fourth argument: each payload goes out as a `FeedTransient` frame after
   the ready frame, the feed still ends when the journal side does, and a transient frame never moves
-  the resume cursor (a reconnecting client gets only what the journal kept). A live stream that ends
-  stops only the live frames; one that fails, or a payload named `ready`, fails the feed.
+  the resume cursor (a reconnecting client gets only what the journal kept). The feed starts `live`
+  before it folds the snapshot or reads the backlog and holds its payloads until the ready frame, so
+  what is published while a cold client catches up reaches it after `ready`, in order; `liveBuffer`
+  (256 by default, 1 to 65 536) bounds what waits: at the bound the feed pulls no more until the
+  client takes some, so a pull-based or finite source loses nothing, while a source that publishes on
+  its own (a session's channel) drops at its own capacity. A live stream that ends stops
+  only the live frames; one that fails, or a payload named `ready`, fails the feed.
 - `kinds` in the options names the journal kinds the projection uses: the tail reads only those
   (`JournalTail.read(feed, after, kinds)`; `SessionsJournalTailLive` passes them to `Sessions.read`,
   so prompts, tool input and images are never loaded for a client that shows none), and records of

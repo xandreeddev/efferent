@@ -4,7 +4,7 @@ import type { IncomingHttpHeaders, Server } from "node:http"
 import { Socket } from "node:net"
 import { brotliDecompressSync, constants, createBrotliDecompress, createGunzip, gunzipSync } from "node:zlib"
 import type { AddressInfo } from "node:net"
-import { Effect, Logger, Option, Result, Schema, Stream } from "effect"
+import { Deferred, Effect, Logger, Option, Ref, Result, Schema, Stream } from "effect"
 import { RunId } from "@xandreed/core"
 import { FeedHeartbeat, FeedReady, FeedRecord, FeedTransient } from "./domain/feed-frame.entity.js"
 import type { FeedFrame, FeedPayload, JournalRecord } from "./domain/feed-frame.entity.js"
@@ -53,6 +53,8 @@ const feedChecks = [
   "a change signal polls at once instead of waiting out the interval",
   "live frames follow the ready frame and end with the journal side",
   "a live stream that ends leaves the journal side following",
+  "live payloads published while a cold client's snapshot is folded follow the ready frame, in order",
+  "a finite live stream longer than liveBuffer reaches the client whole, in order",
   "a client at cursor 0 or past the head starts from the snapshot, then follows the tail",
   "a client at a cursor up to the head resumes without the snapshot",
   "a kinds filter reads, folds and sends only those kinds",
@@ -76,6 +78,7 @@ test("the feed kit's checks are its documented list, and a feed that ignores the
   const noSnapshot = carelessFeed(({ snapshot: _snapshot, ...rest }) => rest)
   const noKinds = carelessFeed(({ kinds: _kinds, ...rest }) => rest)
   expect(await failingFeedChecks(noSnapshot)).toEqual([
+    "live payloads published while a cold client's snapshot is folded follow the ready frame, in order",
     "a client at cursor 0 or past the head starts from the snapshot, then follows the tail",
     "a kinds filter reads, folds and sends only those kinds",
     "records of other kinds still move the cursor",
@@ -84,6 +87,16 @@ test("the feed kit's checks are its documented list, and a feed that ignores the
   expect(await failingFeedChecks(noKinds)).toEqual([
     "a kinds filter reads, folds and sends only those kinds",
     "records of other kinds still move the cursor",
+  ])
+  // A feed that starts following `live` late (here: once its journal side has run a while) loses what was published meanwhile.
+  const lateLive = carelessFeed(({ live, ...rest }) => live === undefined ? rest : { ...rest, live: Stream.unwrap(Effect.sleep("40 millis").pipe(Effect.as(live))) })
+  expect(await failingFeedChecks(lateLive)).toEqual([
+    "live payloads published while a cold client's snapshot is folded follow the ready frame, in order",
+  ])
+  // A feed that keeps only the newest of what its client has not taken loses the start of a pulled source.
+  const lossyLive = carelessFeed(({ live, ...rest }) => live === undefined ? rest : { ...rest, live: live.pipe(Stream.buffer({ capacity: 2, strategy: "sliding" })) })
+  expect(await failingFeedChecks(lossyLive)).toEqual([
+    "a finite live stream longer than liveBuffer reaches the client whole, in order",
   ])
 }, 20_000)
 
@@ -226,6 +239,48 @@ test("a live payload named ready fails the feed, which either wire ends quietly"
     { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }, 0, () => Effect.succeed(Option.none()), { live: Stream.make({ event: "ready", data: {} }) },
   )).pipe(Effect.flip))
   expect(failed.code).toBe("invalid")
+})
+
+test("a feed holds at most liveBuffer live payloads, pulls no more until its client takes some, and refuses a bound outside 1 to 65 536", async () => {
+  const journal = await Effect.runPromise(makeMemoryJournal([{ sequence: 1, kind: "turn.started", data: {} }]))
+  const quiet = () => Effect.succeed(Option.none<FeedPayload>())
+  const payloads = Array.from({ length: 300 }, (_, i) => i + 1)
+  const run = (liveBuffer: number) => Effect.runPromise(Effect.gen(function* () {
+    const pulled = yield* Ref.make(0)
+    // A finite source, pulled by the feed: 300 payloads, more than the bound, all of them before the ready frame can go out.
+    const live = Stream.fromIterable(payloads.map((n): FeedPayload => ({ event: "live", data: { n } }))).pipe(
+      Stream.rechunk(1), Stream.tap(() => Ref.update(pulled, (n) => n + 1)))
+    // The fold returns once the feed has had time to pull everything it would: what it pulled by then is what it held.
+    const fold: SnapshotFold = () => Effect.sleep("30 millis").pipe(Effect.andThen(Ref.get(pulled)),
+      Effect.map((held) => ({ event: "snapshot", data: { held } })))
+    const frames = yield* Stream.runCollect(makeRenderFeed(journal.tail, { ...quick, maxDurationMs: 5_000 }).frames(guestFeed, 0, quiet, { live, liveBuffer, snapshot: { head: 1, fold } }).pipe(
+      Stream.takeUntil((frame) => frame._tag === "FeedTransient" && frame.data["n"] === payloads.length)))
+    const all = Array.from(frames)
+    const held = all.flatMap((frame) => frame._tag === "FeedRecord" ? [frame.data["held"]] : [])
+    return { held, transients: all.flatMap((frame) => frame._tag === "FeedTransient" ? [frame.data["n"]] : []) }
+  }))
+  // At the bound the feed stops pulling: the source waits, and every payload reaches the client in order.
+  const bounded = await run(2)
+  expect(bounded.transients).toEqual(payloads)
+  expect(Number(bounded.held[0])).toBeLessThan(10)
+  expect((await run(256)).transients).toEqual(payloads)
+  const refused = await Effect.runPromise(Effect.forEach([0, 1.5, 65_537], (liveBuffer) =>
+    Effect.flip(Stream.runDrain(makeRenderFeed(journal.tail, quick).frames(guestFeed, 0, quiet, { live: Stream.never, liveBuffer }))), { concurrency: 1 }))
+  expect(refused.map((failure) => failure.code)).toEqual(["invalid", "invalid", "invalid"])
+})
+
+test("a live stream that fails sends the payloads it gave first, after the ready frame, then fails the feed", async () => {
+  const journal = await Effect.runPromise(makeMemoryJournal([{ sequence: 1, kind: "turn.started", data: {} }]))
+  const seen: Array<string> = []
+  const first: FeedPayload = { event: "live.first", data: {} }
+  const live = Stream.make(first).pipe(Stream.concat(Stream.fail(new RenderError({ code: "unavailable", message: "the source is down" }))))
+  const failed = await Effect.runPromise(makeRenderFeed(journal.tail, quick).frames(guestFeed, 0, (record) => Effect.succeed(Option.some({ event: record.kind, data: record.data })), { live }).pipe(
+    Stream.tap((frame) => Effect.sync(() => { seen.push(frame._tag === "FeedTransient" ? `~${frame.event}` : frame._tag) })),
+    Stream.runDrain,
+    Effect.flip,
+  ))
+  expect(failed.code).toBe("unavailable")
+  expect(seen).toEqual(["FeedRecord", "FeedReady", "~live.first"])
 })
 
 test("transient frames never move the cursor a client resumes from", async () => {

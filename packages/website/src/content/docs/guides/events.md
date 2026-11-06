@@ -884,8 +884,14 @@ instances, an adapter over your own broker, checked by
 (`shareTransient`: `assistant.delta` and `tool.progress`, or those you name),
 and pass the session's channel to the feed as its `live` stream
 (`sessionLive`). A follower sees what is published from the time its feed
-starts, after its backlog's `ready`; nothing is stored or replayed, so a
-client that reconnects reads the reply from the journal. Your own live
+starts, after its backlog's `ready`: the feed follows the channel before it
+folds a snapshot or reads the backlog, so a client that connects mid-turn
+gets the turn's later deltas after its snapshot, in order (at most the
+feed's `liveBuffer` wait, 256 by default; past that the feed pulls no more
+until the client takes some, and the channel drops its oldest at its own
+capacity). Nothing is
+stored or replayed, so a client that reconnects reads the reply from the
+journal. Your own live
 payloads (a preview, a progress bar) go to the same channel with
 `SessionChannel.publish`.
 

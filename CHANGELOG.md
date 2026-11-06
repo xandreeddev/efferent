@@ -307,6 +307,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+- `@xandreed/plugin-render`: a render feed follows its `live` stream
+  before it folds a snapshot or reads the backlog. It subscribed only when
+  the merged stream first pulled the live side, concurrently with the
+  snapshot fold, so a payload published while a cold client's snapshot was
+  folded (a turn's deltas for a client connecting mid-turn) could be lost
+  before the subscription existed, and what waited for the ready frame was
+  bounded only by the source's own buffering. The feed now starts `live`
+  first, in its own scope, and holds its payloads in a bounded queue until
+  the ready frame, so every payload published after `frames` starts
+  reaches the client after `ready`, in order. The bound is the new
+  `FeedFramesOptions.liveBuffer` (256 by default, an integer from 1 to
+  65 536, else the feed fails with `invalid`), before the ready frame and
+  after it. At the bound the feed pulls no more from `live` until the
+  client takes some, as the lazily merged stream did: a pull-based or
+  finite source (`Stream.fromIterable` of previews, a burst to a slow
+  client) still loses nothing and waits, and a source that publishes on
+  its own drops at its own capacity (a session channel's follower keeps
+  the newest), as before. A live stream that fails
+  sends the payloads it gave first, then fails the feed. `sessionLive`
+  follows the session from the feed's start, its snapshot's fold
+  included. `renderFeedConformance` adds the checks "live payloads
+  published while a cold client's snapshot is folded follow the ready
+  frame, in order" and "a finite live stream longer than liveBuffer
+  reaches the client whole, in order": rerun it over a host's own
+  `RenderFeed`.
 - Releases wait up to about fifteen minutes (was three) for every package to
   appear on the registry before tagging. 0.17.0 and 0.17.1 each refused to tag
   with packages the registry's CDN showed a few minutes later, and needed a

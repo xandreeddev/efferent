@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Duration, Effect, Fiber, Layer, Match, Option, Ref, Schema, Stream } from "effect"
+import { Context, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Tool as AiTool } from "effect/ai"
 import { publishToolProgress, SessionChannel, shareTransient } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { PrincipalId, RenderFeed, RenderFeedLive, SessionsJournalTailLive, sessionLive, ThreadId } from "@xandreed/plugin-render"
-import type { FeedFrame, FeedProjection } from "@xandreed/plugin-render"
+import type { FeedFrame, FeedProjection, SnapshotFold } from "@xandreed/plugin-render"
 import { makeMemorySessionChannel, SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import {
@@ -105,7 +105,12 @@ const host = Effect.gen(function* () {
     Effect.map((live) => feed.frames(scope, after, asStored, { live })),
     Effect.provideService(SessionChannel, channel),
   )
-  return { agent, sessions, channel, retained, follow }
+  /** A cold follower's request: the journal folded up to the session's `seq` as it connects, then what follows, with the channel's live frames. */
+  const followCold = (fold: SnapshotFold) => Effect.all([sessionLive(scope), sessions.get(address)], { concurrency: 1 }).pipe(
+    Effect.map(([live, view]) => feed.frames(scope, 0, asStored, { live, snapshot: { head: view.seq, fold } })),
+    Effect.provideService(SessionChannel, channel),
+  )
+  return { agent, sessions, channel, retained, follow, followCold }
 })
 
 /** `use` for the background turn: its transient events go to the session's channel, then a preview of the host's own, then the run. */
@@ -166,5 +171,47 @@ describe("a session's transient events reach every follower", () => {
 
     // Every follower has left: the channel holds nothing for the session.
     expect(yield* until(retained, (held) => held === 0)).toBe(0)
+  }))), 20_000)
+
+  test("a cold client that connects mid-turn gets the snapshot, then that turn's transient events after ready", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { agent, channel, followCold } = yield* host
+    // The reply's step waits at `gate` until the cold client is folding its snapshot; `midTurn` says the turn has reached it.
+    const midTurn = yield* Deferred.make<void>()
+    const gate = yield* Deferred.make<void>()
+    const steps = yield* Ref.make(0)
+    const script = [calls("c1", "count", {}), says("Counted three records.")]
+    const model = yield* LanguageModel.make({
+      generateText: () => Effect.die("this journey streams every step"),
+      streamText: () => Stream.unwrap(Ref.getAndUpdate(steps, (n) => n + 1).pipe(Effect.flatMap((n) => n === 0
+        ? Effect.succeed(Stream.fromIterable(script[0] ?? []))
+        : Deferred.succeed(midTurn, undefined).pipe(Effect.andThen(Deferred.await(gate)), Effect.as(Stream.fromIterable(script[1] ?? []))))) as never),
+    })
+
+    const turn = yield* Effect.forkChild(agent.turn({
+      turn: { session: address, userMessage: new UserMessage({ text: "count the records" }), runId: RunId.make("run-channel-cold") },
+      services: Context.make(LanguageModel.LanguageModel, model),
+    }, sharing(channel)))
+    yield* Deferred.await(midTurn)
+
+    // The fold lets the turn stream its reply and waits for the turn to end: every delta is published while the snapshot is folded.
+    const fold: SnapshotFold = (records) => Deferred.succeed(gate, undefined).pipe(
+      Effect.andThen(Fiber.await(turn)),
+      Effect.as({ event: "snapshot", data: { kinds: records.map((record) => record.kind) } }))
+    const frames = Array.from(yield* (yield* followCold(fold)).pipe(
+      Stream.takeUntil((frame) => frame._tag === "FeedTransient" && frame.event === "app.done"),
+      Stream.tap((frame) => frame._tag === "FeedReady" ? channel.publish(address, { event: "app.done", data: {} }).pipe(Effect.orDie) : Effect.void),
+      Stream.runCollect,
+    ))
+    const result = yield* Fiber.join(turn)
+    expect(result.outcome).toBe("completed")
+
+    const names = frames.map(named)
+    const snapshot = frames[0]
+    expect(snapshot?._tag === "FeedRecord" && snapshot.event === "snapshot").toBe(true)
+    // What the turn shared before the client connected is not replayed; what it shared while the snapshot was folded follows the ready frame, in order.
+    expect(names.slice(names.indexOf("FeedReady") + 1)).toEqual(["~assistant.delta", "~assistant.delta", "~assistant.delta", "~app.done"])
+    expect(names.slice(1, names.indexOf("FeedReady"))).toContain("turn.ended")
+    const deltas = frames.flatMap((frame) => frame._tag === "FeedTransient" && frame.event === "assistant.delta" ? [frame.data.delta] : [])
+    expect(deltas.join("")).toBe("Counted three records.")
   }))), 20_000)
 })

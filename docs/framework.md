@@ -3922,7 +3922,12 @@ publishes its own live payloads directly. plugin-sessions'
 sliding hub of 256 payloads per followed session, released with its last
 follower), and plugin-render's `sessionLive(feed)` turns a session's
 channel into a feed's `live` stream (`frames(scope, after, project, { live })`), so a feed opened by any request shows
-a turn another request runs, while a reconnect reads only the journal.
+a turn another request runs, while a reconnect reads only the journal. The
+feed follows the channel before it folds a snapshot or reads the backlog
+and holds its payloads (`liveBuffer`, 256 by default; when they are full
+it pulls no more until the client takes some, and the channel drops at its
+own capacity) until `ready`, so a client that connects mid-turn misses
+none of the turn's later deltas.
 `sessionChannelConformance` (`@xandreed/core/conformance`) checks an
 adapter: order, isolation, no replay, a bounded backlog and release.
 

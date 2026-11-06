@@ -10,10 +10,14 @@ const decodeId = Schema.decodeUnknownEffect(ConversationId)
  * passed in the options of `RenderFeed.frames`
  * (`feed.frames(scope, after, project, { live })`): `threadId` names the session and `principalId` is
  * its owner, as for `SessionsJournalTailLive`, so another owner follows
- * another session and receives nothing of this one. Every payload published
- * to the session from the time the feed starts (a turn's shared transient
- * events, the host's own) goes out as a transient frame after the feed's
- * ready frame; nothing published earlier is replayed, and none of it moves
+ * another session and receives nothing of this one. The channel follows the
+ * session from its first pull, which the feed makes before it folds a
+ * snapshot or reads the backlog: every payload published to the session
+ * from the time the feed starts (a turn's shared transient events, the
+ * host's own), those published while a cold client's snapshot is folded
+ * included, goes out as a transient frame after the feed's ready frame, in
+ * order (at most the feed's `liveBuffer` and the channel's capacity wait:
+ * past them the channel drops the oldest). Nothing published earlier is replayed, and none of it moves
  * the resume cursor. A name that is not a session fails the feed with
  * `invalid`, a channel that cannot be reached with `unavailable`.
  *

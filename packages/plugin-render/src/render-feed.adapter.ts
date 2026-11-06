@@ -1,7 +1,8 @@
 import { Clock, Deferred, Duration, Effect, Layer, Option, Queue, Scope, Stream } from "effect"
+import type { Cause } from "effect"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
 import type { FeedFrame, FeedOptions, FeedPayload, FeedScope, JournalRecord } from "./domain/feed-frame.entity.js"
-import { isOfKinds, nextPollMs, startsFromSnapshot, transientOf } from "./domain/feed-frame.entity.functions.js"
+import { isOfKinds, liveBufferOf, nextPollMs, startsFromSnapshot, transientOf } from "./domain/feed-frame.entity.functions.js"
 import { RenderError } from "./domain/render-surface.entity.js"
 import { JournalTail, RenderFeed } from "./ports/render.port.js"
 import type { FeedFramesOptions, FeedProjection, FeedSnapshot } from "./ports/render.port.js"
@@ -102,21 +103,35 @@ const journalFrames = <R>(tail: typeof JournalTail.Service, options: FeedOptions
   )))
 
 /**
- * Live frames beside the journal's: each payload goes out as a transient
- * frame once the journal side has sent its ready frame (the backlog comes
- * first; the live stream's own buffering decides what waits meanwhile), and
- * the merged stream ends when the journal side does. A live stream that
- * ends only stops live frames; one that fails, or a payload named `ready`,
- * fails the feed.
+ * Live frames beside the journal's. The live stream is followed first, in
+ * the feed's scope, before the journal side folds a snapshot or reads the
+ * backlog: its payloads wait in a bounded queue of `liveBuffer` and each
+ * goes out as a transient frame once the journal side has sent its ready
+ * frame, so nothing published while the client catches up is lost to the
+ * ready frame. A full queue stops pulling `live` until the client takes
+ * from it, before the ready frame and after it: a pull-based or finite
+ * source loses nothing, and a source that publishes on its own (a session's
+ * channel) drops at its own capacity. The merged stream ends when the
+ * journal side does. A live
+ * stream that ends only stops live frames; one that fails (after the
+ * payloads it gave before failing), or a payload named `ready`, fails the
+ * feed.
  */
-const withLive = <R>(journal: Stream.Stream<FeedFrame, RenderError, R>, live: Stream.Stream<FeedPayload, RenderError>): Stream.Stream<FeedFrame, RenderError, R> =>
-  Stream.unwrap(Deferred.make<void>().pipe(Effect.map((caughtUp) => Stream.merge(
-    // Release the live side only once the ready frame is out, so no transient frame overtakes it.
-    journal.pipe(Stream.flatMap((frame) => Stream.succeed(frame).pipe(Stream.concat(
-      frame._tag === "FeedReady" ? Stream.fromEffectDrain(Deferred.succeed(caughtUp, undefined)) : Stream.empty)))),
-    live.pipe(Stream.mapEffect((payload) => Deferred.await(caughtUp).pipe(Effect.andThen(Effect.fromResult(transientOf(payload)))))),
-    { haltStrategy: "left" },
-  ))))
+const withLive = <R>(journal: Stream.Stream<FeedFrame, RenderError, R>, live: Stream.Stream<FeedPayload, RenderError>, liveBuffer: number): Stream.Stream<FeedFrame, RenderError, R> =>
+  Stream.unwrap(Effect.gen(function* () {
+    // Bounded, not sliding: a full queue suspends the copy, which pulls no more from `live` until the client takes.
+    const held = yield* Queue.bounded<FeedPayload, RenderError | Cause.Done>(liveBuffer)
+    // Started at once, so a live stream that follows from its first pull follows before the journal side runs.
+    yield* Stream.runIntoQueue(live, held).pipe(Effect.forkScoped({ startImmediately: true }))
+    const caughtUp = yield* Deferred.make<void>()
+    return Stream.merge(
+      // Release the live side only once the ready frame is out, so no transient frame overtakes it.
+      journal.pipe(Stream.flatMap((frame) => Stream.succeed(frame).pipe(Stream.concat(
+        frame._tag === "FeedReady" ? Stream.fromEffectDrain(Deferred.succeed(caughtUp, undefined)) : Stream.empty)))),
+      Stream.fromQueue(held).pipe(Stream.mapEffect((payload) => Deferred.await(caughtUp).pipe(Effect.andThen(Effect.fromResult(transientOf(payload)))))),
+      { haltStrategy: "left" },
+    )
+  }))
 
 /**
  * A journal tail as a stream of frames: records after the cursor (projected),
@@ -125,8 +140,11 @@ const withLive = <R>(journal: Stream.Stream<FeedFrame, RenderError, R>, live: St
  * `maxDurationMs`. With `kinds`, only those kinds are read and projected;
  * with a `snapshot`, a client at cursor 0 or past its head first gets the
  * fold of the records up to the head, as a record with the head's sequence,
- * and the tail follows from there. A `live` stream's payloads join as
- * transient frames after the ready frame; they never move the cursor.
+ * and the tail follows from there. A `live` stream is followed before the
+ * snapshot is folded or the backlog read, and its payloads join as
+ * transient frames after the ready frame (at most `liveBuffer` of them
+ * waiting, then `live` is not pulled until the client takes some); they
+ * never move the cursor.
  *
  * @public
  */
@@ -138,7 +156,11 @@ export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOp
       onSome: (snapshot) => Stream.fromEffect(snapshotFrame(tail, feed, kinds, snapshot)).pipe(
         Stream.concat(journalFrames(tail, options, feed, snapshot.head, kinds, project))),
     })
-    return Option.match(Option.fromNullishOr(framesOptions.live), { onNone: () => journal, onSome: (live) => withLive(journal, live) })
+    return Option.match(Option.fromNullishOr(framesOptions.live), {
+      onNone: () => journal,
+      onSome: (live) => Stream.unwrap(Effect.fromResult(liveBufferOf(Option.fromNullishOr(framesOptions.liveBuffer))).pipe(
+        Effect.map((liveBuffer) => withLive(journal, live, liveBuffer)))),
+    })
   },
 })
 
