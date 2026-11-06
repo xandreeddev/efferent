@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, ModelId, ModelSelection, pendingCompaction, ProviderId, renderLog, RunId, RunOrdinal, scaledTokens, ToolCallId, UserMessage } from "@xandreed/core"
-import type { LogEntry, MaintainSignal, MemoryObservation } from "@xandreed/core"
+import { entryId, estimateMessageTokens, ledgerOf, ModelId, ModelSelection, pendingCompaction, ProviderId, renderLog, RunId, RunOrdinal, scaledTokens, ToolCallId, UserMessage } from "@xandreed/core"
+import type { CompactionAction, LogBody, LogEntry, MaintainSignal, MemoryObservation, MemoryPolicy } from "@xandreed/core"
 import { memoryWindowDefaults, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const id = RunId.make("test")
@@ -49,4 +49,70 @@ test("overflow returns a strict old-history reduction even when the protected cu
   expect(estimateMessageTokens(actualRender(after))).toBeGreaterThan(1)
   expect(JSON.stringify(actualRender(after))).toContain("protected current evidence")
   expect(all).toEqual([older, current])
+})
+
+describe("currentTurnFirst", () => {
+  const options = { ...memoryWindowDefaults, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40, media: "none" as const }
+  const spillFirst = windowPolicy(options)
+  const currentFirst = windowPolicy({ ...options, currentTurnFirst: true })
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(RunId.make(`run-${turn}`), seq), runId: RunId.make(`run-${turn}`), turn, step: 0, at: seq, body })
+  const call = (seq: number, turn: number): LogEntry => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(`c${seq + 1}`), toolName: "lookup", input: {} }] } })
+  const result = (seq: number, turn: number, view: string): LogEntry => at(seq, turn, {
+    _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName: "lookup", isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
+  })
+  /** Turn 1 read `earlier` and answered; turn 2, the current one, read `current`. */
+  const log = (earlier: string, current: string): ReadonlyArray<LogEntry> => [
+    at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "first question" }) }), call(1, 1), result(2, 1, earlier),
+    at(3, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("first answer") }),
+    at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second question" }) }), call(5, 2), result(6, 2, current),
+  ]
+  const renderTurn2 = (all: ReadonlyArray<LogEntry>) => renderLog(all, { ...currentFirst.render, strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: RunId.make("run-2"), run: RunOrdinal.make(0), stepContext: "none" })
+  const tokensWith = (all: ReadonlyArray<LogEntry>, actions: ReadonlyArray<CompactionAction>) =>
+    estimateMessageTokens(renderTurn2([...all, ...actions.map((action, index) => pendingCompaction(currentFirst.strategy, action, index))]))
+  const maintain = (policy: MemoryPolicy, all: ReadonlyArray<LogEntry>, budgetTokens: number, phase: MaintainSignal["phase"] = "step") =>
+    Effect.runPromise(Effect.result(policy.maintain({ entries: all, signal: { ...signal, phase, budgetTokens }, turn: 2, runId: RunId.make("run-2"), render: renderTurn2 })))
+  const dropTurn1 = (all: ReadonlyArray<LogEntry>): CompactionAction => ({ _tag: "DropTurns", throughTurn: 1, ledger: ledgerOf(all, 1, options.ledgerTurnChars) })
+
+  test("the strategy keeps its id and records the order in its version; the default is unchanged", () => {
+    expect(memoryWindowDefaults.currentTurnFirst).toBe(false)
+    expect(spillFirst.strategy).toEqual(WINDOW_STRATEGY)
+    expect(currentFirst.strategy).toEqual({ id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` })
+  })
+
+  test("earlier turns are condensed first: the oldest turn is dropped while the current turn's result stays whole", async () => {
+    const all = log("x".repeat(3_000), "y".repeat(3_000))
+    const budget = estimateMessageTokens(renderTurn2(all)) - 500
+    expect(await maintain(spillFirst, all, budget)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
+    expect(await maintain(currentFirst, all, budget)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "DropTurns", throughTurn: 1 }] } })
+  })
+
+  test("the current turn's results are spilled only when the current turn alone does not fit", async () => {
+    const all = log("x".repeat(3_000), "y".repeat(3_000))
+    const alone = tokensWith(all, [dropTurn1(all)])
+    expect(await maintain(currentFirst, all, alone)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "DropTurns", throughTurn: 1 }] } })
+    expect(await maintain(currentFirst, all, alone - 1)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+  })
+
+  test("once a result of the current turn is spilled, the earlier turns the budget still holds are kept", async () => {
+    const all = log("x".repeat(200), "y".repeat(6_000))
+    const decided = await maintain(currentFirst, all, tokensWith(all, [dropTurn1(all)]) - 1)
+    expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
+    expect(decided._tag === "Success" && decided.success.actions).toHaveLength(1)
+  })
+
+  test("context.budget only when nothing fits, and the end of a turn takes the smallest reduction instead", async () => {
+    const all = log("x".repeat(3_000), "y".repeat(3_000))
+    expect(await maintain(currentFirst, all, 5)).toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
+    expect(await maintain(currentFirst, all, 5, "turn-end")).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+  })
+
+  test("compactions recorded under the default order keep applying, and are not decided again", async () => {
+    const all = log("x".repeat(3_000), "y".repeat(3_000))
+    const recorded: LogEntry = at(7, 2, { _tag: "Compaction", strategy: WINDOW_STRATEGY.id, version: WINDOW_STRATEGY.version, action: { _tag: "Spill", entry: entryId(RunId.make("run-2"), 6), preview: "y-preview" } })
+    const replayed = [...all, recorded]
+    expect(JSON.stringify(renderTurn2(replayed))).toContain("y-preview")
+    expect(JSON.stringify(renderTurn2(replayed))).not.toContain("y".repeat(3_000))
+    expect(await maintain(currentFirst, replayed, estimateMessageTokens(renderTurn2(replayed)))).toMatchObject({ _tag: "Success", success: { actions: [] } })
+    expect(await maintain(currentFirst, replayed, estimateMessageTokens(renderTurn2(replayed)) - 1)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "DropTurns", throughTurn: 1 }] } })
+  })
 })

@@ -55,6 +55,31 @@ Compaction actions are recorded before they apply. They change later model
 requests, leaving the original tool result and messages in the journal. A new
 memory strategy can rebuild from those original entries.
 
+## Keep the current turn's results whole
+
+A turn that reads a large result and keeps working with it over several steps
+pays for each spill: the model sees a preview and calls `recall_context` to
+read back what it just received. Set `currentTurnFirst: true` to reverse the
+order under pressure:
+
+```ts
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+const memory = { plugin: memoryWindowPlugin, options: { currentTurnFirst: true } }
+```
+
+The policy then compacts earlier turns and replaces the oldest turns with a
+ledger first, keeping every result of the current turn whole. It spills the
+current turn's largest results only when the current turn alone does not fit,
+choosing the fewest spills and then the fewest dropped turns, and fails with
+`context.budget` only when nothing fits. The default, `false`, keeps the order
+above.
+
+The option keeps the strategy id `window` and adds a suffix to its version:
+`2+current-turn-first`. Compactions recorded under either order keep applying
+exactly as they were recorded, while each request's `strategyVersion` (in its
+recorded header and in `context.built`) shows which order decided it.
+
 ## Digests, images and budgets
 
 `digestOnWriteChars: 0` disables eager digestion by default. To digest supported
@@ -112,7 +137,8 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.17.1** · Plugin API **3
   "digests": true,
   "media": "inline",
   "maxImages": 8,
-  "maxMediaChars": 20000000
+  "maxMediaChars": 20000000,
+  "currentTurnFirst": false
 }
 ```
 
@@ -178,6 +204,9 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.17.1** · Plugin API **3
       "type": "integer",
       "minimum": 0,
       "maximum": 20000000
+    },
+    "currentTurnFirst": {
+      "type": "boolean"
     }
   },
   "required": [
