@@ -11,6 +11,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 ### Migration
 
 
+
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -50,8 +51,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   each `KnowledgeRecallResult` it builds (`[]` when it cites nothing).
 
 
-### Added
 
+### Added
 
 - `@xandreed/core`, `@xandreed/plugin-sessions`,
   `@xandreed/plugin-session-files`, `@xandreed/plugin-session-sqlite`: a
@@ -321,9 +322,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `defaults.spans`. Without `spans`, the export is unchanged. A host that
   already runs its own OpenTelemetry provider bridges Effect's tracer into
   it instead and leaves these layers out.
-
+- `@xandreed/plugin-memory-window`: `currentTurnFirst` (off by default)
+  keeps the current turn's tool results whole under budget pressure. The
+  window compacts earlier turns and drops the oldest ones for a ledger
+  first, and spills the current turn's largest results only when the
+  current turn alone does not fit (the fewest spills, then the fewest
+  dropped turns); it fails with `context.budget` only when nothing fits.
+  Without it, a turn that reads a large result and keeps using it over
+  several steps saw that result spilled at the next step while older turns
+  stayed, and spent steps reading it back with `recall_context`; a host
+  had to wrap the policy to change the order. The strategy keeps its id
+  `window`, so compactions recorded under either order keep applying, and
+  its version becomes `2+current-turn-first`, which every request's
+  `strategyVersion` and `context.built` carry. The default order, its
+  version `2` and the stored format are unchanged.
 
 ### Changed
+
 
 
 
@@ -367,7 +382,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
+
 
 - `@xandreed/plugin-render`: a render feed follows its `live` stream
   before it folds a snapshot or reads the backlog. It subscribed only when
@@ -453,7 +470,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the same value twice still runs. An app's own command receives its
   arguments as given. `cliArguments` adds `list` and `singleValued`.
 
+
 ### Breaking
+
 
 
 
@@ -482,7 +501,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Repository
+
 
 
 - `@xandreed/plugin-render`'s test that a compressed SSE frame reaches the
@@ -492,6 +513,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

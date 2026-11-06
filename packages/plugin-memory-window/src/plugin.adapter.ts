@@ -1,5 +1,5 @@
 import { Tool } from "effect/ai"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
   Capabilities,
@@ -49,6 +49,14 @@ export const MemoryWindowConfig = Schema.Struct({
   maxImages: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Base64 characters of the images one request sends, at most `MEDIA_LIMITS.requestChars`; 0 sends none (text only). */
   maxMediaChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: MEDIA_LIMITS.requestChars }))),
+  /**
+   * Under budget pressure, keep the current turn's results whole while
+   * earlier turns are condensed: drop the oldest turns first, and spill the
+   * current turn's largest results only when the current turn alone does not
+   * fit. Off (the default), the current turn's results spill before any turn
+   * is dropped. On, the strategy's version is `2+current-turn-first`.
+   */
+  currentTurnFirst: Schema.optionalKey(Schema.Boolean),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 /** @public */
@@ -56,29 +64,41 @@ export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
   digestOnWriteChars: 0, digests: true, media: "inline", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
+  currentTurnFirst: false,
 }
 
 /** @public */
 export const WINDOW_STRATEGY = { id: "window", version: "2" } as const
+
+/**
+ * The strategy a config runs: always `WINDOW_STRATEGY.id`, so compactions
+ * recorded under either order keep applying, with `currentTurnFirst` in the
+ * version, so request headers and `context.built` tell the two orders apart.
+ */
+const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly version: string } =>
+  config.currentTurnFirst === true ? { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` } : WINDOW_STRATEGY
 
 /** A spilled result's preview: its first `chars` characters, and how to read the rest. */
 export const spillPreview = (entry: LogEntry, view: string, chars: number): string =>
   `${view.slice(0, chars)}\n[… ${Math.max(0, view.length - chars)} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${Math.min(chars, view.length)} to read them]`
 
 /**
- * The window policy: compact older turns, spill oversized results, then drop the oldest turns.
+ * The window policy: compact older turns, spill the current turn's oversized
+ * results, then drop the oldest turns; with `currentTurnFirst`, drop the
+ * oldest turns before spilling any of the current turn's results.
  *
  * @public
  */
 export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
-  strategy: WINDOW_STRATEGY,
+  strategy: strategyOf(config),
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
   maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
 const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
-    const rewritten = rewrittenBy(entries, WINDOW_STRATEGY.id)
+    const strategy = strategyOf(config)
+    const rewritten = rewrittenBy(entries, strategy.id)
     const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body }] : [])
     const older = signal.phase === "turn-start" && config.compactPreviousTurn
       ? results.filter(({ entry, result }) => entry.turn < turn && !result.pinned && !rewritten.has(entry.id))
@@ -91,21 +111,37 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
       _tag: "CompactViews", entries: compacted.map((item) => item.id), texts: compacted.map((item) => item.text),
     }]
     const tokens = (actions: ReadonlyArray<CompactionAction>): number =>
-      scaledTokens(estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(WINDOW_STRATEGY, action, index))])), Option.fromNullishOr(signal.observed))
+      scaledTokens(estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(strategy, action, index))])), Option.fromNullishOr(signal.observed))
     const over = (actions: ReadonlyArray<CompactionAction>): boolean => tokens(actions) > signal.budgetTokens
     if (!over(views)) return views
-    const spillable = results
+    const spills = results
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
       .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RecallContext.name && !rewritten.has(entry.id) && result.view.length >= config.spillMinChars)
       .sort((left, right) => right.result.view.length - left.result.view.length)
-    const spilled = spillable.reduce((actions: ReadonlyArray<CompactionAction>, { entry, result }): ReadonlyArray<CompactionAction> => !over(actions) ? actions
-      : [...actions, { _tag: "Spill", entry: entry.id, preview: spillPreview(entry, result.view, config.previewChars) }], views)
-    if (!over(spilled)) return spilled
-    const candidates = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
-      .map((through): ReadonlyArray<CompactionAction> => [...spilled, { _tag: "DropTurns", throughTurn: through, ledger: ledgerOf(entries, through, config.ledgerTurnChars) }])
-    const dropped = candidates.find((actions) => !over(actions))
-    if (dropped !== undefined) return dropped
-    if (signal.phase === "turn-end" || signal.phase === "overflow") return [spilled, ...candidates]
+      .map(({ entry, result }): CompactionAction => ({ _tag: "Spill", entry: entry.id, preview: spillPreview(entry, result.view, config.previewChars) }))
+    const drops = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
+      .map((through): CompactionAction => ({ _tag: "DropTurns", throughTurn: through, ledger: ledgerOf(entries, through, config.ledgerTurnChars) }))
+    // Each candidate keeps `base` and drops the oldest turns, one more turn at a time.
+    const dropping = (base: ReadonlyArray<CompactionAction>): ReadonlyArray<ReadonlyArray<CompactionAction>> => drops.map((drop) => [...base, drop])
+    // The default order spills the current turn's largest results until they fit, then drops the oldest turns.
+    const spillFirst = (): Option.Option<ReadonlyArray<CompactionAction>> => {
+      const spilled = spills.reduce((actions: ReadonlyArray<CompactionAction>, spill) => !over(actions) ? actions : [...actions, spill], views)
+      return !over(spilled) ? Option.some(spilled) : Arr.findFirst(dropping(spilled), (actions) => !over(actions))
+    }
+    // Current turn first: the fewest spills of the current turn's results, then the fewest dropped turns.
+    // Turns are dropped at a spill count only when dropping every earlier turn fits with it.
+    const currentFirst = (): Option.Option<ReadonlyArray<CompactionAction>> =>
+      Arr.findFirst(Array.from({ length: spills.length + 1 }, (_, count) => [...views, ...spills.slice(0, count)]), (level) => {
+        if (!over(level)) return Option.some(level)
+        const candidates = dropping(level)
+        const deepest = candidates.at(-1)
+        return deepest === undefined || over(deepest) ? Option.none() : Arr.findFirst(candidates, (actions) => !over(actions))
+      })
+    const fitted = config.currentTurnFirst === true ? currentFirst() : spillFirst()
+    if (Option.isSome(fitted)) return fitted.value
+    // Nothing fits: every spill is in the candidates below, as the default order leaves them.
+    const spilled = [...views, ...spills]
+    if (signal.phase === "turn-end" || signal.phase === "overflow") return [spilled, ...dropping(spilled)]
       .reduce((best: ReadonlyArray<CompactionAction>, candidate) => tokens(candidate) < tokens(best) ? candidate : best, [])
     return yield* Effect.fail(new HarnessError({ code: "context.budget", message: `The current turn alone exceeds the ${signal.budgetTokens}-token context budget` }))
 })
@@ -178,7 +214,7 @@ export const memoryWindowPlugin = definePlugin({
     Layer.sync(ConversationMemory, () => {
       const policy = windowPolicy(config)
       return ConversationMemory.of({
-        strategy: WINDOW_STRATEGY,
+        strategy: policy.strategy,
         open: Effect.fn("memory.open")(({ runId, log }) => openLogSession(log, policy, { runId })),
       })
     }),

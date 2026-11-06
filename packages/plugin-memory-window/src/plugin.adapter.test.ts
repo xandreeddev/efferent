@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Result, Tracer } from "effect"
+import { Context, Effect, Option, Result, Schema, Tracer } from "effect"
 import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
-import { memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
+import { MemoryWindowConfig, memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const config = {
   compactPreviousTurn: true, turnContext: "current" as const, replies: true, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40,
@@ -108,6 +108,25 @@ describe("spans", () => {
       ["host.turn", "Success"], ["memory.open", "Success"], ["memory.open", "Failure"],
     ])
     expect(Option.map(spans[1]!.parent, (parent) => parent.spanId)).toEqual(Option.some(spans[0]!.spanId))
+  })
+})
+
+describe("the plugin's strategy", () => {
+  const strategyOf = (options: typeof config & { readonly currentTurnFirst?: boolean }) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const built = yield* memoryWindowPlugin.build(options, Context.empty())
+    return Context.get(built as Context.Context<ConversationMemory>, ConversationMemory).strategy
+  })))
+
+  test("the memory it provides reports the version of the order it was configured with, under the same id", async () => {
+    expect(await strategyOf(config)).toEqual(WINDOW_STRATEGY)
+    expect(await strategyOf({ ...config, currentTurnFirst: false })).toEqual(WINDOW_STRATEGY)
+    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "2+current-turn-first" })
+  })
+
+  test("the option is off by default and validated as a boolean", () => {
+    expect(memoryWindowPlugin.defaults).toMatchObject({ currentTurnFirst: false })
+    expect(Result.isSuccess(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, currentTurnFirst: true }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, currentTurnFirst: "yes" }))).toBe(true)
   })
 })
 

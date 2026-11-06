@@ -1373,7 +1373,8 @@ memory strategy gets the rest for the messages; when they leave nothing,
 the step fails with `context.budget`. What the strategy does with the
 budget it is given is its own: the window strategy compacts older turns,
 spills the current turn's largest results and drops the oldest turns to
-fit, and fails with `context.budget` when the current turn alone does not;
+fit (with `currentTurnFirst`, drops the oldest turns before it spills),
+and fails with `context.budget` when the current turn alone does not;
 the summary strategy summarizes once the calibrated messages pass its
 `triggerRatio` of it and keeps its `keepRatio`, normally after the loop run;
 the digester ignores it. Every step's
@@ -1500,7 +1501,13 @@ a new strategy rebuilds from the full-fidelity entries.
   page is never spilled again. It fails
   with `context.budget` only when the current turn alone does not fit the
   budget it is given: the whole budget at the turn's start, and what the
-  system prompt and tool schemas leave of it at each step.
+  system prompt and tool schemas leave of it at each step. With
+  `currentTurnFirst: true` it keeps the current turn's results whole while
+  earlier turns are compacted and dropped, and spills them only when the
+  current turn alone does not fit (the fewest spills, then the fewest dropped
+  turns); the strategy keeps its id `window` and its version becomes
+  `2+current-turn-first`, part of every request's `strategyVersion`, so
+  compactions recorded under either order replay as recorded.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
   considers one after the turn's reply: once a completed or partial reply is

@@ -127,8 +127,10 @@ artifact with its own lifetime; the journal does not automatically import it.
 
 Choose one conversation policy. Window memory keeps the current turn detailed,
 compacts earlier results, spills oversized results to previews, and finally
-replaces old turns with a ledger under pressure. `recall_context` pages a stored
-result view by locator when the model needs more.
+replaces old turns with a ledger under pressure. With `currentTurnFirst`, it
+replaces old turns before it spills any of the current turn's results, and
+spills them only when the current turn alone does not fit. `recall_context`
+pages a stored result view by locator when the model needs more.
 
 Summary memory folds older whole turns into a helper-generated summary and
 keeps a recent tail verbatim. By default it considers a summary after the reply

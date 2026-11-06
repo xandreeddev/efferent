@@ -1478,7 +1478,8 @@ Requires: none
   "digests": true,
   "media": "inline",
   "maxImages": 8,
-  "maxMediaChars": 20000000
+  "maxMediaChars": 20000000,
+  "currentTurnFirst": false
 }
 ```
 
@@ -1541,6 +1542,9 @@ Requires: none
       "type": "integer",
       "minimum": 0,
       "maximum": 20000000
+    },
+    "currentTurnFirst": {
+      "type": "boolean"
     }
   },
   "required": [
