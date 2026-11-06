@@ -157,6 +157,24 @@ test.skipIf(url.length === 0)("PostgreSQL stamps observation time at publication
   expect(Result.isFailure(failed) && failed.failure.reason).toBe("Corrupt")
 }))))
 
+test.skipIf(url.length === 0)("PostgreSQL keeps a failed job's reason in its payload and decodes one stored before reasons", () => run(Effect.scoped(Effect.gen(function* () {
+  const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const source = sourceOf(scope, "failed", "The extraction failed")
+  const lease = yield* prepare(index, source, stageOf(0))
+  yield* index.fail(lease, { reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" })
+  const failed = yield* index.status(scope, lease.jobId)
+  expect(Option.map(failed, (job) => job.phase)).toEqual(Option.some({ _tag: "Failed", reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" }))
+  const where = sql`domain='knowledge' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection} AND id=${lease.jobId}`
+  const [row] = yield* Effect.tryPromise(() => sql<ReadonlyArray<{ readonly phase: string }>>`SELECT phase FROM efferent_knowledge.jobs WHERE ${where}`)
+  expect(row?.phase).toBe("Failed")
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.jobs SET payload = payload #- '{phase,reason}' #- '{phase,step}' WHERE ${where}`)
+  const older = yield* index.status(scope, lease.jobId)
+  expect(Option.map(older, (job) => job.phase)).toEqual(Option.some({ _tag: "Failed", reason: "Unavailable", message: "the graph extraction was invalid", step: "Required" }))
+  expect((yield* index.retry(scope, lease.jobId)).phase._tag).toBe("Queued")
+}))))
+
 test.skipIf(url.length === 0)("PostgreSQL scope CAS permits one concurrent publication across pools", () => run(Effect.scoped(Effect.gen(function* () {
   const first = yield* makeKnowledgePostgres(Redacted.make(url))
   const second = yield* makeKnowledgePostgres(Redacted.make(url))

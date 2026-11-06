@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Fiber, Option, Ref } from "effect"
 import { TestClock } from "effect/testing"
-import { CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
-import type { KnowledgeHelperCall } from "@xandreed/core"
+import { CurrentKnowledgeHelperCall, KnowledgeError, KnowledgeJobId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
+import type { KnowledgeHelperCall, KnowledgeJobFailure } from "@xandreed/core"
 import { chunkDocument } from "./rag.entity.functions.js"
 import { ragDefaults } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
@@ -158,13 +158,13 @@ describe("native temporal GraphRAG", () => {
 
   test("an invalid graph answer is retried within maxAttempts, and the retry publishes the graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const index = yield* makeKnowledgeIndexMemory()
-    const failures = yield* Ref.make<ReadonlyArray<string>>([])
-    const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], message: string) => Ref.update(failures, (all) => [...all, message]).pipe(Effect.andThen(index.fail(lease, message))) }
+    const failures = yield* Ref.make<ReadonlyArray<KnowledgeJobFailure>>([])
+    const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], failure: KnowledgeJobFailure) => Ref.update(failures, (all) => [...all, failure]).pipe(Effect.andThen(index.fail(lease, failure))) }
     const { utility, prompts } = yield* scriptedUtility(["not JSON", JSON.stringify(atlasGraph)])
     const { knowledge, store } = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
-    expect(yield* Ref.get(failures)).toEqual(["The document model returned an invalid graph extraction"])
+    expect(yield* Ref.get(failures)).toEqual([{ reason: "Invalid", message: "The document model returned an invalid graph extraction", step: "Graph" }])
     const status = yield* knowledge.status(scope, job.id)
     expect(Option.map(status, (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
     expect(Option.exists(Option.flatMap(status, (value) => value.stage), (stage) => stage.notes === undefined && stage.chunks.length === 1)).toBe(true)
@@ -197,8 +197,26 @@ describe("native temporal GraphRAG", () => {
     const failed = yield* Effect.result(knowledge.process(scope, 1))
     expect(failed._tag === "Failure" && failed.failure.reason).toBe("Invalid")
     const status = yield* knowledge.status(scope, job.id)
-    expect(Option.map(status, (value) => [value.phase, value.attempt])).toEqual(Option.some([{ _tag: "Failed", message: "The document source is unavailable" }, 1]))
+    expect(Option.map(status, (value) => [value.phase, value.attempt])).toEqual(Option.some([{ _tag: "Failed", reason: "Invalid", message: "The document source is unavailable", step: "Required" }, 1]))
     expect(yield* Ref.get(prompts)).toEqual([])
+  }))))
+
+  test("a transient failure is recorded as Unavailable and retried within maxAttempts", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const index = yield* makeKnowledgeIndexMemory()
+    const failures = yield* Ref.make<ReadonlyArray<KnowledgeJobFailure>>([])
+    const reads = yield* Ref.make(0)
+    const store = {
+      ...index,
+      source: (...input: Parameters<typeof index.source>) => Ref.getAndUpdate(reads, (count) => count + 1).pipe(Effect.flatMap((count) => count === 0
+        ? Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "The document store was unreachable" }))
+        : index.source(...input))),
+      fail: (lease: Parameters<typeof index.fail>[0], failure: KnowledgeJobFailure) => Ref.update(failures, (all) => [...all, failure]).pipe(Effect.andThen(index.fail(lease, failure))),
+    }
+    const { knowledge } = yield* makeRag({ maxAttempts: 2 }, store)
+    const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    expect(yield* Ref.get(failures)).toEqual([{ reason: "Unavailable", message: "The document store was unreachable", step: "Required" }])
+    expect(Option.map(yield* knowledge.status(scope, job.id), (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
   }))))
 
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

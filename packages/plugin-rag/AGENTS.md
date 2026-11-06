@@ -17,11 +17,12 @@ through KnowledgeStore. Node 24 and Bun.
   document until all chunks, vectors and graph extraction are staged and the
   store accepts the lease, source revision and scope CAS atomically.
 - The graph is optional, the chunks are not. A failed or invalid graph
-  extraction or review fails the attempt with `RagGraphFailed`, which is
-  retried within `maxAttempts` whatever its reason; the last attempt stages
-  the chunks without the graph and a `GraphOmitted` stage note. Only the
-  source's own failures (unavailable, tombstoned, embedding mismatch) stay
-  unretried.
+  extraction or review fails the attempt with `RagGraphFailed`, recorded on
+  the job with step `Graph` and retried within `maxAttempts` whatever its
+  reason; the last attempt stages the chunks without the graph and a
+  `GraphOmitted` stage note. Every other failure is recorded with step
+  `Required`; whether it is retried is `isRetryableKnowledgeFailure` (core),
+  the rule hosts share, never a local reason check.
 - Chunk text and provenance are exact UTF-16 slices of the original source.
   Prefer paragraph, heading and line boundaries; never normalize source text.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is

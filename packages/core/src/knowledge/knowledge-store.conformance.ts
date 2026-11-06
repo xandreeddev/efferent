@@ -9,7 +9,7 @@ import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJobId, KnowledgeLeaseToken,
   KnowledgeMemoryId, KnowledgeSourceId,
-  type KnowledgeCandidates, type KnowledgeJob, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
+  type KnowledgeCandidates, type KnowledgeJob, type KnowledgeJobFailure, type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope,
   type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
 } from "./knowledge.entity.js"
 
@@ -58,7 +58,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging (its notes included), CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
+ * durable staging (its notes included), failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source filters, forgetting,
  * revision replacement, batched source info, engine-scoped discovery and claims, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -91,12 +91,27 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const lease = leaseOf(fixture.scope, job)
       const notes = [{ _tag: "GraphOmitted" as const, reason: "Invalid" as const, message: "graph left out" }]
       yield* fixture.index.stage(lease, { ...stageOf(source), notes })
-      yield* fixture.index.fail(lease, "retryable")
+      yield* fixture.index.fail(lease, { reason: "Unavailable", message: "retryable", step: "Required" })
       const queued = yield* fixture.index.retry(fixture.scope, job.id)
       yield* claim(fixture, 30)
       const resumed = yield* fixture.index.status(fixture.scope, job.id)
       const kept = Option.exists(resumed, (value) => Option.exists(value.stage, (stage) => stage.notes?.length === 1 && stage.notes[0]?.reason === "Invalid" && stage.notes[0].message === "graph left out"))
       yield* expect("knowledge.stage-retry", queued.phase._tag === "Queued" && kept && Option.exists(resumed, (value) => value.attempt === 2), "retry discarded staged extraction, its notes or attempts")
+    })),
+    indexCheck("knowledge.failure-reason", (fixture) => Effect.gen(function* () {
+      const source = sourceOf(fixture.scope)
+      const job = yield* enqueue(fixture, source)
+      yield* claim(fixture)
+      const graph: KnowledgeJobFailure = { reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" }
+      yield* fixture.index.fail(leaseOf(fixture.scope, job), graph)
+      const first = yield* fixture.index.status(fixture.scope, job.id)
+      yield* fixture.index.retry(fixture.scope, job.id)
+      yield* claim(fixture, 30, "second-token")
+      const transient: KnowledgeJobFailure = { reason: "Unavailable", message: "the embedding service was unreachable", step: "Required" }
+      yield* fixture.index.fail({ ...leaseOf(fixture.scope, job, 31), token: KnowledgeLeaseToken.make("second-token") }, transient)
+      const second = yield* fixture.index.status(fixture.scope, job.id)
+      const failedWith = (found: Option.Option<KnowledgeJob>, failure: KnowledgeJobFailure) => Option.exists(found, (value) => sameJson(value.phase, { _tag: "Failed", ...failure }))
+      yield* expect("knowledge.failure-reason", failedWith(first, graph) && failedWith(second, transient), "a failed job's status lost the reason, message or step it was failed with, or kept an earlier attempt's")
     })),
     indexCheck("knowledge.atomic-cas", (fixture) => Effect.gen(function* () {
       yield* seed(fixture)

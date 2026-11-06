@@ -5,10 +5,10 @@ import {
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
-  narrowKnowledgeGraph, traverseKnowledgeGraph,
+  isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSnapshot, KnowledgeStage, KnowledgeVector,
   KnowledgeCandidate,
 } from "@xandreed/core"
@@ -124,13 +124,14 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
             const current = yield* store.status(scope, job.id).pipe(Effect.catchCause((readFailure) => Effect.logWarning("The memory job status could not be checked after processing stopped", readFailure).pipe(Effect.as(Option.none<KnowledgeJob>()))))
             if (!interrupted && Option.exists(current, (value) => value.phase._tag === "Complete")) return { _tag: "Complete" as const }
             const error = Option.getOrElse(Cause.findErrorOption(cause), () => failure(interrupted ? "Memory processing was interrupted before publication" : "Memory processing stopped unexpectedly", cause))
-            const recorded = yield* store.fail(yield* leaseOf(job, token), error.message).pipe(Effect.result)
+            const failed: KnowledgeJobFailure = { reason: error.reason, message: error.message, step: "Required" }
+            const recorded = yield* store.fail(yield* leaseOf(job, token), failed).pipe(Effect.result)
             if (Result.isFailure(recorded)) yield* Effect.logWarning("The memory processing failure could not be recorded", recorded.failure)
             if (interrupted) {
               if (Result.isSuccess(recorded)) yield* store.retry(scope, job.id).pipe(Effect.ignore({ log: "Warn", message: "Interrupted memory work could not be returned to the processing queue" }))
               return yield* Effect.failCause(cause)
             }
-            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && error.reason !== "Invalid" && error.reason !== "Tombstoned" && error.reason !== "EmbeddingMismatch") {
+            if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && isRetryableKnowledgeFailure(failed)) {
               yield* store.retry(scope, job.id)
               return { _tag: "Retry" as const, job }
             }

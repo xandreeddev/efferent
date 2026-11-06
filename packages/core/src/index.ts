@@ -506,7 +506,7 @@ export {
   KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeStage,
-  KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
+  KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
@@ -519,7 +519,7 @@ export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, traverseKnowledgeGraph,
-  validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph,
+  validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph, isRetryableKnowledgeFailure,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
 export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow } from "./knowledge/knowledge-extraction.entity.js"
