@@ -168,6 +168,35 @@ page contains the owner's complete history. An incomplete turn or page limit
 does not advance its checkpoint. A host ending a supplied `TurnWriter` calls
 `sync` after its own acknowledged end; `Agent.turn` does not own that end.
 
+A host screens what capture stores of each committed turn with
+`MemoryCaptureAdmission`, a reference every sync asks once per closed turn,
+before enqueuing it: the observer's, the `memory.recalled` section's catch-up,
+and a host's own `sync` and `backfill`. It receives the turn's session
+address, run id, turn number, evidence text and committed entries, and
+answers `Admit` (optionally with replacement text, stored in the evidence's
+place under the same source identities) or `Refuse`. A refused turn enqueues
+nothing, but the checkpoint still moves past it, so no later sync reads it
+again; `sync` reports it in `refused`. A failure or an invalid decision fails
+the sync before that turn's checkpoint, and the turn is asked again next time.
+The default admits every turn as is. Provide your own among the agent's
+`services` or a turn's services:
+
+```ts
+import { Context, Effect } from "effect"
+import { MemoryCaptureAdmission } from "@xandreed/plugin-memory"
+
+declare const withheldTurns: (session: string) => Effect.Effect<ReadonlySet<number>>
+
+const admission = Context.make(MemoryCaptureAdmission, {
+  admit: (turn) => withheldTurns(turn.session.id).pipe(
+    Effect.map((withheld) => withheld.has(turn.turn) ? { _tag: "Refuse" as const } : { _tag: "Admit" as const }),
+  ),
+})
+```
+
+Screening a turn is not narrowing: `KnowledgeNarrowing` scopes what a turn
+reads, the admission decides what capture learns from it.
+
 Memory processing is asynchronous. `capture` or `ingest` returning a job means
 the source is durably accepted. Inspect `status`, call `process` explicitly, or
 let the worker publish it. `retry` requeues a failed job. Model/embedding errors

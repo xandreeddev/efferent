@@ -4,8 +4,8 @@ import {
   LongTermMemory, Sessions, ToolCompletedEvent, definePlugin, entriesOfEvents, readStored, toolInputsByResult, userMessageText,
 } from "@xandreed/core"
 import type { LogEntry, SessionAddress, SessionLogEvent } from "@xandreed/core"
-import { MemoryCapture } from "./ports/memory-capture.port.js"
-import { MemoryCaptureAck, MemoryCaptureConfig, memoryCaptureDefaults } from "./memory.entity.js"
+import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
+import { MemoryCaptureAck, MemoryCaptureConfig, MemoryCaptureDecision, memoryCaptureDefaults, type MemorySyncResult } from "./memory.entity.js"
 
 const ACK = "@xandreed/plugin-memory/capture.ack"
 const captureKinds = ["turn.started", "memory.message", "memory.tool-result", "tool.completed", "turn.reply", "turn.ended"]
@@ -47,6 +47,8 @@ export const splitCapturedEvidence = (text: string, maximum: number): ReadonlyAr
   return parts
 }
 
+const invalidDecision = (cause: unknown) => new KnowledgeError({ reason: "Invalid", message: "The capture admission returned an invalid decision", cause })
+
 /** Build synchronization over the caller's owner-checked Sessions, independently of engine processing. @public */
 export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(MemoryCapture, Effect.gen(function* () {
   const sessions = yield* Sessions
@@ -79,7 +81,8 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
     if (pages >= config.maxPages) return { events: combined, limited: true }
     return yield* read(address, page.at(-1)?.seq ?? after, combined, pages + 1)
   })
-  const sync = Effect.fn("memory.capture.sync")(function* (address: SessionAddress) {
+  const sync: (address: SessionAddress) => Effect.Effect<MemorySyncResult, KnowledgeError> = Effect.fn("memory.capture.sync")(function* (address: SessionAddress) {
+    const admission = yield* MemoryCaptureAdmission
     const after = yield* checkpoint(address)
     const scanned = yield* read(address, after, [], 1)
     const events = scanned.events
@@ -89,16 +92,25 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
     if (endings.length === 0) return { sources: 0, through: after, hasMore: events.length > 0,
       ...(events.length === 0 ? {} : { stalled: limited ? "page-limit" as const : "open-turn" as const }),
     }
-    const sources = yield* Effect.forEach(endings, (ending) => Effect.gen(function* () {
+    const synced = yield* Effect.forEach(endings, (ending) => Effect.gen(function* () {
       if (Option.isNone(ending.turn) || ending.turn.value < 1) return yield* Effect.fail(corrupt("A closing record has no turn number"))
+      const turn = ending.turn.value
       const turnEvents = events.filter((event) => event.seq <= ending.seq && Option.isSome(event.turn) && Option.contains(ending.turn, event.turn.value))
       const starts = yield* readStored("turn.started", turnEvents).pipe(Effect.mapError(corrupt))
       const started = starts[0]
       if (started === undefined) return yield* Effect.fail(new KnowledgeError({ reason: "Corrupt", message: "A committed turn has no starting evidence" }))
       const entries = yield* entriesOfEvents(turnEvents).pipe(Effect.mapError(corrupt))
       const receipts = yield* Effect.forEach(turnEvents.filter((event) => event.kind === "tool.completed"), (event) => Schema.decodeUnknownEffect(Receipt)(event.data).pipe(Effect.mapError(corrupt)), { concurrency: 1 })
-      const text = capturedTurnText(entries, receipts)
-      const parts = splitCapturedEvidence(text, config.maxSourceChars)
+      const captured = capturedTurnText(entries, receipts)
+      const decision = yield* admission.admit({ session: { owner: address.owner, id: address.id }, runId: started.data.runId, turn, text: captured, entries }).pipe(
+        Effect.flatMap((value) => Schema.decodeUnknownEffect(MemoryCaptureDecision)(value).pipe(Effect.mapError(invalidDecision))),
+      )
+      // A refused turn has no evidence, so it enqueues nothing; its checkpoint below still moves past it.
+      const { evidence, refused } = MemoryCaptureDecision.match(decision, {
+        Admit: (admit) => ({ evidence: admit.text ?? captured, refused: [] }),
+        Refuse: () => ({ evidence: "", refused: [turn] }),
+      })
+      const parts = splitCapturedEvidence(evidence, config.maxSourceChars)
       const episode = `conversation:${address.id}:${started.data.runId}`
       yield* Effect.forEach(parts, (part, index) => {
         const key = `${episode}:1:${index}`
@@ -108,7 +120,7 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
             scope: { owner: address.owner, namespace: config.namespace, collection: config.collection },
             ref: { id: KnowledgeSourceId.make(key), revision: 1 }, text: part.text,
             occurredAt: started.event.at, recordedAt: ending.at,
-            metadata: { kind: "conversation", episode, session: address.id, run: started.data.runId, turn: Option.getOrElse(ending.turn, () => 0), through: ending.seq, part: index, offset: part.start, end: part.end, totalChars: text.length },
+            metadata: { kind: "conversation", episode, session: address.id, run: started.data.runId, turn, through: ending.seq, part: index, offset: part.start, end: part.end, totalChars: evidence.length },
           },
         }).pipe(Effect.catchIf((error) => error.reason === "Tombstoned", () => Effect.succeed(undefined)))
       }, { concurrency: 1 })
@@ -117,12 +129,14 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
         drafts: current >= through ? [] : [{ kind: ACK, data: { namespace: config.namespace, collection: config.collection, version: "1", through } }],
         result: undefined,
       })))).pipe(Effect.mapError(storageFailure))
-      return parts.length
+      return { sources: parts.length, refused }
     }), { concurrency: 1 })
     const through = endings.at(-1)?.seq ?? after
     const more = yield* sessions.read(address, { after: through, kinds: captureKinds, limit: 1 }).pipe(Effect.mapError(storageFailure))
-    return { sources: sources.reduce((sum, amount) => sum + amount, 0), through, hasMore: more.length > 0,
+    const refused = synced.flatMap((turn) => turn.refused)
+    return { sources: synced.reduce((sum, turn) => sum + turn.sources, 0), through, hasMore: more.length > 0,
       ...(limited && events.some((event) => event.seq > through) ? { stalled: "page-limit" as const } : {}),
+      ...(refused.length === 0 ? {} : { refused }),
     }
   })
   return MemoryCapture.of({
@@ -130,7 +144,8 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
     backfill: Effect.fn("memory.capture.backfill")(function* (input) {
       const page = yield* sessions.list(input).pipe(Effect.mapError(storageFailure))
       const captured = yield* Effect.forEach(page.sessions, (view) => sync({ owner: input.owner, id: view.header.id }), { concurrency: 1 })
-      return { sources: captured.reduce((total, result) => total + result.sources, 0), next: page.next }
+      const refused = captured.reduce((total, result) => total + (result.refused?.length ?? 0), 0)
+      return { sources: captured.reduce((total, result) => total + result.sources, 0), next: page.next, ...(refused === 0 ? {} : { refused }) }
     }),
   })
 }))

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { LogEntry, RunId, SessionAddress } from "@xandreed/core"
 
 const Positive = Schema.Int.check(Schema.isGreaterThan(0))
 /** Native memory processing and bounded recall. @public */
@@ -64,9 +65,35 @@ export const memoryCaptureDefaults: MemoryCaptureConfig = { namespace: "default"
 
 /** Plugin-owned checkpoints; the framework's journal schemas stay unchanged. */
 export const MemoryCaptureAck = Schema.Struct({ namespace: Schema.String, collection: Schema.String, version: Schema.Literal("1"), through: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) })
+/**
+ * One committed turn as capture is about to store it, given to the host's `MemoryCaptureAdmission`:
+ * its session, run and turn number, the evidence text capture renders from it and the committed
+ * entries that text comes from. @public
+ */
+export const MemoryCaptureTurn = Schema.Struct({
+  session: SessionAddress,
+  runId: RunId,
+  turn: Positive,
+  /** The evidence capture stores when the turn is admitted as is. */
+  text: Schema.String,
+  /** The turn's committed journal entries, in order. */
+  entries: Schema.Array(LogEntry),
+})
+export type MemoryCaptureTurn = typeof MemoryCaptureTurn.Type
+/**
+ * What capture stores of one committed turn: `Admit` its evidence, or the host's `text` in its
+ * place; `Refuse` stores nothing, and the checkpoint still moves past the turn. @public
+ */
+export const MemoryCaptureDecision = Schema.Union([
+  Schema.TaggedStruct("Admit", { text: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())) }),
+  Schema.TaggedStruct("Refuse", {}),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type MemoryCaptureDecision = typeof MemoryCaptureDecision.Type
 /** @public */
 export const MemorySyncResult = Schema.Struct({
   sources: Schema.Int, through: Schema.Int, hasMore: Schema.Boolean,
   stalled: Schema.optionalKey(Schema.Literals(["open-turn", "page-limit"])),
+  /** The turn numbers the host's admission refused in this sync, in order; absent when none was. */
+  refused: Schema.optionalKey(Schema.Array(Positive)),
 })
 export type MemorySyncResult = typeof MemorySyncResult.Type
