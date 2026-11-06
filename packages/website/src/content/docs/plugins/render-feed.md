@@ -183,7 +183,18 @@ await Effect.runPromise(proof)
 A host that also streams what the journal never stores, such as a reply as
 it is written, a preview or a build handshake, passes that stream as `live`
 in the options of `frames`. Each payload goes out as a transient frame,
-after the ready frame so the backlog comes first. Transient frames carry no
+after the ready frame so the backlog comes first. The feed starts the live
+stream before it folds a snapshot or reads the backlog, and holds what it
+yields until the ready frame: a payload published while a cold client's
+snapshot is folded, or while its backlog is read, reaches it after `ready`,
+in the order it was published. At most `liveBuffer` payloads wait (256 by
+default; an integer from 1 to 65 536, else the feed fails with `invalid`):
+at the bound the feed pulls no more from `live` until the client takes some,
+before the ready frame and after it. A pull-based or finite source (a
+`Stream.fromIterable` of previews) therefore loses nothing and waits, while
+a source that publishes on its own drops at its own capacity: a session's
+channel keeps a follower's newest. The journal side never waits on the
+live one. Transient frames carry no
 sequence: over SSE they have no `id` line, so `Last-Event-ID` stays at the
 last journaled record, and a reconnecting client receives only what the
 journal kept. The feed still ends when its journal side does. A live stream
@@ -212,7 +223,10 @@ follows core's `SessionChannel` for the feed's session (`threadId` the
 session, `principalId` its owner, as `SessionsJournalTailLive` reads them),
 so every feed open on the session shows what a turn shares with
 `shareTransient` and what the host publishes there itself. A feed sees
-what is published from the time it starts; nothing is replayed.
+what is published from the time it starts, its snapshot's fold included,
+so a client that connects mid-turn gets the snapshot, the records after
+its head, `ready`, then the rest of that turn's transient events; nothing
+published before the feed started is replayed.
 
 ```ts
 import { Effect } from "effect"

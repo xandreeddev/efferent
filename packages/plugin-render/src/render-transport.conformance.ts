@@ -186,6 +186,44 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
       }),
     },
     {
+      name: "live payloads published while a cold client's snapshot is folded follow the ready frame, in order",
+      run: Effect.gen(function* () {
+        const expect = holds("live payloads published while a cold client's snapshot is folded follow the ready frame, in order")
+        const journal = yield* makeMemoryJournal([record(1), record(2)])
+        // A source that keeps nothing for a follower it does not have yet, as a session's channel.
+        const source = yield* PubSub.sliding<FeedPayload>(16)
+        // The fold returns only once a payload has been published while it runs: a feed that has not followed `live` by then loses it.
+        const fold: SnapshotFold = (folded) => PubSub.publish(source, livePayload("live.during")).pipe(Effect.andThen(foldOf(folded)))
+        const frames = yield* collect(makeFeed(journal.tail, options).frames(feedScope, 0, project, { live: Stream.fromPubSub(source), snapshot: { head: 2, fold } }).pipe(
+          Stream.tap((frame) => frame._tag === "FeedReady" ? PubSub.publish(source, livePayload("live.after")) : Effect.void),
+          Stream.takeUntil((frame) => frame._tag === "FeedTransient" && frame.event === "live.after"),
+        )).pipe(Effect.timeout("2 seconds"), Effect.option)
+        const all = Option.getOrElse(frames, () => [])
+        const ready = all.findIndex((frame) => frame._tag === "FeedReady")
+        const during = all.findIndex((frame) => frame._tag === "FeedTransient" && frame.event === "live.during")
+        yield* expect(Option.isSome(frames), "the payload published after the ready frame arrived")
+        yield* expect(recordFrames(all)[0]?.event === "snapshot", `the client started from the snapshot, got ${canonicalJson(recordFrames(all)[0])}`)
+        yield* expect(canonicalJson(transients(all)) === canonicalJson(["live.during", "live.after"]), `the payload published during the fold, then the later one, got ${canonicalJson(transients(all))}`)
+        yield* expect(ready >= 0 && during > ready, "the payload published during the fold follows the ready frame")
+      }),
+    },
+    {
+      name: "a finite live stream longer than liveBuffer reaches the client whole, in order",
+      run: Effect.gen(function* () {
+        const expect = holds("a finite live stream longer than liveBuffer reaches the client whole, in order")
+        const journal = yield* makeMemoryJournal([record(1)])
+        const events = Array.from({ length: 40 }, (_, i) => `live.${i + 1}`)
+        // The fold takes a while, so a pulled source runs ahead of the ready frame: a feed that drops what does not fit loses the start.
+        const fold: SnapshotFold = (folded) => Effect.sleep("30 millis").pipe(Effect.andThen(foldOf(folded)))
+        const frames = yield* collect(makeFeed(journal.tail, { ...options, maxDurationMs: 2_000 }).frames(feedScope, 0, project, {
+          live: Stream.fromIterable(events.map(livePayload)), liveBuffer: 4, snapshot: { head: 1, fold },
+        }).pipe(Stream.takeUntil((frame) => frame._tag === "FeedTransient" && frame.event === events[events.length - 1]))).pipe(
+          Effect.timeout("2 seconds"), Effect.option)
+        yield* expect(canonicalJson(transients(Option.getOrElse(frames, () => []))) === canonicalJson(events),
+          `the 40 payloads in order, got ${canonicalJson(transients(Option.getOrElse(frames, () => [])))}`)
+      }),
+    },
+    {
       name: "a client at cursor 0 or past the head starts from the snapshot, then follows the tail",
       run: Effect.gen(function* () {
         const expect = holds("a client at cursor 0 or past the head starts from the snapshot, then follows the tail")

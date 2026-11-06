@@ -160,9 +160,23 @@ export interface FeedSnapshot<R = never> {
 export interface FeedFramesOptions<R = never> {
   /**
    * What the journal never stores (a reply as it streams, a preview, a
-   * handshake), sent as `FeedTransient` frames after the ready frame.
+   * handshake), sent as `FeedTransient` frames after the ready frame. The
+   * feed starts it before it folds the snapshot or reads the backlog, so a
+   * stream that follows its source from its first pull (`sessionLive`)
+   * misses nothing published while the client catches up: those payloads
+   * wait for the ready frame, then go out in order.
    */
   readonly live?: Stream.Stream<FeedPayload, RenderError>
+  /**
+   * How many `live` payloads wait for the client (default 256, an integer
+   * from 1 to 65 536, else the feed fails with `invalid`): those published
+   * before the ready frame, and any a slow client has not taken yet. At the
+   * bound the feed stops pulling `live` until the client takes some, so a
+   * pull-based or finite source loses nothing and waits, while a source
+   * that publishes on its own drops at its own capacity (a session channel's
+   * follower keeps the newest); the journal side never waits on them.
+   */
+  readonly liveBuffer?: number
   /**
    * The journal kinds the projection uses (absent or empty: every kind). The
    * tail reads only those, the snapshot folds only those, and records of
@@ -189,7 +203,12 @@ export interface FeedFramesOptions<R = never> {
  * - `live`, when given, carries what the journal never stores (a reply as it
  *   streams, a preview, a handshake): each payload becomes a `FeedTransient`
  *   frame, sent only after the ready frame, and the stream still ends when
- *   the journal side does. Transient frames carry no sequence and never move
+ *   the journal side does. The feed starts `live` before it folds the
+ *   snapshot or reads the backlog and holds its payloads (at most
+ *   `liveBuffer`, then it pulls no more until the client takes some) until
+ *   the ready frame, so a payload published
+ *   after the feed started reaches the client after ready, in the order it
+ *   was published, even while a cold client's snapshot is folded. Transient frames carry no sequence and never move
  *   the resume cursor: a client that reconnects gets only what the journal
  *   kept. A live stream that ends stops only the live frames; one that fails,
  *   or a payload named `ready`, fails the feed.

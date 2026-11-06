@@ -125,3 +125,20 @@ export const isOfKinds = (kinds: ReadonlyArray<string>) => (record: JournalRecor
 
 /** Whether a client at `after` starts from a snapshot cut at `head`: it has nothing (0), or more than the journal had (past `head`). */
 export const startsFromSnapshot = (after: number, head: number): boolean => after === 0 || after > head
+
+/** How many live payloads a feed holds for its client when `liveBuffer` is not given. */
+export const LIVE_BUFFER_DEFAULT = 256
+const LIVE_BUFFER_MAX = 65_536
+
+/**
+ * The live payloads a feed holds for its client (`FeedFramesOptions.liveBuffer`):
+ * the default when absent, else an integer from 1 to 65 536; anything else
+ * is refused with `invalid`.
+ */
+export const liveBufferOf = (requested: Option.Option<number>): Result.Result<number, RenderError> =>
+  Option.match(requested, {
+    onNone: () => Result.succeed(LIVE_BUFFER_DEFAULT),
+    onSome: (size) => Number.isInteger(size) && size >= 1 && size <= LIVE_BUFFER_MAX
+      ? Result.succeed(size)
+      : Result.fail(new RenderError({ code: "invalid", message: `Invalid liveBuffer ${size}: an integer from 1 to ${LIVE_BUFFER_MAX}` })),
+  })
