@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { createServer, get, IncomingMessage, ServerResponse } from "node:http"
 import type { IncomingHttpHeaders, Server } from "node:http"
 import { Socket } from "node:net"
-import { brotliDecompressSync, constants, gunzipSync } from "node:zlib"
+import { brotliDecompressSync, constants, createBrotliDecompress, createGunzip, gunzipSync } from "node:zlib"
 import type { AddressInfo } from "node:net"
 import { Effect, Logger, Option, Result, Schema, Stream } from "effect"
 import { RunId } from "@xandreed/core"
@@ -376,16 +376,13 @@ const serving = (frames: () => Stream.Stream<FeedFrame>, ended: Array<string> = 
   return new Promise<Server>((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)))
 }
 
-/** Each body chunk as it arrives, and the response headers, without decoding the body. */
-const request = (server: Server, acceptEncoding: string, onChunk: (chunk: Buffer, all: ReadonlyArray<Buffer>) => void = () => undefined) =>
+/** The response headers and its whole body, without decoding the body. */
+const request = (server: Server, acceptEncoding: string) =>
   new Promise<{ readonly headers: IncomingHttpHeaders; readonly body: Buffer }>((resolve, reject) => {
     const { port } = server.address() as AddressInfo
     get({ host: "127.0.0.1", port, path: `/${encodeURIComponent(acceptEncoding)}`, headers: { "accept-encoding": acceptEncoding } }, (response) => {
       const chunks: Array<Buffer> = []
-      response.on("data", (chunk: Buffer) => {
-        chunks.push(chunk)
-        onChunk(chunk, chunks)
-      })
+      response.on("data", (chunk: Buffer) => { chunks.push(chunk) })
       response.on("end", () => resolve({ headers: response.headers, body: Buffer.concat(chunks) }))
       response.on("error", reject)
     }).on("error", reject)
@@ -421,18 +418,52 @@ test("a compressed SSE response decompresses to the same frames and ends with th
   expect(ended.map(decodeURIComponent).toSorted()).toEqual(["/gzip", "/gzip, br", "/identity"].toSorted())
 })
 
+/** How long a compressed frame may take to be decoded before the test fails with what was decoded instead. */
+const frameDeadline = "3 seconds"
+
+/**
+ * Reads a response that never ends, asking for `encoding`, through the streaming
+ * decoder for it until the decoded text holds `expected`. Fails, saying what was
+ * decoded so far, when the request, the response or the decoder fails, or when
+ * the text does not hold `expected` within `frameDeadline`; the request is then
+ * destroyed.
+ */
+const decodedUntil = (server: Server, encoding: "br" | "gzip", expected: string) => Effect.suspend(() => {
+  const decoded: Array<string> = []
+  const failure = (what: string, cause?: unknown) =>
+    new Error(`the ${encoding} response ${what}; decoded so far: ${JSON.stringify(decoded.join(""))}`, { cause })
+  return Effect.callback<string, Error>((resume) => {
+    const { port } = server.address() as AddressInfo
+    const failed = (what: string) => (error: Error) => resume(Effect.fail(failure(what, error)))
+    const sent = get({ host: "127.0.0.1", port, path: `/${encoding}`, headers: { "accept-encoding": encoding } }, (response) => {
+      const decoder = encoding === "br" ? createBrotliDecompress() : createGunzip()
+      decoder.setEncoding("utf8")
+      decoder.on("data", (text: string) => {
+        decoded.push(text)
+        if (decoded.join("").includes(expected)) resume(Effect.succeed(decoded.join("")))
+      })
+      decoder.on("error", failed("could not be decoded"))
+      response.on("error", failed("failed"))
+      response.pipe(decoder)
+    })
+    sent.on("error", failed("could not be requested"))
+    return Effect.sync(() => { sent.destroy() })
+  }).pipe(Effect.timeoutOrElse({
+    duration: frameDeadline,
+    orElse: () => Effect.fail(failure(`did not decode to the expected frame within ${frameDeadline}`)),
+  }))
+})
+
 test("a compressed SSE frame reaches the client before the next one is written", async () => {
   const first = FeedRecord.make({ sequence: 1, event: "message.updated", data: { text: "first" } })
+  // The feed never ends after its first frame, so the frame can only arrive because the peer flushed it.
   const server = await serving(() => Stream.concat(Stream.make(first), Stream.never))
-  const seen = await Promise.all(["br", "gzip"].map((encoding) => new Promise<string>((resolve) => {
-    // The response never ends: the server drops it once the frame has arrived.
-    request(server, encoding, (_chunk, all) => {
-      const text = decompress(encoding, Buffer.concat(all))
-      if (text.includes("event: message.updated")) resolve(text)
-    }).then(() => undefined, () => undefined)
-  })))
-  server.closeAllConnections()
-  server.close()
+  const seen = await Effect.runPromise(Effect.all([decodedUntil(server, "br", encodeSse(first)), decodedUntil(server, "gzip", encodeSse(first))], { concurrency: 2 }).pipe(
+    Effect.ensuring(Effect.sync(() => {
+      server.closeAllConnections()
+      server.close()
+    })),
+  ))
   expect(seen.map(decodeSse)).toEqual([Result.succeed([first]), Result.succeed([first])])
 })
 

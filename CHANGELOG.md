@@ -384,6 +384,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+### Repository
+
+- `@xandreed/plugin-render`'s test that a compressed SSE frame reaches the
+  client while the stream stays open reads each response through a streaming
+  Brotli or gzip decoder and waits for the frame's decoded bytes, with a
+  stated 3 s deadline that fails naming the encoding and what was decoded so
+  far. It decompressed the whole body again on every chunk inside the
+  response listener, where a partial chunk could throw, leave the wait
+  unsettled and run into the test runner's 5 s timeout. Test change only.
+
 
 
 
