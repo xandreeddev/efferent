@@ -153,7 +153,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
 
 /**
  * The Sessions contract, as checks any backend must pass: sessions created,
- * read only by their owner, listed in pages and forked; one open turn per
+ * read only by their owner, listed in pages and forked; a read limited from
+ * either end (`from: "end"`: the newest events of its kinds, ascending);
+ * one open turn per
  * session (`SessionBusy`, on any instance, and exactly one winner of a
  * race); a key's retry is the same turn (`TurnDuplicate`, whatever the
  * `meta`) and anything else under it a `KeyConflict`; a run id an earlier
@@ -676,6 +678,26 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* writer.end(completed)
       const turn = kindsOf(yield* sessions.read(address, { after: 1 }))
       yield* expect("transact", turn === "turn.started@1,step.started@1,conformance.answer@1,turn.ended@1", `the turn stored ${turn}`)
+    })),
+
+    scoped("a read from the end keeps the newest events of its kinds after its position, ascending, and every match without a limit", "read-latest", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      // Three commits outside a turn: a b a | c a | b.
+      const stored = yield* Effect.forEach([["a", "b", "a"], ["c", "a"], ["b"]], (kinds) => sessions.transact(address, () =>
+        Effect.succeed({ drafts: kinds.map((kind) => ({ kind: `conformance.${kind}`, data: {} })), result: undefined })), { concurrency: 1 })
+      const seq = stored.flatMap((decided) => decided.events).map((event) => event.seq)
+      const at = (...indexes: ReadonlyArray<number>) => indexes.map((index) => seq[index]).join()
+      const latest = (query: { readonly after?: number; readonly limit?: number; readonly kinds?: ReadonlyArray<string> }) =>
+        sessions.read(address, { ...query, from: "end" }).pipe(Effect.map((events) => events.map((event) => event.seq).join()))
+      const kinds = (...names: ReadonlyArray<string>) => names.map((name) => `conformance.${name}`)
+      yield* expect("read-latest", seq.length === 6 && (yield* latest({ limit: 2 })) === at(4, 5), `the newest two events read ${yield* latest({ limit: 2 })}, not ${at(4, 5)} ascending`)
+      yield* expect("read-latest", (yield* latest({ limit: 2, kinds: kinds("a") })) === at(2, 4), "the newest events of a kind were not returned")
+      yield* expect("read-latest", (yield* latest({ limit: 2, kinds: kinds("a", "c") })) === at(3, 4), "the limit applied before the kinds filter")
+      yield* expect("read-latest", (yield* latest({ kinds: kinds("a") })) === at(0, 2, 4), "without a limit, not every match was returned")
+      yield* expect("read-latest", (yield* latest({ after: seq[2]!, limit: 5, kinds: kinds("a") })) === at(4), "events at or before after were returned")
+      const fromStart = (yield* sessions.read(address, { limit: 2, kinds: kinds("a"), from: "start" })).map((event) => event.seq).join()
+      yield* expect("read-latest", fromStart === at(0, 2), "from: start did not read as an omitted from")
     })),
 
     scoped("a keyed transact records once: a retry under its key, on any instance and beside an open turn, decides nothing, writes nothing and is TransactDuplicate with the first one's events; transact keys are apart from turn keys", "transact-key", (owner) => Effect.gen(function* () {

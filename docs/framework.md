@@ -3138,7 +3138,11 @@ background tasks. Two layers split the work:
   text, which drops an `undefined` field, and `storedJson` turns any object
   into the `JsonObject` a store gives back.
   `create`, `head`, `list` (an owner's sessions, newest first, keyset
-  paged), `read` (after a cursor, by kinds), `remove` (with its children)
+  paged), `read` (`SessionReadQuery`: after a cursor and at most an
+  inclusive `through`, by kinds, ascending; `limit` keeps the oldest
+  matches, or with `from: "end"` the newest, kinds filtered first, still
+  ascending, so a reader of the latest records of a few kinds does not scan
+  the session from its start), `remove` (with its children)
   and `commit`. A commit is one compare-and-swap: it applies only when
   `revision` still equals `expect` (else `RevisionConflict`, told by its
   tag with `isRevisionConflict`: nothing was written, so a writer reads the
@@ -3158,7 +3162,9 @@ background tasks. Two layers split the work:
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
   concurrent commits wins, that a commit naming a removed incarnation lands
-  nowhere, that data with an `undefined` field commits and
+  nowhere, that a read from the end returns the newest matches of its kinds
+  below its ceiling, across commits, in ascending order and every match
+  without a limit (`read-latest`), that data with an `undefined` field commits and
   reads back without it, and that an event as large as a message's images
   at their limit (`MEDIA_LIMITS.requestChars` base64 characters) comes back
   whole. `sessionLogRecoveryConformance({ open,
@@ -3186,7 +3192,8 @@ background tasks. Two layers split the work:
   processes opening one new file at once wait for each other rather than
   fail. The file is WAL with `synchronous = NORMAL` (a power loss may drop
   the last commits, never tear one), and a row that does not decode fails
-  with code `store.decode`. The file records its schema version
+  with code `store.decode`. A read from the end walks the session's rows
+  newest first along its indexes and stops at its `limit`. The file records its schema version
   (`PRAGMA user_version`): opening it applies the migrations it lacks, under
   the write lock, and a file a newer release wrote fails to open with code
   `store.version`, neither read nor written; a 0.14.0 file, without a
@@ -3218,13 +3225,17 @@ background tasks. Two layers split the work:
   cannot accumulate further pending work, and healthy calls queue for the
   slot left rather than fail. An open sweeps what stopped creates and probes
   left in `staging/`, and a handle caches a bounded number of sessions and
-  commit first lines. Like the SQLite log it stamps time with the caller's
+  commit first lines. A read from the end opens commits newest first and
+  stops once it holds its `limit`, so older commits are not read. Like the SQLite log it stamps time with the caller's
   `Clock`. A directory whose layout a newer release wrote fails to open with
   `store.version`; one without hard links (some SMB mounts), with
   `store.open`.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
-  read and write sessions only through it.
+  read and write sessions only through it. `Sessions.read(address, { after,
+  kinds, limit, from })` passes its query to the log: `from: "end"` with
+  `limit: 1` is a session's latest record of those kinds
+  (`sessionsConformance` checks it, `read-latest`).
 
 **The stored format.** `STORED_FORMAT` (from `@xandreed/core`) is the version
 of every shape the framework keeps in a session log: each journal kind's

@@ -94,6 +94,20 @@ describe("the directory", () => {
     expect(observed).toEqual({ read: "store.decode", head: 3, files: 3 })
   })
 
+  test("a read from the end opens the newest commits only: damage in an older one does not reach it", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { root, id, commits } = yield* withSession(3)
+      const first = join(commits, revisionFile(1))
+      const bytes = readFileSync(first)
+      bytes[bytes.length - 30] = bytes[bytes.length - 30] === 48 ? 49 : 48
+      writeFileSync(first, bytes)
+      const reopened = yield* makeSessionLogFiles(root)
+      const latest = yield* reopened.read(id, { ...everything, limit: Option.some(2), from: "end" })
+      return { latest: latest.map((event) => [event.seq, event.data["n"]]), fromStart: yield* outcomeOf(reopened.read(id, everything)) }
+    })))
+    expect(observed).toEqual({ latest: [[2, 2], [3, 3]], fromStart: "store.decode" })
+  })
+
   test("a layout a newer release wrote is refused with store.version, and the directory is left as it was", async () => {
     const root = mkdtempSync(join(directory, "newer-"))
     writeFileSync(join(root, "store.json"), `${JSON.stringify({ layout: 2 })}\n`)

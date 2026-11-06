@@ -117,13 +117,25 @@ export const SessionCommitted = Schema.Struct({
 })
 export type SessionCommitted = typeof SessionCommitted.Type
 
-/** Events after `after` and at most `through`, ascending; filter by kind before limiting. */
+/**
+ * Events after `after` and at most `through`, ascending; filter by kind
+ * before limiting. `from` picks which end of that range `limit` keeps.
+ */
 export const SessionReadQuery = Schema.Struct({
   after: Schema.Int,
   /** Inclusive sequence ceiling, applied before logical payload decoding or media hydration. Omission reads the current tail. */
   through: Schema.optionalKey(Schema.Int),
   limit: Schema.OptionFromNullOr(Schema.Int),
   kinds: Schema.Array(Name),
+  /**
+   * The end of the range `limit` counts from. `start`: the oldest `limit`
+   * matching events. `end`: the newest `limit` matching events (kinds
+   * filtered first, at most `through`, after `after`), so a reader of the
+   * latest records of a few kinds does not scan the session from its
+   * start. Either way the events come back ascending; without a limit,
+   * every match. Omission reads from the start.
+   */
+  from: Schema.optionalKey(Schema.Literals(["start", "end"])),
   /**
    * `references`: the caller decodes only lookup keys, so a decorating store
    * (`withMediaStore`) may leave stored media references in place instead of

@@ -224,6 +224,13 @@ export const endingsOf = (sessions: typeof Sessions.Service, address: SessionAdd
       code: Option.getOrNull(Option.map(ended.failure, (failure) => failure.code)),
     }))))))
 
+/** How the session's last turn ended: its newest `turn.ended` alone, read from the end, however long the session is. */
+export const lastEndingOf = (sessions: typeof Sessions.Service, address: SessionAddress) =>
+  sessions.read(address, { kinds: ["turn.ended"], limit: 1, from: "end" }).pipe(Effect.flatMap((events) => Option.match(Option.fromNullishOr(events[0]), {
+    onNone: () => Effect.succeed(Option.none<{ readonly turn: number | null; readonly reason: string }>()),
+    onSome: (event) => turnEndedOf(event).pipe(Effect.map((ended) => Option.some({ turn: Option.getOrNull(event.turn), reason: ended.reason }))),
+  })))
+
 const StoredReply = Schema.Struct({ body: Schema.Struct({ outcome: Schema.String, reply: Schema.NullOr(Schema.String) }) })
 
 /** How a turn ended and what it replied, as the journal has it. */
@@ -616,6 +623,15 @@ describe("which subscription sees what", () => {
     expect(Exit.isFailure(exit) ? turnEndingOf(exit).failure.pipe(Option.map((failure) => failure.code), Option.getOrNull) : "none").toBe("app.unavailable")
     expect(yield* Ref.get(outcomes)).toEqual(["failed"])
     expect(yield* endingsOf(host.sessions, address)).toEqual([{ turn: 1, reason: "failed", code: "app.unavailable" }])
+  })))
+
+  test("lastEndingOf reads the newest turn.ended only: none before a turn ends, then the latest turn's", () => run(Effect.gen(function* () {
+    const host = yield* hostWith(yield* scripted([says("first"), says("second")]))
+    expect(yield* lastEndingOf(host.sessions, address)).toEqual(Option.none())
+    yield* host.agent.turn({ ...ask("one"), services: Context.make(LanguageModel.LanguageModel, host.model) }, streamTo(() => Effect.void))
+    yield* host.agent.turn({ ...ask("two"), services: Context.make(LanguageModel.LanguageModel, host.model) }, streamTo(() => Effect.void))
+    expect((yield* endingsOf(host.sessions, address)).length).toBe(2)
+    expect(yield* lastEndingOf(host.sessions, address)).toEqual(Option.some({ turn: 2, reason: "completed" }))
   })))
 })
 

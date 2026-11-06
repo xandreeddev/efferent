@@ -527,7 +527,9 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       const { header, tail } = yield* current(id)
       const limit = Option.match(query.limit, { onNone: () => Number.POSITIVE_INFINITY, onSome: (value) => Math.max(0, value) })
       const wanted = (kind: string) => query.kinds.length === 0 || query.kinds.includes(kind)
-      const revisions = Array.from({ length: tail.revision }, (_, index) => index + 1)
+      // From the end, commits are read newest first and the read stops once it holds `limit` events.
+      const latest = query.from === "end"
+      const revisions = Array.from({ length: tail.revision }, (_, index) => latest ? tail.revision - index : index + 1)
       // The metas this handle read before, and the ones this read reads: kept once, when it is done.
       const cached = Option.match(Option.filter(Option.fromNullishOr((yield* Ref.get(known)).get(id)), (entry) => entry.nonce === header.nonce), {
         onNone: (): ReadonlyMap<number, CommitMeta> => new Map(),
@@ -543,10 +545,12 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
         return metaAt(revision).pipe(Effect.flatMap((meta) =>
           meta.last <= query.after || (query.through !== undefined && meta.first > query.through) || meta.first > meta.last || !meta.kinds.some(wanted)
             ? Effect.succeed(events)
-            : wholeCommit(id, revision).pipe(Effect.map((record) => [
-              ...events,
-              ...record.events.filter((event) => event.seq > query.after && (query.through === undefined || event.seq <= query.through) && wanted(event.kind)).map(eventOf(id, record.meta.at)),
-            ].slice(0, limit)))))
+            : wholeCommit(id, revision).pipe(Effect.map((record) => {
+              const matched = record.events.filter((event) => event.seq > query.after && (query.through === undefined || event.seq <= query.through) && wanted(event.kind)).map(eventOf(id, record.meta.at))
+              if (!latest) return [...events, ...matched].slice(0, limit)
+              const joined = [...matched, ...events]
+              return joined.slice(Math.max(0, joined.length - limit))
+            }))))
       })
       if (fresh.size > 0) yield* Ref.update(known, (all) => Option.match(Option.filter(Option.fromNullishOr(all.get(id)), (entry) => entry.nonce === header.nonce), {
         onNone: () => all,

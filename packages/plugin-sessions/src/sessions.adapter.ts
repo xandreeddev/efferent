@@ -1051,6 +1051,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }, onSession),
     read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap(() => log.read(address.id, {
       after: query?.after ?? 0, limit: Option.fromNullishOr(query?.limit), kinds: query?.kinds ?? [],
+      ...(query?.from === undefined ? {} : { from: query.from }),
     }))), onSession),
     waiting: Stream.unwrap(PubSub.subscribe(waitingHub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
     changes: (address) => Stream.unwrap(RcMap.get(followers, address.id).pipe(Effect.map(Stream.fromPubSub))),
