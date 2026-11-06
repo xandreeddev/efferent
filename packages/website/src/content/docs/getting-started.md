@@ -42,22 +42,48 @@ import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 
 declare const model: LanguageModel.LanguageModel // from @xandreed/plugin-models or any effect/ai provider
 
-const reply = Effect.scoped(Effect.gen(function* () {
-  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
-    Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)),
-  )), Sessions)
-  const agent = yield* Agent.define({
-    plugins: [{ plugin: memoryWindowPlugin, options: { digestOnWriteChars: 4_000 } }, toolDiscoveryPlugin, stepLoopPlugin],
-    turnServices: [LanguageModel.LanguageModel],
-    system: "You are a helpful assistant.",
-  })
-  const view = yield* sessions.create({ owner: "user-1" })
-  const outcome = yield* agent.turn({
-    turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: RunId.make(crypto.randomUUID()) },
-    services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
-  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) }))))
-  return outcome.reply
-}))
+const reply = Effect.scoped(
+  Effect.gen(function* () {
+    // Sessions over an in-memory journal that admits every turn.
+    const sessionsLayer = SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
+      Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)),
+    )
+    const sessions = Context.get(yield* Layer.build(sessionsLayer), Sessions)
+
+    const agent = yield* Agent.define({
+      plugins: [
+        { plugin: memoryWindowPlugin, options: { digestOnWriteChars: 4_000 } },
+        toolDiscoveryPlugin,
+        stepLoopPlugin,
+      ],
+      turnServices: [LanguageModel.LanguageModel],
+      system: "You are a helpful assistant.",
+    })
+
+    const view = yield* sessions.create({ owner: "user-1" })
+    const outcome = yield* agent.turn(
+      {
+        turn: {
+          session: { id: view.header.id, owner: "user-1" },
+          userMessage: new UserMessage({ text: "Hello" }),
+          runId: RunId.make(crypto.randomUUID()),
+        },
+        services: Context.merge(
+          Context.make(LanguageModel.LanguageModel, model),
+          Context.make(Sessions, sessions),
+        ),
+      },
+      (turn) =>
+        turn.run({}).pipe(
+          Effect.map((result) => ({
+            outcome: result.outcome,
+            reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text),
+          })),
+        ),
+    )
+    return outcome.reply
+  }),
+)
 ```
 
 `@xandreed/sdk` re-exports, each by name, the part of core a host writes
