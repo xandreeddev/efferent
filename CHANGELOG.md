@@ -10,6 +10,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -48,7 +49,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   checks; a host's own `Knowledge` or `LongTermMemory` returns `sources` in
   each `KnowledgeRecallResult` it builds (`[]` when it cites nothing).
 
+
 ### Added
+
 
 - `@xandreed/core`, `@xandreed/plugin-sessions`,
   `@xandreed/plugin-session-files`, `@xandreed/plugin-session-sqlite`: a
@@ -306,7 +309,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   The evidence formatters take only a result's candidates and graph. Tool
   and section text, versions and stored formats are unchanged.
 
+
 ### Changed
+
 
 
 
@@ -348,11 +353,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Fixed
-
-
-
-
 
 - `@xandreed/plugin-render`: a render feed follows its `live` stream
   before it folds a snapshot or reads the backlog. It subscribed only when
@@ -424,12 +426,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   answer it; it now records its jobs under an engine id derived from the
   fixture's whole scope. `KnowledgeIndexFixture` states the fixture
   contract: no two checks share owner, namespace and collection together.
-
-
-
-
+- `@xandreed/evals-cli`: a list flag given more than once selects every
+  value. `efferent-eval run --task a --task b` ran only task `a`: each flag
+  was read at its first occurrence, so the rest were dropped without a word
+  and a run measured less than was asked. `--task`, `--candidate`, `--grader`
+  and `--exporter` now merge every occurrence (`--flag value` and
+  `--flag=value`) and their comma lists, each value once in first-seen order.
+  A single-valued flag of a built-in command (`--config`, `--directory`,
+  `--split`, `--repetitions`, `--concurrency`, `--timeout-ms`,
+  `--environment`, `--budget-usd`, `--report`, `--from`, `--import`,
+  `--baseline`, `--candidate-report`) given twice with different values is a
+  usage error (`invalid`) before anything runs, instead of its first value;
+  the same value twice still runs. An app's own command receives its
+  arguments as given. `cliArguments` adds `list` and `singleValued`.
 
 ### Breaking
+
 
 
 
@@ -456,7 +468,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Repository
+
 
 - `@xandreed/plugin-render`'s test that a compressed SSE frame reaches the
   client while the stream stays open reads each response through a streaming
@@ -465,6 +479,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

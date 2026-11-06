@@ -159,7 +159,11 @@ when a declared suite intentionally crosses both. `--task`, `--candidate`, `--re
 `--concurrency`, `--timeout-ms` and `--budget-usd` select and bound execution; the count flags
 take positive integers and `--budget-usd` a positive number, and anything else is a usage
 error (`invalid`), never a silent default. Flags take
-`--flag value` or `--flag=value`. Without `--directory`, results go to
+`--flag value` or `--flag=value`. `--task`, `--candidate`, `--grader` and `--exporter` repeat
+or take a comma list, and every occurrence counts: `--task a --task b,c` selects `a`, `b` and
+`c`, each once, in the order first given. Any other flag takes one value: one given twice with
+different values (`--split validation --split calibration`) is a usage error (`invalid`), never
+its first value; an app's own command reads its arguments as given. Without `--directory`, results go to
 `.eval-results/runs/<id>`, named after the run or grading revision they hold. A report or
 review file that does not exist fails as `missing`; one that does not decode, as `invalid`;
 any other file failure, as `persistence`. Each such error says what failed
