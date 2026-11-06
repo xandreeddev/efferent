@@ -11,6 +11,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 ### Migration
 
 
+
 - A host's own `SessionLog` serves `SessionReadQuery.from: "end"`: the
   newest `limit` matching events, kinds filtered first, still ascending.
   A backend that ignores the key reads from the start and returns the
@@ -72,6 +73,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   create it beforehand with `CREATE INDEX CONCURRENTLY IF NOT EXISTS
   jobs_failed ON efferent_knowledge.jobs (domain, namespace, ordinal) WHERE
   phase = 'Failed'`.
+
 
 
 ### Added
@@ -446,8 +448,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   tool and section text, versions, stored formats and SQL are unchanged.
   `knowledgeStoreConformance` gains `knowledge.metadata-filter`, which a
   store that filters after its limit fails.
+- `@xandreed/plugin-memory`: hosts choose where automatic memory recall
+  goes. `MemoryConfig.recallSection` is `"turn"` by default: the
+  `memory.recalled` turn section, recorded as the turn's context after a
+  capture catch-up of the session's committed turns, unchanged.
+  `recallSection: "off"` contributes no section and runs no catch-up, for a
+  host that wants recall only at the end of each step's request (resent each
+  step and never recorded as turn context) or not at all; the tools are
+  unchanged. `memoryRecallNote(config)` gives the section's text without the
+  section or the catch-up (the same profile records and evidence, reach
+  with its source list and metadata filter, character budget and deadline, rendered by `renderMemoryRecall`; none when
+  nothing is recalled or recall fails), an effect requiring `RunContext` and
+  `LongTermMemory`, which a host returns from its turn policy's `step` with
+  `stepContext: "tail"` or from a `ModelRequestHook`. The section's text and
+  version are unchanged. Plugin options and a config spread from
+  `memoryDefaults` need no change; a `MemoryConfig` written out in full adds
+  `recallSection`.
 
 ### Changed
+
 
 
 - `@xandreed/sdk`: `Agent.define` keeps the type of the services it is given.
@@ -476,7 +495,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `process` do.
 
 
+
 ### Fixed
+
 
 
 
@@ -572,7 +593,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 
 
+
 ### Breaking
+
 
 
 - `@xandreed/plugin-render`: `RenderFeed.frames` takes `live` in its
@@ -590,7 +613,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   above.
 
 
+
 ### Repository
+
 
 
 
@@ -605,6 +630,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   far. It decompressed the whole body again on every chunk inside the
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
+
+
 
 
 

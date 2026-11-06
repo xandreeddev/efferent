@@ -61,7 +61,10 @@ confirmation. A host-specific result supplies any domain-effect evidence.
 Read-only recall is always available; the separate management skill requires
 memory.write and does not authorize any other action. The complete recall
 section, catch-up and profile included, shares one retrieval timeout. A failed
-semantic recall still permits profile injection.
+semantic recall still permits profile injection. `recallSection: "off"` contributes
+no section and runs no catch-up; `memoryRecallNote` renders the section's text,
+without the catch-up, for a host that places recall in its step context or omits it.
+Keep the note and the section one function: their texts never diverge.
 
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, window memory, sessions, and tool discovery without adding
@@ -71,12 +74,13 @@ those dependencies to production. See the repository skills and definition of do
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:13` | exact, `src/memory-capability.adapter.test.ts:15`; exact, `src/memory-capability.adapter.test.ts:22` |
-| Parameters, failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:21` | exact, `src/memory-capability.adapter.test.ts:38` |
-| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:41`, `:47` | exact, `src/memory-capability.adapter.test.ts:56`; exact, `src/memory-capability.adapter.test.ts:59`; exact, `src/memory-capability.adapter.test.ts:60` |
-| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:44` | exact, `src/memory-capability.adapter.test.ts:57` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:114` | exact, `src/memory-capability.adapter.test.ts:33`; exact, `src/memory-capability.adapter.test.ts:34` |
-| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:50` |
+| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:13` | exact, `src/memory-capability.adapter.test.ts:16`; exact, `src/memory-capability.adapter.test.ts:23` |
+| Parameters, failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:21` | exact, `src/memory-capability.adapter.test.ts:39` |
+| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:41`, `:47` | exact, `src/memory-capability.adapter.test.ts:57`; exact, `src/memory-capability.adapter.test.ts:60`; exact, `src/memory-capability.adapter.test.ts:61` |
+| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:44` | exact, `src/memory-capability.adapter.test.ts:58` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:114` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first | `src/memory-capability.adapter.ts:171` | exact, `src/memory-capability.adapter.test.ts:129` |
+| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 
 ## Layout
@@ -86,5 +90,6 @@ those dependencies to production. See the repository skills and definition of do
 - `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture and
   its per-turn admission reference.
 - `memory-capability.adapter.ts`: recall, source read, explicit save/forget and turn evidence;
-  `renderMemoryRecall` and `memorySourcePage` are exported for a host's own tools.
+  `renderMemoryRecall` and `memorySourcePage` are exported for a host's own tools, and
+  `memoryRecallNote` for a host that places the recall section's text itself.
 - `plugin.adapter.ts`, `index.ts`: registered plugins and named host API.

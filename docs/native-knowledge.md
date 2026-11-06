@@ -302,7 +302,8 @@ Memory recall and RAG combine lexical/vector candidates, graph expansion and,
 when enabled, query planning and evidence reranking. Traversal defaults to two
 hops and is capped at three. Results expose truncation and retain citations.
 Query/model work has explicit budgets; invalid planner/reranker output falls
-back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section.
+back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section;
+memory's can be turned off and placed by the host instead ([place memory recall yourself](#place-memory-recall-yourself)).
 
 ## Narrow retrieval per turn
 
@@ -418,6 +419,50 @@ and `memorySourcePage` from `@xandreed/plugin-memory`. A host tool that
 retrieves evidence its own way and renders it with them gives the model the
 same framing, citations and data rule as the built-in tools; the metadata is
 for the host and is not added to that text.
+
+## Place memory recall yourself
+
+By default the memory engine contributes the `memory.recalled` turn section.
+Before the turn's first step it catches up capture of the session's committed
+turns, then recalls for the user's message and records the evidence as the
+turn's context, among the stable messages a provider can cache. A host that
+wants recall only at the end of each step's request, resent every step and
+never recorded as turn context, or no automatic recall at all, sets
+`recallSection: "off"`: the engine then contributes no section and runs no
+catch-up. Capture still follows committed turns through `memoryCapturePlugin`,
+or the host's own `MemoryCapture.sync`; the tools are unchanged.
+
+`memoryRecallNote(config)` gives the section's text without the section or the
+catch-up: the same profile records and evidence, reach (`KnowledgeNarrowing`,
+its source list and metadata filter included), `recallChars` budget and `retrievalTimeoutMs` deadline, rendered by
+`renderMemoryRecall`, or none when nothing is recalled or recall fails. It
+requires `RunContext`, which the turn provides, and `LongTermMemory`: build the
+engine as above and pass its services to `Agent.define`, so a turn's `use` has
+it. Recall once per turn and close each step's request with the same text
+through the turn policy's `step` and `stepContext: "tail"`:
+
+```ts
+import { Effect, Option } from "effect"
+import { memoryDefaults, memoryRecallNote } from "@xandreed/plugin-memory"
+import type { Turn } from "@xandreed/sdk"
+
+// The options the engine was built with.
+const options = { recallSection: "off" as const, embeddingDimensions: 768 }
+const recallNote = memoryRecallNote({ ...memoryDefaults, ...options })
+
+// The `use` of `agent.turn(input, use)`.
+const use = (turn: Turn) => Effect.gen(function* () {
+  const recalled = yield* Effect.cached(recallNote)
+  const result = yield* turn.run({
+    stepContext: "tail",
+    step: () => recalled.pipe(Effect.map((context) => ({ context, toolChoice: Option.none() }))),
+  })
+  return { outcome: result.outcome, reply: Option.some(result.text) }
+})
+```
+
+A `ModelRequestHook` may return the same text as its `context` instead; the
+turn adds a hook's context as a host note.
 
 ## Documents, tools and lifecycle
 

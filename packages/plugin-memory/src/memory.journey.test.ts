@@ -12,7 +12,8 @@ import { memoryPlugin, MemoryPluginLive } from "./plugin.adapter.js"
 import { memoryCapturePlugin, MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
 import { fixtureExtraction } from "./memory.testing.js"
-import { memoryCaptureDefaults } from "./memory.entity.js"
+import { memoryCaptureDefaults, memoryDefaults } from "./memory.entity.js"
+import { memoryRecallNote } from "./memory-capability.adapter.js"
 
 describe("memory through the real agent", () => {
   test("committed replies are captured, only the engine of their embedding space processes them, and later sessions see recorded recall context", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -175,5 +176,64 @@ describe("memory through the real agent", () => {
     expect((yield* store.failed({ namespace: "default", limit: 10 })).jobs).toEqual([])
     const recalled = yield* after.recall({ scope, query: "tea", limit: 5, maxChars: 1000, graph: false })
     expect(recalled.sources.map((source) => source.ref)).toEqual([failed.source])
+  }))))
+
+  test("with the recall section off, a host's step context carries the recall at the request's tail and the system prompt stays the same across turns", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({
+      text: JSON.stringify(fixtureExtraction(/<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? "")), usage: zeroUsage,
+    })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    // The host builds the engine and gives its services (tools, skills, LongTermMemory) to the agent, the section turned off.
+    const options = { recallSection: "off" as const, worker: false, review: false, embeddingDimensions: 2 }
+    const engine = yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime))))
+    const memory = Context.get(engine, LongTermMemory)
+    const requests = yield* Ref.make<ReadonlyArray<{ readonly system: string; readonly last: string; readonly tools: ReadonlyArray<string> }>>([])
+    const textOf = (content: string | ReadonlyArray<{ readonly type: string }> | undefined) => typeof content === "string"
+      ? content : (content ?? []).flatMap((part) => part.type === "text" && "text" in part && typeof part.text === "string" ? [part.text] : []).join("")
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, {
+        system: request.prompt.content.filter((message) => message.role === "system").map((message) => textOf(message.content)).join("\n"),
+        last: textOf(request.prompt.content.at(-1)?.content),
+        tools: request.tools.map((tool) => tool.name),
+      }]).pipe(Effect.as([
+        { type: "text", text: "You prefer tea." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 2 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, memoryCapturePlugin],
+      services: Context.merge(runtime, engine), turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false }, system: "Answer briefly.",
+    })
+    const first = { owner: "same-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d3") }
+    const second = { owner: "same-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d4") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    yield* agent.turn({ turn: { session: first, runId: RunId.make("told"), userMessage: new UserMessage({ text: "I prefer tea." }) }, services }, (turn) => turn.reply("I will keep that in mind."))
+    const queued = yield* store.pending({ engine: knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 }), namespace: "default", now: 10_000_000_000_000, limit: 10 })
+    expect(yield* memory.process(queued[0]!.scope, 10)).toBe(1)
+    const notes = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
+    const note = memoryRecallNote({ ...memoryDefaults, ...options })
+    const ask = (runId: string, text: string) => agent.turn({ turn: { session: second, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      // Recalled once for the turn, and the same text closes the request at each of its steps.
+      const recalled = yield* Effect.cached(note.pipe(Effect.tap((text) => Ref.update(notes, (all) => [...all, text]))))
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({ stepContext: "tail", step: () => recalled.pipe(Effect.map((context) => ({ context, toolChoice: Option.none() }))) })
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    yield* ask("asked", "What drink do I prefer?")
+    yield* ask("asked-again", "Do I prefer tea?")
+    const recalled = (yield* Ref.get(notes)).flatMap((text) => Option.toArray(text))
+    expect(recalled).toHaveLength(2)
+    expect(recalled.every((text) => text.includes("<recalled-memory>") && text.includes("I prefer tea."))).toBe(true)
+    const sent = yield* Ref.get(requests)
+    expect(sent.map((request) => request.last)).toEqual(recalled)
+    expect(sent.every((request) => request.tools.includes("recall_memory"))).toBe(true)
+    // The system prompt carries no recall and is the same for both turns: one fingerprint is recorded, and no turn context.
+    expect(sent.map((request) => request.system)).toEqual([sent[0]!.system, sent[0]!.system])
+    expect(sent[0]!.system.includes("recalled-memory")).toBe(false)
+    expect((yield* sessions.read(second, { kinds: ["memory.system"] })).length).toBe(1)
+    expect(yield* sessions.read(second, { kinds: ["memory.section"] })).toEqual([])
   }))))
 })

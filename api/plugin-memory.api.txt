@@ -13,6 +13,7 @@ const memoryCaptureDefaults
 const memoryCapturePlugin
 const memoryDefaults
 const memoryPlugin
+const memoryRecallNote
 const memorySourcePage
 const renderMemoryRecall
 type MemoryCaptureConfig

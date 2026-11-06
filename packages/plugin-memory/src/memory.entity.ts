@@ -38,6 +38,13 @@ export const MemoryConfig = Schema.Struct({
   recallChars: Positive,
   recallLimit: Positive.check(Schema.isLessThanOrEqualTo(100)),
   graphDepth: Positive.check(Schema.isLessThanOrEqualTo(3)),
+  /**
+   * Where automatic recall goes. `"turn"`: the `memory.recalled` turn section, recorded as the turn's
+   * context, which first catches up capture of the session's committed turns. `"off"`: no section and
+   * no catch-up; the host places `memoryRecallNote` itself (a turn policy's step context, a
+   * `ModelRequestHook`) or recalls only through the tools.
+   */
+  recallSection: Schema.Literals(["turn", "off"]),
   sectionOrder: Schema.Int,
   tools: Schema.Boolean,
 })
@@ -47,7 +54,7 @@ export const memoryDefaults: MemoryConfig = {
   namespace: "default", collection: "memory", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
-  sectionOrder: 700, tools: true,
+  recallSection: "turn", sectionOrder: 700, tools: true,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

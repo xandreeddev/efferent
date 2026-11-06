@@ -2243,6 +2243,7 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "recallChars": 8000,
   "recallLimit": 8,
   "graphDepth": 2,
+  "recallSection": "turn",
   "sectionOrder": 700,
   "tools": true
 }
@@ -2360,6 +2361,13 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
       "maximum": 3,
       "exclusiveMinimum": 0
     },
+    "recallSection": {
+      "type": "string",
+      "enum": [
+        "turn",
+        "off"
+      ]
+    },
     "sectionOrder": {
       "type": "integer",
       "minimum": -9007199254740991,
@@ -2392,6 +2400,7 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "recallChars",
     "recallLimit",
     "graphDepth",
+    "recallSection",
     "sectionOrder",
     "tools"
   ],
