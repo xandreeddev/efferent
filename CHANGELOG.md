@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.18.0 — 2026-11-06
+
 ### Migration
 
 
@@ -631,29 +633,59 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   response listener, where a partial chunk could throw, leave the wait
   unsettled and run into the test runner's 5 s timeout. Test change only.
 
+### Changes
 
+- `Agent.define` keeps the type of its `services`: `AgentConfig<S>.services` is a `Context.Context<S>`, inferred, and the agent is an `Agent<S>` whose `turn` does not require what `use` reads of them. A host passes the context it built without a cast; an `Agent<S>` is still a `TurnRunner` (`AgentTurn`). Tools still check their `requires` by key when a turn opens them.
 
+- A compat model the host builds itself reserves and settles each send's spend: `CompatConfig.spend` (`ModelSpendGuard`, exported from `@xandreed/plugin-models/compat`: a `ModelSpend` ledger and decoded `ModelSpendOptions`) guards every physical send of a `makeCompatLanguageModel` model, retries included, as the models plugin's `spend` option guards a routed call: each send reserves its worst case for the turn before it goes out and settles at the cost of its reported usage, buffered or streamed; a send past a cap is never sent and fails with `model.spend`. The guard is the model's own: the plugin's `spend` option guards only the calls the plugin routes, and the plugin no longer leaves its guard among the services it builds, so a host model stacked beside it (`stackPlugins` over the plugin's built services) is never priced or capped by the plugin's guard; a host model without `spend` is not guarded.
 
+- An evaluation run's spend budget: `--budget-usd` on `run` and `calibrate` (`EvaluationSelection.spendBudget`) caps every model send of every trial in one shared `ModelSpend` ledger, stops starting trials once the budget refuses a send or is reached (the rest `skipped`, never failures), and records each trial's and the run's settled spend in the report (`Trial.spend`, `EvaluationRun.spend`).
 
+- Repeated list flags merge: `--task`, `--candidate`, `--grader` and `--exporter` given more than once (or as comma lists) select every value, each once in first-seen order, instead of only the first occurrence. A single-valued flag given twice with different values is a usage error (`invalid`) instead of silently using its first value. `cliArguments` adds `list` and `singleValued`.
 
+- Decode stored tool lifecycle and conversation message records with typed schemas: `StoredData` adds `tool.started`, `tool.completed`, `tool.refused` and `memory.message` (`ToolStartedData`, `ToolCompletedData`, `ToolRefusedData`, `MemoryMessageData`), so `readStored` types them, and `decodeStored(kind, event)` and `storedRecordOf(event)` decode one record at a time.
 
+- Knowledge workers process only the jobs of their own embedding space: `plugin-rag` and `plugin-memory` record, discover and claim jobs under `knowledgeEngineId(processor, space)`, derived from their embedding options, instead of the constant `rag:1` / `memory:1`. `KnowledgeClaim` gains a required `engine`, and the in-memory and PostgreSQL stores claim only jobs recorded under it, by job id too. `knowledgeStoreConformance` adds `knowledge.engine-isolation`, and its `knowledge.pending-discovery` check no longer depends on other checks' jobs in a shared namespace and collection. Jobs queued under the old ids and never completed must be ingested or captured again as the next source revision.
 
+- Knowledge extraction is bounded per call: the memory and document engines take `maxExtractionChars` (48,000 by default) and extract a longer source window by window through core's `extractKnowledge`, merging the windows' results with exact whole-source offsets before staging. Every helper call the engines make runs with `CurrentKnowledgeHelperCall` set to its purpose (`extract`, `review`, `plan`, `rerank`), scope, job and attempt, and the optional, advisory `maxHelperOutputTokens` (applied only by a `UtilityLlm` that reads it, which the models plugin's does not), so a `UtilityLlm` adapter can budget or refuse it.
 
+- Hosts find failed knowledge jobs and start them over for the current engine: `KnowledgeIndex.failed(query)` lists failed jobs across owners in a namespace (optionally by engine, collection and failure reasons), oldest first, with a cursor, and `KnowledgeIndex.requeue({ scope, jobId, engine })` requeues a failed job under `engine` with its attempts reset, keeping its stage only under the same engine. A job whose source was forgotten is refused with `Tombstoned` (checked before its phase, since forgetting cancels the source's jobs), a superseded or unfailed one with `Conflict`. `Knowledge.retry` and `LongTermMemory.retry` requeue under the engine's current id, so attempts reset and a job failed under an older extraction version or embedding space is taken over; they refuse a scope outside the engine's collection. The store's `retry` still keeps engine and attempts for the engines' own bounded retries. The PostgreSQL store creates the partial index `jobs_failed` on open when it is missing and leaves its layout at 1, so an earlier release still opens the database; building the index blocks writes to the jobs table once (on a large table, create it beforehand with `CREATE INDEX CONCURRENTLY`). `knowledgeStoreConformance` adds `knowledge.failed-listing` and `knowledge.requeue`; a host's own `KnowledgeIndex` implements both methods.
 
+- A failed knowledge job records why it failed: `KnowledgeIndex.fail(lease, failure)` takes a `KnowledgeJobFailure` (`reason`, `message` and the `step` that failed, `Graph` or `Required`) instead of a message, and the job's `Failed` phase keeps it, so hosts read the reason from `status` instead of matching message text. `isRetryableKnowledgeFailure` is the rule the RAG and memory engines retry by, exported for hosts deciding whether to `retry`. A job stored with only a message decodes as `Unavailable` at step `Required`; the PostgreSQL store keeps the failure in the job payload with its layout unchanged. `knowledgeStoreConformance` adds `knowledge.failure-reason`; a host's own `KnowledgeIndex` adopts the new `fail`.
 
+- The PostgreSQL knowledge store fails with reason `Invalid`, and a message naming the cause and the fix, when the server lacks pgvector, the role may not create the extension or the `efferent_knowledge` schema, the role lacks a privilege on its tables, or the database's objects do not fit the layout; connection failures and deadlines stay `Unavailable` and concurrent writes `Conflict`.
 
+- `queryPlanning` and `rerank` default to `false` on the RAG and memory engines, so a search or recall makes no helper-model call unless the host opts in; set both to `true` to keep the previous query planning and evidence reranking, which behave as before when enabled.
 
+- Knowledge search and recall take an optional `sources` filter, honoured by every store and engine, and `KnowledgeNarrowing` lets a host set each turn's retrieval owner and sources without replacing the document and memory tools or recall sections.
 
+- Knowledge retrieval and recall results carry `sources`, the times and metadata of every source revision they cite, read in one call to the new `KnowledgeIndex.sourceInfo`; the RAG and memory plugins export the evidence and source-page formatters their tools use. A host's own `KnowledgeIndex` adds `sourceInfo`.
 
+- Knowledge search, recall and a turn's reach take an optional `metadata` filter on the cited source revisions' metadata, applied by every store before its nearest-neighbour limit and honoured by both engines and the document and memory capabilities. While a reach has a metadata filter, `forget_memory` answers every source as not found, since forgetting removes every revision and the filter judges revisions.
 
+- The memory and document workers scan for pending jobs untraced, so an idle worker records no spans; each job it claims is traced as before. Every scan (default every 2 s) used to export a root `knowledge_store.pending` trace, tens of thousands a day per process.
 
+- `MemoryCaptureAdmission` lets a host admit, replace the evidence of, or refuse each committed turn before conversation capture stores it; a refused turn enqueues nothing while the capture checkpoint still moves past it, and `MemorySyncResult.refused` reports it.
 
+- `recallSection: "off"` turns off the memory engine's `memory.recalled` turn section and its capture catch-up, and `memoryRecallNote(config)` gives that section's text for a host to place in its step context (a turn policy's `step` with `stepContext: "tail"`, or a `ModelRequestHook`). The default (`"turn"`) is unchanged.
 
+- Window memory's `currentTurnFirst` option keeps the current turn's tool results whole under budget pressure: earlier turns are compacted and dropped first, and the current turn's results are spilled only when the current turn alone does not fit. The strategy keeps its id and records the order in its version (`2+current-turn-first`); the default order is unchanged.
 
+- Model spend caps: core's `ModelSpend` ledger port (`ModelSpendMemoryLive`, `modelSpendConformance`; the turn forgets itself in the ledger as it ends), the models plugin's `spend` option that reserves each physical send's worst case and settles it at the cost of its reported usage within a per-turn and a total cap (`model.spend`, `model.unpriced`), `TurnResult.spend` and `CurrentTurnRunId`.
 
+- The OTLP export layers take a `spans` policy (`OtlpSpanPolicy`): `keep` drops a span, its children reparented to its nearest kept ancestor, and `attribute` rewrites or leaves out span and span-event attributes before they reach the exporter.
 
+- Optional graph extraction no longer keeps a document out of plain retrieval: a failed or invalid extraction or review is recorded on the job and retried within `maxAttempts`, and the last attempt publishes the source's chunks without the graph, its stage carrying a `GraphOmitted` note (`KnowledgeStage.notes`, `KnowledgeStageNote`). `knowledgeConformance` gains `failed-extraction`, with an optional `failingExtraction` subject, and `knowledgeStoreConformance`'s `stage-retry` requires a stage's notes to survive retry.
 
+- A render feed can start a client at cursor 0 from a snapshot folded at a head sequence and read only the journal kinds its projection uses: `RenderFeed.frames` takes `{ live, kinds, snapshot }` after the projection (`live` moves there from the fourth argument), `JournalTail.read` takes `kinds`, which `SessionsJournalTailLive` passes to `Sessions.read`, and `foldEqualsReplay` checks a fold against its projection.
 
+- A render feed follows its `live` stream before it folds a snapshot or reads the backlog and holds its payloads until the ready frame, so a payload published while a cold client catches up (a turn's deltas for a client connecting mid-turn) reaches it after `ready`, in order. `FeedFramesOptions.liveBuffer` (256 by default) bounds what waits: at the bound the feed pulls no more from `live` until the client takes some, so a pull-based or finite source still loses nothing and a session channel drops at its own capacity, as before; `renderFeedConformance` checks a live payload published during the snapshot's fold and a finite live stream longer than the bound.
+
+- Add the `@xandreed/plugin-models/testing` entry: `scriptedChatCompletions`, a scripted OpenAI-compatible chat-completions endpoint that runs in the process, so tests and evaluations drive the production compat client and the models plugin with no key and no network. It matches requests to steps by order or a predicate, streams text and tool-call arguments in fragments with the usage on the final chunk, records every request, and refuses an unmatched one with an error naming it.
+
+- A session read can take its limit from the end: `SessionReadQuery.from: "end"` (and `Sessions.read`'s `from`) returns the newest `limit` events of the given kinds, at most `through` and after `after`, still in ascending order, so a host that needs a session's latest records of a few kinds no longer reads and folds the whole journal. Every backend serves it (in memory, the media-store decorator, the file log newest commit first, SQLite along its indexes); `sessionLogConformance` and `sessionsConformance` check it (`read-latest`). Omitting `from` reads from the start, as before.
+
+- A session's transient events reach every follower of the session: core's `SessionChannel` port with `shareTransient`, an opt-in turn subscription that publishes `assistant.delta` and `tool.progress` to it without ever holding the turn, and its kit `sessionChannelConformance`; plugin-sessions' in-memory `SessionChannelMemoryLive`; and plugin-render's `sessionLive`, a session's channel as a render feed's `live` stream. Nothing is stored or replayed.
 
 ## 0.17.1 — 2026-11-05
 
