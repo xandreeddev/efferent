@@ -46,7 +46,7 @@ Reply with the JSON object only.
 </knowledge-task>
 
 <knowledge-proposal>
-{"entities":[{"key":"a","name":"A","type":"person","aliases":[],"existing":{"_id":"Option","_tag":"None"},"spans":[{"start":0,"end":1,"quote":"A"}]}],"memories":[{"key":"note","kind":"fact","text":"A note.","entities":["a"],"spans":[{"start":0,"end":7,"quote":"A note."}],"evidence":{"_tag":"Stated"},"supersedes":[],"supersession":"change"}],"assertions":[]}
+{"entities":[{"key":"a","name":"A","type":"person","aliases":[],"existing":null,"spans":[{"start":0,"end":1,"quote":"A"}]}],"memories":[{"key":"note","kind":"fact","text":"A note.","entities":["a"],"spans":[{"start":0,"end":7,"quote":"A note."}],"evidence":{"_tag":"Stated"},"supersedes":[],"supersession":"change"}],"assertions":[]}
 </knowledge-proposal>
 
 Reply with the corrected JSON object only.

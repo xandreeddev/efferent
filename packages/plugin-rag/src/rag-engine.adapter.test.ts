@@ -261,6 +261,34 @@ describe("native temporal GraphRAG", () => {
     expect(Option.map(yield* knowledge.status(scope, job.id), (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
   }))))
 
+  test("a reviewer that returns the proposal from its prompt unchanged publishes the graph, with an absent and a known identity alike", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    const second = { entities: [
+      { key: "b", name: "Beacon", type: "service", aliases: [], existing: "one:1:entity:b", spans: [{ start: 0, end: 6, quote: "Beacon" }] },
+      { key: "c", name: "Cedar", type: "team", aliases: [], existing: null, spans: [{ start: 14, end: 19, quote: "Cedar" }] },
+    ], memories: [], assertions: [{ key: "serves", subject: "b", predicate: "serves", object: { _tag: "Entity", key: "c" }, text: "Beacon serves Cedar", spans: [{ start: 0, end: 20, quote: "Beacon serves Cedar." }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }] }
+    const extractions = [JSON.stringify(atlasGraph), JSON.stringify(second)]
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    // Extraction answers from the script; review copies the proposal back verbatim.
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.modify(prompts, (all): [number, ReadonlyArray<string>] => [all.filter((seen) => !seen.includes("<knowledge-proposal>")).length, [...all, prompt]]).pipe(
+      Effect.map((extracted) => new UtilityCompletion({ text: prompt.includes("<knowledge-proposal>") ? frame("knowledge-proposal", prompt) : extractions[extracted] ?? "not JSON", usage: zeroUsage })),
+    ) })
+    const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
+    const one = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    yield* knowledge.process(scope, 1)
+    const two = yield* knowledge.ingest(enqueue("two", "Beacon serves Cedar."))
+    yield* knowledge.process(scope, 1)
+    const stages = yield* Effect.forEach([one, two], (job) => knowledge.status(scope, job.id).pipe(Effect.map(Option.map((value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])]))), { concurrency: 1 })
+    expect(stages).toEqual([Option.some(["Complete", Option.some([])]), Option.some(["Complete", Option.some([])])])
+    const graph = (yield* store.snapshot(scope)).graph
+    expect([graph.entities.map((entity) => entity.name).toSorted(), graph.assertions.map((edge) => edge.predicate)]).toEqual([["Atlas", "Beacon", "Cedar"], ["owns", "serves"]])
+    const proposals = (yield* Ref.get(prompts)).filter((prompt) => prompt.includes("<knowledge-proposal>")).map((prompt) => frame("knowledge-proposal", prompt))
+    expect(proposals).toHaveLength(2)
+    expect(proposals.some((proposal) => proposal.includes("\"_id\":\"Option\""))).toBe(false)
+    expect(proposals[1]).toContain("\"existing\":\"one:1:entity:b\"")
+    expect(proposals[1]).toContain("\"validFrom\":null,\"validTo\":null")
+  }))))
+
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const draft = { entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(draft), JSON.stringify({ entities: [], memories: [], assertions: [] })])

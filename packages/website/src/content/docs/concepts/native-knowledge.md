@@ -46,17 +46,17 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `4`) and its
-embedding space: `knowledgeEngineId("rag:5", space)` is
-`rag:5/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `6`) and its
+embedding space: `knowledgeEngineId("rag:6", space)` is
+`rag:6/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:4/…`,
-`rag:4/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:5/…`,
+`rag:5/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -68,8 +68,16 @@ it name the candidate memory a source restates (`restates`), which adds
 evidence to that memory instead of a new one
 ([one memory for a repeated statement](#one-memory-for-a-repeated-statement));
 version 5 gives a memory the time of the dated event it concerns (`eventAt`)
-([plans tied to a dated event](#plans-tied-to-a-dated-event)).
-A job of an earlier version that failed is retried the same way.
+([plans tied to a dated event](#plans-tied-to-a-dated-event)); version 6
+writes the review's proposal in the output schema's wire form
+([evidence review](#graph-time-and-evidence)). A job of an earlier version
+that failed is retried the same way: `retry` requeues it under the current
+id through `KnowledgeIndex.requeue`. A memory job whose review copied
+version 5's proposal back failed with `Invalid` ("The extraction model
+returned an invalid knowledge object"), which `isRetryableKnowledgeFailure`
+calls final, so list it with `failed({ namespace, reasons: ["Invalid"] })`
+and `retry` it directly; a document whose graph was omitted that way is
+extracted again by ingesting its next revision.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -346,7 +354,14 @@ entity and assertion retains exact source evidence. Ambiguous identities remain
 distinct. The extractor cannot invent source identities, retire another scope's
 records, or publish invalid intervals. Every extracted span includes a literal quote. A quote found in the source repairs offset
 errors (its occurrence nearest the proposed start); a record with an invented quote is left out. A review pass checks extraction
-against the source before embedding and publication. This validates evidence links;
+against the source before embedding and publication. Its prompt
+(`knowledgeReviewPrompt`) shows the proposed extraction in the output
+schema's wire form, the form the extraction call answered in: an absent
+`existing` identity or `validFrom`/`validTo` date is `null`, a present one its
+plain value. A reviewer that keeps the proposal as it is therefore returns a
+valid extraction; before version 6 the proposal carried the decoded value's
+`Option` objects (`{"_id":"Option","_tag":"None"}`), and a reviewer that
+copied them back failed the output schema. This validates evidence links;
 semantic entailment still depends on model quality and evaluation.
 
 Extraction calls are bounded by `maxExtractionChars` (48,000 by default on both
