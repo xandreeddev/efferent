@@ -167,7 +167,10 @@ as any other for one call; `pastEventWeight: 1` turns the demotion off
 
 Automatic context also prepends up to four active preference/profile records
 whose dated event, if any, has not passed, independently of the question's
-search ranking, each with the count recall found for it. See the
+search ranking: the profile's first four within the run's reach, ordered by
+how many episodes said each, then by when it was last said, then by id, never
+by the store's order, each with its count
+([the profile's order](/docs/concepts/native-knowledge/#the-profiles-order)). See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
 for the scores, graph expansion and final prompt path.
 

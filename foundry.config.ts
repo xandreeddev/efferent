@@ -467,7 +467,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-memory-summary", path: src("plugin-memory-summary"), canImport: ["core"], externals: ["effect"] },
       ...testLayer("plugin-memory-digest", ["plugin-memory-digest", "core"], ["effect", "effect/testing", "bun:test"]),
       { name: "plugin-memory-digest", path: src("plugin-memory-digest"), canImport: ["core"], externals: ["effect"] },
-      ...testLayer("plugin-memory", ["plugin-memory", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-sessions", "plugin-tool-discovery"], ["effect", "effect/ai", "effect/testing", "bun:test"]),
+      ...testLayer("plugin-memory", ["plugin-memory", "core", "sdk", "plugin-agent-loop", "plugin-knowledge-postgres", "plugin-memory-window", "plugin-sessions", "plugin-tool-discovery"], ["effect", "effect/ai", "effect/testing", "bun:test"]),
       { name: "plugin-memory", path: src("plugin-memory"), canImport: ["core"], externals: ["effect", "effect/ai"] },
       ...testLayer("plugin-rag", ["plugin-rag", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-sessions", "plugin-tool-discovery"], ["effect", "effect/ai", "effect/testing", "bun:test"]),
       { name: "plugin-rag", path: src("plugin-rag"), canImport: ["core"], externals: ["effect", "effect/ai"] },

@@ -7,7 +7,7 @@ import {
 } from "@xandreed/core"
 import type {
   KnowledgeAssertion, KnowledgeEventTime, KnowledgeEvidence, KnowledgeMemory, KnowledgeMemoryKind, KnowledgeProvenance, KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource,
-  KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeSupport,
+  KnowledgeProfileMemory, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeSupport,
 } from "@xandreed/core"
 import { MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture } from "./ports/memory-capture.port.js"
@@ -98,22 +98,30 @@ const narrowingOf = (reach: KnowledgeReach) => ({
 const sameRevision = (left: KnowledgeSourceRef, right: KnowledgeSourceRef): boolean => left.id === right.id && left.revision === right.revision
 const infoOf = (source: KnowledgeSource): KnowledgeSourceInfo => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata })
 /**
- * The profile memories within the reach, in order, at most `limit`: each one's own evidence cites only listed sources and,
- * under a metadata filter, only revisions whose metadata matches, read one revision at a time until `limit` are kept;
- * the evidence of a later restatement outside the reach is left out of the record (`narrowKnowledgeMemory`).
- * `sources` is the info of the revisions it read.
+ * The profile memories within the reach, in the profile's order, at most `limit`: each one's own evidence cites only listed
+ * sources and, under a metadata filter, only revisions whose metadata matches, read one revision at a time until `limit`
+ * are kept; the evidence of a later restatement outside the reach is left out of the record (`narrowKnowledgeMemory`), and
+ * with it the record's support, which counted that restatement.
+ * The narrowing applies before the cut, so a refused memory never takes an admitted one's place. `sources` is the info
+ * of the revisions it read.
  */
-const profileWithin = Effect.fnUntraced(function* (memory: Context.Service.Shape<typeof LongTermMemory>, scope: KnowledgeScope, reach: KnowledgeReach, memories: ReadonlyArray<KnowledgeMemory>, limit: number) {
+const profileWithin = Effect.fnUntraced(function* (memory: Context.Service.Shape<typeof LongTermMemory>, scope: KnowledgeScope, reach: KnowledgeReach, memories: ReadonlyArray<KnowledgeProfileMemory>, limit: number) {
   const { sources, metadata } = reach
-  const listed = sources === undefined ? memories : memories.flatMap((record) => Option.toArray(narrowKnowledgeMemory(record, knowledgeNarrowingAdmits({ sources }, []))))
+  // A record that loses a restatement outside the reach loses its support too: the count included that mention.
+  const narrowed = (record: KnowledgeProfileMemory, admits: (ref: KnowledgeSourceRef) => boolean): ReadonlyArray<KnowledgeProfileMemory> => Option.toArray(narrowKnowledgeMemory(record, admits)).map((shown) => {
+    if (shown === record) return record
+    const { support: _counted, ...uncounted } = shown
+    return uncounted
+  })
+  const listed = sources === undefined ? memories : memories.flatMap((record) => narrowed(record, knowledgeNarrowingAdmits({ sources }, [])))
   const noneRead: ReadonlyArray<KnowledgeSourceInfo> = []
   if (metadata === undefined) return { memories: listed.slice(0, limit), sources: noneRead }
-  const initial: { readonly kept: ReadonlyArray<KnowledgeMemory>; readonly read: ReadonlyArray<KnowledgeSource> } = { kept: [], read: [] }
+  const initial: { readonly kept: ReadonlyArray<KnowledgeProfileMemory>; readonly read: ReadonlyArray<KnowledgeSource> } = { kept: [], read: [] }
   const kept = yield* Effect.reduce(listed, () => initial, (state, record) => state.kept.length >= limit ? Effect.succeed(state) : Effect.gen(function* () {
     const unread = record.provenance.map((span) => span.source).filter((ref, index, refs) => refs.findIndex((other) => sameRevision(other, ref)) === index &&
       !state.read.some((source) => sameRevision(source.ref, ref)))
     const read = [...state.read, ...(yield* Effect.forEach(unread, (ref) => memory.source(scope, ref), { concurrency: 1 })).flatMap(Option.toArray)]
-    return { read, kept: [...state.kept, ...Option.toArray(narrowKnowledgeMemory(record, knowledgeNarrowingAdmits({ metadata }, read)))] }
+    return { read, kept: [...state.kept, ...narrowed(record, knowledgeNarrowingAdmits({ metadata }, read))] }
   }))
   return { memories: kept.kept, sources: kept.read.map(infoOf) }
 })
@@ -261,7 +269,8 @@ const noRecall: KnowledgeRecallResult = { candidates: [], graph: { entities: [],
 
 /**
  * The run's recall within its reach (sources and metadata, `narrowingOf`): up to four profile records
- * (`profileWithin`), then the evidence recalled for the user's message; none when there is nothing.
+ * (`profileWithin`), the first four the reach admits in the profile's order (more episodes, then said more
+ * recently), then the evidence recalled for the user's message; none when there is nothing.
  */
 const recalledEvidence = Effect.fnUntraced(function* (config: MemoryConfig) {
   const run = yield* RunContext
@@ -284,10 +293,11 @@ const recalledEvidence = Effect.fnUntraced(function* (config: MemoryConfig) {
   const dating = config.recallDates ? yield* datingSources(memory, scope, profile.memories, known).pipe(
     Effect.catch((error) => Effect.logWarning("The memory profile's dates are unavailable; its records are shown undated", error).pipe(Effect.as([]))),
   ) : []
-  // A profile record recall also found keeps the support recall counted for it.
+  // A profile record carries the support the profile counted for it; one without (from a host's own profile) keeps the
+  // support recall counted when recall also found it.
   const supportFound = (id: KnowledgeMemory["id"]) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === id && candidate.support !== undefined ? [candidate.support] : [])[0]
-  const preferred = profile.memories.map((memory) => {
-    const support = supportFound(memory.id)
+  const preferred = profile.memories.map(({ support: counted, ...memory }) => {
+    const support = counted ?? supportFound(memory.id)
     return { _tag: "Memory" as const, memory, score: 1, ...(support === undefined ? {} : { support }) }
   })
   const combined = {
@@ -382,7 +392,7 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
     defineSkill({ id: "memory.manage", summary: memoryCapabilityText.manageSkill, tools: ["remember_memory", "forget_memory"], permissions: ["memory.write"] }),
   ] : [],
   promptSections: config.recallSection === "turn" ? [definePromptSection({
-    id: "memory.recalled", version: "5", tier: "turn", order: config.sectionOrder,
+    id: "memory.recalled", version: "6", tier: "turn", order: config.sectionOrder,
     requires: [RunContext, LongTermMemory, Sessions],
     render: () => Effect.gen(function* () {
       const run = yield* RunContext

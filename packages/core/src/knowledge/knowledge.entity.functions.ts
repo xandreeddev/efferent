@@ -4,7 +4,7 @@ import {
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeCorroboration, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
   type KnowledgeEventTime, type KnowledgeMemory, type KnowledgeMemoryKind, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
-  type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
+  type KnowledgeMetadataValue, type KnowledgeProfileMemory, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
   type KnowledgeVector,
 } from "./knowledge.entity.js"
 
@@ -221,6 +221,20 @@ export const knowledgeMemorySupport = (memory: Pick<KnowledgeMemory, "mentions" 
 }
 
 /**
+ * The order of a memory profile (`LongTermMemory.profile`): the memory stated in more episodes first
+ * (`KnowledgeSupport.episodes`), then the one stated more recently (`lastSeen`), then by id. A memory
+ * without `support` follows every one with it, by id. The store's own order (insertion, or id, where
+ * ids begin with their source's) never decides it, so the same memories give the same profile on
+ * every store.
+ * @public
+ */
+export const knowledgeProfileOrder: Order.Order<KnowledgeProfileMemory> = Order.combineAll([
+  Order.mapInput(Order.flip(Order.Number), (memory: KnowledgeProfileMemory) => memory.support?.episodes ?? 0),
+  Order.mapInput(Order.flip(Order.Number), (memory: KnowledgeProfileMemory) => memory.support?.lastSeen ?? -1),
+  Order.mapInput(Order.String, (memory: KnowledgeProfileMemory) => memory.id),
+])
+
+/**
  * The source revisions a recall's evidence cites, once each, in order of first citation:
  * candidates, then relations, then entities, then earlier states. Engines read their info for
  * `KnowledgeRecallResult.sources`.
@@ -296,7 +310,7 @@ export const citesAdmittedKnowledge = (provenance: ReadonlyArray<KnowledgeProven
  * reach neither hides the memory from it nor shows there.
  * @public
  */
-export const narrowKnowledgeMemory = (memory: KnowledgeMemory, admits: (ref: KnowledgeSourceRef) => boolean): Option.Option<KnowledgeMemory> => {
+export const narrowKnowledgeMemory = <M extends KnowledgeMemory>(memory: M, admits: (ref: KnowledgeSourceRef) => boolean): Option.Option<M> => {
   const later = memory.evidence._tag === "Stated" && memory.mentions !== undefined ? knowledgeMemoryMentions(memory).slice(1) : []
   const among = (refs: ReadonlyArray<KnowledgeSourceRef>) => (ref: KnowledgeSourceRef) => refs.some((other) => sameKnowledgeRevision(other, ref))
   if (!citesAdmittedKnowledge(memory.provenance.filter((span) => !among(later)(span.source)), admits)) return Option.none()

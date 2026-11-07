@@ -1,7 +1,7 @@
 import { EmbeddingModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref } from "effect"
 import { CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, UtilityCompletion, UtilityLlm, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
-import type { KnowledgeEnqueue, KnowledgeHelperCall, KnowledgeScope } from "@xandreed/core"
+import type { KnowledgeEnqueue, KnowledgeHelperCall, KnowledgeIndex, KnowledgeScope } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -16,11 +16,11 @@ export const fixtureExtraction = (text: string) => ({
   memories: [{ key: "preference", kind: "preference", text, entities: ["person"], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
   assertions: [{ key: "prefers", subject: "person", predicate: "prefers", object: { _tag: "Value", value: "tea" }, text, spans: [{ start: 0, end: text.length, quote: text }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
 })
-/** Replies by call order, or computed from each call's prompt and helper context. */
-export const makeMemoryFixture = (responses: ReadonlyArray<string> | ((prompt: string, call: Option.Option<KnowledgeHelperCall>) => string), options: Partial<MemoryConfig> = {}) => Effect.gen(function* () {
+/** Replies by call order, or computed from each call's prompt and helper context; over the in-memory store unless given another. */
+export const makeMemoryFixture = (responses: ReadonlyArray<string> | ((prompt: string, call: Option.Option<KnowledgeHelperCall>) => string), options: Partial<MemoryConfig> = {}, index?: KnowledgeIndex) => Effect.gen(function* () {
   const calls = yield* Ref.make<ReadonlyArray<string>>([])
   const helperCalls = yield* Ref.make<ReadonlyArray<Option.Option<KnowledgeHelperCall>>>([])
-  const store = yield* makeKnowledgeIndexMemory()
+  const store = index ?? (yield* makeKnowledgeIndexMemory())
   const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => text.toLowerCase().includes("coffee") ? [0, 1] : [1, 0]), usage: { inputTokens: undefined } }) })
   const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
     Effect.tap((call) => Ref.update(helperCalls, (all) => [...all, call])),

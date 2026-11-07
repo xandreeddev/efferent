@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { TestClock } from "effect/testing"
-import { CurrentToolInvocation, InvocationId, KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId, KnowledgeNarrowing, KnowledgeSourceId, LongTermMemory, RunContext, RunId, Sessions, UserMessage, type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeRecall, type KnowledgeScope } from "@xandreed/core"
+import { CurrentToolInvocation, InvocationId, KnowledgeAssertionId, KnowledgeJobId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId, KnowledgeNarrowing, KnowledgeSourceId, LongTermMemory, RunContext, RunId, Sessions, UserMessage, type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeRecall, type KnowledgeScope } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -10,6 +10,7 @@ import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { memoryCapability, memoryCapabilityText, memoryNoteEvidence, memoryRecallNote, memorySourcePage, memoryToolDescriptions, renderMemoryRecall, savedMemoryReceipt } from "./memory-capability.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import { captureAddress, captureRun, makeCaptureFixture } from "./memory-capture.testing.js"
+import { fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
 describe("memory model-facing contracts", () => {
   test("tool and skill descriptions are pinned exactly; read access does not require write grants", () => {
@@ -242,6 +243,70 @@ describe("memory model-facing contracts", () => {
       return yield* turn.reply("Hello.")
     }))
   })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("the section shows the profile in its order: a preference said in three episodes precedes a newer one said once, with its count", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const capture = yield* makeCaptureFixture
+    // The helper model names the earlier tea preference, among its candidates, as the one a later source restates.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly memories?: ReadonlyArray<{ readonly id: string; readonly text: string }> } = JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const said = text.includes("cocoa") ? "The user prefers cocoa in the evening." : "The user prefers green tea."
+      const restates = (candidates.memories ?? []).filter((memory) => memory.text === said).map((memory) => memory.id)
+      return JSON.stringify({ entities: [], assertions: [], memories: [{
+        key: "preference", kind: "preference", text: said, entities: [], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change",
+        ...(restates.length === 0 ? {} : { restates }),
+      }] })
+    }
+    const fixture = yield* makeMemoryFixture(extract)
+    const scope = { ...fixtureScope, owner: captureAddress.owner }
+    // The cocoa preference was said last, captured first and its id sorts first: the store's order (insertion here, id
+    // in a store that sorts by it) or recency alone would put it first.
+    const told = [
+      ["a-cocoa", "Hot cocoa in the evening, please.", Date.UTC(2026, 3, 20, 9)], ["z-tea-1", "Green tea, please.", Date.UTC(2026, 0, 5, 9)],
+      ["z-tea-2", "Green tea again for me.", Date.UTC(2026, 1, 9, 9)], ["z-tea-3", "I will have green tea.", Date.UTC(2026, 2, 14, 9)],
+    ] as const
+    yield* Effect.forEach(told, ([id, text, occurredAt]) => fixture.memory.capture({
+      jobId: KnowledgeJobId.make(`job:${id}`), engine: "memory:1", expectedRevision: Option.none(),
+      source: { scope, ref: { id: KnowledgeSourceId.make(id), revision: 1 }, text, occurredAt, recordedAt: occurredAt, metadata: {} },
+    }).pipe(Effect.andThen(fixture.memory.process(scope, 1))), { concurrency: 1 })
+    expect((yield* fixture.memory.profile(scope)).map((memory) => [memory.text, memory.support?.episodes])).toEqual([["The user prefers green tea.", 3], ["The user prefers cocoa in the evening.", 1]])
+    const config = { ...memoryDefaults, namespace: fixtureScope.namespace }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [Sessions, LongTermMemory] })
+    yield* agent.turn({ turn: { session: captureAddress, runId: RunId.make("profile-order"), userMessage: new UserMessage({ text: "Hello." }) }, services: Context.make(Sessions, capture.sessions).pipe(Context.add(LongTermMemory, fixture.memory)) }, (turn) => Effect.gen(function* () {
+      const text = Option.getOrElse(yield* memoryRecallNote(config).pipe(Effect.provideService(LongTermMemory, fixture.memory)), () => "")
+      const tea = "[2026-01-05 · preference · stated · said 3 times, last 2026-03-14] The user prefers green tea."
+      const cocoa = "[2026-04-20 · preference · stated] The user prefers cocoa in the evening."
+      expect([text.includes(tea), text.indexOf(tea) < text.indexOf(cocoa), text.split("The user prefers green tea.").length, text.split("The user prefers cocoa in the evening.").length]).toEqual([true, true, 2, 2])
+      expect(yield* memoryCapability(config).promptSections[0]!.render({ variant: Option.none(), active: [], skills: [] })).toEqual(Option.some(text))
+      return yield* turn.reply("Hello.")
+    }))
+  }))))
+
+  test("the section's top four are the first four profile records the reach admits, in the profile's order, each with the profile's count unless a restatement outside the reach made it", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    const said = Date.UTC(2026, 4, 2, 9)
+    const profileOf = (name: string, episodes: number) => ({ id: KnowledgeMemoryId.make(name), kind: "preference" as const, text: `Prefers ${name}.`, entities: [], evidence: { _tag: "Stated" as const }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none(),
+      provenance: [{ source: { id: KnowledgeSourceId.make(name), revision: 1 }, start: 0, end: name.length + 9, quote: `Prefers ${name}.` }], support: { episodes, sources: episodes, firstSeen: said, lastSeen: said } })
+    // Two records the reach refuses lead the profile, and five follow that it admits.
+    // Coffee was said again in a source the reach refuses: it stays, without that source's evidence or the count that included it.
+    const outside = { source: { id: KnowledgeSourceId.make("outside-3"), revision: 1 }, start: 0, end: 15, quote: "Prefers coffee." }
+    const coffee = profileOf("coffee", 2)
+    const restated = { ...coffee, provenance: [...coffee.provenance, outside], mentions: [coffee.provenance[0]!.source, outside.source] }
+    const profile = [profileOf("outside-1", 5), profileOf("outside-2", 4), profileOf("tea", 3), restated, profileOf("cocoa", 1), profileOf("juice", 1), profileOf("water", 1)]
+    const memory = LongTermMemory.of({
+      ...fixture.memory, profile: () => Effect.succeed(profile),
+      source: (scope, ref) => Effect.succeed(Option.some({ scope, ref, text: "Prefers tea.", occurredAt: said, recordedAt: said, metadata: {} })),
+    })
+    const narrowing = { reach: () => Effect.succeed({ owner: captureAddress.owner, sources: ["tea", "coffee", "cocoa", "juice", "water"].map((name) => KnowledgeSourceId.make(name)) }) }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [Sessions, LongTermMemory] })
+    yield* agent.turn({ turn: { session: captureAddress, runId: RunId.make("profile-reach"), userMessage: new UserMessage({ text: "Hello." }) }, services: Context.make(Sessions, fixture.sessions).pipe(Context.add(LongTermMemory, memory), Context.add(KnowledgeNarrowing, narrowing)) }, (turn) => Effect.gen(function* () {
+      const text = Option.getOrElse(yield* memoryRecallNote(memoryDefaults).pipe(Effect.provideService(LongTermMemory, memory)), () => "")
+      const shown = [...text.matchAll(/\] (Prefers [a-z0-9-]+\.)/g)].map((match) => match[1])
+      expect(shown).toEqual(["Prefers tea.", "Prefers coffee.", "Prefers cocoa.", "Prefers juice."])
+      expect([text.includes("said 3 times, last 2026-05-02] Prefers tea."), text.includes("said 2 times, last 2026-05-02] Prefers coffee.")]).toEqual([true, false])
+      return yield* turn.reply("Hello.")
+    }))
+  }))))
 
   test("the recall note is the section's text for the same evidence, dated from the recall's sources and the profile records' own, and is pinned exactly", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const fixture = yield* makeCaptureFixture

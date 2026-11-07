@@ -306,6 +306,16 @@ export type KnowledgePerspective = typeof KnowledgePerspective.Type
 export const KnowledgeSupport = Schema.Struct({ episodes: Positive, sources: Positive, firstSeen: Count, lastSeen: Count })
 export type KnowledgeSupport = typeof KnowledgeSupport.Type
 /**
+ * A memory of the profile (`LongTermMemory.profile`) and, when the engine counts it, how often it was
+ * stated (`KnowledgeSupport`, from the revisions it mentions): a `KnowledgeMemory` with an optional
+ * `support`, so code that reads profile memories as memories is unchanged. The profile is ordered by
+ * `knowledgeProfileOrder`.
+ * @public
+ */
+export const KnowledgeProfileMemory = Schema.Struct({ ...KnowledgeMemory.fields, support: Schema.optionalKey(KnowledgeSupport) })
+  .check(Schema.makeFilter((memory) => memory.knownTo._tag === "None" || memory.knownTo.value >= memory.knownFrom || "known interval ends before it starts"))
+export type KnowledgeProfileMemory = typeof KnowledgeProfileMemory.Type
+/**
  * Candidate stores return independent ranked arms; the engine fuses them. An engine that counts
  * how often a memory was stated sets the memory's `support`, and one that judges event time sets
  * `past: true` on a memory whose dated event had passed at the recall's valid time

@@ -100,25 +100,29 @@ by `pastEventWeight` after the support factor (`memoryPastFactor`); `profile`
 leaves it out. Never delete or filter a past record from search, and never
 judge facts, routines or profiles past. The render adds `(event on <date>)`,
 with `, past` when marked.
+`profile` gives each memory its `support` (one `sourceInfo` read) and sorts
+by `knowledgeProfileOrder` (episodes, then `lastSeen`, then id), never the
+store's order; `supportWeight: 0` reads nothing and sorts by id. The section
+keeps that order and cuts at four only after the reach's narrowing.
 
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
-the SDK, agent loop, window memory, sessions, and tool discovery without adding
-those dependencies to production. See the repository skills and definition of done.
+the SDK, agent loop, PostgreSQL knowledge store, window memory, sessions, and
+tool discovery without adding those dependencies to production. See the repository skills and definition of done.
 
 ## Model-facing text
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact, `src/memory-capability.adapter.test.ts:16`; exact, `src/memory-capability.adapter.test.ts:23` |
-| Parameters (the recall tool's `history` and `temporal` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:168` |
-| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:47`, `:53` | exact, `src/memory-capability.adapter.test.ts:188`; exact, `src/memory-capability.adapter.test.ts:191`; exact, `src/memory-capability.adapter.test.ts:192` |
-| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:50` | exact, `src/memory-capability.adapter.test.ts:189` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
-| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:131`, `:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
-| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:99` |
-| Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:136`, `:162`, `:217` | exact, `src/memory-capability.adapter.test.ts:124`; exact, `src/memory-capability.adapter.test.ts:130` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:156`; exact, `src/memory.journey.test.ts:458` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:319` | exact, `src/memory-capability.adapter.test.ts:268`; exact, `src/memory-capability.adapter.test.ts:278` |
+| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact, `src/memory-capability.adapter.test.ts:17`; exact, `src/memory-capability.adapter.test.ts:24` |
+| Parameters (the recall tool's `history` and `temporal` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:169` |
+| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:47`, `:53` | exact, `src/memory-capability.adapter.test.ts:189`; exact, `src/memory-capability.adapter.test.ts:192`; exact, `src/memory-capability.adapter.test.ts:193` |
+| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:50` | exact, `src/memory-capability.adapter.test.ts:190` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:35`; exact, `src/memory-capability.adapter.test.ts:36` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:139`, `:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:62`; exact, `src/memory-capability.adapter.test.ts:70` |
+| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:100` |
+| Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:144`, `:170`, `:225` | exact, `src/memory-capability.adapter.test.ts:125`; exact, `src/memory-capability.adapter.test.ts:131` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:157`; exact, `src/memory.journey.test.ts:458` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:329` | exact, `src/memory-capability.adapter.test.ts:333`; exact, `src/memory-capability.adapter.test.ts:343` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 

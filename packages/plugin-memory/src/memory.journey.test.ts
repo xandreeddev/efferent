@@ -377,7 +377,7 @@ describe("memory through the real agent", () => {
     yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
     yield* say(asked, "asking", "What do I drink, where do I live, and how do I get to work?")
     const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body] : [])
-    expect(recalled.map((section) => section.version)).toEqual(["5"])
+    expect(recalled.map((section) => section.version)).toEqual(["6"])
     const text = recalled[0]?.text ?? ""
     expect(text).toContain("Each record is dated by when its source was said or written; a validity range bounds when a relationship held.\n\n<recalled-memory>")
     expect(text).toContain("[2026-03-02 · preference · stated] The user prefers tea.")
@@ -755,5 +755,79 @@ describe("memory through the real agent", () => {
     const query = { scope, query: "What am I interested in?", limit: 8, maxChars: 8_000, graph: false as const }
     expect(texts(yield* memory.recall(query))).toEqual([["pottery", false], ["exhibition", true]])
     expect(texts(yield* memory.recall({ ...query, temporal: "all" }))).toEqual([["exhibition", true], ["pottery", false]])
+  })).pipe(Effect.provide(TestClock.layer()))))
+  test("a preference said in three conversations leads the profile in a later conversation's section, ahead of newer ones said once, and the oldest falls out of the four", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    // The helper model: each conversation states one preference; a conversation about oat milk names the candidate it restates.
+    const preferences = [
+      ["oat milk", "The user takes oat milk in coffee."], ["crime novels", "The user likes crime novels."], ["window seats", "The user prefers window seats on trains."],
+      ["morning", "The user prefers meetings in the morning."], ["hiking", "The user enjoys hiking at weekends."],
+    ] as const
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly memories?: ReadonlyArray<{ readonly id: string; readonly text: string }> } = JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const found = preferences.find(([cue]) => text.toLowerCase().includes(cue))
+      if (found === undefined) return { entities: [], memories: [], assertions: [] }
+      const quote = /User: ([^\n]*)/.exec(text)?.[1] ?? text
+      const restates = (candidates.memories ?? []).filter((memory) => memory.text === found[1]).map((memory) => memory.id)
+      return { entities: [], assertions: [], memories: [{
+        key: "preference", kind: "preference", text: found[1], entities: [], spans: [{ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote }],
+        evidence: { _tag: "Stated" }, supersedes: [], supersession: "change", ...(restates.length === 0 ? {} : { restates }),
+      }] }
+    }
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    // Session ids sort the oldest preference first and the oat milk conversations last: in id order, the most repeated
+    // preference would fall out of the four; in the order they were stored, the newest would.
+    const conversation = (id: string) => ({ owner: "drink-owner", id: ConversationId.make(`00000000-0000-4000-8000-0000000000${id}`) })
+    const told = [
+      [conversation("01"), "I like crime novels.", Date.UTC(2026, 0, 10, 9)], [conversation("f9"), "I take oat milk in my coffee.", Date.UTC(2026, 1, 3, 9)],
+      [conversation("02"), "I prefer window seats on trains.", Date.UTC(2026, 2, 5, 9)], [conversation("03"), "I prefer meetings in the morning.", Date.UTC(2026, 3, 7, 9)],
+      [conversation("f8"), "Oat milk in my coffee again, please.", Date.UTC(2026, 4, 9, 9)], [conversation("f7"), "As usual, oat milk in my coffee.", Date.UTC(2026, 5, 11, 9)],
+      [conversation("04"), "I enjoy hiking at weekends.", Date.UTC(2026, 6, 13, 9)],
+    ] as const
+    const asked = conversation("a1")
+    yield* Effect.forEach([...told.map(([session]) => session), asked], (session) => sessions.create(session), { concurrency: 1 })
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: "drink-owner", namespace: "default", collection: "memory" }
+    const say = (session: typeof asked, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    yield* Effect.forEach(told, ([session, text, at], index) => TestClock.setTime(at).pipe(Effect.andThen(say(session, `told-${index}`, text)), Effect.andThen(memory.process(scope, 10))), { concurrency: 1 })
+    // One oat milk memory, said in three conversations, stored second and under the id of a conversation that sorts last.
+    const stored = (yield* store.snapshot(scope)).memories
+    expect(stored.map((record) => record.text)).toEqual(["The user likes crime novels.", "The user takes oat milk in coffee.", "The user prefers window seats on trains.", "The user prefers meetings in the morning.", "The user enjoys hiking at weekends."])
+    expect((yield* memory.profile(scope)).map((record) => [record.text, record.support?.episodes])).toEqual([
+      ["The user takes oat milk in coffee.", 3], ["The user enjoys hiking at weekends.", 1], ["The user prefers meetings in the morning.", 1],
+      ["The user prefers window seats on trains.", 1], ["The user likes crime novels.", 1],
+    ])
+    // A later conversation's section leads with those four, in that order, the repeated one with its count.
+    yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
+    yield* say(asked, "asking", "Can you plan my Saturday?")
+    const section = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body.text] : [])[0] ?? ""
+    const labelled = [...section.matchAll(/^\[[^\]]*\] .*$/gm)].map((match) => match[0])
+    expect(labelled.slice(0, 4)).toEqual([
+      "[2026-02-03 · preference · stated · said 3 times, last 2026-06-11] The user takes oat milk in coffee.",
+      "[2026-07-13 · preference · stated] The user enjoys hiking at weekends.",
+      "[2026-04-07 · preference · stated] The user prefers meetings in the morning.",
+      "[2026-03-05 · preference · stated] The user prefers window seats on trains.",
+    ])
+    expect((yield* Ref.get(requests)).at(-1)).toContain("said 3 times, last 2026-06-11")
   })).pipe(Effect.provide(TestClock.layer()))))
 })

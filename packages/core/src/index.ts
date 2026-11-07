@@ -508,7 +508,7 @@ export {
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeCorroboration, KnowledgeStage,
   KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeJobCursor, KnowledgeFailedQuery, KnowledgeFailedPage, KnowledgeRequeue,
-  KnowledgeLease, KnowledgePerspective, KnowledgeSupport, KnowledgeCandidate, KnowledgeSearch,
+  KnowledgeLease, KnowledgePerspective, KnowledgeSupport, KnowledgeProfileMemory, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
   KnowledgeSupersession, KnowledgeMemoryReplacement, KnowledgeAssertionReplacement, KnowledgeRecallHistoryMode, KnowledgeRecallHistory, KnowledgeRecallTemporalMode,
@@ -520,7 +520,7 @@ export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey, knowledgeAssertionKey,
-  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast, traverseKnowledgeGraph,
+  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeProfileOrder, knowledgeMemoryIsPast, traverseKnowledgeGraph,
   validateKnowledgeStage, corroborateKnowledgeMemory, stripKnowledgeRevisions, citesKnowledgeSources, narrowKnowledgeGraph, narrowKnowledgeMemory, isRetryableKnowledgeFailure,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"
