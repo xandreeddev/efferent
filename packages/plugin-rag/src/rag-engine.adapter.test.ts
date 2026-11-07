@@ -289,6 +289,21 @@ describe("native temporal GraphRAG", () => {
     expect(proposals[1]).toContain("\"validFrom\":null,\"validTo\":null")
   }))))
 
+  test("a document graph whose relations give null or no supersession while superseding nothing publishes, through review", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    const { supersession: _, ...owns } = atlasGraph.assertions[0]!
+    // One relation's supersession is null, the other's is absent; review copies the proposal back verbatim.
+    const graph = { ...atlasGraph, assertions: [{ ...owns, supersession: null }, { ...owns, key: "runs", predicate: "runs", text: "Atlas runs Beacon" }] }
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: prompt.includes("<knowledge-proposal>") ? frame("knowledge-proposal", prompt) : JSON.stringify(graph), usage: zeroUsage })) })
+    const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
+    const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
+    yield* knowledge.process(scope, 1)
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.map(status, (value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])])).toEqual(Option.some(["Complete", Option.some([])]))
+    const published = (yield* store.snapshot(scope)).graph
+    expect(published.assertions.map((edge) => [edge.predicate, "replaces" in edge])).toEqual([["owns", false], ["runs", false]])
+  }))))
+
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const draft = { entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(draft), JSON.stringify({ entities: [], memories: [], assertions: [] })])

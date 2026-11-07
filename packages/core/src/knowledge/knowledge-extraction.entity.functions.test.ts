@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("6")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("7")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -425,6 +425,9 @@ describe("staging links each successor to the earlier state it replaced", () => 
     id: coffee, kind: "preference", text: "Ann drinks coffee.", provenance: knownAnn.provenance, entities: [knownAnn.id], evidence: { _tag: "Stated" },
     embedding: Option.none(), knownFrom: 5, knownTo: Option.none(),
   }] }
+  /** The record with `supersession` set to a value or null, or without the key when it is undefined. */
+  const supersessionAs = <R extends { readonly supersession: string }>({ supersession: _, ...record }: R, supersession: string | null | undefined) =>
+    supersession === undefined ? record : { ...record, supersession }
   const replacing = (memory: string, relation: string) => ({
     entities: [{ ...ann, existing: knownAnn.id }, oslo],
     memories: [{ ...drinks, supersedes: [coffee, coffee], supersession: memory }],
@@ -448,13 +451,80 @@ describe("staging links each successor to the earlier state it replaced", () => 
     expect([plainStage.memories[0] !== undefined && "replaces" in plainStage.memories[0], plainStage.assertions[0] !== undefined && "replaces" in plainStage.assertions[0]]).toEqual([false, false])
   })))
 
-  test("an extracted memory states why it supersedes, and a memory or relation stored before links decodes without them", () => Effect.runPromise(Effect.gen(function* () {
-    const missing = yield* Effect.flip(Schema.decodeUnknownEffect(KnowledgeExtraction)({ entities: [], assertions: [], memories: [{ ...drinks, supersession: undefined }] }))
-    expect(missing._tag).toBe("SchemaError")
+  test("a memory or relation stored before links decodes without them", () => Effect.runPromise(Effect.gen(function* () {
     const stored = yield* Schema.decodeUnknownEffect(KnowledgeMemory)({ id: "m", kind: "fact", text: "A note.", provenance: [{ source: { id: "s", revision: 1 }, start: 0, end: 7, quote: "A note." }], entities: [], evidence: { _tag: "Stated" }, embedding: null, knownFrom: 1, knownTo: null })
     expect("replaces" in stored).toBe(false)
     const result = yield* Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: { entities: [], assertions: [], truncated: false } })
     expect([result.history, result.sources]).toEqual([[], []])
+  })))
+
+  test("a record that supersedes nothing needs no supersession: null, absent or a value given anyway stage alike", () => Effect.runPromise(Effect.gen(function* () {
+    const withSupersession = (supersession: string | null | undefined) => ({
+      entities: [ann, oslo], memories: [supersessionAs(drinks, supersession)], assertions: [supersessionAs(livesIn, supersession)],
+    })
+    const decoded = yield* Effect.forEach([null, undefined], (value) => Schema.decodeUnknownEffect(KnowledgeExtraction)(withSupersession(value)), { concurrency: 1 })
+    expect(decoded.map((value) => [value.memories[0]?.supersession, value.assertions[0]?.supersession])).toEqual([[null, null], [undefined, undefined]])
+    expect(decoded.map((value) => ["supersession" in value.memories[0]!, "supersession" in value.assertions[0]!])).toEqual([[true, true], [false, false]])
+    // Encoding keeps the form it decoded, so the review's proposal shows the record as the model wrote it.
+    const encoded: ReadonlyArray<unknown> = yield* Effect.forEach(decoded, (value) => Schema.encodeEffect(KnowledgeExtraction)(value), { concurrency: 1 })
+    expect(encoded).toEqual([withSupersession(null), withSupersession(undefined)])
+    const staged = yield* Effect.forEach([null, undefined, "change", "correction"], (value) => stageOf(empty, withSupersession(value)), { concurrency: 1 })
+    expect(staged.map((stage) => [stage.memories.length, stage.assertions.length, stage.notes])).toEqual(staged.map(() => [1, 1, undefined]))
+    expect(staged.map((stage) => [stage.memories[0]!, stage.assertions[0]!].map((record) => "replaces" in record))).toEqual(staged.map(() => [false, false]))
+    expect(staged.map((stage) => [stage.assertions[0]?.validFrom, stage.assertions[0]?.validFromBasis])).toEqual(staged.map(() => [Option.none(), undefined]))
+  })))
+
+  test("a record that supersedes others without a supersession is dropped with a note, and the rest of the extraction stages", () => Effect.runPromise(Effect.gen(function* () {
+    const without = (supersession: null | undefined) => {
+      const proposal = replacing("change", "change")
+      return {
+        ...proposal,
+        memories: [...proposal.memories, { ...drinks, key: "plain" }].map((memory) => supersessionAs(memory, supersession)),
+        assertions: proposal.assertions.map((assertion) => supersessionAs(assertion, supersession)),
+      }
+    }
+    const staged = yield* Effect.forEach([null, undefined], (value) => stageOf(withCoffee, without(value)), { concurrency: 1 })
+    const message = "The extraction supersedes records without saying whether it is a change or a correction"
+    expect(staged.map((stage) => stage.notes)).toEqual(staged.map(() => [
+      { _tag: "RecordDropped", record: "memory", key: "drinks", reason: "Invalid", message },
+      { _tag: "RecordDropped", record: "assertion", key: "lives", reason: "Invalid", message },
+    ]))
+    // The superseded records stay active and unlinked; the memory that supersedes nothing is staged with the entity it names,
+    // and Oslo, which only the dropped relation named, is left out with it.
+    expect(staged.map((stage) => [stage.entities.map((entity) => entity.name), stage.memories.map((memory) => [memory.id, "replaces" in memory]), stage.assertions, stage.retireMemories, stage.retireAssertions])).toEqual(staged.map(() => [
+      ["Ann"], [[KnowledgeMemoryId.make("city:1:memory:plain"), false]], [], [], [],
+    ]))
+    // An extraction whose only records supersede without saying why changes nothing, with the drop's message.
+    const only = yield* Effect.flip(stageOf(withCoffee, { entities: [], memories: [{ ...drinks, entities: [], supersedes: [coffee], supersession: null }], assertions: [] }))
+    expect([only.reason, only.message]).toEqual(["Invalid", message])
+  })))
+
+  test("a recorded reply that gives null or no supersession beside empty supersedes decodes and stages every record", () => Effect.runPromise(Effect.gen(function* () {
+    // The shape extraction models replied in, rewritten with neutral content: relations with "supersession": null, a
+    // memory without the key, and a relation that names a supersession although it supersedes nothing. The output
+    // schema used to require a supersession on every record, so such a reply failed to decode and the job failed.
+    const text = "Now I only drink green tea. The Harbour Café opens at 08:00 and closes at 18:00."
+    const at = (quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    const reply = JSON.stringify({
+      entities: [
+        { key: "user", name: "User", type: "person", aliases: [], existing: null, spans: [at("I")] },
+        { key: "harbour-cafe", name: "Harbour Café", type: "place", aliases: [], existing: null, spans: [at("Harbour Café")] },
+      ],
+      memories: [{ key: "tea-only", kind: "preference", text: "The user now only drinks green tea.", entities: ["user"], spans: [at("Now I only drink green tea.")], evidence: { _tag: "Stated" }, supersedes: [] }],
+      assertions: [
+        { key: "opens", subject: "harbour-cafe", predicate: "opens_at", object: { _tag: "Value", value: "08:00" }, text: "The Harbour Café opens at 08:00.", spans: [at("opens at 08:00")], validFrom: null, validTo: null, supersedes: [], supersession: null },
+        { key: "closes", subject: "harbour-cafe", predicate: "closes_at", object: { _tag: "Value", value: "18:00" }, text: "The Harbour Café closes at 18:00.", spans: [at("closes at 18:00")], validFrom: null, validTo: null, supersedes: [], supersession: null },
+        { key: "drinks", subject: "user", predicate: "drinks", object: { _tag: "Value", value: "green tea" }, text: "The user only drinks green tea.", spans: [at("I only drink green tea")], validFrom: null, validTo: null, supersedes: [], supersession: "change" },
+      ],
+    })
+    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(reply)
+    const stage = yield* stageKnowledgeExtraction({ ...source, text }, empty, decoded, 30)
+    expect([stage.entities.length, stage.memories.map((memory) => memory.text), stage.assertions.map((assertion) => assertion.predicate), stage.notes]).toEqual([
+      2, ["The user now only drinks green tea."], ["opens_at", "closes_at", "drinks"], undefined,
+    ])
+    // Nothing is replaced, and a supersession beside empty supersedes dates nothing, as before.
+    expect([...stage.memories, ...stage.assertions].some((record) => "replaces" in record)).toBe(false)
+    expect(stage.assertions.map((assertion) => [assertion.validFrom, assertion.validFromBasis])).toEqual(stage.assertions.map(() => [Option.none(), undefined]))
   })))
 })
 

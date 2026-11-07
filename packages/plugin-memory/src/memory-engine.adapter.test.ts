@@ -61,6 +61,24 @@ describe("native memory engine", () => {
     expect(proposals.map((proposal) => /"existing":(null|"[^"]*")/.exec(proposal)?.[1])).toEqual(["null", `"${snapshot.graph.entities[0]!.id}"`])
   }))))
 
+  test("an extraction that gives no supersession for records that supersede nothing publishes them, null or absent alike", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const text = "I prefer tea."
+    const extracted = fixtureExtraction(text)
+    // The memory's supersession is null and the relation has none, as extraction models reply when a record replaces nothing.
+    const reply = JSON.stringify({
+      ...extracted,
+      memories: extracted.memories.map((memory) => ({ ...memory, supersession: null })),
+      assertions: extracted.assertions.map(({ supersession: _, ...assertion }) => assertion),
+    })
+    const fixture = yield* makeMemoryFixture([reply])
+    yield* fixture.memory.capture(fixtureEnqueue("session-a", text))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
+    const job = yield* fixture.store.status(fixtureScope, KnowledgeJobId.make("job:session-a"))
+    expect(Option.map(job, (value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])])).toEqual(Option.some(["Complete", Option.some([])]))
+    const snapshot = yield* fixture.store.snapshot(fixtureScope)
+    expect([snapshot.memories.map((memory) => [memory.text, "replaces" in memory]), snapshot.graph.assertions.map((assertion) => [assertion.predicate, "replaces" in assertion])]).toEqual([[[text, false]], [["prefers", false]]])
+  }))))
+
   test("capture is durable before processing, then facts and graph evidence are recalled across sessions", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const text = "I prefer tea."
     const fixture = yield* makeMemoryFixture([JSON.stringify(fixtureExtraction(text))])

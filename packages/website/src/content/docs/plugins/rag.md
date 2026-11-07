@@ -69,7 +69,7 @@ the last attempt publishes the chunks without the graph, and the job's stage
 records a `GraphOmitted` note (`stage.notes`) with the failure's reason and
 message. A source that is itself invalid still fails. A graph record that
 fails a check of its own (an invalid span, an undefined entity key, an unknown
-record it supersedes, …) is no graph failure: it is left out with a
+record it supersedes, records it supersedes without a `supersession`, …) is no graph failure: it is left out with a
 `RecordDropped` note on the stage, and the chunks publish with the rest of the
 graph; only a graph none of whose relations survive (its entities alone do
 not count), or that repeats an entity key, fails the graph step.
@@ -79,8 +79,8 @@ Use `status`, `retry`, and `process` for host-controlled operation. With
 durable jobs after restart and renew leases during processing.
 
 Jobs are recorded under an engine id derived from the extraction version and
-the embedding options (`knowledgeEngineId("rag:6", { model, version, dimensions })`,
-for example `rag:6/host-embedding/1/768`; version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
+the embedding options (`knowledgeEngineId("rag:7", { model, version, dimensions })`,
+for example `rag:7/host-embedding/1/768`; version 7 since a `supersession` is asked for only from a relation that supersedes, version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
 version 3 since memory supersessions and successor links, version 2 since dropped records and observed dates, and a
 job queued under an earlier version waits for a worker of that version).
 `retrieve` returns current evidence only: its `history` is always empty. The worker and `process` discover and claim only
@@ -128,7 +128,9 @@ extraction task and the proposed graph, written in the output schema's wire
 form (an absent identity or validity date as `null`), and returns the
 corrected graph, so a reviewer that keeps the proposal unchanged publishes
 it. A graph omitted under version 5 because the review copied that version's
-proposal back is extracted again by ingesting the document's next revision. Query planning (`queryPlanning`)
+proposal back, or under version 6 because a relation that supersedes nothing
+gave a `null` or no `supersession`, is extracted again by ingesting the
+document's next revision. Query planning (`queryPlanning`)
 and evidence reranking (`rerank`) are off by default: each adds one helper-model
 call to every search, so turn one on only when its quality is worth that cost
 and latency. Enabled, they use `UtilityLlm` when it is available; invalid or

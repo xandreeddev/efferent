@@ -35,17 +35,17 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `6`) and its
-embedding space: `knowledgeEngineId("rag:6", space)` is
-`rag:6/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `7`) and its
+embedding space: `knowledgeEngineId("rag:7", space)` is
+`rag:7/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:5/…`,
-`rag:5/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:6/…`,
+`rag:6/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -59,14 +59,18 @@ evidence to that memory instead of a new one
 version 5 gives a memory the time of the dated event it concerns (`eventAt`)
 ([plans tied to a dated event](#plans-tied-to-a-dated-event)); version 6
 writes the review's proposal in the output schema's wire form
-([evidence review](#graph-time-and-evidence)). A job of an earlier version
+([evidence review](#graph-time-and-evidence)); version 7 asks for a
+`supersession` only from a record that supersedes others
+([graph, time and evidence](#graph-time-and-evidence)). A job of an earlier version
 that failed is retried the same way: `retry` requeues it under the current
 id through `KnowledgeIndex.requeue`. A memory job whose review copied
 version 5's proposal back failed with `Invalid` ("The extraction model
 returned an invalid knowledge object"), which `isRetryableKnowledgeFailure`
 calls final, so list it with `failed({ namespace, reasons: ["Invalid"] })`
 and `retry` it directly; a document whose graph was omitted that way is
-extracted again by ingesting its next revision.
+extracted again by ingesting its next revision. A job that failed under
+version 6 with the same message because a record that supersedes nothing gave
+a `null` or no `supersession` is retried the same way.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -269,7 +273,7 @@ extraction is staged and published: a span that is not the exact source text
 even after its quote repaired the offsets, an `existing` entity identity that is
 not among the supplied candidates, a reference to an entity key the extraction
 does not define, a `supersedes` entry that names an unknown or inactive record,
-an inferred memory's unknown supporting memory, an inferred routine with fewer
+records superseded without a `supersession`, an inferred memory's unknown supporting memory, an inferred routine with fewer
 than three supporting episodes, or a validity interval that ends before it
 starts. Leaving out an entity also leaves out every memory and assertion that
 refers to its key, and an entity that only left-out records referred to is
@@ -332,7 +336,18 @@ the retired relation. A memory supersedes too: an extracted memory says why
 (`supersession`, `change` when the situation changed, `correction` when the
 earlier memory was wrong), and the new memory links each memory it retires
 with that supersession. The extraction prompt (version 3 on) asks for this and
-for the new memory to state the new situation and what it replaces. A record
+for the new memory to state the new situation and what it replaces. An
+extracted record gives a `supersession` only when its `supersedes` is
+non-empty (version 7 on): one that supersedes nothing leaves it `null` or
+out, and a value it gives anyway is ignored, so it neither dates nor links
+anything. Staging drops a record that supersedes others without one, with a
+`RecordDropped` note ("The extraction supersedes records without saying
+whether it is a change or a correction"), and stages the rest; the records it
+named stay active. Before version 7 the output schema required the key on
+every record, so a reply with `"supersession": null` beside an empty
+`supersedes`, the form extraction models commonly return, failed to decode
+and failed the whole job. An extraction written in the earlier form, with a
+value on every record, still decodes and stages as before. A record
 stored before links existed decodes with none. Query `graph.perspective` with separate `validAt` and
 `knownAt` coordinates. Temporal graph filtering applies at every hop. Historical
 graph filtering does not make RAG's current chunk index a historical chunk index;

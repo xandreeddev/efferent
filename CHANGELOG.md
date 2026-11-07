@@ -128,6 +128,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   it with `KnowledgeIndex.failed({ namespace, reasons: ["Invalid"] })`. A
   document whose graph was omitted that way is extracted again by ingesting
   its next revision. A host that pins `knowledgeReviewPrompt` updates the pin.
+- Native knowledge extraction is at version 7: the engines record their jobs
+  under `memory:7/…` and `rag:7/…`; drain version 6 jobs, or `retry` them
+  (which requeues each under the new id through `KnowledgeIndex.requeue`).
+  A memory job that failed under version 6 with `Invalid` ("The extraction
+  model returned an invalid knowledge object") because a record that
+  supersedes nothing gave `"supersession": null` or no `supersession` now
+  stages; list it with `KnowledgeIndex.failed({ namespace, reasons: ["Invalid"] })`
+  and `retry` it. A document whose graph was omitted that way is extracted
+  again by ingesting its next revision. `KnowledgeExtractedMemory` and
+  `KnowledgeExtractedAssertion` now type `supersession` as optional and
+  nullable (`supersession?: KnowledgeSupersession | null`): code that reads
+  it from a decoded extraction handles `null` and absence, and reads it only
+  when `supersedes` is non-empty. A host that pins the extraction, document,
+  part or review prompt updates the pin.
 
 ### Changed
 
@@ -459,6 +473,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   did. Ties still go by candidate key, `limit` and the character budget
   select after scoring, and fusion is one pass over the lists instead of a
   search of each list per candidate.
+
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: an
+  extraction whose records supersede nothing no longer fails for giving them
+  no supersession. The output schema required `supersession` (`change` or
+  `correction`) on every extracted memory and relation, so a reply with
+  `"supersession": null` beside an empty `supersedes`, or without the key,
+  the form extraction models commonly return, failed to decode: the memory
+  job failed with `Invalid` or the document graph was omitted.
+  `KnowledgeExtractedMemory.supersession` and
+  `KnowledgeExtractedAssertion.supersession` are now
+  `Schema.optionalKey(Schema.NullOr(KnowledgeSupersession))`, and the output
+  schema describes the field as required only when `supersedes` is
+  non-empty. `stageKnowledgeExtraction` reads a supersession only from a
+  record that supersedes others: one given beside an empty `supersedes` is
+  ignored, as it was. A record that supersedes others without one is left
+  out with a `RecordDropped` note ("The extraction supersedes records
+  without saying whether it is a change or a correction"), its superseded
+  records stay active, and the rest stages; an extraction whose every record
+  is dropped that way fails with `Invalid` and that message. The memory
+  `replaces` link, an undated change's observed `validFrom`, a relation's
+  history copies and its `replaces` links follow the same rule. An
+  extraction with a supersession on every record, the earlier form, decodes
+  and stages as before. Extraction version 7 (`KNOWLEDGE_EXTRACTION_VERSION`)
+  and the pinned extraction, document, part and review prompts record the
+  new output schema; the prompts' instructions are unchanged.
 
 ## 0.18.0 — 2026-11-06
 

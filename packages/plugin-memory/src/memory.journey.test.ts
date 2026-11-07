@@ -987,4 +987,82 @@ describe("memory through the real agent", () => {
     const seen = (yield* Ref.get(requests))[0] ?? ""
     expect([seen.includes("The user only drinks green tea since March."), seen.includes("The user takes their tea with oat milk.")]).toEqual([true, true])
   }))))
+
+  test("a captured turn whose extraction gives no supersession publishes, and a later turn's supersession retires what it replaces", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => text.includes("tea") ? [0, 1] : [1, 0]), usage: { inputTokens: undefined } }) })
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The extraction model replies as recorded models did when a record replaces nothing: the memory without a
+    // supersession, the relation with null. The second turn's memory supersedes the first's, so it says why. The
+    // reviewer copies its proposal back verbatim.
+    const extract = (prompt: string) => {
+      const text = frame("knowledge-source", prompt)
+      const candidates = frame("knowledge-candidates", prompt)
+      const user = /"id":"([^"]*:entity:user)"/.exec(candidates)?.[1] ?? null
+      const earlier = /"id":"([^"]*:memory:drink)"/.exec(candidates)?.[1]
+      const drink = text.includes("green tea") ? { quote: "I switched to green tea.", value: "green tea", text: "The user switched from coffee to green tea." } : { quote: "I drink coffee every morning.", value: "coffee", text: "The user drinks coffee every morning." }
+      return JSON.stringify({
+        entities: [{ key: "user", name: "User", type: "person", aliases: [], existing: user, spans: [span(text, "I")] }],
+        memories: [{ key: "drink", kind: "preference", text: drink.text, entities: ["user"], spans: [span(text, drink.quote)], evidence: { _tag: "Stated" },
+          ...(earlier === undefined ? { supersedes: [] } : { supersedes: [earlier], supersession: "change" }) }],
+        assertions: [{ key: "drinks", subject: "user", predicate: "drinks", object: { _tag: "Value", value: drink.value }, text: drink.text, spans: [span(text, drink.quote)], validFrom: null, validTo: null, supersedes: [], supersession: null }],
+      })
+    }
+    const helperPrompts = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly prompt: string }>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
+      Effect.map((call) => Option.match(call, { onNone: () => "none", onSome: (value) => value.purpose })),
+      Effect.tap((purpose) => Ref.update(helperPrompts, (all) => [...all, { purpose, prompt }])),
+      Effect.map((purpose) => new UtilityCompletion({ text: purpose === "review" ? frame("knowledge-proposal", prompt) : extract(prompt), usage: zeroUsage })),
+    ) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const first = { owner: "supersession-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000b1") }
+    const second = { owner: "supersession-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000b2") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: first.owner, namespace: "default", collection: "memory" }
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
+    const capture = (runId: string, text: string) => agent.turn({ turn: { session: first, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => turn.reply("Noted.")).pipe(
+      Effect.andThen(store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })),
+      Effect.tap((jobs) => memory.process(scope, 10).pipe(Effect.map((processed) => expect(processed).toBe(jobs.length)))),
+      Effect.map((jobs) => jobs[0]!),
+    )
+    const coffee = yield* capture("coffee", "I drink coffee every morning.")
+    const afterCoffee = yield* store.snapshot(scope)
+    const tea = yield* capture("tea", "I switched to green tea.")
+    const phases = yield* Effect.forEach([coffee, tea], (job) => memory.status(scope, job.id).pipe(Effect.map(Option.map((value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])]))), { concurrency: 1 })
+    expect(phases).toEqual([Option.some(["Complete", Option.some([])]), Option.some(["Complete", Option.some([])])])
+    // The review's proposals keep the form extraction gave: no supersession key on the first turn's memory, null on each relation.
+    const proposals = (yield* Ref.get(helperPrompts)).filter((call) => call.purpose === "review").map((call) => frame("knowledge-proposal", call.prompt))
+    expect(proposals.map((proposal) => [/"supersession":"change"/.test(proposal), (proposal.match(/"supersession":null/g) ?? []).length])).toEqual([[false, 1], [true, 1]])
+    // The first turn's memory is active until the second retires it, linked to its successor with the reason given.
+    const coffeeMemory = afterCoffee.memories[0]!
+    const snapshot = yield* store.snapshot(scope)
+    expect(snapshot.memories.map((value) => [value.text, Option.isSome(value.knownTo), value.replaces ?? []])).toEqual([
+      ["The user drinks coffee every morning.", true, []],
+      ["The user switched from coffee to green tea.", false, [{ id: coffeeMemory.id, supersession: "change" }]],
+    ])
+    expect(snapshot.graph.assertions.map((assertion) => [assertion.text, "replaces" in assertion])).toEqual([["The user drinks coffee every morning.", false], ["The user switched from coffee to green tea.", false]])
+    // A later conversation recalls the current preference.
+    yield* Ref.set(requests, [])
+    yield* agent.turn({ turn: { session: second, runId: RunId.make("asking"), userMessage: new UserMessage({ text: "What do I drink now?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    expect((yield* Ref.get(requests))[0] ?? "").toContain("The user switched from coffee to green tea.")
+  }))))
 })

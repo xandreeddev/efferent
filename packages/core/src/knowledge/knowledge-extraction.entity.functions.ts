@@ -3,13 +3,13 @@ import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote, KnowledgeSupersession } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
 import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations, sameKnowledgeEventTime } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
-export const KNOWLEDGE_EXTRACTION_VERSION = "6"
+export const KNOWLEDGE_EXTRACTION_VERSION = "7"
 
 const extractionRules = [
   "Extract durable knowledge with exact source evidence. Resolve entities conservatively; reuse only an existing identity supplied below, and keep ambiguous identities separate.",
@@ -257,6 +257,7 @@ const DROPPED = {
   undefinedKey: "The extraction refers to an undefined entity key",
   droppedKey: "The extraction refers to an entity it dropped",
   retired: "The extraction retires an unknown or inactive record",
+  supersession: "The extraction supersedes records without saying whether it is a change or a correction",
   restated: "The extraction restates an unknown or inactive memory",
   restatesRetired: "The extraction restates a memory it also supersedes",
   support: "The extraction cites an unknown supporting memory",
@@ -270,6 +271,11 @@ const firstProblem = (checks: ReadonlyArray<() => Option.Option<string>>): Optio
 const problemIf = (failed: boolean, message: string): Option.Option<string> => failed ? Option.some(message) : Option.none()
 /** Whether a memory was published by a revision of the source: its first mention is (`KnowledgeMemory.mentions`). A later revision retires it, so it is never corroborated. */
 const publishedBy = (memory: KnowledgeMemory, source: KnowledgeSourceRef): boolean => knowledgeMemoryMentions(memory)[0]?.id === source.id
+/** Why a record replaces the records it supersedes: its supersession, read only when it supersedes some; none when it supersedes none or gives none. */
+const supersessionOf = (record: ExtractedMemory | ExtractedAssertion): Option.Option<KnowledgeSupersession> =>
+  record.supersedes.length === 0 ? Option.none() : Option.fromNullishOr(record.supersession)
+/** Whether a record supersedes others without saying why, which staging cannot link or date. */
+const supersedesWithoutReason = (record: ExtractedMemory | ExtractedAssertion): boolean => record.supersedes.length > 0 && Option.isNone(supersessionOf(record))
 /** A memory's event time as stored (`KnowledgeEventTime`), none when the extraction gives none; `end` only when given. */
 const eventTimeOf = (memory: ExtractedMemory): KnowledgeEventTime | undefined => memory.eventAt === undefined || memory.eventAt === null ? undefined
   : { start: memory.eventAt.start, ...(memory.eventAt.end === undefined || memory.eventAt.end === null ? {} : { end: memory.eventAt.end }) }
@@ -285,7 +291,8 @@ const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): P
  * Resolve local keys and evidence into a stage. Nothing is written: a record
  * that fails a check of its own (an invalid span, an unknown `existing`
  * identity, an undefined entity key, an unknown or inactive record it
- * supersedes, restates or cites as support, an inferred routine with fewer than three
+ * supersedes, restates or cites as support, records it supersedes without a
+ * `supersession`, an inferred routine with fewer than three
  * supporting episodes, an inverted validity interval or event time) is left out with a
  * `RecordDropped` note, as is every record that refers to a dropped entity,
  * and the rest is staged; an entity that only dropped records referred to is
@@ -293,7 +300,9 @@ const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): P
  * key, does not encode, or proposed memories or assertions of which none
  * survive (entities alone do not count; with the first drop's message). A world change that supersedes a record
  * without a `validFrom` takes the source's occurrence time, with basis
- * `observed`; a `validFrom` the extraction gives has basis `stated`. A record
+ * `observed`; a `validFrom` the extraction gives has basis `stated`. A
+ * `supersession` is read only from a record that supersedes others (one beside
+ * an empty `supersedes` is ignored, and null or absent there is fine). A record
  * that supersedes others links them in `replaces`, with its supersession: a
  * memory the memories it retires, a relation's change the history copies it
  * writes, and a relation's correction the relations it retires.
@@ -347,6 +356,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     () => problemIf(badSpans(memory.spans), DROPPED.span),
     () => keysProblem(memory.entities),
     () => problemIf(memory.supersedes.some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.retired),
+    () => problemIf(supersedesWithoutReason(memory), DROPPED.supersession),
     () => problemIf((memory.restates ?? []).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.restated),
     () => problemIf(Option.exists(Option.fromNullishOr(memory.eventAt), (event) => event.end !== undefined && event.end !== null && event.end < event.start), DROPPED.event),
     () => problemIf(supportOf(memory).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.support),
@@ -363,12 +373,13 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   /** A change that supersedes a record holds from the source's occurrence time at the latest, when the source gives no date. */
   const dated = (assertion: ExtractedAssertion): Pick<KnowledgeAssertion, "validFrom" | "validFromBasis"> => Option.match(assertion.validFrom, {
     onSome: (from) => ({ validFrom: Option.some(from), validFromBasis: "stated" }),
-    onNone: () => assertion.supersession === "change" && assertion.supersedes.length > 0 ? { validFrom: Option.some(source.occurredAt), validFromBasis: "observed" } : { validFrom: Option.none() },
+    onNone: () => Option.contains(supersessionOf(assertion), "change") ? { validFrom: Option.some(source.occurredAt), validFromBasis: "observed" } : { validFrom: Option.none() },
   })
   const assertionChecks = extraction.assertions.map((assertion) => ({ assertion, problem: firstProblem([
     () => problemIf(badSpans(assertion.spans), DROPPED.span),
     () => keysProblem([assertion.subject, ...Match.valueTags(assertion.object, { Entity: (value) => [value.key], Value: () => [] })]),
     () => problemIf(assertion.supersedes.some((id) => !activeAssertions.some((existing) => existing.id === id)), DROPPED.retired),
+    () => problemIf(supersedesWithoutReason(assertion), DROPPED.supersession),
     () => problemIf(Option.exists(dated(assertion).validFrom, (from) => Option.exists(assertion.validTo, (to) => to < from)), DROPPED.interval),
   ]) }))
   const notes: ReadonlyArray<RecordDropped> = [
@@ -422,7 +433,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       entities: memory.entities.map(identityOf),
       evidence: memory.evidence, embedding: Option.none(), knownFrom: now, knownTo: Option.none(), mentions: mentions(memory),
       ...eventKeyOf(memory),
-      ...linked([...new Set(memory.supersedes)].map((id) => ({ id, supersession: memory.supersession }))),
+      ...linked(Option.match(supersessionOf(memory), { onNone: () => [], onSome: (supersession) => [...new Set(memory.supersedes)].map((id) => ({ id, supersession })) })),
     })),
     entities: kept.entities.map((entity) => ({
       id: identityOf(entity.key), name: entity.name, type: entity.type, aliases: entity.aliases, provenance: entityEvidence(entity.key),
@@ -431,7 +442,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       const validity = dated(assertion)
       const priors = activeAssertions.filter((prior) => assertion.supersedes.includes(prior.id))
       // A change ends each prior relation in a history copy; a correction retires it with no copy.
-      const copies = assertion.supersession !== "change" ? [] : Option.match(validity.validFrom, { onNone: () => [], onSome: (effective) => priors.map((prior) => {
+      const copies = !Option.contains(supersessionOf(assertion), "change") ? [] : Option.match(validity.validFrom, { onNone: () => [], onSome: (effective) => priors.map((prior) => {
         // The prior relation ends where the change takes effect, or earlier when it already had, and never before it began.
         const ended = Math.min(Option.getOrElse(prior.validTo, () => effective), effective)
         return {
@@ -441,7 +452,10 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
           provenance: [...prior.provenance, ...provenance(assertion.spans)], knownFrom: now, knownTo: Option.none(),
         }
       }) })
-      const replaced: ReadonlyArray<KnowledgeAssertionReplacement> = assertion.supersession === "change" ? copies.map(({ id }) => ({ id, supersession: "change" })) : priors.map(({ id }) => ({ id, supersession: "correction" }))
+      const replaced: ReadonlyArray<KnowledgeAssertionReplacement> = Option.match(supersessionOf(assertion), {
+        onNone: () => [],
+        onSome: (supersession) => supersession === "change" ? copies.map(({ id }) => ({ id, supersession: "change" })) : priors.map(({ id }) => ({ id, supersession: "correction" })),
+      })
       return [{
         id: KnowledgeAssertionId.make(`${source.ref.id}:${source.ref.revision}:assertion:${encodeURIComponent(assertion.key)}`),
         subject: identityOf(assertion.subject),
