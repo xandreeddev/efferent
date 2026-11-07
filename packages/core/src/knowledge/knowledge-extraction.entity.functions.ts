@@ -156,18 +156,45 @@ export const knowledgeExtractionWindows = (text: string, maxChars: number): Read
 }
 
 /**
+ * The plain character a model commonly writes for a typographic one: single quotes, apostrophes
+ * and the prime as `'`, double quotes and the double prime as `"`, hyphens, dashes and the minus
+ * sign as `-`, and the no-break, narrow no-break and figure spaces as a space. Each is one UTF-16
+ * unit mapped to one, so an offset into the folded text is the same offset into the original.
+ */
+const PLAIN_TYPOGRAPHY: ReadonlyMap<string, string> = new Map([
+  ...Array.from("‘’‚‛′", (char) => [char, "'"] as const),
+  ...Array.from("“”„‟″", (char) => [char, "\""] as const),
+  ...Array.from("‐‑‒–—−", (char) => [char, "-"] as const),
+  ...Array.from("   ", (char) => [char, " "] as const),
+])
+const TYPOGRAPHIC = new RegExp(`[${[...PLAIN_TYPOGRAPHY.keys()].join("")}]`, "gu")
+/** `text` with each character of `PLAIN_TYPOGRAPHY` replaced by its plain form: the same length, so offsets carry over. */
+const plainTypography = (text: string): string => text.replace(TYPOGRAPHIC, (char) => PLAIN_TYPOGRAPHY.get(char) ?? char)
+
+/**
  * Models quote reliably but count characters badly: a span whose quote is not at its offsets
  * moves to the quote's occurrence in `text` nearest the proposed offset (the only one when it is
- * unique). A quote that is not in `text` keeps its offsets and validation refuses it.
+ * unique). A quote that is nowhere in `text` is compared again with the typography of both folded
+ * (`PLAIN_TYPOGRAPHY`): one that differs from the source only in its quotes, apostrophes, dashes
+ * or no-break spaces moves to the nearest folded occurrence and takes the source's exact text
+ * there as its quote. A quote that matches neither way keeps its offsets and validation refuses it.
  */
 const anchorSpans = <S extends { readonly start: number; readonly end: number; readonly quote?: string }>(text: string, spans: ReadonlyArray<S>): ReadonlyArray<S> => {
-  const occurrences = (quote: string): ReadonlyArray<number> => text.split(quote).slice(0, -1).reduce<ReadonlyArray<number>>(
+  const occurrences = (within: string, quote: string): ReadonlyArray<number> => within.split(quote).slice(0, -1).reduce<ReadonlyArray<number>>(
     (found, before) => [...found, (found.length === 0 ? 0 : found[found.length - 1]! + quote.length) + before.length], [])
+  const nearest = (within: string, quote: string, start: number): Option.Option<number> => Option.fromNullishOr(occurrences(within, quote).reduce<number | undefined>(
+    (best, at) => best === undefined || Math.abs(at - start) < Math.abs(best - start) ? at : best, undefined))
+  const plainText = plainTypography(text)
   return spans.map((span) => {
-    if (span.quote === undefined || span.quote.length === 0 || text.slice(span.start, span.end) === span.quote) return span
-    const nearest = occurrences(span.quote).reduce<number | undefined>(
-      (best, at) => best === undefined || Math.abs(at - span.start) < Math.abs(best - span.start) ? at : best, undefined)
-    return nearest === undefined ? span : { ...span, start: nearest, end: nearest + span.quote.length }
+    const quote = span.quote
+    if (quote === undefined || quote.length === 0 || text.slice(span.start, span.end) === quote) return span
+    return Option.match(nearest(text, quote, span.start), {
+      onSome: (at): S => ({ ...span, start: at, end: at + quote.length }),
+      onNone: () => Option.match(nearest(plainText, plainTypography(quote), span.start), {
+        onNone: () => span,
+        onSome: (at): S => ({ ...span, start: at, end: at + quote.length, quote: text.slice(at, at + quote.length) }),
+      }),
+    })
   })
 }
 

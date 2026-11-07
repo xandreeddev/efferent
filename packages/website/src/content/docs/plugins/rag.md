@@ -153,7 +153,10 @@ One extraction call reads at most `maxExtractionChars` of a document (48,000
 by default; `maxSourceChars`, 200,000 by default, bounds the document). A
 longer document is extracted window by window, each window and its review in
 their own helper calls, and the windows' entities and relationships are merged
-with exact offsets into the whole document before anything is staged. Every
+with exact offsets into the whole document before anything is staged. A
+quote that differs from the document only in typography (curly or straight
+quotes and apostrophes, a dash for a hyphen, a no-break space) is anchored
+where it matches and cites the document's exact text. Every
 helper call (extraction, review, planning, reranking) runs with
 `CurrentKnowledgeHelperCall` set to its purpose, scope, job and attempt where
 there is one, and the optional `maxHelperOutputTokens`, so a host's
