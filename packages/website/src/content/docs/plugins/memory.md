@@ -139,6 +139,19 @@ records of similar relevance and a strong match stays ahead of a weak one said
 often; `0` turns it off
 ([memories said in several episodes](/docs/concepts/native-knowledge/#memories-said-in-several-episodes)).
 
+A statement repeated in another conversation adds a mention to the memory it
+restates instead of a second memory. The extraction names the candidate memory
+a source restates (`restates`), and processing also recognises a new stated
+memory with the kind and exactly the entities of an active one from another
+source whose embedding is at least `restatementSimilarity` (default 0.92) alike;
+`false` keeps only the restatements the extraction names. Memories without
+entities never merge. The restated memory gains the source's spans and mention,
+so it is said once more, and a later revision or forgetting of that source
+takes them away again. A narrowed turn that admits the memory's own source
+keeps it even when the restating source is outside its reach, without that
+source's spans and mention
+([one memory for a repeated statement](/docs/concepts/native-knowledge/#one-memory-for-a-repeated-statement)).
+
 Automatic context also prepends up to four active preference/profile records,
 independently of the question's search ranking, each with the count recall
 found for it. See the
@@ -157,8 +170,8 @@ the only sources recall, reads and the turn-context section may reach, by id,
 by their metadata or both, its profile records included (see
 [narrow retrieval per turn](/docs/concepts/native-knowledge/#narrow-retrieval-per-turn)
 and [narrow by source metadata](/docs/concepts/native-knowledge/#narrow-by-source-metadata)).
-A memory matches a metadata filter only when every source revision it cites
-does, and the store applies the filter before its candidate limit. Narrowing
+A memory matches a metadata filter only when every source revision of its own
+evidence does (later restatements aside), and the store applies the filter before its candidate limit. Narrowing
 scopes reads only: saving, forgetting and conversation capture keep the session
 owner, and a source outside the listed ones cannot be forgotten (it is not
 found). Forgetting removes every revision of a source, so while a metadata
@@ -189,9 +202,9 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:3", { model, version, dimensions })`, version 3
-since memory supersessions and successor links, version 2 since dropped
-records and observed dates). The worker and `process` discover
+(`knowledgeEngineId("memory:4", { model, version, dimensions })`, version 4
+since restatements, version 3 since memory supersessions and successor links,
+version 2 since dropped records and observed dates). The worker and `process` discover
 and claim only jobs of that id, so engines configured with different embedding
 spaces on one store never learn from each other's sources, and a job queued
 under the earlier extraction version waits for a worker of that version. After changing the embedding options, capture the source again
@@ -262,7 +275,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "recallToday": false,
   "recallHistory": "changes",
   "recallHistoryShare": 0.2,
-  "supportWeight": 0.15
+  "supportWeight": 0.15,
+  "restatementSimilarity": 0.92
 }
 ```
 
@@ -419,6 +433,21 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "restatementSimilarity": {
+      "anyOf": [
+        {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      ]
     }
   },
   "required": [
@@ -451,7 +480,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "recallToday",
     "recallHistory",
     "recallHistoryShare",
-    "supportWeight"
+    "supportWeight",
+    "restatementSimilarity"
   ],
   "additionalProperties": true
 }

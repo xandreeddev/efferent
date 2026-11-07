@@ -46,25 +46,28 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `3`) and its
-embedding space: `knowledgeEngineId("rag:3", space)` is
-`rag:3/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `4`) and its
+embedding space: `knowledgeEngineId("rag:4", space)` is
+`rag:4/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:2/…`,
-`rag:2/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:3/…`,
+`rag:3/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
 calls `Invalid` final, so list those jobs with
 `failed({ namespace, reasons: ["Invalid"] })` and pass them to `retry`
 directly. Version 3 asks each extracted memory why it supersedes
-(`supersession`) and links successors to what they replaced; a job of an
-earlier version that failed is retried the same way.
+(`supersession`) and links successors to what they replaced; version 4 lets
+it name the candidate memory a source restates (`restates`), which adds
+evidence to that memory instead of a new one
+([one memory for a repeated statement](#one-memory-for-a-repeated-statement)).
+A job of an earlier version that failed is retried the same way.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -329,7 +332,7 @@ history copy, which carries the ended `validTo`; a relation's correction links
 the retired relation. A memory supersedes too: an extracted memory says why
 (`supersession`, `change` when the situation changed, `correction` when the
 earlier memory was wrong), and the new memory links each memory it retires
-with that supersession. The extraction prompt (version 3) asks for this and
+with that supersession. The extraction prompt (version 3 on) asks for this and
 for the new memory to state the new situation and what it replaces. A record
 stored before links existed decodes with none. Query `graph.perspective` with separate `validAt` and
 `knownAt` coordinates. Temporal graph filtering applies at every hop. Historical
@@ -411,7 +414,9 @@ const narrowing = Context.make(KnowledgeNarrowing, {
 With sources listed, `search_knowledge`, `recall_memory` and both recall
 sections pass them on as `sources`; `read_knowledge` and `read_memory` answer a
 source outside them as not found, and an empty list reads nothing. A record is
-kept only when every span of its provenance cites a listed source. A graph
+kept only when every span of its own provenance cites a listed source (a
+memory's restatements by other sources are no part of it: see
+[one memory for a repeated statement](#one-memory-for-a-repeated-statement)). A graph
 entity is kept when a listed source mentions it, with only those spans, and a
 relation needs every span listed and both of its entities kept. Owners and
 sources come from the host, never from model arguments. Narrowing scopes what
@@ -646,6 +651,65 @@ said in two episodes or more, with the date of the latest:
 ```
 
 The section's profile records show the count recall found for them.
+
+### One memory for a repeated statement
+
+Counting mentions helps only when a repeated statement is one memory. The
+extraction prompt (version 4) shows the active candidate memories and asks the
+model, when the source states one of them again without changing it, to return
+it with `restates` naming that candidate instead of writing a new record: a
+restatement adds evidence, not a memory. Staging turns such a proposal into a
+corroboration (`KnowledgeStage.corroborations`: the memory, the source revision
+as `mention`, and the proposal's own spans as `provenance`) of each named
+memory that is active, stated, of the proposal's kind and published by
+another source. A named memory that is unknown or no longer active drops the
+proposal with a `RecordDropped` note; one that is inferred, of another kind or
+published by this source (its next revision retires it) leaves the proposal a
+new memory, as does a proposal that supersedes something. A memory another
+proposal of the same extraction supersedes is never corroborated, since
+publication refuses a corroboration of a memory its own stage retires: a
+proposal that restates only such memories repeats the state the extraction
+replaces and is dropped with a `RecordDropped` note ("The extraction restates a
+memory it also supersedes"), and the successor publishes.
+
+An extraction that misses a restatement gets a second chance once the stage is
+embedded. `mergeKnowledgeRestatements(stage, snapshot, source, minSimilarity)`
+takes a new stated memory that replaces nothing as a corroboration of the
+active stated memory with the same kind and exactly the same entities, from
+another source, whose embedding's cosine with its own is at least
+`minSimilarity` (the most similar one, ties by id). The memory engine runs it
+with `MemoryConfig.restatementSimilarity` (default `0.92`; `false` turns it
+off). A memory without entities never merges, so two facts about different
+people, places or things stay apart however alike their sentences read.
+
+Publication appends a corroboration's spans to the memory's provenance and its
+revision to the memory's `mentions` (`corroborateKnowledgeMemory`), writes the
+source rows that link the memory to that revision, and neither writes a record
+nor retires one. The memory must still be active once the publication has
+retired what it replaces, or publication fails with `Conflict` and changes
+nothing. When a later revision of a corroborating source is published, the
+memories that source published retire as before, while a memory another source
+published loses the earlier revision's spans and mention instead of retiring
+(`stripKnowledgeRevisions`); the new revision restates it again if it still
+says so. Forgetting a corroborating source uses the source closure: the memory
+is removed and its other sources are requeued, and their extraction builds it
+again from the mentions that survive, so a memory three conversations stated
+is said twice once one of them is forgotten.
+
+A read narrowed by `sources` or `metadata` judges a memory by its own evidence:
+the spans of the revision that published it and of its entities. The revisions
+that restated it later (a stated memory's `mentions` after the first) are no
+part of that evidence, so a restatement from outside the reach, such as another
+episode, project or tenant, neither hides the memory from a read that admits its
+source nor shows there: `narrowKnowledgeMemory` leaves the restatement's spans
+and mention out of the record the stores' search, the memory section's profile
+and the earlier states return, and support counts only the mentions left. A
+read that admits only the restating source finds nothing, as before.
+
+```text
+[2026-02-03 · fact · stated · said 3 times, last 2026-07-09] The user lives in Lisbon.
+[2026-08-01 · fact · stated] The user's sister lives in Porto.
+```
 
 ## Place memory recall yourself
 

@@ -3,10 +3,10 @@ import { Effect, Match, Option, Ref, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemory, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId,
 } from "./knowledge.entity.js"
-import type { KnowledgeSnapshot, KnowledgeSource } from "./knowledge.entity.js"
+import type { KnowledgeSnapshot, KnowledgeSource, KnowledgeStage } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import { knowledgeMemorySupport, knowledgeRecordDate, validateKnowledgeStage } from "./knowledge.entity.functions.js"
-import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
+import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
 import { applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeQueryPrompt, knowledgeRerankPrompt } from "./knowledge-query.entity.functions.js"
 
@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("3")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("4")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -448,5 +448,97 @@ describe("the recall budget gives earlier states at most their share", () => {
     const current0 = { ...earlier("new1", current[0]!.memory) }
     const duplicate = budgetKnowledgeRecall({ candidates: current, graph, history: [current0, history[0]!, history[0]!], sources: [] }, perRecord * 20, 6, 0.5)
     expect(duplicate.history.map((state): string => state.record.id)).toEqual(["old0"])
+  })
+})
+
+describe("a restatement adds evidence to the memory it restates instead of a new record", () => {
+  const space = { model: "kit", version: "1", dimensions: 2 }
+  const city = KnowledgeEntityId.make("earlier:1:entity:city")
+  const sister = KnowledgeEntityId.make("earlier:1:entity:sister")
+  const earlier: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("earlier"), revision: 1 }, text: "I live in Lisbon. My sister lives in Porto." }
+  const now: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("now"), revision: 1 }, text: "Still in Lisbon, and I love it." }
+  const stated = (id: string, text: string, entities: ReadonlyArray<KnowledgeEntityId>, values: ReadonlyArray<number>, from: KnowledgeSource = earlier): KnowledgeMemory => ({
+    id: KnowledgeMemoryId.make(id), kind: "fact", text, entities, evidence: { _tag: "Stated" },
+    provenance: [{ source: from.ref, start: 0, end: 17, quote: from.text.slice(0, 17) }], mentions: [from.ref],
+    embedding: Option.some({ space, values }), knownFrom: 1, knownTo: Option.none(),
+  })
+  const lives = stated("lives", "The user lives in Lisbon.", [city], [1, 0])
+  const snapshot: KnowledgeSnapshot = {
+    version: 3, memories: [lives, { ...stated("retired", "The user lived in Faro.", [city], [1, 0]), knownTo: Option.some(2) },
+      { ...stated("habit", "The user walks to work.", [], [1, 0]), kind: "routine" }],
+    graph: { entities: [
+      { id: city, name: "Lisbon", type: "city", aliases: [], provenance: [{ source: earlier.ref, start: 10, end: 16, quote: "Lisbon" }] },
+      { id: sister, name: "Sister", type: "person", aliases: [], provenance: [{ source: earlier.ref, start: 21, end: 27, quote: "sister" }] },
+    ], assertions: [], truncated: false },
+  }
+  const span = { start: 0, end: 15, quote: "Still in Lisbon" }
+  const restating = (key: string, restates: ReadonlyArray<string>, kind = "fact") => ({
+    key, kind, text: "The user lives in Lisbon.", entities: [], spans: [span], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change", restates,
+  })
+  const stageOf = (memories: ReadonlyArray<object>, from: KnowledgeSnapshot = snapshot) => Schema.decodeUnknownEffect(KnowledgeExtraction)({ entities: [], memories, assertions: [] }).pipe(
+    Effect.flatMap((decoded) => stageKnowledgeExtraction(now, from, decoded, 40)))
+
+  test("a restating memory becomes one corroboration of its target, with its own spans, and no memory is written", () => Effect.runPromise(Effect.gen(function* () {
+    const stage = yield* stageOf([restating("again", [lives.id]), restating("once-more", [lives.id])])
+    expect(stage.memories).toEqual([])
+    expect(stage.corroborations).toEqual([{ memory: lives.id, mention: now.ref, provenance: [{ source: now.ref, ...span }] }])
+    expect([stage.retireMemories, stage.notes]).toEqual([[], undefined])
+    // An extraction that restates nothing stages no corroborations key, as before.
+    const { restates: _none, ...unnamed } = restating("new", [])
+    const plainStage = yield* stageOf([unnamed])
+    expect([plainStage.memories.length, "corroborations" in plainStage]).toEqual([1, false])
+  })))
+
+  test("restating a retired or unknown memory drops the record with a note; a target that cannot be restated leaves a new memory", () => Effect.runPromise(Effect.gen(function* () {
+    const stage = yield* stageOf([restating("stale", ["retired"]), restating("invented", ["nowhere"]), restating("kept", [])])
+    expect(stage.notes?.map((note) => note._tag === "RecordDropped" ? [note.key, note.message] : [])).toEqual([
+      ["stale", "The extraction restates an unknown or inactive memory"], ["invented", "The extraction restates an unknown or inactive memory"],
+    ])
+    expect([stage.memories.length, stage.corroborations]).toEqual([1, undefined])
+    // Another kind, an inference, a memory this source published (a later revision retires it), or a proposal that supersedes: written as new.
+    const inferred = { ...stated("inferred", "The user likes Lisbon.", [city], [1, 0]), evidence: { _tag: "Inferred" as const, supports: [lives.id] } }
+    const own = stated("own", "The user lives in Lisbon.", [city], [1, 0], { ...now, ref: { ...now.ref, revision: 1 } })
+    const mixed = yield* stageOf([restating("kind", [lives.id], "preference"), restating("inferred", [inferred.id]), restating("own", [own.id])], { ...snapshot, memories: [...snapshot.memories, inferred, own] })
+    const changed = yield* stageOf([{ ...restating("changed", [lives.id]), supersedes: [lives.id] }])
+    expect([[...mixed.memories, ...changed.memories].map((memory) => memory.id.split(":").at(-1)), mixed.corroborations, changed.corroborations]).toEqual([["kind", "inferred", "own", "changed"], undefined, undefined])
+  })))
+
+  test("a memory that restates only what another memory of the extraction supersedes is dropped, so the stage still publishes", () => Effect.runPromise(Effect.gen(function* () {
+    const successor = { ...restating("moved", []), text: "The user moved to Porto.", supersedes: [lives.id] }
+    const both = yield* stageOf([successor, restating("again", [lives.id])])
+    expect([both.memories.map((memory) => memory.id.split(":").at(-1)), both.retireMemories, both.corroborations]).toEqual([["moved"], [lives.id], undefined])
+    expect(both.notes).toEqual([{ _tag: "RecordDropped", record: "memory", key: "again", reason: "Invalid", message: "The extraction restates a memory it also supersedes" }])
+    expect(validateKnowledgeStage(both, snapshot, [earlier, now])).toEqual(Option.none())
+    // Restating a retired memory and another one corroborates only the other, whichever order the records come in.
+    const twin = stated("twin", "The user resides in Lisbon.", [city], [0.9, 0.1])
+    const withTwin = { ...snapshot, memories: [...snapshot.memories, twin] }
+    const partly = yield* stageOf([restating("again", [lives.id, twin.id]), successor], withTwin)
+    expect([partly.memories.map((memory) => memory.id.split(":").at(-1)), partly.corroborations?.map((corroboration) => corroboration.memory), partly.notes]).toEqual([["moved"], [twin.id], undefined])
+    expect(validateKnowledgeStage(partly, withTwin, [earlier, now])).toEqual(Option.none())
+  })))
+
+  test("after embedding, a new memory with the same kind and entities that is close enough corroborates instead", () => {
+    const written = (key: string, entities: ReadonlyArray<KnowledgeEntityId>, values: ReadonlyArray<number>, text = "The user is based in Lisbon."): KnowledgeMemory => ({
+      ...stated(`now:1:memory:${key}`, text, entities, values, now), provenance: [{ source: now.ref, start: 0, end: 15, quote: "Still in Lisbon" }, ...snapshot.graph.entities[0]!.provenance],
+    })
+    const stageWith = (memories: ReadonlyArray<KnowledgeMemory>): KnowledgeStage => ({ expectedVersion: 3, memories, chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [] })
+    const close = written("close", [city], [0.95, 0.05])
+    const merged = mergeKnowledgeRestatements(stageWith([close]), snapshot, now.ref, 0.92)
+    expect(merged.memories).toEqual([])
+    // Only the revision's own spans are its evidence; the entity's earlier evidence stays where it was.
+    expect(merged.corroborations).toEqual([{ memory: lives.id, mention: now.ref, provenance: [{ source: now.ref, start: 0, end: 15, quote: "Still in Lisbon" }] }])
+    // A distinct fact about other entities, however alike its embedding, is its own memory; so is one without entities,
+    // one below the threshold, one of another kind, and one whose match this source published.
+    const distinct = [written("sister", [sister], [1, 0], "The user's sister lives in Porto."), written("both", [city, sister], [1, 0]), written("none", [], [1, 0]),
+      written("far", [city], [0, 1]), { ...written("kind", [city], [1, 0]), kind: "preference" as const }]
+    expect(mergeKnowledgeRestatements(stageWith(distinct), snapshot, now.ref, 0.92)).toEqual(stageWith(distinct))
+    const ownSnapshot = { ...snapshot, memories: [stated("lives-own", "The user lives in Lisbon.", [city], [1, 0], { ...now, ref: { ...now.ref, revision: 1 } })] }
+    expect(mergeKnowledgeRestatements(stageWith([close]), ownSnapshot, { ...now.ref, revision: 2 }, 0.92).memories).toHaveLength(1)
+    // The most similar active match wins, and a named corroboration of it merges with the found one.
+    const twin = { ...stated("twin", "The user resides in Lisbon.", [city], [0.9, 0.1]) }
+    const named = { ...stageWith([close]), corroborations: [{ memory: twin.id, mention: now.ref, provenance: [{ source: now.ref, start: 16, end: 30, quote: now.text.slice(16, 30) }] }] }
+    expect(mergeKnowledgeRestatements(named, { ...snapshot, memories: [lives, twin] }, now.ref, 0.5).corroborations?.map((corroboration) => corroboration.memory)).toEqual([twin.id, lives.id])
+    // A merged memory still validates against the snapshot, and the stage needs none of its own records.
+    expect(validateKnowledgeStage(merged, snapshot, [earlier, now])).toEqual(Option.none())
   })
 })

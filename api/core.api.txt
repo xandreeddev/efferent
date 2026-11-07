@@ -177,6 +177,7 @@ const KnowledgeCandidates
 const KnowledgeChunk
 const KnowledgeChunkId
 const KnowledgeClaim
+const KnowledgeCorroboration
 const KnowledgeEmbeddingSpace
 const KnowledgeEnqueue
 const KnowledgeEntity
@@ -446,6 +447,7 @@ const clippedMarker
 const collectBashResult
 const collectSkillFiles
 const compileGlob
+const corroborateKnowledgeMemory
 const costOf
 const decodeStored
 const defineCapability
@@ -517,6 +519,7 @@ const mediaFromBytes
 const mediaHashOf
 const mediaLabel
 const mediaSlotsOf
+const mergeKnowledgeRestatements
 const mergeOptions
 const messagesOf
 const modelFailureCodeOf
@@ -527,6 +530,7 @@ const modelRequestDescriptorOf
 const modelSpendExceededOf
 const narrowKnowledgeGraph
 const narrowKnowledgeGraphBy
+const narrowKnowledgeMemory
 const noMaintenance
 const normalizeUserMessage
 const notifyCommittedTurn
@@ -580,6 +584,7 @@ const stampResponseModel
 const storedJson
 const storedRecordOf
 const strictJsonSchema
+const stripKnowledgeRevisions
 const subscribeAll
 const sumUsage
 const tokenUsage
@@ -755,6 +760,7 @@ type KnowledgeCandidates
 type KnowledgeChunk
 type KnowledgeChunkId
 type KnowledgeClaim
+type KnowledgeCorroboration
 type KnowledgeEmbeddingSpace
 type KnowledgeEnqueue
 type KnowledgeEntity

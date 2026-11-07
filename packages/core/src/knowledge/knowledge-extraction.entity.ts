@@ -13,7 +13,12 @@ export const KnowledgeExtractedEntity = Schema.Struct({
   existing: Schema.OptionFromNullOr(KnowledgeEntityId),
   spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
 })
-/** A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`. @public */
+/**
+ * A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`.
+ * `restates` names active candidate memories the source states again without changing them (none
+ * when absent): staging adds the source's spans to each as evidence instead of a new record.
+ * @public
+ */
 export const KnowledgeExtractedMemory = Schema.Struct({
   key: Key, kind: KnowledgeMemoryKind, text: Schema.Trimmed.check(Schema.isNonEmpty()),
   entities: Schema.Array(Key), spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
@@ -23,6 +28,7 @@ export const KnowledgeExtractedMemory = Schema.Struct({
   ]),
   supersedes: Schema.Array(KnowledgeMemoryId),
   supersession: KnowledgeSupersession,
+  restates: Schema.optionalKey(Schema.Array(KnowledgeMemoryId)),
 })
 /** @public */
 export const KnowledgeExtractedAssertion = Schema.Struct({

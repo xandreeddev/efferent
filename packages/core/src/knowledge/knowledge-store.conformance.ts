@@ -1,9 +1,11 @@
-import { Effect, Option, Order, Result } from "effect"
+import { Effect, Option, Order, Result, Schema } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, sameJson } from "../conformance.functions.js"
 import type { KnowledgeIndex, TemporalGraph } from "../ports/knowledge.port.js"
 import { knowledgeCandidateKey } from "./knowledge.entity.functions.js"
+import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
+import { stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import type { Context } from "effect"
 import { knowledgeScopeKey } from "./knowledge.entity.functions.js"
 import {
@@ -46,6 +48,18 @@ const memoryOf = (source: KnowledgeSource, name = "memory"): KnowledgeMemory => 
 const stageOf = (source: KnowledgeSource, version = 0, name = "memory"): KnowledgeStage => ({
   expectedVersion: version, memories: [memoryOf(source, name)], chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [],
 })
+/** A stage that adds nothing but the source's restatement of `memory`: its first five characters as evidence. */
+const corroborationStage = (source: KnowledgeSource, memory: KnowledgeMemory["id"], version: number): KnowledgeStage => ({
+  expectedVersion: version, memories: [], chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [],
+  corroborations: [{ memory, mention: source.ref, provenance: [{ source: source.ref, start: 0, end: 5, quote: source.text.slice(0, 5) }] }],
+})
+/** Claims the named job, stages what `build` makes of the current scope version and publishes it, leased at `now`. */
+const publishJob = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, job: KnowledgeJob, now: number, build: (version: number) => KnowledgeStage) {
+  yield* fixture.index.claim({ scope: fixture.scope, engine: KIT_ENGINE, worker: "kit", token: KnowledgeLeaseToken.make("token"), now, leaseMs: 100, jobId: job.id })
+  const lease = leaseOf(fixture.scope, job, now + 1)
+  yield* fixture.index.stage(lease, build((yield* fixture.index.snapshot(fixture.scope)).version))
+  yield* fixture.index.publish(lease)
+})
 const infoOf = (source: KnowledgeSource): KnowledgeSourceInfo => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata })
 const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source: KnowledgeSource = sourceOf(fixture.scope)) {
   const job = yield* enqueue(fixture, source)
@@ -61,7 +75,10 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
  * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), a memory's mentions (kept, absent on one
- * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
+ * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), corroborations (appended without a new record or a
+ * retirement, refused when their memory is no longer active, stripped rather than retired by a later revision, and rebuilt from the surviving sources after
+ * forgetting one; a narrowed read keeps a memory restated from outside it, without that evidence; a stage that supersedes a memory and
+ * restates it in another record publishes), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
  * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -323,6 +340,124 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
       yield* expect("knowledge.mentions", Option.isNone(yield* fixture.index.memory(fixture.scope, inferred.id)) && !(yield* fixture.index.snapshot(fixture.scope)).memories.some((memory) => memory.id === inferred.id),
         "a memory stayed readable after a revision it mentions was forgotten")
+    })),
+    indexCheck("knowledge.corroboration", (fixture) => Effect.gen(function* () {
+      // A memory stored without mentions, restated by two other sources: one record that mentions all three.
+      const seeded = yield* seed(fixture)
+      const target = seeded.stage.memories[0]!
+      const [second, third] = [sourceOf(fixture.scope, "Alice still prefers coffee", "second"), sourceOf(fixture.scope, "Alice keeps preferring coffee", "third")]
+      const secondJob = yield* enqueue(fixture, second, "second-job")
+      yield* publishJob(fixture, secondJob, 30, (version) => corroborationStage(second, target.id, version))
+      const thirdJob = yield* enqueue(fixture, third, "third-job")
+      yield* publishJob(fixture, thirdJob, 40, (version) => corroborationStage(third, target.id, version))
+      const read = yield* fixture.index.memory(fixture.scope, target.id)
+      const snapshot = yield* fixture.index.snapshot(fixture.scope)
+      const found = yield* fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.none(), limit: 10, knownAt: Option.none() })
+      const mentioned = [seeded.source.ref, second.ref, third.ref]
+      const evidence = [...target.provenance, ...[second, third].map((source) => ({ source: source.ref, start: 0, end: 5, quote: "Alice" }))]
+      yield* expect("knowledge.corroboration", Option.exists(read, (memory) => sameJson(memory.mentions, mentioned) && sameJson(memory.provenance, evidence) && Option.isNone(memory.knownTo) && memory.knownFrom === target.knownFrom && memory.text === target.text) &&
+        snapshot.memories.length === 1 && sameJson(found.lexical.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory.mentions] : []), [mentioned]),
+        "a corroboration did not append its spans and mention to the memory it restates, wrote a new record, or retired or changed the memory")
+      // Forgetting a corroborating source removes the record and requeues its other sources; they rebuild it with the mentions that survive.
+      yield* fixture.index.forget(fixture.scope, second.ref.id, 50)
+      const requeued = yield* Effect.forEach([seeded.job, thirdJob], (job) => fixture.index.status(fixture.scope, job.id), { concurrency: 1 })
+      yield* expect("knowledge.corroboration", Option.isNone(yield* fixture.index.memory(fixture.scope, target.id)) && requeued.every((job) => Option.exists(job, (value) => value.phase._tag === "Queued")),
+        "forgetting a corroborating source kept the memory it restated or did not requeue the memory's other sources")
+      yield* publishJob(fixture, seeded.job, 60, (version) => stageOf(seeded.source, version))
+      yield* publishJob(fixture, thirdJob, 70, (version) => corroborationStage(third, target.id, version))
+      yield* expect("knowledge.corroboration", Option.exists(yield* fixture.index.memory(fixture.scope, target.id), (memory) => sameJson(memory.mentions, [seeded.source.ref, third.ref]) && memory.provenance.every((span) => span.source.id !== second.ref.id)),
+        "the rebuilt memory did not mention exactly the sources that survived")
+    })),
+    indexCheck("knowledge.corroboration-conflict", (fixture) => Effect.gen(function* () {
+      // A source's later revision retires what the source published, so it cannot corroborate that: the publication is refused whole.
+      const seeded = yield* seed(fixture)
+      const target = seeded.stage.memories[0]!
+      const revision = sourceOf(fixture.scope, "Alice prefers coffee, as before", "source", 2)
+      const revisionJob = yield* enqueue(fixture, revision, "revision-job", Option.some(1))
+      const own = yield* Effect.result(publishJob(fixture, revisionJob, 30, (version) => corroborationStage(revision, target.id, version)))
+      const kept = yield* fixture.index.memory(fixture.scope, target.id)
+      const pending = yield* fixture.index.status(fixture.scope, revisionJob.id)
+      const conflict = (result: Result.Result<unknown, KnowledgeError>) => Result.isFailure(result) && result.failure.reason === "Conflict"
+      yield* expect("knowledge.corroboration-conflict", conflict(own) && Option.exists(kept, (memory) => Option.isNone(memory.knownTo) && !("mentions" in memory)) && Option.exists(pending, (job) => job.phase._tag !== "Complete"),
+        "a corroboration of a memory its own publication retires was published, or the refused publication changed the memory")
+      // A corroboration staged while its memory was active cannot publish once another source retired it, nor stage again.
+      const other = sourceOf(fixture.scope, "Alice still prefers coffee", "other")
+      const otherJob = yield* enqueue(fixture, other, "other-job")
+      yield* fixture.index.claim({ scope: fixture.scope, engine: KIT_ENGINE, worker: "kit", token: KnowledgeLeaseToken.make("token"), now: 40, leaseMs: 100, jobId: otherJob.id })
+      const otherLease = leaseOf(fixture.scope, otherJob, 41)
+      const extractedAt = (yield* fixture.index.snapshot(fixture.scope)).version
+      yield* fixture.index.stage(otherLease, corroborationStage(other, target.id, extractedAt))
+      const later = sourceOf(fixture.scope, "Alice prefers tea now", "later")
+      const laterJob = yield* enqueue(fixture, later, "later-job")
+      yield* publishJob(fixture, laterJob, 42, (version) => ({ ...stageOf(later, version, "successor"), retireMemories: [target.id] }))
+      const stale = yield* Effect.result(fixture.index.publish(otherLease))
+      const restaged = yield* Effect.result(fixture.index.stage(otherLease, corroborationStage(other, target.id, extractedAt + 1)))
+      yield* expect("knowledge.corroboration-conflict", conflict(stale) && conflict(restaged) && Option.exists(yield* fixture.index.memory(fixture.scope, target.id), (memory) => Option.isSome(memory.knownTo) && !("mentions" in memory)),
+        "a corroboration of a memory retired after extraction was published or staged")
+    })),
+    indexCheck("knowledge.corroboration-revision", (fixture) => Effect.gen(function* () {
+      // A corroborating source's later revision takes its earlier evidence off the memory it restated instead of retiring it,
+      // and retires what the source published itself, as any revision does.
+      const seeded = yield* seed(fixture)
+      const target = seeded.stage.memories[0]!
+      const first = sourceOf(fixture.scope, "Alice still prefers coffee", "restating")
+      const firstJob = yield* enqueue(fixture, first, "restating-1")
+      yield* publishJob(fixture, firstJob, 30, (version) => ({ ...corroborationStage(first, target.id, version), memories: [memoryOf(first, "restating-own")] }))
+      const second = sourceOf(fixture.scope, "Alice, again: coffee", "restating", 2)
+      const secondJob = yield* enqueue(fixture, second, "restating-2", Option.some(1))
+      yield* publishJob(fixture, secondJob, 40, (version) => corroborationStage(second, target.id, version))
+      const read = yield* fixture.index.memory(fixture.scope, target.id)
+      const own = yield* fixture.index.memory(fixture.scope, KnowledgeMemoryId.make("restating-own"))
+      const found = yield* fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.none(), limit: 10, knownAt: Option.none() })
+      const restated = found.lexical.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === target.id ? [candidate.memory] : [])
+      yield* expect("knowledge.corroboration-revision", Option.exists(read, (memory) => Option.isNone(memory.knownTo) && sameJson(memory.mentions, [seeded.source.ref, second.ref]) &&
+        sameJson(memory.provenance, [...target.provenance, { source: second.ref, start: 0, end: 5, quote: "Alice" }])) && sameJson(restated.map((memory) => memory.mentions), [[seeded.source.ref, second.ref]]),
+        "a later revision of a corroborating source retired the memory it restated, or left its earlier revision's spans or mention on it")
+      yield* expect("knowledge.corroboration-revision", Option.exists(own, (memory) => Option.contains(memory.knownTo, 41)), "a later revision did not retire the memory its source published")
+    })),
+    indexCheck("knowledge.corroboration-reach", (fixture) => Effect.gen(function* () {
+      // A restatement from outside a narrowed read neither hides the memory it restated from that read nor shows there;
+      // a read that admits only the restating source finds nothing, as the memory's own evidence is outside it.
+      const mine = { ...sourceOf(fixture.scope), metadata: { team: "mine" } }
+      const seeded = yield* seed(fixture, mine)
+      const target = seeded.stage.memories[0]!
+      const other = { ...sourceOf(fixture.scope, "Alice still prefers coffee", "other"), metadata: { team: "other" } }
+      yield* publishJob(fixture, yield* enqueue(fixture, other, "other-job"), 30, (version) => corroborationStage(other, target.id, version))
+      const restated = (narrowing: Pick<KnowledgeSearch, "sources" | "metadata">) => fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.none(), limit: 10, knownAt: Option.none(), ...narrowing }).pipe(
+        Effect.map((found) => [...found.lexical, ...found.semantic].flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === target.id ? [candidate.memory] : [])))
+      const whole = yield* restated({})
+      yield* expect("knowledge.corroboration-reach", whole.length > 0 && whole.every((memory) => sameJson(memory.mentions, [mine.ref, other.ref])),
+        "a corroboration from another source did not reach the memory it restated")
+      const narrowed = [...yield* restated({ sources: [mine.ref.id] }), ...yield* restated({ metadata: { team: "mine" } })]
+      yield* expect("knowledge.corroboration-reach", narrowed.length > 0 && narrowed.every((memory) => sameJson(memory.mentions, [mine.ref]) && sameJson(memory.provenance, target.provenance)),
+        "a read narrowed to the publishing source lost the memory once another source restated it, or showed the restating source's evidence")
+      const outside = [...yield* restated({ sources: [other.ref.id] }), ...yield* restated({ metadata: { team: "other" } })]
+      yield* expect("knowledge.corroboration-reach", outside.length === 0, "a read narrowed to the restating source alone found the memory another source published")
+    })),
+    indexCheck("knowledge.corroboration-superseded", (fixture) => Effect.gen(function* () {
+      // Staging never pairs a corroboration with the retirement of its memory: an extraction that supersedes a memory in one
+      // record and restates it in another stages the successor alone, and the store publishes it.
+      const seeded = yield* seed(fixture)
+      const target = seeded.stage.memories[0]!
+      const text = "Alice prefers tea now. Alice prefers coffee."
+      const source = sourceOf(fixture.scope, text, "successor")
+      const job = yield* enqueue(fixture, source, "successor-job")
+      const record = (key: string, start: number, end: number, change: Partial<Record<"supersedes" | "restates", ReadonlyArray<string>>>) => ({
+        key, kind: target.kind, text: text.slice(start, end), entities: [], spans: [{ start, end, quote: text.slice(start, end) }], evidence: { _tag: "Stated" },
+        supersedes: [], supersession: "change", ...change,
+      })
+      const extraction = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ entities: [], assertions: [], memories: [
+        record("tea", 0, 22, { supersedes: [target.id] }), record("coffee", 23, text.length, { restates: [target.id] }),
+      ] })
+      yield* fixture.index.claim({ scope: fixture.scope, engine: KIT_ENGINE, worker: "kit", token: KnowledgeLeaseToken.make("token"), now: 30, leaseMs: 100, jobId: job.id })
+      const lease = leaseOf(fixture.scope, job, 31)
+      yield* fixture.index.stage(lease, yield* stageKnowledgeExtraction(source, yield* fixture.index.snapshot(fixture.scope), extraction, 31))
+      const published = yield* Effect.result(fixture.index.publish(lease))
+      const status = yield* fixture.index.status(fixture.scope, job.id)
+      const active = (yield* fixture.index.snapshot(fixture.scope)).memories.filter((memory) => Option.isNone(memory.knownTo))
+      yield* expect("knowledge.corroboration-superseded", Result.isSuccess(published) && Option.exists(status, (value) => value.phase._tag === "Complete") &&
+        sameJson(active.map((memory) => memory.text), ["Alice prefers tea now."]) && Option.exists(yield* fixture.index.memory(fixture.scope, target.id), (memory) => Option.isSome(memory.knownTo) && !("mentions" in memory)),
+        "an extraction that supersedes a memory and restates it in another record did not publish its successor alone")
     })),
     indexCheck("knowledge.source-revision", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

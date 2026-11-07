@@ -505,7 +505,7 @@ export {
   KnowledgeEntityId, KnowledgeAssertionId, KnowledgeLeaseToken, KnowledgeScope,
   KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
-  KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeStage,
+  KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeCorroboration, KnowledgeStage,
   KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeJobCursor, KnowledgeFailedQuery, KnowledgeFailedPage, KnowledgeRequeue,
   KnowledgeLease, KnowledgePerspective, KnowledgeSupport, KnowledgeCandidate, KnowledgeSearch,
@@ -521,11 +521,11 @@ export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey, knowledgeAssertionKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, traverseKnowledgeGraph,
-  validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph, isRetryableKnowledgeFailure,
+  validateKnowledgeStage, corroborateKnowledgeMemory, stripKnowledgeRevisions, citesKnowledgeSources, narrowKnowledgeGraph, narrowKnowledgeMemory, isRetryableKnowledgeFailure,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
 export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow } from "./knowledge/knowledge-extraction.entity.js"
 export { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge/knowledge-query.entity.js"
 export { knowledgeQueryPrompt, knowledgeRerankPrompt, applyKnowledgeRerank, budgetKnowledgeRecall } from "./knowledge/knowledge-query.entity.functions.js"
-export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction, knowledgeExtractionWindows, extractKnowledge } from "./knowledge/knowledge-extraction.entity.functions.js"
+export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction, mergeKnowledgeRestatements, knowledgeExtractionWindows, extractKnowledge } from "./knowledge/knowledge-extraction.entity.functions.js"

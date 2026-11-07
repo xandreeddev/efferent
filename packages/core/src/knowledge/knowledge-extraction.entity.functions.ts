@@ -3,13 +3,13 @@ import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeHelperPurpose, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
-import { knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens } from "./knowledge.entity.functions.js"
+import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
-export const KNOWLEDGE_EXTRACTION_VERSION = "3"
+export const KNOWLEDGE_EXTRACTION_VERSION = "4"
 
 const extractionRules = [
   "Extract durable knowledge with exact source evidence. Resolve entities conservatively; reuse only an existing identity supplied below, and keep ambiguous identities separate.",
@@ -18,6 +18,7 @@ const extractionRules = [
   "Use local entity keys in memories and assertions. Include every referenced entity in entities. Use existing only for an identity from the supplied candidates. Supersedes may name only active supplied records.",
   "For a relationship that changed in the world, use supersession change and supply the new validFrom time. When the source states a present change without a date, set validFrom to the source occurrence time; reserve null for a start that is unknown and supersedes nothing. For an earlier claim that was incorrect, use supersession correction. Keep unknown validity dates null; never invent a date to force an update.",
   "When a new memory replaces an active candidate memory because the situation changed, list it in supersedes with supersession change; when the candidate was wrong, use correction. Write the new memory so it states the new situation and what it replaces.",
+  "When the source restates an active candidate memory without changing it, return it with restates set to that candidate instead of writing a new record; a restatement adds evidence, not a memory.",
   "Mark inferred memories with supporting memory identities. Infer routines only from at least three distinct source episodes. Explicitly stated routines need no recurrence inference. A routine never authorizes an action.",
   "Consolidate repeated supported observations into concise entity profiles and routines when the evidence warrants them. Preserve supporting identities, supersede redundant derived observations explicitly, and keep disagreements visible instead of inventing a single answer.",
   "Return one JSON object matching the output schema, with no Markdown fences or surrounding prose. Return empty arrays when the evidence supports no durable knowledge.",
@@ -244,6 +245,8 @@ const DROPPED = {
   undefinedKey: "The extraction refers to an undefined entity key",
   droppedKey: "The extraction refers to an entity it dropped",
   retired: "The extraction retires an unknown or inactive record",
+  restated: "The extraction restates an unknown or inactive memory",
+  restatesRetired: "The extraction restates a memory it also supersedes",
   support: "The extraction cites an unknown supporting memory",
   routine: "An inferred routine needs three distinct supporting episodes",
   interval: "The extraction gives a validity interval that ends before it starts",
@@ -252,12 +255,16 @@ const DROPPED = {
 const firstProblem = (checks: ReadonlyArray<() => Option.Option<string>>): Option.Option<string> =>
   checks.reduce<Option.Option<string>>((found, next) => Option.orElse(found, next), Option.none())
 const problemIf = (failed: boolean, message: string): Option.Option<string> => failed ? Option.some(message) : Option.none()
+/** Whether a memory was published by a revision of the source: its first mention is (`KnowledgeMemory.mentions`). A later revision retires it, so it is never corroborated. */
+const publishedBy = (memory: KnowledgeMemory, source: KnowledgeSourceRef): boolean => knowledgeMemoryMentions(memory)[0]?.id === source.id
+/** The `corroborations` key, written only when there are some, so a stage that restates nothing is stored as before. */
+const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): Pick<KnowledgeStage, "corroborations"> => corroborations.length === 0 ? {} : { corroborations }
 
 /**
  * Resolve local keys and evidence into a stage. Nothing is written: a record
  * that fails a check of its own (an invalid span, an unknown `existing`
  * identity, an undefined entity key, an unknown or inactive record it
- * supersedes or cites as support, an inferred routine with fewer than three
+ * supersedes, restates or cites as support, an inferred routine with fewer than three
  * supporting episodes, an inverted validity interval) is left out with a
  * `RecordDropped` note, as is every record that refers to a dropped entity,
  * and the rest is staged; an entity that only dropped records referred to is
@@ -275,6 +282,13 @@ const problemIf = (failed: boolean, message: string): Option.Option<string> => f
  * A staged memory's `mentions` are this source revision and, when it is
  * inferred, the revisions that state its supports (`knowledgeMemoryMentions`),
  * never those that only evidence its entities.
+ * A stated memory that replaces none and `restates` active memories becomes a
+ * corroboration of each of them that is stated, of its kind, published by
+ * another source and not superseded by another memory of the extraction
+ * (`KnowledgeStage.corroborations`, its own spans as evidence), and no new
+ * memory; when none of them is, it is staged as a new memory, but one that
+ * restates only memories the extraction supersedes is left out with a
+ * `RecordDropped` note.
  * @public
  */
 export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
@@ -307,14 +321,22 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   /** The revisions that state a memory: this source, and for an inferred memory every revision that states one of its supports. */
   const mentions = (memory: ExtractedMemory): ReadonlyArray<KnowledgeSourceRef> => [source.ref, ...supports(memory).flatMap(knowledgeMemoryMentions)]
     .filter((ref, index, all) => all.findIndex((other) => other.id === ref.id && other.revision === ref.revision) === index)
-  const memoryChecks = extraction.memories.map((memory) => ({ memory, problem: firstProblem([
+  const ownChecks = extraction.memories.map((memory) => ({ memory, problem: firstProblem([
     () => problemIf(badSpans(memory.spans), DROPPED.span),
     () => keysProblem(memory.entities),
     () => problemIf(memory.supersedes.some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.retired),
+    () => problemIf((memory.restates ?? []).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.restated),
     () => problemIf(supportOf(memory).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.support),
     // Staging knows only this source's metadata: other revisions count by source here, and by episode at publication.
     () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && knowledgeEpisodeCount(supportEvidence(memory).map((span) => span.source), [source]) < 3, DROPPED.routine),
   ]) }))
+  /** The memories this stage retires: no memory of it may restate them, as publication refuses a corroboration of a memory the stage retires. */
+  const retiring = new Set(ownChecks.filter(({ problem }) => Option.isNone(problem)).flatMap(({ memory }) => memory.supersedes))
+  // A restatement only of memories the extraction also supersedes repeats a state it replaces: it is dropped, not written as new.
+  const memoryChecks = ownChecks.map(({ memory, problem }) => ({ memory, problem: Option.orElse(problem, () => problemIf(
+    memory.evidence._tag === "Stated" && memory.supersedes.length === 0 && (memory.restates ?? []).length > 0 && (memory.restates ?? []).every((id) => retiring.has(id)),
+    DROPPED.restatesRetired,
+  )) }))
   /** A change that supersedes a record holds from the source's occurrence time at the latest, when the source gives no date. */
   const dated = (assertion: ExtractedAssertion): Pick<KnowledgeAssertion, "validFrom" | "validFromBasis"> => Option.match(assertion.validFrom, {
     onSome: (from) => ({ validFrom: Option.some(from), validFromBasis: "stated" }),
@@ -350,6 +372,10 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   // Entities alone are no surviving knowledge when the extraction proposed memories or assertions.
   const survivors = extraction.memories.length + extraction.assertions.length > 0 ? kept.memories.length + kept.assertions.length : kept.entities.length
   if (first !== undefined && survivors === 0) return yield* invalid(first.message)
+  /** The active memories a kept memory restates and evidences instead of being written: stated, of its kind, published by another source and not retired by this stage. */
+  const restated = (memory: ExtractedMemory): ReadonlyArray<KnowledgeMemory> => memory.evidence._tag !== "Stated" || memory.supersedes.length > 0 ? []
+    : activeMemories.filter((existing) => (memory.restates ?? []).includes(existing.id) && !retiring.has(existing.id) && existing.evidence._tag === "Stated" && existing.kind === memory.kind && !publishedBy(existing, source.ref))
+  const written = kept.memories.filter((memory) => restated(memory).length === 0)
 
   const entityOf = (key: string) => kept.entities.find((entity) => entity.key === key)
   const identityOf = (key: string): KnowledgeEntityId => Option.getOrElse(Option.flatMap(Option.fromNullishOr(entityOf(key)), (entity) => entity.existing),
@@ -365,7 +391,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   const linked = <L>(links: ReadonlyArray<L>): { readonly replaces?: ReadonlyArray<L> } => links.length === 0 ? {} : { replaces: links }
   const stage: KnowledgeStage = {
     expectedVersion: snapshot.version, chunks: [],
-    memories: kept.memories.map((memory) => ({
+    memories: written.map((memory) => ({
       id: KnowledgeMemoryId.make(`${source.ref.id}:${source.ref.revision}:memory:${encodeURIComponent(memory.key)}`),
       kind: memory.kind, text: memory.text,
       provenance: [...provenance(memory.spans), ...memory.entities.flatMap(entityEvidence), ...supportEvidence(memory)],
@@ -403,11 +429,53 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
         ...validity, validTo: assertion.validTo, knownFrom: now, knownTo: Option.none(), ...linked(replaced),
       }, ...copies]
     }),
-    retireMemories: [...new Set(kept.memories.flatMap((memory) => memory.supersedes))],
+    retireMemories: [...new Set(written.flatMap((memory) => memory.supersedes))],
     retireAssertions: [...new Set(kept.assertions.flatMap((assertion) => assertion.supersedes))],
     ...(notes.length === 0 ? {} : { notes }),
+    ...corroborating(mergeKnowledgeCorroborations(kept.memories.flatMap((memory) => restated(memory).map((target): KnowledgeCorroboration => ({
+      memory: target.id, mention: source.ref, provenance: provenance(memory.spans),
+    }))))),
   }
   return yield* Schema.encodeEffect(KnowledgeExtraction)(kept).pipe(
     Effect.map(() => stage), Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The extraction is invalid", cause })),
   )
 })
+
+/**
+ * The deterministic restatement merge an engine runs once a stage's memories are embedded: a memory
+ * the stage writes that is stated, replaces none and names entities becomes a corroboration
+ * (`KnowledgeStage.corroborations`) of the active stated memory of `snapshot` that has its kind and
+ * exactly its entities, was published by another source, is not retired by the stage, and whose
+ * embedding's cosine with its own is at least `minSimilarity` (the most similar, ties by id). Its
+ * evidence is its spans in `source`, the revision being staged, and it is not written. A memory
+ * without entities or an embedding never merges, nor does one another staged memory is inferred
+ * from; restatements the extraction named stay as they are.
+ * @public
+ */
+export const mergeKnowledgeRestatements = (stage: KnowledgeStage, snapshot: KnowledgeSnapshot, source: KnowledgeSourceRef, minSimilarity: number): KnowledgeStage => {
+  const sameEntities = (left: ReadonlyArray<KnowledgeEntityId>, right: ReadonlyArray<KnowledgeEntityId>) =>
+    new Set(left).size === new Set(right).size && left.every((id) => right.includes(id))
+  const targets = snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && memory.evidence._tag === "Stated" && memory.entities.length > 0 &&
+    !stage.retireMemories.includes(memory.id) && !publishedBy(memory, source))
+  const supports = new Set(stage.memories.flatMap((memory) => Match.valueTags(memory.evidence, { Stated: () => [], Inferred: (value) => value.supports })))
+  const ownSpans = (memory: KnowledgeMemory) => memory.provenance.filter((span) => span.source.id === source.id && span.source.revision === source.revision)
+  const restated = (memory: KnowledgeMemory): Option.Option<KnowledgeMemory> => {
+    if (memory.evidence._tag !== "Stated" || (memory.replaces ?? []).length > 0 || memory.entities.length === 0 || supports.has(memory.id) || ownSpans(memory).length === 0) return Option.none()
+    const scored = Option.match(memory.embedding, {
+      onNone: () => [],
+      onSome: (vector) => targets.filter((target) => target.kind === memory.kind && sameEntities(target.entities, memory.entities))
+        .flatMap((target) => Option.toArray(target.embedding).map((embedding) => ({ target, score: knowledgeCosine(vector, embedding) })))
+        .filter(({ score }) => score >= minSimilarity),
+    })
+    return Option.fromNullishOr(scored.toSorted((left, right) => right.score - left.score || Order.String(left.target.id, right.target.id))[0]).pipe(Option.map(({ target }) => target))
+  }
+  const matched = stage.memories.map((memory) => ({ memory, target: restated(memory) }))
+  if (matched.every(({ target }) => Option.isNone(target))) return stage
+  return {
+    ...stage,
+    memories: matched.filter(({ target }) => Option.isNone(target)).map(({ memory }) => memory),
+    corroborations: mergeKnowledgeCorroborations([...(stage.corroborations ?? []), ...matched.flatMap(({ memory, target }) => Option.toArray(target).map((found): KnowledgeCorroboration => ({
+      memory: found.id, mention: source, provenance: ownSpans(memory),
+    })))]),
+  }
+}
