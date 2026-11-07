@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Ref, Schema } from "effect"
+import { Effect, Match, Option, Ref, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId,
 } from "./knowledge.entity.js"
@@ -21,7 +21,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("1")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("2")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -39,16 +39,21 @@ describe("native extraction and retrieval contracts", () => {
     expect(stage.memories[0]?.embedding).toEqual(Option.none())
   })))
 
-  test("unknown identities, unsupported supersession and invalid source spans change nothing", () => Effect.runPromise(Effect.gen(function* () {
+  test("an extraction whose every record fails its own checks changes nothing", () => Effect.runPromise(Effect.gen(function* () {
     const cases = [
       { ...plain, entities: [{ ...plain.entities[0]!, existing: KnowledgeEntityId.make("other-owner") }] },
-      { ...plain, memories: [{ ...plain.memories[0]!, supersedes: [KnowledgeMemoryId.make("unknown")] }] },
-      { ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 0, end: 100, quote: "invented quotation" }] }] },
+      { entities: [], memories: [{ ...plain.memories[0]!, entities: [], supersedes: [KnowledgeMemoryId.make("unknown")] }], assertions: [] },
+      { entities: [], memories: [{ ...plain.memories[0]!, entities: [], spans: [{ start: 0, end: 100, quote: "invented quotation" }] }], assertions: [] },
     ]
-    yield* Effect.forEach(cases, (value) => Schema.decodeUnknownEffect(KnowledgeExtraction)(value).pipe(
-      Effect.flatMap((decoded) => stageKnowledgeExtraction(source, empty, decoded, 30)), Effect.result,
-      Effect.map((result) => expect(result._tag).toBe("Failure")),
+    const results = yield* Effect.forEach(cases, (value) => Schema.decodeUnknownEffect(KnowledgeExtraction)(value).pipe(
+      Effect.orDie, Effect.flatMap((decoded) => stageKnowledgeExtraction(source, empty, decoded, 30)), Effect.flip,
+      Effect.map((error) => [error.reason, error.message]),
     ), { concurrency: 1 })
+    expect(results).toEqual([
+      ["Invalid", "The extraction names an unknown entity"],
+      ["Invalid", "The extraction retires an unknown or inactive record"],
+      ["Invalid", "The extraction cites an invalid source span"],
+    ])
   })))
 
   test("literal evidence repairs offset errors at the nearest occurrence while invented quotes are rejected", () => Effect.runPromise(Effect.gen(function* () {
@@ -59,7 +64,9 @@ describe("native extraction and retrieval contracts", () => {
     expect((yield* stageKnowledgeExtraction(repeated, empty, yield* near(4), 30)).memories[0]?.provenance[0]).toEqual({ source: source.ref, start: 2, end: 6, quote: "note" })
     expect((yield* stageKnowledgeExtraction(repeated, empty, yield* near(17), 30)).memories[0]?.provenance[0]).toEqual({ source: source.ref, start: 19, end: 23, quote: "note" })
     const invented = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 2, end: 6, quote: "nothing" }] }] })
-    expect((yield* stageKnowledgeExtraction(repeated, empty, invented, 30).pipe(Effect.result))._tag).toBe("Failure")
+    // Its only memory dropped, the extraction keeps no knowledge: its entity alone does not publish.
+    const withoutInvented = yield* Effect.flip(stageKnowledgeExtraction(repeated, empty, invented, 30))
+    expect([withoutInvented.reason, withoutInvented.message]).toEqual(["Invalid", "The extraction cites an invalid source span"])
     expect((yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 0, end: 7 }] }] }).pipe(Effect.result))._tag).toBe("Failure")
   })))
 
@@ -189,11 +196,125 @@ describe("bounded extraction windows", () => {
     expect(merged.assertions.flatMap((assertion) => assertion.spans).map((span) => span.start)).toEqual(windows.map((window) => window.start + longText.slice(window.start, window.end).indexOf("Atlas")))
   })))
 
-  test("a window that names an undefined entity key is refused before anything is merged", () => Effect.runPromise(Effect.gen(function* () {
-    const result = yield* extractKnowledge({
+  test("a window's record that names an entity key no part defines is dropped at staging, and a repeated key refuses the source", () => Effect.runPromise(Effect.gen(function* () {
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    const stray = (part: string) => {
+      const value = windowExtractor(part)
+      return { ...value, assertions: [...value.assertions, { ...value.assertions[0]!, key: "stray", subject: "nobody" }] }
+    }
+    const merged = yield* extractKnowledge({
       source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
-      complete: (prompt) => Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...windowExtractor(sourceFrame(prompt)), entities: [] }).pipe(Effect.orDie),
-    }).pipe(Effect.result)
-    expect(result._tag === "Failure" && result.failure.reason).toBe("Invalid")
+      complete: (prompt) => Schema.decodeUnknownEffect(KnowledgeExtraction)(stray(sourceFrame(prompt))).pipe(Effect.orDie),
+    })
+    const stage = yield* stageKnowledgeExtraction(longSource, empty, merged, 30)
+    expect(stage.assertions).toHaveLength(windows.length)
+    expect(stage.notes?.map((note) => [note._tag, Match.valueTags(note, { GraphOmitted: () => "", RecordDropped: (dropped) => dropped.key }), note.message]))
+      .toEqual(["stray", ...windows.slice(1).map((window) => `stray~${window.part}`)].map((key) => ["RecordDropped", key, "The extraction refers to an undefined entity key"]))
+    const repeated = yield* extractKnowledge({
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: (prompt) => {
+        const value = windowExtractor(sourceFrame(prompt))
+        return Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...value, entities: [...value.entities, value.entities[0]!] }).pipe(Effect.orDie)
+      },
+    }).pipe(Effect.flip)
+    expect([repeated.reason, repeated.message]).toEqual(["Invalid", "The extraction repeats an entity key"])
+  })))
+})
+
+/** "Ann lives in Oslo. Ann drinks tea.": an entity, a memory about her and a relation, each grounded. */
+const city: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("city"), revision: 1 }, text: "Ann lives in Oslo. Ann drinks tea.", occurredAt: 1_700_000_000_000 }
+const ann = { key: "ann", name: "Ann", type: "person", aliases: [], existing: null, spans: [{ start: 0, end: 3, quote: "Ann" }] }
+const oslo = { key: "oslo", name: "Oslo", type: "city", aliases: [], existing: null, spans: [{ start: 13, end: 17, quote: "Oslo" }] }
+const drinks = { key: "drinks", kind: "preference", text: "Ann drinks tea.", entities: ["ann"], spans: [{ start: 19, end: 34, quote: "Ann drinks tea." }], evidence: { _tag: "Stated" }, supersedes: [] }
+const livesIn = { key: "lives", subject: "ann", predicate: "lives_in", object: { _tag: "Entity", key: "oslo" }, text: "Ann lives in Oslo.", spans: [{ start: 0, end: 18, quote: "Ann lives in Oslo." }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }
+const knownAnn = { id: KnowledgeEntityId.make("known-ann"), name: "Ann", type: "person", aliases: [], provenance: [{ source: { id: KnowledgeSourceId.make("earlier"), revision: 1 }, start: 0, end: 3, quote: "Ann" }] }
+const knownBergen = { ...knownAnn, id: KnowledgeEntityId.make("known-bergen"), name: "Bergen", type: "city" }
+/** Ann lived in Bergen from `from` on, as an earlier source said. */
+const livedIn = (from: Option.Option<number>) => ({
+  id: KnowledgeAssertionId.make("lived-in-bergen"), subject: knownAnn.id, predicate: "lives_in", object: { _tag: "Entity" as const, entityId: knownBergen.id },
+  text: "Ann lives in Bergen.", provenance: knownAnn.provenance, validFrom: from, validTo: Option.none<number>(), knownFrom: 5, knownTo: Option.none<number>(),
+})
+const withPrior = (from: Option.Option<number>): KnowledgeSnapshot => ({ version: 3, memories: [], graph: { entities: [knownAnn, knownBergen], assertions: [livedIn(from)], truncated: false } })
+const moved = (validFrom: number | null) => ({
+  entities: [{ ...ann, existing: knownAnn.id }, oslo], memories: [],
+  assertions: [{ ...livesIn, supersedes: [livedIn(Option.none()).id], supersession: "change", validFrom }],
+})
+const stageOf = (snapshot: KnowledgeSnapshot, value: unknown) => Schema.decodeUnknownEffect(KnowledgeExtraction)(value).pipe(Effect.orDie, Effect.flatMap((decoded) => stageKnowledgeExtraction(city, snapshot, decoded, 2_000_000_000_000)))
+
+describe("staging dates undated changes and drops only the records that fail their own checks", () => {
+  test("a change without a date takes the source's occurrence time as observed, and the relation it supersedes ends there", () => Effect.runPromise(Effect.gen(function* () {
+    const stage = yield* stageOf(withPrior(Option.some(1_600_000_000_000)), moved(null))
+    const [current, history] = stage.assertions
+    expect([current?.validFrom, current?.validFromBasis, current?.validTo]).toEqual([Option.some(city.occurredAt), "observed", Option.none()])
+    expect([history?.id, history?.validFrom, history?.validTo, history?.validFromBasis]).toEqual([KnowledgeAssertionId.make("city:1:history:lives:lived-in-bergen"), Option.some(1_600_000_000_000), Option.some(city.occurredAt), undefined])
+    expect([stage.retireAssertions, stage.notes]).toEqual([[livedIn(Option.none()).id], undefined])
+  })))
+
+  test("a stated date keeps its basis; the history copy never ends before its relation began", () => Effect.runPromise(Effect.gen(function* () {
+    const stated = yield* stageOf(withPrior(Option.none()), moved(1_650_000_000_000))
+    expect([stated.assertions[0]?.validFrom, stated.assertions[0]?.validFromBasis, stated.assertions[1]?.validTo]).toEqual([Option.some(1_650_000_000_000), "stated", Option.some(1_650_000_000_000)])
+    const later = yield* stageOf(withPrior(Option.some(1_800_000_000_000)), moved(null))
+    expect([later.assertions[1]?.validFrom, later.assertions[1]?.validTo]).toEqual([Option.some(1_800_000_000_000), Option.some(1_800_000_000_000)])
+    const undated = yield* stageOf(empty, { entities: [ann, oslo], memories: [], assertions: [{ ...livesIn, supersession: "change" }] })
+    expect([undated.assertions[0]?.validFrom, undated.assertions[0]?.validFromBasis]).toEqual([Option.none(), undefined])
+  })))
+
+  test("each record-local failure drops that record with a note and stages the others", () => Effect.runPromise(Effect.gen(function* () {
+    const once = KnowledgeMemoryId.make("once")
+    const snapshot: KnowledgeSnapshot = { ...empty, memories: [{
+      id: once, kind: "action", text: "Ann walked to work.", provenance: knownAnn.provenance, entities: [], evidence: { _tag: "Stated" },
+      embedding: Option.none(), knownFrom: 5, knownTo: Option.none(),
+    }] }
+    const valid = { entities: [ann, oslo], memories: [drinks], assertions: [livesIn] }
+    const cases = [
+      { change: { ...valid, memories: [{ ...drinks, spans: [{ start: 19, end: 40, quote: "Ann drinks coffee." }] }] }, record: "memory" as const, message: "The extraction cites an invalid source span" },
+      { change: { ...valid, memories: [{ ...drinks, entities: ["ann", "bob"] }] }, record: "memory" as const, message: "The extraction refers to an undefined entity key" },
+      { change: { ...valid, memories: [{ ...drinks, supersedes: ["retired-elsewhere"] }] }, record: "memory" as const, message: "The extraction retires an unknown or inactive record" },
+      { change: { ...valid, memories: [{ ...drinks, evidence: { _tag: "Inferred", supports: ["missing"] } }] }, record: "memory" as const, message: "The extraction cites an unknown supporting memory" },
+      { change: { ...valid, memories: [{ ...drinks, kind: "routine", evidence: { _tag: "Inferred", supports: [once] } }] }, record: "memory" as const, message: "An inferred routine needs three distinct supporting episodes" },
+      { change: { ...valid, assertions: [{ ...livesIn, object: { _tag: "Entity", key: "bergen" } }] }, record: "assertion" as const, message: "The extraction refers to an undefined entity key" },
+      { change: { ...valid, assertions: [{ ...livesIn, supersedes: ["unknown-relation"] }] }, record: "assertion" as const, message: "The extraction retires an unknown or inactive record" },
+      { change: { ...valid, assertions: [{ ...livesIn, validFrom: 20, validTo: 10 }] }, record: "assertion" as const, message: "The extraction gives a validity interval that ends before it starts" },
+    ]
+    const staged = yield* Effect.forEach(cases, ({ change }) => stageOf(snapshot, change), { concurrency: 1 })
+    expect(staged.map((stage) => stage.notes)).toEqual(cases.map(({ record, message }) => [{ _tag: "RecordDropped", record, key: record === "memory" ? "drinks" : "lives", reason: "Invalid", message }]))
+    // A relation dropped with its object takes Oslo along; one that never named Oslo leaves it as proposed.
+    expect(staged.map((stage) => [stage.entities.map((entity) => entity.name), stage.memories.length, stage.assertions.length])).toEqual([
+      ...cases.slice(0, 5).map(() => [["Ann", "Oslo"], 0, 1]), [["Ann", "Oslo"], 1, 0], [["Ann"], 1, 0], [["Ann"], 1, 0],
+    ])
+    expect(staged.every((stage) => stage.retireMemories.length === 0 && stage.retireAssertions.length === 0)).toBe(true)
+  })))
+
+  test("a dropped entity takes the records that refer to it along, each with its own note", () => Effect.runPromise(Effect.gen(function* () {
+    const unknown = yield* stageOf(empty, { entities: [ann, { ...oslo, existing: "someone-elses-oslo" }], memories: [drinks], assertions: [livesIn] })
+    expect(unknown.notes).toEqual([
+      { _tag: "RecordDropped", record: "entity", key: "oslo", reason: "Invalid", message: "The extraction names an unknown entity" },
+      { _tag: "RecordDropped", record: "assertion", key: "lives", reason: "Invalid", message: "The extraction refers to an entity it dropped" },
+    ])
+    expect([unknown.entities.map((entity) => entity.name), unknown.memories.map((memory) => memory.text), unknown.assertions]).toEqual([["Ann"], ["Ann drinks tea."], []])
+    const withoutOslo = yield* stageOf(empty, { entities: [{ ...ann, spans: [{ start: 0, end: 3, quote: "Ada" }] }, oslo], memories: [drinks], assertions: [{ ...livesIn, object: { _tag: "Value", value: "a city" } }, { ...livesIn, key: "visits", subject: "oslo", object: { _tag: "Value", value: "often" } }] })
+    expect(withoutOslo.notes?.map((note) => note.message)).toEqual(["The extraction cites an invalid source span", "The extraction refers to an entity it dropped", "The extraction refers to an entity it dropped"])
+    expect([withoutOslo.entities.map((entity) => entity.name), withoutOslo.memories, withoutOslo.assertions.map((assertion) => assertion.text)]).toEqual([["Oslo"], [], ["Ann lives in Oslo."]])
+  })))
+
+  test("entities alone are no surviving knowledge: an extraction whose memories and relations all drop fails whole", () => Effect.runPromise(Effect.gen(function* () {
+    const unnamedUser = yield* Effect.flip(stageOf(empty, { entities: [ann, oslo], memories: [{ ...drinks, entities: ["user"] }], assertions: [] }))
+    const ungrounded = yield* Effect.flip(stageOf(empty, { entities: [{ ...ann, spans: [{ start: 0, end: 3, quote: "Ada" }] }, oslo], memories: [drinks], assertions: [livesIn] }))
+    expect([[unnamedUser.reason, unnamedUser.message], [ungrounded.reason, ungrounded.message]]).toEqual([
+      ["Invalid", "The extraction refers to an undefined entity key"], ["Invalid", "The extraction cites an invalid source span"],
+    ])
+    // An extraction of entities only still publishes the entities that pass.
+    const entitiesOnly = yield* stageOf(empty, { entities: [ann, { ...oslo, existing: "someone-elses-oslo" }], memories: [], assertions: [] })
+    expect([entitiesOnly.entities.map((entity) => entity.name), entitiesOnly.notes?.map((note) => note.message)]).toEqual([["Ann"], ["The extraction names an unknown entity"]])
+  })))
+
+  test("a repeated entity key, or an extraction with no surviving record, still fails the whole job", () => Effect.runPromise(Effect.gen(function* () {
+    const repeated = yield* Effect.flip(stageOf(empty, { entities: [ann, { ...oslo, key: "ann" }], memories: [drinks], assertions: [] }))
+    const none = yield* Effect.flip(stageOf(empty, { entities: [{ ...ann, existing: "elsewhere" }], memories: [drinks], assertions: [] }))
+    expect([[repeated.reason, repeated.message], [none.reason, none.message]]).toEqual([
+      ["Invalid", "The extraction repeats an entity key"], ["Invalid", "The extraction names an unknown entity"],
+    ])
+    const nothing = yield* stageOf(empty, { entities: [], memories: [], assertions: [] })
+    expect([nothing.entities, nothing.memories, nothing.assertions, nothing.notes]).toEqual([[], [], [], undefined])
   })))
 })

@@ -46,8 +46,8 @@ describe("native document ingestion", () => {
     const job = yield* knowledge.ingest(enqueue("guide", "Atlas deploys through the blue release lane."))
     const manual = enqueue("manual", "Borealis deploys through the green release lane.")
     const otherJob = yield* otherSpace.ingest({ ...manual, source: { ...manual.source, scope: otherOwner } })
-    expect(job.engine).toBe(knowledgeEngineId("rag:1", { model: "host", version: "1", dimensions: 2 }))
-    expect(otherJob.engine).toBe(knowledgeEngineId("rag:1", { model: "other-embedder", version: "1", dimensions: 2 }))
+    expect(job.engine).toBe(knowledgeEngineId(`rag:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 }))
+    expect(otherJob.engine).toBe(knowledgeEngineId(`rag:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "other-embedder", version: "1", dimensions: 2 }))
     const discovered = (engine: string) => store.pending({ engine, namespace: scope.namespace, collection: scope.collection, now: 0, limit: 10 }).pipe(Effect.map((jobs) => jobs.map((entry) => entry.id)))
     expect(yield* discovered(job.engine)).toEqual([job.id])
     expect(yield* discovered(otherJob.engine)).toEqual([otherJob.id])
@@ -167,6 +167,22 @@ describe("native temporal GraphRAG", () => {
     expect([blue.candidates, blue.graph.assertions, blue.graph.entities, redElsewhere.candidates, redElsewhere.graph.entities]).toEqual([[], [], [], [], []])
     const before = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000, graph: { perspective: { ...perspective, validAt: 9 }, depth: 2 } })
     expect(before.graph.assertions).toEqual([])
+  }))))
+
+  test("a graph record that fails its own checks is dropped with a note while the chunks and the other records publish", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const stray = { ...atlasGraph.assertions[0]!, key: "uses", predicate: "uses", object: { _tag: "Entity", key: "ledger" }, text: "Atlas uses Ledger" }
+    const { utility } = yield* scriptedUtility([JSON.stringify({ ...atlasGraph, assertions: [...atlasGraph.assertions, stray] })])
+    const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
+    const job = yield* knowledge.ingest(enqueue("atlas", "Atlas owns Beacon."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    const status = yield* knowledge.status(scope, job.id)
+    expect(Option.map(status, (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 1]))
+    expect(Option.flatMap(status, (value) => value.stage).pipe(Option.map((stage) => [stage.chunks.length, stage.notes]))).toEqual(Option.some([1, [
+      { _tag: "RecordDropped", record: "assertion", key: "uses", reason: "Invalid", message: "The extraction refers to an undefined entity key" },
+    ]]))
+    const graph = (yield* store.snapshot(scope)).graph
+    expect([graph.entities.map((entity) => entity.name), graph.assertions.map((edge) => edge.predicate)]).toEqual([["Atlas", "Beacon"], ["owns"]])
+    expect((yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 1000 })).candidates).toHaveLength(1)
   }))))
 
   test("graph extraction requires a utility model, and personal memories from a document omit its graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

@@ -67,15 +67,22 @@ The graph never keeps a document out of plain retrieval. A failed or invalid
 extraction (or review) is recorded on the job and retried within `maxAttempts`;
 the last attempt publishes the chunks without the graph, and the job's stage
 records a `GraphOmitted` note (`stage.notes`) with the failure's reason and
-message. A source that is itself invalid still fails.
+message. A source that is itself invalid still fails. A graph record that
+fails a check of its own (an invalid span, an undefined entity key, an unknown
+record it supersedes, …) is no graph failure: it is left out with a
+`RecordDropped` note on the stage, and the chunks publish with the rest of the
+graph; only a graph none of whose relations survive (its entities alone do
+not count), or that repeats an entity key, fails the graph step.
 
 Use `status`, `retry`, and `process` for host-controlled operation. With
 `worker: false`, the host must schedule processing. Workers otherwise recover
 durable jobs after restart and renew leases during processing.
 
-Jobs are recorded under an engine id derived from the embedding options
-(`knowledgeEngineId("rag:1", { model, version, dimensions })`, for example
-`rag:1/host-embedding/1/768`). The worker and `process` discover and claim only
+Jobs are recorded under an engine id derived from the extraction version and
+the embedding options (`knowledgeEngineId("rag:2", { model, version, dimensions })`,
+for example `rag:2/host-embedding/1/768`; version 2 since dropped records and
+observed dates, and a job queued under version 1 waits for a worker of that
+version). The worker and `process` discover and claim only
 jobs of that id, so engines configured with different embedding spaces on one
 store never index each other's documents. After changing the embedding
 options, a job queued under the earlier configuration is processed only by an

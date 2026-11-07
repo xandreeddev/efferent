@@ -192,6 +192,34 @@ test.skipIf(url.length === 0)("PostgreSQL lists a job failed before reasons as u
   expect({ engine: requeued.engine, attempt: requeued.attempt, stage: Option.isSome(requeued.stage), row }).toEqual({ engine: "integration-next", attempt: 0, stage: false, row: { engine: "integration-next", phase: "Queued" } })
 }))))
 
+test.skipIf(url.length === 0)("PostgreSQL keeps dropped-record notes and validity bases in its payloads, and reads rows stored without them", () => run(Effect.scoped(Effect.gen(function* () {
+  const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const source = sourceOf(scope, "moved", "Ann lives in Oslo.")
+  const ann = { id: KnowledgeEntityId.make("moved:1:entity:ann"), name: "Ann", type: "person", aliases: [], provenance: [{ source: source.ref, start: 0, end: 3, quote: "Ann" }] }
+  const lives = {
+    id: KnowledgeAssertionId.make("moved:1:assertion:lives"), subject: ann.id, predicate: "lives_in", object: { _tag: "Value" as const, value: "Oslo" }, text: "Ann lives in Oslo.",
+    provenance: [{ source: source.ref, start: 0, end: 18, quote: "Ann lives in Oslo." }], validFrom: Option.some(10), validTo: Option.none<number>(), validFromBasis: "observed" as const,
+    knownFrom: 21, knownTo: Option.none<number>(),
+  }
+  const notes = [
+    { _tag: "GraphOmitted" as const, reason: "Unavailable" as const, message: "graph left out" },
+    { _tag: "RecordDropped" as const, record: "memory" as const, key: "stranger", reason: "Invalid" as const, message: "The extraction refers to an undefined entity key" },
+  ]
+  const lease = yield* prepare(index, source, { ...stageOf(0), entities: [ann], assertions: [lives], notes })
+  yield* index.publish(lease)
+  const stored = Effect.all([index.status(scope, lease.jobId), index.snapshot(scope)], { concurrency: 1 }).pipe(Effect.map(([job, snapshot]) => [
+    Option.map(Option.flatMap(job, (value) => value.stage), (stage) => stage.notes), snapshot.graph.assertions.map((edge) => edge.validFromBasis),
+  ]))
+  expect(yield* stored).toEqual([Option.some(notes), ["observed"]])
+  // Rows an earlier release wrote: a stage with only its graph note, a relation without a basis.
+  const where = sql`domain='knowledge' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection}`
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.jobs SET payload = payload #- '{stage,notes,1}' WHERE ${where} AND id=${lease.jobId}`)
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.assertions SET payload = payload #- '{validFromBasis}' WHERE ${where}`)
+  expect(yield* stored).toEqual([Option.some(notes.slice(0, 1)), [undefined]])
+}))))
+
 test.skipIf(url.length === 0)("PostgreSQL scope CAS permits one concurrent publication across pools", () => run(Effect.scoped(Effect.gen(function* () {
   const first = yield* makeKnowledgePostgres(Redacted.make(url))
   const second = yield* makeKnowledgePostgres(Redacted.make(url))

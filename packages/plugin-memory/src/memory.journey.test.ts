@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel, LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, CurrentKnowledgeHelperCall, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
+import { ConversationId, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
 import type { KnowledgeHelperCall } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -47,7 +47,7 @@ describe("memory through the real agent", () => {
     yield* sessions.create(second)
     const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
     yield* agent.turn({ turn: { session: first, runId: RunId.make("first"), userMessage: new UserMessage({ text: "I prefer tea." }) }, services }, (turn) => turn.reply("I will keep that in mind."))
-    const engine = knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 })
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
     const pending = yield* store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })
     expect(pending).toHaveLength(1)
     expect(pending[0]?.engine).toBe(engine)
@@ -112,7 +112,7 @@ describe("memory through the real agent", () => {
     yield* say(first, "kept-after", "I walk every morning.")
     // Each committed turn was asked about once, by the observer after its commit.
     expect(yield* Ref.get(asked)).toEqual([1, 2, 3])
-    const engine = knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 })
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
     const pending = yield* store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })
     const texts = yield* Effect.forEach(pending, (job) => store.source(job.scope, job.source).pipe(Effect.map(Option.map((source) => source.text))), { concurrency: 1 })
     expect(texts.map((text) => Option.getOrElse(text, () => "")).toSorted()).toEqual([
@@ -163,13 +163,13 @@ describe("memory through the real agent", () => {
     // The host finds the job without having kept its id: every failed job of the namespace whose extraction was invalid.
     const listed = yield* store.failed({ namespace: "default", reasons: ["Invalid"], limit: 10 })
     expect(listed.jobs.map((job) => ({ owner: job.scope.owner, engine: job.engine, attempt: job.attempt, reason: job.phase._tag === "Failed" ? job.phase.reason : job.phase._tag })))
-      .toEqual([{ owner: session.owner, engine: knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 }), attempt: 1, reason: "Invalid" }])
+      .toEqual([{ owner: session.owner, engine: knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 }), attempt: 1, reason: "Invalid" }])
     yield* Ref.set(answersInvalid, false)
     const after = yield* memoryOf("2")
     const failed = listed.jobs[0]!
     const requeued = yield* after.retry(failed.scope, failed.id)
     expect({ engine: requeued.engine, attempt: requeued.attempt, phase: requeued.phase._tag })
-      .toEqual({ engine: knowledgeEngineId("memory:1", { model: "host", version: "2", dimensions: 2 }), attempt: 0, phase: "Queued" })
+      .toEqual({ engine: knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "2", dimensions: 2 }), attempt: 0, phase: "Queued" })
     expect(yield* before.process(scope, 10)).toBe(0)
     expect(yield* after.process(scope, 10)).toBe(1)
     expect(Option.map(yield* after.status(scope, failed.id), (job) => job.phase._tag)).toEqual(Option.some("Complete"))
@@ -211,7 +211,7 @@ describe("memory through the real agent", () => {
     yield* sessions.create(second)
     const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
     yield* agent.turn({ turn: { session: first, runId: RunId.make("told"), userMessage: new UserMessage({ text: "I prefer tea." }) }, services }, (turn) => turn.reply("I will keep that in mind."))
-    const queued = yield* store.pending({ engine: knowledgeEngineId("memory:1", { model: "host", version: "1", dimensions: 2 }), namespace: "default", now: 10_000_000_000_000, limit: 10 })
+    const queued = yield* store.pending({ engine: knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 }), namespace: "default", now: 10_000_000_000_000, limit: 10 })
     expect(yield* memory.process(queued[0]!.scope, 10)).toBe(1)
     const notes = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
     const note = memoryRecallNote({ ...memoryDefaults, ...options })
@@ -235,5 +235,79 @@ describe("memory through the real agent", () => {
     expect(sent[0]!.system.includes("recalled-memory")).toBe(false)
     expect((yield* sessions.read(second, { kinds: ["memory.system"] })).length).toBe(1)
     expect(yield* sessions.read(second, { kinds: ["memory.section"] })).toEqual([])
+  }))))
+
+  test("an undated change publishes dated at its source's time beside an unrelated fact, and a bad record is dropped alone", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    const extractionPrompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The helper model: the first turn says where the user lives; the second states a move without a date, an unrelated fact,
+    // and a memory about an entity it never defines. It reads the user and the earlier relation from the candidates it is shown.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly entities: ReadonlyArray<{ readonly id: string; readonly name: string }>; readonly assertions: ReadonlyArray<{ readonly id: string; readonly predicate: string }> } =
+        JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const lives = (city: string, quote: string, supersedes: ReadonlyArray<string>) => ({
+        key: "lives", subject: "user", predicate: "lives_in", object: { _tag: "Entity", key: city.toLowerCase() }, text: `The user lives in ${city}.`, spans: [span(text, quote)],
+        validFrom: null, validTo: null, supersedes, supersession: supersedes.length === 0 ? "correction" : "change",
+      })
+      const fact = (key: string, entities: ReadonlyArray<string>) => ({ key, kind: "fact", text: "The user's sister plays chess.", entities, spans: [span(text, "My sister plays chess.")], evidence: { _tag: "Stated" }, supersedes: [] })
+      return text.includes("Bergen") ? {
+        entities: [{ key: "user", name: "User", type: "person", aliases: [], existing: null, spans: [span(text, "I live")] }, { key: "bergen", name: "Bergen", type: "city", aliases: [], existing: null, spans: [span(text, "Bergen")] }],
+        memories: [], assertions: [lives("Bergen", "I live in Bergen.", [])],
+      } : {
+        entities: [
+          { key: "user", name: "User", type: "person", aliases: [], existing: candidates.entities.find((entity) => entity.name === "User")?.id ?? null, spans: [span(text, "I moved")] },
+          { key: "oslo", name: "Oslo", type: "city", aliases: [], existing: null, spans: [span(text, "Oslo")] },
+        ],
+        memories: [fact("sister", ["user"]), fact("neighbour", ["neighbour"])],
+        assertions: [lives("Oslo", "I moved to Oslo.", candidates.assertions.filter((assertion) => assertion.predicate === "lives_in").map((assertion) => assertion.id))],
+      }
+    }
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.update(extractionPrompts, (all) => [...all, prompt]).pipe(Effect.as(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage }))) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const model = yield* LanguageModel.make({
+      generateText: () => Effect.succeed([{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }] as never),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const session = { owner: "moving-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c1") }
+    yield* sessions.create(session)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: session.owner, namespace: "default", collection: "memory" }
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
+    const say = (runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => turn.reply("Noted.")).pipe(
+      Effect.andThen(store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })),
+      Effect.tap((jobs) => memory.process(scope, 10).pipe(Effect.map((processed) => expect(processed).toBe(jobs.length)))),
+      Effect.map((jobs) => jobs[0]!),
+    )
+    yield* say("lived", "I live in Bergen.")
+    const moved = yield* say("moved", "I moved to Oslo. My sister plays chess.")
+    const source = Option.getOrThrow(yield* store.source(scope, moved.source))
+    // The helper read the source's time as ISO 8601 and as the epoch milliseconds its dates are given in.
+    expect((yield* Ref.get(extractionPrompts))[1]).toContain(`Source occurrence time: ${new Date(source.occurredAt).toISOString()} (epoch milliseconds ${source.occurredAt}).`)
+    const status = Option.getOrThrow(yield* memory.status(scope, moved.id))
+    expect(status.phase._tag).toBe("Complete")
+    expect(Option.map(status.stage, (stage) => stage.notes)).toEqual(Option.some([
+      { _tag: "RecordDropped", record: "memory", key: "neighbour", reason: "Invalid", message: "The extraction refers to an undefined entity key" },
+    ]))
+    const graph = (yield* store.snapshot(scope)).graph
+    const current = graph.assertions.find((assertion) => assertion.text === "The user lives in Oslo.")
+    const history = graph.assertions.find((assertion) => assertion.text === "The user lives in Bergen." && Option.isSome(assertion.validTo))
+    const retired = graph.assertions.find((assertion) => assertion.text === "The user lives in Bergen." && Option.isNone(assertion.validTo))
+    expect([current?.validFrom, current?.validFromBasis, history?.validTo, Option.isSome(retired?.knownTo ?? Option.none())]).toEqual([Option.some(source.occurredAt), "observed", Option.some(source.occurredAt), true])
+    // Recall now: the fact and the current relation, not the one the move ended.
+    const recalled = yield* memory.recall({ scope, query: "Oslo Bergen chess", limit: 5, maxChars: 2000, graph: { perspective: {}, depth: 1 } })
+    expect(recalled.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory.text] : [])).toEqual(["The user's sister plays chess."])
+    expect(recalled.graph.assertions.map((assertion) => assertion.text)).toEqual(["The user lives in Oslo."])
+    // Recall as of just before the move: the history copy, still valid then.
+    const before = yield* memory.recall({ scope, query: "Oslo Bergen chess", limit: 5, maxChars: 2000, graph: { perspective: { validAt: source.occurredAt - 1 }, depth: 1 } })
+    expect(before.graph.assertions.map((assertion) => assertion.text)).toEqual(["The user lives in Bergen."])
   }))))
 })

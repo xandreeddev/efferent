@@ -7,9 +7,17 @@ import { KnowledgeJobId, KnowledgeSourceId } from "./knowledge.entity.js"
 import type { KnowledgeRecallResult, KnowledgeScope } from "./knowledge.entity.js"
 import { citedKnowledgeSources } from "./knowledge.entity.functions.js"
 
+type MemoryFixture = { readonly memory: Context.Service.Shape<typeof LongTermMemory>; readonly scope: KnowledgeScope }
 /** Fresh native memory service, with workers disabled and valid scripted extraction. @public */
 export interface LongTermMemorySubject {
-  readonly open: Effect.Effect<{ readonly memory: Context.Service.Shape<typeof LongTermMemory>; readonly scope: KnowledgeScope }, unknown, Scope.Scope>
+  readonly open: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
+  /**
+   * A fresh service like `open` whose extraction of the kit's source ("I prefer tea.") proposes
+   * grounded records and one record that fails a check of its own (it refers to an entity key the
+   * extraction does not define, say). Without it, `dropped-record` runs on `open` and shows only
+   * that the source publishes evidence recall cites.
+   */
+  readonly droppingExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
 }
 type KnowledgeFixture = { readonly knowledge: Context.Service.Shape<typeof Knowledge>; readonly scope: KnowledgeScope }
 /** Fresh document service, with workers disabled and valid scripted extraction if enabled. @public */
@@ -21,6 +29,13 @@ export interface KnowledgeSubject {
    * and shows only that plain retrieval completes.
    */
   readonly failingExtraction?: Effect.Effect<KnowledgeFixture, unknown, Scope.Scope>
+  /**
+   * A fresh service like `open` with graph extraction whose extraction of the kit's source
+   * ("I prefer tea.") proposes grounded entities or relations and one record that fails a check
+   * of its own (it refers to an entity key the extraction does not define, say). Without it,
+   * `dropped-record` runs on `open` and shows only that the source publishes evidence recall cites.
+   */
+  readonly droppingExtraction?: Effect.Effect<KnowledgeFixture, unknown, Scope.Scope>
 }
 type Memory = Context.Service.Shape<typeof LongTermMemory>
 type Facade = Omit<Memory, "capture" | "profile"> & { readonly accept: Memory["capture"]; readonly profile?: Memory["profile"] }
@@ -41,7 +56,24 @@ const seed = Effect.fnUntraced(function* (fixture: Fixture, id: string) {
   return job
 })
 
-const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown, Scope.Scope>): ReadonlyArray<ConformanceCheck> => {
+/** One record's own failure leaves it out with a note, and the rest of the source still publishes. */
+const droppedRecord = (prefix: string, open: Effect.Effect<Fixture, unknown, Scope.Scope>, dropping: Effect.Effect<Fixture, unknown, Scope.Scope> | undefined): ConformanceCheck => {
+  const id = `${prefix}.dropped-record`
+  return check(id, id, () => Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* (dropping ?? open)
+    const job = yield* accept(fixture)
+    const processed = yield* fixture.facade.process(fixture.scope, 1)
+    const status = yield* fixture.facade.status(fixture.scope, job.id)
+    const recalled = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000 })
+    const cites = recalled.candidates.some((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.provenance, Chunk: ({ chunk }) => [chunk.provenance] }).some((span) => span.source.id === job.source.id))
+    yield* expect(id, processed === 1 && Option.exists(status, (value) => value.phase._tag === "Complete") && cites, "a record that failed its own checks kept the rest of the source from publication or recall")
+    if (dropping !== undefined) yield* expect(id, Option.exists(Option.flatMap(status, (value) => value.stage), (stage) =>
+      (stage.notes ?? []).some((note) => note._tag === "RecordDropped") && stage.memories.length + stage.entities.length + stage.assertions.length > 0),
+    "the completed job did not record the record it dropped, or staged none of the others")
+  })))
+}
+
+const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown, Scope.Scope>, dropping?: Effect.Effect<Fixture, unknown, Scope.Scope>): ReadonlyArray<ConformanceCheck> => {
   const test = (name: string, body: (fixture: Fixture, id: string) => Effect.Effect<void, unknown>) => {
     const id = `${prefix}.${name}`
     return check(id, id, () => Effect.scoped(Effect.flatMap(open, (fixture) => body(fixture, id))))
@@ -116,11 +148,14 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
       const size = result.candidates.reduce((sum, candidate) => sum + Match.valueTags(candidate, { Memory: ({ memory }) => memory.text.length, Chunk: ({ chunk }) => chunk.text.length }), 0) + result.graph.assertions.reduce((sum, edge) => sum + edge.text.length, 0)
       yield* expect(id, size <= 1 && result.candidates.length <= 1 && result.graph.assertions.length === 0 && result.graph.entities.length === 0, "explicit graph:false or the combined evidence budget was ignored")
     })),
+    droppedRecord(prefix, open, dropping),
   ]
 }
 
-/** Async processing, isolation, source retention, deletion, cited source info and retrieval contracts; no model-quality assertions. @public */
-export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => facadeConformance("long_term_memory", Effect.map(subject.open, ({ memory, scope }) => ({ scope, facade: { ...memory, accept: memory.capture } })))
+const memoryFacade = ({ memory, scope }: MemoryFixture): Fixture => ({ scope, facade: { ...memory, accept: memory.capture } })
+/** Async processing, isolation, source retention, deletion, cited source info and retrieval contracts, and a dropped record that does not stop the rest; no model-quality assertions. @public */
+export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> =>
+  facadeConformance("long_term_memory", Effect.map(subject.open, memoryFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, memoryFacade))
 const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
   const id = "knowledge_facade.failed-extraction"
   return check(id, id, () => Effect.scoped(Effect.gen(function* () {
@@ -136,12 +171,13 @@ const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
   })))
 }
 
+const documentFacade = ({ knowledge, scope }: KnowledgeFixture): Fixture => ({ scope, facade: { ...knowledge, accept: knowledge.ingest, recall: knowledge.retrieve } })
 /**
  * Async document processing, isolation, source retention, deletion, cited source info and retrieval contracts;
- * a failed optional graph extraction still publishes the source's chunks.
+ * a dropped graph record does not stop the rest, and a failed optional graph extraction still publishes the source's chunks.
  * @public
  */
 export const knowledgeConformance = (subject: KnowledgeSubject): ReadonlyArray<ConformanceCheck> => [
-  ...facadeConformance("knowledge_facade", Effect.map(subject.open, ({ knowledge, scope }) => ({ scope, facade: { ...knowledge, accept: knowledge.ingest, recall: knowledge.retrieve } }))),
+  ...facadeConformance("knowledge_facade", Effect.map(subject.open, documentFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, documentFacade)),
   failedExtraction(subject),
 ]

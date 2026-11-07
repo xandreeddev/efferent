@@ -223,3 +223,20 @@ test("a graph narrowed by a predicate keeps admitted spans and wholly admitted r
   expect(narrowKnowledgeGraphBy(graph, admits)).toEqual(narrowKnowledgeGraph(graph, [KnowledgeSourceId.make("one")]))
   expect(narrowKnowledgeGraphBy(graph, () => false)).toEqual({ entities: [], assertions: [], truncated: false })
 })
+
+test("a job stored with only graph notes and assertions without a validity basis decodes unchanged, and dropped-record notes round-trip", () => Effect.runPromise(Effect.gen(function* () {
+  const assertion = {
+    id: "edge", subject: "ann", predicate: "lives_in", object: { _tag: "Value", value: "Oslo" }, text: "Ann lives in Oslo.",
+    provenance: [{ source: { id: "note", revision: 1 }, start: 0, end: 3, quote: "Ann" }], validFrom: 10, validTo: null, knownFrom: 20, knownTo: null,
+  }
+  const stored = {
+    id: "job", scope, source: { id: "note", revision: 1 }, engine: "memory:1/host/1/2", attempt: 1, phase: { _tag: "Complete", publishedAt: 30 },
+    stage: { expectedVersion: 0, memories: [], chunks: [], entities: [], assertions: [assertion], retireMemories: [], retireAssertions: [], notes: [{ _tag: "GraphOmitted", reason: "Invalid", message: "graph left out" }] },
+  }
+  const legacy = yield* Schema.decodeUnknownEffect(KnowledgeJob)(stored)
+  expect(Option.map(legacy.stage, (value) => [value.notes, value.assertions[0]?.validFromBasis])).toEqual(Option.some([[{ _tag: "GraphOmitted", reason: "Invalid", message: "graph left out" }], undefined]))
+  expect<unknown>(yield* Schema.encodeEffect(KnowledgeJob)(legacy)).toEqual(stored)
+  const current = { ...stored, stage: { ...stored.stage, assertions: [{ ...assertion, validFromBasis: "observed" }], notes: [...stored.stage.notes, { _tag: "RecordDropped", record: "assertion", key: "moved", reason: "Invalid", message: "The extraction refers to an undefined entity key" }] } }
+  expect<unknown>(yield* Schema.encodeEffect(KnowledgeJob)(yield* Schema.decodeUnknownEffect(KnowledgeJob)(current))).toEqual(current)
+  expect((yield* Effect.result(Schema.decodeUnknownEffect(KnowledgeJob)({ ...current, stage: { ...current.stage, notes: [{ _tag: "RecordDropped", record: "chunk", key: "x", reason: "Invalid", message: "" }] } })))._tag).toBe("Failure")
+})))
