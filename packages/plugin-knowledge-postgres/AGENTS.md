@@ -14,7 +14,10 @@ three ports. Node 24 and Bun use the same `postgres` driver.
   and semantic statements, before `ORDER BY` and `LIMIT`, never a filter over
   their rows: a metadata filter joins each record to the source revisions it
   cites (`chunks.source_revision`, `record_sources`) and compares top-level
-  metadata values by JSON equality.
+  metadata values by JSON equality. A semantic score is the cosine similarity
+  `1 - (embedding <=> query)` (0 for a zero vector), and `minSimilarity` is a
+  predicate on that same expression in the semantic statements only, before
+  `ORDER BY` and `LIMIT`.
 - New derived indexes remain invisible until publication commits. Publication,
   graph revision comparison and leased-job completion share one transaction.
 - Deleted sources retain tombstones. Pending work and derived facts cannot

@@ -186,6 +186,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     const arms = yield* Effect.forEach(queries, (query, index) => store.search({ scope: input.scope, query,
       vector: Option.flatMap(queryVectors, (vectors) => Option.fromNullishOr(vectors[index])), limit: poolLimit,
       knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }),
+      ...(config.minSimilarity === undefined ? {} : { minSimilarity: config.minSimilarity }),
     }), { concurrency: 1 })
     // Each query's lists, narrowed to passages, are ranked on their own: a passage a planned query finds first ranks as one the question finds first.
     const pooled = fuseKnowledgeCandidates(arms.map((arm) => ({ lexical: arm.lexical.filter((entry) => entry._tag === "Chunk"), semantic: arm.semantic.filter((entry) => entry._tag === "Chunk") })), poolLimit, config.maxCandidateChars)

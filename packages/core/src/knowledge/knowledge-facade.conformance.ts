@@ -22,7 +22,8 @@ export interface LongTermMemorySubject {
    * A fresh service like `open` whose extraction of a second source with the kit's text ("I prefer
    * tea.") names the memory the kit's source published, among its candidates, as the memory it
    * restates (`restates`). Without it, `restated-source` runs on `open` and shows only that both
-   * sources publish evidence recall cites.
+   * sources publish evidence recall cites. With it, the check wants one recalled memory that both
+   * sources state; one that recall only folded near-duplicates into (`alike`) does not count.
    */
   readonly restatingExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
   /**
@@ -99,7 +100,8 @@ const restatedSource = (open: Effect.Effect<Fixture, unknown, Scope.Scope>, rest
     const cited = citedKnowledgeSources(recalled).map((ref) => ref.id)
     yield* expect(id, processed === 1 && cited.includes(first.source.id) && cited.includes(again.ref.id), "a second source was not processed, or recall did not cite both sources")
     if (restating === undefined) return
-    const memories = recalled.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory] : [])
+    // A memory recall folded near-duplicates into (`alike`) shows them as one without publication having merged them.
+    const memories = recalled.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.alike === undefined ? [candidate.memory] : [])
     const mentions = (memory: (typeof memories)[number]) => knowledgeMemoryMentions(memory).map((ref) => ref.id)
     yield* expect(id, memories.some((memory) => mentions(memory).includes(first.source.id) && mentions(memory).includes(again.ref.id)) &&
       !memories.some((memory) => memory.provenance.every((span) => span.source.id === again.ref.id)),

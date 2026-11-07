@@ -105,6 +105,18 @@ by `knowledgeProfileOrder` (episodes, then `lastSeen`, then id), never the
 store's order; `supportWeight: 0` reads nothing and sorts by id. The section
 keeps that order and cuts at four only after the reach's narrowing.
 
+After weighting, recall folds near-duplicates (`recallCollapseSimilarity`,
+default 0.95; `false` turns it off): in rank order, a memory of the same kind
+and event time as a kept memory ranked above it, with an embedding cosine at
+least the threshold, leaves the result (`collapseMemoryCandidates`), freeing its
+place and budget before reranking and selection; the kept candidate names it in
+`alike` and carries its spans and mentions, so its support and citations count
+both. Passages never fold, and the graph is still seeded from every memory
+found. The section (version 7) shows a profile record recall folded into a kept
+memory once, as the profile's record with its own count (the kept memory's support
+for a record without one). `recallMinSimilarity` (absent by default) is passed
+to the store as `KnowledgeSearch.minSimilarity`, a floor on the semantic arm.
+
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, PostgreSQL knowledge store, window memory, sessions, and
 tool discovery without adding those dependencies to production. See the repository skills and definition of done.
@@ -122,14 +134,14 @@ tool discovery without adding those dependencies to production. See the reposito
 | Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:100` |
 | Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:144`, `:170`, `:225` | exact, `src/memory-capability.adapter.test.ts:125`; exact, `src/memory-capability.adapter.test.ts:131` |
 | Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:157`; exact, `src/memory.journey.test.ts:458` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:329` | exact, `src/memory-capability.adapter.test.ts:333`; exact, `src/memory-capability.adapter.test.ts:343` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:331` | exact, `src/memory-capability.adapter.test.ts:333`; exact, `src/memory-capability.adapter.test.ts:343` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 
 ## Layout
 
 - `memory.entity.ts`: configuration, plugin checkpoint and capture admission schemas;
-  `memory.entity.functions.ts`: recall's support and event factors.
+  `memory.entity.functions.ts`: recall's support and event factors and its near-duplicate collapse.
 - `memory-engine.adapter.ts`: native memory orchestration and processing worker.
 - `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture and
   its per-turn admission reference.

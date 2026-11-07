@@ -6,7 +6,7 @@ import { Knowledge, KnowledgeEntityId, makeKnowledgeIndexMemory, RunContext, Uti
 import type { KnowledgeRecall, KnowledgeSearch, KnowledgeTraversal } from "@xandreed/core"
 import { ragCapability } from "./rag-capability.adapter.js"
 import { ragDefaults } from "./rag.entity.js"
-import { enqueue, makeRag, scope, scriptedUtility } from "./rag.testing.js"
+import { enqueue, makeEmbeddings, makeRag, scope, scriptedUtility } from "./rag.testing.js"
 
 const trackedGraphStore = Effect.gen(function* () {
   const index = yield* makeKnowledgeIndexMemory()
@@ -63,6 +63,25 @@ describe("document query controls", () => {
     expect(requests[0]?.graph).toEqual({ perspective: { knownAt: 42 }, depth: ragDefaults.graphDepth })
     expect(requests[1]?.graph).toBe(false)
     expect(requests[0]?.scope.owner).toBe(scope.owner)
+  }))))
+
+  test("a similarity floor keeps weakly similar passages out of semantic search, and none is set by default", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // Neither passage shares a word with the question; the first is close to it, the second only weakly similar (cosine 0.3).
+    const embeddings = yield* makeEmbeddings((text) => /harbour|ferry/i.test(text) ? [1, 0] : /orchard/i.test(text) ? [0.3, 0.954] : [0, 1])
+    const search = Effect.fnUntraced(function* (options: Partial<typeof ragDefaults>) {
+      const tracked = yield* trackedGraphStore
+      const { knowledge } = yield* makeRag(options, undefined, embeddings)
+      yield* knowledge.ingest(enqueue("harbour", "Harbour timetable notes."))
+      yield* knowledge.ingest(enqueue("orchard", "Orchard harvest notes."))
+      yield* knowledge.process(scope, 2)
+      const found = yield* knowledge.retrieve({ scope, query: "When does a ferry leave?", limit: 4, maxChars: 1000, graph: false })
+      // The same options against a recording store: what the engine asks of it.
+      const { knowledge: recorded } = yield* makeRag(options, tracked.store, embeddings)
+      yield* recorded.retrieve({ scope, query: "When does a ferry leave?", limit: 4, maxChars: 1000, graph: false })
+      return { texts: found.candidates.map((candidate) => candidate._tag === "Chunk" ? candidate.chunk.text : candidate.memory.text), asked: (yield* Ref.get(tracked.searches)).map((query) => query.minSimilarity) }
+    })
+    expect(yield* search({})).toEqual({ texts: ["Harbour timetable notes.", "Orchard harvest notes."], asked: [undefined] })
+    expect(yield* search({ minSimilarity: 0.5 })).toEqual({ texts: ["Harbour timetable notes."], asked: [0.5] })
   }))))
 
   test.each(["search", "traverse"] as const)("the total query deadline interrupts a stalled %s", (stalled) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

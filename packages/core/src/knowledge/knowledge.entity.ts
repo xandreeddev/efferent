@@ -319,10 +319,17 @@ export type KnowledgeProfileMemory = typeof KnowledgeProfileMemory.Type
  * Candidate stores return independent ranked arms; the engine fuses them. An engine that counts
  * how often a memory was stated sets the memory's `support`, and one that judges event time sets
  * `past: true` on a memory whose dated event had passed at the recall's valid time
- * (`knowledgeMemoryIsPast`); a store sets neither. @public
+ * (`knowledgeMemoryIsPast`). An engine that collapses near-duplicates sets `alike` on the memory it
+ * kept: the ids of the lower-ranked memories it folded into it, in rank order, which the result no
+ * longer holds. The kept memory then carries their evidence as a corroborated one does (their spans
+ * in its provenance, the revisions stating them in its mentions), so its `support` counts them and
+ * the result cites their sources. A store sets none of them. @public
  */
 export const KnowledgeCandidate = Schema.Union([
-  Schema.TaggedStruct("Memory", { memory: KnowledgeMemory, score: Schema.Number, support: Schema.optionalKey(KnowledgeSupport), past: Schema.optionalKey(Schema.Boolean) }),
+  Schema.TaggedStruct("Memory", {
+    memory: KnowledgeMemory, score: Schema.Number, support: Schema.optionalKey(KnowledgeSupport), past: Schema.optionalKey(Schema.Boolean),
+    alike: Schema.optionalKey(Schema.Array(KnowledgeMemoryId)),
+  }),
   Schema.TaggedStruct("Chunk", { chunk: KnowledgeChunk, score: Schema.Number }),
 ])
 export type KnowledgeCandidate = typeof KnowledgeCandidate.Type
@@ -361,6 +368,14 @@ export const KnowledgeSearch = Schema.Struct({
   sources: Schema.optionalKey(KnowledgeSourceFilter),
   /** Candidates only from source revisions whose metadata matches, applied before `limit`; with `sources`, both must hold. */
   metadata: Schema.optionalKey(KnowledgeMetadataFilter),
+  /**
+   * The least cosine similarity a semantic candidate may have with `vector`, from -1 to 1: a store
+   * leaves out of the semantic arm every record scored below it, and keeps every record scored at
+   * or above it (0 and below included), before `limit`, so they take no place of it. The lexical
+   * arm is unaffected. Absent, the semantic arm keeps its store's own rule (the in-memory store
+   * keeps scores above 0, the PostgreSQL store every score).
+   */
+  minSimilarity: Schema.optionalKey(Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
 })
 export type KnowledgeSearch = typeof KnowledgeSearch.Type
 /** @public */

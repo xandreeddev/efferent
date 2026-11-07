@@ -15,7 +15,7 @@ describe("knowledge index reference conformance", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry", "knowledge.stage-notes", "knowledge.failure-reason",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
-      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.mentions", "knowledge.event-time",
+      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.similarity-floor", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.mentions", "knowledge.event-time",
       "knowledge.corroboration", "knowledge.corroboration-conflict", "knowledge.corroboration-revision", "knowledge.corroboration-reach", "knowledge.corroboration-superseded", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
       "knowledge.engine-isolation", "knowledge.failed-listing", "knowledge.requeue", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
@@ -170,4 +170,14 @@ test("the metadata-filter check rejects a store that ignores the filter or appli
     (check) => Effect.result(check.run), { concurrency: 1 },
   ), { concurrency: 1 }))
   expect(results.map((found) => found.length === 1 && found.every(Result.isFailure))).toEqual([true, true])
+})
+
+test("the similarity-floor check rejects a store that ignores the floor, floors the lexical arm too, or scores by anything but cosine", async () => {
+  await failingAlone("knowledge.similarity-floor", (real) => ({ search: ({ minSimilarity: _ignored, ...query }) => real.search(query) }))
+  await failingAlone("knowledge.similarity-floor", (real) => ({
+    search: (query) => real.search(query).pipe(Effect.map((found) => query.minSimilarity === undefined ? found : { ...found, lexical: found.lexical.filter((candidate) => candidate.score >= 10) })),
+  }))
+  await failingAlone("knowledge.similarity-floor", (real) => ({
+    search: (query) => real.search(query).pipe(Effect.map((found) => ({ ...found, semantic: found.semantic.map((candidate) => ({ ...candidate, score: candidate.score * candidate.score })) }))),
+  }))
 })

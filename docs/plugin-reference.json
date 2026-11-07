@@ -2141,7 +2141,8 @@
       "recallHistoryShare": 0.2,
       "supportWeight": 0.15,
       "restatementSimilarity": 0.92,
-      "pastEventWeight": 0.5
+      "pastEventWeight": 0.5,
+      "recallCollapseSimilarity": 0.95
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2310,6 +2311,26 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "recallMinSimilarity": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "recallCollapseSimilarity": {
+          "anyOf": [
+            {
+              "type": "boolean",
+              "enum": [
+                false
+              ]
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ]
         }
       },
       "required": [
@@ -2344,7 +2365,8 @@
         "recallHistoryShare",
         "supportWeight",
         "restatementSimilarity",
-        "pastEventWeight"
+        "pastEventWeight",
+        "recallCollapseSimilarity"
       ],
       "additionalProperties": true
     }
@@ -2582,6 +2604,11 @@
           "type": "integer",
           "maximum": 100,
           "exclusiveMinimum": 0
+        },
+        "minSimilarity": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
         },
         "evidenceChars": {
           "type": "integer",

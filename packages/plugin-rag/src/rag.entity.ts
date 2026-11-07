@@ -40,6 +40,13 @@ export const RagConfig = Schema.Struct({
   overlapChars: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   embeddingBatchSize: Positive.check(Schema.isLessThanOrEqualTo(100)),
   searchLimit: Positive.check(Schema.isLessThanOrEqualTo(100)),
+  /**
+   * The least cosine similarity, from -1 to 1, a passage's embedding must have with the question's
+   * for semantic search to return it (`KnowledgeSearch.minSimilarity`): the store leaves out weaker
+   * matches before its limit. Lexical matches are kept whatever their similarity. Absent by default:
+   * a floor depends on the embedding model, so measure one before setting it.
+   */
+  minSimilarity: Schema.optionalKey(Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
   evidenceChars: Positive,
   readChars: Positive,
   graphDepth: Positive.check(Schema.isLessThanOrEqualTo(3)),

@@ -14,7 +14,7 @@ import type {
   KnowledgeAssertion, KnowledgeCandidate, KnowledgeCandidates, KnowledgeMemory, KnowledgeProfileMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession, KnowledgeSupport,
 } from "@xandreed/core"
 import type { MemoryConfig } from "./memory.entity.js"
-import { memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
+import { collapseMemoryCandidates, memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
 
 const failure = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const decodeExtraction = (text: string) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(text).pipe(
@@ -195,6 +195,9 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
    * pool's memories have their mentioned revisions' info read in one batch, the lists are fused again with each
    * memory's support factor times its event factor, and every memory of the result carries its `support` and, when
    * its event has passed, `past`. A support weight of 0 reads nothing; with no factor to apply, the pool is the result.
+   * Then, unless `recallCollapseSimilarity` is false, near-duplicate memories fold into the one ranked above them
+   * (`collapseMemoryCandidates`), whose support counts the mentions of all of them among the revisions read:
+   * `collapsed` is the result, `ranked` the list before folding.
    */
   const fuseRanked = Effect.fnUntraced(function* (scope: KnowledgeScope, lists: ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number, validAt: number, demote: boolean) {
     const pool = fuseKnowledgeCandidates(lists, limit, maxChars)
@@ -212,11 +215,13 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       Chunk: (chunk) => chunk,
     })
     const demoting = demote && config.pastEventWeight !== 1 && memories.some((memory) => knowledgeMemoryIsPast(memory, validAt))
-    if (supports.size === 0 && !demoting) return pool.map(marked)
-    return fuseKnowledgeCandidates(lists, limit, maxChars, (candidate) => {
+    const ranked = supports.size === 0 && !demoting ? pool.map(marked) : fuseKnowledgeCandidates(lists, limit, maxChars, (candidate) => {
       const weighed = marked(candidate)
       return memorySupportFactor(weighed, config.supportWeight) * (demote ? memoryPastFactor(weighed, config.pastEventWeight) : 1)
     }).map(marked)
+    const collapsed = config.recallCollapseSimilarity === false ? ranked
+      : collapseMemoryCandidates(ranked, config.recallCollapseSimilarity, (memory) => knowledgeMemorySupport(memory, infos))
+    return { ranked, collapsed }
   })
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
@@ -240,11 +245,15 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
         Effect.flatMap((response) => vector(response.vector)), Effect.map(Option.some),
         Effect.catchIf((error) => error.reason === "Unavailable", (error) => Effect.logWarning("Memory query embedding is unavailable; using lexical evidence", error).pipe(Effect.as(Option.none()))),
       )
-      return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }) })
+      return yield* store.search({
+        scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }),
+        ...(config.recallMinSimilarity === undefined ? {} : { minSimilarity: config.recallMinSimilarity }),
+      })
     }), { concurrency: 2 })
     // Each query's lexical and semantic lists are ranked on their own: a memory a planned query finds first ranks as one the question finds first.
     // A record is past when its event ended before the world time the recall reads (now, unless the graph perspective or the plan names one).
-    const fused = yield* fuseRanked(input.scope, results, candidateLimit, input.maxChars * 4, perspective.validAt, (input.temporal ?? "current") === "current")
+    // Near-duplicates are folded here, before reranking and selection, so they free their places and budget for other evidence.
+    const { ranked: unfolded, collapsed: fused } = yield* fuseRanked(input.scope, results, candidateLimit, input.maxChars * 4, perspective.validAt, (input.temporal ?? "current") === "current")
     const stored = yield* store.snapshot(input.scope)
     // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata
     // filter reads the info of the revisions the graph cites.
@@ -254,7 +263,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const snapshot = { ...stored, graph: narrowed }
     const scores = knowledgeBm25([input.query, ...plan.entities].join(" "), snapshot.graph.entities.map((entity) => [entity.name, ...entity.aliases].join(" ")))
     const matched = snapshot.graph.entities.filter((_, index) => (scores[index] ?? 0) > 0).map((entity) => entity.id)
-    const seeds = [...matched, ...fused.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.entities, Chunk: () => [] }))]
+    // A folded memory still seeds the graph with its entities.
+    const seeds = [...matched, ...unfolded.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.entities, Chunk: () => [] }))]
     const graph = input.graph === false || seeds.length === 0
       ? { entities: [], assertions: [], truncated: false }
       : sources === undefined && metadata === undefined ? yield* store.traverse({ scope: input.scope, seeds: [...new Set(seeds)], perspective, depth: graphOptions?.depth ?? config.graphDepth, limit: 100 })

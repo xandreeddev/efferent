@@ -1,4 +1,6 @@
-import type { KnowledgeCandidate, KnowledgeMemoryKind } from "@xandreed/core"
+import { Match, Option } from "effect"
+import { corroborateKnowledgeMemory, knowledgeCosine, knowledgeMemoryMentions } from "@xandreed/core"
+import type { KnowledgeCandidate, KnowledgeMemory, KnowledgeMemoryKind, KnowledgeSupport } from "@xandreed/core"
 
 /** The kinds whose repetition says something about the person: stating one again is evidence it holds. */
 const SUPPORTED_KINDS: ReadonlyArray<KnowledgeMemoryKind> = ["preference", "routine", "profile", "fact"]
@@ -21,3 +23,52 @@ export const memorySupportFactor = (candidate: KnowledgeCandidate, supportWeight
  */
 export const memoryPastFactor = (candidate: KnowledgeCandidate, pastEventWeight: number): number =>
   candidate._tag === "Memory" && candidate.past === true ? pastEventWeight : 1
+
+/**
+ * Whether `later` repeats `kept` closely enough to be shown as it: the same kind and event time (both
+ * none, or the same start and end), and embeddings whose cosine is at least `minSimilarity`. A memory
+ * without an embedding repeats none.
+ */
+const repeats = (kept: KnowledgeMemory, later: KnowledgeMemory, minSimilarity: number): boolean =>
+  kept.kind === later.kind && kept.eventAt?.start === later.eventAt?.start && kept.eventAt?.end === later.eventAt?.end
+  && Option.isSome(kept.embedding) && Option.isSome(later.embedding) && knowledgeCosine(kept.embedding.value, later.embedding.value) >= minSimilarity
+
+/** A kept candidate and the memories folded into it, in rank order. */
+interface CollapseGroup { readonly kept: KnowledgeCandidate; readonly folded: ReadonlyArray<KnowledgeMemory> }
+
+/**
+ * Recall's near-duplicate collapse (`MemoryConfig.recallCollapseSimilarity`), over candidates in rank
+ * order: each memory that repeats a memory ranked above it and kept (the same kind and event time, the
+ * cosine of their embeddings at least `minSimilarity`) is folded into the first such one; every other
+ * candidate, and every passage, is kept in its place. A kept memory that folded others names them in
+ * `alike`, in rank order, and carries their evidence as publication carries a restatement's
+ * (`corroborateKnowledgeMemory`): their spans after its own in its provenance, and the revisions that
+ * state them (`knowledgeMemoryMentions`) after its own in its mentions, each once. Its `support` is
+ * what `supportOf` counts for it so, keeping its own when that is none; its id, text, kind, score and
+ * first span stay its own. Pure and deterministic: the same ranked list folds the same way.
+ */
+export const collapseMemoryCandidates = (
+  ranked: ReadonlyArray<KnowledgeCandidate>, minSimilarity: number, supportOf: (memory: KnowledgeMemory) => Option.Option<KnowledgeSupport>,
+): ReadonlyArray<KnowledgeCandidate> => {
+  const groups = ranked.reduce<ReadonlyArray<CollapseGroup>>((kept, candidate) => {
+    const into = Match.valueTags(candidate, {
+      Memory: ({ memory }) => kept.findIndex((group) => group.kept._tag === "Memory" && repeats(group.kept.memory, memory, minSimilarity)),
+      Chunk: () => -1,
+    })
+    return into < 0 ? [...kept, { kept: candidate, folded: [] }]
+      : kept.map((group, index) => index === into && candidate._tag === "Memory" ? { ...group, folded: [...group.folded, candidate.memory] } : group)
+  }, [])
+  return groups.map(({ kept, folded }) => Match.valueTags(kept, {
+    Memory: (memory): KnowledgeCandidate => {
+      if (folded.length === 0) return memory
+      const merged = folded.reduce((record, alike) => knowledgeMemoryMentions(alike).reduce(
+        (current, mention) => corroborateKnowledgeMemory(current, { memory: current.id, mention, provenance: alike.provenance }), record,
+      ), memory.memory)
+      return {
+        ...memory, memory: merged, alike: folded.map((record) => record.id),
+        ...Option.match(supportOf(merged), { onNone: () => ({}), onSome: (support) => ({ support }) }),
+      }
+    },
+    Chunk: (chunk): KnowledgeCandidate => chunk,
+  }))
+}

@@ -370,7 +370,9 @@ lists that hold it, so a candidate a planned query finds first ranks with the
 question's best and one several queries find gains from each
 (`fuseKnowledgeCandidates` takes one pair or one per query). Memory recall
 then weighs each memory by how often it was said
-([memories said in several episodes](#memories-said-in-several-episodes)). Traversal defaults to two
+([memories said in several episodes](#memories-said-in-several-episodes))
+and shows near-duplicates as one
+([near-duplicates and a similarity floor](#near-duplicates-and-a-similarity-floor)). Traversal defaults to two
 hops and is capped at three. Results expose truncation and retain citations.
 Query/model work has explicit budgets; invalid planner/reranker output falls
 back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section;
@@ -763,7 +765,9 @@ true. Nothing is deleted or filtered from search for being past:
 - `renderMemoryRecall` says when after a memory's text, unless `dates` is
   false: `(event on YYYY-MM-DD)`, `(event on YYYY-MM-DD–YYYY-MM-DD)` for one
   that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall
-  marked it past.
+  marked it past. The section's version is 5 (6 since
+  [the profile's order](#the-profiles-order), 7 since
+  [near-duplicates](#near-duplicates-and-a-similarity-floor) fold).
 
 ```text
 [2026-03-05 · preference · stated] The user is interested in weekly pottery classes at the community studio.
@@ -776,6 +780,63 @@ Source: conversation:…:1:0 revision 1, characters 6-56
 `recall_memory` takes a `temporal` parameter, so the model can ask for `all`
 on one call ("which exhibitions did I want to see this year?"). A wrong
 `eventAt` only demotes a live goal; it never hides one.
+
+### Near-duplicates and a similarity floor
+
+Restatements that publication did not merge (extracted without entities, with
+another entity set, from the same source, or stored before restatements were
+merged) are separate memories with near-identical embeddings. Each ranks close
+to the others, so four wordings of one fact could fill four of recall's eight
+places and push other evidence out. Memory recall folds them:
+
+- After the support and event weights, in rank order, a memory of the same
+  kind and event time as a memory ranked above it and kept, whose embedding's
+  cosine with that memory's is at least `MemoryConfig.recallCollapseSimilarity`
+  (default `0.95`), is folded into the first such one. Passages and
+  memories without an embedding never fold.
+- The folded memory leaves the result before reranking and the final
+  selection, so its place and its share of the character budget go to the
+  next evidence. The graph is still seeded with its entities.
+- The kept candidate names the folded memories in `alike`
+  (`KnowledgeCandidate`'s optional `KnowledgeMemoryId` list, in rank order) and
+  carries their evidence as a corroborated memory does: their spans after its
+  own in its provenance and the revisions that state them in its mentions. Its
+  `support` therefore counts every episode that said any of them, and the
+  result cites their sources. Its id, text, kind, score and first span (its
+  date) stay its own. Nothing is merged in the store: each record keeps its own
+  provenance, and forgetting a source removes only what it stated.
+
+```text
+[2026-03-02 · fact · stated · said 4 times, last 2026-03-23] The user's team releases on Fridays.
+Source: conversation:…:1:0 revision 1, characters 6-34
+Source: conversation:…:1:0 revision 1, characters 6-38
+Source: conversation:…:1:0 revision 1, characters 6-45
+Source: conversation:…:1:0 revision 1, characters 6-40
+```
+
+The section (version 7) shows a profile record that recall folded into a
+memory it kept once, as the profile's record with the profile's count (a
+record without one, from a host's own profile, takes the kept memory's
+support). `recallCollapseSimilarity: false` turns
+folding off, and the order and records are then exactly as before. The
+threshold is high because folding needs no entity match: two facts of the
+same kind about different things whose sentences embed at 0.95 or more are
+shown as one. Lower it only with an embedding model whose near-duplicates you
+have measured.
+
+`KnowledgeSearch.minSimilarity` (from -1 to 1) is a floor on the semantic
+arm: a store leaves out every semantic candidate whose score, the cosine
+similarity of its embedding with the query vector, is below it, before the
+limit, so weak matches take no place. The lexical arm is unaffected, so an
+exact word still finds its record. Without a floor the in-memory store drops
+scores of 0 or less, as it always has; with one, both stores keep every score at
+or above it, so a floor of 0 or below keeps them too. The PostgreSQL store
+applies the floor in its SQL.
+`MemoryConfig.recallMinSimilarity` and `RagConfig.minSimilarity` pass one,
+and both are absent by default: a useful floor depends on the embedding model
+(values around 0.1 to 0.3 are used elsewhere), so measure recall with and
+without one before setting it. `knowledgeStoreConformance`'s
+`knowledge.similarity-floor` check holds a host's own store to both rules.
 
 ## Place memory recall yourself
 
