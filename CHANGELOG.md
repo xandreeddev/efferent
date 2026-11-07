@@ -499,6 +499,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Fixed
 
+- Release preparation failed after the readme was shortened: the readme lost its
+  `Workspace packages share version` line, which every release rewrites. The
+  line is back, and a test now fails when any file the release rewrites lacks
+  its version marker.
 - `@xandreed/core`, `@xandreed/plugin-memory`: the memory profile is
   ordered by support and recency instead of the store's order. The profile
   kept the order of its store's snapshot, insertion order in memory and id
