@@ -142,6 +142,13 @@ link dangling, and recall skips such a link. A memory or relation an earlier
 release wrote has no links and decodes unchanged. The adapter passes
 `knowledgeStoreConformance`'s `knowledge.supersession-links` check.
 
+A memory's `mentions`, the source revisions whose own text states it, are part
+of its payload too, with no column: every mention is a revision its provenance
+cites, so `record_sources` already holds it, and forgetting a mentioned source
+removes the memory through the same closure as the rest of its evidence. A
+memory an earlier release wrote has no mentions and decodes unchanged. The
+adapter passes `knowledgeStoreConformance`'s `knowledge.mentions` check.
+
 `failed` lists failed jobs across owners from the row's `phase`, `engine` and
 `collection` columns, in the rows' recording order; its cursor is the last
 row's ordinal. A reasons filter reads the reason in the payload, and a job

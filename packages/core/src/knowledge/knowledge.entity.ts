@@ -84,6 +84,11 @@ export type KnowledgeAssertionReplacement = typeof KnowledgeAssertionReplacement
  * A durable memory. `replaces` links a successor to the memories it superseded; staging writes it
  * on the successor only when there is one, and nothing is ever written to the memory it retired
  * but its `knownTo`. A memory without it, as every one stored before it existed, replaces none.
+ * `mentions` are the source revisions whose own text states the record, a subset of the revisions
+ * its provenance cites: staging writes the revision it extracts a stated memory from, and for an
+ * inferred memory that revision and every revision that states one of its supports. Its provenance
+ * may cite more revisions, for the evidence of its entities, which never count as stating it. A
+ * memory stored before `mentions` existed reads them from its provenance (`knowledgeMemoryMentions`).
  * @public
  */
 export const KnowledgeMemory = Schema.Struct({
@@ -93,6 +98,7 @@ export const KnowledgeMemory = Schema.Struct({
   embedding: Schema.OptionFromNullOr(KnowledgeVector),
   knownFrom: Count, knownTo: Schema.OptionFromNullOr(Count),
   replaces: Schema.optionalKey(Schema.Array(KnowledgeMemoryReplacement)),
+  mentions: Schema.optionalKey(Schema.Array(KnowledgeSourceRef)),
 }).check(Schema.makeFilter((memory) => memory.knownTo._tag === "None" || memory.knownTo.value >= memory.knownFrom || "known interval ends before it starts"))
 export type KnowledgeMemory = typeof KnowledgeMemory.Type
 /** @public */
@@ -256,9 +262,21 @@ export type KnowledgeLease = typeof KnowledgeLease.Type
 /** Both coordinates are exclusive upper bounds on relation intervals. @public */
 export const KnowledgePerspective = Schema.Struct({ validAt: Count, knownAt: Count })
 export type KnowledgePerspective = typeof KnowledgePerspective.Type
-/** Candidate stores return independent ranked arms; the engine fuses them. @public */
+/**
+ * How often a memory was stated (`knowledgeMemorySupport`), counted over the live revisions among
+ * its `mentions`: `episodes`, the distinct episodes they belong to (a revision's `metadata.episode`,
+ * else its source id), `sources`, the revisions, and `firstSeen` and `lastSeen`, the earliest and
+ * latest of their occurrence times. A forgotten revision never counts.
+ * @public
+ */
+export const KnowledgeSupport = Schema.Struct({ episodes: Positive, sources: Positive, firstSeen: Count, lastSeen: Count })
+export type KnowledgeSupport = typeof KnowledgeSupport.Type
+/**
+ * Candidate stores return independent ranked arms; the engine fuses them. An engine that counts
+ * how often a memory was stated sets the memory's `support`; a store never does. @public
+ */
 export const KnowledgeCandidate = Schema.Union([
-  Schema.TaggedStruct("Memory", { memory: KnowledgeMemory, score: Schema.Number }),
+  Schema.TaggedStruct("Memory", { memory: KnowledgeMemory, score: Schema.Number, support: Schema.optionalKey(KnowledgeSupport) }),
   Schema.TaggedStruct("Chunk", { chunk: KnowledgeChunk, score: Schema.Number }),
 ])
 export type KnowledgeCandidate = typeof KnowledgeCandidate.Type

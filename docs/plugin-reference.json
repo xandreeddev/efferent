@@ -2138,7 +2138,8 @@
       "recallDates": true,
       "recallToday": false,
       "recallHistory": "changes",
-      "recallHistoryShare": 0.2
+      "recallHistoryShare": 0.2,
+      "supportWeight": 0.15
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2282,6 +2283,11 @@
           "type": "number",
           "minimum": 0,
           "maximum": 0.5
+        },
+        "supportWeight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       },
       "required": [
@@ -2313,7 +2319,8 @@
         "recallDates",
         "recallToday",
         "recallHistory",
-        "recallHistoryShare"
+        "recallHistoryShare",
+        "supportWeight"
       ],
       "additionalProperties": true
     }

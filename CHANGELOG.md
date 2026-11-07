@@ -49,6 +49,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `memoryDefaults` need no change. Memory recall now returns earlier states by
   default: a host that pins the recall text, or wants the earlier behaviour,
   sets `recallHistory: "none"` (or passes `history: "none"` to `recall`).
+- `@xandreed/plugin-memory`'s `MemoryConfig` gains the required key
+  `supportWeight` (default `0.15`); options merged over `memoryDefaults` need
+  no change, and a host that builds a whole `MemoryConfig` adds it. Recall
+  now ranks by support and the default text counts repeated memories: a host
+  that pins the recall text or its order, or wants the earlier behaviour,
+  sets `supportWeight: 0`. A host's own `KnowledgeIndex` keeps a memory's new
+  `mentions` whole and refuses a stage whose memory mentions a revision its
+  provenance does not cite, as `validateKnowledgeStage` does and
+  `knowledgeStoreConformance`'s new `knowledge.mentions` check requires.
 
 ### Changed
 
@@ -180,6 +189,45 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   corrected as wrong, or none. Omit to use the default.") overrides it for one
   call. The default text changes only when a recalled record replaced
   something. `@xandreed/plugin-rag`'s `retrieve` returns no earlier states.
+- `@xandreed/core`: a memory records the source revisions whose own text
+  states it, `KnowledgeMemory.mentions` (optional; additive in the stored
+  payload). `stageKnowledgeExtraction` writes the source for a stated memory,
+  and for an inferred one the source and every revision that states one of
+  its supports, never the revisions that only evidence its entities, which
+  staging still appends to its provenance. `knowledgeMemoryMentions(memory)`
+  reads them, falling back for a memory stored before them to the revision
+  its first span cites when stated and every revision its provenance cites
+  when inferred. `validateKnowledgeStage` refuses a memory that mentions a
+  revision its provenance does not cite, so forgetting a mentioned source
+  removes the memory through the existing source closure and requeues its
+  other sources. `knowledgeMemorySupport(memory, infos)` returns a
+  `KnowledgeSupport` (`episodes`, `sources`, `firstSeen`, `lastSeen`) over
+  the live mentioned revisions: `episodes` counts distinct
+  `metadata.episode` values, a revision without one counting as its own
+  source, the rule the inferred-routine check in `validateKnowledgeStage`
+  and `stageKnowledgeExtraction` now shares. `KnowledgeCandidate`'s `Memory`
+  case gains an optional `support`, and `fuseKnowledgeCandidates` an
+  optional `weight(candidate)` that multiplies each fused score before
+  ranking and selection; without it fusion is unchanged.
+  `knowledgeStoreConformance` gains `knowledge.mentions` (kept through
+  staging, publication, search and reads; absent on a memory stored without
+  them; refused outside the provenance; the memory removed when a mentioned
+  source is forgotten), which `@xandreed/plugin-knowledge-postgres` passes
+  with its layout unchanged, the mentions living in the memory's payload.
+- `@xandreed/plugin-memory`: recall ranks a preference, routine, profile or
+  fact said in several episodes a little higher and says how often. The
+  engine fuses once, reads the info of the pool's (at most 100) mentioned
+  revisions in one `sourceInfo` batch, and fuses again with the factor
+  `1 + supportWeight × ln(min(episodes, 4))`; chunks and other kinds weigh
+  1. With the new `MemoryConfig.supportWeight` (default `0.15`) the boost is
+  at most ×1.21, so near the top of the lists a memory passes only records
+  within about twelve places of it: a fact both arms rank first stays ahead
+  of a preference said in four episodes they rank twentieth. Each recalled
+  memory carries its `support`. `renderMemoryRecall` adds `said <n> times,
+  last YYYY-MM-DD` to a dated memory's labels from two episodes on, and the
+  `memory.recalled` section (now version 4) gives its profile records the
+  support recall found for them. `supportWeight: 0` reads nothing, ranks as
+  before and shows no count.
 
 ### Fixed
 

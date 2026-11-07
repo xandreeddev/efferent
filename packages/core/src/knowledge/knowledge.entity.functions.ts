@@ -4,7 +4,7 @@ import {
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
   type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
-  type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo,
+  type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
   type KnowledgeVector,
 } from "./knowledge.entity.js"
 
@@ -101,19 +101,71 @@ const selectKnowledgeCandidates = (ranked: ReadonlyArray<ScoredKnowledgeCandidat
       ? { used: result.used + length, items: [...result.items, { ...entry.candidate, score: entry.score }] }
       : result
   }, { used: 0, items: [] as ReadonlyArray<KnowledgeCandidate> }).items
+/** Weight: each fused score times the candidate's weight, before sorting. */
+const weighKnowledgeCandidates = (scored: ReadonlyArray<ScoredKnowledgeCandidate>, weight: (candidate: KnowledgeCandidate) => number): ReadonlyArray<ScoredKnowledgeCandidate> =>
+  scored.map((entry) => ({ ...entry, score: entry.score * weight(entry.candidate) }))
 /**
  * Reciprocal rank fusion with deterministic ties and one shared character budget. Takes one search's lexical and
  * semantic lists, or one such pair per query of a planned search: every list is ranked on its own, so a candidate
  * a later query finds first scores as highly as one the first query finds first, and a candidate several lists
- * find sums its votes, `1 / (61 + rank)` per list at its 0-based rank there. Ties go by candidate key; `limit` and
- * `maxChars` select from the ranked result.
+ * find sums its votes, `1 / (61 + rank)` per list at its 0-based rank there. With `weight`, each candidate's fused
+ * score is multiplied by its weight (the candidate as the lists first hold it) before ranking; without it, or with
+ * a weight of 1 for every candidate, the ranking is plain fusion. Ties go by candidate key; `limit` and `maxChars`
+ * select from the ranked result, and each selected candidate carries its final score.
  * @public
  */
 export const fuseKnowledgeCandidates = (
-  arms: KnowledgeCandidates | ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number,
+  arms: KnowledgeCandidates | ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number, weight?: (candidate: KnowledgeCandidate) => number,
 ): ReadonlyArray<KnowledgeCandidate> => {
   const pairs: ReadonlyArray<KnowledgeCandidates> = "lexical" in arms ? [arms] : arms
-  return selectKnowledgeCandidates(byKnowledgeScore(scoreKnowledgeLists(pairs.flatMap((pair) => [pair.lexical, pair.semantic]))), limit, maxChars)
+  const scored = scoreKnowledgeLists(pairs.flatMap((pair) => [pair.lexical, pair.semantic]))
+  return selectKnowledgeCandidates(byKnowledgeScore(weight === undefined ? scored : weighKnowledgeCandidates(scored, weight)), limit, maxChars)
+}
+
+const sameKnowledgeRevision = (left: KnowledgeSourceRef, right: KnowledgeSourceRef): boolean => left.id === right.id && left.revision === right.revision
+const distinctRevisions = (refs: ReadonlyArray<KnowledgeSourceRef>): ReadonlyArray<KnowledgeSourceRef> =>
+  refs.filter((ref, index) => refs.findIndex((other) => sameKnowledgeRevision(other, ref)) === index)
+/**
+ * The source revisions whose own text states a memory, once each: its `mentions`, or, for a memory
+ * stored before they existed, the revision its first span cites when it is stated (staging puts a
+ * record's own spans first) and every revision its provenance cites when it is inferred.
+ * @public
+ */
+export const knowledgeMemoryMentions = (memory: Pick<KnowledgeMemory, "mentions" | "provenance" | "evidence">): ReadonlyArray<KnowledgeSourceRef> =>
+  distinctRevisions(memory.mentions ?? Match.valueTags(memory.evidence, {
+    Stated: () => memory.provenance.slice(0, 1).map((span) => span.source),
+    Inferred: () => memory.provenance.map((span) => span.source),
+  }))
+/**
+ * The episode a source revision belongs to, as `knowledgeEpisodeCount` tells episodes apart: the
+ * nonblank `metadata.episode` its info in `infos` names, else the source itself.
+ */
+const knowledgeEpisodeKey = (ref: KnowledgeSourceRef, infos: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "metadata">>): string => {
+  const episode = infos.find((info) => sameKnowledgeRevision(info.ref, ref))?.metadata.episode
+  return typeof episode === "string" && episode.trim().length > 0 ? `episode:${episode}` : `source:${ref.id}`
+}
+/**
+ * How many distinct episodes the revisions belong to: revisions whose info in `infos` names the same
+ * nonblank `metadata.episode` are one episode, and a revision whose info names none, or is missing,
+ * is an episode of its source. The routine rule (`validateKnowledgeStage`, `stageKnowledgeExtraction`)
+ * and `knowledgeMemorySupport` count by it.
+ */
+export const knowledgeEpisodeCount = (refs: ReadonlyArray<KnowledgeSourceRef>, infos: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "metadata">>): number =>
+  new Set(refs.map((ref) => knowledgeEpisodeKey(ref, infos))).size
+/**
+ * How often a memory was stated, from the info of the revisions it mentions (`knowledgeMemoryMentions`;
+ * pass `KnowledgeIndex.sourceInfo` of them, or a recall result's `sources`): only revisions found in
+ * `infos` count, so a forgotten one never does, and the evidence of the memory's entities is never a
+ * mention. Episodes are counted as `knowledgeEpisodeCount` does among those live revisions. None when
+ * no mentioned revision is found.
+ * @public
+ */
+export const knowledgeMemorySupport = (memory: Pick<KnowledgeMemory, "mentions" | "provenance" | "evidence">, infos: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "occurredAt" | "metadata">>): Option.Option<KnowledgeSupport> => {
+  const live = knowledgeMemoryMentions(memory).flatMap((ref) => infos.filter((info) => sameKnowledgeRevision(info.ref, ref)).slice(0, 1))
+  const times = live.map((info) => info.occurredAt)
+  return live.length === 0 ? Option.none() : Option.some({
+    episodes: knowledgeEpisodeCount(live.map((info) => info.ref), live), sources: live.length, firstSeen: Math.min(...times), lastSeen: Math.max(...times),
+  })
 }
 
 /**
@@ -246,7 +298,11 @@ export const narrowKnowledgeGraphBy = (graph: KnowledgeSubgraph, admits: (ref: K
   }
 }
 
-/** Publication checks common to durable adapters. No extraction output is trusted as provenance. @public */
+/**
+ * Publication checks common to durable adapters. No extraction output is trusted as provenance; a
+ * memory's `mentions` must be revisions its provenance cites.
+ * @public
+ */
 export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: KnowledgeSnapshot, sources: ReadonlyArray<KnowledgeSource>): Option.Option<KnowledgeError> => {
   const spans = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.entities.flatMap((entity) => entity.provenance), ...stage.assertions.flatMap((edge) => edge.provenance)]
   const badSpan = spans.some((span) => span.start < 0 || span.end <= span.start || span.quote.length === 0 || !sources.some((source) => source.ref.id === span.source.id && source.ref.revision === span.source.revision && span.end <= source.text.length && source.text.slice(span.start, span.end) === span.quote))
@@ -265,11 +321,10 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
   }
   const unsupportedRoutine = stage.memories.some((memory) => memory.kind === "routine" && Match.valueTags(memory.evidence, {
     Stated: () => false,
-    Inferred: ({ supports }) => new Set(supports.flatMap((id) => allMemories.find((item) => item.id === id)?.provenance.map((span) => {
-      const episode = sources.find((source) => source.ref.id === span.source.id && source.ref.revision === span.source.revision)?.metadata.episode
-      return typeof episode === "string" && episode.trim().length > 0 ? `episode:${episode}` : `source:${span.source.id}`
-    }) ?? [])).size < 3,
+    Inferred: ({ supports }) => knowledgeEpisodeCount(supports.flatMap((id) => allMemories.find((item) => item.id === id)?.provenance.map((span) => span.source) ?? []), sources) < 3,
   }))
+  // A memory mentions only revisions its provenance cites, so forgetting any of them removes it with the rest of its evidence.
+  const strayMention = stage.memories.some((memory) => (memory.mentions ?? []).some((ref) => !memory.provenance.some((span) => sameKnowledgeRevision(span.source, ref))))
   const retireMissing = stage.retireMemories.some((id) => !snapshot.memories.some((memory) => memory.id === id && Option.isNone(memory.knownTo))) ||
     stage.retireAssertions.some((id) => !snapshot.graph.assertions.some((edge) => edge.id === id && Option.isNone(edge.knownTo)))
   const intervalInvalid = (start: number, until: Option.Option<number>): boolean => !Number.isInteger(start) || start < 0 || Option.exists(until, (end) => !Number.isInteger(end) || end < start)
@@ -279,7 +334,7 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
       onSome: (from) => intervalInvalid(from, edge.validTo),
     }))
   const unsupportedProvenance = stage.memories.some((memory) => memory.provenance.length === 0) || stage.assertions.some((edge) => edge.provenance.length === 0)
-  if (badSpan || badInterval || unsupportedProvenance || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || stage.memories.some((memory) => cyclic(memory.id, []))) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, intervals, duplicate identities, or unsupported derivations" }))
+  if (badSpan || badInterval || unsupportedProvenance || strayMention || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || stage.memories.some((memory) => cyclic(memory.id, []))) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, mentions, intervals, duplicate identities, or unsupported derivations" }))
   if (retireMissing) return Option.some(new KnowledgeError({ reason: "Conflict", message: "A retired record is no longer active" }))
   const vectors = stage.memories.flatMap((memory) => Option.toArray(memory.embedding)).concat(stage.chunks.flatMap((chunk) => Option.toArray(chunk.embedding)))
   const spaces = vectors.map((vector) => vector.space)

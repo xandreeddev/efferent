@@ -7,7 +7,7 @@ import {
 } from "@xandreed/core"
 import type {
   KnowledgeAssertion, KnowledgeEvidence, KnowledgeMemory, KnowledgeMemoryKind, KnowledgeProvenance, KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource,
-  KnowledgeSourceInfo, KnowledgeSourceRef,
+  KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeSupport,
 } from "@xandreed/core"
 import { MemoryCaptureLive } from "./memory-capture.adapter.js"
 import { MemoryCapture } from "./ports/memory-capture.port.js"
@@ -139,6 +139,7 @@ const recallText = {
   earlier: "Earlier states, no longer current:",
   previously: (text: string, until: string, successor: string) => `previously: ${text} (until ${until}; replaced by ${successor})`,
   corrected: (text: string, date: string) => `previously: ${text} (corrected ${date}; this was wrong)`,
+  said: (times: number, last: string) => `said ${times} times, last ${last}`,
   truncated: "Additional graph evidence was omitted by the traversal budget.",
 } as const
 /** A time as its UTC calendar date, `YYYY-MM-DD`; none for a time no date can show. */
@@ -146,6 +147,9 @@ const utcDate = (time: number): Option.Option<string> => Option.map(DateTime.mak
 const citations = (provenance: ReadonlyArray<KnowledgeProvenance>): string =>
   provenance.map((span) => `Source: ${span.source.id} revision ${span.source.revision}, characters ${span.start}-${span.end}`).join("\n")
 const labelled = (labels: ReadonlyArray<string>, text: string): string => labels.length === 0 ? text : `[${labels.join(" · ")}] ${text}`
+/** How often a memory was said, when in two episodes or more: `said <n> times, last YYYY-MM-DD`. */
+const supportOf = (support: KnowledgeSupport | undefined): ReadonlyArray<string> =>
+  support === undefined || support.episodes < 2 ? [] : Option.toArray(Option.map(utcDate(support.lastSeen), (last) => recallText.said(support.episodes, last)))
 /** When a relation held: `valid <from>–<to|present>`, `valid until <to>` with an unknown start, nothing with neither. */
 const validityOf = (assertion: KnowledgeAssertion, now: Option.Option<number>): ReadonlyArray<string> => {
   const from = Option.flatMap(assertion.validFrom, utcDate)
@@ -177,13 +181,17 @@ const validityOf = (assertion: KnowledgeAssertion, now: Option.Option<number>): 
  * relation whose validity ended by then as no longer current. Without `sources`, or with `dates:
  * false`, the text is as it was before records were dated.
  *
+ * A memory whose `support` (`KnowledgeSupport`, set by recall) counts two episodes or more also
+ * says how often it was said, in its dated labels: `said <n> times, last YYYY-MM-DD`, the date of
+ * the latest revision that states it.
+ *
  * Given `history` (a recall result's), it ends the evidence with the earlier states its current
  * records replaced, under "Earlier states, no longer current:", each with its citations: a change
  * as `previously: <text> (until YYYY-MM-DD; replaced by <source> revision <n>)`, naming the
  * revision that states its successor, and a correction as `previously: <text> (corrected
  * YYYY-MM-DD; this was wrong)`. Earlier states take at most `historyShare` (0.2 by default) of the
  * budget and only beside a successor the budget kept (`budgetKnowledgeRecall`). The budget bounds
- * the records' text and citations; labels add about 30 characters per record. @public
+ * the records' text and citations; labels add about 30 characters per record, 30 more with a count. @public
  */
 export const renderMemoryRecall = (
   result: Pick<KnowledgeRecallResult, "candidates" | "graph"> & { readonly sources?: ReadonlyArray<KnowledgeSourceInfo>; readonly history?: KnowledgeRecallResult["history"] },
@@ -198,7 +206,7 @@ export const renderMemoryRecall = (
   const now = Option.fromNullishOr(options.now)
   const dateOf = (provenance: ReadonlyArray<KnowledgeProvenance>): ReadonlyArray<string> => dated ? Option.toArray(Option.flatMap(knowledgeRecordDate(provenance, sources), utcDate)) : []
   const records = bounded.candidates.map((candidate) => Match.valueTags(candidate, {
-    Memory: ({ memory }) => `${labelled(dated ? [...dateOf(memory.provenance), kindWords[memory.kind], evidenceWords[memory.evidence._tag]] : [], memory.text)}\n${citations(memory.provenance)}`,
+    Memory: ({ memory, support }) => `${labelled(dated ? [...dateOf(memory.provenance), kindWords[memory.kind], evidenceWords[memory.evidence._tag], ...supportOf(support)] : [], memory.text)}\n${citations(memory.provenance)}`,
     Chunk: ({ chunk }) => `${labelled(dateOf([chunk.provenance]), chunk.text)}\n${citations([chunk.provenance])}`,
   }))
   const relationships = bounded.graph.assertions.map((assertion) =>
@@ -255,7 +263,12 @@ const recalledEvidence = Effect.fnUntraced(function* (config: MemoryConfig) {
   const dating = config.recallDates ? yield* datingSources(memory, scope, profile.memories, known).pipe(
     Effect.catch((error) => Effect.logWarning("The memory profile's dates are unavailable; its records are shown undated", error).pipe(Effect.as([]))),
   ) : []
-  const preferred = profile.memories.map((memory) => ({ _tag: "Memory" as const, memory, score: 1 }))
+  // A profile record recall also found keeps the support recall counted for it.
+  const supportFound = (id: KnowledgeMemory["id"]) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === id && candidate.support !== undefined ? [candidate.support] : [])[0]
+  const preferred = profile.memories.map((memory) => {
+    const support = supportFound(memory.id)
+    return { _tag: "Memory" as const, memory, score: 1, ...(support === undefined ? {} : { support }) }
+  })
   const combined = {
     ...result, sources: [...known, ...dating],
     candidates: [...preferred, ...result.candidates.filter((candidate) => candidate._tag !== "Memory" || !preferred.some((item) => item.memory.id === candidate.memory.id))],
@@ -348,7 +361,7 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
     defineSkill({ id: "memory.manage", summary: memoryCapabilityText.manageSkill, tools: ["remember_memory", "forget_memory"], permissions: ["memory.write"] }),
   ] : [],
   promptSections: config.recallSection === "turn" ? [definePromptSection({
-    id: "memory.recalled", version: "3", tier: "turn", order: config.sectionOrder,
+    id: "memory.recalled", version: "4", tier: "turn", order: config.sectionOrder,
     requires: [RunContext, LongTermMemory, Sessions],
     render: () => Effect.gen(function* () {
       const run = yield* RunContext

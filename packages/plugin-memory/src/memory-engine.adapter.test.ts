@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
-import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
-import type { KnowledgeCandidate, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
+import { KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
+import type { KnowledgeCandidate, KnowledgeMemory, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -189,6 +189,47 @@ describe("native memory engine", () => {
     expect(result.candidates.map((candidate) => [candidate._tag === "Memory" ? candidate.memory.text : "", candidate.score])).toEqual([
       [texts.third, 1 / 63 + 1 / 63 + 1 / 62], [texts.first, 2 / 61], [texts.later, 2 / 61], [texts.second, 2 / 62],
     ])
+  }))))
+
+  test("recall weighs a memory by the distinct episodes that state it, gives it its support, and a weight of 0 reads nothing", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeMemoryFixture(["{}"])
+    // Four captured turns: three state the repeated preference, one the single one; each turn is its own episode.
+    const said = ["monday", "tuesday", "friday", "single"] as const
+    yield* Effect.forEach(said, (name, index) => {
+      const enqueue = fixtureEnqueue(name, `Turn ${name}.`)
+      return fixture.memory.capture({ ...enqueue, source: { ...enqueue.source, occurredAt: Date.UTC(2026, 5, index + 1), metadata: { kind: "conversation", episode: `turn:${name}` } } })
+    }, { concurrency: 1 })
+    const ref = (name: string) => ({ id: KnowledgeSourceId.make(name), revision: 1 })
+    const span = (name: string) => ({ source: ref(name), start: 0, end: 4, quote: "Turn" })
+    const memoryOf = (id: string, provenance: ReadonlyArray<string>, mentions: ReadonlyArray<string>): KnowledgeMemory => ({
+      id: KnowledgeMemoryId.make(id), kind: "preference", text: `Prefers ${id}.`, entities: [], evidence: { _tag: "Stated" }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none(),
+      provenance: provenance.map(span), mentions: mentions.map(ref),
+    })
+    // The single preference also cites Monday's turn, for an entity's evidence: that never counts as stating it.
+    const single = memoryOf("single", ["single", "monday"], ["single"])
+    const repeated = memoryOf("repeated", ["monday", "tuesday", "friday"], ["monday", "tuesday", "friday"])
+    const listed: ReadonlyArray<KnowledgeCandidate> = [single, repeated].map((memory) => ({ _tag: "Memory", memory, score: 1 }))
+    const reads = yield* Ref.make(0)
+    const services = Context.add(fixture.services, MemoryStore, {
+      ...fixture.store, search: () => Effect.succeed({ lexical: listed, semantic: listed }),
+      sourceInfo: (scope, refs) => Ref.update(reads, (count) => count + 1).pipe(Effect.andThen(fixture.store.sourceInfo(scope, refs))),
+    })
+    const recallWith = (config: MemoryConfig) => Layer.build(MemoryLive(config).pipe(Layer.provide(Layer.succeedContext(services)))).pipe(
+      Effect.flatMap((context) => Context.get(context, LongTermMemory).recall({ scope: fixtureScope, query: "preference", limit: 8, maxChars: 8_000, graph: false })),
+    )
+    const ranked = (result: KnowledgeRecallResult) => result.candidates.map((candidate) => candidate._tag === "Memory" ? [String(candidate.memory.id), candidate.score, candidate.support] : [])
+    // Plain fusion puts the single preference first (2/61 against 2/62); three episodes weigh 1 + 0.15 ln 3.
+    const weighed = yield* recallWith(fixture.config)
+    expect(ranked(weighed)).toEqual([
+      ["repeated", (2 / 62) * (1 + 0.15 * Math.log(3)), { episodes: 3, sources: 3, firstSeen: Date.UTC(2026, 5, 1), lastSeen: Date.UTC(2026, 5, 3) }],
+      ["single", 2 / 61, { episodes: 1, sources: 1, firstSeen: Date.UTC(2026, 5, 4), lastSeen: Date.UTC(2026, 5, 4) }],
+    ])
+    // One read for the pool's mentions, one for the result's sources.
+    expect(yield* Ref.get(reads)).toBe(2)
+    // A weight of 0 reads nothing more, ranks plainly and gives no support.
+    yield* Ref.set(reads, 0)
+    expect(ranked(yield* recallWith({ ...fixture.config, supportWeight: 0 }))).toEqual([["single", 2 / 61, undefined], ["repeated", 2 / 62, undefined]])
+    expect(yield* Ref.get(reads)).toBe(1)
   }))))
 
   test("explicit graph opt-out performs no graph traversal", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

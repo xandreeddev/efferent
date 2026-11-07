@@ -3,7 +3,7 @@ import { EmbeddingModel, LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, entriesOfEvents, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
-import type { KnowledgeHelperCall } from "@xandreed/core"
+import type { KnowledgeHelperCall, KnowledgeRecallResult } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -377,7 +377,7 @@ describe("memory through the real agent", () => {
     yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
     yield* say(asked, "asking", "What do I drink, where do I live, and how do I get to work?")
     const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body] : [])
-    expect(recalled.map((section) => section.version)).toEqual(["3"])
+    expect(recalled.map((section) => section.version)).toEqual(["4"])
     const text = recalled[0]?.text ?? ""
     expect(text).toContain("Each record is dated by when its source was said or written; a validity range bounds when a relationship held.\n\n<recalled-memory>")
     expect(text).toContain("[2026-03-02 · preference · stated] The user prefers tea.")
@@ -519,4 +519,83 @@ describe("memory through the real agent", () => {
     const journal = yield* sessions.read(session, { kinds: ["memory.section"] })
     expect(journal.some((event) => JSON.stringify(event.data).includes(schedule))).toBe(true)
   }))))
+
+  test("a preference inferred from three episodes says how often it was said and outranks an adjacent one said once", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    // Both preferences answer the question; the one said once is the closer match in both arms.
+    const vectorOf = (text: string) => /cocoa/i.test(text) ? [1, 0] : /green tea/i.test(text) && /favourite/i.test(text) ? [0.9, 0.1] : /favourite/i.test(text) ? [1, 0] : [0, 1]
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(vectorOf), usage: { inputTokens: undefined } }) })
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The helper model: two turns mention green tea; the third infers the favourite from them, citing the earlier memories
+    // it reads among the candidates; the fourth states another favourite once.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly memories: ReadonlyArray<{ readonly id: string; readonly text: string }> } = JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const memory = (key: string, kind: string, said: string, quote: string, evidence: object) => ({ key, kind, text: said, entities: [], spans: [span(text, quote)], evidence, supersedes: [], supersession: "change" })
+      const memories = text.includes("breakfast") ? [memory("tea", "fact", "The user had green tea at breakfast.", "I had green tea at breakfast.", { _tag: "Stated" })]
+        : text.includes("afternoon") ? [memory("tea", "fact", "The user had green tea in the afternoon.", "Green tea in the afternoon again.", { _tag: "Stated" })]
+          : text.includes("as usual") ? [memory("favourite", "preference", "The user's favourite drink is green tea.", "Green tea, as usual.", {
+            _tag: "Inferred", supports: candidates.memories.filter((candidate) => candidate.text.includes("green tea")).map((candidate) => candidate.id),
+          })]
+            : text.includes("Cocoa") ? [memory("favourite", "preference", "The user's favourite drink is cocoa.", "Cocoa is my favourite drink.", { _tag: "Stated" })] : []
+      return { entities: [], assertions: [], memories }
+    }
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    // The answering model: asked for the favourite, it recalls once, then answers; otherwise it acknowledges.
+    const results = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Effect.gen(function* () {
+        const toolResults = request.prompt.content.flatMap((message) => message.role === "tool" ? message.content.flatMap((part) => part.type === "tool-result" ? [JSON.stringify(part.result)] : []) : [])
+        yield* Ref.set(results, toolResults)
+        return (JSON.stringify(request.prompt.content).includes("What is my favourite drink?") && toolResults.length === 0
+          ? [{ type: "tool-call", id: "favourite", name: "recall_memory", params: { query: "What is my favourite drink?" } }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]
+          : [{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]) as never
+      }),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const conversation = (id: string) => ({ owner: "tea-owner", id: ConversationId.make(`00000000-0000-4000-8000-0000000000${id}`) })
+    const [morning, later, evening, asked] = [conversation("e1"), conversation("e2"), conversation("e3"), conversation("e4")]
+    yield* Effect.forEach([morning, later, evening, asked], (session) => sessions.create(session), { concurrency: 1 })
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: "tea-owner", namespace: "default", collection: "memory" }
+    const say = (session: typeof morning, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    // Three episodes say green tea: two turns of one conversation and a turn of another; a fourth says cocoa once.
+    const told = [
+      [morning, "breakfast", "I had green tea at breakfast.", Date.UTC(2026, 2, 2, 9)], [morning, "afternoon", "Green tea in the afternoon again.", Date.UTC(2026, 3, 10, 15)],
+      [later, "usual", "Green tea, as usual.", Date.UTC(2026, 4, 14, 18)], [evening, "cocoa", "Cocoa is my favourite drink.", Date.UTC(2026, 5, 3, 20)],
+    ] as const
+    yield* Effect.forEach(told, ([session, runId, text, at]) => TestClock.setTime(at).pipe(Effect.andThen(say(session, runId, text)), Effect.andThen(memory.process(scope, 10))), { concurrency: 1 })
+    // The inferred favourite mentions its own turn and the two it is inferred from; the stated one, its turn alone.
+    const favourite = (text: string) => store.snapshot(scope).pipe(Effect.map((snapshot) => snapshot.memories.find((record) => record.text === text)))
+    const inferred = yield* favourite("The user's favourite drink is green tea.")
+    const stated = yield* favourite("The user's favourite drink is cocoa.")
+    expect([inferred?.evidence._tag, inferred?.mentions?.length, stated?.evidence._tag, stated?.mentions?.length]).toEqual(["Inferred", 3, "Stated", 1])
+    yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
+    yield* say(asked, "asking", "What is my favourite drink?")
+    // The tool's recall ranks green tea first, with its count; cocoa, said once, follows with none.
+    const tea = "[2026-05-14 · preference · inferred · said 3 times, last 2026-05-14] The user's favourite drink is green tea."
+    const cocoa = "[2026-06-03 · preference · stated] The user's favourite drink is cocoa."
+    const toolResult = (yield* Ref.get(results)).join("")
+    expect([toolResult.indexOf(tea) >= 0, toolResult.indexOf(cocoa) > toolResult.indexOf(tea)]).toEqual([true, true])
+    // The turn's recall section shows the same count on its profile record.
+    const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body.text] : [])
+    expect([recalled.length, recalled[0]?.includes(tea), recalled[0]?.includes(cocoa)]).toEqual([1, true, true])
+    // Without support the same recall ranks cocoa first: the closer match in both arms.
+    const plain = Context.get(yield* Layer.build(MemoryPluginLive({ ...options, supportWeight: 0 }).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const texts = (result: KnowledgeRecallResult) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.kind === "preference" ? [candidate.memory.text] : [])
+    const query = { scope, query: "What is my favourite drink?", limit: 8, maxChars: 8_000, graph: false as const }
+    expect(texts(yield* plain.recall(query))).toEqual(["The user's favourite drink is cocoa.", "The user's favourite drink is green tea."])
+    expect(texts(yield* memory.recall(query))).toEqual(["The user's favourite drink is green tea.", "The user's favourite drink is cocoa."])
+  })).pipe(Effect.provide(TestClock.layer()))))
 })

@@ -80,6 +80,15 @@ off), one hop back along each successor's `replaces`, within
 `recallHistoryShare` of the budget; `renderMemoryRecall` shows them after the
 current records under "Earlier states, no longer current:". A link whose record
 was forgotten, is still current or lies outside the narrowing is skipped.
+Recall weighs a preference, routine, profile or fact by the distinct episodes
+whose own text states it (`KnowledgeMemory.mentions`, `knowledgeMemorySupport`):
+it fuses once, reads the pool's mentioned revisions' info in one `sourceInfo`
+batch, and fuses again with the factor `1 + supportWeight × ln(min(episodes,
+4))` (`memorySupportFactor`), each memory carrying its `support`; the render
+adds `said <n> times, last <date>` from two episodes on, and the section's
+profile records take the support recall found for them. Never count a
+memory's provenance as its mentions: staging appends entity and support
+evidence to it. `supportWeight: 0` reads nothing and ranks plainly.
 
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, window memory, sessions, and tool discovery without adding
@@ -90,19 +99,21 @@ those dependencies to production. See the repository skills and definition of do
 | Text | Source | Pinned by |
 |---|---|---|
 | Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact, `src/memory-capability.adapter.test.ts:16`; exact, `src/memory-capability.adapter.test.ts:23` |
-| Parameters (the recall tool's `history` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:121` |
-| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:46`, `:52` | exact, `src/memory-capability.adapter.test.ts:140`; exact, `src/memory-capability.adapter.test.ts:143`; exact, `src/memory-capability.adapter.test.ts:144` |
-| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:49` | exact, `src/memory-capability.adapter.test.ts:141` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:133`, `:188` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
-| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:128`, `:133`, `:188` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:133`, `:188` | exact, `src/memory-capability.adapter.test.ts:109`; exact, `src/memory.journey.test.ts:458` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:285` | exact, `src/memory-capability.adapter.test.ts:218`; exact, `src/memory-capability.adapter.test.ts:224` |
+| Parameters (the recall tool's `history` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:141` |
+| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:46`, `:52` | exact, `src/memory-capability.adapter.test.ts:160`; exact, `src/memory-capability.adapter.test.ts:163`; exact, `src/memory-capability.adapter.test.ts:164` |
+| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:49` | exact, `src/memory-capability.adapter.test.ts:161` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:128`, `:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
+| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:99` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:129`; exact, `src/memory.journey.test.ts:458` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:298` | exact, `src/memory-capability.adapter.test.ts:238`; exact, `src/memory-capability.adapter.test.ts:244` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 
 ## Layout
 
-- `memory.entity.ts`: configuration, plugin checkpoint and capture admission schemas.
+- `memory.entity.ts`: configuration, plugin checkpoint and capture admission schemas;
+  `memory.entity.functions.ts`: recall's support factor.
 - `memory-engine.adapter.ts`: native memory orchestration and processing worker.
 - `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture and
   its per-turn admission reference.
