@@ -1134,4 +1134,69 @@ describe("memory through the real agent", () => {
     }))
     expect((yield* Ref.get(requests)).at(-1) ?? "").toContain("The user takes their tea with oat milk.")
   }))))
+
+  test("a captured turn with typographic punctuation, extracted with plain quotes, publishes a memory whose provenance is the source's exact text", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => text.includes("museum") ? [0, 1] : [1, 0]), usage: { inputTokens: undefined } }) })
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    // The user's message and the reply use curly apostrophes and an em dash. The extraction model answers as recorded
+    // models did: it writes its quotes with plain apostrophes and hyphens, one character early, and cites the reply too.
+    const userText = "I’m visiting the city museum on Saturday — when does it open?"
+    const replyText = "That isn’t listed yet. The museum’s own page will have it."
+    const plainly = (text: string) => text.replace(/[‘’]/g, "'").replace(/[–—]/g, "-")
+    const span = (text: string, quote: string) => ({ start: Math.max(0, text.indexOf(quote) - 1), end: text.indexOf(quote) - 1 + quote.length, quote: plainly(quote) })
+    const extract = (prompt: string) => {
+      const text = frame("knowledge-source", prompt)
+      return JSON.stringify({
+        entities: [{ key: "museum", name: "City museum", type: "place", aliases: [], existing: null, spans: [span(text, "city museum")] }],
+        memories: [{ key: "visit", kind: "fact", text: "The user is visiting the city museum on Saturday.", entities: ["museum"],
+          spans: [span(text, "I’m visiting the city museum on Saturday — when"), span(text, "That isn’t listed yet.")], evidence: { _tag: "Stated" }, supersedes: [] }],
+        assertions: [],
+      })
+    }
+    const replies = yield* Ref.make<ReadonlyArray<string>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.sync(() => extract(prompt)).pipe(
+      Effect.tap((text) => Ref.update(replies, (all) => [...all, text])),
+      Effect.map((text) => new UtilityCompletion({ text, usage: zeroUsage })),
+    ) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const first = { owner: "typography-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d1") }
+    const second = { owner: "typography-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000d2") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: first.owner, namespace: "default", collection: "memory" }
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
+    yield* agent.turn({ turn: { session: first, runId: RunId.make("visiting"), userMessage: new UserMessage({ text: userText }) }, services }, (turn) => turn.reply(replyText))
+    const jobs = yield* store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })
+    expect(yield* memory.process(scope, 10)).toBe(1)
+    // The extraction quoted plainly, and nothing was dropped.
+    expect((yield* Ref.get(replies)).map((reply) => /[’—]/.test(reply))).toEqual([false])
+    const status = yield* memory.status(scope, jobs[0]!.id)
+    expect(Option.map(status, (value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])])).toEqual(Option.some(["Complete", Option.some([])]))
+    // The published memory cites the source's exact text, typography included, at the source's offsets.
+    const captured = Option.getOrThrow(yield* store.source(scope, jobs[0]!.source))
+    const visit = (yield* store.snapshot(scope)).memories.find((value) => value.text === "The user is visiting the city museum on Saturday.")
+    expect(visit?.provenance.map((evidence) => evidence.quote)).toEqual(["I’m visiting the city museum on Saturday — when", "That isn’t listed yet.", "city museum"])
+    expect(visit?.provenance.every((evidence) => captured.text.slice(evidence.start, evidence.end) === evidence.quote)).toBe(true)
+    // A later conversation recalls the memory.
+    yield* agent.turn({ turn: { session: second, runId: RunId.make("asking"), userMessage: new UserMessage({ text: "When is my museum visit?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    expect((yield* Ref.get(requests)).at(-1) ?? "").toContain("The user is visiting the city museum on Saturday.")
+  }))))
 })

@@ -68,7 +68,10 @@ whose subject or object is the user define the user as an entity like any
 other: a record that names a key the extraction does not define, an undefined
 `user` among them, is dropped with a `RecordDropped` note ("The extraction
 refers to an undefined entity key"). Facts and graph entities retain literal
-source evidence. Entity matching is conservative; ambiguous names can remain
+source evidence. A quote that differs from the turn only in typography (curly
+or straight quotes and apostrophes, a dash for a hyphen, a no-break space) is
+anchored where it matches and stored as the turn's exact text, so a reply
+written with typographic punctuation keeps its memories. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
 One extraction call reads at most `maxExtractionChars` of a source (48,000 by

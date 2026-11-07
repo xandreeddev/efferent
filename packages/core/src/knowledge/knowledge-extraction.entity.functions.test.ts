@@ -130,6 +130,47 @@ describe("native extraction and retrieval contracts", () => {
     expect((yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...plain, memories: [{ ...plain.memories[0]!, spans: [{ start: 0, end: 7 }] }] }).pipe(Effect.result))._tag).toBe("Failure")
   })))
 
+  test("a quote that differs from the source only in typography is anchored at the nearest occurrence and takes the source's exact text, and one that still does not match is dropped", () => Effect.runPromise(Effect.gen(function* () {
+    const memory = (key: string, quote: string, start: number) => ({ ...plain.memories[0]!, key, entities: [], spans: [{ start, end: start + quote.length, quote }] })
+    const staged = (text: string, memories: ReadonlyArray<ReturnType<typeof memory>>) => Schema.decodeUnknownEffect(KnowledgeExtraction)({ entities: [], memories, assertions: [] }).pipe(
+      Effect.orDie, Effect.flatMap((decoded) => stageKnowledgeExtraction({ ...source, text }, empty, decoded, 30)))
+    const cited = (text: string, quote: string, start: number) => staged(text, [memory("note", quote, start)]).pipe(Effect.map((stage) => stage.memories[0]?.provenance[0]))
+    const at = (text: string, exact: string, from = 0) => ({ source: source.ref, start: text.indexOf(exact, from), end: text.indexOf(exact, from) + exact.length, quote: exact })
+    // Each source holds typography its quote writes plainly, or the reverse; the span takes the source's text at the source's offsets.
+    const cases: ReadonlyArray<readonly [string, string, string]> = [
+      // A curly apostrophe in the source, a straight one in the quote.
+      ["Mia doesn’t drink coffee.", "doesn't drink coffee", "doesn’t drink coffee"],
+      // A straight apostrophe and straight double quotes in the source, curly ones in the quote.
+      ["The team's tool is \"Atlas\".", "team’s tool is “Atlas”", "team's tool is \"Atlas\""],
+      // Low and reversed quotes, primes: all fold to the plain ones.
+      ["She said „hello‟ at 5′ past, a ‛note’ by 2″.", "\"hello\" at 5' past, a 'note' by 2\"", "„hello‟ at 5′ past, a ‛note’ by 2″"],
+      // A hyphen, a non-breaking hyphen, a figure dash, an en dash, an em dash and a minus sign, each written as a hyphen.
+      ["Open 9–17 — e‑mail, co‐op, 555‒1234, at −2 degrees.", "9-17 - e-mail, co-op, 555-1234, at -2", "9–17 — e‑mail, co‐op, 555‒1234, at −2"],
+      // A no-break, a narrow no-break and a figure space, each written as a space.
+      ["Room 4, floor 2, desk 7.", "Room 4, floor 2, desk 7", "Room 4, floor 2, desk 7"],
+    ]
+    const anchored = yield* Effect.forEach(cases, ([text, quote]) => cited(text, quote, 1), { concurrency: 1 })
+    expect(anchored).toEqual(cases.map(([text, , exact]) => at(text, exact)))
+    // A repeated quote takes the occurrence nearest the proposed start.
+    const twice = "Lena’s café opened in May. Later that year Lena’s café closed."
+    const second = twice.lastIndexOf("Lena")
+    expect(yield* cited(twice, "Lena's café", 3)).toEqual(at(twice, "Lena’s café"))
+    expect(yield* cited(twice, "Lena's café", second - 4)).toEqual(at(twice, "Lena’s café", second))
+    // Exact matching comes first: an exact occurrence wins over a nearer one that differs only in typography.
+    const both = "I don’t know; you don't know."
+    expect(yield* cited(both, "don't know", 2)).toEqual(at(both, "don't know"))
+    // A quote that differs in its words, not only its typography, is dropped with the span note; the rest is staged.
+    const kept = yield* staged("Mia doesn’t drink coffee.", [memory("coffee", "doesn't drink coffee", 4), memory("tea", "doesn't drink tea", 4)])
+    expect([kept.memories.map((value) => value.provenance[0]?.quote), kept.notes]).toEqual([
+      ["doesn’t drink coffee"],
+      [{ _tag: "RecordDropped", record: "memory", key: "tea", reason: "Invalid", message: "The extraction cites an invalid source span" }],
+    ])
+    // Publication's own check accepts the anchored spans: their quotes are the source's text.
+    const typographic = { ...source, text: cases[0]![0] }
+    const stage = yield* staged(typographic.text, [memory("note", cases[0]![1], 0)])
+    expect(validateKnowledgeStage(stage, empty, [typographic])).toEqual(Option.none())
+  })))
+
   test("candidate context keeps relevant whole records after a large entity catalogue", () => Effect.runPromise(Effect.gen(function* () {
     const stage = yield* stageKnowledgeExtraction(source, empty, yield* extraction, 30)
     const target = { ...stage.memories[0]!, text: "Atlas deployment uses the blue lane." }
@@ -254,6 +295,30 @@ describe("bounded extraction windows", () => {
     expect(merged.assertions.map((assertion) => assertion.subject)).toEqual(["atlas", ...windows.slice(1).map(() => "atlas~2")])
     expect(merged.entities.flatMap((entity) => entity.spans).every((span) => longText.slice(span.start, span.end) === span.quote)).toBe(true)
     expect(merged.assertions.flatMap((assertion) => assertion.spans).map((span) => span.start)).toEqual(windows.map((window) => window.start + longText.slice(window.start, window.end).indexOf("Atlas")))
+  })))
+
+  test("a window's quote that differs from its part only in typography is anchored within that window with the source's exact text", () => Effect.runPromise(Effect.gen(function* () {
+    // Each paragraph says the same thing with a curly apostrophe and an en dash; the extractor writes both plainly, at offset 0 of its part.
+    const said = "Atlas’s site moved north – twice."
+    const text = [`${filler("Planning", 60)} ${said}`, `${filler("Logistics", 55)} ${said}`].join("\n\n")
+    const typographic: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("typographic"), revision: 1 }, text }
+    const windows = knowledgeExtractionWindows(text, 1_000)
+    expect(windows).toHaveLength(2)
+    const quote = "Atlas's site moved north - twice."
+    const merged = yield* extractKnowledge({
+      source: typographic, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: () => Schema.decodeUnknownEffect(KnowledgeExtraction)({
+        entities: [{ key: "atlas", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Atlas" }] }],
+        memories: [],
+        assertions: [{ key: "moved", subject: "atlas", predicate: "moved", object: { _tag: "Value", value: "north" }, text: "Atlas moved north.", spans: [{ start: 0, end: quote.length, quote }], validFrom: null, validTo: null, supersedes: [] }],
+      }).pipe(Effect.orDie),
+    })
+    const starts = windows.map((window) => window.start + text.slice(window.start, window.end).indexOf(said))
+    expect(merged.assertions.flatMap((assertion) => assertion.spans)).toEqual(starts.map((start) => ({ start, end: start + said.length, quote: said })))
+    const stage = yield* stageKnowledgeExtraction(typographic, empty, merged, 30)
+    expect(stage.notes ?? []).toEqual([])
+    expect(stage.assertions.map((assertion) => assertion.provenance[0]?.quote)).toEqual([said, said])
+    expect(validateKnowledgeStage(stage, empty, [typographic])).toEqual(Option.none())
   })))
 
   test("a window's record that names an entity key no part defines is dropped at staging, and a repeated key refuses the source", () => Effect.runPromise(Effect.gen(function* () {

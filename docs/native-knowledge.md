@@ -275,7 +275,9 @@ against the updated graph.
 Staging (`stageKnowledgeExtraction`) checks each extracted record on its own.
 A record that fails a check of its own is left out and the rest of the
 extraction is staged and published: a span that is not the exact source text
-even after its quote repaired the offsets, an `existing` entity identity that is
+even after its quote repaired the offsets (a quote that differs from the source
+only in its quotes, apostrophes, dashes or no-break spaces is repaired to the
+source's text), an `existing` entity identity that is
 not among the supplied candidates, a reference to an entity key the extraction
 does not define, a `supersedes` entry that names an unknown or inactive record,
 records superseded without a `supersession`, an inferred memory's unknown supporting memory, an inferred routine with fewer
@@ -382,7 +384,14 @@ Entity identities are resolved conservatively from supplied candidates. Every
 entity and assertion retains exact source evidence. Ambiguous identities remain
 distinct. The extractor cannot invent source identities, retire another scope's
 records, or publish invalid intervals. Every extracted span includes a literal quote. A quote found in the source repairs offset
-errors (its occurrence nearest the proposed start); a record with an invented quote is left out. A review pass checks extraction
+errors (its occurrence nearest the proposed start). A quote found nowhere exactly is compared again with
+typography folded on both sides: single quotes, apostrophes and the prime (`‘ ’ ‚ ‛ ′`) read as `'`,
+double quotes and the double prime (`“ ” „ ‟ ″`) as `"`, hyphens, dashes and the minus sign
+(`‐ ‑ ‒ – — −`) as `-`, and the no-break, narrow no-break and figure spaces as a space. Each of these is
+one UTF-16 unit read as one, so offsets stay the source's: a quote that differs from the source only in
+this typography moves to the nearest such occurrence and takes the source's exact text there as its
+quote, which staging's checks and the stored provenance then carry. An exact occurrence wins over a
+typographic one. A record with an invented quote is left out. A review pass checks extraction
 against the source before embedding and publication. Its prompt
 (`knowledgeReviewPrompt`) shows the proposed extraction in the output
 schema's wire form, the form the extraction call answered in: an absent
@@ -400,7 +409,7 @@ boundaries (`knowledgeExtractionWindows`); each window is extracted, and
 reviewed, in its own helper calls, one window after another, and its prompt
 frames that part alone and says which part it is. The engine merges the
 windows' results before staging: spans are checked and repaired within their
-window, then moved to exact offsets into the whole source; an entity named in
+window, typography included, then moved to exact offsets into the whole source; an entity named in
 several windows becomes one entity when its key and existing identity agree,
 and any other repeated key is renamed (`key~2`). A source that fits one window
 makes exactly the calls of a whole-source extraction. `extractKnowledge` runs

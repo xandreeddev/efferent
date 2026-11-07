@@ -531,6 +531,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`KNOWLEDGE_EXTRACTION_VERSION`) and the pinned extraction, document, part
   and review prompts record the change.
 
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: an
+  extracted span whose quote differs from the source only in typography is
+  anchored instead of dropped. Extraction models commonly quote a curly
+  apostrophe or quote as a straight one (or the reverse), a dash as a hyphen
+  or a no-break space as a space; staging found no such quote in the source
+  and dropped the record with a `RecordDropped` note ("The extraction cites
+  an invalid source span"), or failed the job when it was the only record.
+  `stageKnowledgeExtraction`, and `extractKnowledge` within each window of a
+  split source, still look for the exact quote first; when it is nowhere in
+  the text, they compare again with `‘ ’ ‚ ‛ ′` read as `'`, `“ ” „ ‟ ″` as
+  `"`, `‐ ‑ ‒ – — −` as `-`, and the no-break, narrow no-break and figure
+  spaces as a space. Each is one UTF-16 unit read as one, so offsets stay the
+  source's. The occurrence nearest the proposed offset wins, and the span's
+  quote becomes the source's exact text there, which staging's checks and the
+  stored provenance carry. A quote that matches neither way is still dropped
+  with its note. Prompts and the output schema are unchanged, so
+  `KNOWLEDGE_EXTRACTION_VERSION` stays 8; a job that failed with `Invalid`
+  for this reason stages when retried.
+
 ## 0.18.0 — 2026-11-06
 
 ### Migration
