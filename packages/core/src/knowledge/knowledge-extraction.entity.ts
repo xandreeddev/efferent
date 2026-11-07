@@ -4,6 +4,10 @@ import { KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeMe
 const Key = Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(160))
 const Offset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Positive = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+/** Why a record replaces those it supersedes, asked for only when it supersedes some; the output schema says so to the model. */
+const Supersession = Schema.optionalKey(Schema.NullOr(KnowledgeSupersession).annotate({
+  description: "Why this record replaces the records in supersedes: change when the situation changed, correction when the earlier record was wrong. Required when supersedes is non-empty; null when supersedes is empty.",
+}))
 
 /** Source offsets proposed by extraction; publication verifies the exact quote. @public */
 export const KnowledgeExtractionSpan = Schema.Struct({ start: Offset, end: Offset, quote: Schema.String.check(Schema.isMinLength(1)) })
@@ -14,7 +18,10 @@ export const KnowledgeExtractedEntity = Schema.Struct({
   spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
 })
 /**
- * A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`.
+ * A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`
+ * (`change` or `correction`). It is required only when `supersedes` is non-empty: null or absent
+ * otherwise, and read only then (a value given beside an empty `supersedes` is ignored). Staging
+ * drops a memory that supersedes records without it.
  * `restates` names active candidate memories the source states again without changing them (none
  * when absent): staging adds the source's spans to each as evidence instead of a new record.
  * `eventAt` is the time of the dated event the memory concerns, with `end` only for an event that
@@ -30,18 +37,25 @@ export const KnowledgeExtractedMemory = Schema.Struct({
     Schema.TaggedStruct("Inferred", { supports: Schema.Array(KnowledgeMemoryId).check(Schema.isNonEmpty()) }),
   ]),
   supersedes: Schema.Array(KnowledgeMemoryId),
-  supersession: KnowledgeSupersession,
+  supersession: Supersession,
   restates: Schema.optionalKey(Schema.Array(KnowledgeMemoryId)),
   eventAt: Schema.optionalKey(Schema.NullOr(Schema.Struct({ start: Offset, end: Schema.optionalKey(Schema.NullOr(Offset)) }))),
 })
-/** @public */
+/**
+ * A relation proposed by extraction; `supersession` says why it replaces every relation it
+ * `supersedes`: `change` (the world changed; each prior relation ends in a history copy) or
+ * `correction` (the prior claim was wrong). It is required only when `supersedes` is non-empty:
+ * null or absent otherwise, and read only then (a value given beside an empty `supersedes` is
+ * ignored). Staging drops a relation that supersedes records without it.
+ * @public
+ */
 export const KnowledgeExtractedAssertion = Schema.Struct({
   key: Key, subject: Key, predicate: Key,
   object: Schema.Union([Schema.TaggedStruct("Entity", { key: Key }), Schema.TaggedStruct("Value", { value: Schema.Json })]),
   text: Schema.Trimmed.check(Schema.isNonEmpty()), spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
   validFrom: Schema.OptionFromNullOr(Offset), validTo: Schema.OptionFromNullOr(Offset),
   supersedes: Schema.Array(KnowledgeAssertionId),
-  supersession: KnowledgeSupersession,
+  supersession: Supersession,
 })
 /** Provider-neutral extraction protocol shared by memory and opt-in document graphs. @public */
 export const KnowledgeExtraction = Schema.Struct({

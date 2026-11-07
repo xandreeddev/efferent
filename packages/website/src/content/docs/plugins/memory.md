@@ -58,7 +58,11 @@ Sources pass structured extraction and, by default, a review pass before
 embedding and atomic publication. The review prompt shows the proposed
 extraction in the output schema's wire form, an absent identity or validity
 date as `null`, so a reviewer that keeps the proposal unchanged returns a
-valid extraction and the job publishes. Facts and graph entities retain literal
+valid extraction and the job publishes. A memory or relation says why it
+replaces others (`supersession`: `change` or `correction`) only when it
+supersedes some; one that supersedes nothing may leave it `null` or out, and
+one that supersedes records without it is dropped with a `RecordDropped`
+note. Facts and graph entities retain literal
 source evidence. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
@@ -225,7 +229,7 @@ or set `worker: false` and schedule bounded `process(scope, limit)` calls.
 Model or embedding failures publish no partial knowledge; valid staged
 extraction can survive retry. One extracted record that fails a check of its
 own (an invalid span, an undefined entity key, an unknown record it
-supersedes, …) is left out with a `RecordDropped` note on the job's stage
+supersedes, records it supersedes without a `supersession`, …) is left out with a `RecordDropped` note on the job's stage
 (`status`), and the rest of the turn's knowledge publishes; the job fails with
 `Invalid` only when no memory or relation survives (entities alone do not
 count) or the extraction repeats an entity key. A change stated without a date ("I moved to Oslo") is dated at the
@@ -235,7 +239,8 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:6", { model, version, dimensions })`, version 6
+(`knowledgeEngineId("memory:7", { model, version, dimensions })`, version 7
+since a `supersession` is asked for only from a record that supersedes, version 6
 since the review's wire-form proposal, version 5 since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
 version 2 since dropped records and observed dates). The worker and `process` discover
 and claim only jobs of that id, so engines configured with different embedding
@@ -254,7 +259,10 @@ those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
 reasons a configuration change can fix). A job whose review failed under
 version 5 by copying that version's proposal back (`Invalid`, "The
 extraction model returned an invalid knowledge object") is one: `retry`
-requeues it under the version 6 id through `KnowledgeIndex.requeue`.
+requeues it under the current id through `KnowledgeIndex.requeue`. So is a job
+that failed under version 6 with the same message because a record that
+supersedes nothing gave a `null` or no `supersession`, which version 7
+accepts.
 
 `forget` tombstones a source and removes its text and dependent learned
 knowledge, including historical graph evidence. Backfill cannot resurrect that
