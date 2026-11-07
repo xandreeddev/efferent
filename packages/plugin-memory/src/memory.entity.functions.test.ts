@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { KnowledgeChunkId, KnowledgeMemoryId, KnowledgeSourceId, fuseKnowledgeCandidates } from "@xandreed/core"
 import type { KnowledgeCandidate, KnowledgeMemory, KnowledgeSupport } from "@xandreed/core"
-import { memorySupportFactor } from "./memory.entity.functions.js"
+import { memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
 import { memoryDefaults } from "./memory.entity.js"
 
 const ref = { id: KnowledgeSourceId.make("source"), revision: 1 }
@@ -46,5 +46,34 @@ describe("recall's support factor", () => {
     expect(order(fuseKnowledgeCandidates({ lexical: [memoryOf("a-once", "preference", 1), repeated], semantic: [memoryOf("a-once", "preference", 1), repeated] }, 10, 1_000, factor))).toEqual(["repeated", "a-once"])
     // Without support the ranking is plain fusion.
     expect(order(fuseKnowledgeCandidates({ lexical: list, semantic: list }, 100, 100_000, factor)).slice(0, 1)).toEqual(order(fuseKnowledgeCandidates({ lexical: list, semantic: list }, 100, 100_000)).slice(0, 1))
+  })
+})
+
+describe("recall's event factor", () => {
+  const marked = (candidate: KnowledgeCandidate, past: boolean): KnowledgeCandidate => candidate._tag === "Memory" ? { ...candidate, past } : candidate
+  const past = (candidate: KnowledgeCandidate) => marked(candidate, true)
+  test("is pastEventWeight for a memory marked past, and 1 for every other candidate", () => {
+    expect(memoryDefaults.pastEventWeight).toBe(0.5)
+    expect(memoryPastFactor(past(memoryOf("exhibition", "preference")), 0.5)).toBe(0.5)
+    expect(memoryPastFactor(memoryOf("pottery", "preference"), 0.5)).toBe(1)
+    expect(memoryPastFactor(marked(memoryOf("unmarked", "goal"), false), 0.5)).toBe(1)
+    expect(memoryPastFactor(past(memoryOf("exhibition", "preference")), 1)).toBe(1)
+  })
+
+  test("demotes a past record below a current one of similar relevance without removing it, and composes with support", () => {
+    const order = (fused: ReadonlyArray<KnowledgeCandidate>) => fused.map((candidate) => candidate._tag === "Memory" ? String(candidate.memory.id) : "")
+    const exhibition = past(memoryOf("exhibition", "preference", 1))
+    const pottery = memoryOf("pottery", "preference", 1)
+    const lists = { lexical: [exhibition, pottery], semantic: [exhibition, pottery] }
+    const factor = (weight: number) => (candidate: KnowledgeCandidate) => memorySupportFactor(candidate, memoryDefaults.supportWeight) * memoryPastFactor(candidate, weight)
+    // Plain fusion ranks the past record first; demoted, it follows the current one and is still returned.
+    expect(order(fuseKnowledgeCandidates(lists, 10, 1_000))).toEqual(["exhibition", "pottery"])
+    expect(order(fuseKnowledgeCandidates(lists, 10, 1_000, factor(0.5)))).toEqual(["pottery", "exhibition"])
+    expect(order(fuseKnowledgeCandidates(lists, 10, 1_000, factor(1)))).toEqual(["exhibition", "pottery"])
+    // A weight of 0 ranks it last, never drops it.
+    expect(order(fuseKnowledgeCandidates(lists, 10, 1_000, factor(0)))).toEqual(["pottery", "exhibition"])
+    // Halved, a past record said in four episodes (at most x1.21) still follows a current one ranked just below it.
+    const repeated = past(memoryOf("exhibition", "preference", 4))
+    expect(order(fuseKnowledgeCandidates({ lexical: [repeated, pottery], semantic: [repeated, pottery] }, 10, 1_000, factor(0.5)))).toEqual(["pottery", "exhibition"])
   })
 })

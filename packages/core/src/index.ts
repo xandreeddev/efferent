@@ -504,14 +504,14 @@ export {
   KnowledgeSourceId, KnowledgeJobId, KnowledgeMemoryId, KnowledgeChunkId,
   KnowledgeEntityId, KnowledgeAssertionId, KnowledgeLeaseToken, KnowledgeScope,
   KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
-  KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeMemory,
+  KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeEventTime, KnowledgeMemory,
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeCorroboration, KnowledgeStage,
   KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeJobCursor, KnowledgeFailedQuery, KnowledgeFailedPage, KnowledgeRequeue,
   KnowledgeLease, KnowledgePerspective, KnowledgeSupport, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
-  KnowledgeSupersession, KnowledgeMemoryReplacement, KnowledgeAssertionReplacement, KnowledgeRecallHistoryMode, KnowledgeRecallHistory,
+  KnowledgeSupersession, KnowledgeMemoryReplacement, KnowledgeAssertionReplacement, KnowledgeRecallHistoryMode, KnowledgeRecallHistory, KnowledgeRecallTemporalMode,
   KnowledgeHelperPurpose, KnowledgeHelperJob, KnowledgeHelperCall,
   KnowledgeSourceFilter, KnowledgeMetadataValue, KnowledgeMetadataFilter, KnowledgeReach,
 } from "./knowledge/knowledge.entity.js"
@@ -520,7 +520,7 @@ export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey, knowledgeAssertionKey,
-  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, traverseKnowledgeGraph,
+  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast, traverseKnowledgeGraph,
   validateKnowledgeStage, corroborateKnowledgeMemory, stripKnowledgeRevisions, citesKnowledgeSources, narrowKnowledgeGraph, narrowKnowledgeMemory, isRetryableKnowledgeFailure,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"

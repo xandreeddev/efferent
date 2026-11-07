@@ -15,10 +15,13 @@ const restating = makeMemoryFixture((prompt) => {
   const extracted = fixtureExtraction(text)
   return JSON.stringify(earlier === undefined ? extracted : { ...extracted, memories: extracted.memories.map((memory) => ({ ...memory, restates: [earlier] })) })
 })
+/** The kit's source, its preference tied to an event long past (the source is dated at epoch 1). */
+const pastEvent = makeMemoryFixture([JSON.stringify({ ...grounded, memories: grounded.memories.map((memory) => ({ ...memory, eventAt: { start: 5, end: null } })) })])
 const checks = longTermMemoryConformance({
   open: Effect.map(open, ({ memory }) => ({ memory, scope: fixtureScope })),
   droppingExtraction: Effect.map(dropping, ({ memory }) => ({ memory, scope: fixtureScope })),
   restatingExtraction: Effect.map(restating, ({ memory }) => ({ memory, scope: fixtureScope })),
+  pastEventExtraction: Effect.map(pastEvent, ({ memory }) => ({ memory, scope: fixtureScope })),
 })
 
 describe("native memory facade conformance", () => {
@@ -34,5 +37,15 @@ describe("native memory facade conformance", () => {
     const plain = { open: Effect.map(open, ({ memory }) => ({ memory, scope: fixtureScope })) }
     const results = await Effect.runPromise(Effect.forEach([...restated(plain), ...restated({ ...plain, restatingExtraction: plain.open })], (check) => Effect.result(check.run), { concurrency: 1 }))
     expect(results.map(Result.isSuccess)).toEqual([true, false])
+  })
+  test("the past-event check fails when the profile keeps a past preference, or recall drops or does not mark it", async () => {
+    const past = (memory: Parameters<typeof longTermMemoryConformance>[0]["open"]) => longTermMemoryConformance({ open: Effect.map(open, ({ memory }) => ({ memory, scope: fixtureScope })), pastEventExtraction: memory })
+      .filter((check) => check.name === "long_term_memory.past-event")
+    const keeping = Effect.map(pastEvent, ({ memory }) => ({ memory: { ...memory, profile: (scope: typeof fixtureScope) => memory.recall({ scope, query: "tea", limit: 10, maxChars: 1000, graph: false }).pipe(
+      Effect.map((result) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory] : []))) }, scope: fixtureScope }))
+    const unmarked = Effect.map(pastEvent, ({ memory }) => ({ memory: { ...memory, recall: (input: Parameters<typeof memory.recall>[0]) => memory.recall(input).pipe(
+      Effect.map((result) => ({ ...result, candidates: result.candidates.map((candidate) => candidate._tag === "Memory" ? { ...candidate, past: false } : candidate) }))) }, scope: fixtureScope }))
+    const results = await Effect.runPromise(Effect.forEach([...past(keeping), ...past(unmarked)], (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect(results.map(Result.isFailure)).toEqual([true, true])
   })
 })

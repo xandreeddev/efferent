@@ -6,7 +6,7 @@ import {
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction,
   isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph, knowledgeNarrowingAdmits, narrowKnowledgeGraphBy,
-  narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport,
+  narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
@@ -14,7 +14,7 @@ import type {
   KnowledgeAssertion, KnowledgeCandidate, KnowledgeCandidates, KnowledgeMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession, KnowledgeSupport,
 } from "@xandreed/core"
 import type { MemoryConfig } from "./memory.entity.js"
-import { memorySupportFactor } from "./memory.entity.functions.js"
+import { memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
 
 const failure = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const decodeExtraction = (text: string) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(text).pipe(
@@ -190,22 +190,33 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     ]
   })
   /**
-   * Fuse the searches' lists, weighing each memory by how often it was stated (`supportWeight`): the plain fused pool's
-   * memories have their mentioned revisions' info read in one batch, the lists are fused again with each memory's
-   * support factor, and every memory of the result carries its `support`. A weight of 0 reads nothing and fuses plainly.
+   * Fuse the searches' lists, weighing each memory by how often it was stated (`supportWeight`) and, under
+   * `temporal: "current"`, demoting one whose dated event had passed at `validAt` (`pastEventWeight`): the plain fused
+   * pool's memories have their mentioned revisions' info read in one batch, the lists are fused again with each
+   * memory's support factor times its event factor, and every memory of the result carries its `support` and, when
+   * its event has passed, `past`. A support weight of 0 reads nothing; with no factor to apply, the pool is the result.
    */
-  const fuseBySupport = Effect.fnUntraced(function* (scope: KnowledgeScope, lists: ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number) {
+  const fuseRanked = Effect.fnUntraced(function* (scope: KnowledgeScope, lists: ReadonlyArray<KnowledgeCandidates>, limit: number, maxChars: number, validAt: number, demote: boolean) {
     const pool = fuseKnowledgeCandidates(lists, limit, maxChars)
     const memories = pool.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory] : [])
-    const mentioned = memories.flatMap(knowledgeMemoryMentions)
-    if (config.supportWeight === 0 || mentioned.length === 0) return pool
-    const infos = yield* store.sourceInfo(scope, mentioned)
+    const mentioned = config.supportWeight === 0 ? [] : memories.flatMap(knowledgeMemoryMentions)
+    const infos = mentioned.length === 0 ? [] : yield* store.sourceInfo(scope, mentioned)
     const supports = new Map(memories.flatMap((memory) => Option.toArray(knowledgeMemorySupport(memory, infos)).map((support): readonly [string, KnowledgeSupport] => [memory.id, support])))
-    const supported = (candidate: KnowledgeCandidate): KnowledgeCandidate => Match.valueTags(candidate, {
-      Memory: (memory) => Option.match(Option.fromNullishOr(supports.get(memory.memory.id)), { onNone: () => memory, onSome: (support) => ({ ...memory, support }) }),
+    // A past record is marked whatever the mode; only `current` demotes it.
+    const marked = (candidate: KnowledgeCandidate): KnowledgeCandidate => Match.valueTags(candidate, {
+      Memory: (memory) => ({
+        ...memory,
+        ...Option.match(Option.fromNullishOr(supports.get(memory.memory.id)), { onNone: () => ({}), onSome: (support) => ({ support }) }),
+        ...(knowledgeMemoryIsPast(memory.memory, validAt) ? { past: true } : {}),
+      }),
       Chunk: (chunk) => chunk,
     })
-    return fuseKnowledgeCandidates(lists, limit, maxChars, (candidate) => memorySupportFactor(supported(candidate), config.supportWeight)).map(supported)
+    const demoting = demote && config.pastEventWeight !== 1 && memories.some((memory) => knowledgeMemoryIsPast(memory, validAt))
+    if (supports.size === 0 && !demoting) return pool.map(marked)
+    return fuseKnowledgeCandidates(lists, limit, maxChars, (candidate) => {
+      const weighed = marked(candidate)
+      return memorySupportFactor(weighed, config.supportWeight) * (demote ? memoryPastFactor(weighed, config.pastEventWeight) : 1)
+    }).map(marked)
   })
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
@@ -232,7 +243,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       return yield* store.search({ scope: input.scope, query, vector: embedded, limit: candidateLimit, knownAt: Option.some(perspective.knownAt), ...(sources === undefined ? {} : { sources }), ...(metadata === undefined ? {} : { metadata }) })
     }), { concurrency: 2 })
     // Each query's lexical and semantic lists are ranked on their own: a memory a planned query finds first ranks as one the question finds first.
-    const fused = yield* fuseBySupport(input.scope, results, candidateLimit, input.maxChars * 4)
+    // A record is past when its event ended before the world time the recall reads (now, unless the graph perspective or the plan names one).
+    const fused = yield* fuseRanked(input.scope, results, candidateLimit, input.maxChars * 4, perspective.validAt, (input.temporal ?? "current") === "current")
     const stored = yield* store.snapshot(input.scope)
     // A source or metadata filter narrows the graph before seeding and traverses it here, as the store would; a metadata
     // filter reads the info of the revisions the graph cites.
@@ -277,7 +289,12 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     // A host's retry starts the job over under this engine's id: its attempts reset, a job failed under an older id included.
     retry: Effect.fn("memory.retry")((scope, id) => inScope(scope).pipe(Effect.andThen(store.requeue({ scope, jobId: id, engine })), Effect.tap(() => Queue.offer(wake, undefined)))),
     source: store.source,
-    profile: Effect.fn("memory.profile")((scope) => store.snapshot(scope).pipe(Effect.map((snapshot) => snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && (memory.kind === "preference" || memory.kind === "profile"))))),
+    // A preference whose dated event has passed leaves the profile; recall still returns it, labelled past.
+    profile: Effect.fn("memory.profile")(function* (scope) {
+      const snapshot = yield* store.snapshot(scope)
+      const now = yield* Clock.currentTimeMillis
+      return snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && (memory.kind === "preference" || memory.kind === "profile") && !knowledgeMemoryIsPast(memory, now))
+    }),
   })
 
   const drain = Effect.gen(function* () {

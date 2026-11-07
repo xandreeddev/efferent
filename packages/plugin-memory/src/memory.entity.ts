@@ -88,6 +88,14 @@ export const MemoryConfig = Schema.Struct({
    * `false` turns the comparison off: only named restatements merge.
    */
   restatementSimilarity: Schema.Union([Schema.Literal(false), Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))]),
+  /**
+   * How far recall demotes a goal, decision, action or preference whose dated event had passed at
+   * the recall's valid time (`knowledgeMemoryIsPast`), from 0 to 1: under `temporal: "current"`, the
+   * default, its fused score is multiplied by this after the support factor, so a current record of
+   * similar relevance ranks above it. The record is still returned and labelled past; the profile
+   * leaves it out whatever the weight. 1 turns the demotion off.
+   */
+  pastEventWeight: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -96,7 +104,7 @@ export const memoryDefaults: MemoryConfig = {
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
-  recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15, restatementSimilarity: 0.92,
+  recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15, restatementSimilarity: 0.92, pastEventWeight: 0.5,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

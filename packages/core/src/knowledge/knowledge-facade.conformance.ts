@@ -25,6 +25,12 @@ export interface LongTermMemorySubject {
    * sources publish evidence recall cites.
    */
   readonly restatingExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
+  /**
+   * A fresh service like `open` whose extraction of the kit's source ("I prefer tea.") gives its
+   * preference a dated event that has passed (`eventAt`, before the current time). Without it,
+   * `past-event` runs on `open` and shows only that a memory without an event is never marked past.
+   */
+  readonly pastEventExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
 }
 type KnowledgeFixture = { readonly knowledge: Context.Service.Shape<typeof Knowledge>; readonly scope: KnowledgeScope }
 /** Fresh document service, with workers disabled and valid scripted extraction if enabled. @public */
@@ -98,6 +104,25 @@ const restatedSource = (open: Effect.Effect<Fixture, unknown, Scope.Scope>, rest
     yield* expect(id, memories.some((memory) => mentions(memory).includes(first.source.id) && mentions(memory).includes(again.ref.id)) &&
       !memories.some((memory) => memory.provenance.every((span) => span.source.id === again.ref.id)),
     "the restating source wrote a memory of its own instead of adding its evidence and mention to the memory it restated")
+  })))
+}
+
+/** A preference whose dated event has passed leaves the profile, and recall still returns it, marked past. */
+const pastEvent = (open: Effect.Effect<Fixture, unknown, Scope.Scope>, dated: Effect.Effect<Fixture, unknown, Scope.Scope> | undefined): ConformanceCheck => {
+  const id = "long_term_memory.past-event"
+  return check(id, id, () => Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* (dated ?? open)
+    const job = yield* seed(fixture, id)
+    const recalled = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000, graph: false })
+    const memories = recalled.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.provenance.some((span) => span.source.id === job.source.id) ? [candidate] : [])
+    const profile = fixture.facade.profile === undefined ? [] : yield* fixture.facade.profile(fixture.scope)
+    if (dated === undefined) {
+      yield* expect(id, memories.length > 0 && memories.every((candidate) => candidate.past !== true), "recall returned no memory of the source, or marked one without a dated event past")
+      return
+    }
+    const past = memories.filter((candidate) => candidate.past === true)
+    yield* expect(id, past.length > 0 && past.every((candidate) => candidate.memory.eventAt !== undefined), "recall left out a memory whose dated event has passed, or did not mark it past")
+    yield* expect(id, !profile.some((memory) => past.some((candidate) => candidate.memory.id === memory.id)), "the profile kept a preference whose dated event has passed")
   })))
 }
 
@@ -183,12 +208,14 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
 const memoryFacade = ({ memory, scope }: MemoryFixture): Fixture => ({ scope, facade: { ...memory, accept: memory.capture } })
 /**
  * Async processing, isolation, source retention, deletion, cited source info and retrieval contracts, a dropped record
- * that does not stop the rest, and a restating source that adds evidence to the memory it restates; no model-quality assertions.
+ * that does not stop the rest, a restating source that adds evidence to the memory it restates, and a preference whose dated
+ * event has passed that recall returns marked past and the profile leaves out; no model-quality assertions.
  * @public
  */
 export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => [
   ...facadeConformance("long_term_memory", Effect.map(subject.open, memoryFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, memoryFacade)),
   restatedSource(Effect.map(subject.open, memoryFacade), subject.restatingExtraction === undefined ? undefined : Effect.map(subject.restatingExtraction, memoryFacade)),
+  pastEvent(Effect.map(subject.open, memoryFacade), subject.pastEventExtraction === undefined ? undefined : Effect.map(subject.pastEventExtraction, memoryFacade)),
 ]
 const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
   const id = "knowledge_facade.failed-extraction"

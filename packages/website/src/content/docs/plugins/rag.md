@@ -79,8 +79,8 @@ Use `status`, `retry`, and `process` for host-controlled operation. With
 durable jobs after restart and renew leases during processing.
 
 Jobs are recorded under an engine id derived from the extraction version and
-the embedding options (`knowledgeEngineId("rag:4", { model, version, dimensions })`,
-for example `rag:4/host-embedding/1/768`; version 4 since memory restatements,
+the embedding options (`knowledgeEngineId("rag:5", { model, version, dimensions })`,
+for example `rag:5/host-embedding/1/768`; version 5 since memory event times, version 4 since memory restatements,
 version 3 since memory supersessions and successor links, version 2 since dropped records and observed dates, and a
 job queued under an earlier version waits for a worker of that version).
 `retrieve` returns current evidence only: its `history` is always empty. The worker and `process` discover and claim only

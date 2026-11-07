@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
+import { TestClock } from "effect/testing"
 import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
 import { KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
 import type { KnowledgeCandidate, KnowledgeMemory, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
@@ -257,6 +258,47 @@ describe("native memory engine", () => {
     expect(ranked(yield* recallWith({ ...fixture.config, supportWeight: 0 }))).toEqual([["single", 2 / 61, undefined], ["repeated", 2 / 62, undefined]])
     expect(yield* Ref.get(reads)).toBe(1)
   }))))
+
+  test("recall demotes and marks a goal or preference whose dated event has passed, never a fact; all ranks it plainly, and the profile leaves it out", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const opening = Date.UTC(2026, 2, 20, 10), afterwards = Date.UTC(2026, 4, 1, 12)
+    // The extraction ties the preference to the exhibition's date, and states a second, current one.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const extracted = fixtureExtraction(text)
+      return JSON.stringify({ ...extracted, assertions: [], memories: extracted.memories.map((memory) => ({ ...memory, ...(text.includes("exhibition") ? { eventAt: { start: opening, end: null } } : {}) })) })
+    }
+    const fixture = yield* makeMemoryFixture(extract)
+    yield* TestClock.setTime(Date.UTC(2026, 2, 2, 9))
+    yield* fixture.memory.capture(fixtureEnqueue("exhibition", "I want to see the glass exhibition."))
+    yield* fixture.memory.capture(fixtureEnqueue("pottery", "I want to take pottery classes."))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(2)
+    const stored = (yield* fixture.store.snapshot(fixtureScope)).memories
+    const exhibition = stored.find((memory) => memory.text.includes("exhibition"))!
+    const pottery = stored.find((memory) => memory.text.includes("pottery"))!
+    expect([exhibition.eventAt, "eventAt" in pottery]).toEqual([{ start: opening }, false])
+    // Both arms list the exhibition first; a fact with the same past event is listed last.
+    const fact: KnowledgeMemory = { ...exhibition, id: KnowledgeMemoryId.make("fact"), kind: "fact", text: "The exhibition opened in March." }
+    const listed: ReadonlyArray<KnowledgeCandidate> = [exhibition, pottery, fact].map((memory) => ({ _tag: "Memory", memory, score: 1 }))
+    const services = Context.add(fixture.services, MemoryStore, { ...fixture.store, search: () => Effect.succeed({ lexical: listed, semantic: listed }) })
+    const engine = (config: MemoryConfig) => Layer.build(MemoryLive(config).pipe(Layer.provide(Layer.succeedContext(services)))).pipe(Effect.map((context) => Context.get(context, LongTermMemory)))
+    const query: KnowledgeRecall = { scope: fixtureScope, query: "interests", limit: 8, maxChars: 8_000, graph: false }
+    const ranked = (result: KnowledgeRecallResult) => result.candidates.map((candidate) => candidate._tag === "Memory" ? [candidate.memory.kind === "fact" ? "fact" : candidate.memory.text.includes("exhibition") ? "exhibition" : "pottery", candidate.score, candidate.past ?? false] : [])
+    const memory = yield* engine(fixture.config)
+    // Before the event nothing is past: plain fusion, and the profile holds both preferences.
+    yield* TestClock.setTime(opening)
+    expect(ranked(yield* memory.recall(query))).toEqual([["exhibition", 2 / 61, false], ["pottery", 2 / 62, false], ["fact", 2 / 63, false]])
+    expect((yield* memory.profile(fixtureScope)).map((record) => record.id).toSorted(Order.String)).toEqual([exhibition.id, pottery.id].toSorted(Order.String))
+    // After it the preference is demoted by half below the current one and marked past; the fact keeps its rank.
+    yield* TestClock.setTime(afterwards)
+    expect(ranked(yield* memory.recall(query))).toEqual([["pottery", 2 / 62, false], ["fact", 2 / 63, false], ["exhibition", (2 / 61) * 0.5, true]])
+    expect((yield* memory.profile(fixtureScope)).map((record) => record.id)).toEqual([pottery.id])
+    // all ranks it plainly and still marks it; so does a weight of 1; a valid time before the event reads it as current.
+    expect(ranked(yield* memory.recall({ ...query, temporal: "all" }))).toEqual([["exhibition", 2 / 61, true], ["pottery", 2 / 62, false], ["fact", 2 / 63, false]])
+    expect(ranked(yield* (yield* engine({ ...fixture.config, pastEventWeight: 1 })).recall(query))).toEqual([["exhibition", 2 / 61, true], ["pottery", 2 / 62, false], ["fact", 2 / 63, false]])
+    expect(ranked(yield* memory.recall({ ...query, graph: { perspective: { validAt: opening - 1 }, depth: 1 } }))).toEqual([["exhibition", 2 / 61, false], ["pottery", 2 / 62, false], ["fact", 2 / 63, false]])
+    // Without support the demotion still applies.
+    expect(ranked(yield* (yield* engine({ ...fixture.config, supportWeight: 0 })).recall(query))[2]).toEqual(["exhibition", (2 / 61) * 0.5, true])
+  })).pipe(Effect.provide(TestClock.layer()))))
 
   test("explicit graph opt-out performs no graph traversal", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const text = "I prefer tea."

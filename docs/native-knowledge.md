@@ -36,16 +36,16 @@ models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
 extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `4`) and its
-embedding space: `knowledgeEngineId("rag:4", space)` is
-`rag:4/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+embedding space: `knowledgeEngineId("rag:5", space)` is
+`rag:5/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:3/…`,
-`rag:3/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:4/…`,
+`rag:4/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -55,7 +55,9 @@ directly. Version 3 asks each extracted memory why it supersedes
 (`supersession`) and links successors to what they replaced; version 4 lets
 it name the candidate memory a source restates (`restates`), which adds
 evidence to that memory instead of a new one
-([one memory for a repeated statement](#one-memory-for-a-repeated-statement)).
+([one memory for a repeated statement](#one-memory-for-a-repeated-statement));
+version 5 gives a memory the time of the dated event it concerns (`eventAt`)
+([plans tied to a dated event](#plans-tied-to-a-dated-event)).
 A job of an earlier version that failed is retried the same way.
 
 Build typed layers when the host needs direct ingestion, status and backfill
@@ -644,7 +646,7 @@ The section's profile records show the count recall found for them.
 ### One memory for a repeated statement
 
 Counting mentions helps only when a repeated statement is one memory. The
-extraction prompt (version 4) shows the active candidate memories and asks the
+extraction prompt (since version 4) shows the active candidate memories and asks the
 model, when the source states one of them again without changing it, to return
 it with `restates` naming that candidate instead of writing a new record: a
 restatement adds evidence, not a memory. Staging turns such a proposal into a
@@ -654,9 +656,9 @@ memory that is active, stated, of the proposal's kind and published by
 another source. A named memory that is unknown or no longer active drops the
 proposal with a `RecordDropped` note; one that is inferred, of another kind or
 published by this source (its next revision retires it) leaves the proposal a
-new memory, as does a proposal that supersedes something. A memory another
-proposal of the same extraction supersedes is never corroborated, since
-publication refuses a corroboration of a memory its own stage retires: a
+new memory, as does a proposal that supersedes something or has another event time. A
+memory another proposal of the same extraction supersedes is never corroborated,
+since publication refuses a corroboration of a memory its own stage retires: a
 proposal that restates only such memories repeats the state the extraction
 replaces and is dropped with a `RecordDropped` note ("The extraction restates a
 memory it also supersedes"), and the successor publishes.
@@ -664,7 +666,7 @@ memory it also supersedes"), and the successor publishes.
 An extraction that misses a restatement gets a second chance once the stage is
 embedded. `mergeKnowledgeRestatements(stage, snapshot, source, minSimilarity)`
 takes a new stated memory that replaces nothing as a corroboration of the
-active stated memory with the same kind and exactly the same entities, from
+active stated memory with the same kind, event time and exactly the same entities, from
 another source, whose embedding's cosine with its own is at least
 `minSimilarity` (the most similar one, ties by id). The memory engine runs it
 with `MemoryConfig.restatementSimilarity` (default `0.92`; `false` turns it
@@ -699,6 +701,54 @@ read that admits only the restating source finds nothing, as before.
 [2026-02-03 · fact · stated · said 3 times, last 2026-07-09] The user lives in Lisbon.
 [2026-08-01 · fact · stated] The user's sister lives in Porto.
 ```
+
+### Plans tied to a dated event
+
+A plan, goal or interest tied to a dated event holds only until the event:
+"I'd love to see the glass exhibition on 20 March" says nothing about what the
+user wants in May. The extraction prompt (version 5) asks the model, when a
+memory concerns a dated event (an appointment, a trip, a deadline, a booking),
+to set `eventAt` to the event's time, resolving relative expressions against
+the source occurrence time, with `end` only for an event that lasts beyond its
+start. Staging keeps it on the memory (`KnowledgeMemory.eventAt`, a
+`KnowledgeEventTime` of `start` and optional `end`, epoch milliseconds) and
+drops a memory whose event ends before it starts with a `RecordDropped` note.
+A memory stored before event times existed has none and is never past. A
+restatement must have the same event time: a named one of another event, and
+a similar new memory of another event, is written as its own memory.
+
+A memory is past at a time when it is a `goal`, `decision`, `action` or
+`preference` whose event ended before that time, at its `end`, else its
+`start` (`knowledgeMemoryIsPast(memory, now)` in `@xandreed/core`). Facts,
+routines and profiles are never past: "the exhibition opened in March" stays
+true. Nothing is deleted or filtered from search for being past:
+
+- Recall marks each past memory candidate `past: true`, judged at the recall's
+  valid time (now, unless the graph perspective or the query plan names one).
+- `KnowledgeRecall.temporal` chooses the ranking: `"current"` (the default)
+  multiplies a past record's fused score by the memory engine's
+  `pastEventWeight` (default `0.5`), after the support factor, so a current
+  record of similar relevance ranks above it; `"all"` ranks it as any other.
+  `pastEventWeight: 1` turns the demotion off. Document retrieval returns no
+  memories and ignores it.
+- `LongTermMemory.profile` leaves past records out, so the section's profile
+  never shows a passed plan as current; recall still returns it.
+- `renderMemoryRecall` says when after a memory's text, unless `dates` is
+  false: `(event on YYYY-MM-DD)`, `(event on YYYY-MM-DD–YYYY-MM-DD)` for one
+  that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall
+  marked it past. The section's version is 5.
+
+```text
+[2026-03-05 · preference · stated] The user is interested in weekly pottery classes at the community studio.
+Source: conversation:…:1:0 revision 1, characters 6-68
+
+[2026-03-02 · preference · stated] The user is interested in the glass exhibition on 20 March. (event on 2026-03-20, past)
+Source: conversation:…:1:0 revision 1, characters 6-56
+```
+
+`recall_memory` takes a `temporal` parameter, so the model can ask for `all`
+on one call ("which exhibitions did I want to see this year?"). A wrong
+`eventAt` only demotes a live goal; it never hides one.
 
 ## Place memory recall yourself
 

@@ -3,18 +3,19 @@ import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
-import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations } from "./knowledge.entity.functions.js"
+import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations, sameKnowledgeEventTime } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
-export const KNOWLEDGE_EXTRACTION_VERSION = "4"
+export const KNOWLEDGE_EXTRACTION_VERSION = "5"
 
 const extractionRules = [
   "Extract durable knowledge with exact source evidence. Resolve entities conservatively; reuse only an existing identity supplied below, and keep ambiguous identities separate.",
   "Preserve facts, preferences, goals, decisions, observed tool outcomes, and relationships. Distinguish user statements, assistant proposals, and confirmed effects. A successful tool handler alone does not establish a successful real-world effect.",
   "Use UTF-16 source offsets and an exact quote for every span. A unique exact quote can repair an offset error; repeated quotes need the correct offset. Dates are epoch milliseconds. Resolve relative dates and times against the source occurrence time, never the current time. Recording time is assigned by storage. Preserve historical facts and propose supersession only when the source establishes a correction or change.",
+  "When a memory concerns a dated event (an appointment, a trip, a deadline, a booking), set eventAt to the event's time, resolving relative expressions against the source occurrence time; a plan, interest or goal tied to the event holds only until the event. Give end only for an event that lasts beyond its start, and leave eventAt null when the memory concerns no dated event.",
   "Use local entity keys in memories and assertions. Include every referenced entity in entities. Use existing only for an identity from the supplied candidates. Supersedes may name only active supplied records.",
   "For a relationship that changed in the world, use supersession change and supply the new validFrom time. When the source states a present change without a date, set validFrom to the source occurrence time; reserve null for a start that is unknown and supersedes nothing. For an earlier claim that was incorrect, use supersession correction. Keep unknown validity dates null; never invent a date to force an update.",
   "When a new memory replaces an active candidate memory because the situation changed, list it in supersedes with supersession change; when the candidate was wrong, use correction. Write the new memory so it states the new situation and what it replaces.",
@@ -50,7 +51,7 @@ export const extractionCandidateContext = (source: KnowledgeSource, snapshot: Kn
   const entities = whole(rankedEntities.map(({ entity }) => ({ ...entity, provenance: preview(entity.provenance) })), Math.floor(budget * 0.25))
   const memories = whole(rankedMemories.map(({ memory }) => ({
     id: memory.id, kind: memory.kind, text: memory.text, entities: memory.entities, evidence: memory.evidence,
-    provenance: preview(memory.provenance), knownFrom: memory.knownFrom,
+    provenance: preview(memory.provenance), knownFrom: memory.knownFrom, ...(memory.eventAt === undefined ? {} : { eventAt: memory.eventAt }),
   })), Math.floor(budget * 0.4))
   const assertions = whole(rankedAssertions.map(({ assertion }) => ({
     id: assertion.id, subject: assertion.subject, predicate: assertion.predicate, object: assertion.object,
@@ -250,6 +251,7 @@ const DROPPED = {
   support: "The extraction cites an unknown supporting memory",
   routine: "An inferred routine needs three distinct supporting episodes",
   interval: "The extraction gives a validity interval that ends before it starts",
+  event: "The extraction gives an event that ends before it starts",
 } as const
 /** The first problem the checks find, each run only when the earlier ones found none. */
 const firstProblem = (checks: ReadonlyArray<() => Option.Option<string>>): Option.Option<string> =>
@@ -257,6 +259,14 @@ const firstProblem = (checks: ReadonlyArray<() => Option.Option<string>>): Optio
 const problemIf = (failed: boolean, message: string): Option.Option<string> => failed ? Option.some(message) : Option.none()
 /** Whether a memory was published by a revision of the source: its first mention is (`KnowledgeMemory.mentions`). A later revision retires it, so it is never corroborated. */
 const publishedBy = (memory: KnowledgeMemory, source: KnowledgeSourceRef): boolean => knowledgeMemoryMentions(memory)[0]?.id === source.id
+/** A memory's event time as stored (`KnowledgeEventTime`), none when the extraction gives none; `end` only when given. */
+const eventTimeOf = (memory: ExtractedMemory): KnowledgeEventTime | undefined => memory.eventAt === undefined || memory.eventAt === null ? undefined
+  : { start: memory.eventAt.start, ...(memory.eventAt.end === undefined || memory.eventAt.end === null ? {} : { end: memory.eventAt.end }) }
+/** The `eventAt` key, written only when the memory concerns a dated event, so a memory without one is stored as before. */
+const eventKeyOf = (memory: ExtractedMemory): Pick<KnowledgeMemory, "eventAt"> => {
+  const eventAt = eventTimeOf(memory)
+  return eventAt === undefined ? {} : { eventAt }
+}
 /** The `corroborations` key, written only when there are some, so a stage that restates nothing is stored as before. */
 const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): Pick<KnowledgeStage, "corroborations"> => corroborations.length === 0 ? {} : { corroborations }
 
@@ -265,7 +275,7 @@ const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): P
  * that fails a check of its own (an invalid span, an unknown `existing`
  * identity, an undefined entity key, an unknown or inactive record it
  * supersedes, restates or cites as support, an inferred routine with fewer than three
- * supporting episodes, an inverted validity interval) is left out with a
+ * supporting episodes, an inverted validity interval or event time) is left out with a
  * `RecordDropped` note, as is every record that refers to a dropped entity,
  * and the rest is staged; an entity that only dropped records referred to is
  * left out too. The extraction fails with `Invalid` when it repeats an entity
@@ -282,12 +292,13 @@ const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): P
  * A staged memory's `mentions` are this source revision and, when it is
  * inferred, the revisions that state its supports (`knowledgeMemoryMentions`),
  * never those that only evidence its entities.
+ * A staged memory keeps the extraction's `eventAt` (`KnowledgeMemory.eventAt`).
  * A stated memory that replaces none and `restates` active memories becomes a
- * corroboration of each of them that is stated, of its kind, published by
- * another source and not superseded by another memory of the extraction
- * (`KnowledgeStage.corroborations`, its own spans as evidence), and no new
- * memory; when none of them is, it is staged as a new memory, but one that
- * restates only memories the extraction supersedes is left out with a
+ * corroboration of each of them that is stated, of its kind and event time,
+ * published by another source and not superseded by another memory of the
+ * extraction (`KnowledgeStage.corroborations`, its own spans as evidence), and
+ * no new memory; when none of them is, it is staged as a new memory, but one
+ * that restates only memories the extraction supersedes is left out with a
  * `RecordDropped` note.
  * @public
  */
@@ -326,6 +337,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     () => keysProblem(memory.entities),
     () => problemIf(memory.supersedes.some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.retired),
     () => problemIf((memory.restates ?? []).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.restated),
+    () => problemIf(Option.exists(Option.fromNullishOr(memory.eventAt), (event) => event.end !== undefined && event.end !== null && event.end < event.start), DROPPED.event),
     () => problemIf(supportOf(memory).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.support),
     // Staging knows only this source's metadata: other revisions count by source here, and by episode at publication.
     () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && knowledgeEpisodeCount(supportEvidence(memory).map((span) => span.source), [source]) < 3, DROPPED.routine),
@@ -372,9 +384,10 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   // Entities alone are no surviving knowledge when the extraction proposed memories or assertions.
   const survivors = extraction.memories.length + extraction.assertions.length > 0 ? kept.memories.length + kept.assertions.length : kept.entities.length
   if (first !== undefined && survivors === 0) return yield* invalid(first.message)
-  /** The active memories a kept memory restates and evidences instead of being written: stated, of its kind, published by another source and not retired by this stage. */
+  /** The active memories a kept memory restates and evidences instead of being written: stated, of its kind and event time, published by another source and not retired by this stage. */
   const restated = (memory: ExtractedMemory): ReadonlyArray<KnowledgeMemory> => memory.evidence._tag !== "Stated" || memory.supersedes.length > 0 ? []
-    : activeMemories.filter((existing) => (memory.restates ?? []).includes(existing.id) && !retiring.has(existing.id) && existing.evidence._tag === "Stated" && existing.kind === memory.kind && !publishedBy(existing, source.ref))
+    : activeMemories.filter((existing) => (memory.restates ?? []).includes(existing.id) && !retiring.has(existing.id) && existing.evidence._tag === "Stated" && existing.kind === memory.kind &&
+      sameKnowledgeEventTime(existing.eventAt, eventTimeOf(memory)) && !publishedBy(existing, source.ref))
   const written = kept.memories.filter((memory) => restated(memory).length === 0)
 
   const entityOf = (key: string) => kept.entities.find((entity) => entity.key === key)
@@ -397,6 +410,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       provenance: [...provenance(memory.spans), ...memory.entities.flatMap(entityEvidence), ...supportEvidence(memory)],
       entities: memory.entities.map(identityOf),
       evidence: memory.evidence, embedding: Option.none(), knownFrom: now, knownTo: Option.none(), mentions: mentions(memory),
+      ...eventKeyOf(memory),
       ...linked([...new Set(memory.supersedes)].map((id) => ({ id, supersession: memory.supersession }))),
     })),
     entities: kept.entities.map((entity) => ({
@@ -444,8 +458,8 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
 /**
  * The deterministic restatement merge an engine runs once a stage's memories are embedded: a memory
  * the stage writes that is stated, replaces none and names entities becomes a corroboration
- * (`KnowledgeStage.corroborations`) of the active stated memory of `snapshot` that has its kind and
- * exactly its entities, was published by another source, is not retired by the stage, and whose
+ * (`KnowledgeStage.corroborations`) of the active stated memory of `snapshot` that has its kind,
+ * event time and exactly its entities, was published by another source, is not retired by the stage, and whose
  * embedding's cosine with its own is at least `minSimilarity` (the most similar, ties by id). Its
  * evidence is its spans in `source`, the revision being staged, and it is not written. A memory
  * without entities or an embedding never merges, nor does one another staged memory is inferred
@@ -463,7 +477,7 @@ export const mergeKnowledgeRestatements = (stage: KnowledgeStage, snapshot: Know
     if (memory.evidence._tag !== "Stated" || (memory.replaces ?? []).length > 0 || memory.entities.length === 0 || supports.has(memory.id) || ownSpans(memory).length === 0) return Option.none()
     const scored = Option.match(memory.embedding, {
       onNone: () => [],
-      onSome: (vector) => targets.filter((target) => target.kind === memory.kind && sameEntities(target.entities, memory.entities))
+      onSome: (vector) => targets.filter((target) => target.kind === memory.kind && sameKnowledgeEventTime(target.eventAt, memory.eventAt) && sameEntities(target.entities, memory.entities))
         .flatMap((target) => Option.toArray(target.embedding).map((embedding) => ({ target, score: knowledgeCosine(vector, embedding) })))
         .filter(({ score }) => score >= minSimilarity),
     })

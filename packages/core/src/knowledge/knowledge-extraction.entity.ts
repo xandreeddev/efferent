@@ -17,6 +17,9 @@ export const KnowledgeExtractedEntity = Schema.Struct({
  * A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`.
  * `restates` names active candidate memories the source states again without changing them (none
  * when absent): staging adds the source's spans to each as evidence instead of a new record.
+ * `eventAt` is the time of the dated event the memory concerns, with `end` only for an event that
+ * lasts beyond its start; null or absent when it concerns none. Staging drops a memory whose event
+ * ends before it starts.
  * @public
  */
 export const KnowledgeExtractedMemory = Schema.Struct({
@@ -29,6 +32,7 @@ export const KnowledgeExtractedMemory = Schema.Struct({
   supersedes: Schema.Array(KnowledgeMemoryId),
   supersession: KnowledgeSupersession,
   restates: Schema.optionalKey(Schema.Array(KnowledgeMemoryId)),
+  eventAt: Schema.optionalKey(Schema.NullOr(Schema.Struct({ start: Offset, end: Schema.optionalKey(Schema.NullOr(Offset)) }))),
 })
 /** @public */
 export const KnowledgeExtractedAssertion = Schema.Struct({

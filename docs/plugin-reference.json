@@ -2140,7 +2140,8 @@
       "recallHistory": "changes",
       "recallHistoryShare": 0.2,
       "supportWeight": 0.15,
-      "restatementSimilarity": 0.92
+      "restatementSimilarity": 0.92,
+      "pastEventWeight": 0.5
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2304,6 +2305,11 @@
               "maximum": 1
             }
           ]
+        },
+        "pastEventWeight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       },
       "required": [
@@ -2337,7 +2343,8 @@
         "recallHistory",
         "recallHistoryShare",
         "supportWeight",
-        "restatementSimilarity"
+        "restatementSimilarity",
+        "pastEventWeight"
       ],
       "additionalProperties": true
     }

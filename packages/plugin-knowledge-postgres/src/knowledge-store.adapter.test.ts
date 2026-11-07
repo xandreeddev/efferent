@@ -157,6 +157,22 @@ test.skipIf(url.length === 0)("PostgreSQL stamps observation time at publication
   expect(Result.isFailure(failed) && failed.failure.reason).toBe("Corrupt")
 }))))
 
+test.skipIf(url.length === 0)("PostgreSQL keeps a memory's event time in its payload and decodes a row stored before event times", () => run(Effect.scoped(Effect.gen(function* () {
+  const { memory: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const source = sourceOf(scope, "dated", "A table is booked for Friday")
+  yield* index.publish(yield* prepare(index, source, stageOf(0, [{ ...memoryOf(source, "dated-memory"), kind: "action", eventAt: { start: 1_000, end: 2_000 } }])))
+  const where = sql`domain='memory' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection} AND id='dated-memory'`
+  const rows = yield* Effect.tryPromise(() => sql<ReadonlyArray<{ readonly event: unknown }>>`SELECT payload->'eventAt' AS event FROM efferent_knowledge.memories WHERE ${where}`)
+  expect(rows.map((row) => row.event)).toEqual([{ start: 1_000, end: 2_000 }])
+  expect(Option.map(yield* index.memory(scope, KnowledgeMemoryId.make("dated-memory")), (memory) => memory.eventAt)).toEqual(Option.some({ start: 1_000, end: 2_000 }))
+  // A row written before event times existed has no key, and decodes without one.
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.memories SET payload = payload - 'eventAt' WHERE ${where}`)
+  const legacy = yield* index.memory(scope, KnowledgeMemoryId.make("dated-memory"))
+  expect(Option.map(legacy, (memory) => "eventAt" in memory)).toEqual(Option.some(false))
+}))))
+
 test.skipIf(url.length === 0)("PostgreSQL keeps a failed job's reason in its payload and decodes one stored before reasons", () => run(Effect.scoped(Effect.gen(function* () {
   const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
   const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))

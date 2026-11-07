@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("4")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("5")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -323,14 +323,26 @@ describe("staging dates undated changes and drops only the records that fail the
       { change: { ...valid, assertions: [{ ...livesIn, object: { _tag: "Entity", key: "bergen" } }] }, record: "assertion" as const, message: "The extraction refers to an undefined entity key" },
       { change: { ...valid, assertions: [{ ...livesIn, supersedes: ["unknown-relation"] }] }, record: "assertion" as const, message: "The extraction retires an unknown or inactive record" },
       { change: { ...valid, assertions: [{ ...livesIn, validFrom: 20, validTo: 10 }] }, record: "assertion" as const, message: "The extraction gives a validity interval that ends before it starts" },
+      { change: { ...valid, memories: [{ ...drinks, eventAt: { start: 20, end: 10 } }] }, record: "memory" as const, message: "The extraction gives an event that ends before it starts" },
     ]
     const staged = yield* Effect.forEach(cases, ({ change }) => stageOf(snapshot, change), { concurrency: 1 })
     expect(staged.map((stage) => stage.notes)).toEqual(cases.map(({ record, message }) => [{ _tag: "RecordDropped", record, key: record === "memory" ? "drinks" : "lives", reason: "Invalid", message }]))
     // A relation dropped with its object takes Oslo along; one that never named Oslo leaves it as proposed.
     expect(staged.map((stage) => [stage.entities.map((entity) => entity.name), stage.memories.length, stage.assertions.length])).toEqual([
-      ...cases.slice(0, 5).map(() => [["Ann", "Oslo"], 0, 1]), [["Ann", "Oslo"], 1, 0], [["Ann"], 1, 0], [["Ann"], 1, 0],
+      ...cases.slice(0, 5).map(() => [["Ann", "Oslo"], 0, 1]), [["Ann", "Oslo"], 1, 0], [["Ann"], 1, 0], [["Ann"], 1, 0], [["Ann", "Oslo"], 0, 1],
     ])
     expect(staged.every((stage) => stage.retireMemories.length === 0 && stage.retireAssertions.length === 0)).toBe(true)
+  })))
+
+  test("a memory about a dated event keeps its time, without an end when none is given, and a memory about none has no event", () => Effect.runPromise(Effect.gen(function* () {
+    const opening = Date.UTC(2026, 2, 20, 10), closing = Date.UTC(2026, 2, 24, 18)
+    const cases = [{ start: opening, end: closing }, { start: opening, end: null }, { start: opening }, { start: opening, end: opening }, null, undefined]
+    const staged = yield* Effect.forEach(cases, (eventAt) => stageOf(empty, { entities: [ann, oslo], memories: [{ ...drinks, ...(eventAt === undefined ? {} : { eventAt }) }], assertions: [] }), { concurrency: 1 })
+    expect(staged.map((stage) => stage.memories[0]?.eventAt)).toEqual([{ start: opening, end: closing }, { start: opening }, { start: opening }, { start: opening, end: opening }, undefined, undefined])
+    expect(staged.slice(4).map((stage) => "eventAt" in stage.memories[0]!)).toEqual([false, false])
+    // The candidates a later extraction reads carry the event time, so it can restate or supersede the memory knowingly.
+    const context = extractionCandidateContext(city, { ...empty, memories: staged.slice(0, 1).flatMap((stage) => stage.memories) }, 4_000)
+    expect(context).toContain(`"eventAt":{"start":${opening},"end":${closing}}`)
   })))
 
   test("a dropped entity takes the records that refer to it along, each with its own note", () => Effect.runPromise(Effect.gen(function* () {
@@ -515,6 +527,24 @@ describe("a restatement adds evidence to the memory it restates instead of a new
     const partly = yield* stageOf([restating("again", [lives.id, twin.id]), successor], withTwin)
     expect([partly.memories.map((memory) => memory.id.split(":").at(-1)), partly.corroborations?.map((corroboration) => corroboration.memory), partly.notes]).toEqual([["moved"], [twin.id], undefined])
     expect(validateKnowledgeStage(partly, withTwin, [earlier, now])).toEqual(Option.none())
+  })))
+
+  test("a restatement of another event time is a new memory, named or found by similarity", () => Effect.runPromise(Effect.gen(function* () {
+    const opening = Date.UTC(2026, 2, 20, 10)
+    const dated = { ...lives, eventAt: { start: opening } }
+    const datedSnapshot = { ...snapshot, memories: [dated] }
+    // Named: the same event corroborates, another event or none is written as a new memory.
+    const same = yield* stageOf([{ ...restating("same", [dated.id]), eventAt: { start: opening } }], datedSnapshot)
+    const other = yield* stageOf([{ ...restating("later", [dated.id]), eventAt: { start: opening + 86_400_000 } }, restating("undated", [dated.id])], datedSnapshot)
+    expect([same.memories.length, same.corroborations?.map((corroboration) => corroboration.memory)]).toEqual([0, [dated.id]])
+    expect([other.memories.map((memory) => [memory.id.split(":").at(-1), memory.eventAt]), other.corroborations]).toEqual([[["later", { start: opening + 86_400_000 }], ["undated", undefined]], undefined])
+    // Found by similarity: only a memory of the same event time merges.
+    const found = (key: string, eventAt?: KnowledgeMemory["eventAt"]): KnowledgeStage => ({ expectedVersion: 3, chunks: [], entities: [], assertions: [], retireMemories: [], retireAssertions: [], memories: [{
+      ...stated(`now:1:memory:${key}`, "The user is based in Lisbon.", [city], [1, 0], now), provenance: [{ source: now.ref, start: 0, end: 15, quote: "Still in Lisbon" }], ...(eventAt === undefined ? {} : { eventAt }),
+    }] })
+    expect(mergeKnowledgeRestatements(found("same", { start: opening }), datedSnapshot, now.ref, 0.92).memories).toEqual([])
+    expect(mergeKnowledgeRestatements(found("later", { start: opening + 1 }), datedSnapshot, now.ref, 0.92).memories).toHaveLength(1)
+    expect(mergeKnowledgeRestatements(found("undated"), datedSnapshot, now.ref, 0.92).memories).toHaveLength(1)
   })))
 
   test("after embedding, a new memory with the same kind and entities that is close enough corroborates instead", () => {

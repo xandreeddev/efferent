@@ -2,7 +2,7 @@ import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeCorroboration, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
-  type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
+  type KnowledgeEventTime, type KnowledgeMemory, type KnowledgeMemoryKind, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
   type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
   type KnowledgeVector,
@@ -190,6 +190,20 @@ const knowledgeEpisodeKey = (ref: KnowledgeSourceRef, infos: ReadonlyArray<Pick<
  */
 export const knowledgeEpisodeCount = (refs: ReadonlyArray<KnowledgeSourceRef>, infos: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "metadata">>): number =>
   new Set(refs.map((ref) => knowledgeEpisodeKey(ref, infos))).size
+/** The kinds that hold only until the dated event they concern: a plan, goal, decision or interest tied to it. */
+const EVENT_BOUND_KINDS: ReadonlyArray<KnowledgeMemoryKind> = ["goal", "decision", "action", "preference"]
+/**
+ * Whether a memory is past at `now`: it is a goal, decision, action or preference whose dated event
+ * (`KnowledgeMemory.eventAt`) ended before `now`, at its `end`, else its `start`. A memory without an
+ * event, and a fact, routine or profile whatever its event, is never past. Being past demotes a record
+ * in recall and leaves it out of the profile; nothing deletes or filters it from search.
+ * @public
+ */
+export const knowledgeMemoryIsPast = (memory: Pick<KnowledgeMemory, "kind" | "eventAt">, now: number): boolean =>
+  memory.eventAt !== undefined && EVENT_BOUND_KINDS.includes(memory.kind) && (memory.eventAt.end ?? memory.eventAt.start) < now
+/** Whether two records concern the same event time: both none, or the same start and end. */
+export const sameKnowledgeEventTime = (left: KnowledgeEventTime | undefined, right: KnowledgeEventTime | undefined): boolean =>
+  left === undefined || right === undefined ? left === right : left.start === right.start && left.end === right.end
 /**
  * How often a memory was stated, from the info of the revisions it mentions (`knowledgeMemoryMentions`;
  * pass `KnowledgeIndex.sourceInfo` of them, or a recall result's `sources`): only revisions found in
