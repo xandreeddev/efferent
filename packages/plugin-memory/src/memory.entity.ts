@@ -70,6 +70,15 @@ export const MemoryConfig = Schema.Struct({
   recallHistory: KnowledgeRecallHistoryMode,
   /** The most of `recallChars` earlier states may take, from 0 to 0.5 (`KnowledgeRecall.historyShare`); what they leave goes to current records. */
   recallHistoryShare: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 0.5 })),
+  /**
+   * How much recall favours a preference, routine, profile or fact stated in several episodes
+   * (`KnowledgeSupport`), from 0 to 1: its fused score is multiplied by `1 + supportWeight ×
+   * ln(min(episodes, 4))`, at most ×1.21 with the default 0.15, so repetition reorders records of
+   * similar relevance: near the top of the lists, a record passes only records within about twelve
+   * places of it. Recall also gives each memory its `support`, and a memory said in two episodes
+   * or more shows how often. 0 turns support off: no read, no boost and no count, as before.
+   */
+  supportWeight: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -78,7 +87,7 @@ export const memoryDefaults: MemoryConfig = {
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
-  recallHistory: "changes", recallHistoryShare: 0.2,
+  recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

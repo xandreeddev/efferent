@@ -198,6 +198,14 @@ first in both of the question's lists does; ranked behind the question's 32
 candidates in one joined list, at rank 33 of each arm, it would score only
 0.021505. See the [fusion function](https://github.com/xandreeddev/efferent/blob/main/packages/core/src/knowledge/knowledge.entity.functions.ts#L110).
 
+Memory recall then weighs each preference, routine, profile or fact by the
+distinct episodes whose own text states it. Suppose M2 were a preference said
+in three conversations: its fused 0.032522 becomes 0.032522 × (1 + 0.15 ×
+ln 3) = 0.037882. Four or more episodes weigh ×1.21 at most, so repetition
+reorders memories of similar relevance and never lifts one ranked far below.
+The evidence of a memory's entities never counts as stating it
+([memories said in several episodes](/docs/concepts/native-knowledge/#memories-said-in-several-episodes)).
+
 ## 7. Expand relationships, then ask what evidence helps
 
 The engine finds graph starting points from matching entity names/aliases

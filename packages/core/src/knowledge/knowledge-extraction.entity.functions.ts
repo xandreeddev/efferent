@@ -3,10 +3,10 @@ import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeHelperPurpose, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeHelperPurpose, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
-import { knowledgeTokens } from "./knowledge.entity.functions.js"
+import { knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
 export const KNOWLEDGE_EXTRACTION_VERSION = "3"
@@ -272,6 +272,9 @@ const problemIf = (failed: boolean, message: string): Option.Option<string> => f
  * A staged record cites its own spans first, then its entities' evidence and,
  * for an inferred memory, its supports' evidence; a relation's history copy
  * keeps the earlier relation's spans first. `knowledgeRecordDate` relies on it.
+ * A staged memory's `mentions` are this source revision and, when it is
+ * inferred, the revisions that state its supports (`knowledgeMemoryMentions`),
+ * never those that only evidence its entities.
  * @public
  */
 export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
@@ -299,13 +302,18 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     : Option.some(extraction.entities.some((entity) => entity.key === key) ? DROPPED.droppedKey : DROPPED.undefinedKey)
   const keysProblem = (keys: ReadonlyArray<string>) => firstProblem(keys.map((key) => () => keyProblem(key)))
   const supportOf = (memory: ExtractedMemory): ReadonlyArray<KnowledgeMemoryId> => Match.valueTags(memory.evidence, { Stated: () => [], Inferred: (value) => value.supports })
-  const supportEvidence = (memory: ExtractedMemory) => activeMemories.filter((existing) => supportOf(memory).includes(existing.id)).flatMap((existing) => existing.provenance)
+  const supports = (memory: ExtractedMemory) => activeMemories.filter((existing) => supportOf(memory).includes(existing.id))
+  const supportEvidence = (memory: ExtractedMemory) => supports(memory).flatMap((existing) => existing.provenance)
+  /** The revisions that state a memory: this source, and for an inferred memory every revision that states one of its supports. */
+  const mentions = (memory: ExtractedMemory): ReadonlyArray<KnowledgeSourceRef> => [source.ref, ...supports(memory).flatMap(knowledgeMemoryMentions)]
+    .filter((ref, index, all) => all.findIndex((other) => other.id === ref.id && other.revision === ref.revision) === index)
   const memoryChecks = extraction.memories.map((memory) => ({ memory, problem: firstProblem([
     () => problemIf(badSpans(memory.spans), DROPPED.span),
     () => keysProblem(memory.entities),
     () => problemIf(memory.supersedes.some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.retired),
     () => problemIf(supportOf(memory).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.support),
-    () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && new Set(supportEvidence(memory).map((span) => span.source.id)).size < 3, DROPPED.routine),
+    // Staging knows only this source's metadata: other revisions count by source here, and by episode at publication.
+    () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && knowledgeEpisodeCount(supportEvidence(memory).map((span) => span.source), [source]) < 3, DROPPED.routine),
   ]) }))
   /** A change that supersedes a record holds from the source's occurrence time at the latest, when the source gives no date. */
   const dated = (assertion: ExtractedAssertion): Pick<KnowledgeAssertion, "validFrom" | "validFromBasis"> => Option.match(assertion.validFrom, {
@@ -362,7 +370,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       kind: memory.kind, text: memory.text,
       provenance: [...provenance(memory.spans), ...memory.entities.flatMap(entityEvidence), ...supportEvidence(memory)],
       entities: memory.entities.map(identityOf),
-      evidence: memory.evidence, embedding: Option.none(), knownFrom: now, knownTo: Option.none(),
+      evidence: memory.evidence, embedding: Option.none(), knownFrom: now, knownTo: Option.none(), mentions: mentions(memory),
       ...linked([...new Set(memory.supersedes)].map((id) => ({ id, supersession: memory.supersession }))),
     })),
     entities: kept.entities.map((entity) => ({

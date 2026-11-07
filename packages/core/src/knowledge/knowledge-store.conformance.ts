@@ -60,7 +60,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
- * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
+ * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), a memory's mentions (kept, absent on one
+ * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
  * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -292,6 +293,36 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
       yield* expect("knowledge.supersession-links", Option.isNone(yield* fixture.index.memory(fixture.scope, prior)) && sameJson(linksOf(yield* fixture.index.memory(fixture.scope, successor.id)), Option.some(successor.replaces)),
         "forgetting the earlier source kept its memory readable or removed the successor's link")
+    })),
+    indexCheck("knowledge.mentions", (fixture) => Effect.gen(function* () {
+      // A memory stored without mentions, as before they existed, reads back without the key.
+      const seeded = yield* seed(fixture)
+      const later = sourceOf(fixture.scope, "Alice prefers coffee again", "later")
+      const job = yield* enqueue(fixture, later, "later-job")
+      yield* claim(fixture, 30)
+      const lease = leaseOf(fixture.scope, job, 31)
+      // Inferred from the earlier memory: it cites both revisions and mentions both.
+      const inferred: KnowledgeMemory = {
+        ...memoryOf(later, "inferred"), provenance: [...memoryOf(later).provenance, ...seeded.stage.memories[0]!.provenance],
+        evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("memory")] }, mentions: [later.ref, seeded.source.ref],
+      }
+      const stray = yield* Effect.result(fixture.index.stage(lease, { ...stageOf(later, 1, "inferred"), memories: [{ ...inferred, mentions: [later.ref, { ...seeded.source.ref, revision: 2 }] }] }))
+      yield* expect("knowledge.mentions", Result.isFailure(stray), "a memory that mentions a revision its provenance does not cite was staged")
+      yield* fixture.index.stage(lease, { ...stageOf(later, 1, "inferred"), memories: [inferred] })
+      yield* fixture.index.publish(lease)
+      const read = yield* fixture.index.memory(fixture.scope, inferred.id)
+      const legacy = yield* fixture.index.memory(fixture.scope, KnowledgeMemoryId.make("memory"))
+      const found = yield* fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.none(), limit: 10, knownAt: Option.none() })
+      const searched = found.lexical.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === inferred.id ? [candidate.memory.mentions] : [])
+      const snapshot = yield* fixture.index.snapshot(fixture.scope)
+      yield* expect("knowledge.mentions", Option.exists(read, (memory) => sameJson(memory.mentions, inferred.mentions)) && sameJson(searched, [inferred.mentions]) &&
+        sameJson(snapshot.memories.find((memory) => memory.id === inferred.id)?.mentions, inferred.mentions),
+        "a memory's mentions were lost or changed by staging, publication, search or reads")
+      yield* expect("knowledge.mentions", Option.exists(legacy, (memory) => !("mentions" in memory)), "a memory stored without mentions gained them")
+      // Forgetting a revision it mentions removes the memory with the rest of that source's evidence.
+      yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
+      yield* expect("knowledge.mentions", Option.isNone(yield* fixture.index.memory(fixture.scope, inferred.id)) && !(yield* fixture.index.snapshot(fixture.scope)).memories.some((memory) => memory.id === inferred.id),
+        "a memory stayed readable after a revision it mentions was forgotten")
     })),
     indexCheck("knowledge.source-revision", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

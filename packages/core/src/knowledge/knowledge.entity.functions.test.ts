@@ -3,13 +3,14 @@ import { Effect, Option, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId,
   KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector, type KnowledgeErrorReason, type KnowledgeFailureStep, KnowledgeMetadataFilter,
-  KnowledgeSearch,
+  KnowledgeSearch, KnowledgeMemory as KnowledgeMemoryCodec,
   type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
   citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
   admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
+  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -91,6 +92,61 @@ test("rank fusion ranks each query's lists on their own and sums a candidate's v
   // Limit and character budget select after scoring; no pair fuses to nothing.
   expect(ids(fuseKnowledgeCandidates([asked, planned], 2, 1_000))).toEqual([["first", 1 / 61], ["later", 1 / 61]])
   expect(fuseKnowledgeCandidates([], 10, 1_000)).toEqual([])
+})
+test("a weight multiplies each fused score before ranking and selection; a weight of 1 fuses plainly", () => {
+  const candidate = (id: string): KnowledgeCandidate => ({ _tag: "Memory", memory: memory(id), score: 0 })
+  const ids = (fused: ReadonlyArray<KnowledgeCandidate>) => fused.map((entry) => [entry._tag === "Memory" ? String(entry.memory.id) : String(entry.chunk.id), entry.score])
+  const pair = { lexical: [candidate("first"), candidate("second"), candidate("third")], semantic: [candidate("first"), candidate("second"), candidate("third")] }
+  expect(ids(fuseKnowledgeCandidates(pair, 10, 1_000, () => 1))).toEqual(ids(fuseKnowledgeCandidates(pair, 10, 1_000)))
+  // The weight sees each candidate as its lists hold it; the selected candidate carries its weighted score.
+  const weighted = fuseKnowledgeCandidates(pair, 2, 1_000, (entry) => entry._tag === "Memory" && entry.memory.id === "third" ? 1.1 : 1)
+  expect(ids(weighted)).toEqual([["third", 1.1 * 2 / 63], ["first", 2 / 61]])
+})
+test("a memory's mentions are the revisions that state it; one stored before mentions reads them from its provenance", () => {
+  const ref = (name: string, revision = 1) => ({ id: KnowledgeSourceId.make(name), revision })
+  const span = (name: string, revision = 1) => ({ source: ref(name, revision), start: 0, end: 5, quote: "Visit" })
+  const stated: KnowledgeMemory = { ...memory("stated"), provenance: [span("own"), span("entity"), span("own")] }
+  // Stated, stored before mentions: the revision its first span cites, never its entities' evidence.
+  expect(knowledgeMemoryMentions(stated)).toEqual([ref("own")])
+  // Inferred, stored before mentions: every revision its provenance cites, once each.
+  expect(knowledgeMemoryMentions({ ...stated, provenance: [...stated.provenance, span("support", 2)], evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("other")] } }))
+    .toEqual([ref("own"), ref("entity"), ref("support", 2)])
+  // Stored mentions win, once each.
+  expect(knowledgeMemoryMentions({ ...stated, mentions: [ref("own"), ref("entity"), ref("own")] })).toEqual([ref("own"), ref("entity")])
+})
+test("support counts the distinct episodes of the live mentioned revisions, by source when a revision names no episode", () => {
+  const ref = (name: string) => ({ id: KnowledgeSourceId.make(name), revision: 1 })
+  const span = (name: string) => ({ source: ref(name), start: 0, end: 5, quote: "Visit" })
+  const info = (name: string, occurredAt: number, episode?: string) => ({ ref: ref(name), occurredAt, recordedAt: occurredAt, metadata: episode === undefined ? {} : { episode } })
+  // Four revisions: two parts of one turn, a turn of its own, and a revision that names no episode. The entity's revision is never a mention.
+  const inferred: KnowledgeMemory = {
+    ...memory("inferred"), kind: "preference", evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("support")] },
+    provenance: ["part-one", "part-two", "later", "plain", "entity"].map(span), mentions: ["part-one", "part-two", "later", "plain"].map(ref),
+  }
+  const infos = [info("part-one", 30, "turn:a"), info("part-two", 10, "turn:a"), info("later", 50, "turn:b"), info("plain", 20), info("entity", 90, "turn:c")]
+  expect(knowledgeMemorySupport(inferred, infos)).toEqual(Option.some({ episodes: 3, sources: 4, firstSeen: 10, lastSeen: 50 }))
+  // A blank episode counts by source, as the routine rule does.
+  expect(knowledgeEpisodeCount([ref("part-one"), ref("plain")], [info("part-one", 1, " "), info("plain", 1, " ")])).toBe(2)
+  // A forgotten revision (its info missing) never counts; with none left there is no support.
+  expect(knowledgeMemorySupport(inferred, infos.filter((entry) => entry.ref.id !== "later"))).toEqual(Option.some({ episodes: 2, sources: 3, firstSeen: 10, lastSeen: 30 }))
+  expect(knowledgeMemorySupport(inferred, [info("entity", 90, "turn:c")])).toEqual(Option.none())
+  // Stored before mentions: a stated memory counts only the revision its first span cites, however many entities its provenance evidences.
+  const { mentions: _mentions, ...legacy } = { ...inferred, evidence: { _tag: "Stated" as const } }
+  expect(knowledgeMemorySupport(legacy, infos)).toEqual(Option.some({ episodes: 1, sources: 1, firstSeen: 30, lastSeen: 30 }))
+})
+test("a memory stored before mentions decodes without them, and one stored with them keeps them", () => Effect.runPromise(Effect.gen(function* () {
+  const codec = Schema.fromJsonString(KnowledgeMemoryCodec)
+  const legacy = yield* Schema.encodeEffect(codec)(memory("legacy"))
+  const decoded = yield* Schema.decodeUnknownEffect(codec)(legacy)
+  expect([legacy.includes("mentions"), "mentions" in decoded, knowledgeMemoryMentions(decoded)]).toEqual([false, false, [decoded.provenance[0]!.source]])
+  const mentioned = { ...memory("mentioned"), mentions: [{ id: KnowledgeSourceId.make("mentioned"), revision: 1 }] }
+  expect((yield* Schema.decodeUnknownEffect(codec)(yield* Schema.encodeEffect(codec)(mentioned))).mentions).toEqual(mentioned.mentions)
+})))
+test("publication refuses a memory that mentions a revision its provenance does not cite", () => {
+  const original = memory("one")
+  expect(Option.isNone(validateKnowledgeStage(stage({ ...original, mentions: [original.provenance[0]!.source] }), { version: 0, memories: [], graph: emptyGraph }, [source("one")]))).toBe(true)
+  expect(Option.isSome(validateKnowledgeStage(stage({ ...original, mentions: [source("two").ref] }), { version: 0, memories: [], graph: emptyGraph }, [source("one"), source("two")]))).toBe(true)
+  expect(Option.isSome(validateKnowledgeStage(stage({ ...original, mentions: [{ ...original.provenance[0]!.source, revision: 2 }] }), { version: 0, memories: [], graph: emptyGraph }, [source("one")]))).toBe(true)
 })
 test("BM25 finds exact tokens and cosine defines zero norms without NaN", () => {
   const scores = knowledgeBm25("ticket-123", ["ticket-123 resolved", "unrelated ticket"])

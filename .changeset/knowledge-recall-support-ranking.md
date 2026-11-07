@@ -1,0 +1,6 @@
+---
+"@xandreed/core": minor
+"@xandreed/plugin-memory": minor
+---
+
+Memory recall ranks and labels a memory by how many episodes state it. `KnowledgeMemory.mentions` (optional, additive) records the source revisions whose own text states a memory: staging writes the source for a stated memory and, for an inferred one, also every revision that states one of its supports, never the revisions that only evidence its entities; older memories fall back to their provenance (`knowledgeMemoryMentions`), and `validateKnowledgeStage` refuses a mention outside the provenance, so forgetting a mentioned source removes the memory. `knowledgeMemorySupport` returns a `KnowledgeSupport` (`episodes`, `sources`, `firstSeen`, `lastSeen`) over the live mentioned revisions, by the episode rule the inferred-routine check now shares. `fuseKnowledgeCandidates` takes an optional `weight`, and `KnowledgeCandidate`'s `Memory` case an optional `support`. The memory engine multiplies a preference, routine, profile or fact's fused score by `1 + supportWeight × ln(min(episodes, 4))` (`MemoryConfig.supportWeight`, default 0.15, at most ×1.21; 0 turns it off), and `renderMemoryRecall` adds `said <n> times, last YYYY-MM-DD` from two episodes on (`memory.recalled` version 4). `knowledgeStoreConformance` gains `knowledge.mentions`.

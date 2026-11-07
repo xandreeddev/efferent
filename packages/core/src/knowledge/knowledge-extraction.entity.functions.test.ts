@@ -5,7 +5,7 @@ import {
 } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
-import { knowledgeRecordDate } from "./knowledge.entity.functions.js"
+import { knowledgeMemorySupport, knowledgeRecordDate, validateKnowledgeStage } from "./knowledge.entity.functions.js"
 import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
 import { applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeQueryPrompt, knowledgeRerankPrompt } from "./knowledge-query.entity.functions.js"
@@ -281,6 +281,30 @@ describe("staging dates undated changes and drops only the records that fail the
     const sources = [{ ref: city.ref, occurredAt: city.occurredAt }, { ref: knownAnn.provenance[0]!.source, occurredAt: 1_500_000_000_000 }]
     expect([stage.memories[0], current, history].map((record) => knowledgeRecordDate(record?.provenance ?? [], sources)))
       .toEqual([Option.some(city.occurredAt), Option.some(city.occurredAt), Option.some(1_500_000_000_000)])
+  })))
+
+  test("a staged memory mentions this source, and an inferred one also the revisions that state its supports, never its entities' evidence", () => Effect.runPromise(Effect.gen(function* () {
+    const said = (name: string, text: string): KnowledgeSource => ({ ...source, ref: { id: KnowledgeSourceId.make(name), revision: 1 }, text, metadata: { episode: `turn:${name}` } })
+    const dawn = said("dawn", "Ann walks at dawn."), work = said("work", "Ann walks before work.")
+    const walk = (name: string, from: KnowledgeSource, mentions: boolean): KnowledgeMemory => ({
+      id: KnowledgeMemoryId.make(name), kind: "routine", text: from.text, entities: [knownAnn.id], evidence: { _tag: "Stated" }, embedding: Option.none(), knownFrom: 5, knownTo: Option.none(),
+      provenance: [{ source: from.ref, start: 0, end: from.text.length, quote: from.text }, ...knownAnn.provenance], ...(mentions ? { mentions: [from.ref] } : {}),
+    })
+    // One support records its mentions; the other was stored before mentions existed, and its first span says where it was stated.
+    const snapshot: KnowledgeSnapshot = { ...withPrior(Option.none()), memories: [walk("walk-dawn", dawn, true), walk("walk-work", work, false)] }
+    const stage = yield* stageOf(snapshot, {
+      entities: [{ ...ann, existing: knownAnn.id }], assertions: [],
+      memories: [drinks, { ...drinks, key: "early", text: "Ann likes early walks.", spans: [{ start: 0, end: 3, quote: "Ann" }], evidence: { _tag: "Inferred", supports: ["walk-dawn", "walk-work"] } }],
+    })
+    const [stated, inferred] = stage.memories
+    expect(stated?.mentions).toEqual([city.ref])
+    expect(inferred?.mentions).toEqual([city.ref, dawn.ref, work.ref])
+    // Both cite the earlier source of Ann's identity, which states neither.
+    expect([stated, inferred].map((memory) => memory?.provenance.some((span) => span.source.id === "earlier"))).toEqual([true, true])
+    const earlier: KnowledgeSource = { ...said("earlier", "Ann"), metadata: { episode: "turn:earlier" } }
+    expect(Option.isNone(validateKnowledgeStage(stage, snapshot, [city, dawn, work, earlier]))).toBe(true)
+    const infos = [city, dawn, work, earlier].map((value) => ({ ref: value.ref, occurredAt: value.occurredAt, metadata: value.metadata }))
+    expect([stated, inferred].map((memory) => Option.map(knowledgeMemorySupport(memory!, infos), (support) => support.episodes))).toEqual([Option.some(1), Option.some(3)])
   })))
 
   test("each record-local failure drops that record with a note and stages the others", () => Effect.runPromise(Effect.gen(function* () {

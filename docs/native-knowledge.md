@@ -363,7 +363,9 @@ question's, and with planning each planned query's) give a candidate
 `1 / (61 + rank)` at its 0-based rank there, and its score is the sum over the
 lists that hold it, so a candidate a planned query finds first ranks with the
 question's best and one several queries find gains from each
-(`fuseKnowledgeCandidates` takes one pair or one per query). Traversal defaults to two
+(`fuseKnowledgeCandidates` takes one pair or one per query). Memory recall
+then weighs each memory by how often it was said
+([memories said in several episodes](#memories-said-in-several-episodes)). Traversal defaults to two
 hops and is capped at three. Results expose truncation and retain citations.
 Query/model work has explicit budgets; invalid planner/reranker output falls
 back to deterministic retrieval. Retrieved text is framed as data in a recorded turn-tier section;
@@ -520,7 +522,8 @@ result encoded before `sources` existed) keeps its other labels, undated.
 relation whose validity ended by then `(no longer current since <date>)`.
 Without `sources`, or with `dates: false`, the text is exactly as before
 records were dated. The `maxChars` budget still bounds the records' text and
-citations; the labels add about 30 characters per record on top of it.
+citations; the labels add about 30 characters per record on top of it, and
+about 30 more for a count.
 
 The memory engine renders its `memory.recalled` section, `memoryRecallNote`
 and `recall_memory` this way. `recallDates` (default `true`) turns the labels
@@ -580,6 +583,58 @@ the current records. The memory engine's `recallHistory` (default `"changes"`)
 and `recallHistoryShare` (default `0.2`) set both for the section,
 `memoryRecallNote` and `recall_memory`, whose `history` parameter lets the
 model ask for `all` or `none` on one call.
+
+### Memories said in several episodes
+
+A preference the user states in four conversations is better evidence than
+one stated once. Memory recall counts it, ranks by it and tells the model.
+
+Each memory records the source revisions whose own text states it,
+`KnowledgeMemory.mentions`. Staging writes the source it extracts a stated
+memory from; an inferred memory mentions that source and every revision that
+states one of its supports. A memory's provenance may cite more revisions,
+because staging appends its entities' evidence and its supports' provenance;
+those never count as stating it. `knowledgeMemoryMentions(memory)` reads them,
+and a memory stored before mentions existed falls back to the revision its
+first span cites when stated, and every revision its provenance cites when
+inferred. Publication refuses a memory that mentions a revision its
+provenance does not cite, so forgetting a mentioned source removes the memory
+with the rest of that source's evidence and requeues its other sources: a
+forgotten source never counts.
+
+`knowledgeMemorySupport(memory, infos)` gives a `KnowledgeSupport` from the
+info of the mentioned revisions (`KnowledgeIndex.sourceInfo`): `episodes`,
+the distinct `metadata.episode` values among the revisions found (a revision
+without one counts as its own source, as for inferred routines), `sources`,
+and `firstSeen` and `lastSeen`, the earliest and latest occurrence times.
+Captured turns carry one episode per turn, and a remembered note its turn's.
+
+Recall fuses the searches' lists as above into a pool of at most 100
+candidates, reads the info of the pool's mentioned revisions in one batch, and
+fuses again with a weight (`fuseKnowledgeCandidates(lists, limit, maxChars,
+weight)`), each memory carrying its `support`:
+
+```text
+final = rrf × (1 + supportWeight × ln(min(episodes, 4)))
+```
+
+The weight applies to `preference`, `routine`, `profile` and `fact` memories;
+chunks and other kinds weigh 1. With the default `supportWeight` of `0.15`,
+two episodes weigh ×1.10, three ×1.16 and four or more ×1.21, so repetition
+reorders records of similar relevance. Near the top of the lists a record
+passes only records within about twelve places of it in both arms: a fact
+both arms rank first stays ahead of a preference said in four episodes that
+they rank twentieth. `supportWeight: 0` turns support off: no read, no
+weight and no count, exactly as before.
+
+`renderMemoryRecall` adds the count to a dated memory's labels when it was
+said in two episodes or more, with the date of the latest:
+
+```text
+[2026-05-14 · preference · inferred · said 3 times, last 2026-05-14] The user's favourite drink is green tea.
+```
+
+The section's profile records show the count recall found for them.
 
 ## Place memory recall yourself
 

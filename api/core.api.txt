@@ -234,6 +234,7 @@ const KnowledgeStageNote
 const KnowledgeStoreMemoryLive
 const KnowledgeSubgraph
 const KnowledgeSupersession
+const KnowledgeSupport
 const KnowledgeTraversal
 const KnowledgeVector
 const LogBody
@@ -494,6 +495,8 @@ const knowledgeCosine
 const knowledgeEngineId
 const knowledgeExtractionPrompt
 const knowledgeExtractionWindows
+const knowledgeMemoryMentions
+const knowledgeMemorySupport
 const knowledgeNarrowingAdmits
 const knowledgeQueryPrompt
 const knowledgeRecordDate
@@ -803,6 +806,7 @@ type KnowledgeStage
 type KnowledgeStageNote
 type KnowledgeSubgraph
 type KnowledgeSupersession
+type KnowledgeSupport
 type KnowledgeTraversal
 type KnowledgeVector
 type LogBody

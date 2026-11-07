@@ -128,8 +128,20 @@ for one call. Earlier states take at most `recallHistoryShare` (default 0.2)
 of `recallChars`, at most half of `recallLimit` of them, and only beside a
 current record shown; a share they leave unused goes to current records.
 
+A preference, routine, profile or fact said in several episodes (captured
+turns, or remembered notes) ranks a little higher and says how often: recall
+counts the distinct episodes among the sources whose own text states the
+memory (its `mentions`, never the evidence of its entities), multiplies its
+fused score by `1 + supportWeight × ln(min(episodes, 4))`, and labels it
+`said <n> times, last <date>` from two episodes on. The default
+`supportWeight` of 0.15 caps the boost at ×1.21, so repetition reorders
+records of similar relevance and a strong match stays ahead of a weak one said
+often; `0` turns it off
+([memories said in several episodes](/docs/concepts/native-knowledge/#memories-said-in-several-episodes)).
+
 Automatic context also prepends up to four active preference/profile records,
-independently of the question's search ranking. See the
+independently of the question's search ranking, each with the count recall
+found for it. See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
 for the scores, graph expansion and final prompt path.
 
@@ -249,7 +261,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "recallDates": true,
   "recallToday": false,
   "recallHistory": "changes",
-  "recallHistoryShare": 0.2
+  "recallHistoryShare": 0.2,
+  "supportWeight": 0.15
 }
 ```
 
@@ -401,6 +414,11 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
       "type": "number",
       "minimum": 0,
       "maximum": 0.5
+    },
+    "supportWeight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   },
   "required": [
@@ -432,7 +450,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "recallDates",
     "recallToday",
     "recallHistory",
-    "recallHistoryShare"
+    "recallHistoryShare",
+    "supportWeight"
   ],
   "additionalProperties": true
 }
