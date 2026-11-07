@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
 import { TestClock } from "effect/testing"
-import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
-import { KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
+import { Clock, Context, Effect, Layer, Option, Order, Ref, Tracer } from "effect"
+import { KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, MemoryStore, UtilityCompletion, citedKnowledgeSources, knowledgeExtractionWindows, zeroUsage } from "@xandreed/core"
 import type { KnowledgeCandidate, KnowledgeHelperCall, KnowledgeMemory, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
@@ -155,12 +155,63 @@ describe("native memory engine", () => {
     const result = yield* fixture.memory.process(fixtureScope, 1).pipe(Effect.result)
     expect(result._tag).toBe("Failure")
     expect(Option.map(yield* fixture.memory.status(fixtureScope, job.id), (status) => [status.phase, status.attempt])).toEqual(Option.some([
-      { _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required" }, 1,
+      { _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required", diagnostic: { stage: "extract", path: [], window: { part: 1, parts: 1 } } }, 1,
     ]))
     expect(yield* Ref.get(fixture.calls)).toHaveLength(1)
     expect((yield* fixture.memory.retry(fixtureScope, job.id)).phase._tag).toBe("Queued")
     expect((yield* fixture.store.snapshot(fixtureScope)).memories).toEqual([])
     expect(yield* fixture.memory.source(fixtureScope, job.source)).not.toEqual(Option.none())
+  }))))
+
+  test("a failed extraction records where and how it failed on the job and on the processing span, without its content", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const text = "Since March I only take oat milk in my coffee."
+    const whole = JSON.stringify(fixtureExtraction(text))
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    } })
+    /** Process one capture whose helper replies `replies` in order: the job's failure and the attributes the processing span holds. */
+    const failing = (id: string, replies: ReadonlyArray<string | UtilityCompletion>, options: Partial<MemoryConfig> = {}) => Effect.gen(function* () {
+      const fixture = yield* makeMemoryFixture(replies, options)
+      const job = yield* fixture.memory.capture(fixtureEnqueue(id, text))
+      yield* Effect.flip(fixture.memory.process(fixtureScope, 1).pipe(Effect.withTracer(tracer)))
+      const phase = Option.map(yield* fixture.memory.status(fixtureScope, job.id), (status) => status.phase)
+      const span = spans.findLast((value) => value.name === "memory.process")
+      const attributes = Object.fromEntries([...(span?.attributes ?? new Map<string, unknown>())].filter(([key]) => key.startsWith("efferent.knowledge.failure.")))
+      return { phase, attributes }
+    })
+    // Cut off at the output cap: the reply as a whole did not decode.
+    const cut = yield* failing("cut", [new UtilityCompletion({ text: whole.slice(0, whole.indexOf("oat milk")), usage: { ...zeroUsage, outputTokens: 4096, totalTokens: 4096 }, finishReason: "length" })])
+    expect(cut.phase).toEqual(Option.some({ _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required",
+      diagnostic: { stage: "extract", path: [], finishReason: "length", outputTokens: 4096, window: { part: 1, parts: 1 } } }))
+    expect(cut.attributes).toEqual({
+      "efferent.knowledge.failure.stage": "extract", "efferent.knowledge.failure.path": "$", "efferent.knowledge.failure.finish_reason": "length",
+      "efferent.knowledge.failure.output_tokens": 4096, "efferent.knowledge.failure.window": "1/1",
+    })
+    expect(JSON.stringify(cut).includes("oat milk")).toBe(false)
+    // A reviewer that wrote an absent identity as an encoded option: the review reply drifted at that field.
+    const extracted = fixtureExtraction(text)
+    const echoed = JSON.stringify({ ...extracted, entities: extracted.entities.map((entity) => ({ ...entity, existing: { _id: "Option", _tag: "None" } })) })
+    const reviewed = yield* failing("reviewed", [whole, new UtilityCompletion({ text: echoed, usage: { ...zeroUsage, outputTokens: 700, totalTokens: 700 }, finishReason: "stop" })], { review: true })
+    expect(Option.map(reviewed.phase, (phase) => phase._tag === "Failed" ? phase.diagnostic : undefined)).toEqual(Option.some({ stage: "review", path: ["entities", 0, "existing"], finishReason: "stop", outputTokens: 700, window: { part: 1, parts: 1 } }))
+    expect(reviewed.attributes["efferent.knowledge.failure.path"]).toBe("$[\"entities\"][0][\"existing\"]")
+    // Staging refused it: every record names an entity key the extraction never defines.
+    const undefinedKey = JSON.stringify({ entities: [], memories: extracted.memories.map((memory) => ({ ...memory, entities: ["the-user"] })), assertions: [] })
+    const refused = yield* failing("refused", [undefinedKey])
+    expect(refused.phase).toEqual(Option.some({ _tag: "Failed", reason: "Invalid", message: "The extraction refers to an undefined entity key", step: "Required", diagnostic: { stage: "stage" } }))
+    expect(refused.attributes).toEqual({ "efferent.knowledge.failure.stage": "stage" })
+    // A failure that is not an extraction's records no diagnostic and sets no attribute.
+    const embeddingFailed = yield* Effect.gen(function* () {
+      const fixture = yield* makeMemoryFixture([whole])
+      const live = yield* Layer.build(MemoryLive(fixture.config).pipe(Layer.provide(Layer.succeedContext(fixture.services.pipe(Context.add(EmbeddingModel.EmbeddingModel, yield* EmbeddingModel.make({ embedMany: () => Effect.die("the embedding service is unreachable") })))))))
+      const memory = Context.get(live, LongTermMemory)
+      const job = yield* memory.capture(fixtureEnqueue("embedding", text))
+      yield* Effect.flip(memory.process(fixtureScope, 1))
+      return Option.map(yield* memory.status(fixtureScope, job.id), (status) => status.phase)
+    })
+    expect(embeddingFailed).toEqual(Option.some({ _tag: "Failed", reason: "Unavailable", message: "Memory processing stopped unexpectedly", step: "Required" }))
   }))))
 
   test("explicit corrections supersede memories while retaining their historical evidence", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

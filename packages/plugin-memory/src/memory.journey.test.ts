@@ -3,7 +3,7 @@ import { EmbeddingModel, LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, entriesOfEvents, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
-import type { KnowledgeHelperCall, KnowledgeRecallResult } from "@xandreed/core"
+import type { KnowledgeHelperCall, KnowledgeJobPhase, KnowledgeRecallResult } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -177,6 +177,48 @@ describe("memory through the real agent", () => {
     expect((yield* store.failed({ namespace: "default", limit: 10 })).jobs).toEqual([])
     const recalled = yield* after.recall({ scope, query: "tea", limit: 5, maxChars: 1000, graph: false })
     expect(recalled.sources.map((source) => source.ref)).toEqual([failed.source])
+  }))))
+
+  test("a capture whose extraction reply was cut off at the output cap fails for good, and its status and the failed listing say where and how, without content", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    // The helper model writes the extraction but reaches its output cap inside the first memory's text, so the JSON ends mid-string.
+    const helperCalls = yield* Ref.make(0)
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.update(helperCalls, (count) => count + 1).pipe(Effect.map(() => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const whole = JSON.stringify(fixtureExtraction(text))
+      return new UtilityCompletion({ text: whole.slice(0, whole.indexOf("cortado") + 3), usage: { ...zeroUsage, inputTokens: 2_400, outputTokens: 4_096, totalTokens: 6_496 }, finishReason: "length" })
+    })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const model = yield* LanguageModel.make({
+      generateText: () => Effect.succeed([{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }] as never),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2, maxAttempts: 3 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const session = { owner: "capped-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c1") }
+    yield* sessions.create(session)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    yield* agent.turn({ turn: { session, runId: RunId.make("capped"), userMessage: new UserMessage({ text: "My usual order is a cortado with oat milk." }) }, services }, (turn) => turn.reply("I will remember your order."))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: session.owner, namespace: "default", collection: "memory" }
+    // An invalid reply is final: one call, no retry within maxAttempts, nothing published.
+    expect((yield* Effect.result(memory.process(scope, 10)))._tag).toBe("Failure")
+    expect(yield* Ref.get(helperCalls)).toBe(1)
+    expect((yield* store.snapshot(scope)).memories).toEqual([])
+    const failure: KnowledgeJobPhase = {
+      _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required",
+      diagnostic: { stage: "extract", path: [], finishReason: "length", outputTokens: 4_096, window: { part: 1, parts: 1 } },
+    }
+    // The host lists what failed in the namespace and reads why: cut off at the cap, not a schema drift or a staging refusal.
+    const listed = yield* store.failed({ namespace: "default", reasons: ["Invalid"], limit: 10 })
+    expect(listed.jobs.map((job) => [job.scope.owner, job.phase])).toEqual([[session.owner, failure]])
+    expect(Option.map(yield* memory.status(scope, listed.jobs[0]!.id), (job) => job.phase)).toEqual(Option.some(failure))
+    // Neither the source nor the model's text reaches the failure.
+    expect(["cortado", "oat milk", "order"].filter((word) => JSON.stringify(listed.jobs[0]!.phase).includes(word))).toEqual([])
   }))))
 
   test("with the recall section off, a host's step context carries the recall at the request's tail and the system prompt stays the same across turns", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

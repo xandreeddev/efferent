@@ -131,10 +131,11 @@ without taking each other's jobs. The adapter passes
 `knowledgeStoreConformance`, including its `knowledge.engine-isolation` check.
 
 A failed job keeps the failure it was failed with (`KnowledgeJobFailure`:
-reason, message and step) in its stored payload; the row's `phase` column
-still reads `Failed`, and the layout is unchanged. A job failed by an earlier
+reason, message, step and, for a failed extraction, its `diagnostic`) in its
+stored payload, and `failed` lists it whole; the row's `phase` column still
+reads `Failed`, and the layout is unchanged. A job failed by an earlier
 release, whose payload has only a message, decodes with reason `Unavailable`
-at step `Required`.
+at step `Required`, and one failed before diagnostics decodes without one.
 
 A stage's notes, `GraphOmitted` and `RecordDropped` (the extracted records
 staging left out), are part of the job's stored payload, and an assertion's

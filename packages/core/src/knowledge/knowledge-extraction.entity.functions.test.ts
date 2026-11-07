@@ -9,6 +9,11 @@ import { knowledgeMemorySupport, knowledgeRecordDate, validateKnowledgeStage } f
 import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
 import { applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeQueryPrompt, knowledgeRerankPrompt } from "./knowledge-query.entity.functions.js"
+import { UtilityCompletion } from "../ports/utility-llm.port.js"
+import { zeroUsage } from "../domain/token-usage.entity.functions.js"
+
+/** A helper's completion whose text is this value's JSON (or this text). */
+const reply = (value: unknown) => new UtilityCompletion({ text: typeof value === "string" ? value : JSON.stringify(value), usage: zeroUsage })
 
 const source: KnowledgeSource = { scope: { owner: "fixture", namespace: "fixture", collection: "memory" }, ref: { id: KnowledgeSourceId.make("note"), revision: 1 }, text: "A note.", occurredAt: 10, recordedAt: 20, metadata: {} }
 const empty: KnowledgeSnapshot = { version: 0, memories: [], graph: { entities: [], assertions: [], truncated: false } }
@@ -81,8 +86,8 @@ describe("native extraction and retrieval contracts", () => {
     const reviews = yield* Ref.make<ReadonlyArray<string>>([])
     const reviewed = yield* extractKnowledge({
       source: { ...source, text }, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: true,
-      complete: (prompt, purpose) => purpose === "extract" ? Effect.succeed(decoded)
-        : Ref.update(reviews, (all) => [...all, prompt]).pipe(Effect.andThen(readBack(proposalOf(prompt))), Effect.orDie),
+      complete: (prompt, purpose) => purpose === "extract" ? Effect.succeed(reply(wire))
+        : Ref.update(reviews, (all) => [...all, prompt]).pipe(Effect.as(reply(proposalOf(prompt)))),
     })
     expect(reviewed).toEqual(decoded)
     expect(yield* Ref.get(reviews)).toEqual([knowledgeReviewPrompt(extract, decoded)])
@@ -245,7 +250,7 @@ describe("bounded extraction windows", () => {
     const merged = yield* extractKnowledge({
       source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: true,
       complete: (prompt, purpose) => Ref.update(calls, (all) => [...all, { purpose, part: sourceFrame(prompt) }]).pipe(
-        Effect.andThen(Schema.decodeUnknownEffect(KnowledgeExtraction)(windowExtractor(sourceFrame(prompt)))), Effect.orDie,
+        Effect.as(reply(windowExtractor(sourceFrame(prompt)))),
       ),
     })
     const windows = knowledgeExtractionWindows(longText, 1_000)
@@ -267,9 +272,9 @@ describe("bounded extraction windows", () => {
     const decoded = yield* extraction
     const result = yield* extractKnowledge({
       source, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: false,
-      complete: (prompt) => Ref.update(prompts, (all) => [...all, prompt]).pipe(Effect.as(decoded)),
+      complete: (prompt) => Ref.update(prompts, (all) => [...all, prompt]).pipe(Effect.as(reply(plain))),
     })
-    expect(result).toBe(decoded)
+    expect(result).toEqual(decoded)
     expect(yield* Ref.get(prompts)).toEqual([knowledgeExtractionPrompt(source, empty, "memory", 1000)])
   })))
 
@@ -284,11 +289,11 @@ describe("bounded extraction windows", () => {
         const part = sourceFrame(prompt)
         const value = windowExtractor(part)
         const first = part === longText.slice(0, windows[0]!.end)
-        return Schema.decodeUnknownEffect(KnowledgeExtraction)({
+        return Effect.succeed(reply({
           ...value,
           entities: value.entities.map((entity) => entity.key === "atlas" ? { ...entity, existing: first ? "known-a" : "known-b", spans: [{ start: 0, end: 5, quote: "Atlas" }] } : entity),
           assertions: value.assertions.map((assertion) => ({ ...assertion, spans: [{ start: 1, end: 6, quote: "Atlas" }] })),
-        }).pipe(Effect.orDie)
+        }))
       },
     })
     expect(merged.entities.map((entity) => [entity.key, Option.getOrElse(entity.existing, () => "")])).toEqual([["atlas", "known-a"], ["ada", ""], ["atlas~2", "known-b"]])
@@ -307,11 +312,11 @@ describe("bounded extraction windows", () => {
     const quote = "Atlas's site moved north - twice."
     const merged = yield* extractKnowledge({
       source: typographic, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
-      complete: () => Schema.decodeUnknownEffect(KnowledgeExtraction)({
+      complete: () => Effect.succeed(reply({
         entities: [{ key: "atlas", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Atlas" }] }],
         memories: [],
         assertions: [{ key: "moved", subject: "atlas", predicate: "moved", object: { _tag: "Value", value: "north" }, text: "Atlas moved north.", spans: [{ start: 0, end: quote.length, quote }], validFrom: null, validTo: null, supersedes: [] }],
-      }).pipe(Effect.orDie),
+      })),
     })
     const starts = windows.map((window) => window.start + text.slice(window.start, window.end).indexOf(said))
     expect(merged.assertions.flatMap((assertion) => assertion.spans)).toEqual(starts.map((start) => ({ start, end: start + said.length, quote: said })))
@@ -329,7 +334,7 @@ describe("bounded extraction windows", () => {
     }
     const merged = yield* extractKnowledge({
       source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
-      complete: (prompt) => Schema.decodeUnknownEffect(KnowledgeExtraction)(stray(sourceFrame(prompt))).pipe(Effect.orDie),
+      complete: (prompt) => Effect.succeed(reply(stray(sourceFrame(prompt)))),
     })
     const stage = yield* stageKnowledgeExtraction(longSource, empty, merged, 30)
     expect(stage.assertions).toHaveLength(windows.length)
@@ -339,10 +344,11 @@ describe("bounded extraction windows", () => {
       source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
       complete: (prompt) => {
         const value = windowExtractor(sourceFrame(prompt))
-        return Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...value, entities: [...value.entities, value.entities[0]!] }).pipe(Effect.orDie)
+        return Effect.succeed(reply({ ...value, entities: [...value.entities, value.entities[0]!] }))
       },
     }).pipe(Effect.flip)
-    expect([repeated.reason, repeated.message]).toEqual(["Invalid", "The extraction repeats an entity key"])
+    // The refusal names the first part that repeats a key, at stage `stage`.
+    expect([repeated.reason, repeated.message, repeated.diagnostic]).toEqual(["Invalid", "The extraction repeats an entity key", { stage: "stage", window: { part: 1, parts: windows.length } }])
   })))
 })
 
@@ -799,4 +805,68 @@ describe("a restatement adds evidence to the memory it restates instead of a new
     // A merged memory still validates against the snapshot, and the stage needs none of its own records.
     expect(validateKnowledgeStage(merged, snapshot, [earlier, now])).toEqual(Option.none())
   })
+})
+/** "Since March Noor only drinks oat milk in her coffee.": one person and one relation, as an extraction reply writes them. */
+const drink: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("drink"), revision: 1 }, text: "Since March Noor only drinks oat milk in her coffee." }
+const drinkReply = {
+  entities: [{ key: "noor", name: "Noor", type: "person", aliases: [], existing: null, spans: [{ start: 12, end: 16, quote: "Noor" }] }],
+  memories: [],
+  assertions: [{ key: "milk", subject: "noor", predicate: "drinks_coffee_with", object: { _tag: "Value", value: "oat milk" }, text: "Noor only drinks oat milk in her coffee.", spans: [{ start: 12, end: 52, quote: "Noor only drinks oat milk in her coffee." }], validFrom: null, validTo: null, supersedes: [], supersession: null }],
+}
+/** A completion that reports why it ended and how many tokens it wrote. */
+const reported = (text: string, finishReason: "stop" | "length", outputTokens: number) =>
+  new UtilityCompletion({ text, usage: { ...zeroUsage, inputTokens: 3_000, outputTokens, totalTokens: 3_000 + outputTokens }, finishReason })
+/** Extract `drink` with these replies, by call: the error it fails with. */
+const failing = (replies: ReadonlyArray<UtilityCompletion>, options: { readonly review: boolean; readonly source?: KnowledgeSource; readonly maxExtractionChars?: number } = { review: false }) => Effect.gen(function* () {
+  const calls = yield* Ref.make(0)
+  return yield* extractKnowledge({
+    source: options.source ?? drink, snapshot: empty, mode: "memory", maxContextChars: 1_000, maxExtractionChars: options.maxExtractionChars ?? 1_000, consolidate: true, review: options.review,
+    complete: () => Ref.getAndUpdate(calls, (count) => count + 1).pipe(Effect.map((index) => replies[Math.min(index, replies.length - 1)]!)),
+  }).pipe(Effect.flip)
+})
+
+describe("extraction failure diagnostics", () => {
+  test("a reply cut off at the output cap fails at extract for the reply as a whole, with its finish reason, output tokens and window, and none of its text", () => Effect.runPromise(Effect.gen(function* () {
+    const whole = JSON.stringify(drinkReply)
+    const cut = whole.slice(0, whole.indexOf("oat milk in her"))
+    const error = yield* failing([reported(cut, "length", 4096)])
+    expect([error.reason, error.message]).toEqual(["Invalid", "The extraction model returned an invalid knowledge object"])
+    expect(error.diagnostic).toEqual({ stage: "extract", path: [], finishReason: "length", outputTokens: 4096, window: { part: 1, parts: 1 } })
+    expect(["Noor", "oat milk", "coffee"].some((word) => JSON.stringify(error.diagnostic).includes(word))).toBe(false)
+  })))
+
+  test("a reply that drifted from the schema fails at the path of the field that broke it", () => Effect.runPromise(Effect.gen(function* () {
+    const drifted = { ...drinkReply, assertions: [{ ...drinkReply.assertions[0]!, supersedes: [], supersession: "update" }] }
+    const error = yield* failing([reported(JSON.stringify(drifted), "stop", 812)])
+    expect(error.diagnostic).toEqual({ stage: "extract", path: ["assertions", 0, "supersession"], finishReason: "stop", outputTokens: 812, window: { part: 1, parts: 1 } })
+  })))
+
+  test("a review reply that echoes an encoded option fails at review, and a completion that reports neither finish nor usage records neither", () => Effect.runPromise(Effect.gen(function* () {
+    const echoed = { ...drinkReply, entities: [{ ...drinkReply.entities[0]!, existing: { _id: "Option", _tag: "None" } }] }
+    const error = yield* failing([reported(JSON.stringify(drinkReply), "stop", 640), new UtilityCompletion({ text: JSON.stringify(echoed), usage: zeroUsage })], { review: true })
+    expect([error.message, error.diagnostic]).toEqual(["The extraction model returned an invalid knowledge object", { stage: "review", path: ["entities", 0, "existing"], window: { part: 1, parts: 1 } }])
+  })))
+
+  test("a failure in a later window names that window, and the document mode keeps its own message", () => Effect.runPromise(Effect.gen(function* () {
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    const calls = yield* Ref.make(0)
+    const error = yield* extractKnowledge({
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      complete: (prompt) => Ref.getAndUpdate(calls, (count) => count + 1).pipe(Effect.map((index) => index === 1 ? reported("Here is the extraction you asked for.", "stop", 9) : reply(windowExtractor(sourceFrame(prompt))))),
+    }).pipe(Effect.flip)
+    expect([error.message, error.diagnostic]).toEqual(["The document model returned an invalid graph extraction", { stage: "extract", path: [], finishReason: "stop", outputTokens: 9, window: { part: 2, parts: windows.length } }])
+  })))
+
+  test("staging that refuses the extraction as a whole fails at stage, with no path, window or completion facts", () => Effect.runPromise(Effect.gen(function* () {
+    const undefinedKey = { entities: [], memories: [], assertions: [{ ...drinkReply.assertions[0]!, subject: "the-user" }] }
+    const decoded = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)(undefinedKey)
+    const refused = yield* Effect.flip(stageKnowledgeExtraction(drink, empty, decoded, 30))
+    expect([refused.reason, refused.message, refused.diagnostic]).toEqual(["Invalid", "The extraction refers to an undefined entity key", { stage: "stage" }])
+    const repeated = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...drinkReply, entities: [drinkReply.entities[0]!, drinkReply.entities[0]!] })
+    expect((yield* Effect.flip(stageKnowledgeExtraction(drink, empty, repeated, 30))).diagnostic).toEqual({ stage: "stage" })
+    // Valid entities are no surviving knowledge: an extraction whose every relation drops fails at stage too.
+    const entitiesOnly = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...drinkReply, memories: [], assertions: [{ ...drinkReply.assertions[0]!, subject: "the-user" }] })
+    const orphaned = yield* Effect.flip(stageKnowledgeExtraction(drink, empty, entitiesOnly, 30))
+    expect([orphaned.reason, orphaned.message, orphaned.diagnostic]).toEqual(["Invalid", "The extraction refers to an undefined entity key", { stage: "stage" }])
+  })))
 })

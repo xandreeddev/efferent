@@ -23,7 +23,9 @@ time, so it cannot vouch for a whole source.
 
 Extraction and query protocols are core's shared native knowledge helpers. Extract
 through `extractKnowledge` (one call and review per `maxExtractionChars` window,
-merged before staging), and run every UtilityLlm call inside
+merged before staging; it decodes each helper completion), record a failed
+job with `knowledgeJobFailure`, which keeps an extraction's diagnostic, and set
+that diagnostic on the span with `knowledgeFailureAttributes`, and run every UtilityLlm call inside
 `CurrentKnowledgeHelperCall` (purpose, scope, job and attempt, output cap). Stage
 validated extraction before embedding: `stageKnowledgeExtraction` leaves out a
 record that fails its own checks and writes its `RecordDropped` note on the
@@ -133,7 +135,7 @@ tool discovery without adding those dependencies to production. See the reposito
 | Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:139`, `:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:62`; exact, `src/memory-capability.adapter.test.ts:70` |
 | Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:100` |
 | Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:144`, `:170`, `:225` | exact, `src/memory-capability.adapter.test.ts:125`; exact, `src/memory-capability.adapter.test.ts:131` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:157`; exact, `src/memory.journey.test.ts:458` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:157`; exact, `src/memory.journey.test.ts:500` |
 | Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:331` | exact, `src/memory-capability.adapter.test.ts:333`; exact, `src/memory-capability.adapter.test.ts:343` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |

@@ -117,18 +117,23 @@ test("the source-filter check rejects a store that ignores the filter", async ()
   expect(results.length === 1 && results.every(Result.isFailure)).toBe(true)
 })
 
-const failingAlone = async (name: string, change: (real: KnowledgeIndex) => Partial<KnowledgeIndex>) => {
+const failingAlone = async (name: string | ReadonlyArray<string>, change: (real: KnowledgeIndex) => Partial<KnowledgeIndex>) => {
   const changed = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, ...change(real) }))
   const all = knowledgeStoreConformance({ open: Effect.map(changed, (index) => ({ index, scope })) })
   const results = await Effect.runPromise(Effect.forEach(all, (check) => Effect.result(check.run), { concurrency: 1 }))
-  expect(all.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual([name])
+  expect(all.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(typeof name === "string" ? [name] : [...name])
 }
 
 test("the failed-listing check rejects a store that ignores the reason filter or lists every phase", async () => {
   await failingAlone("knowledge.failed-listing", (real) => ({ failed: ({ reasons: _ignored, ...query }) => real.failed(query) }))
-  await failingAlone("knowledge.failed-listing", (real) => ({
+  // Listing no failed job at all also loses the failure the failure-reason check lists.
+  await failingAlone(["knowledge.failure-reason", "knowledge.failed-listing"], (real) => ({
     failed: (query) => real.pending({ engine: query.engine ?? "kit", namespace: query.namespace, now: 1_000, limit: query.limit }).pipe(Effect.map((jobs) => ({ jobs, next: Option.none() }))),
   }))
+})
+
+test("the failure-reason check rejects a store that drops a failure's diagnostic", async () => {
+  await failingAlone("knowledge.failure-reason", (real) => ({ fail: (lease, { diagnostic: _dropped, ...failure }) => real.fail(lease, failure) }))
 })
 
 test("the requeue check rejects a store whose requeue keeps the job's attempts and engine", async () => {

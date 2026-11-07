@@ -99,7 +99,16 @@ unchanged). To find failed jobs without keeping their ids, page through
 which lists them across owners with the reason each failed with, and `retry`
 those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
 reasons a configuration change can fix). `retry` refuses a scope outside the
-engine's namespace and collection.
+engine's namespace and collection. A graph step that failed on an earlier
+attempt records where and how its extraction failed, without its content
+(`diagnostic`, a `KnowledgeFailureDiagnostic`): the `stage` (`extract`,
+`review` or `stage`, which also covers a document extraction that proposed
+personal memories), for a reply that did not decode the `path` of its first
+decode issue (empty for the reply as a whole), the `finishReason` and
+`outputTokens` the helper completion reported and the `window` it read. The
+engine sets the same facts on the span that processed the job
+(`efferent.knowledge.failure.*`, `knowledgeFailureAttributes`), the last
+attempt's too, whose `GraphOmitted` note keeps the reason and message alone.
 
 ## Search, graph and model context
 

@@ -506,7 +506,7 @@ export {
   KnowledgeSourceRef, KnowledgeSource, KnowledgeSourceInfo, KnowledgeProvenance, KnowledgeEmbeddingSpace,
   KnowledgeVector, KnowledgeMemoryKind, KnowledgeEvidence, KnowledgeEventTime, KnowledgeMemory,
   KnowledgeChunk, KnowledgeEntity, KnowledgeObject, KnowledgeAssertion, KnowledgeStageNote, KnowledgeCorroboration, KnowledgeStage,
-  KnowledgeFailureStep, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
+  KnowledgeFailureStep, KnowledgeFailureStage, KnowledgeFailureDiagnostic, KnowledgeJobFailure, KnowledgeJobPhase, KnowledgeJob, KnowledgeEnqueue, KnowledgeClaim, KnowledgePending,
   KnowledgeJobCursor, KnowledgeFailedQuery, KnowledgeFailedPage, KnowledgeRequeue,
   KnowledgeLease, KnowledgePerspective, KnowledgeSupport, KnowledgeProfileMemory, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
@@ -521,7 +521,7 @@ export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey, knowledgeAssertionKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeProfileOrder, knowledgeMemoryIsPast, traverseKnowledgeGraph,
-  validateKnowledgeStage, corroborateKnowledgeMemory, stripKnowledgeRevisions, citesKnowledgeSources, narrowKnowledgeGraph, narrowKnowledgeMemory, isRetryableKnowledgeFailure,
+  validateKnowledgeStage, corroborateKnowledgeMemory, stripKnowledgeRevisions, citesKnowledgeSources, narrowKnowledgeGraph, narrowKnowledgeMemory, isRetryableKnowledgeFailure, knowledgeJobFailure, knowledgeFailureAttributes,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"

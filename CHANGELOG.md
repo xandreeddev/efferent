@@ -153,6 +153,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   job keeps what it published. A host that pins the extraction, document,
   part or review prompt updates the pin.
 
+- `extractKnowledge`'s `complete` returns the helper's `UtilityCompletion`
+  instead of a decoded `KnowledgeExtraction`: `extractKnowledge` now decodes
+  each reply itself, so it can record where and how one failed. A host that
+  runs its own engine over it passes its `UtilityLlm.complete` result through
+  and drops its own decode; a reply that does not decode fails `Invalid` with
+  "The extraction model returned an invalid knowledge object" in memory mode
+  and "The document model returned an invalid graph extraction" in document
+  mode, the messages the native engines used. A host's own `KnowledgeIndex`
+  keeps a failure's new `diagnostic` whole on the job and in its failed
+  listing, as `knowledgeStoreConformance`'s `knowledge.failure-reason` check
+  now requires.
+
 ### Changed
 
 - `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: one
@@ -428,6 +440,30 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   of -1 too; `MemoryConfig.recallMinSimilarity` and
   `RagConfig.minSimilarity` pass one and are absent by default, so search is
   unchanged until a floor measured for the embedding model is set.
+
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`,
+  `@xandreed/plugin-models`, `@xandreed/plugin-knowledge-postgres`: a failed
+  extraction records where and how it failed on its job, without its content,
+  so a host or a trace can tell a reply cut off at the output cap from one
+  that drifted from the schema or one staging refused. `KnowledgeJobFailure`
+  and `KnowledgeError` gain an optional `diagnostic`
+  (`KnowledgeFailureDiagnostic`): the `stage` (`extract` or `review` when that
+  call's reply did not decode, `stage` when staging refused the decoded
+  extraction as a whole), the `path` of the first decode issue
+  (`["assertions", 0, "supersession"]`, empty for the reply as a whole), the
+  `finishReason` and `outputTokens` the helper completion reported and the
+  source `window` (`{ part, parts }`) the call read. It never holds the
+  model's text, a quote or the source, and failures that are not an
+  extraction's have none. `UtilityCompletion` gains an optional
+  `finishReason`, which the models plugin's `UtilityLlmLive` fills from the
+  response's finish part. The memory and document engines copy the diagnostic
+  into the failure they record (`knowledgeJobFailure`) and set it on the span
+  that processed the job (`knowledgeFailureAttributes`:
+  `efferent.knowledge.failure.stage`, `.path` as JSONPath, `.finish_reason`,
+  `.output_tokens`, `.window`). The in-memory and PostgreSQL stores keep it in
+  the job payload, layout unchanged, return it from `status` and `failed`,
+  and decode a failure stored before it without one. No prompt or output
+  schema changes, so `KNOWLEDGE_EXTRACTION_VERSION` stays 8.
 
 ### Fixed
 

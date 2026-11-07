@@ -33,7 +33,10 @@ through KnowledgeStore. Node 24 and Bun.
   opt-in and requires UtilityLlm; extracted entity identities and evidence
   are validated by core before publication. Review is enabled by default.
   Extraction runs through core's `extractKnowledge`: one call (and one
-  review) per `maxExtractionChars` window, merged before staging.
+  review) per `maxExtractionChars` window, merged before staging; it decodes
+  each helper completion. A failed job is recorded with `knowledgeJobFailure`,
+  which keeps an extraction's diagnostic, set on the span with
+  `knowledgeFailureAttributes`.
 - Every UtilityLlm call runs inside `CurrentKnowledgeHelperCall` (purpose,
   scope, job and attempt for extraction and review, `maxHelperOutputTokens`).
   The cap is advisory: only a host's own UtilityLlm that reads the reference

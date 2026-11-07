@@ -16,8 +16,11 @@ export const fixtureExtraction = (text: string) => ({
   memories: [{ key: "preference", kind: "preference", text, entities: ["person"], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
   assertions: [{ key: "prefers", subject: "person", predicate: "prefers", object: { _tag: "Value", value: "tea" }, text, spans: [{ start: 0, end: text.length, quote: text }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
 })
+/** A scripted reply: its text alone, or a whole completion (a finish reason, usage). */
+type Scripted = string | UtilityCompletion
+const completionOf = (reply: Scripted): UtilityCompletion => typeof reply === "string" ? new UtilityCompletion({ text: reply, usage: zeroUsage }) : reply
 /** Replies by call order, or computed from each call's prompt and helper context; over the in-memory store unless given another. */
-export const makeMemoryFixture = (responses: ReadonlyArray<string> | ((prompt: string, call: Option.Option<KnowledgeHelperCall>) => string), options: Partial<MemoryConfig> = {}, index?: KnowledgeIndex) => Effect.gen(function* () {
+export const makeMemoryFixture = (responses: ReadonlyArray<Scripted> | ((prompt: string, call: Option.Option<KnowledgeHelperCall>) => Scripted), options: Partial<MemoryConfig> = {}, index?: KnowledgeIndex) => Effect.gen(function* () {
   const calls = yield* Ref.make<ReadonlyArray<string>>([])
   const helperCalls = yield* Ref.make<ReadonlyArray<Option.Option<KnowledgeHelperCall>>>([])
   const store = index ?? (yield* makeKnowledgeIndexMemory())
@@ -25,7 +28,7 @@ export const makeMemoryFixture = (responses: ReadonlyArray<string> | ((prompt: s
   const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
     Effect.tap((call) => Ref.update(helperCalls, (all) => [...all, call])),
     Effect.flatMap((call) => Ref.modify(calls, (seen): [number, ReadonlyArray<string>] => [seen.length, [...seen, prompt]]).pipe(
-      Effect.map((index) => new UtilityCompletion({ text: typeof responses === "function" ? responses(prompt, call) : responses[index] ?? responses.at(-1) ?? "{}", usage: zeroUsage })),
+      Effect.map((index) => completionOf(typeof responses === "function" ? responses(prompt, call) : responses[index] ?? responses.at(-1) ?? "{}")),
     )),
   ) })
   const services = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))

@@ -1,11 +1,12 @@
-import { DateTime, Effect, JsonSchema, Match, Option, Order, Schema } from "effect"
+import { DateTime, Effect, JsonSchema, Match, Option, Order, Schema, SchemaIssue } from "effect"
 import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote, KnowledgeSupersession } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeFailureDiagnostic, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote, KnowledgeSupersession } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
+import type { UtilityCompletion } from "../ports/utility-llm.port.js"
 import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations, sameKnowledgeEventTime } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
@@ -122,7 +123,36 @@ export const knowledgeReviewPrompt = (prompt: string, extraction: KnowledgeExtra
   "Reply with the corrected JSON object only.",
 ].join("\n\n")
 
-const invalid = (message: string) => Effect.fail(new KnowledgeError({ reason: "Invalid", message }))
+const invalid = (message: string, diagnostic: KnowledgeFailureDiagnostic) => Effect.fail(new KnowledgeError({ reason: "Invalid", message, diagnostic }))
+/** A refusal of the decoded extraction as a whole. */
+const refused = (message: string) => invalid(message, { stage: "stage" })
+
+const issueFormatter = SchemaIssue.makeFormatterStandardSchemaV1()
+/** Where the first issue of a failed decode sits, as keys and array indexes; empty for the value as a whole. */
+const issuePath = (issue: SchemaIssue.Issue): ReadonlyArray<string | number> => (issueFormatter(issue).issues[0]?.path ?? []).map((segment) => {
+  const key = typeof segment === "object" ? segment.key : segment
+  return typeof key === "number" ? key : typeof key === "string" ? key : key.description ?? ""
+})
+/** What each mode calls a reply that does not decode as an extraction. */
+const UNDECODED: Record<"memory" | "document", string> = {
+  memory: "The extraction model returned an invalid knowledge object",
+  document: "The document model returned an invalid graph extraction",
+}
+/**
+ * A helper's reply decoded as an extraction. One that does not decode fails `Invalid` with where and
+ * how (`KnowledgeFailureDiagnostic`): the call's stage and window, the first issue's path, and the
+ * finish reason and output tokens the completion reported (a zero count reads as unreported). Never
+ * its text.
+ */
+const decodeReply = (completion: UtilityCompletion, stage: Extract<KnowledgeHelperPurpose, "extract" | "review">, window: KnowledgeExtractionWindow, message: string) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(completion.text).pipe(
+    Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message, cause, diagnostic: {
+      stage, path: issuePath(cause.issue),
+      ...(completion.finishReason === undefined ? {} : { finishReason: completion.finishReason }),
+      ...(Number.isInteger(completion.usage.outputTokens) && completion.usage.outputTokens > 0 ? { outputTokens: completion.usage.outputTokens } : {}),
+      window: { part: window.part, parts: window.parts },
+    } })),
+  )
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff
@@ -258,6 +288,12 @@ const mergeWindows = (text: string, parts: ReadonlyArray<WindowExtraction>): Kno
  * extraction whose spans are exact offsets into the whole source, ready for
  * `stageKnowledgeExtraction`. A source that fits one window makes the calls
  * a whole-source extraction makes and returns their result unchanged.
+ * `complete` returns the helper's completion, which this decodes as a
+ * `KnowledgeExtraction`; a reply that does not decode fails `Invalid` with a
+ * `diagnostic` (`KnowledgeFailureDiagnostic`): stage `extract` or `review`,
+ * the window, the first decode issue's path, and the completion's finish
+ * reason and output tokens. A repeated entity key that refuses the merge of
+ * several windows fails at stage `stage`, naming the first part that repeats one.
  * @public
  */
 export const extractKnowledge = <E, R>(input: {
@@ -268,13 +304,15 @@ export const extractKnowledge = <E, R>(input: {
   readonly maxExtractionChars: number
   readonly consolidate: boolean
   readonly review: boolean
-  readonly complete: (prompt: string, purpose: Extract<KnowledgeHelperPurpose, "extract" | "review">) => Effect.Effect<KnowledgeExtraction, E, R>
+  readonly complete: (prompt: string, purpose: Extract<KnowledgeHelperPurpose, "extract" | "review">) => Effect.Effect<UtilityCompletion, E, R>
 }): Effect.Effect<KnowledgeExtraction, E | KnowledgeError, R> => {
   const windows = knowledgeExtractionWindows(input.source.text, input.maxExtractionChars)
+  const ask = (prompt: string, purpose: Extract<KnowledgeHelperPurpose, "extract" | "review">, window: KnowledgeExtractionWindow) =>
+    input.complete(prompt, purpose).pipe(Effect.flatMap((completion) => decodeReply(completion, purpose, window, UNDECODED[input.mode])))
   const extractWindow = (window: KnowledgeExtractionWindow) => {
     const prompt = knowledgeExtractionPrompt(input.source, input.snapshot, input.mode, input.maxContextChars, input.consolidate, window)
-    return input.complete(prompt, "extract").pipe(
-      Effect.flatMap((extracted) => input.review ? input.complete(knowledgeReviewPrompt(prompt, extracted), "review") : Effect.succeed(extracted)),
+    return ask(prompt, "extract", window).pipe(
+      Effect.flatMap((extracted) => input.review ? ask(knowledgeReviewPrompt(prompt, extracted), "review", window) : Effect.succeed(extracted)),
       Effect.map((extraction): WindowExtraction => ({ window, extraction })),
     )
   }
@@ -282,7 +320,10 @@ export const extractKnowledge = <E, R>(input: {
     const only = parts.length === 1 ? parts[0] : undefined
     if (only !== undefined) return Effect.succeed(only.extraction)
     // A repeated key is ambiguous within its part, so it refuses the whole source; a record that names a key no part defines is left to staging, which drops that record alone.
-    return parts.some(({ extraction }) => repeatsEntityKey(extraction)) ? invalid(REPEATED_KEY) : Effect.succeed(mergeWindows(input.source.text, parts))
+    return Option.match(Option.fromNullishOr(parts.find(({ extraction }) => repeatsEntityKey(extraction))), {
+      onNone: () => Effect.succeed(mergeWindows(input.source.text, parts)),
+      onSome: ({ window }) => invalid(REPEATED_KEY, { stage: "stage", window: { part: window.part, parts: window.parts } }),
+    })
   }))
 }
 
@@ -334,7 +375,8 @@ const corroborating = (corroborations: ReadonlyArray<KnowledgeCorroboration>): P
  * and the rest is staged; an entity that only dropped records referred to is
  * left out too. The extraction fails with `Invalid` when it repeats an entity
  * key, does not encode, or proposed memories or assertions of which none
- * survive (entities alone do not count; with the first drop's message). A world change that supersedes a record
+ * survive (entities alone do not count; with the first drop's message), each
+ * with the diagnostic stage `stage` (`KnowledgeFailureDiagnostic`). A world change that supersedes a record
  * without a `validFrom` takes the source's occurrence time, with basis
  * `observed`; a `validFrom` the extraction gives has basis `stated`. A
  * `supersession` is read only from a record that supersedes others (one beside
@@ -367,7 +409,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     memories: proposed.memories.map((memory) => ({ ...memory, spans: anchored(memory.spans) })),
     assertions: proposed.assertions.map((assertion) => ({ ...assertion, spans: anchored(assertion.spans) })),
   }
-  if (repeatsEntityKey(extraction)) return yield* invalid(REPEATED_KEY)
+  if (repeatsEntityKey(extraction)) return yield* refused(REPEATED_KEY)
   const activeMemories = snapshot.memories.filter((memory) => Option.isNone(memory.knownTo))
   const activeAssertions = snapshot.graph.assertions.filter((assertion) => Option.isNone(assertion.knownTo))
   const badSpans = (spans: ReadonlyArray<{ readonly start: number; readonly end: number; readonly quote?: string }>) => spans.some((span) =>
@@ -441,7 +483,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
   const first = notes[0]
   // Entities alone are no surviving knowledge when the extraction proposed memories or assertions.
   const survivors = extraction.memories.length + extraction.assertions.length > 0 ? kept.memories.length + kept.assertions.length : kept.entities.length
-  if (first !== undefined && survivors === 0) return yield* invalid(first.message)
+  if (first !== undefined && survivors === 0) return yield* refused(first.message)
   /** The active memories a kept memory restates and evidences instead of being written: stated, of its kind and event time, published by another source and not retired by this stage. */
   const restated = (memory: ExtractedMemory): ReadonlyArray<KnowledgeMemory> => memory.evidence._tag !== "Stated" || memory.supersedes.length > 0 ? []
     : activeMemories.filter((existing) => (memory.restates ?? []).includes(existing.id) && !retiring.has(existing.id) && existing.evidence._tag === "Stated" && existing.kind === memory.kind &&
@@ -512,7 +554,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     }))))),
   }
   return yield* Schema.encodeEffect(KnowledgeExtraction)(kept).pipe(
-    Effect.map(() => stage), Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The extraction is invalid", cause })),
+    Effect.map(() => stage), Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The extraction is invalid", cause, diagnostic: { stage: "stage" } })),
   )
 })
 

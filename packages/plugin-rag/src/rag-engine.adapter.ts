@@ -1,13 +1,14 @@
 import { EmbeddingModel } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Predicate, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, CurrentKnowledgeHelperCall, extractKnowledge, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, Knowledge, KnowledgeError,
+  knowledgeFailureAttributes, knowledgeJobFailure,
   KnowledgeLeaseToken, KnowledgeStore, stageKnowledgeExtraction, UtilityLlm,
   applyKnowledgeRerank, citedKnowledgeSources, knowledgeCandidateText, KnowledgeQueryPlan, knowledgeQueryPrompt, KnowledgeRerank, knowledgeRerankPrompt,
   knowledgeNarrowingAdmits, narrowKnowledgeGraph, narrowKnowledgeGraphBy, traverseKnowledgeGraph,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeEntityId, KnowledgeFailureDiagnostic, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease, KnowledgeRecall, KnowledgeScope,
   KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeSubgraph, KnowledgeVector,
 } from "@xandreed/core"
 import { RagGraphFailed } from "./rag.entity.js"
@@ -16,6 +17,8 @@ import { chunkDocument } from "./rag.entity.functions.js"
 
 const unavailable = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const knowledgeFailure = (failure: KnowledgeError | RagGraphFailed): KnowledgeError => Predicate.isTagged(failure, "RagGraphFailed") ? failure.failure : failure
+/** Where and how an extraction failed, without its content, on the span that processed the job. */
+const annotateFailure = (diagnostic: KnowledgeFailureDiagnostic | undefined) => diagnostic === undefined ? Effect.void : Effect.annotateCurrentSpan(knowledgeFailureAttributes(diagnostic))
 
 /** Native staged ingestion and hybrid retrieval over the host's document store. @public */
 export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(function* () {
@@ -45,13 +48,10 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       maxOutputTokens: Option.fromNullishOr(config.maxHelperOutputTokens),
     })),
   )
+  /** One graph extraction or review completion; `extractKnowledge` decodes it, and records where and how a reply that does not decode failed. */
   const complete = (job: KnowledgeJob) => (prompt: string, purpose: KnowledgeHelperPurpose) => Option.match(utility, {
     onNone: () => Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Graph extraction requires a UtilityLlm" })),
-    onSome: (model) => bounded(ask(model, prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => unavailable("Document graph extraction failed", cause))), "Document graph extraction exceeded its time budget").pipe(
-      Effect.flatMap((result) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(result.text).pipe(
-        Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The document model returned an invalid graph extraction", cause })),
-      )),
-    ),
+    onSome: (model) => bounded(ask(model, prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => unavailable("Document graph extraction failed", cause))), "Document graph extraction exceeded its time budget"),
   })
   const askQuery = <A, I>(schema: Schema.Codec<A, I>, prompt: string, purpose: KnowledgeHelperPurpose, scope: KnowledgeScope) => Option.match(utility, {
     onNone: () => Effect.succeed(Option.none<A>()),
@@ -68,7 +68,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
       consolidate: true, review: config.review, complete: complete(job),
     })
-    if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories" }))
+    if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories", diagnostic: { stage: "stage" } }))
     return yield* stageKnowledgeExtraction(source, snapshot, reviewed, yield* Clock.currentTimeMillis)
   }).pipe(Effect.catchDefect((cause) => Effect.fail(unavailable("Document graph extraction encountered an unexpected failure", cause))))
   // The graph is optional: a failed extraction is retried with the job, and its last attempt publishes the chunks without it.
@@ -80,6 +80,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
     if (Result.isSuccess(graph)) return { ...graph.success, chunks }
     if (!last) return yield* Effect.fail(new RagGraphFailed({ failure: graph.failure }))
     yield* Effect.logWarning("Document graph extraction failed on the last attempt; the source's chunks publish without its graph", graph.failure)
+    yield* annotateFailure(graph.failure.diagnostic)
     return { ...plain, notes: [{ _tag: "GraphOmitted" as const, reason: graph.failure.reason, message: graph.failure.message }] }
   })
   const embed = (stage: KnowledgeStage): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
@@ -136,7 +137,8 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
               onNone: () => unavailable(interrupted ? "Document processing was interrupted before publication" : "Document processing stopped unexpectedly", cause),
               onSome: knowledgeFailure,
             })
-            const failure: KnowledgeJobFailure = { reason: error.reason, message: error.message, step: graphFailed ? "Graph" : "Required" }
+            const failure = knowledgeJobFailure(error, graphFailed ? "Graph" : "Required")
+            yield* annotateFailure(failure.diagnostic)
             const recorded = yield* store.fail(yield* lease(job, token), failure).pipe(Effect.result)
             if (Result.isFailure(recorded)) yield* Effect.logWarning("The document processing failure could not be recorded", recorded.failure)
             if (interrupted) {

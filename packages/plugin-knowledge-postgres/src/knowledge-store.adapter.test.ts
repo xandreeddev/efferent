@@ -191,6 +191,28 @@ test.skipIf(url.length === 0)("PostgreSQL keeps a failed job's reason in its pay
   expect((yield* index.retry(scope, lease.jobId)).phase._tag).toBe("Queued")
 }))))
 
+test.skipIf(url.length === 0)("PostgreSQL keeps a failed extraction's diagnostic in the job payload, lists it, and decodes a failure stored before diagnostics", () => run(Effect.scoped(Effect.gen(function* () {
+  const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const source = sourceOf(scope, "cut-off", "The extraction was cut off")
+  const lease = yield* prepare(index, source, stageOf(0))
+  const diagnostic = { stage: "review" as const, path: ["entities", 0, "existing"], finishReason: "length" as const, outputTokens: 4096, window: { part: 2, parts: 3 } }
+  const failure = { reason: "Invalid" as const, message: "The extraction model returned an invalid knowledge object", step: "Required" as const, diagnostic }
+  yield* index.fail(lease, failure)
+  expect(Option.map(yield* index.status(scope, lease.jobId), (job) => job.phase)).toEqual(Option.some({ _tag: "Failed", ...failure }))
+  const where = sql`domain='knowledge' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection} AND id=${lease.jobId}`
+  // The layout is unchanged: the diagnostic is a key of the payload's phase.
+  const [row] = yield* Effect.tryPromise(() => sql<ReadonlyArray<{ readonly phase: string; readonly diagnostic: unknown }>>`SELECT phase, payload->'phase'->'diagnostic' AS diagnostic FROM efferent_knowledge.jobs WHERE ${where}`)
+  expect([row?.phase, row?.diagnostic]).toEqual(["Failed", diagnostic])
+  const listed = yield* index.failed({ namespace: scope.namespace, collection: scope.collection, limit: 10 })
+  expect(listed.jobs.filter((job) => job.scope.owner === scope.owner).map((job) => job.phase)).toEqual([{ _tag: "Failed", ...failure }])
+  // A failure stored before diagnostics has no key, and decodes without one.
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.jobs SET payload = payload #- '{phase,diagnostic}' WHERE ${where}`)
+  const older = yield* index.status(scope, lease.jobId)
+  expect(Option.map(older, (job) => job.phase)).toEqual(Option.some({ _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required" }))
+}))))
+
 test.skipIf(url.length === 0)("PostgreSQL lists a job failed before reasons as unavailable and requeues it under a new engine column", () => run(Effect.scoped(Effect.gen(function* () {
   const { knowledge: index } = yield* makeKnowledgePostgres(Redacted.make(url))
   const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
