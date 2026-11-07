@@ -1065,4 +1065,73 @@ describe("memory through the real agent", () => {
     }))
     expect((yield* Ref.get(requests))[0] ?? "").toContain("The user switched from coffee to green tea.")
   }))))
+
+  test("a captured turn's extraction follows the memory prompt's rule for the conversation's user, so its memory and relation publish whole and a later conversation recalls them", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => text.includes("tea") ? [0, 1] : [1, 0]), usage: { inputTokens: undefined } }) })
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // Without the rule, the extraction model replies as recorded models did: its memory lists an undefined `user`
+    // and its relation's subject is that key. Told how to refer to the user, it lists no user in the memory and
+    // defines the user for the relation. The reviewer copies its proposal back verbatim.
+    const told = (prompt: string) => prompt.includes("never list the user in a memory's entities") && prompt.includes("define the user in entities like any other entity")
+    const extract = (prompt: string) => {
+      const text = frame("knowledge-source", prompt)
+      const user = { key: "user", name: "User", type: "person", aliases: [], existing: null, spans: [span(text, "I")] }
+      const bergen = { key: "bergen", name: "Bergen", type: "city", aliases: [], existing: null, spans: [span(text, "Bergen")] }
+      const tea = { key: "tea", kind: "preference", text: "The user takes their tea with oat milk.", spans: [span(text, "I take my tea with oat milk.")], evidence: { _tag: "Stated" }, supersedes: [] }
+      const lives = { key: "lives", subject: "user", predicate: "lives_in", object: { _tag: "Entity", key: "bergen" }, text: "The user lives in Bergen.", spans: [span(text, "I live in Bergen.")], validFrom: null, validTo: null, supersedes: [] }
+      return JSON.stringify(told(prompt)
+        ? { entities: [user, bergen], memories: [{ ...tea, entities: [] }], assertions: [lives] }
+        : { entities: [bergen], memories: [{ ...tea, entities: ["user"] }], assertions: [lives] })
+    }
+    const helperPrompts = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly prompt: string }>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
+      Effect.map((call) => Option.match(call, { onNone: () => "none", onSome: (value) => value.purpose })),
+      Effect.tap((purpose) => Ref.update(helperPrompts, (all) => [...all, { purpose, prompt }])),
+      Effect.map((purpose) => new UtilityCompletion({ text: purpose === "review" ? frame("knowledge-proposal", prompt) : extract(prompt), usage: zeroUsage })),
+    ) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const first = { owner: "referent-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c1") }
+    const second = { owner: "referent-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c2") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: first.owner, namespace: "default", collection: "memory" }
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
+    yield* agent.turn({ turn: { session: first, runId: RunId.make("telling"), userMessage: new UserMessage({ text: "I take my tea with oat milk. I live in Bergen." }) }, services }, (turn) => turn.reply("Noted."))
+    const jobs = yield* store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })
+    expect(yield* memory.process(scope, 10)).toBe(1)
+    // The extraction model was told, and its reply staged with nothing dropped.
+    const extractions = (yield* Ref.get(helperPrompts)).filter((call) => call.purpose === "extract")
+    expect(extractions.map((call) => told(call.prompt))).toEqual([true])
+    const status = yield* memory.status(scope, jobs[0]!.id)
+    expect(Option.map(status, (value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])])).toEqual(Option.some(["Complete", Option.some([])]))
+    // The memory lists no entity; the relation runs from the user's entity to the city's.
+    const snapshot = yield* store.snapshot(scope)
+    const named = (name: string) => snapshot.graph.entities.find((entity) => entity.name === name)!.id
+    expect(snapshot.memories.map((value) => [value.text, value.entities])).toEqual([["The user takes their tea with oat milk.", []]])
+    expect(snapshot.graph.assertions.map((assertion) => [assertion.text, assertion.subject, assertion.object])).toEqual([
+      ["The user lives in Bergen.", named("User"), { _tag: "Entity", entityId: named("Bergen") }],
+    ])
+    // A later conversation recalls the memory.
+    yield* agent.turn({ turn: { session: second, runId: RunId.make("asking"), userMessage: new UserMessage({ text: "How do I take my tea?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    expect((yield* Ref.get(requests)).at(-1) ?? "").toContain("The user takes their tea with oat milk.")
+  }))))
 })

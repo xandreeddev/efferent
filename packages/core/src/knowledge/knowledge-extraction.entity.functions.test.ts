@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("7")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("8")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -30,6 +30,25 @@ describe("native extraction and retrieval contracts", () => {
     expect(knowledgeReviewPrompt(prompt, decoded)).toBe(await Bun.file(new URL("../../golden/knowledge-review.prompt.txt", import.meta.url)).text())
     expect(knowledgeQueryPrompt("Who works on Atlas?", 100)).toBe(await Bun.file(new URL("../../golden/knowledge-query.prompt.txt", import.meta.url)).text())
     expect(knowledgeRerankPrompt("Who?", [], empty.graph, 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-rerank.prompt.txt", import.meta.url)).text())
+  })
+
+  test("the memory prompt says how to refer to the conversation's user, the document prompt does not, and the output schema says every named key is defined in entities", () => {
+    const rule = "Memories are already about the conversation's user: never list the user in a memory's entities. When a relationship's subject or object is the user, define the user in entities like any other entity, with a span where the user speaks or refers to themselves. Define in entities every key a memory or relationship names."
+    const two = { ...source, text: "A note.\n\nA second note." }
+    const paragraphs = (mode: "memory" | "document", window?: { readonly part: number; readonly parts: number; readonly start: number; readonly end: number }) =>
+      knowledgeExtractionPrompt(window === undefined ? source : two, empty, mode, 1000, true, window).split("\n\n")
+    const second = { part: 2, parts: 2, start: 9, end: 23 }
+    // The rule follows the memory mode's own line, in a whole source and in each part of a split one.
+    expect([paragraphs("memory"), paragraphs("memory", second)].map((all) => all[all.indexOf("Extract conversational memory and its relationships.") + 1])).toEqual([rule, rule])
+    expect([paragraphs("document"), paragraphs("document", second)].map((all) => all.some((paragraph) => paragraph.includes("conversation's user")))).toEqual([false, false])
+    // Both modes share the output schema, whose record keys say where they are defined.
+    const schemaOf = (all: ReadonlyArray<string>) => all.find((paragraph) => paragraph.startsWith("Output schema:\n")) ?? ""
+    expect(schemaOf(paragraphs("memory"))).toBe(schemaOf(paragraphs("document")))
+    expect([
+      "The key of an entity this memory concerns, defined in entities.",
+      "The key of the entity the relationship is about, defined in entities.",
+      "The key of the related entity, defined in entities.",
+    ].map((description) => schemaOf(paragraphs("document")).includes(`"description":"${description}"`))).toEqual([true, true, true])
   })
 
   test("the review proposal is the output schema's wire form, so a reviewer that returns it unchanged returns the same extraction", () => Effect.runPromise(Effect.gen(function* () {
@@ -406,6 +425,40 @@ describe("staging dates undated changes and drops only the records that fail the
     // An extraction of entities only still publishes the entities that pass.
     const entitiesOnly = yield* stageOf(empty, { entities: [ann, { ...oslo, existing: "someone-elses-oslo" }], memories: [], assertions: [] })
     expect([entitiesOnly.entities.map((entity) => entity.name), entitiesOnly.notes?.map((note) => note.message)]).toEqual([["Ann"], ["The extraction names an unknown entity"]])
+  })))
+
+  test("records that name the conversation's user without defining it drop one by one, as recorded models wrote them; the form the memory prompt asks for stages whole", () => Effect.runPromise(Effect.gen(function* () {
+    const text = "User: I take my tea with oat milk. I live in Bergen.\n\nAssistant final reply: Both cafés near you open at eight."
+    const conversation: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("conversation"), revision: 1 }, text }
+    const at = (quote: string) => [{ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote }]
+    const stated = { _tag: "Stated" }
+    const bergen = { key: "bergen", name: "Bergen", type: "city", aliases: [], existing: null, spans: at("Bergen") }
+    const tea = { key: "tea", kind: "preference", text: "The user takes their tea with oat milk.", entities: ["user"], spans: at("I take my tea with oat milk."), evidence: stated, supersedes: [] }
+    const home = { key: "home", kind: "fact", text: "The user lives in Bergen.", entities: ["bergen"], spans: at("I live in Bergen."), evidence: stated, supersedes: [] }
+    const lives = { key: "lives", subject: "user", predicate: "lives_in", object: { _tag: "Entity", key: "bergen" }, text: "The user lives in Bergen.", spans: at("I live in Bergen."), validFrom: null, validTo: null, supersedes: [] }
+    const opens = { key: "opens", subject: "nearby-cafes", predicate: "open_at", object: { _tag: "Value", value: "08:00" }, text: "Both cafés near the user open at eight.", spans: at("Both cafés near you open at eight."), validFrom: null, validTo: null, supersedes: [] }
+    const stageFor = (value: unknown) => Schema.decodeUnknownEffect(KnowledgeExtraction)(value).pipe(Effect.orDie, Effect.flatMap((decoded) => stageKnowledgeExtraction(conversation, empty, decoded, 2_000_000_000_000)))
+    // Each failure class the recorded outputs showed: a memory that lists the user, a relation whose subject is the
+    // user or another name for it, and a relation about a group the extraction never defined. Staging drops each alone.
+    const recorded = yield* stageFor({ entities: [bergen], memories: [tea, home], assertions: [lives, { ...lives, key: "lives-self", subject: "user:self" }, opens] })
+    expect(recorded.notes?.map((note) => note._tag === "RecordDropped" ? [note.record, note.key, note.message] : [note._tag])).toEqual([
+      ["memory", "tea", "The extraction refers to an undefined entity key"],
+      ["assertion", "lives", "The extraction refers to an undefined entity key"],
+      ["assertion", "lives-self", "The extraction refers to an undefined entity key"],
+      ["assertion", "opens", "The extraction refers to an undefined entity key"],
+    ])
+    expect([recorded.entities.map((entity) => entity.name), recorded.memories.map((memory) => memory.text), recorded.assertions]).toEqual([["Bergen"], ["The user lives in Bergen."], []])
+    // As the memory prompt asks: no memory lists the user, and each relation's keys, the user's among them, are defined.
+    const user = { key: "user", name: "User", type: "person", aliases: [], existing: null, spans: at("I") }
+    const cafes = { key: "nearby-cafes", name: "cafés near the user", type: "place", aliases: [], existing: null, spans: at("Both cafés near you") }
+    const asked = yield* stageFor({ entities: [user, bergen, cafes], memories: [{ ...tea, entities: [] }, home], assertions: [lives, opens] })
+    expect(asked.notes).toBeUndefined()
+    expect([asked.memories.map((memory) => [memory.text, memory.entities.length]), asked.assertions.map((assertion) => assertion.text)]).toEqual([
+      [["The user takes their tea with oat milk.", 0], ["The user lives in Bergen.", 1]],
+      ["The user lives in Bergen.", "Both cafés near the user open at eight."],
+    ])
+    const userId = asked.entities.find((entity) => entity.name === "User")?.id
+    expect(asked.assertions[0]?.subject).toBe(userId!)
   })))
 
   test("a repeated entity key, or an extraction with no surviving record, still fails the whole job", () => Effect.runPromise(Effect.gen(function* () {

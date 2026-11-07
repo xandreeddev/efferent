@@ -62,7 +62,12 @@ valid extraction and the job publishes. A memory or relation says why it
 replaces others (`supersession`: `change` or `correction`) only when it
 supersedes some; one that supersedes nothing may leave it `null` or out, and
 one that supersedes records without it is dropped with a `RecordDropped`
-note. Facts and graph entities retain literal
+note. Every memory is about the conversation's user, so the extraction prompt
+asks that a memory never list the user in its `entities`, and that a relation
+whose subject or object is the user define the user as an entity like any
+other: a record that names a key the extraction does not define, an undefined
+`user` among them, is dropped with a `RecordDropped` note ("The extraction
+refers to an undefined entity key"). Facts and graph entities retain literal
 source evidence. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
@@ -239,7 +244,8 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:7", { model, version, dimensions })`, version 7
+(`knowledgeEngineId("memory:8", { model, version, dimensions })`, version 8
+since the prompt says how to refer to the conversation's user, version 7
 since a `supersession` is asked for only from a record that supersedes, version 6
 since the review's wire-form proposal, version 5 since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
 version 2 since dropped records and observed dates). The worker and `process` discover
@@ -262,7 +268,10 @@ extraction model returned an invalid knowledge object") is one: `retry`
 requeues it under the current id through `KnowledgeIndex.requeue`. So is a job
 that failed under version 6 with the same message because a record that
 supersedes nothing gave a `null` or no `supersession`, which version 7
-accepts.
+accepts, and a job that failed under version 7 with `Invalid` ("The extraction
+refers to an undefined entity key") because every record it proposed named
+the user without defining it. A completed job keeps what it published, its
+dropped records' notes included; `retry` does not extract it again.
 
 `forget` tombstones a source and removes its text and dependent learned
 knowledge, including historical graph evidence. Backfill cannot resurrect that
