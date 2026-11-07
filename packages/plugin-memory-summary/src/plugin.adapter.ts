@@ -202,7 +202,7 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
  * @public
  */
 export const memorySummaryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-summary", version: "0.18.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-summary", version: "0.19.0", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
   optional: [UtilityLlm],
   provides: [ConversationMemory],
