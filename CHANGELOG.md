@@ -97,6 +97,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   returns it marked `past`. `@xandreed/plugin-memory`'s `MemoryConfig` gains
   the required key `pastEventWeight` (default `0.5`); options merged over
   `memoryDefaults` need no change, and `1` ranks past records as before.
+- `LongTermMemory.profile` returns `KnowledgeProfileMemory` (a
+  `KnowledgeMemory` with an optional `support`), so code that reads the
+  profile as memories is unchanged and a host's own `LongTermMemory` that
+  returns plain memories still compiles. `longTermMemoryConformance` gains
+  `profile-order`: a host's own `LongTermMemory` passes it by giving each
+  profile memory the support `knowledgeMemorySupport` counts from the
+  revisions it mentions and returning the profile in `knowledgeProfileOrder`.
+  A host that pins the memory section's text or its profile records' order
+  re-records it: the order and the counts change, and the section is
+  version 6.
 
 ### Changed
 
@@ -345,6 +355,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   memory's `eventAt`.
 
 ### Fixed
+
+- `@xandreed/core`, `@xandreed/plugin-memory`: the memory profile is
+  ordered by support and recency instead of the store's order. The profile
+  kept the order of its store's snapshot, insertion order in memory and id
+  order in PostgreSQL, where a memory's id begins with its source's and so
+  with the host's session ids, and the `memory.recalled` section showed the
+  first four: which preferences reached the model depended on the store and
+  on how the host names sessions, and a preference said in many
+  conversations could be left out for one said once. `LongTermMemory.profile`
+  still returns the current preference and profile memories whose dated
+  event has not passed, now each with its `support` (one `sourceInfo` read
+  for all their mentioned revisions; `KnowledgeProfileMemory`) and ordered
+  by the new `knowledgeProfileOrder`: more episodes first, then said more
+  recently (`lastSeen`), then by id, a memory without support last. The
+  section and `memoryRecallNote` keep that order, label each profile record
+  with the profile's count, and take the first four the run's reach admits,
+  so a refused record never displaces an admitted one (section version 6);
+  a record the reach keeps without a restatement from outside it shows no
+  count, as its support counted that restatement. `supportWeight: 0` reads
+  nothing and orders the profile by id.
 
 - `@xandreed/plugin-memory`, `@xandreed/plugin-rag`, `@xandreed/core`:
   with `queryPlanning` on, recall and document search rank each planned

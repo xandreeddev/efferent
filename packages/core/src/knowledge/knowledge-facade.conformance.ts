@@ -1,11 +1,11 @@
-import { Effect, Match, Option, Result } from "effect"
+import { Array as Arr, Effect, Match, Option, Result } from "effect"
 import type { Context, Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, sameJson } from "../conformance.functions.js"
 import type { Knowledge, LongTermMemory } from "../ports/knowledge.port.js"
 import { KnowledgeJobId, KnowledgeSourceId } from "./knowledge.entity.js"
 import type { KnowledgeRecallResult, KnowledgeScope } from "./knowledge.entity.js"
-import { citedKnowledgeSources, knowledgeMemoryMentions } from "./knowledge.entity.functions.js"
+import { citedKnowledgeSources, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeProfileOrder } from "./knowledge.entity.functions.js"
 
 type MemoryFixture = { readonly memory: Context.Service.Shape<typeof LongTermMemory>; readonly scope: KnowledgeScope }
 /** Fresh native memory service, with workers disabled and valid scripted extraction. @public */
@@ -126,6 +126,32 @@ const pastEvent = (open: Effect.Effect<Fixture, unknown, Scope.Scope>, dated: Ef
   })))
 }
 
+/**
+ * The profile is ordered by support and recency, never by the store's order: four sources with the kit's text, accepted in
+ * an order that matches neither their ids nor when they were said, each give the profile a preference counted from the
+ * revisions it mentions (`knowledgeMemorySupport`), and the profile is ordered by `knowledgeProfileOrder`.
+ */
+const profileOrder = (open: Effect.Effect<Fixture, unknown, Scope.Scope>): ConformanceCheck => {
+  const id = "long_term_memory.profile-order"
+  return check(id, id, () => Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* open
+    // Said latest first in neither id order (a, b, c, d) nor acceptance order (b, a, d, c); c and d were said at once.
+    const said = [["facade-profile-b", 30], ["facade-profile-a", 10], ["facade-profile-d", 20], ["facade-profile-c", 20]] as const
+    const sources = said.map(([name, occurredAt]) => ({ ...sourceOf(fixture.scope), ref: { id: KnowledgeSourceId.make(name), revision: 1 }, occurredAt }))
+    yield* Effect.forEach(sources, (source) => fixture.facade.accept({ jobId: KnowledgeJobId.make(`${source.ref.id}-job`), source, engine: "facade-kit", expectedRevision: Option.none() }), { concurrency: 1 })
+    const processed = yield* Effect.forEach(sources, () => fixture.facade.process(fixture.scope, 1), { concurrency: 1 })
+    const profile = fixture.facade.profile === undefined ? [] : yield* fixture.facade.profile(fixture.scope)
+    const infos = sources.map((source) => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata }))
+    const mentioned = new Set(profile.flatMap((memory) => knowledgeMemoryMentions(memory).map((ref) => String(ref.id))))
+    yield* expect(id, processed.every((count) => count === 1) && sources.every((source) => mentioned.has(source.ref.id)),
+      "the four sources were not all processed, or the profile does not mention each of them")
+    yield* expect(id, profile.every((memory) => sameJson(memory.support, Option.getOrUndefined(knowledgeMemorySupport(memory, infos)))),
+      "a profile memory did not carry the support counted from the revisions it mentions")
+    yield* expect(id, sameJson(profile.map((memory) => memory.id), Arr.sort(profile, knowledgeProfileOrder).map((memory) => memory.id)),
+      "the profile was not ordered by episodes, then by when last said, then by id")
+  })))
+}
+
 const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown, Scope.Scope>, dropping?: Effect.Effect<Fixture, unknown, Scope.Scope>): ReadonlyArray<ConformanceCheck> => {
   const test = (name: string, body: (fixture: Fixture, id: string) => Effect.Effect<void, unknown>) => {
     const id = `${prefix}.${name}`
@@ -208,14 +234,16 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
 const memoryFacade = ({ memory, scope }: MemoryFixture): Fixture => ({ scope, facade: { ...memory, accept: memory.capture } })
 /**
  * Async processing, isolation, source retention, deletion, cited source info and retrieval contracts, a dropped record
- * that does not stop the rest, a restating source that adds evidence to the memory it restates, and a preference whose dated
- * event has passed that recall returns marked past and the profile leaves out; no model-quality assertions.
+ * that does not stop the rest, a restating source that adds evidence to the memory it restates, a preference whose dated
+ * event has passed that recall returns marked past and the profile leaves out, and a profile ordered by support and recency
+ * whatever order the store keeps; no model-quality assertions.
  * @public
  */
 export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => [
   ...facadeConformance("long_term_memory", Effect.map(subject.open, memoryFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, memoryFacade)),
   restatedSource(Effect.map(subject.open, memoryFacade), subject.restatingExtraction === undefined ? undefined : Effect.map(subject.restatingExtraction, memoryFacade)),
   pastEvent(Effect.map(subject.open, memoryFacade), subject.pastEventExtraction === undefined ? undefined : Effect.map(subject.pastEventExtraction, memoryFacade)),
+  profileOrder(Effect.map(subject.open, memoryFacade)),
 ]
 const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
   const id = "knowledge_facade.failed-extraction"

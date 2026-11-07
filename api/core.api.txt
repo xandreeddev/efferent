@@ -214,6 +214,7 @@ const KnowledgeNarrowing
 const KnowledgeObject
 const KnowledgePending
 const KnowledgePerspective
+const KnowledgeProfileMemory
 const KnowledgeProvenance
 const KnowledgeQueryPlan
 const KnowledgeReach
@@ -503,6 +504,7 @@ const knowledgeMemoryIsPast
 const knowledgeMemoryMentions
 const knowledgeMemorySupport
 const knowledgeNarrowingAdmits
+const knowledgeProfileOrder
 const knowledgeQueryPrompt
 const knowledgeRecordDate
 const knowledgeRerankPrompt
@@ -795,6 +797,7 @@ type KnowledgeMetadataValue
 type KnowledgeObject
 type KnowledgePending
 type KnowledgePerspective
+type KnowledgeProfileMemory
 type KnowledgeProvenance
 type KnowledgeQueryPlan
 type KnowledgeReach

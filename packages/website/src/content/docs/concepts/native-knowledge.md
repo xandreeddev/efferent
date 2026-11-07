@@ -652,7 +652,34 @@ said in two episodes or more, with the date of the latest:
 [2026-05-14 · preference · inferred · said 3 times, last 2026-05-14] The user's favourite drink is green tea.
 ```
 
-The section's profile records show the count recall found for them.
+### The profile's order
+
+The profile carries the same counts and is ordered by them, never by the
+store. `LongTermMemory.profile` returns the current `preference` and `profile`
+memories whose dated event, if any, has not passed, each with its `support`
+(`KnowledgeProfileMemory`, a `KnowledgeMemory` with an optional `support`),
+counted from the info of their mentioned revisions read in one batch. It
+orders them by `knowledgeProfileOrder`: more episodes first, then the one said
+more recently (`lastSeen`), then by id; a memory without support follows those
+with it. Before, the profile kept the store's order: insertion order in memory
+and id order in PostgreSQL, where a memory's id begins with its source's and
+so with the host's session ids. The section's four profile records could then
+leave out the preference said most often, and differ between stores.
+
+The `memory.recalled` section (version 6) and `memoryRecallNote` show the
+first four profile records the run's reach admits, in the profile's order and
+with the profile's count: a narrowing applies before the cut, so a refused
+record never takes an admitted one's place. A preference said in three
+conversations precedes a newer one said once:
+
+```text
+[2026-02-03 · preference · stated · said 3 times, last 2026-06-11] The user takes oat milk in coffee.
+[2026-07-13 · preference · stated] The user enjoys hiking at weekends.
+```
+
+`supportWeight: 0` reads nothing here either: the profile then has no counts
+and is ordered by id. `longTermMemoryConformance`'s `profile-order` check holds
+a host's own `LongTermMemory` to the same order and counts.
 
 ### One memory for a repeated statement
 
@@ -747,7 +774,7 @@ true. Nothing is deleted or filtered from search for being past:
 - `renderMemoryRecall` says when after a memory's text, unless `dates` is
   false: `(event on YYYY-MM-DD)`, `(event on YYYY-MM-DD–YYYY-MM-DD)` for one
   that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall
-  marked it past. The section's version is 5.
+  marked it past.
 
 ```text
 [2026-03-05 · preference · stated] The user is interested in weekly pottery classes at the community studio.

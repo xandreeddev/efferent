@@ -1,17 +1,17 @@
 import { EmbeddingModel } from "effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
+import { Array as Arr, Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
   BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction,
   isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph, knowledgeNarrowingAdmits, narrowKnowledgeGraphBy,
-  narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast,
+  narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast, knowledgeProfileOrder,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSnapshot, KnowledgeStage, KnowledgeVector,
-  KnowledgeAssertion, KnowledgeCandidate, KnowledgeCandidates, KnowledgeMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession, KnowledgeSupport,
+  KnowledgeAssertion, KnowledgeCandidate, KnowledgeCandidates, KnowledgeMemory, KnowledgeProfileMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession, KnowledgeSupport,
 } from "@xandreed/core"
 import type { MemoryConfig } from "./memory.entity.js"
 import { memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
@@ -289,11 +289,17 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     // A host's retry starts the job over under this engine's id: its attempts reset, a job failed under an older id included.
     retry: Effect.fn("memory.retry")((scope, id) => inScope(scope).pipe(Effect.andThen(store.requeue({ scope, jobId: id, engine })), Effect.tap(() => Queue.offer(wake, undefined)))),
     source: store.source,
-    // A preference whose dated event has passed leaves the profile; recall still returns it, labelled past.
+    // A preference whose dated event has passed leaves the profile; recall still returns it, labelled past. The rest are
+    // ordered by how often and how recently they were said, their mentioned revisions' info read in one batch, never by
+    // the store's order; `supportWeight: 0` reads nothing, and the profile is then ordered by id.
     profile: Effect.fn("memory.profile")(function* (scope) {
       const snapshot = yield* store.snapshot(scope)
       const now = yield* Clock.currentTimeMillis
-      return snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && (memory.kind === "preference" || memory.kind === "profile") && !knowledgeMemoryIsPast(memory, now))
+      const current = snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && (memory.kind === "preference" || memory.kind === "profile") && !knowledgeMemoryIsPast(memory, now))
+      const mentioned = config.supportWeight === 0 ? [] : current.flatMap(knowledgeMemoryMentions)
+      const infos = mentioned.length === 0 ? [] : yield* store.sourceInfo(scope, mentioned)
+      const supported = current.map((memory): KnowledgeProfileMemory => Option.match(knowledgeMemorySupport(memory, infos), { onNone: () => memory, onSome: (support) => ({ ...memory, support }) }))
+      return Arr.sort(supported, knowledgeProfileOrder)
     }),
   })
 

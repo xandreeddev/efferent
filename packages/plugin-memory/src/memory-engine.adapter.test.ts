@@ -51,6 +51,28 @@ describe("native memory engine", () => {
     expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] })
   }))))
 
+  test("the profile is ordered by episodes, then by when last said, then by id, with each memory's support, whatever the store's order; supportWeight 0 reads nothing and orders by id", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // Each source states the same preference about a person of its own, so none restates another: one memory per source.
+    const said = [["session-b", 30], ["session-a", 10], ["session-d", 20], ["session-c", 20]] as const
+    const profileOf = (options: Partial<MemoryConfig>) => Effect.gen(function* () {
+      const fixture = yield* makeMemoryFixture([JSON.stringify(fixtureExtraction("I prefer tea."))], options)
+      const reads = yield* Ref.make(0)
+      const counted = { ...fixture.store, sourceInfo: (scope: typeof fixtureScope, refs: Parameters<typeof fixture.store.sourceInfo>[1]) => Ref.update(reads, (count) => count + 1).pipe(Effect.andThen(fixture.store.sourceInfo(scope, refs))) }
+      const memory = Context.get(yield* Layer.build(MemoryLive(fixture.config).pipe(Layer.provide(Layer.succeedContext(Context.add(fixture.services, MemoryStore, counted))))), LongTermMemory)
+      yield* Effect.forEach(said, ([session, occurredAt]) => {
+        const input = fixtureEnqueue(session, "I prefer tea.")
+        return memory.capture({ ...input, source: { ...input.source, occurredAt } })
+      }, { concurrency: 1 })
+      expect(yield* memory.process(fixtureScope, 10)).toBe(4)
+      yield* Ref.set(reads, 0)
+      const profile = yield* memory.profile(fixtureScope)
+      return { order: profile.map((record) => [record.id.split(":")[0], record.support?.lastSeen ?? null]), reads: yield* Ref.get(reads) }
+    })
+    // The in-memory store keeps insertion order (b, a, d, c); the profile is the latest said first, the tie by id, in one read.
+    expect(yield* profileOf({})).toEqual({ order: [["session-b", 30], ["session-c", 20], ["session-d", 20], ["session-a", 10]], reads: 1 })
+    expect(yield* profileOf({ supportWeight: 0 })).toEqual({ order: [["session-a", null], ["session-b", null], ["session-c", null], ["session-d", null]], reads: 0 })
+  }))))
+
   test("a metadata filter recalls memories and graph evidence only from source revisions whose metadata matches", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const tea = "I prefer tea."
     const coffee = "I prefer coffee."

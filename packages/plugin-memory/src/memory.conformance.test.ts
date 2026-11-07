@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Result } from "effect"
+import { Effect, Option, Order, Redacted, Result } from "effect"
+import type { Scope } from "effect"
+import { KnowledgeJobId, KnowledgeSourceId } from "@xandreed/core"
+import type { KnowledgeIndex, KnowledgeScope } from "@xandreed/core"
 import { longTermMemoryConformance } from "@xandreed/core/conformance"
+import { makeKnowledgePostgres } from "@xandreed/plugin-knowledge-postgres"
 import { fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
+
+const postgresUrl = process.env.EFFERENT_TEST_POSTGRES_URL ?? ""
 
 const open = makeMemoryFixture([JSON.stringify(fixtureExtraction("I prefer tea."))])
 const grounded = fixtureExtraction("I prefer tea.")
@@ -24,8 +30,47 @@ const checks = longTermMemoryConformance({
   pastEventExtraction: Effect.map(pastEvent, ({ memory }) => ({ memory, scope: fixtureScope })),
 })
 
+/** The engine over a PostgreSQL memory store, in a scope of its own: the database is shared across checks and runs. */
+const overPostgres = <A, E>(make: (index: KnowledgeIndex, scope: KnowledgeScope) => Effect.Effect<A, E, Scope.Scope>) => Effect.gen(function* () {
+  const opened = yield* makeKnowledgePostgres(Redacted.make(postgresUrl))
+  return yield* make(opened.memory, { ...fixtureScope, owner: `postgres-${crypto.randomUUID()}` })
+})
+const postgresChecks = longTermMemoryConformance({
+  open: overPostgres((index, scope) => Effect.map(makeMemoryFixture([JSON.stringify(fixtureExtraction("I prefer tea."))], {}, index), ({ memory }) => ({ memory, scope }))),
+})
+
 describe("native memory facade conformance", () => {
   checks.forEach((check) => test(check.name, () => Effect.runPromise(check.run)))
+  postgresChecks.forEach((check) => test.skipIf(postgresUrl.length === 0)(`PostgreSQL: ${check.name}`, () => Effect.runPromise(check.run)))
+  test("the profile-order check fails on a profile in the store's order, and on one that leaves out support", async () => {
+    const order = (memory: Parameters<typeof longTermMemoryConformance>[0]["open"]) => longTermMemoryConformance({ open: memory }).filter((check) => check.name === "long_term_memory.profile-order")
+    // The store's own order: insertion order here, and the order a store that sorts by id would keep.
+    const inserted = Effect.map(open, ({ memory, store }) => ({ scope: fixtureScope, memory: { ...memory, profile: (scope: typeof fixtureScope) => store.snapshot(scope).pipe(
+      Effect.map((snapshot) => snapshot.memories.filter((record) => Option.isNone(record.knownTo)))) } }))
+    const byId = Effect.map(open, ({ memory }) => ({ scope: fixtureScope, memory: { ...memory, profile: (scope: typeof fixtureScope) => memory.profile(scope).pipe(
+      Effect.map((records) => records.toSorted((left, right) => Order.String(left.id, right.id)))) } }))
+    const unsupported = Effect.map(open, ({ memory }) => ({ scope: fixtureScope, memory: { ...memory, profile: (scope: typeof fixtureScope) => memory.profile(scope).pipe(
+      Effect.map((records) => records.map(({ support: _support, ...record }) => record))) } }))
+    const results = await Effect.runPromise(Effect.forEach([...order(inserted), ...order(byId), ...order(unsupported)], (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect(results.map(Result.isFailure)).toEqual([true, true, true])
+  })
+  test.skipIf(postgresUrl.length === 0)("the same sources give the same profile order on the in-memory store and on PostgreSQL, whatever order each keeps", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // Accepted in neither id order nor the order they were said; the latest said leads, and a tie goes to the lower id.
+    const said = [["profile-b", 30], ["profile-a", 10], ["profile-d", 20], ["profile-c", 20]] as const
+    const profileOf = (fixture: Effect.Success<ReturnType<typeof makeMemoryFixture>>, scope: KnowledgeScope) => Effect.gen(function* () {
+      yield* Effect.forEach(said, ([name, occurredAt]) => fixture.memory.capture({
+        jobId: KnowledgeJobId.make(`job:${name}`), engine: "memory:1", expectedRevision: Option.none(),
+        source: { scope, ref: { id: KnowledgeSourceId.make(name), revision: 1 }, text: "I prefer tea.", occurredAt, recordedAt: 40, metadata: {} },
+      }), { concurrency: 1 })
+      expect(yield* fixture.memory.process(scope, 10)).toBe(4)
+      return (yield* fixture.memory.profile(scope)).map((memory) => [String(memory.provenance[0]?.source.id), memory.support?.lastSeen])
+    })
+    const response = [JSON.stringify(fixtureExtraction("I prefer tea."))]
+    const inMemory = yield* makeMemoryFixture(response).pipe(Effect.flatMap((fixture) => profileOf(fixture, fixtureScope)))
+    const postgres = yield* overPostgres((index, scope) => makeMemoryFixture(response, {}, index).pipe(Effect.flatMap((fixture) => profileOf(fixture, scope))))
+    expect(inMemory).toEqual([["profile-b", 30], ["profile-c", 20], ["profile-d", 20], ["profile-a", 10]])
+    expect(postgres).toEqual(inMemory)
+  }))))
   test("the source-filter check rejects recall that ignores the filter", async () => {
     const unfiltered = longTermMemoryConformance({ open: Effect.map(open, ({ memory }) => ({ memory: { ...memory, recall: ({ sources: _ignored, ...input }) => memory.recall(input) }, scope: fixtureScope })) })
       .filter((check) => check.name === "long_term_memory.source-filter")

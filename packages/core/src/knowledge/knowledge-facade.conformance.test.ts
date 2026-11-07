@@ -18,7 +18,7 @@ test("facade kits expose stable contract names and reject a careless service on 
   const memory = longTermMemoryConformance({ open: Effect.succeed({ memory: careless, scope }) })
   const knowledge = knowledgeConformance({ open: Effect.succeed({ knowledge: { ...careless, ingest: careless.capture, retrieve: careless.recall }, scope }) })
   const names = ["accepted-source", "processing", "source-replay", "owner-isolation", "forget-tombstone", "source-filter", "cited-sources", "retrieval-bounds", "dropped-record"]
-  expect(memory.map((check) => check.name)).toEqual([...names, "restated-source", "past-event"].map((name) => `long_term_memory.${name}`))
+  expect(memory.map((check) => check.name)).toEqual([...names, "restated-source", "past-event", "profile-order"].map((name) => `long_term_memory.${name}`))
   expect(knowledge.map((check) => check.name)).toEqual([...names, "failed-extraction"].map((name) => `knowledge_facade.${name}`))
   const results = await Effect.runPromise(Effect.forEach([...memory, ...knowledge], (check) => Effect.result(check.run), { concurrency: 1 }))
   expect(results.every(Result.isFailure)).toBe(true)

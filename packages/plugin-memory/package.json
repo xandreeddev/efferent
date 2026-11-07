@@ -9,6 +9,7 @@
   "devDependencies": {
     "@xandreed/sdk": "workspace:*",
     "@xandreed/plugin-agent-loop": "workspace:*",
+    "@xandreed/plugin-knowledge-postgres": "workspace:*",
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-sessions": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*"

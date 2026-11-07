@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId,
   KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector, type KnowledgeErrorReason, type KnowledgeFailureStep, KnowledgeMetadataFilter,
@@ -10,7 +10,7 @@ import {
   citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
   admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
-  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory, knowledgeMemoryIsPast,
+  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory, knowledgeMemoryIsPast, knowledgeProfileOrder,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -133,6 +133,13 @@ test("support counts the distinct episodes of the live mentioned revisions, by s
   // Stored before mentions: a stated memory counts only the revision its first span cites, however many entities its provenance evidences.
   const { mentions: _mentions, ...legacy } = { ...inferred, evidence: { _tag: "Stated" as const } }
   expect(knowledgeMemorySupport(legacy, infos)).toEqual(Option.some({ episodes: 1, sources: 1, firstSeen: 30, lastSeen: 30 }))
+})
+test("the profile order puts more episodes first, then the latest said, then the lower id, and a memory without support last", () => {
+  const supported = (name: string, episodes: number, lastSeen: number) => ({ ...memory(name), support: { episodes, sources: episodes, firstSeen: 1, lastSeen } })
+  // In id order, and in the order a store would insert them: neither is the profile's order.
+  const profile = [memory("a-unsupported"), supported("b-once-old", 1, 10), supported("c-once-new", 1, 40), supported("d-twice", 2, 20), supported("e-once-new", 1, 40), supported("f-thrice", 3, 5)]
+  expect(Arr.sort(profile, knowledgeProfileOrder).map((record) => String(record.id))).toEqual(["f-thrice", "d-twice", "c-once-new", "e-once-new", "b-once-old", "a-unsupported"])
+  expect(Arr.sort(profile.toReversed(), knowledgeProfileOrder)).toEqual(Arr.sort(profile, knowledgeProfileOrder))
 })
 test("a memory stored before mentions decodes without them, and one stored with them keeps them", () => Effect.runPromise(Effect.gen(function* () {
   const codec = Schema.fromJsonString(KnowledgeMemoryCodec)

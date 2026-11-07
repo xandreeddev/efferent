@@ -2,7 +2,7 @@ import { Context, Effect } from "effect"
 import type { Option } from "effect"
 import type {
   KnowledgeCandidates, KnowledgeChunk, KnowledgeChunkId, KnowledgeClaim, KnowledgeEnqueue,
-  KnowledgeError, KnowledgeFailedPage, KnowledgeFailedQuery, KnowledgeJob, KnowledgeJobFailure, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId,
+  KnowledgeError, KnowledgeFailedPage, KnowledgeFailedQuery, KnowledgeJob, KnowledgeJobFailure, KnowledgeJobId, KnowledgeLease, KnowledgeMemory, KnowledgeMemoryId, KnowledgeProfileMemory,
   KnowledgePending, KnowledgeReach, KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSearch, KnowledgeSnapshot, KnowledgeSource,
   KnowledgeRequeue, KnowledgeSourceId, KnowledgeSourceInfo, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph, KnowledgeTraversal,
 } from "../knowledge/knowledge.entity.js"
@@ -78,7 +78,13 @@ export class LongTermMemory extends Context.Service<LongTermMemory, {
   readonly process: (scope: KnowledgeScope, limit: number) => Effect.Effect<number, KnowledgeError>
   /** Bounded evidence; its `sources` hold the info (times, metadata) of every revision it cites. */
   readonly recall: (input: KnowledgeRecall) => Effect.Effect<KnowledgeRecallResult, KnowledgeError>
-  readonly profile: (scope: KnowledgeScope) => Effect.Effect<ReadonlyArray<KnowledgeMemory>, KnowledgeError>
+  /**
+   * The current preference and profile memories, but those whose dated event has passed
+   * (`knowledgeMemoryIsPast`), each with its `support` (`knowledgeMemorySupport` of the revisions it
+   * mentions) unless the engine is set not to count support, ordered by `knowledgeProfileOrder`:
+   * more episodes first, then said more recently, then by id, whatever order the store keeps.
+   */
+  readonly profile: (scope: KnowledgeScope) => Effect.Effect<ReadonlyArray<KnowledgeProfileMemory>, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>
   readonly status: (scope: KnowledgeScope, jobId: KnowledgeJobId) => Effect.Effect<Option.Option<KnowledgeJob>, KnowledgeError>
   /**
