@@ -10,7 +10,7 @@ import {
   citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
   admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
-  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory,
+  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory, knowledgeMemoryIsPast,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -375,4 +375,24 @@ test("a stage corroborates only an active stated memory of the snapshot, with sp
   expect(reason(validateKnowledgeStage(only([{ ...corroboration, provenance: target.provenance }]), snapshot([target]), sources))).toEqual(Option.some("Invalid"))
   expect(reason(validateKnowledgeStage(only([corroboration]), snapshot([{ ...target, evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("other")] } }]), sources))).toEqual(Option.some("Invalid"))
   expect(reason(validateKnowledgeStage(only([{ ...corroboration, provenance: [{ ...corroboration.provenance[0]!, quote: "invented" }] }]), snapshot([target]), sources))).toEqual(Option.some("Invalid"))
+})
+test("a goal, decision, action or preference is past once its dated event ended; a fact, routine or profile never is", () => {
+  const opening = Date.UTC(2026, 2, 20, 10), closing = Date.UTC(2026, 2, 24, 18)
+  const dated = (kind: KnowledgeMemory["kind"], eventAt?: KnowledgeMemory["eventAt"]): KnowledgeMemory => ({ ...memory(kind), kind, ...(eventAt === undefined ? {} : { eventAt }) })
+  const kinds: ReadonlyArray<KnowledgeMemory["kind"]> = ["goal", "decision", "action", "preference", "fact", "routine", "profile"]
+  // After the event, only the kinds tied to it are past.
+  expect(kinds.map((kind) => knowledgeMemoryIsPast(dated(kind, { start: opening }), opening + 1))).toEqual([true, true, true, true, false, false, false])
+  // Up to its time, never: the event ends strictly before now.
+  expect(kinds.map((kind) => knowledgeMemoryIsPast(dated(kind, { start: opening }), opening))).toEqual(kinds.map(() => false))
+  // An event with an end holds until the end, not the start.
+  expect([closing - 1, closing, closing + 1].map((now) => knowledgeMemoryIsPast(dated("goal", { start: opening, end: closing }), now))).toEqual([false, false, true])
+  // A memory without an event, as every one stored before events existed, is never past.
+  expect(kinds.map((kind) => knowledgeMemoryIsPast(dated(kind), Number.MAX_SAFE_INTEGER))).toEqual(kinds.map(() => false))
+})
+test("a stored memory decodes with or without an event time, and an event that ends before it starts is refused", () => {
+  const encoded = Schema.encodeSync(KnowledgeMemoryCodec)(memory("legacy"))
+  expect("eventAt" in Schema.decodeUnknownSync(KnowledgeMemoryCodec)(encoded)).toBe(false)
+  expect(Schema.decodeUnknownSync(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 5, end: 9 } }).eventAt).toEqual({ start: 5, end: 9 })
+  expect(Schema.decodeUnknownSync(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 5 } }).eventAt).toEqual({ start: 5 })
+  expect(Schema.decodeUnknownExit(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 9, end: 5 } })._tag).toBe("Failure")
 })

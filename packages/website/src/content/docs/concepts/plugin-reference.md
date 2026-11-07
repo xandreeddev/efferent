@@ -2251,7 +2251,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "recallHistory": "changes",
   "recallHistoryShare": 0.2,
   "supportWeight": 0.15,
-  "restatementSimilarity": 0.92
+  "restatementSimilarity": 0.92,
+  "pastEventWeight": 0.5
 }
 ```
 
@@ -2420,6 +2421,11 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
           "maximum": 1
         }
       ]
+    },
+    "pastEventWeight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   },
   "required": [
@@ -2453,7 +2459,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "recallHistory",
     "recallHistoryShare",
     "supportWeight",
-    "restatementSimilarity"
+    "restatementSimilarity",
+    "pastEventWeight"
   ],
   "additionalProperties": true
 }

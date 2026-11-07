@@ -183,6 +183,7 @@ const KnowledgeEnqueue
 const KnowledgeEntity
 const KnowledgeEntityId
 const KnowledgeErrorReason
+const KnowledgeEventTime
 const KnowledgeEvidence
 const KnowledgeExtractedAssertion
 const KnowledgeExtractedEntity
@@ -220,6 +221,7 @@ const KnowledgeRecall
 const KnowledgeRecallHistory
 const KnowledgeRecallHistoryMode
 const KnowledgeRecallResult
+const KnowledgeRecallTemporalMode
 const KnowledgeRequeue
 const KnowledgeRerank
 const KnowledgeScope
@@ -497,6 +499,7 @@ const knowledgeCosine
 const knowledgeEngineId
 const knowledgeExtractionPrompt
 const knowledgeExtractionWindows
+const knowledgeMemoryIsPast
 const knowledgeMemoryMentions
 const knowledgeMemorySupport
 const knowledgeNarrowingAdmits
@@ -766,6 +769,7 @@ type KnowledgeEnqueue
 type KnowledgeEntity
 type KnowledgeEntityId
 type KnowledgeErrorReason
+type KnowledgeEventTime
 type KnowledgeEvidence
 type KnowledgeExtraction
 type KnowledgeExtractionWindow
@@ -798,6 +802,7 @@ type KnowledgeRecall
 type KnowledgeRecallHistory
 type KnowledgeRecallHistoryMode
 type KnowledgeRecallResult
+type KnowledgeRecallTemporalMode
 type KnowledgeRequeue
 type KnowledgeRerank
 type KnowledgeScope

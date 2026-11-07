@@ -377,7 +377,7 @@ describe("memory through the real agent", () => {
     yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
     yield* say(asked, "asking", "What do I drink, where do I live, and how do I get to work?")
     const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body] : [])
-    expect(recalled.map((section) => section.version)).toEqual(["4"])
+    expect(recalled.map((section) => section.version)).toEqual(["5"])
     const text = recalled[0]?.text ?? ""
     expect(text).toContain("Each record is dated by when its source was said or written; a validity range bounds when a relationship held.\n\n<recalled-memory>")
     expect(text).toContain("[2026-03-02 · preference · stated] The user prefers tea.")
@@ -678,5 +678,82 @@ describe("memory through the real agent", () => {
     const porto = "[2026-08-01 · fact · stated] The user's sister lives in Porto."
     expect([recalled.length, recalled[0]?.includes(lives), recalled[0]?.includes(porto), recalled[0]?.split("The user lives in Lisbon.").length]).toEqual([1, true, true, 2])
     expect((yield* Ref.get(requests)).at(-1)).toContain("said 3 times, last 2026-07-09")
+  })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("an interest in a dated exhibition is past after its date: below a current interest, labelled past, and out of the profile", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    // The exhibition is the closer match in both arms: without demotion it would rank first.
+    const vectorOf = (text: string) => /exhibition|interested in\?/i.test(text) ? [1, 0] : /pottery/i.test(text) ? [0.8, 0.6] : [0, 1]
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(vectorOf), usage: { inputTokens: undefined } }) })
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The helper model resolves "20 March" against the source occurrence time the prompt gives it.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const year = Number(/Source occurrence time: (\d{4})-/.exec(prompt)?.[1])
+      const memory = (key: string, said: string, quote: string, eventAt: object | null) => ({ key, kind: "preference", text: said, entities: [], spans: [span(text, quote)], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change", eventAt })
+      const memories = text.includes("exhibition") ? [memory("exhibition", "The user is interested in the glass exhibition on 20 March.", "I'd love to see the glass exhibition on 20 March.", { start: Date.UTC(year, 2, 20, 10), end: null })]
+        : text.includes("pottery") ? [memory("pottery", "The user is interested in weekly pottery classes at the community studio.", "I have started weekly pottery classes at the community studio.", null)] : []
+      return { entities: [], assertions: [], memories }
+    }
+    const helperPrompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.update(helperPrompts, (all) => [...all, prompt]).pipe(Effect.as(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage }))) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    // The answering model: asked about interests, it recalls once, then answers; otherwise it acknowledges.
+    const results = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Effect.gen(function* () {
+        const toolResults = request.prompt.content.flatMap((message) => message.role === "tool" ? message.content.flatMap((part) => part.type === "tool-result" ? [JSON.stringify(part.result)] : []) : [])
+        yield* Ref.set(results, toolResults)
+        return (JSON.stringify(request.prompt.content).includes("What am I interested in?") && toolResults.length === 0
+          ? [{ type: "tool-call", id: "interests", name: "recall_memory", params: { query: "What am I interested in?" } }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]
+          : [{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]) as never
+      }),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const conversation = (id: string) => ({ owner: "museum-owner", id: ConversationId.make(`00000000-0000-4000-8000-0000000000${id}`) })
+    const [told, before, after] = [conversation("a1"), conversation("a2"), conversation("a3")]
+    yield* Effect.forEach([told, before, after], (session) => sessions.create(session), { concurrency: 1 })
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: "museum-owner", namespace: "default", collection: "memory" }
+    const say = (session: typeof told, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    const said = [["exhibition", "I'd love to see the glass exhibition on 20 March.", Date.UTC(2026, 2, 2, 9)], ["pottery", "I have started weekly pottery classes at the community studio.", Date.UTC(2026, 2, 5, 18)]] as const
+    yield* Effect.forEach(said, ([runId, text, at]) => TestClock.setTime(at).pipe(Effect.andThen(say(told, runId, text)), Effect.andThen(memory.process(scope, 10))), { concurrency: 1 })
+    // The extraction was asked for event times, and the memory carries the exhibition's.
+    expect((yield* Ref.get(helperPrompts)).find((prompt) => prompt.includes("glass exhibition"))).toContain("set eventAt to the event's time, resolving relative expressions against the source occurrence time")
+    const exhibition = (yield* store.snapshot(scope)).memories.find((record) => record.text.includes("exhibition"))
+    expect(exhibition?.eventAt).toEqual({ start: Date.UTC(2026, 2, 20, 10) })
+    const sectionOf = (session: typeof told) => sessions.read(session).pipe(Effect.flatMap(entriesOfEvents), Effect.map((entries) => entries.flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body.text] : [])))
+    const upcoming = "[2026-03-02 · preference · stated] The user is interested in the glass exhibition on 20 March. (event on 2026-03-20)"
+    const past = "[2026-03-02 · preference · stated] The user is interested in the glass exhibition on 20 March. (event on 2026-03-20, past)"
+    const pottery = "[2026-03-05 · preference · stated] The user is interested in weekly pottery classes at the community studio."
+    // Before the exhibition, it is a current interest: in the profile and the section, not past.
+    yield* TestClock.setTime(Date.UTC(2026, 2, 10, 12))
+    expect((yield* memory.profile(scope)).map((record) => record.text).toSorted()).toEqual(["The user is interested in the glass exhibition on 20 March.", "The user is interested in weekly pottery classes at the community studio."])
+    yield* say(before, "before", "What am I interested in?")
+    const early = (yield* sectionOf(before))[0] ?? ""
+    expect([early.includes(upcoming), early.includes("past)"), early.includes(pottery)]).toEqual([true, false, true])
+    // After it, the interest is past: the profile leaves it out, and recall shows it below the current one, labelled.
+    yield* TestClock.setTime(Date.UTC(2026, 4, 1, 12))
+    expect((yield* memory.profile(scope)).map((record) => record.text)).toEqual(["The user is interested in weekly pottery classes at the community studio."])
+    yield* say(after, "after", "What am I interested in?")
+    const late = (yield* sectionOf(after))[0] ?? ""
+    expect([late.includes(past), late.indexOf(pottery) >= 0 && late.indexOf(pottery) < late.indexOf(past)]).toEqual([true, true])
+    const toolResult = (yield* Ref.get(results)).join("")
+    expect([toolResult.includes(past), toolResult.indexOf(pottery) >= 0 && toolResult.indexOf(pottery) < toolResult.indexOf(past)]).toEqual([true, true])
+    // Never deleted: a recall that reads every record as current ranks the closer match first, still labelled past.
+    const texts = (result: KnowledgeRecallResult) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [[candidate.memory.text.includes("exhibition") ? "exhibition" : "pottery", candidate.past === true]] : [])
+    const query = { scope, query: "What am I interested in?", limit: 8, maxChars: 8_000, graph: false as const }
+    expect(texts(yield* memory.recall(query))).toEqual([["pottery", false], ["exhibition", true]])
+    expect(texts(yield* memory.recall({ ...query, temporal: "all" }))).toEqual([["exhibition", true], ["pottery", false]])
   })).pipe(Effect.provide(TestClock.layer()))))
 })

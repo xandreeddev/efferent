@@ -14,3 +14,10 @@ export const memorySupportFactor = (candidate: KnowledgeCandidate, supportWeight
   candidate._tag === "Memory" && candidate.support !== undefined && SUPPORTED_KINDS.includes(candidate.memory.kind)
     ? 1 + supportWeight * Math.log(Math.min(Math.max(candidate.support.episodes, 1), SUPPORT_EPISODE_CAP))
     : 1
+
+/**
+ * A recall candidate's event factor (`MemoryConfig.pastEventWeight`): `pastEventWeight` for a memory
+ * recall marked `past` (`knowledgeMemoryIsPast`), and 1 for every other candidate.
+ */
+export const memoryPastFactor = (candidate: KnowledgeCandidate, pastEventWeight: number): number =>
+  candidate._tag === "Memory" && candidate.past === true ? pastEventWeight : 1

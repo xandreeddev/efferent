@@ -84,6 +84,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `restatementSimilarity` (default `0.92`); options merged over
   `memoryDefaults` need no change, and `false` keeps every memory the
   extraction writes but those it names as restatements.
+- Native knowledge extraction is at version 5: the engines record their jobs
+  under `memory:5/…` and `rag:5/…`; drain or `retry` version 4 jobs as above.
+  `KnowledgeMemory` gains the optional `eventAt` (`KnowledgeEventTime`): a
+  host's own `KnowledgeIndex` keeps it whole through staging, publication,
+  search and reads and decodes a memory stored without it unchanged, as
+  `knowledgeStoreConformance`'s new `knowledge.event-time` check requires.
+  `longTermMemoryConformance` gains `past-event`; a host's own
+  `LongTermMemory` passes it on plain extraction by never marking a memory
+  without an event `past`, and giving the subject `pastEventExtraction` also
+  checks that its profile leaves a passed preference out and its recall
+  returns it marked `past`. `@xandreed/plugin-memory`'s `MemoryConfig` gains
+  the required key `pastEventWeight` (default `0.5`); options merged over
+  `memoryDefaults` need no change, and `1` ranks past records as before.
 
 ### Changed
 
@@ -301,6 +314,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   nor shows there: `narrowKnowledgeMemory` leaves their spans and mentions
   out of the record the stores' search, the memory's profile and its earlier
   states return, and the support recall counts.
+- `@xandreed/core`, `@xandreed/plugin-memory`: a plan, goal or interest tied
+  to a dated event no longer stays current forever. Memories had only known
+  time, so "I'd love to see the exhibition on 20 March" was shown in the
+  profile in May as a current preference; the only expiry was an assertion's
+  `validTo`, set at the extractor's discretion. The extraction prompt
+  (version 5) asks for `eventAt` on a memory that concerns a dated event (an
+  appointment, a trip, a deadline, a booking), resolved against the source
+  occurrence time, and `KnowledgeExtractedMemory` gains the optional, nullable
+  `eventAt` (`start`, and `end` only for an event that lasts beyond its
+  start); staging keeps it on the memory (`KnowledgeMemory.eventAt`, written
+  only when given) and drops a memory whose event ends before it starts with
+  a `RecordDropped` note. A goal, decision, action or preference whose event
+  ended before a time is past then (`knowledgeMemoryIsPast(memory, now)`);
+  facts, routines and profiles never are. Nothing is deleted or filtered from
+  search: memory recall marks a past candidate `past: true`
+  (`KnowledgeCandidate`'s new optional key), judged at the recall's valid
+  time, and under the new `KnowledgeRecall.temporal: "current"` (the default;
+  `KnowledgeRecallTemporalMode`) multiplies its fused score by
+  `MemoryConfig.pastEventWeight` (default `0.5`, so the default ranking
+  changes, which is the point; `1` turns it off) after the support factor
+  (`memoryPastFactor`), while `"all"` ranks it as any other.
+  `LongTermMemory.profile` leaves past records out. `renderMemoryRecall`
+  follows a memory's text with `(event on YYYY-MM-DD)`, a range for an event
+  that ends on a later day, or `(event on YYYY-MM-DD, past)`, unless `dates`
+  is false, and the `memory.recalled` section is version 5. `recall_memory`
+  gains a `temporal` parameter. A restatement must have the event time of the
+  memory it restates, named or found by similarity, so a later booking of the
+  same kind is its own memory, and the extraction's candidates show each
+  memory's `eventAt`.
 
 ### Fixed
 

@@ -93,6 +93,13 @@ adds `said <n> times, last <date>` from two episodes on, and the section's
 profile records take the support recall found for them. Never count a
 memory's provenance as its mentions: staging appends entity and support
 evidence to it. `supportWeight: 0` reads nothing and ranks plainly.
+A goal, decision, action or preference whose dated event (`eventAt`) ended
+before the recall's valid time is past (`knowledgeMemoryIsPast`): recall marks
+it `past` and, under `temporal: "current"` (the default), multiplies its score
+by `pastEventWeight` after the support factor (`memoryPastFactor`); `profile`
+leaves it out. Never delete or filter a past record from search, and never
+judge facts, routines or profiles past. The render adds `(event on <date>)`,
+with `, past` when marked.
 
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, window memory, sessions, and tool discovery without adding
@@ -103,21 +110,22 @@ those dependencies to production. See the repository skills and definition of do
 | Text | Source | Pinned by |
 |---|---|---|
 | Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact, `src/memory-capability.adapter.test.ts:16`; exact, `src/memory-capability.adapter.test.ts:23` |
-| Parameters (the recall tool's `history` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:141` |
-| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:46`, `:52` | exact, `src/memory-capability.adapter.test.ts:160`; exact, `src/memory-capability.adapter.test.ts:163`; exact, `src/memory-capability.adapter.test.ts:164` |
-| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:49` | exact, `src/memory-capability.adapter.test.ts:161` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
-| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:129`, `:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
-| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:99` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:129`; exact, `src/memory.journey.test.ts:458` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:299` | exact, `src/memory-capability.adapter.test.ts:238`; exact, `src/memory-capability.adapter.test.ts:244` |
+| Parameters (the recall tool's `history` and `temporal` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:168` |
+| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:47`, `:53` | exact, `src/memory-capability.adapter.test.ts:188`; exact, `src/memory-capability.adapter.test.ts:191`; exact, `src/memory-capability.adapter.test.ts:192` |
+| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:50` | exact, `src/memory-capability.adapter.test.ts:189` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:131`, `:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
+| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:99` |
+| Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:136`, `:162`, `:217` | exact, `src/memory-capability.adapter.test.ts:124`; exact, `src/memory-capability.adapter.test.ts:130` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:136`, `:217` | exact, `src/memory-capability.adapter.test.ts:156`; exact, `src/memory.journey.test.ts:458` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:319` | exact, `src/memory-capability.adapter.test.ts:268`; exact, `src/memory-capability.adapter.test.ts:278` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 
 ## Layout
 
 - `memory.entity.ts`: configuration, plugin checkpoint and capture admission schemas;
-  `memory.entity.functions.ts`: recall's support factor.
+  `memory.entity.functions.ts`: recall's support and event factors.
 - `memory-engine.adapter.ts`: native memory orchestration and processing worker.
 - `memory-capture.adapter.ts`, `ports/memory-capture.port.ts`: committed journal capture and
   its per-turn admission reference.

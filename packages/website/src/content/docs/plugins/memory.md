@@ -151,10 +151,23 @@ takes them away again. A narrowed turn that admits the memory's own source
 keeps it even when the restating source is outside its reach, without that
 source's spans and mention
 ([one memory for a repeated statement](/docs/concepts/native-knowledge/#one-memory-for-a-repeated-statement)).
+A restatement must have the same event time as the memory it restates.
 
-Automatic context also prepends up to four active preference/profile records,
-independently of the question's search ranking, each with the count recall
-found for it. See the
+A plan, goal or interest tied to a dated event holds only until the event.
+The extraction gives such a memory the event's time (`eventAt`, resolved
+against when the source was said), and once the event has passed a goal,
+decision, action or preference is past: recall still returns it, labelled
+`(event on <date>, past)`, but multiplies its fused score by `pastEventWeight`
+(default 0.5) so a current record of similar relevance ranks above it, and the
+profile leaves it out. A memory about an upcoming event reads `(event on
+<date>)`. Facts, routines and profiles are never past, and nothing is deleted
+for it. `recall_memory` takes a `temporal` parameter: `all` ranks past records
+as any other for one call; `pastEventWeight: 1` turns the demotion off
+([plans tied to a dated event](/docs/concepts/native-knowledge/#plans-tied-to-a-dated-event)).
+
+Automatic context also prepends up to four active preference/profile records
+whose dated event, if any, has not passed, independently of the question's
+search ranking, each with the count recall found for it. See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
 for the scores, graph expansion and final prompt path.
 
@@ -202,8 +215,8 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:4", { model, version, dimensions })`, version 4
-since restatements, version 3 since memory supersessions and successor links,
+(`knowledgeEngineId("memory:5", { model, version, dimensions })`, version 5
+since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
 version 2 since dropped records and observed dates). The worker and `process` discover
 and claim only jobs of that id, so engines configured with different embedding
 spaces on one store never learn from each other's sources, and a job queued
@@ -276,7 +289,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "recallHistory": "changes",
   "recallHistoryShare": 0.2,
   "supportWeight": 0.15,
-  "restatementSimilarity": 0.92
+  "restatementSimilarity": 0.92,
+  "pastEventWeight": 0.5
 }
 ```
 
@@ -448,6 +462,11 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
           "maximum": 1
         }
       ]
+    },
+    "pastEventWeight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   },
   "required": [
@@ -481,7 +500,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "recallHistory",
     "recallHistoryShare",
     "supportWeight",
-    "restatementSimilarity"
+    "restatementSimilarity",
+    "pastEventWeight"
   ],
   "additionalProperties": true
 }

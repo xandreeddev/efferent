@@ -81,6 +81,14 @@ export type KnowledgeMemoryReplacement = typeof KnowledgeMemoryReplacement.Type
 export const KnowledgeAssertionReplacement = Schema.Struct({ id: KnowledgeAssertionId, supersession: KnowledgeSupersession })
 export type KnowledgeAssertionReplacement = typeof KnowledgeAssertionReplacement.Type
 /**
+ * When the event a memory concerns takes place, in world time: `start`, and `end` for an event that
+ * lasts beyond its start (a trip's return), never before `start`. Epoch milliseconds.
+ * @public
+ */
+export const KnowledgeEventTime = Schema.Struct({ start: Count, end: Schema.optionalKey(Count) })
+  .check(Schema.makeFilter((event) => event.end === undefined || event.end >= event.start || "event ends before it starts"))
+export type KnowledgeEventTime = typeof KnowledgeEventTime.Type
+/**
  * A durable memory. `replaces` links a successor to the memories it superseded; staging writes it
  * on the successor only when there is one, and nothing is ever written to the memory it retired
  * but its `knownTo`. A memory without it, as every one stored before it existed, replaces none.
@@ -92,6 +100,11 @@ export type KnowledgeAssertionReplacement = typeof KnowledgeAssertionReplacement
  * The first mention is the revision that published the memory; publication appends each revision
  * that restates it later (`KnowledgeCorroboration`), and a later revision of such a source takes
  * its earlier revision's mention and spans away again without retiring the memory.
+ * `eventAt` is the time of the dated event the memory concerns (`KnowledgeEventTime`), written only
+ * when the extraction gives one; a memory without it, as every one stored before it existed, concerns
+ * no dated event. A goal, decision, action or preference whose event has passed is past
+ * (`knowledgeMemoryIsPast`): recall demotes and labels it, the profile leaves it out, and it is
+ * never deleted for it.
  * @public
  */
 export const KnowledgeMemory = Schema.Struct({
@@ -102,6 +115,7 @@ export const KnowledgeMemory = Schema.Struct({
   knownFrom: Count, knownTo: Schema.OptionFromNullOr(Count),
   replaces: Schema.optionalKey(Schema.Array(KnowledgeMemoryReplacement)),
   mentions: Schema.optionalKey(Schema.Array(KnowledgeSourceRef)),
+  eventAt: Schema.optionalKey(KnowledgeEventTime),
 }).check(Schema.makeFilter((memory) => memory.knownTo._tag === "None" || memory.knownTo.value >= memory.knownFrom || "known interval ends before it starts"))
 export type KnowledgeMemory = typeof KnowledgeMemory.Type
 /** @public */
@@ -293,10 +307,12 @@ export const KnowledgeSupport = Schema.Struct({ episodes: Positive, sources: Pos
 export type KnowledgeSupport = typeof KnowledgeSupport.Type
 /**
  * Candidate stores return independent ranked arms; the engine fuses them. An engine that counts
- * how often a memory was stated sets the memory's `support`; a store never does. @public
+ * how often a memory was stated sets the memory's `support`, and one that judges event time sets
+ * `past: true` on a memory whose dated event had passed at the recall's valid time
+ * (`knowledgeMemoryIsPast`); a store sets neither. @public
  */
 export const KnowledgeCandidate = Schema.Union([
-  Schema.TaggedStruct("Memory", { memory: KnowledgeMemory, score: Schema.Number, support: Schema.optionalKey(KnowledgeSupport) }),
+  Schema.TaggedStruct("Memory", { memory: KnowledgeMemory, score: Schema.Number, support: Schema.optionalKey(KnowledgeSupport), past: Schema.optionalKey(Schema.Boolean) }),
   Schema.TaggedStruct("Chunk", { chunk: KnowledgeChunk, score: Schema.Number }),
 ])
 export type KnowledgeCandidate = typeof KnowledgeCandidate.Type
@@ -355,6 +371,12 @@ export type KnowledgeSnapshot = typeof KnowledgeSnapshot.Type
 /** Which earlier states a recall returns (`KnowledgeRecall.history`). @public */
 export const KnowledgeRecallHistoryMode = Schema.Literals(["changes", "all", "none"])
 export type KnowledgeRecallHistoryMode = typeof KnowledgeRecallHistoryMode.Type
+/**
+ * Whether a recall ranks past records as current ones (`KnowledgeRecall.temporal`): `current` demotes
+ * a memory whose dated event has passed (`knowledgeMemoryIsPast`), `all` does not. @public
+ */
+export const KnowledgeRecallTemporalMode = Schema.Literals(["current", "all"])
+export type KnowledgeRecallTemporalMode = typeof KnowledgeRecallTemporalMode.Type
 /** @public */
 export const KnowledgeRecall = Schema.Struct({
   scope: KnowledgeScope, query: Schema.String, limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
@@ -371,6 +393,13 @@ export const KnowledgeRecall = Schema.Struct({
   history: Schema.optionalKey(KnowledgeRecallHistoryMode),
   /** The most of `maxChars` earlier states may take, from 0 to 0.5; 0.2 by default. What they leave unused goes to current records. */
   historyShare: Schema.optionalKey(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 0.5 }))),
+  /**
+   * How a memory engine ranks a goal, decision, action or preference whose dated event had passed at
+   * the recall's valid time (`knowledgeMemoryIsPast`): `current` (the default) demotes it below
+   * current records of similar relevance, `all` ranks it as any other. Either way it is returned,
+   * marked `past`, never filtered out. Document retrieval, which returns no memories, ignores it.
+   */
+  temporal: Schema.optionalKey(KnowledgeRecallTemporalMode),
 })
 export type KnowledgeRecall = typeof KnowledgeRecall.Type
 /**

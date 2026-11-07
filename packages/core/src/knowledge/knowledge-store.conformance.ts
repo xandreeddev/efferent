@@ -75,7 +75,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
  * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), a memory's mentions (kept, absent on one
- * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), corroborations (appended without a new record or a
+ * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), a memory's event time (kept through
+ * staging, publication, search and reads, and absent on one stored without it), corroborations (appended without a new record or a
  * retirement, refused when their memory is no longer active, stripped rather than retired by a later revision, and rebuilt from the surviving sources after
  * forgetting one; a narrowed read keeps a memory restated from outside it, without that evidence; a stage that supersedes a memory and
  * restates it in another record publishes), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
@@ -340,6 +341,25 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
       yield* expect("knowledge.mentions", Option.isNone(yield* fixture.index.memory(fixture.scope, inferred.id)) && !(yield* fixture.index.snapshot(fixture.scope)).memories.some((memory) => memory.id === inferred.id),
         "a memory stayed readable after a revision it mentions was forgotten")
+    })),
+    indexCheck("knowledge.event-time", (fixture) => Effect.gen(function* () {
+      // A memory stored without an event time, as before event times existed, reads back without the key.
+      const seeded = yield* seed(fixture)
+      const later = sourceOf(fixture.scope, "Alice books a table for Friday", "later")
+      const job = yield* enqueue(fixture, later, "later-job")
+      const dated: KnowledgeMemory = { ...memoryOf(later, "dated"), kind: "action", eventAt: { start: 1_000, end: 2_000 } }
+      const open: KnowledgeMemory = { ...memoryOf(later, "open"), kind: "goal", eventAt: { start: 3_000 } }
+      yield* publishJob(fixture, job, 30, (version) => ({ ...stageOf(later, version), memories: [dated, open] }))
+      const read = yield* Effect.forEach([dated.id, open.id, seeded.stage.memories[0]!.id], (id) => fixture.index.memory(fixture.scope, id), { concurrency: 1 })
+      const found = yield* fixture.index.search({ scope: fixture.scope, query: "table", vector: Option.none(), limit: 10, knownAt: Option.none() })
+      const searched = found.lexical.flatMap((candidate) => candidate._tag === "Memory" ? [[candidate.memory.id, candidate.memory.eventAt]] : [])
+      const snapshot = yield* fixture.index.snapshot(fixture.scope)
+      const stored = (id: KnowledgeMemory["id"]) => snapshot.memories.find((memory) => memory.id === id)?.eventAt
+      yield* expect("knowledge.event-time", sameJson(read.map((memory) => Option.map(memory, (value) => value.eventAt ?? null)), [Option.some(dated.eventAt), Option.some(open.eventAt), Option.some(null)]) &&
+        sameJson(searched.filter(([id]) => id === dated.id || id === open.id).toSorted(([left], [right]) => Order.String(String(left), String(right))), [[dated.id, dated.eventAt], [open.id, open.eventAt]]) &&
+        sameJson([stored(dated.id), stored(open.id)], [dated.eventAt, open.eventAt]),
+      "a memory's event time was lost or changed by staging, publication, search or reads")
+      yield* expect("knowledge.event-time", Option.exists(read[2]!, (memory) => !("eventAt" in memory)), "a memory stored without an event time gained one")
     })),
     indexCheck("knowledge.corroboration", (fixture) => Effect.gen(function* () {
       // A memory stored without mentions, restated by two other sources: one record that mentions all three.
