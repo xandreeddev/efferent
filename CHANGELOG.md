@@ -119,6 +119,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the memory section's text re-records it: the section is version 7. The facade kit's
   `restated-source` check no longer counts a memory recall folded (`alike`)
   as a stored restatement.
+- Native knowledge extraction is at version 6: the engines record their jobs
+  under `memory:6/…` and `rag:6/…`; drain version 5 jobs, or `retry` them
+  (which requeues each under the new id through `KnowledgeIndex.requeue`).
+  A memory job whose review failed under version 5 with `Invalid` ("The
+  extraction model returned an invalid knowledge object") is worth that
+  retry, although `isRetryableKnowledgeFailure` calls `Invalid` final: list
+  it with `KnowledgeIndex.failed({ namespace, reasons: ["Invalid"] })`. A
+  document whose graph was omitted that way is extracted again by ingesting
+  its next revision. A host that pins `knowledgeReviewPrompt` updates the pin.
 
 ### Changed
 
@@ -417,6 +426,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   a record the reach keeps without a restatement from outside it shows no
   count, as its support counted that restatement. `supportWeight: 0` reads
   nothing and orders the profile by id.
+
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: the
+  evidence review no longer fails on a proposal the reviewer keeps.
+  `knowledgeReviewPrompt` wrote the decoded extraction with
+  `JSON.stringify`, so an absent `existing` identity or `validFrom`/`validTo`
+  date reached the reviewer as Effect's `Option` object
+  (`{"_id":"Option","_tag":"None"}`, a present one with a `value`). A
+  reviewer that copied the proposal back returned JSON the output schema
+  refuses, and the memory job failed with `Invalid` or the document graph was
+  omitted. The proposal is now the output schema's wire form, encoded by
+  `KnowledgeExtraction`: an absent value is `null` and a present one its plain
+  value, as in the extraction call's own answer, so returning it unchanged
+  decodes to the same extraction. The review prompt's instructions are
+  unchanged; extraction version 6 (`KNOWLEDGE_EXTRACTION_VERSION`) and the
+  pinned review prompt record the new proposal, and the extraction, document
+  and part prompts are unchanged. Review stays on by default on both engines.
 
 - `@xandreed/plugin-memory`, `@xandreed/plugin-rag`, `@xandreed/core`:
   with `queryPlanning` on, recall and document search rank each planned

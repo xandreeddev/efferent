@@ -55,7 +55,10 @@ same namespace and collection to learn from committed conversations.
 ## Evidence and time
 
 Sources pass structured extraction and, by default, a review pass before
-embedding and atomic publication. Facts and graph entities retain literal
+embedding and atomic publication. The review prompt shows the proposed
+extraction in the output schema's wire form, an absent identity or validity
+date as `null`, so a reviewer that keeps the proposal unchanged returns a
+valid extraction and the job publishes. Facts and graph entities retain literal
 source evidence. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
@@ -232,8 +235,8 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:5", { model, version, dimensions })`, version 5
-since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
+(`knowledgeEngineId("memory:6", { model, version, dimensions })`, version 6
+since the review's wire-form proposal, version 5 since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
 version 2 since dropped records and observed dates). The worker and `process` discover
 and claim only jobs of that id, so engines configured with different embedding
 spaces on one store never learn from each other's sources, and a job queued
@@ -248,7 +251,10 @@ collection is refused. To find failed jobs without keeping their ids, page
 through `MemoryStore.failed({ namespace, collection, reasons, limit, after })`,
 which lists them across owners with the reason each failed with, and `retry`
 those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
-reasons a configuration change can fix).
+reasons a configuration change can fix). A job whose review failed under
+version 5 by copying that version's proposal back (`Invalid`, "The
+extraction model returned an invalid knowledge object") is one: `retry`
+requeues it under the version 6 id through `KnowledgeIndex.requeue`.
 
 `forget` tombstones a source and removes its text and dependent learned
 knowledge, including historical graph evidence. Backfill cannot resurrect that

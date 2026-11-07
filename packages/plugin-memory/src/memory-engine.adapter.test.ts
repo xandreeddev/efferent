@@ -3,7 +3,7 @@ import { EmbeddingModel } from "effect/ai"
 import { TestClock } from "effect/testing"
 import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
 import { KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
-import type { KnowledgeCandidate, KnowledgeMemory, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
+import type { KnowledgeCandidate, KnowledgeHelperCall, KnowledgeMemory, KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult, KnowledgeSearch } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -34,6 +34,31 @@ describe("native memory engine", () => {
     const separate = yield* run({ restatementSimilarity: false })
     expect(separate.memories.map((memory) => memory.text)).toEqual(["I prefer tea.", "I really prefer tea."])
     expect(separate.corroborations).toEqual(Option.some([]))
+  }))))
+
+  test("a reviewer that returns the proposal from its prompt unchanged publishes the job, with an absent and a known identity alike", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    // Extraction names the person the candidates already know, or none; review copies the proposal back verbatim.
+    const reply = (prompt: string, call: Option.Option<KnowledgeHelperCall>) => {
+      if (Option.exists(call, (value) => value.purpose === "review")) return frame("knowledge-proposal", prompt)
+      const person = /"id":"([^"]*:entity:person)"/.exec(frame("knowledge-candidates", prompt))?.[1] ?? null
+      const extracted = fixtureExtraction(frame("knowledge-source", prompt))
+      return JSON.stringify({ ...extracted, entities: extracted.entities.map((entity) => ({ ...entity, existing: person })) })
+    }
+    const fixture = yield* makeMemoryFixture(reply, { review: true })
+    yield* fixture.memory.capture(fixtureEnqueue("session-a", "I prefer tea."))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
+    yield* fixture.memory.capture(fixtureEnqueue("session-b", "I prefer coffee now."))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
+    const phases = yield* Effect.forEach(["session-a", "session-b"], (id) => fixture.store.status(fixtureScope, KnowledgeJobId.make(`job:${id}`)).pipe(Effect.map(Option.map((job) => job.phase._tag))), { concurrency: 1 })
+    expect(phases).toEqual([Option.some("Complete"), Option.some("Complete")])
+    const snapshot = yield* fixture.store.snapshot(fixtureScope)
+    expect(snapshot.memories.map((memory) => memory.text)).toEqual(["I prefer tea.", "I prefer coffee now."])
+    expect(snapshot.graph.entities.map((entity) => entity.id)).toHaveLength(1)
+    expect((yield* Ref.get(fixture.helperCalls)).map(Option.map((call) => call.purpose))).toEqual((["extract", "review", "extract", "review"] as const).map((purpose) => Option.some(purpose)))
+    const proposals = (yield* Ref.get(fixture.calls)).filter((_, index) => index % 2 === 1).map((prompt) => frame("knowledge-proposal", prompt))
+    expect(proposals.some((proposal) => proposal.includes("\"_id\":\"Option\""))).toBe(false)
+    expect(proposals.map((proposal) => /"existing":(null|"[^"]*")/.exec(proposal)?.[1])).toEqual(["null", `"${snapshot.graph.entities[0]!.id}"`])
   }))))
 
   test("capture is durable before processing, then facts and graph evidence are recalled across sessions", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {

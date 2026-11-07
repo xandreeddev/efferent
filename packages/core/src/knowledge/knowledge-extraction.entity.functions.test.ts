@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("5")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("6")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -31,6 +31,46 @@ describe("native extraction and retrieval contracts", () => {
     expect(knowledgeQueryPrompt("Who works on Atlas?", 100)).toBe(await Bun.file(new URL("../../golden/knowledge-query.prompt.txt", import.meta.url)).text())
     expect(knowledgeRerankPrompt("Who?", [], empty.graph, 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-rerank.prompt.txt", import.meta.url)).text())
   })
+
+  test("the review proposal is the output schema's wire form, so a reviewer that returns it unchanged returns the same extraction", () => Effect.runPromise(Effect.gen(function* () {
+    const text = "Since March I only drink green tea. Maya opens the café at eight."
+    const at = (quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    const wire = {
+      entities: [
+        { key: "user", name: "User", type: "person", aliases: [], existing: "note:1:entity:user", spans: [at("I")] },
+        { key: "maya", name: "Maya", type: "person", aliases: [], existing: null, spans: [at("Maya")] },
+      ],
+      memories: [{ key: "tea", kind: "preference", text: "The user only drinks green tea since March.", entities: ["user"], spans: [at("Since March I only drink green tea.")], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
+      assertions: [
+        { key: "drinks", subject: "user", predicate: "drinks", object: { _tag: "Value", value: "green tea" }, text: "The user only drinks green tea.", spans: [at("I only drink green tea")], validFrom: null, validTo: null, supersedes: [], supersession: "change" },
+        { key: "opens", subject: "maya", predicate: "opens_cafe_at", object: { _tag: "Value", value: "08:00" }, text: "Maya opens the café at eight.", spans: [at("Maya opens the café at eight.")], validFrom: 10, validTo: null, supersedes: [], supersession: "correction" },
+      ],
+    }
+    const decoded = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)(wire)
+    const proposalOf = (prompt: string) => /<knowledge-proposal>\n([\s\S]*?)\n<\/knowledge-proposal>/.exec(prompt)?.[1] ?? ""
+    const readBack = (json: string) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(json)
+    const extract = knowledgeExtractionPrompt({ ...source, text }, empty, "memory", 1000)
+    const proposal = proposalOf(knowledgeReviewPrompt(extract, decoded))
+    // An absent identity or validity date is null, as in the output schema; a present one is its plain value.
+    expect(proposal).not.toContain("\"_id\":\"Option\"")
+    expect(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(proposal)).toEqual(wire)
+    expect(yield* readBack(proposal)).toEqual(decoded)
+    // A reviewer's reply that copied the earlier form of the proposal, Option objects included, fails the output schema at the first of them.
+    const copied = yield* Effect.flip(readBack(JSON.stringify(decoded)))
+    expect(String(copied)).toContain("[\"entities\"][0][\"existing\"]")
+    // Through extraction with review: a reviewer that returns the proposal unchanged keeps the extraction.
+    const reviews = yield* Ref.make<ReadonlyArray<string>>([])
+    const reviewed = yield* extractKnowledge({
+      source: { ...source, text }, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: true,
+      complete: (prompt, purpose) => purpose === "extract" ? Effect.succeed(decoded)
+        : Ref.update(reviews, (all) => [...all, prompt]).pipe(Effect.andThen(readBack(proposalOf(prompt))), Effect.orDie),
+    })
+    expect(reviewed).toEqual(decoded)
+    expect(yield* Ref.get(reviews)).toEqual([knowledgeReviewPrompt(extract, decoded)])
+    // A value that breaks the schema's own checks, which no decoded extraction does, is proposed empty rather than in another form.
+    const broken = { ...decoded, entities: [{ ...decoded.entities[0]!, key: "" }] }
+    expect(proposalOf(knowledgeReviewPrompt(extract, broken))).toBe("{\"entities\":[],\"memories\":[],\"assertions\":[]}")
+  })))
 
   test("decoded extraction becomes a grounded stage and carries entity attribution evidence", () => Effect.runPromise(Effect.gen(function* () {
     const stage = yield* stageKnowledgeExtraction(source, empty, yield* extraction, 30)
