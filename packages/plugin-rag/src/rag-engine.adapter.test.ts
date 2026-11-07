@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Effect, Fiber, Option, Ref } from "effect"
+import { Clock, Effect, Fiber, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeChunkId, KnowledgeError, KnowledgeJobId, KnowledgeMemoryId, KnowledgeSourceId, knowledgeEngineId, knowledgeExtractionWindows, makeKnowledgeIndexMemory, UtilityCompletion, UtilityLlm, zeroUsage } from "@xandreed/core"
 import type { KnowledgeCandidate, KnowledgeHelperCall, KnowledgeJobFailure, KnowledgeMetadataFilter, KnowledgeSearch } from "@xandreed/core"
@@ -188,13 +188,23 @@ describe("native temporal GraphRAG", () => {
   test("graph extraction requires a utility model, and personal memories from a document omit its graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const absent = yield* Effect.result(makeRag({ graph: true }))
     expect(absent._tag).toBe("Failure")
-    const { utility } = yield* scriptedUtility([JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] })])
+    const personal = JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] })
+    const { utility } = yield* scriptedUtility([personal])
     const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("bad", "Guide data."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     expect((yield* store.snapshot(scope)).memories).toEqual([])
     const status = yield* knowledge.status(scope, job.id)
     expect(Option.flatMap(status, (value) => value.stage).pipe(Option.map((stage) => stage.notes))).toEqual(Option.some([{ _tag: "GraphOmitted", reason: "Invalid", message: "Document extraction must not create personal memories" }]))
+    // An earlier attempt records that refusal of the decoded extraction at stage `stage`.
+    const { utility: twice } = yield* scriptedUtility([personal, personal])
+    const failures = yield* Ref.make<ReadonlyArray<KnowledgeJobFailure>>([])
+    const index = yield* makeKnowledgeIndexMemory()
+    const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], failure: KnowledgeJobFailure) => Ref.update(failures, (all) => [...all, failure]).pipe(Effect.andThen(index.fail(lease, failure))) }
+    const retried = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, twice)
+    yield* retried.knowledge.ingest(enqueue("bad", "Guide data."))
+    expect(yield* retried.knowledge.process(scope, 1)).toBe(1)
+    expect(yield* Ref.get(failures)).toEqual([{ reason: "Invalid", message: "Document extraction must not create personal memories", step: "Graph", diagnostic: { stage: "stage" } }])
     expect((yield* knowledge.retrieve({ scope, query: "Guide", limit: 3, maxChars: 1000 })).candidates).toHaveLength(1)
   }))))
 
@@ -202,11 +212,27 @@ describe("native temporal GraphRAG", () => {
     const index = yield* makeKnowledgeIndexMemory()
     const failures = yield* Ref.make<ReadonlyArray<KnowledgeJobFailure>>([])
     const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], failure: KnowledgeJobFailure) => Ref.update(failures, (all) => [...all, failure]).pipe(Effect.andThen(index.fail(lease, failure))) }
-    const { utility, prompts } = yield* scriptedUtility(["not JSON", JSON.stringify(atlasGraph)])
+    // The first answer is cut off at the output cap, inside its first relation.
+    const whole = JSON.stringify(atlasGraph)
+    const cut = new UtilityCompletion({ text: whole.slice(0, whole.indexOf("\"assertions\"") + 20), usage: { ...zeroUsage, outputTokens: 2048, totalTokens: 2048 }, finishReason: "length" })
+    const { utility, prompts } = yield* scriptedUtility([cut, whole])
     const { knowledge, store } = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
-    expect(yield* knowledge.process(scope, 1)).toBe(1)
-    expect(yield* Ref.get(failures)).toEqual([{ reason: "Invalid", message: "The document model returned an invalid graph extraction", step: "Graph" }])
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    } })
+    expect(yield* knowledge.process(scope, 1).pipe(Effect.withTracer(tracer))).toBe(1)
+    // The graph step's failure records where and how its extraction failed, and so does the span that processed it.
+    expect(yield* Ref.get(failures)).toEqual([{ reason: "Invalid", message: "The document model returned an invalid graph extraction", step: "Graph",
+      diagnostic: { stage: "extract", path: [], finishReason: "length", outputTokens: 2048, window: { part: 1, parts: 1 } } }])
+    const processed = spans.find((span) => span.name === "rag.process")
+    expect(Object.fromEntries([...(processed?.attributes ?? new Map<string, unknown>())].filter(([key]) => key.startsWith("efferent.knowledge.failure.")))).toEqual({
+      "efferent.knowledge.failure.stage": "extract", "efferent.knowledge.failure.path": "$", "efferent.knowledge.failure.finish_reason": "length",
+      "efferent.knowledge.failure.output_tokens": 2048, "efferent.knowledge.failure.window": "1/1",
+    })
     const status = yield* knowledge.status(scope, job.id)
     expect(Option.map(status, (value) => [value.phase._tag, value.attempt])).toEqual(Option.some(["Complete", 2]))
     expect(Option.exists(Option.flatMap(status, (value) => value.stage), (stage) => stage.notes === undefined && stage.chunks.length === 1)).toBe(true)

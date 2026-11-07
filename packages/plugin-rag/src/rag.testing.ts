@@ -16,11 +16,13 @@ export const enqueue = (name: string, text: string, revision = 1, metadata: Know
 export const makeEmbeddings = (map: (text: string) => Array<number> = () => [1, 0]) => EmbeddingModel.make({
   embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(map), usage: { inputTokens: inputs.length } }),
 })
-export const scriptedUtility = (replies: ReadonlyArray<string>) => Effect.gen(function* () {
+/** Replies by call order: a reply's text alone, or a whole completion (a finish reason, usage). */
+export const scriptedUtility = (replies: ReadonlyArray<string | UtilityCompletion>) => Effect.gen(function* () {
   const prompts = yield* Ref.make<ReadonlyArray<string>>([])
   const utility = UtilityLlm.of({ complete: (prompt) => Ref.getAndUpdate(prompts, (all) => [...all, prompt]).pipe(Effect.flatMap((previous) => {
-    const text = replies[previous.length]
-    return text === undefined ? Effect.fail(new UtilityError({ message: "No scripted response remains" })) : Effect.succeed(new UtilityCompletion({ text, usage: zeroUsage }))
+    const reply = replies[previous.length]
+    return reply === undefined ? Effect.fail(new UtilityError({ message: "No scripted response remains" }))
+      : Effect.succeed(typeof reply === "string" ? new UtilityCompletion({ text: reply, usage: zeroUsage }) : reply)
   })) })
   return { utility, prompts }
 })

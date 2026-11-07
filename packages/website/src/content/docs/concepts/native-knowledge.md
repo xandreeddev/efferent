@@ -279,8 +279,39 @@ graph step is always retryable; otherwise `Invalid`, `Tombstoned` and
 `EmbeddingMismatch` are final and every other reason is transient. A job that
 failed before reasons were recorded reads as `Unavailable` at step `Required`,
 so it counts as retryable and its next failure records its own reason. A store
-records a failure with `KnowledgeIndex.fail(lease, { reason, message, step })`. Successful staged extraction is
-reused after an embedding failure. Scope-version conflicts trigger reconciliation
+records a failure with `KnowledgeIndex.fail(lease, { reason, message, step, diagnostic })`. Successful staged extraction is
+reused after an embedding failure.
+
+A failed extraction also records where and how it failed, without its content,
+in the failure's `diagnostic` (`KnowledgeFailureDiagnostic`), so a host or a
+trace can tell a reply cut off at the output cap from one that drifted from the
+schema or one staging refused. `stage` is `extract` or `review` when that
+call's reply did not decode, and `stage` when staging refused the decoded
+extraction as a whole (a repeated entity key, no record surviving its checks).
+For a reply that did not decode, `path` is where its first decode issue sits,
+as keys and array indexes (`["assertions", 0, "supersession"]`; empty for the
+reply as a whole, such as JSON cut off mid-string), `finishReason` and
+`outputTokens` are what the helper completion reported
+(`UtilityCompletion.finishReason`, which the models plugin's `UtilityLlmLive`
+fills from the response's finish part, and its usage; a helper that reports
+neither leaves them out, and a zero output count reads as unreported), and
+`window` is the part of the source the call read (`{ part, parts }`). A reply
+cut off at the cap reads `finishReason: "length"` with an empty `path`; a
+schema drift names the field that broke it; a staging refusal holds the stage
+alone. It never holds the model's text, a quote or the source, and a failure
+that is not an extraction's (a model call that timed out, embedding, storage)
+has none. `status` and `KnowledgeIndex.failed` return it with the phase, and a
+failure recorded before diagnostics decodes without one; the
+`knowledge.failure-reason` check of `knowledgeStoreConformance` round-trips
+one through a store, its failed listing included. The native engines also set
+it on the span that processed the job, through `knowledgeFailureAttributes`:
+`efferent.knowledge.failure.stage`, `efferent.knowledge.failure.path` (JSONPath
+in bracket notation, `$` for the reply as a whole),
+`efferent.knowledge.failure.finish_reason`,
+`efferent.knowledge.failure.output_tokens` and
+`efferent.knowledge.failure.window` (`part/parts`). A host's own engine builds
+the job's failure from a `KnowledgeError` with `knowledgeJobFailure(error,
+step)`, which keeps the error's diagnostic. Scope-version conflicts trigger reconciliation
 against the updated graph.
 
 Staging (`stageKnowledgeExtraction`) checks each extracted record on its own.
@@ -424,7 +455,10 @@ window, typography included, then moved to exact offsets into the whole source; 
 several windows becomes one entity when its key and existing identity agree,
 and any other repeated key is renamed (`key~2`). A source that fits one window
 makes exactly the calls of a whole-source extraction. `extractKnowledge` runs
-this for a host that builds its own engine.
+this for a host that builds its own engine: its `complete` returns the helper's
+`UtilityCompletion`, which `extractKnowledge` decodes, so a reply that does not
+decode fails `Invalid` with its diagnostic (stage, window, path, finish reason
+and output tokens), and a part that repeats an entity key names its window.
 
 Profiles and routines are evidence-backed memory kinds. Explicit preferences
 need no recurrence threshold. Inferred routines need support from at least three

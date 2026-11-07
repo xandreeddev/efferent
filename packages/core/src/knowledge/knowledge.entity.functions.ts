@@ -2,6 +2,7 @@ import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
   type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeCorroboration, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
+  type KnowledgeFailureDiagnostic, type KnowledgeFailureStep,
   type KnowledgeEventTime, type KnowledgeMemory, type KnowledgeMemoryKind, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
   type KnowledgeMetadataValue, type KnowledgeProfileMemory, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
@@ -38,6 +39,29 @@ const FINAL_REASONS: ReadonlyArray<KnowledgeErrorReason> = ["Invalid", "Tombston
  */
 export const isRetryableKnowledgeFailure = (failure: Pick<KnowledgeJobFailure, "reason" | "step">): boolean =>
   failure.step === "Graph" || !FINAL_REASONS.includes(failure.reason)
+/**
+ * The failure an engine records with `KnowledgeIndex.fail` for an error at `step`: its reason and
+ * message, and its `diagnostic` when it has one (an extraction that failed). @public
+ */
+export const knowledgeJobFailure = (error: KnowledgeError, step: KnowledgeFailureStep): KnowledgeJobFailure => ({
+  reason: error.reason, message: error.message, step, ...(error.diagnostic === undefined ? {} : { diagnostic: error.diagnostic }),
+})
+/** A decode issue's path as JSONPath in bracket notation: `$` for the reply as a whole, `$["assertions"][0]["supersession"]` for a field. */
+const jsonPathOf = (path: ReadonlyArray<string | number>): string =>
+  `$${path.map((key) => typeof key === "number" ? `[${key}]` : `[${JSON.stringify(key)}]`).join("")}`
+/**
+ * The span attributes of an extraction failure's diagnostic, which the native engines set on the
+ * current span when a job fails: `efferent.knowledge.failure.stage`, `….path` (JSONPath in bracket
+ * notation, `$` for the reply as a whole), `….finish_reason`, `….output_tokens` and `….window`
+ * (`part/parts`), each only when the diagnostic holds it. No content. @public
+ */
+export const knowledgeFailureAttributes = (diagnostic: KnowledgeFailureDiagnostic): Readonly<Record<string, string | number>> => ({
+  "efferent.knowledge.failure.stage": diagnostic.stage,
+  ...(diagnostic.path === undefined ? {} : { "efferent.knowledge.failure.path": jsonPathOf(diagnostic.path) }),
+  ...(diagnostic.finishReason === undefined ? {} : { "efferent.knowledge.failure.finish_reason": diagnostic.finishReason }),
+  ...(diagnostic.outputTokens === undefined ? {} : { "efferent.knowledge.failure.output_tokens": diagnostic.outputTokens }),
+  ...(diagnostic.window === undefined ? {} : { "efferent.knowledge.failure.window": `${diagnostic.window.part}/${diagnostic.window.parts}` }),
+})
 /** Exact cosine, including a defined zero-norm score. @public */
 export const knowledgeCosine = (left: KnowledgeVector, right: KnowledgeVector): number => {
   if (!sameEmbeddingSpace(left.space, right.space)) return 0

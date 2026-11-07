@@ -210,7 +210,7 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
         },
       }))
     })),
-    fail: Effect.fn("knowledge_store.fail")((lease, failure) => leased(lease, (current, job) => Result.succeed({ state: replaceJob(current, { ...job, phase: { _tag: "Failed", reason: failure.reason, message: failure.message, step: failure.step } }), value: undefined }))),
+    fail: Effect.fn("knowledge_store.fail")((lease, failure) => leased(lease, (current, job) => Result.succeed({ state: replaceJob(current, { ...job, phase: { _tag: "Failed", reason: failure.reason, message: failure.message, step: failure.step, ...(failure.diagnostic === undefined ? {} : { diagnostic: failure.diagnostic }) } }), value: undefined }))),
     retry: Effect.fn("knowledge_store.retry")((scope, jobId) => change((current) => {
       const job = current.jobs.find((entry) => entry.id === jobId && sameKnowledgeScope(entry.scope, scope))
       if (!job || job.phase._tag !== "Failed") return Result.fail(error("Conflict", "Only a failed job may be retried"))

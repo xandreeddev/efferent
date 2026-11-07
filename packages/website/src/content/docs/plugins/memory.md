@@ -265,7 +265,17 @@ collection is refused. To find failed jobs without keeping their ids, page
 through `MemoryStore.failed({ namespace, collection, reasons, limit, after })`,
 which lists them across owners with the reason each failed with, and `retry`
 those worth retrying (`isRetryableKnowledgeFailure(job.phase)`, or the
-reasons a configuration change can fix). A job whose review failed under
+reasons a configuration change can fix). A failed extraction's phase also says
+where and how it failed, without its content (`diagnostic`, a
+`KnowledgeFailureDiagnostic`): the `stage` (`extract`, `review` or `stage`),
+for a reply that did not decode the `path` of its first decode issue (empty for
+the reply as a whole), the `finishReason` and `outputTokens` the helper
+completion reported and the `window` it read. A reply cut off at the output cap
+reads `finishReason: "length"` with an empty path, which raising the helper's
+output cap or lowering `maxExtractionChars` fixes; a schema drift names the
+field that broke it; a staging refusal holds the stage alone. The engine sets
+the same facts on the span that processed the job
+(`efferent.knowledge.failure.*`, `knowledgeFailureAttributes`). A job whose review failed under
 version 5 by copying that version's proposal back (`Invalid`, "The
 extraction model returned an invalid knowledge object") is one: `retry`
 requeues it under the current id through `KnowledgeIndex.requeue`. So is a job

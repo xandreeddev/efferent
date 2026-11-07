@@ -3,7 +3,7 @@ import { Array as Arr, Effect, Option, Schema } from "effect"
 import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId,
   KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector, type KnowledgeErrorReason, type KnowledgeFailureStep, KnowledgeMetadataFilter,
-  KnowledgeSearch, KnowledgeMemory as KnowledgeMemoryCodec,
+  KnowledgeSearch, KnowledgeMemory as KnowledgeMemoryCodec, KnowledgeError, type KnowledgeFailureDiagnostic,
   type KnowledgeCandidate, type KnowledgeCorroboration, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
@@ -11,6 +11,7 @@ import {
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
   admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
   knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory, knowledgeMemoryIsPast, knowledgeProfileOrder,
+  knowledgeFailureAttributes, knowledgeJobFailure,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -206,6 +207,34 @@ test("a failed job records its reason and step, and one stored before reasons de
   const encoded = await Effect.runPromise(Schema.encodeEffect(KnowledgeJob)(job))
   expect(encoded.phase).toEqual({ _tag: "Failed", reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" })
   expect((await Effect.runPromise(decode(encoded))).phase).toEqual(job.phase)
+})
+test("a failed extraction's diagnostic round-trips on the job, and a failure recorded before diagnostics decodes without one", async () => {
+  const stored = { id: "job", scope, source: { id: "source", revision: 1 }, engine: "kit", attempt: 1, stage: null }
+  const decode = Schema.decodeUnknownEffect(KnowledgeJob)
+  const earlier = await Effect.runPromise(decode({ ...stored, phase: { _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required" } }))
+  expect(earlier.phase).toEqual({ _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required" })
+  const diagnostic: KnowledgeFailureDiagnostic = { stage: "extract", path: [], finishReason: "length", outputTokens: 4096, window: { part: 1, parts: 1 } }
+  const job: KnowledgeJob = { ...earlier, id: KnowledgeJobId.make("job"), phase: { _tag: "Failed", ...knowledgeJobFailure(new KnowledgeError({ reason: "Invalid", message: "The extraction model returned an invalid knowledge object", diagnostic }), "Required") } }
+  const encoded = await Effect.runPromise(Schema.encodeEffect(KnowledgeJob)(job))
+  expect(encoded.phase).toEqual({ _tag: "Failed", reason: "Invalid", message: "The extraction model returned an invalid knowledge object", step: "Required", diagnostic })
+  expect((await Effect.runPromise(decode(encoded))).phase).toEqual(job.phase)
+  // An error without a diagnostic records none: the key stays absent, as before.
+  expect(knowledgeJobFailure(new KnowledgeError({ reason: "Unavailable", message: "Memory embedding failed" }), "Required")).toEqual({ reason: "Unavailable", message: "Memory embedding failed", step: "Required" })
+})
+test("a diagnostic's span attributes write its path as JSONPath, the reply as a whole as $, and only what it holds", () => {
+  expect(knowledgeFailureAttributes({ stage: "review", path: ["entities", 0, "existing"], finishReason: "stop", outputTokens: 812, window: { part: 2, parts: 3 } })).toEqual({
+    "efferent.knowledge.failure.stage": "review",
+    "efferent.knowledge.failure.path": "$[\"entities\"][0][\"existing\"]",
+    "efferent.knowledge.failure.finish_reason": "stop",
+    "efferent.knowledge.failure.output_tokens": 812,
+    "efferent.knowledge.failure.window": "2/3",
+  })
+  expect(knowledgeFailureAttributes({ stage: "extract", path: [], finishReason: "length" })).toEqual({
+    "efferent.knowledge.failure.stage": "extract", "efferent.knowledge.failure.path": "$", "efferent.knowledge.failure.finish_reason": "length",
+  })
+  expect(knowledgeFailureAttributes({ stage: "stage" })).toEqual({ "efferent.knowledge.failure.stage": "stage" })
+  // A key holding a quote or a bracket stays one segment.
+  expect(knowledgeFailureAttributes({ stage: "extract", path: ["a\"b]", 1] })["efferent.knowledge.failure.path"]).toBe("$[\"a\\\"b]\"][1]")
 })
 test("graph intervals are half-open on both timelines and traversal cannot cross invalid edges", () => {
   const ids = [KnowledgeEntityId.make("one"), KnowledgeEntityId.make("two"), KnowledgeEntityId.make("three")]

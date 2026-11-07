@@ -142,18 +142,26 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
     })),
     indexCheck("knowledge.failure-reason", (fixture) => Effect.gen(function* () {
       const source = sourceOf(fixture.scope)
-      const job = yield* enqueue(fixture, source)
-      yield* claim(fixture)
-      const graph: KnowledgeJobFailure = { reason: "Invalid", message: "the graph extraction was invalid", step: "Graph" }
+      // An engine only this check records jobs under, so the failed listing holds this job alone.
+      const engine = scopedEngine(fixture.scope, "failure-reason")
+      const job = yield* enqueue(fixture, source, "job", Option.none(), engine)
+      yield* claim(fixture, 20, "token", engine)
+      // A graph extraction cut off at its output cap in the second of three windows: where and how it failed, without content.
+      const graph: KnowledgeJobFailure = {
+        reason: "Invalid", message: "the graph extraction was invalid", step: "Graph",
+        diagnostic: { stage: "extract", path: ["assertions", 0, "supersession"], finishReason: "length", outputTokens: 4096, window: { part: 2, parts: 3 } },
+      }
       yield* fixture.index.fail(leaseOf(fixture.scope, job), graph)
       const first = yield* fixture.index.status(fixture.scope, job.id)
+      const listed = yield* fixture.index.failed({ namespace: fixture.scope.namespace, engine, limit: 10 })
       yield* fixture.index.retry(fixture.scope, job.id)
-      yield* claim(fixture, 30, "second-token")
+      yield* claim(fixture, 30, "second-token", engine)
       const transient: KnowledgeJobFailure = { reason: "Unavailable", message: "the embedding service was unreachable", step: "Required" }
       yield* fixture.index.fail({ ...leaseOf(fixture.scope, job, 31), token: KnowledgeLeaseToken.make("second-token") }, transient)
       const second = yield* fixture.index.status(fixture.scope, job.id)
       const failedWith = (found: Option.Option<KnowledgeJob>, failure: KnowledgeJobFailure) => Option.exists(found, (value) => sameJson(value.phase, { _tag: "Failed", ...failure }))
-      yield* expect("knowledge.failure-reason", failedWith(first, graph) && failedWith(second, transient), "a failed job's status lost the reason, message or step it was failed with, or kept an earlier attempt's")
+      yield* expect("knowledge.failure-reason", failedWith(first, graph) && sameJson(listed.jobs.map((value) => value.phase), [{ _tag: "Failed", ...graph }]) && failedWith(second, transient),
+        "a failed job's status or the failed listing lost the reason, message, step or diagnostic it was failed with, or kept an earlier attempt's")
     })),
     indexCheck("knowledge.atomic-cas", (fixture) => Effect.gen(function* () {
       yield* seed(fixture)

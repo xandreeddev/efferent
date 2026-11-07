@@ -384,7 +384,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
     fail: Effect.fn("knowledge_store.fail")(function* (lease, failure) {
       yield* db.transaction((tx) => Effect.gen(function* () {
         const job = yield* leased(tx, lease)
-        yield* saveJob(tx, { ...job, phase: { _tag: "Failed", reason: failure.reason, message: failure.message, step: failure.step } })
+        yield* saveJob(tx, { ...job, phase: { _tag: "Failed", reason: failure.reason, message: failure.message, step: failure.step, ...(failure.diagnostic === undefined ? {} : { diagnostic: failure.diagnostic }) } })
       }))
     }),
     retry: Effect.fn("knowledge_store.retry")(function* (scope, id) {

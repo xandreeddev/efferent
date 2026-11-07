@@ -1,7 +1,7 @@
 import { EmbeddingModel } from "effect/ai"
 import { Array as Arr, Cause, Clock, Context, Effect, Exit, Fiber, Layer, Match, Option, Queue, Ref, Result, Schema, Semaphore, Stream, SubscriptionRef } from "effect"
 import {
-  BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
+  BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, knowledgeFailureAttributes, knowledgeJobFailure,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction,
@@ -9,7 +9,7 @@ import {
   narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport, knowledgeMemoryIsPast, knowledgeProfileOrder,
 } from "@xandreed/core"
 import type {
-  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
+  KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeLease,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSnapshot, KnowledgeStage, KnowledgeVector,
   KnowledgeAssertion, KnowledgeCandidate, KnowledgeCandidates, KnowledgeMemory, KnowledgeProfileMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession, KnowledgeSupport,
 } from "@xandreed/core"
@@ -17,9 +17,6 @@ import type { MemoryConfig } from "./memory.entity.js"
 import { collapseMemoryCandidates, memoryPastFactor, memorySupportFactor } from "./memory.entity.functions.js"
 
 const failure = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
-const decodeExtraction = (text: string) => Schema.decodeUnknownEffect(Schema.fromJsonString(KnowledgeExtraction))(text).pipe(
-  Effect.mapError((cause) => new KnowledgeError({ reason: "Invalid", message: "The extraction model returned an invalid knowledge object", cause })),
-)
 
 /** Native extraction, graph reconciliation, consolidation, and hybrid memory recall. @public */
 export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.gen(function* () {
@@ -48,9 +45,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       maxOutputTokens: Option.fromNullishOr(config.maxHelperOutputTokens),
     })),
   )
-  const complete = (job: KnowledgeJob) => (prompt: string, purpose: KnowledgeHelperPurpose) => bounded(ask(prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => failure("The memory model could not complete extraction", cause))), "The memory model exceeded its time budget").pipe(
-    Effect.flatMap((result) => decodeExtraction(result.text)),
-  )
+  /** One extraction or review completion; `extractKnowledge` decodes it, and records where and how a reply that does not decode failed. */
+  const complete = (job: KnowledgeJob) => (prompt: string, purpose: KnowledgeHelperPurpose) => bounded(ask(prompt, purpose, job.scope, Option.some(job)).pipe(Effect.mapError((cause) => failure("The memory model could not complete extraction", cause))), "The memory model exceeded its time budget")
   const vector = (values: ReadonlyArray<number>): Effect.Effect<KnowledgeVector, KnowledgeError> =>
     values.length === space.dimensions && values.every(Number.isFinite)
       ? Effect.succeed({ space, values })
@@ -127,7 +123,9 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
             const current = yield* store.status(scope, job.id).pipe(Effect.catchCause((readFailure) => Effect.logWarning("The memory job status could not be checked after processing stopped", readFailure).pipe(Effect.as(Option.none<KnowledgeJob>()))))
             if (!interrupted && Option.exists(current, (value) => value.phase._tag === "Complete")) return { _tag: "Complete" as const }
             const error = Option.getOrElse(Cause.findErrorOption(cause), () => failure(interrupted ? "Memory processing was interrupted before publication" : "Memory processing stopped unexpectedly", cause))
-            const failed: KnowledgeJobFailure = { reason: error.reason, message: error.message, step: "Required" }
+            const failed = knowledgeJobFailure(error, "Required")
+            // Where and how an extraction failed, without its content, on the span that processed the job.
+            if (failed.diagnostic !== undefined) yield* Effect.annotateCurrentSpan(knowledgeFailureAttributes(failed.diagnostic))
             const recorded = yield* store.fail(yield* leaseOf(job, token), failed).pipe(Effect.result)
             if (Result.isFailure(recorded)) yield* Effect.logWarning("The memory processing failure could not be recorded", recorded.failure)
             if (interrupted) {

@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+import { FinishReason } from "../domain/turn-vocabulary.entity.js"
 
 const Text = Schema.Trimmed.check(Schema.isNonEmpty())
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
@@ -217,16 +218,51 @@ export type KnowledgeStage = typeof KnowledgeStage.Type
 export const KnowledgeFailureStep = Schema.Literals(["Required", "Graph"])
 export type KnowledgeFailureStep = typeof KnowledgeFailureStep.Type
 /**
+ * Where a knowledge extraction failed: `extract`, the extraction call's reply did not decode;
+ * `review`, the review call's reply did not decode; `stage`, the decoded extraction was refused as
+ * a whole (it repeats an entity key, none of its records survived their checks, or it breaks the
+ * extraction schema's checks).
+ * @public
+ */
+export const KnowledgeFailureStage = Schema.Literals(["extract", "review", "stage"])
+export type KnowledgeFailureStage = typeof KnowledgeFailureStage.Type
+/**
+ * How a knowledge extraction failed, without its content: never the model's text, a quote or the
+ * source. `stage` is where it failed (`KnowledgeFailureStage`). For a reply that did not decode
+ * (`extract` or `review`), `path` is where the first decode issue sits in the reply's JSON, as keys
+ * and array indexes (`["assertions", 0, "supersession"]`), empty when the reply as a whole is not
+ * the extraction's JSON (cut off, not JSON); `finishReason` and `outputTokens` are what the helper
+ * completion reported, when it did (`UtilityCompletion.finishReason`, its usage's output tokens).
+ * A reply cut off at the output cap reads `finishReason: "length"` with an empty `path`; a reply
+ * that drifted from the schema reads the path of the field that broke it. `window` is the part of
+ * the source the failed call read, `part` of `parts` (1 of 1 for a source read whole); at `stage`,
+ * the part whose extraction repeats an entity key when that refuses the merge of several parts,
+ * and none for a refusal of the staged extraction.
+ * @public
+ */
+export const KnowledgeFailureDiagnostic = Schema.Struct({
+  stage: KnowledgeFailureStage,
+  path: Schema.optionalKey(Schema.Array(Schema.Union([Schema.String, Count]))),
+  finishReason: Schema.optionalKey(FinishReason),
+  outputTokens: Schema.optionalKey(Count),
+  window: Schema.optionalKey(Schema.Struct({ part: Positive, parts: Positive })),
+})
+export type KnowledgeFailureDiagnostic = typeof KnowledgeFailureDiagnostic.Type
+/**
  * Why a processing attempt failed, as `KnowledgeIndex.fail` records it on the job's `Failed` phase:
  * the `KnowledgeError` reason, its message and the step that failed (`isRetryableKnowledgeFailure`
- * tells whether retrying can help). A job failed before reasons were recorded decodes with reason
- * `Unavailable` at step `Required`, so it counts as retryable and its next failure records its own reason.
+ * tells whether retrying can help), and, for an extraction that failed, where and how it failed
+ * (`diagnostic`, `KnowledgeFailureDiagnostic`; absent for any other failure). A job failed before
+ * reasons were recorded decodes with reason `Unavailable` at step `Required`, so it counts as
+ * retryable and its next failure records its own reason; one failed before diagnostics were
+ * recorded decodes without one.
  * @public
  */
 export const KnowledgeJobFailure = Schema.Struct({
   reason: KnowledgeErrorReason.pipe(Schema.withDecodingDefaultKey(Effect.succeed("Unavailable" as const))),
   message: Schema.String,
   step: KnowledgeFailureStep.pipe(Schema.withDecodingDefaultKey(Effect.succeed("Required" as const))),
+  diagnostic: Schema.optionalKey(KnowledgeFailureDiagnostic),
 })
 export type KnowledgeJobFailure = typeof KnowledgeJobFailure.Type
 /** @public */
@@ -487,7 +523,13 @@ export const KnowledgeHelperCall = Schema.Struct({
   maxOutputTokens: Schema.OptionFromNullOr(Positive),
 })
 export type KnowledgeHelperCall = typeof KnowledgeHelperCall.Type
-/** Expected storage/extraction errors preserve the original cause. @public */
+/**
+ * Expected storage/extraction errors preserve the original cause. An extraction that failed carries
+ * where and how in `diagnostic` (`KnowledgeFailureDiagnostic`), which the native engines copy into
+ * the job's failure; any other error has none.
+ * @public
+ */
 export class KnowledgeError extends Schema.TaggedError<KnowledgeError>()("KnowledgeError", {
   reason: KnowledgeErrorReason, message: Schema.String, cause: Schema.optionalKey(Schema.Defect()),
+  diagnostic: Schema.optionalKey(KnowledgeFailureDiagnostic),
 }) {}

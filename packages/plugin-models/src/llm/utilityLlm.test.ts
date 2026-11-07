@@ -122,6 +122,31 @@ describe("UtilityLlmLive", () => {
     expect(calls[0]?.step).toEqual(Option.none())
   })
 
+  test("a completion carries why its response ended: cut off at the output cap reads length, with its output tokens", async () => {
+    const finishing = async (finishReason: string) => {
+      const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({
+        choices: [{ finish_reason: finishReason, message: { content: "{\"entities\": [" } }], usage: { prompt_tokens: 3, completion_tokens: 4096, total_tokens: 4099 },
+      }) })
+      const stores = Layer.merge(
+        Layer.succeed(SettingsStore, SettingsStore.of({ load: Effect.succeed(new EngineSettings({ model: Option.some("gw:general") })), setRole: () => Effect.void, set: () => Effect.void })),
+        Layer.succeed(AuthStore, AuthStore.of({
+          all: Effect.succeed(new Map()), get: () => Effect.succeed(Option.none()), resolveKey: () => Effect.succeed(Option.none()),
+          set: () => Effect.void, remove: () => Effect.void,
+        })),
+      )
+      return await Effect.runPromise(Effect.gen(function* () {
+        const utility = yield* UtilityLlm
+        return yield* utility.complete("Extract this")
+      }).pipe(
+        Effect.provide(UtilityLlmLive.pipe(Layer.provide(stores))),
+        Effect.provideService(CurrentModelEndpoints, { gw: { url: `http://127.0.0.1:${server.port}/v1`, standardOnly: false } }),
+      )).finally(() => server.stop(true))
+    }
+    const cut = await finishing("length")
+    expect({ finishReason: cut.finishReason, outputTokens: cut.usage.outputTokens }).toEqual({ finishReason: "length", outputTokens: 4096 })
+    expect((await finishing("stop")).finishReason).toBe("stop")
+  })
+
   test("a recorder failure remains the original TurnError and never becomes a soft UtilityError", async () => {
     const failure = new HarnessError({ code: "events.encode", message: "the model call could not be recorded" })
     const calls: Array<ModelCallData> = []

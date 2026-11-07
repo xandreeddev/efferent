@@ -65,9 +65,12 @@ export const UtilityLlmLive = Layer.effect(
         const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
         // The loop's own reading of provider usage, so both count alike.
         const model = Option.flatMap(responseModelOf(parts), parseModelSelection)
+        // Why the response ended, from its last finish part: `length` tells a caller its text was cut off at the cap.
+        const finish = Option.fromNullishOr(parts.findLast((part): part is Response.FinishPart => part.type === "finish"))
         return new UtilityCompletion({
           text, usage: extractUsage(res.usage, parts),
           ...Option.match(model, { onNone: () => ({}), onSome: (selection) => ({ model: selection }) }),
+          ...Option.match(finish, { onNone: () => ({}), onSome: (part) => ({ finishReason: part.reason }) }),
         })
       }),
     }

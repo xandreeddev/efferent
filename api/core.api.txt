@@ -193,6 +193,8 @@ const KnowledgeExtractionSpan
 const KnowledgeExtractionWindow
 const KnowledgeFailedPage
 const KnowledgeFailedQuery
+const KnowledgeFailureDiagnostic
+const KnowledgeFailureStage
 const KnowledgeFailureStep
 const KnowledgeHelperCall
 const KnowledgeHelperJob
@@ -500,6 +502,8 @@ const knowledgeCosine
 const knowledgeEngineId
 const knowledgeExtractionPrompt
 const knowledgeExtractionWindows
+const knowledgeFailureAttributes
+const knowledgeJobFailure
 const knowledgeMemoryIsPast
 const knowledgeMemoryMentions
 const knowledgeMemorySupport
@@ -777,6 +781,8 @@ type KnowledgeExtraction
 type KnowledgeExtractionWindow
 type KnowledgeFailedPage
 type KnowledgeFailedQuery
+type KnowledgeFailureDiagnostic
+type KnowledgeFailureStage
 type KnowledgeFailureStep
 type KnowledgeHelperCall
 type KnowledgeHelperJob
