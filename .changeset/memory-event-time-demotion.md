@@ -1,6 +1,0 @@
----
-"@xandreed/core": minor
-"@xandreed/plugin-memory": minor
----
-
-A plan, goal or interest tied to a dated event is past once the event has passed. The extraction prompt (version 5, engine ids `memory:5/…` and `rag:5/…`) asks for `eventAt` on a memory that concerns a dated event, resolved against the source occurrence time; `KnowledgeExtractedMemory.eventAt` is optional and nullable, staging keeps it as `KnowledgeMemory.eventAt` (`KnowledgeEventTime`, written only when given, so older memories decode unchanged) and drops a memory whose event ends before it starts with a `RecordDropped` note. A goal, decision, action or preference whose event has ended is past (`knowledgeMemoryIsPast`); facts, routines and profiles never are. Memory recall marks it `past: true` and, under `KnowledgeRecall.temporal: "current"` (the default; `"all"` does not), multiplies its score by `MemoryConfig.pastEventWeight` (default 0.5) after the support factor; `LongTermMemory.profile` leaves it out, nothing deletes it, and `renderMemoryRecall` labels a memory `(event on YYYY-MM-DD)` or `(event on YYYY-MM-DD, past)` (section version 5). `recall_memory` gains a `temporal` parameter. A restatement must share the event time of the memory it restates. `knowledgeStoreConformance` gains `knowledge.event-time` and `longTermMemoryConformance` gains `past-event`.

@@ -206,7 +206,7 @@ export const recallCapability = defineCapability({
  * @public
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.18.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-window", version: "0.19.0", scope: "runtime",
   config: MemoryWindowConfig, defaults: memoryWindowDefaults,
   provides: [ConversationMemory],
   contributes: [Capabilities],
