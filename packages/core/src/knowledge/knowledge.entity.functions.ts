@@ -63,6 +63,8 @@ export const knowledgeBm25 = (query: string, documents: ReadonlyArray<string>): 
 export const knowledgeCandidateKey = (candidate: KnowledgeCandidate): string => Match.valueTags(candidate, {
   Memory: ({ memory }) => `memory:${memory.id}`, Chunk: ({ chunk }) => `chunk:${chunk.id}`,
 })
+/** A relation's key beside the candidate keys: `assertion:<id>`, as `KnowledgeRecallHistory.successor` names a relation. @public */
+export const knowledgeAssertionKey = (assertion: Pick<KnowledgeAssertion, "id">): string => `assertion:${assertion.id}`
 /** @public */
 export const knowledgeCandidateText = (candidate: KnowledgeCandidate): string => Match.valueTags(candidate, {
   Memory: ({ memory }) => memory.text, Chunk: ({ chunk }) => chunk.text,
@@ -88,14 +90,16 @@ export const fuseKnowledgeCandidates = (arms: KnowledgeCandidates, limit: number
 
 /**
  * The source revisions a recall's evidence cites, once each, in order of first citation:
- * candidates, then relations, then entities. Engines read their info for `KnowledgeRecallResult.sources`.
+ * candidates, then relations, then entities, then earlier states. Engines read their info for
+ * `KnowledgeRecallResult.sources`.
  * @public
  */
-export const citedKnowledgeSources = (evidence: Pick<KnowledgeRecallResult, "candidates" | "graph">): ReadonlyArray<KnowledgeSourceRef> => {
+export const citedKnowledgeSources = (evidence: Pick<KnowledgeRecallResult, "candidates" | "graph"> & { readonly history?: KnowledgeRecallResult["history"] }): ReadonlyArray<KnowledgeSourceRef> => {
   const spans = [
     ...evidence.candidates.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => memory.provenance, Chunk: ({ chunk }) => [chunk.provenance] })),
     ...evidence.graph.assertions.flatMap((assertion) => assertion.provenance),
     ...evidence.graph.entities.flatMap((entity) => entity.provenance),
+    ...(evidence.history ?? []).flatMap((earlier) => earlier.record.provenance),
   ]
   return [...new Map(spans.map((span) => [JSON.stringify([span.source.id, span.source.revision]), span.source] as const)).values()]
 }

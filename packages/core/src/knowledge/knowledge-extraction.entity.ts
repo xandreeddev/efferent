@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeMemoryKind } from "./knowledge.entity.js"
+import { KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeMemoryKind, KnowledgeSupersession } from "./knowledge.entity.js"
 
 const Key = Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(160))
 const Offset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
@@ -13,7 +13,7 @@ export const KnowledgeExtractedEntity = Schema.Struct({
   existing: Schema.OptionFromNullOr(KnowledgeEntityId),
   spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
 })
-/** @public */
+/** A memory proposed by extraction; `supersession` says why it replaces every memory it `supersedes`. @public */
 export const KnowledgeExtractedMemory = Schema.Struct({
   key: Key, kind: KnowledgeMemoryKind, text: Schema.Trimmed.check(Schema.isNonEmpty()),
   entities: Schema.Array(Key), spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
@@ -22,6 +22,7 @@ export const KnowledgeExtractedMemory = Schema.Struct({
     Schema.TaggedStruct("Inferred", { supports: Schema.Array(KnowledgeMemoryId).check(Schema.isNonEmpty()) }),
   ]),
   supersedes: Schema.Array(KnowledgeMemoryId),
+  supersession: KnowledgeSupersession,
 })
 /** @public */
 export const KnowledgeExtractedAssertion = Schema.Struct({
@@ -30,7 +31,7 @@ export const KnowledgeExtractedAssertion = Schema.Struct({
   text: Schema.Trimmed.check(Schema.isNonEmpty()), spans: Schema.Array(KnowledgeExtractionSpan).check(Schema.isNonEmpty()),
   validFrom: Schema.OptionFromNullOr(Offset), validTo: Schema.OptionFromNullOr(Offset),
   supersedes: Schema.Array(KnowledgeAssertionId),
-  supersession: Schema.Literals(["change", "correction"]),
+  supersession: KnowledgeSupersession,
 })
 /** Provider-neutral extraction protocol shared by memory and opt-in document graphs. @public */
 export const KnowledgeExtraction = Schema.Struct({

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Match, Option, Ref, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeSourceId,
+  KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemory, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId,
 } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
@@ -14,7 +14,7 @@ const source: KnowledgeSource = { scope: { owner: "fixture", namespace: "fixture
 const empty: KnowledgeSnapshot = { version: 0, memories: [], graph: { entities: [], assertions: [], truncated: false } }
 const plain = {
   entities: [{ key: "a", name: "A", type: "person", aliases: [], existing: null, spans: [{ start: 0, end: 1, quote: "A" }] }],
-  memories: [{ key: "note", kind: "fact", text: "A note.", entities: ["a"], spans: [{ start: 0, end: 7, quote: "A note." }], evidence: { _tag: "Stated" }, supersedes: [] }], assertions: [],
+  memories: [{ key: "note", kind: "fact", text: "A note.", entities: ["a"], spans: [{ start: 0, end: 7, quote: "A note." }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [],
 }
 const extraction = Schema.decodeUnknownEffect(KnowledgeExtraction)(plain)
 
@@ -22,7 +22,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("2")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("3")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -91,7 +91,7 @@ describe("native extraction and retrieval contracts", () => {
     }))
     const cited = { ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: { kind: "note" } }
     const dropped = { ...cited, ref: { id: KnowledgeSourceId.make("dropped"), revision: 1 } }
-    const result = budgetKnowledgeRecall({ candidates: [{ _tag: "Memory", memory: stage.memories[0]!, score: 1 }], graph: { entities: stage.entities, assertions, truncated: false }, sources: [cited, dropped] }, 600, 8)
+    const result = budgetKnowledgeRecall({ candidates: [{ _tag: "Memory", memory: stage.memories[0]!, score: 1 }], graph: { entities: stage.entities, assertions, truncated: false }, history: [], sources: [cited, dropped] }, 600, 8)
     expect(result.graph.truncated).toBe(true)
     expect(result.graph.assertions.length).toBeGreaterThan(0)
     expect(result.graph.assertions.length).toBeLessThan(20)
@@ -226,7 +226,7 @@ describe("bounded extraction windows", () => {
 const city: KnowledgeSource = { ...source, ref: { id: KnowledgeSourceId.make("city"), revision: 1 }, text: "Ann lives in Oslo. Ann drinks tea.", occurredAt: 1_700_000_000_000 }
 const ann = { key: "ann", name: "Ann", type: "person", aliases: [], existing: null, spans: [{ start: 0, end: 3, quote: "Ann" }] }
 const oslo = { key: "oslo", name: "Oslo", type: "city", aliases: [], existing: null, spans: [{ start: 13, end: 17, quote: "Oslo" }] }
-const drinks = { key: "drinks", kind: "preference", text: "Ann drinks tea.", entities: ["ann"], spans: [{ start: 19, end: 34, quote: "Ann drinks tea." }], evidence: { _tag: "Stated" }, supersedes: [] }
+const drinks = { key: "drinks", kind: "preference", text: "Ann drinks tea.", entities: ["ann"], spans: [{ start: 19, end: 34, quote: "Ann drinks tea." }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }
 const livesIn = { key: "lives", subject: "ann", predicate: "lives_in", object: { _tag: "Entity", key: "oslo" }, text: "Ann lives in Oslo.", spans: [{ start: 0, end: 18, quote: "Ann lives in Oslo." }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }
 const knownAnn = { id: KnowledgeEntityId.make("known-ann"), name: "Ann", type: "person", aliases: [], provenance: [{ source: { id: KnowledgeSourceId.make("earlier"), revision: 1 }, start: 0, end: 3, quote: "Ann" }] }
 const knownBergen = { ...knownAnn, id: KnowledgeEntityId.make("known-bergen"), name: "Bergen", type: "city" }
@@ -341,4 +341,88 @@ describe("staging dates undated changes and drops only the records that fail the
     const nothing = yield* stageOf(empty, { entities: [], memories: [], assertions: [] })
     expect([nothing.entities, nothing.memories, nothing.assertions, nothing.notes]).toEqual([[], [], [], undefined])
   })))
+})
+
+describe("staging links each successor to the earlier state it replaced", () => {
+  const coffee = KnowledgeMemoryId.make("drank-coffee")
+  const withCoffee: KnowledgeSnapshot = { ...withPrior(Option.none()), memories: [{
+    id: coffee, kind: "preference", text: "Ann drinks coffee.", provenance: knownAnn.provenance, entities: [knownAnn.id], evidence: { _tag: "Stated" },
+    embedding: Option.none(), knownFrom: 5, knownTo: Option.none(),
+  }] }
+  const replacing = (memory: string, relation: string) => ({
+    entities: [{ ...ann, existing: knownAnn.id }, oslo],
+    memories: [{ ...drinks, supersedes: [coffee, coffee], supersession: memory }],
+    assertions: [{ ...livesIn, supersedes: [livedIn(Option.none()).id], supersession: relation }],
+  })
+
+  test("a change links the memory it retires and the relation's history copy; nothing is written to the retired records", () => Effect.runPromise(Effect.gen(function* () {
+    const stage = yield* stageOf(withCoffee, replacing("change", "change"))
+    const [current, history] = stage.assertions
+    expect(stage.memories[0]?.replaces).toEqual([{ id: coffee, supersession: "change" }])
+    expect(current?.replaces).toEqual([{ id: history!.id, supersession: "change" }])
+    expect([history?.replaces, history?.validTo]).toEqual([undefined, Option.some(city.occurredAt)])
+    expect([stage.retireMemories, stage.retireAssertions]).toEqual([[coffee], [livedIn(Option.none()).id]])
+  })))
+
+  test("a correction links the retired records themselves, and a record that replaces nothing has no links", () => Effect.runPromise(Effect.gen(function* () {
+    const stage = yield* stageOf(withCoffee, replacing("correction", "correction"))
+    expect(stage.memories[0]?.replaces).toEqual([{ id: coffee, supersession: "correction" }])
+    expect(stage.assertions.map((assertion) => assertion.replaces)).toEqual([[{ id: livedIn(Option.none()).id, supersession: "correction" }]])
+    const plainStage = yield* stageOf(empty, { entities: [ann, oslo], memories: [drinks], assertions: [livesIn] })
+    expect([plainStage.memories[0] !== undefined && "replaces" in plainStage.memories[0], plainStage.assertions[0] !== undefined && "replaces" in plainStage.assertions[0]]).toEqual([false, false])
+  })))
+
+  test("an extracted memory states why it supersedes, and a memory or relation stored before links decodes without them", () => Effect.runPromise(Effect.gen(function* () {
+    const missing = yield* Effect.flip(Schema.decodeUnknownEffect(KnowledgeExtraction)({ entities: [], assertions: [], memories: [{ ...drinks, supersession: undefined }] }))
+    expect(missing._tag).toBe("SchemaError")
+    const stored = yield* Schema.decodeUnknownEffect(KnowledgeMemory)({ id: "m", kind: "fact", text: "A note.", provenance: [{ source: { id: "s", revision: 1 }, start: 0, end: 7, quote: "A note." }], entities: [], evidence: { _tag: "Stated" }, embedding: null, knownFrom: 1, knownTo: null })
+    expect("replaces" in stored).toBe(false)
+    const result = yield* Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: { entities: [], assertions: [], truncated: false } })
+    expect([result.history, result.sources]).toEqual([[], []])
+  })))
+})
+
+describe("the recall budget gives earlier states at most their share", () => {
+  const span = (id: string, text: string) => ({ source: { id: KnowledgeSourceId.make(id), revision: 1 }, start: 0, end: text.length, quote: text })
+  const memory = (id: string, text: string, replaces: ReadonlyArray<string> = []) => ({
+    id: KnowledgeMemoryId.make(id), kind: "preference" as const, text, provenance: [span(id, text)], entities: [], evidence: { _tag: "Stated" as const },
+    embedding: Option.none(), knownFrom: 1, knownTo: replaces.length === 0 && id.startsWith("old") ? Option.some(2) : Option.none<number>(),
+    ...(replaces.length === 0 ? {} : { replaces: replaces.map((prior) => ({ id: KnowledgeMemoryId.make(prior), supersession: "change" as const })) }),
+  })
+  const candidate = (record: ReturnType<typeof memory>) => ({ _tag: "Memory" as const, memory: record, score: 1 })
+  const earlier = (successor: string, record: ReturnType<typeof memory>) => ({ _tag: "Memory" as const, successor: `memory:${successor}`, record, supersession: "change" as const, until: 2 })
+  const current = Array.from({ length: 6 }, (_, index) => candidate(memory(`new${index}`, `Current record number ${index} about the drink.`, [`old${index}`])))
+  const history = current.map((_, index) => earlier(`new${index}`, memory(`old${index}`, `Earlier record number ${index} about the drink.`)))
+  const graph = { entities: [], assertions: [], truncated: false }
+  const costOf = (text: string, id: string) => text.length + `\nSource: ${id} revision 1, characters 0-${text.length}`.length + 2
+
+  test("earlier states never exceed their share, follow their successors' rank, and at most half the limit", () => {
+    const perRecord = costOf(current[0]!.memory.text, "new0")
+    const maxChars = perRecord * 5
+    const result = budgetKnowledgeRecall({ candidates: current, graph, history: [...history].reverse(), sources: [] }, maxChars, 6, 0.2)
+    const used = result.history.reduce((sum, state) => sum + costOf(state.record.text, state.record.id), 0)
+    expect(used).toBeLessThanOrEqual(Math.floor(maxChars * 0.2))
+    expect(result.history.map((state) => state.successor)).toEqual(["memory:new0"])
+    expect(result.candidates.map((value): string => value._tag === "Memory" ? value.memory.id : "")).toEqual(["new0", "new1", "new2", "new3"])
+    const wide = budgetKnowledgeRecall({ candidates: current, graph, history, sources: [] }, perRecord * 20, 6, 0.5)
+    expect(wide.history.map((state) => state.successor)).toEqual(["memory:new0", "memory:new1", "memory:new2"])
+    expect(wide.candidates).toHaveLength(6)
+  })
+
+  test("an unused share goes to current records, and no history or a zero share budgets as before", () => {
+    const perRecord = costOf(current[0]!.memory.text, "new0")
+    const maxChars = perRecord * 5
+    const without = budgetKnowledgeRecall({ candidates: current, graph, history: [], sources: [] }, maxChars, 6, 0.2)
+    expect(without.candidates).toHaveLength(5)
+    // An earlier state whose successor did not make the first pass is never followed: its share returns to current records.
+    const orphaned = budgetKnowledgeRecall({ candidates: current, graph, history: [earlier("new5", memory("old5", "Earlier record number 5 about the drink."))], sources: [] }, maxChars, 6, 0.2)
+    expect([orphaned.candidates.length, orphaned.history]).toEqual([5, []])
+    expect(budgetKnowledgeRecall({ candidates: current, graph, history, sources: [] }, maxChars, 6, 0)).toEqual(without)
+    // A share too small for the earliest state also returns whole: the result is the one without history.
+    expect(budgetKnowledgeRecall({ candidates: current, graph, history, sources: [] }, maxChars, 6, 0.05)).toEqual(without)
+    // An earlier state already kept as a current record, or repeated, is shown once and only as current.
+    const current0 = { ...earlier("new1", current[0]!.memory) }
+    const duplicate = budgetKnowledgeRecall({ candidates: current, graph, history: [current0, history[0]!, history[0]!], sources: [] }, perRecord * 20, 6, 0.5)
+    expect(duplicate.history.map((state): string => state.record.id)).toEqual(["old0"])
+  })
 })

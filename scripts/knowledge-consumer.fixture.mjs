@@ -64,7 +64,7 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const memoryInput = enqueue(memoryScope, "personal-evidence", "Alice prefers coffee")
   const memoryProtocol = {
     entities: [{ key: "alice", name: "Alice", type: "person", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Alice" }] }],
-    memories: [{ key: "coffee", kind: "preference", text: "Alice prefers coffee", entities: ["alice"], spans: [{ start: 0, end: 20, quote: memoryInput.source.text }], evidence: { _tag: "Stated" }, supersedes: [] }],
+    memories: [{ key: "coffee", kind: "preference", text: "Alice prefers coffee", entities: ["alice"], spans: [{ start: 0, end: 20, quote: memoryInput.source.text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
     assertions: [{ key: "prefers", subject: "alice", predicate: "prefers", object: { _tag: "Value", value: "coffee" }, text: "Alice prefers coffee", spans: [{ start: 0, end: 20, quote: memoryInput.source.text }], validFrom: 0, validTo: null, supersedes: [], supersession: "correction" }],
   }
   const helper = yield* scripted(memoryProtocol)

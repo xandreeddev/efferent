@@ -165,7 +165,7 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   const retrieve = Effect.fn("rag.retrieve")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
     const { sources, metadata } = input
-    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }
+    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] }
     const now = yield* Clock.currentTimeMillis
     const plan = config.queryPlanning ? yield* askQuery(KnowledgeQueryPlan, knowledgeQueryPrompt(input.query, now), "plan", input.scope) : Option.none()
     const queries = [...new Set([input.query, ...Option.match(plan, { onNone: () => [], onSome: (value) => value.queries })])].slice(0, 4)
@@ -214,7 +214,8 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       ? { used: state.used + knowledgeCandidateText(candidate).length, items: [...state.items, candidate] } : state, { used: 0, items: [] as typeof pooled }).items
     const used = candidates.reduce((sum, candidate) => sum + knowledgeCandidateText(candidate).length, 0)
     const kept = graph.assertions.reduce((state, edge) => state.used + edge.text.length <= input.maxChars ? { used: state.used + edge.text.length, assertions: [...state.assertions, edge] } : state, { used, assertions: [] as KnowledgeSubgraph["assertions"] })
-    const evidence = { candidates, graph: { ...graph, assertions: kept.assertions, truncated: graph.truncated || kept.assertions.length < graph.assertions.length } }
+    // Document retrieval returns current evidence only: `history` stays empty, whatever the recall asks.
+    const evidence = { candidates, graph: { ...graph, assertions: kept.assertions, truncated: graph.truncated || kept.assertions.length < graph.assertions.length }, history: [] }
     return { ...evidence, sources: yield* store.sourceInfo(input.scope, citedKnowledgeSources(evidence)) }
   }, Effect.timeoutOrElse({ duration: config.queryTimeoutMs, orElse: () => Effect.fail(unavailable("Document retrieval exceeded its time budget")) }))
   const ingest = Effect.fn("rag.ingest")(function* (input: KnowledgeEnqueue) {

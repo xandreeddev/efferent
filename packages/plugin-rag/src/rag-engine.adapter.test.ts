@@ -188,7 +188,7 @@ describe("native temporal GraphRAG", () => {
   test("graph extraction requires a utility model, and personal memories from a document omit its graph", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const absent = yield* Effect.result(makeRag({ graph: true }))
     expect(absent._tag).toBe("Failure")
-    const { utility } = yield* scriptedUtility([JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [] }], assertions: [] })])
+    const { utility } = yield* scriptedUtility([JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] })])
     const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("bad", "Guide data."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
@@ -262,7 +262,7 @@ describe("native temporal GraphRAG", () => {
   }))))
 
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const draft = { entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [] }], assertions: [] }
+    const draft = { entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(draft), JSON.stringify({ entities: [], memories: [], assertions: [] })])
     const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
     yield* knowledge.ingest(enqueue("reviewed", "Guide data."))

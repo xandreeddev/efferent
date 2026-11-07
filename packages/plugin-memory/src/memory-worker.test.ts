@@ -13,7 +13,7 @@ import type { MemoryConfig } from "./memory.entity.js"
 
 const scope: KnowledgeScope = { owner: "worker-owner", namespace: "worker-tests", collection: "memory" }
 const text = "Alice prefers coffee"
-const extraction = JSON.stringify({ entities: [], assertions: [], memories: [{ key: "coffee", kind: "preference", text, entities: [], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [] }] })
+const extraction = JSON.stringify({ entities: [], assertions: [], memories: [{ key: "coffee", kind: "preference", text, entities: [], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }] })
 const completion = new UtilityCompletion({ text: extraction, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })
 const input = (id = "source") => ({ jobId: KnowledgeJobId.make(`${id}:1`), source: { scope, ref: { id: KnowledgeSourceId.make(id), revision: 1 }, text, occurredAt: 0, recordedAt: 0, metadata: {} }, engine: "fixture", expectedRevision: Option.none<number>() })
 const embeddingResponse = (inputs: ReadonlyArray<string>) => ({ results: inputs.map(() => [1, 0]), usage: { inputTokens: inputs.length } })

@@ -110,6 +110,21 @@ still bounds the records' text. A record's date never changes, so the recorded
 section stays stable; `recallToday` (off by default) also says today's date
 and marks relations that have ended, at the cost of text that changes daily.
 
+When a later turn says something changed ("I switched to tea"), the new memory
+supersedes the old one as a `change` and links it (`replaces`); the old one is
+retired, never rewritten. Recall then shows the new memory as current and,
+after the current records, the old one under "Earlier states, no longer
+current:" as `previously: <text> (until <date>; replaced by <source>
+revision <n>)`, so the model can answer what was true before without taking it
+for what is true now
+([earlier states in memory recall](/docs/concepts/native-knowledge/#earlier-states-in-memory-recall)).
+`recallHistory` (default `"changes"`) chooses which earlier states: `"all"`
+adds beliefs a `correction` found wrong, shown as `(corrected <date>; this was
+wrong)`, and `"none"` shows none; `recall_memory` takes a `history` parameter
+for one call. Earlier states take at most `recallHistoryShare` (default 0.2)
+of `recallChars`, at most half of `recallLimit` of them, and only beside a
+current record shown; a share they leave unused goes to current records.
+
 Automatic context also prepends up to four active preference/profile records,
 independently of the question's search ranking. See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
@@ -159,8 +174,9 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:2", { model, version, dimensions })`, version 2
-since dropped records and observed dates). The worker and `process` discover
+(`knowledgeEngineId("memory:3", { model, version, dimensions })`, version 3
+since memory supersessions and successor links, version 2 since dropped
+records and observed dates). The worker and `process` discover
 and claim only jobs of that id, so engines configured with different embedding
 spaces on one store never learn from each other's sources, and a job queued
 under the earlier extraction version waits for a worker of that version. After changing the embedding options, capture the source again
@@ -228,7 +244,9 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "sectionOrder": 700,
   "tools": true,
   "recallDates": true,
-  "recallToday": false
+  "recallToday": false,
+  "recallHistory": "changes",
+  "recallHistoryShare": 0.2
 }
 ```
 
@@ -367,6 +385,19 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     },
     "recallToday": {
       "type": "boolean"
+    },
+    "recallHistory": {
+      "type": "string",
+      "enum": [
+        "changes",
+        "all",
+        "none"
+      ]
+    },
+    "recallHistoryShare": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0.5
     }
   },
   "required": [
@@ -396,7 +427,9 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "sectionOrder",
     "tools",
     "recallDates",
-    "recallToday"
+    "recallToday",
+    "recallHistory",
+    "recallHistoryShare"
   ],
   "additionalProperties": true
 }

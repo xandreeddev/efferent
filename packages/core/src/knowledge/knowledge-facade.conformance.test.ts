@@ -9,7 +9,7 @@ const scope = { owner: "fixture", namespace: "assistant", collection: "memory" }
 const careless: Context.Service.Shape<typeof LongTermMemory> = {
   capture: (input) => Effect.succeed({ id: input.jobId, scope: input.source.scope, source: input.source.ref, engine: input.engine, attempt: 0, phase: { _tag: "Queued" }, stage: Option.none() }),
   process: () => Effect.succeed(0),
-  recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }),
+  recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] }),
   profile: () => Effect.succeed([]), source: () => Effect.succeed(Option.none()), status: () => Effect.succeed(Option.none()),
   retry: () => Effect.fail(new KnowledgeError({ reason: "Conflict", message: "Nothing was recorded" })), forget: () => Effect.void,
 }

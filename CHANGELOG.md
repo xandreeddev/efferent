@@ -36,6 +36,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   text now carries dates: a host that pins it, or wants the earlier text, sets
   `recallDates: false`.
 
+- Native knowledge extraction is at version 3: the engines record their jobs
+  under `memory:3/…` and `rag:3/…`; drain or `retry` version 2 jobs as above.
+  `KnowledgeExtractedMemory` gains the required `supersession` (`"change"` or
+  `"correction"`), so a scripted or host-written extraction adds it to each
+  memory, as assertions already have it.
+- `KnowledgeRecallResult` gains `history` (decoded as empty from results
+  encoded before it): a host's own `LongTermMemory`, `Knowledge` or code that
+  builds a result adds `history: []`, and `budgetKnowledgeRecall` reads it.
+  `@xandreed/plugin-memory`'s `MemoryConfig` gains the required keys
+  `recallHistory` and `recallHistoryShare`; options merged over
+  `memoryDefaults` need no change. Memory recall now returns earlier states by
+  default: a host that pins the recall text, or wants the earlier behaviour,
+  sets `recallHistory: "none"` (or passes `history: "none"` to `recall`).
+
 ### Changed
 
 - `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: one
@@ -113,6 +127,59 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the new check with its layout unchanged: notes and the validity basis live
   in the job and assertion payloads, and rows an earlier release wrote decode
   unchanged.
+- `@xandreed/core`: a successor links the earlier state it replaced.
+  `KnowledgeMemory.replaces` and `KnowledgeAssertion.replaces` (optional,
+  `{ id, supersession }`) are written on the successor at staging, only when
+  it replaces something; nothing is written to the retired record but its
+  `knownTo`. A memory links each memory it supersedes with the extracted
+  memory's new `supersession`; a relation's change links the history copy
+  (which carries the ended `validTo`), a relation's correction the retired
+  relation. Records stored before links existed decode with none. The
+  extraction prompt (version 3) adds: "When a new memory replaces an active
+  candidate memory because the situation changed, list it in supersedes with
+  supersession change; when the candidate was wrong, use correction. Write the
+  new memory so it states the new situation and what it replaces." The pinned
+  extraction, document, part and review prompts change accordingly (the
+  output schema gains the memory's `supersession`). New names:
+  `KnowledgeSupersession`, `KnowledgeMemoryReplacement`,
+  `KnowledgeAssertionReplacement`.
+- `@xandreed/core`: recall can return the earlier states its current records
+  replaced. `KnowledgeRecall.history` (`"changes"`, the default, `"all"` or
+  `"none"`; corrections only with `"all"`, since a correction says the earlier
+  belief was wrong) and `historyShare` (0 to 0.5, default 0.2);
+  `KnowledgeRecallResult.history` lists `KnowledgeRecallHistory` entries
+  (`Memory` or `Assertion`, with the `record`, its `successor`'s key,
+  `supersession` and `until`), and `sources` now also cites their revisions.
+  `budgetKnowledgeRecall(result, maxChars, limit, historyShare?)` selects in
+  three deterministic passes: current evidence within `(1 - historyShare) ×
+  maxChars`; one hop back from the records it kept, in their rank order,
+  within the share and at most `ceil(limit / 2)` earlier states; then further
+  current evidence in what is left. With no earlier state followed, the
+  budget is exactly as before. `knowledgeAssertionKey` names a relation as a
+  successor (`assertion:<id>`). `knowledgeStoreConformance` gains
+  `knowledge.supersession-links` (links kept on successors, a retired memory
+  readable by id and otherwise unchanged, a link left dangling by
+  forgetting); `@xandreed/plugin-knowledge-postgres` passes it with its
+  layout unchanged, the links living in the successor's payload.
+- `@xandreed/plugin-memory`: memory recall returns and shows earlier states.
+  The engine follows each recalled memory's and relation's links of the
+  requested supersessions one hop (a memory read by id, a relation from the
+  snapshot recall already reads) and skips a link whose record was forgotten,
+  is still current or lies outside the recall's `sources` or `metadata`;
+  `until` is a relation change's ended validity, else the date its successor
+  was said. `renderMemoryRecall` (new option `historyShare`) shows them after
+  the current records, in the same frame, under "Earlier states, no longer
+  current:", a change as `previously: <text> (until YYYY-MM-DD; replaced by
+  <source> revision <n>)` and a correction as `previously: <text> (corrected
+  YYYY-MM-DD; this was wrong)`, each with its citations. `MemoryConfig`
+  gains `recallHistory` (default `"changes"`) and `recallHistoryShare`
+  (default `0.2`), read by the `memory.recalled` section (now version 3),
+  `memoryRecallNote` and `recall_memory`, whose new `history` parameter
+  ("Which earlier states to show beside the current records that replaced
+  them: changes for situations that changed, all to add beliefs later
+  corrected as wrong, or none. Omit to use the default.") overrides it for one
+  call. The default text changes only when a recalled record replaced
+  something. `@xandreed/plugin-rag`'s `retrieve` returns no earlier states.
 
 ## 0.18.0 — 2026-11-06
 

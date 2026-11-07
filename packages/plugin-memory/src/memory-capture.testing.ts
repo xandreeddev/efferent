@@ -21,7 +21,7 @@ export const closeCaptureTurn = (writer: TurnWriter, reply = "Done.") => draftsO
 )
 export const captureMemory = (store: KnowledgeIndex, calls: Ref.Ref<ReadonlyArray<KnowledgeEnqueue>>): typeof LongTermMemory.Service => LongTermMemory.of({
   capture: (input) => Ref.update(calls, (all) => [...all, input]).pipe(Effect.andThen(store.enqueue(input))),
-  process: () => Effect.succeed(0), recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] }),
+  process: () => Effect.succeed(0), recall: () => Effect.succeed({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] }),
   profile: () => Effect.succeed([]), source: store.source, status: store.status, retry: store.retry, forget: (scope, id) => store.forget(scope, id, 100),
 })
 export const makeCaptureFixture = Effect.gen(function* () {
