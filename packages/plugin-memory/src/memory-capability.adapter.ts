@@ -294,15 +294,17 @@ const recalledEvidence = Effect.fnUntraced(function* (config: MemoryConfig) {
     Effect.catch((error) => Effect.logWarning("The memory profile's dates are unavailable; its records are shown undated", error).pipe(Effect.as([]))),
   ) : []
   // A profile record carries the support the profile counted for it; one without (from a host's own profile) keeps the
-  // support recall counted when recall also found it.
-  const supportFound = (id: KnowledgeMemory["id"]) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" && candidate.memory.id === id && candidate.support !== undefined ? [candidate.support] : [])[0]
+  // support recall counted when recall found it, or folded it into a memory it kept (`alike`). A recalled memory that is
+  // a profile record, or folded one in, is shown once, as the profile's record.
+  const stands = (candidate: KnowledgeRecallResult["candidates"][number], id: KnowledgeMemory["id"]) => candidate._tag === "Memory" && (candidate.memory.id === id || candidate.alike?.includes(id) === true)
+  const supportFound = (id: KnowledgeMemory["id"]) => result.candidates.flatMap((candidate) => stands(candidate, id) && candidate._tag === "Memory" && candidate.support !== undefined ? [candidate.support] : [])[0]
   const preferred = profile.memories.map(({ support: counted, ...memory }) => {
     const support = counted ?? supportFound(memory.id)
     return { _tag: "Memory" as const, memory, score: 1, ...(support === undefined ? {} : { support }) }
   })
   const combined = {
     ...result, sources: [...known, ...dating],
-    candidates: [...preferred, ...result.candidates.filter((candidate) => candidate._tag !== "Memory" || !preferred.some((item) => item.memory.id === candidate.memory.id))],
+    candidates: [...preferred, ...result.candidates.filter((candidate) => !preferred.some((item) => stands(candidate, item.memory.id)))],
   }
   return combined.candidates.length === 0 && combined.graph.assertions.length === 0 ? Option.none<string>() : Option.some(renderMemoryRecall(combined, config.recallChars, yield* renderingOf(config)))
 })
@@ -392,7 +394,7 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
     defineSkill({ id: "memory.manage", summary: memoryCapabilityText.manageSkill, tools: ["remember_memory", "forget_memory"], permissions: ["memory.write"] }),
   ] : [],
   promptSections: config.recallSection === "turn" ? [definePromptSection({
-    id: "memory.recalled", version: "6", tier: "turn", order: config.sectionOrder,
+    id: "memory.recalled", version: "7", tier: "turn", order: config.sectionOrder,
     requires: [RunContext, LongTermMemory, Sessions],
     render: () => Effect.gen(function* () {
       const run = yield* RunContext

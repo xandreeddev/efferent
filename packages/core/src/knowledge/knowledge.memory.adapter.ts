@@ -264,7 +264,7 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
         onSome: (vector) => candidates.flatMap((candidate) => Match.valueTags(candidate, {
           Memory: ({ memory }) => Option.toArray(memory.embedding).map((embedding) => ({ ...candidate, score: knowledgeCosine(vector, embedding) })),
           Chunk: ({ chunk }) => Option.toArray(chunk.embedding).map((embedding) => ({ ...candidate, score: knowledgeCosine(vector, embedding) })),
-        })).filter((candidate) => candidate.score > 0).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a), knowledgeCandidateKey(b))).slice(0, query.limit),
+        })).filter((candidate) => query.minSimilarity === undefined ? candidate.score > 0 : candidate.score >= query.minSimilarity).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a), knowledgeCandidateKey(b))).slice(0, query.limit),
       })
       return { lexical, semantic }
     }),

@@ -132,6 +132,13 @@ With planning, each query's lexical and semantic passage lists are ranked on
 their own in reciprocal rank fusion and a passage's votes are summed across
 them, so a passage a planned query finds first is not ranked behind every
 match of the original question.
+`minSimilarity` (absent by default) sets a floor on semantic search: the store
+leaves out passages whose embedding's cosine with the question's is below it,
+before its limit, while a passage that shares the question's words is still
+found by them. A useful floor depends on the embedding model, so measure one
+before setting it
+([a similarity floor](/docs/concepts/native-knowledge/#near-duplicates-and-a-similarity-floor)).
+Passages are never folded together as memory recall folds near-duplicates.
 The total foreground query, including helper calls, embedding and graph
 traversal, is bounded by `queryTimeoutMs`.
 
@@ -330,6 +337,11 @@ Plugin: `@xandreed/plugin-rag` · Version **0.18.0** · Plugin API **3** · Scop
       "type": "integer",
       "maximum": 100,
       "exclusiveMinimum": 0
+    },
+    "minSimilarity": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
     },
     "evidenceChars": {
       "type": "integer",

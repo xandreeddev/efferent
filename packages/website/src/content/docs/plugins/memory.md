@@ -165,11 +165,25 @@ for it. `recall_memory` takes a `temporal` parameter: `all` ranks past records
 as any other for one call; `pastEventWeight: 1` turns the demotion off
 ([plans tied to a dated event](/docs/concepts/native-knowledge/#plans-tied-to-a-dated-event)).
 
+Near-duplicates that publication kept apart are shown as one. After weighting,
+a memory of the same kind and event time as a memory ranked above it, whose
+embedding is at least `recallCollapseSimilarity` (default 0.95) alike, is
+folded into it: it gives up its place among the `recallLimit` and its share of
+`recallChars` to other evidence, and the kept memory lists it in `alike`, cites
+its sources and counts its episodes, so four wordings of one fact read as one
+line `said 4 times`. Passages never fold, nothing is merged in the store, and
+`false` turns folding off. `recallMinSimilarity` (absent by default) sets a
+floor on semantic search: memories whose embedding is less similar to the
+question than that are not found by meaning, only by their words; measure
+your embedding model before setting one
+([near-duplicates and a similarity floor](/docs/concepts/native-knowledge/#near-duplicates-and-a-similarity-floor)).
+
 Automatic context also prepends up to four active preference/profile records
 whose dated event, if any, has not passed, independently of the question's
 search ranking: the profile's first four within the run's reach, ordered by
 how many episodes said each, then by when it was last said, then by id, never
-by the store's order, each with its count
+by the store's order, each with its count (a record recall folded into another
+is shown once, as the profile's record)
 ([the profile's order](/docs/concepts/native-knowledge/#the-profiles-order)). See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
 for the scores, graph expansion and final prompt path.
@@ -293,7 +307,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "recallHistoryShare": 0.2,
   "supportWeight": 0.15,
   "restatementSimilarity": 0.92,
-  "pastEventWeight": 0.5
+  "pastEventWeight": 0.5,
+  "recallCollapseSimilarity": 0.95
 }
 ```
 
@@ -470,6 +485,26 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "recallMinSimilarity": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "recallCollapseSimilarity": {
+      "anyOf": [
+        {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      ]
     }
   },
   "required": [
@@ -504,7 +539,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "recallHistoryShare",
     "supportWeight",
     "restatementSimilarity",
-    "pastEventWeight"
+    "pastEventWeight",
+    "recallCollapseSimilarity"
   ],
   "additionalProperties": true
 }

@@ -2252,7 +2252,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "recallHistoryShare": 0.2,
   "supportWeight": 0.15,
   "restatementSimilarity": 0.92,
-  "pastEventWeight": 0.5
+  "pastEventWeight": 0.5,
+  "recallCollapseSimilarity": 0.95
 }
 ```
 
@@ -2426,6 +2427,26 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "recallMinSimilarity": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "recallCollapseSimilarity": {
+      "anyOf": [
+        {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      ]
     }
   },
   "required": [
@@ -2460,7 +2481,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "recallHistoryShare",
     "supportWeight",
     "restatementSimilarity",
-    "pastEventWeight"
+    "pastEventWeight",
+    "recallCollapseSimilarity"
   ],
   "additionalProperties": true
 }
@@ -2703,6 +2725,11 @@ Optional: `@xandreed/core/UtilityLlm`
       "type": "integer",
       "maximum": 100,
       "exclusiveMinimum": 0
+    },
+    "minSimilarity": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
     },
     "evidenceChars": {
       "type": "integer",

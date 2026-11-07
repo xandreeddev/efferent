@@ -350,6 +350,32 @@ describe("memory model-facing contracts", () => {
     }))
   }))))
 
+  test("a profile record recall folded into a memory it kept is shown once, with the profile's count or else the support recall counted for both", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* makeCaptureFixture
+    const recordOf = (name: string, text: string) => ({ id: KnowledgeMemoryId.make(name), kind: "preference" as const, text, entities: [], provenance: [{ source: { id: KnowledgeSourceId.make(name), revision: 1 }, start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" as const }, embedding: Option.none(), knownFrom: 1, knownTo: Option.none() })
+    const infoOf = (name: string, day: number) => ({ ref: { id: KnowledgeSourceId.make(name), revision: 1 }, occurredAt: Date.UTC(2026, 0, day), recordedAt: Date.UTC(2026, 0, day), metadata: {} })
+    // Recall kept the closer wording and folded the profile's into it; the profile, read on its own, holds the folded one.
+    const kept = { ...recordOf("closer", "Prefers oat milk in coffee."), provenance: [...recordOf("closer", "Prefers oat milk in coffee.").provenance, ...recordOf("profile", "Prefers oat milk.").provenance] }
+    const memory = LongTermMemory.of({
+      ...fixture.memory,
+      recall: () => Effect.succeed({
+        candidates: [{ _tag: "Memory", memory: kept, score: 0.5, alike: [KnowledgeMemoryId.make("profile")], support: { episodes: 2, sources: 2, firstSeen: Date.UTC(2026, 0, 3), lastSeen: Date.UTC(2026, 0, 9) } }],
+        graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [infoOf("closer", 9), infoOf("profile", 3)],
+      }),
+      profile: () => Effect.succeed([recordOf("profile", "Prefers oat milk.")]),
+    })
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [Sessions, LongTermMemory] })
+    yield* agent.turn({ turn: { session: captureAddress, runId: RunId.make("folded-profile"), userMessage: new UserMessage({ text: "Do I take milk?" }) }, services: Context.make(Sessions, fixture.sessions).pipe(Context.add(LongTermMemory, memory)) }, (turn) => Effect.gen(function* () {
+      const text = Option.getOrElse(yield* memoryRecallNote(memoryDefaults).pipe(Effect.provideService(LongTermMemory, memory)), () => "")
+      expect([text.includes("[2026-01-03 · preference · stated · said 2 times, last 2026-01-09] Prefers oat milk."), text.includes("Prefers oat milk in coffee.")]).toEqual([true, false])
+      // The engine's profile counts its own records: that count wins, and the kept memory is still shown once.
+      const counted = LongTermMemory.of({ ...memory, profile: () => Effect.succeed([{ ...recordOf("profile", "Prefers oat milk."), support: { episodes: 3, sources: 3, firstSeen: Date.UTC(2026, 0, 3), lastSeen: Date.UTC(2026, 0, 12) } }]) })
+      const countedText = Option.getOrElse(yield* memoryRecallNote(memoryDefaults).pipe(Effect.provideService(LongTermMemory, counted)), () => "")
+      expect([countedText.includes("[2026-01-03 · preference · stated · said 3 times, last 2026-01-12] Prefers oat milk."), countedText.includes("Prefers oat milk in coffee.")]).toEqual([true, false])
+      return yield* turn.reply("Oat milk.")
+    }))
+  }))))
+
   test("with the recall section off the capability contributes no section, and a turn catches up no capture the section would have", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const captured = (recallSection: "turn" | "off") => Effect.gen(function* () {
       const fixture = yield* makeCaptureFixture

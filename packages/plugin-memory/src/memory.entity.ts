@@ -96,6 +96,23 @@ export const MemoryConfig = Schema.Struct({
    * leaves it out whatever the weight. 1 turns the demotion off.
    */
   pastEventWeight: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  /**
+   * The least cosine similarity, from -1 to 1, a memory's embedding must have with the question's
+   * for recall's semantic search to return it (`KnowledgeSearch.minSimilarity`): the store leaves
+   * out weaker matches before its limit. Lexical matches are kept whatever their similarity. Absent
+   * by default: a floor depends on the embedding model, so measure one before setting it.
+   */
+  recallMinSimilarity: Schema.optionalKey(Schema.Finite.check(Schema.isBetween({ minimum: -1, maximum: 1 }))),
+  /**
+   * How alike two recalled memories must be for recall to show them as one, above 0 and at most 1:
+   * after weighting, in rank order, a memory of the same kind and event time as a memory ranked
+   * above it and kept, whose embedding's cosine with that memory's is at least this, is folded into
+   * it: it leaves the result before reranking and selection, freeing its place and its share of
+   * the budget, and is named in the kept candidate's `alike`; the kept memory carries its spans and
+   * mentions, so its `support` counts both and both sources are cited. Passages are never folded,
+   * and nothing changes in the store. `false` turns collapsing off.
+   */
+  recallCollapseSimilarity: Schema.Union([Schema.Literal(false), Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))]),
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -105,6 +122,7 @@ export const memoryDefaults: MemoryConfig = {
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
   recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15, restatementSimilarity: 0.92, pastEventWeight: 0.5,
+  recallCollapseSimilarity: 0.95,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

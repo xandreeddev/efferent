@@ -3,7 +3,7 @@ import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, sameJson } from "../conformance.functions.js"
 import type { KnowledgeIndex, TemporalGraph } from "../ports/knowledge.port.js"
-import { knowledgeCandidateKey } from "./knowledge.entity.functions.js"
+import { knowledgeCandidateKey, knowledgeCosine } from "./knowledge.entity.functions.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import { stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import type { Context } from "effect"
@@ -73,7 +73,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
+ * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters,
+ * cosine semantic scores and their similarity floor (applied to the semantic arm alone, before the limit), forgetting,
  * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), a memory's mentions (kept, absent on one
  * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), a memory's event time (kept through
  * staging, publication, search and reads, and absent on one stored without it), corroborations (appended without a new record or a
@@ -268,6 +269,39 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* expect("knowledge.metadata-filter", results.every(Boolean) && sameJson(revisions, [
         ["memory:versioned-memory", "memory:versioned-memory"], ["", ""], ["chunk:versioned-2-chunk,memory:versioned-2-memory", "chunk:versioned-2-chunk,memory:versioned-2-memory"],
       ]), "a metadata filter dropped matching evidence ranked outside the unfiltered limit, returned evidence citing a revision that does not match, judged a record by another revision's metadata, or ignored the source filter beside it")
+    })),
+    indexCheck("knowledge.similarity-floor", (fixture) => Effect.gen(function* () {
+      const space = { model: "kit", version: "1", dimensions: 2 }
+      const query = { space, values: [1, 0] }
+      // Cosines with the query: 1, 0.8 (a memory and a chunk), 0.6, 0 and -0.6; every record also matches "coffee" lexically.
+      const embedded: ReadonlyArray<readonly [string, ReadonlyArray<number>]> = [["exact", [1, 0]], ["close", [4, 3]], ["far", [3, 4]], ["orthogonal", [0, 1]], ["opposite", [-3, -4]]]
+      const source = sourceOf(fixture.scope, "coffee in the morning, coffee after lunch")
+      const job = yield* enqueue(fixture, source)
+      yield* claim(fixture)
+      const memories = embedded.map(([name, values]) => ({ ...memoryOf(source, name), embedding: Option.some({ space, values }) }))
+      const chunk = { id: KnowledgeChunkId.make("close-chunk"), text: source.text, provenance: memoryOf(source).provenance[0]!, embedding: Option.some({ space, values: [4, 3] }) }
+      yield* fixture.index.stage(leaseOf(fixture.scope, job), { ...stageOf(source), memories, chunks: [chunk] })
+      yield* fixture.index.publish(leaseOf(fixture.scope, job))
+      const search = (limit: number, minSimilarity?: number) => fixture.index.search({ scope: fixture.scope, query: "coffee", vector: Option.some(query), limit, knownAt: Option.none(), ...(minSimilarity === undefined ? {} : { minSimilarity }) })
+      const keysOf = (arm: KnowledgeCandidates["semantic"]) => arm.map(knowledgeCandidateKey).toSorted(Order.String).join(",")
+      // Each semantic score is the cosine of the record's embedding with the query.
+      const cosineScored = (arm: KnowledgeCandidates["semantic"]) => arm.every((candidate) => {
+        const embedding = candidate._tag === "Memory" ? candidate.memory.embedding : candidate.chunk.embedding
+        return Option.exists(embedding, (vector) => Math.abs(knowledgeCosine(query, vector) - candidate.score) < 1e-6)
+      })
+      const open = yield* search(10)
+      const floored = yield* search(10, 0.7)
+      const tight = yield* search(3, 0.7)
+      // A floor at or below 0 keeps what it admits, a score of 0 or below included, whatever the store keeps without one.
+      const zero = yield* search(10, 0)
+      const any = yield* search(10, -1)
+      const lexical = "chunk:close-chunk,memory:close,memory:exact,memory:far,memory:opposite,memory:orthogonal"
+      yield* expect("knowledge.similarity-floor",
+        cosineScored(open.semantic) && cosineScored(floored.semantic) && ["memory:exact", "memory:close", "chunk:close-chunk", "memory:far"].every((key) => open.semantic.some((candidate) => knowledgeCandidateKey(candidate) === key))
+          && keysOf(floored.semantic) === "chunk:close-chunk,memory:close,memory:exact" && keysOf(tight.semantic) === "chunk:close-chunk,memory:close,memory:exact"
+          && keysOf(floored.lexical) === lexical && keysOf(open.lexical) === lexical
+          && keysOf(zero.semantic) === "chunk:close-chunk,memory:close,memory:exact,memory:far,memory:orthogonal" && keysOf(any.semantic) === lexical && cosineScored(any.semantic),
+        "a semantic score was not the cosine with the query, a candidate below minSimilarity was returned or took a place of the limit, one at or above it (a floor at or below 0 included) was dropped, or the floor narrowed the lexical arm")
     })),
     indexCheck("knowledge.forget-tombstone", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

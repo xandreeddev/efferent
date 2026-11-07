@@ -44,7 +44,9 @@ through KnowledgeStore. Node 24 and Bun.
   cannot introduce a candidate identity. Explicit traversal coordinates win.
 - Keep the original query in the bounded search plan. Combine lexical and
   semantic arms with core's deterministic reciprocal rank fusion, one pair
-  per query (`fuseKnowledgeCandidates`), never one joined list. Graph
+  per query (`fuseKnowledgeCandidates`), never one joined list. A
+  `minSimilarity` (absent by default) goes to the store as the semantic arm's
+  floor (`KnowledgeSearch.minSimilarity`); passages are never collapsed. Graph
   expansion applies both temporal coordinates at every hop and shares the
   evidence budget with excerpts.
 - Renew processing leases throughout model and embedding work. Serialize

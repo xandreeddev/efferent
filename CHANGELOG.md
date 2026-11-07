@@ -107,6 +107,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   A host that pins the memory section's text or its profile records' order
   re-records it: the order and the counts change, and the section is
   version 6.
+- `knowledgeStoreConformance` gains `knowledge.similarity-floor`: a host's own
+  `KnowledgeIndex` scores a semantic candidate by the cosine similarity of its
+  embedding with the query vector and honours `KnowledgeSearch.minSimilarity`
+  on the semantic arm alone, before its limit. `@xandreed/plugin-memory`'s
+  `MemoryConfig` gains the required key `recallCollapseSimilarity` (default
+  `0.95`); options merged over `memoryDefaults` need no change, and a host that
+  pins the recall text or its records, or wants the earlier behaviour, sets
+  `false`. Code that reads a recalled memory's provenance or mentions sees the
+  folded memories' evidence on the kept one (see Changed). A host that pins
+  the memory section's text re-records it: the section is version 7. The facade kit's
+  `restated-source` check no longer counts a memory recall folded (`alike`)
+  as a stored restatement.
 
 ### Changed
 
@@ -353,6 +365,36 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   memory it restates, named or found by similarity, so a later booking of the
   same kind is its own memory, and the extraction's candidates show each
   memory's `eventAt`.
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`,
+  `@xandreed/plugin-knowledge-postgres`: near-identical memories no longer
+  fill recall's places. Restatements that publication did not merge (without
+  entities, with another entity set, from the same source, or stored before
+  restatements were merged) are separate memories that rank side by side, so
+  four wordings of one fact could take four of the default eight places and
+  push other evidence out; and semantic search kept every positive cosine
+  (in-memory) or every score (PostgreSQL), however weak. Memory recall now
+  folds, after the support and event weights and before reranking and
+  selection, each memory of the same kind and event time as a memory ranked
+  above it and kept whose embedding cosine with it is at least
+  `MemoryConfig.recallCollapseSimilarity` (default `0.95`, so the default
+  recall changes, which is the point; `false` turns it off) into that
+  memory: the folded memory frees its place and its
+  share of the budget, and the kept candidate names it in `alike`
+  (`KnowledgeCandidate`'s new optional list of `KnowledgeMemoryId`) and
+  carries its spans and mentions as a corroboration would, so its `support`
+  counts both and the result cites both sources. Passages never fold, the
+  graph is still seeded from every memory found, and nothing changes in the
+  store. The section shows a profile record recall folded into a kept memory
+  once, as the profile's record with the profile's count (or, for a record
+  without one, the kept memory's), and is version 7.
+  `KnowledgeSearch.minSimilarity` (from -1 to 1, optional) is a floor on the
+  semantic arm, applied before the limit by the in-memory store and in the
+  PostgreSQL store's SQL; both keep every score at or above it, so a floor at
+  or below 0 keeps the scores of 0 or less the in-memory store otherwise
+  drops, and the kit's `knowledge.similarity-floor` checks a floor of 0 and
+  of -1 too; `MemoryConfig.recallMinSimilarity` and
+  `RagConfig.minSimilarity` pass one and are absent by default, so search is
+  unchanged until a floor measured for the embedding model is set.
 
 ### Fixed
 

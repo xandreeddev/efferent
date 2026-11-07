@@ -377,7 +377,7 @@ describe("memory through the real agent", () => {
     yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
     yield* say(asked, "asking", "What do I drink, where do I live, and how do I get to work?")
     const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body] : [])
-    expect(recalled.map((section) => section.version)).toEqual(["6"])
+    expect(recalled.map((section) => section.version)).toEqual(["7"])
     const text = recalled[0]?.text ?? ""
     expect(text).toContain("Each record is dated by when its source was said or written; a validity range bounds when a relationship held.\n\n<recalled-memory>")
     expect(text).toContain("[2026-03-02 · preference · stated] The user prefers tea.")
@@ -522,8 +522,9 @@ describe("memory through the real agent", () => {
 
   test("a preference inferred from three episodes says how often it was said and outranks an adjacent one said once", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const store = yield* makeKnowledgeIndexMemory()
-    // Both preferences answer the question; the one said once is the closer match in both arms.
-    const vectorOf = (text: string) => /cocoa/i.test(text) ? [1, 0] : /green tea/i.test(text) && /favourite/i.test(text) ? [0.9, 0.1] : /favourite/i.test(text) ? [1, 0] : [0, 1]
+    // Both preferences answer the question; the one said once is the closer match in both arms. No two of the records
+    // are alike enough to be shown as one (cosine 0.95): the favourites' cosine is 0.91, the two teas' 0.91.
+    const vectorOf = (text: string) => /cocoa/i.test(text) ? [1, 0] : /green tea/i.test(text) && /favourite/i.test(text) ? [0.9, 0.4] : /favourite/i.test(text) ? [1, 0] : /afternoon/i.test(text) ? [0.4, 0.9] : [0, 1]
     const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(vectorOf), usage: { inputTokens: undefined } }) })
     const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
     // The helper model: two turns mention green tea; the third infers the favourite from them, citing the earlier memories
@@ -601,8 +602,9 @@ describe("memory through the real agent", () => {
 
   test("three conversations that say where the user lives make one memory said three times, and another city stays its own", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const store = yield* makeKnowledgeIndexMemory()
-    // The sister's city embeds close to the user's: only its other entity keeps it apart.
-    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => /Porto/.test(text) ? [0.99, 0.14] : [1, 0]), usage: { inputTokens: undefined } }) })
+    // The sister's city embeds close enough to the user's to be taken for a restatement (cosine 0.94, above 0.92): only
+    // its other entity keeps it apart. It stays below the cosine at which recall shows two memories as one (0.95).
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => /Porto/.test(text) ? [0.94, 0.34] : [1, 0]), usage: { inputTokens: undefined } }) })
     const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
     // The helper model: the first conversation states the city; the second names the candidate it restates; the third
     // writes the same memory again about the same city, which processing recognises; the fourth states another city.
@@ -829,5 +831,87 @@ describe("memory through the real agent", () => {
       "[2026-03-05 · preference · stated] The user prefers window seats on trains.",
     ])
     expect((yield* Ref.get(requests)).at(-1)).toContain("said 3 times, last 2026-06-11")
+  })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("four restatements that escaped corroboration are recalled as one line said four times, and the other evidence keeps its places", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    // Four wordings of one fact embed within a cosine of 0.99 of each other and of the question; three other facts of
+    // the team each sit at about 0.71 from the question and far from each other.
+    const restated = [
+      ["My team releases on Fridays.", "The user's team releases on Fridays.", [1, 0, 0]],
+      ["We ship our releases on Fridays.", "The user's team ships its releases on Fridays.", [1, 0.05, 0]],
+      ["Releases go out on Fridays for my team.", "The user's team puts its releases out on Fridays.", [1, 0, 0.06]],
+      ["Friday is release day for my team.", "The user's team has its release day on Fridays.", [1, 0.06, 0.04]],
+    ] as const
+    const others = [
+      ["My team plans work in two-week cycles.", "The user's team plans work in two-week cycles.", [0.7, 0.7, 0]],
+      ["My team keeps its notes in a shared wiki.", "The user's team keeps its notes in a shared wiki.", [0.7, 0, 0.7]],
+      ["My team meets on Monday mornings.", "The user's team meets on Monday mornings.", [0.7, -0.7, 0]],
+    ] as const
+    const question = "When does my team ship releases?"
+    const vectors = new Map<string, ReadonlyArray<number>>([...restated, ...others].map(([, text, values]) => [text, values]))
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => [...(vectors.get(text) ?? [1, 0, 0])]), usage: { inputTokens: undefined } }) })
+    // The helper model writes each turn's fact without entities, so publication never takes one for a restatement of another.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const found = [...restated, ...others].find(([said]) => text.includes(said))
+      return { entities: [], assertions: [], memories: found === undefined ? [] : [{
+        key: "fact", kind: "fact", text: found[1], entities: [], spans: [{ start: text.indexOf(found[0]), end: text.indexOf(found[0]) + found[0].length, quote: found[0] }],
+        evidence: { _tag: "Stated" }, supersedes: [], supersession: "change",
+      }] }
+    }
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    // Four places for recalled evidence: the four wordings alone would fill them.
+    const options = { worker: false, review: false, embeddingDimensions: 3, recallLimit: 4 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const conversation = (index: number) => ({ owner: "team-owner", id: ConversationId.make(`00000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`) })
+    const told = [...restated, ...others].map((_, index) => conversation(index))
+    const asked = conversation(99)
+    yield* Effect.forEach([...told, asked], (session) => sessions.create(session), { concurrency: 1 })
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: "team-owner", namespace: "default", collection: "memory" }
+    const say = (session: typeof asked, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    // Each statement in its own conversation, a week apart from 2 March.
+    yield* Effect.forEach([...restated, ...others], ([said], index) => TestClock.setTime(Date.UTC(2026, 2, 2 + 7 * index, 9)).pipe(
+      Effect.andThen(say(told[index]!, `told-${index}`, said)), Effect.andThen(memory.process(scope, 10)),
+    ), { concurrency: 1 })
+    // Publication kept seven memories: no wording was taken for a restatement of another.
+    const active = (yield* store.snapshot(scope)).memories.filter((record) => Option.isNone(record.knownTo))
+    expect([active.length, active.every((record) => record.mentions?.length === 1)]).toEqual([7, true])
+    // Recall shows the first wording, folding the other three into it, and gives the three other facts the places they freed.
+    yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
+    const query = { scope, query: question, limit: 4, maxChars: 8_000, graph: false as const }
+    const recalled = yield* memory.recall(query)
+    const listed = (result: KnowledgeRecallResult) => result.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [[candidate.memory.text, (candidate.alike ?? []).length, candidate.support?.episodes ?? 0]] : [])
+    expect(listed(recalled)[0]).toEqual([restated[0][1], 3, 4])
+    expect(listed(recalled).slice(1).map(String).toSorted()).toEqual(others.map(([, text]) => [text, 0, 1]).map(String).toSorted())
+    const kept = recalled.candidates[0]
+    expect(kept?._tag === "Memory" ? [kept.alike?.length, kept.memory.provenance.map((span) => span.quote)] : []).toEqual([3, restated.map(([said]) => said)])
+    // Without collapsing, the four wordings take every place.
+    const crowded = Context.get(yield* Layer.build(MemoryPluginLive({ ...options, recallCollapseSimilarity: false }).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    expect((yield* crowded.recall(query)).candidates.map((candidate) => candidate._tag === "Memory" ? candidate.memory.text : "").toSorted()).toEqual(restated.map(([, text]) => text).toSorted())
+    // A new conversation's recall section renders one line said four times, citing its four sources, and each other fact once.
+    yield* say(asked, "asking", question)
+    const section = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body.text] : [])[0] ?? ""
+    const line = `[2026-03-02 · fact · stated · said 4 times, last 2026-03-23] ${restated[0][1]}`
+    expect([section.includes(line), ...restated.slice(1).map(([, text]) => section.includes(text)), ...others.map(([, text]) => section.includes(text))]).toEqual([true, false, false, false, true, true, true])
+    expect(section.split("\n").filter((row) => row.startsWith("Source: ")).length).toBe(4 + 3)
+    expect((yield* Ref.get(requests)).at(-1)).toContain("said 4 times, last 2026-03-23")
   })).pipe(Effect.provide(TestClock.layer()))))
 })

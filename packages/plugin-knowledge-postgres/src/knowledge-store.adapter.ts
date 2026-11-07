@@ -470,13 +470,18 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         const lexicalMemories = yield* tx.rows(memoryScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(6)})::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND lexical @@ ${lexicalQuery(6)}${lexicalMemory.sql} ORDER BY score DESC,id LIMIT $7`, lexicalMemory.values)
         const lexicalChunk = narrow([...base, query.query, query.limit], "chunk")
         const lexicalChunks = yield* tx.rows(chunkScore, `SELECT payload,ts_rank_cd(lexical,${lexicalQuery(5)})::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND lexical @@ ${lexicalQuery(5)}${lexicalChunk.sql} ORDER BY score DESC,id LIMIT $6`, lexicalChunk.values)
+        // A semantic score is the cosine similarity with the query vector (parameter `$n`); a floor is one more parameter
+        // after the narrowings, applied to that same expression before ORDER BY and LIMIT.
+        const cosine = (parameter: number): string => `CASE WHEN vector_norm(embedding)=0 OR vector_norm($${parameter}::vector)=0 THEN 0 ELSE 1-(embedding <=> $${parameter}::vector) END::float8`
+        const floored = (statement: { readonly sql: string; readonly values: Parameters }, parameter: number): { readonly sql: string; readonly values: Parameters } => query.minSimilarity === undefined
+          ? statement : { sql: `${statement.sql} AND ${cosine(parameter)} >= $${statement.values.length + 1}::float8`, values: [...statement.values, query.minSimilarity] }
         const semanticMemories = vector ? yield* Effect.suspend(() => {
-          const statement = narrow([...base, when, vectorText(vector), query.limit], "memory")
-          return tx.rows(memoryScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($6::vector)=0 THEN 0 ELSE 1-(embedding <=> $6::vector) END::float8 AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND embedding IS NOT NULL${statement.sql} ORDER BY score DESC,id LIMIT $7`, statement.values)
+          const statement = floored(narrow([...base, when, vectorText(vector), query.limit], "memory"), 6)
+          return tx.rows(memoryScore, `SELECT payload,${cosine(6)} AS score FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND ${memoryTime} AND embedding IS NOT NULL${statement.sql} ORDER BY score DESC,id LIMIT $7`, statement.values)
         }) : []
         const semanticChunks = vector ? yield* Effect.suspend(() => {
-          const statement = narrow([...base, vectorText(vector), query.limit], "chunk")
-          return tx.rows(chunkScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($5::vector)=0 THEN 0 ELSE 1-(embedding <=> $5::vector) END::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND embedding IS NOT NULL${statement.sql} ORDER BY score DESC,id LIMIT $6`, statement.values)
+          const statement = floored(narrow([...base, vectorText(vector), query.limit], "chunk"), 5)
+          return tx.rows(chunkScore, `SELECT payload,${cosine(5)} AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND embedding IS NOT NULL${statement.sql} ORDER BY score DESC,id LIMIT $6`, statement.values)
         }) : []
         // The memories the statements admitted, with the corroborating evidence the narrowing does not admit left out.
         // A metadata filter reads the info of every revision the found memories cite, only when one of them was restated later.

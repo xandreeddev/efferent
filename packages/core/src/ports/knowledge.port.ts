@@ -49,7 +49,9 @@ export interface KnowledgeIndex {
   readonly snapshot: (scope: KnowledgeScope) => Effect.Effect<KnowledgeSnapshot, KnowledgeError>
   /**
    * Ranked lexical and semantic arms of at most `limit` each. A `sources` or `metadata` narrowing
-   * applies before ranking and the limit, so a narrow filter still returns its best matches.
+   * applies before ranking and the limit, so a narrow filter still returns its best matches. A
+   * semantic candidate's score is the cosine similarity of its embedding with `vector`, and
+   * `minSimilarity` leaves out, before the limit, every semantic candidate scored below it.
    */
   readonly search: (query: KnowledgeSearch) => Effect.Effect<KnowledgeCandidates, KnowledgeError>
   readonly source: (scope: KnowledgeScope, ref: KnowledgeSourceRef) => Effect.Effect<Option.Option<KnowledgeSource>, KnowledgeError>

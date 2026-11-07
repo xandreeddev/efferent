@@ -154,7 +154,8 @@ describe("native memory engine", () => {
           : [memoryOf(text === said.a ? "drink" : "place", text, [], "change")]
       return JSON.stringify({ entities: [], memories, assertions: [] })
     }
-    const fixture = yield* makeMemoryFixture(extraction)
+    // The fixture embeds every one of these preferences alike: collapsing would fold them into one.
+    const fixture = yield* makeMemoryFixture(extraction, { recallCollapseSimilarity: false })
     yield* Effect.forEach(Object.entries(said), ([id, text]) => fixture.memory.capture(fixtureEnqueue(id, text)).pipe(Effect.andThen(fixture.memory.process(fixtureScope, 1))), { concurrency: 1 })
     const recall = (more: Partial<KnowledgeRecall> = {}) => fixture.memory.recall({ scope: fixtureScope, query: "What do I drink and where do I live?", limit: 8, maxChars: 8_000, ...more })
     const earlier = (result: KnowledgeRecallResult) => result.history.map((state) => [state.successor, state.record.text, state.supersession, state.until])
@@ -231,7 +232,8 @@ describe("native memory engine", () => {
       : { lexical: listed("later", "third"), semantic: listed("later") }
     const searched = yield* Ref.make<ReadonlyArray<string>>([])
     const services = Context.add(fixture.services, MemoryStore, { ...fixture.store, search: (query) => Ref.update(searched, (all) => [...all, query.query]).pipe(Effect.as(lists(query))) })
-    const context = yield* Layer.build(MemoryLive({ ...fixture.config, queryPlanning: true }).pipe(Layer.provide(Layer.succeedContext(services))))
+    // The fixture embeds every one of these preferences alike: collapsing would fold them into one.
+    const context = yield* Layer.build(MemoryLive({ ...fixture.config, queryPlanning: true, recallCollapseSimilarity: false }).pipe(Layer.provide(Layer.succeedContext(services))))
     const result = yield* Context.get(context, LongTermMemory).recall({ scope: fixtureScope, query: "drink", limit: 8, maxChars: 8_000, graph: false })
     expect(yield* Ref.get(searched)).toEqual(["drink", "milk"])
     // third: 2/63 + 1/62; first and later: 2/61 each, tied by key; second: 2/62. Concatenated lists ranked later last.

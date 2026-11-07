@@ -98,7 +98,13 @@ with the revision's top-level metadata value. The joins use the tables' primary
 keys, so the filter needs no layout change and no new index.
 
 The lexical arm uses PostgreSQL text ranking with the `simple` configuration.
-The vector arm uses exact pgvector cosine ranking. This is not a BM25 or an
+The vector arm uses exact pgvector cosine ranking: a semantic score is the
+cosine similarity `1 - (embedding <=> query)`, 0 for a zero vector. A search's
+`minSimilarity` is one more predicate on that expression in the semantic
+statements only, before `ORDER BY` and `LIMIT`, so records below the floor
+take no place of the limit and the lexical arm keeps them
+([a similarity floor](/docs/concepts/native-knowledge/#near-duplicates-and-a-similarity-floor)).
+This is not a BM25 or an
 approximate-nearest-neighbor implementation. Measure corpus size and query cost
 before relying on large-scale performance.
 
