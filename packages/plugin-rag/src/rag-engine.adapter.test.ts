@@ -132,7 +132,7 @@ describe("native temporal GraphRAG", () => {
     ], memories: [], assertions: [{ key: "serves", subject: "b", predicate: "serves", object: { _tag: "Entity", key: "c" }, text: "Beacon serves Cedar", spans: [{ start: 0, end: 20, quote: "Beacon serves Cedar." }], validFrom: 10, validTo: null, supersedes: [], supersession: "correction" }] }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(first), JSON.stringify(second)])
     const embeddings = yield* makeEmbeddings((text) => text.includes("Cedar") ? [0, 1] : [1, 0])
-    const { knowledge } = yield* makeRag({ graph: true, review: false }, undefined, embeddings, utility)
+    const { knowledge } = yield* makeRag({ graph: true, review: "off" }, undefined, embeddings, utility)
     yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon.", 1, { team: "red" }))
     yield* knowledge.process(scope, 1)
     yield* knowledge.ingest(enqueue("two", "Beacon serves Cedar.", 1, { team: "blue" }))
@@ -172,7 +172,7 @@ describe("native temporal GraphRAG", () => {
   test("a graph record that fails its own checks is dropped with a note while the chunks and the other records publish", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const stray = { ...atlasGraph.assertions[0]!, key: "uses", predicate: "uses", object: { _tag: "Entity", key: "ledger" }, text: "Atlas uses Ledger" }
     const { utility } = yield* scriptedUtility([JSON.stringify({ ...atlasGraph, assertions: [...atlasGraph.assertions, stray] })])
-    const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "off" }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("atlas", "Atlas owns Beacon."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     const status = yield* knowledge.status(scope, job.id)
@@ -190,7 +190,7 @@ describe("native temporal GraphRAG", () => {
     expect(absent._tag).toBe("Failure")
     const personal = JSON.stringify({ entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] })
     const { utility } = yield* scriptedUtility([personal])
-    const { knowledge, store } = yield* makeRag({ graph: true, review: false }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "off" }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("bad", "Guide data."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     expect((yield* store.snapshot(scope)).memories).toEqual([])
@@ -201,7 +201,7 @@ describe("native temporal GraphRAG", () => {
     const failures = yield* Ref.make<ReadonlyArray<KnowledgeJobFailure>>([])
     const index = yield* makeKnowledgeIndexMemory()
     const recording = { ...index, fail: (lease: Parameters<typeof index.fail>[0], failure: KnowledgeJobFailure) => Ref.update(failures, (all) => [...all, failure]).pipe(Effect.andThen(index.fail(lease, failure))) }
-    const retried = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, twice)
+    const retried = yield* makeRag({ graph: true, review: "off", maxAttempts: 2 }, recording, undefined, twice)
     yield* retried.knowledge.ingest(enqueue("bad", "Guide data."))
     expect(yield* retried.knowledge.process(scope, 1)).toBe(1)
     expect(yield* Ref.get(failures)).toEqual([{ reason: "Invalid", message: "Document extraction must not create personal memories", step: "Graph", diagnostic: { stage: "stage" } }])
@@ -216,7 +216,7 @@ describe("native temporal GraphRAG", () => {
     const whole = JSON.stringify(atlasGraph)
     const cut = new UtilityCompletion({ text: whole.slice(0, whole.indexOf("\"assertions\"") + 20), usage: { ...zeroUsage, outputTokens: 2048, totalTokens: 2048 }, finishReason: "length" })
     const { utility, prompts } = yield* scriptedUtility([cut, whole])
-    const { knowledge, store } = yield* makeRag({ graph: true, review: false, maxAttempts: 2 }, recording, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "off", maxAttempts: 2 }, recording, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     const spans: Array<Tracer.NativeSpan> = []
     const tracer = Tracer.make({ span: (options) => {
@@ -243,7 +243,7 @@ describe("native temporal GraphRAG", () => {
   test("chunks publish without the graph when extraction or review fails on every attempt", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     // Attempt 1: a valid extraction, then an invalid review. Attempt 2: the helper is unavailable.
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(atlasGraph), "not JSON"])
-    const { knowledge, store } = yield* makeRag({ graph: true, review: true, maxAttempts: 2 }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "always", maxAttempts: 2 }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     const status = yield* knowledge.status(scope, job.id)
@@ -260,7 +260,7 @@ describe("native temporal GraphRAG", () => {
     const index = yield* makeKnowledgeIndexMemory()
     const store = { ...index, source: () => Effect.succeed(Option.none()) }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(atlasGraph)])
-    const { knowledge } = yield* makeRag({ graph: true, review: false, maxAttempts: 3 }, store, undefined, utility)
+    const { knowledge } = yield* makeRag({ graph: true, review: "off", maxAttempts: 3 }, store, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     const failed = yield* Effect.result(knowledge.process(scope, 1))
     expect(failed._tag === "Failure" && failed.failure.reason).toBe("Invalid")
@@ -299,7 +299,7 @@ describe("native temporal GraphRAG", () => {
     const utility = UtilityLlm.of({ complete: (prompt) => Ref.modify(prompts, (all): [number, ReadonlyArray<string>] => [all.filter((seen) => !seen.includes("<knowledge-proposal>")).length, [...all, prompt]]).pipe(
       Effect.map((extracted) => new UtilityCompletion({ text: prompt.includes("<knowledge-proposal>") ? frame("knowledge-proposal", prompt) : extractions[extracted] ?? "not JSON", usage: zeroUsage })),
     ) })
-    const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "always" }, undefined, undefined, utility)
     const one = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     yield* knowledge.process(scope, 1)
     const two = yield* knowledge.ingest(enqueue("two", "Beacon serves Cedar."))
@@ -321,7 +321,7 @@ describe("native temporal GraphRAG", () => {
     // One relation's supersession is null, the other's is absent; review copies the proposal back verbatim.
     const graph = { ...atlasGraph, assertions: [{ ...owns, supersession: null }, { ...owns, key: "runs", predicate: "runs", text: "Atlas runs Beacon" }] }
     const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: prompt.includes("<knowledge-proposal>") ? frame("knowledge-proposal", prompt) : JSON.stringify(graph), usage: zeroUsage })) })
-    const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "always" }, undefined, undefined, utility)
     const job = yield* knowledge.ingest(enqueue("one", "Atlas owns Beacon."))
     yield* knowledge.process(scope, 1)
     const status = yield* knowledge.status(scope, job.id)
@@ -333,12 +333,40 @@ describe("native temporal GraphRAG", () => {
   test("evidence review can remove unsupported personal material before document publication", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const draft = { entities: [], memories: [{ key: "bad", kind: "preference", text: "User prefers this document", entities: [], spans: [{ start: 0, end: 5, quote: "Guide" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }], assertions: [] }
     const { utility, prompts } = yield* scriptedUtility([JSON.stringify(draft), JSON.stringify({ entities: [], memories: [], assertions: [] })])
-    const { knowledge, store } = yield* makeRag({ graph: true, review: true }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "always" }, undefined, undefined, utility)
     yield* knowledge.ingest(enqueue("reviewed", "Guide data."))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     expect((yield* store.snapshot(scope)).memories).toEqual([])
     expect((yield* Ref.get(prompts))).toHaveLength(2)
     expect((yield* knowledge.retrieve({ scope, query: "Guide", limit: 3, maxChars: 1000 })).candidates).toHaveLength(1)
+  }))))
+
+  test("review on failure extracts a clean document once and reviews only a graph staging refuses, by helper purpose", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // A document about Atlas extracts cleanly; one about Beacon also proposes a personal memory, which a document refuses, and its review drops it.
+    const personal = { key: "note", kind: "preference", text: "The reader likes this document", entities: [], spans: [{ start: 0, end: 5, quote: "Atlas" }], evidence: { _tag: "Stated" }, supersedes: [], supersession: null }
+    const purposes = yield* Ref.make<ReadonlyArray<string>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
+      Effect.map((call) => Option.getOrElse(Option.map(call, (value) => value.purpose), () => "none")),
+      Effect.tap((purpose) => Ref.update(purposes, (all) => [...all, purpose])),
+      Effect.map((purpose) => new UtilityCompletion({ text: JSON.stringify(purpose === "extract" && prompt.includes("Beacon runs") ? { ...atlasGraph, memories: [personal] } : atlasGraph), usage: zeroUsage })),
+    ) })
+    const run = (review: RagConfig["review"], text: string) => Effect.gen(function* () {
+      yield* Ref.set(purposes, [])
+      const { knowledge, store } = yield* makeRag({ graph: true, review }, undefined, undefined, utility)
+      const job = yield* knowledge.ingest(enqueue("doc", text))
+      yield* knowledge.process(scope, 1)
+      const status = yield* knowledge.status(scope, job.id)
+      return {
+        purposes: yield* Ref.get(purposes),
+        notes: Option.flatMap(status, (value) => Option.map(value.stage, (stage) => (stage.notes ?? []).map((note) => note.message))),
+        graph: (yield* store.snapshot(scope)).graph.assertions.map((edge) => edge.predicate),
+      }
+    })
+    expect(yield* run("on-failure", "Atlas owns Beacon.")).toEqual({ purposes: ["extract"], notes: Option.some([]), graph: ["owns"] })
+    expect(yield* run("always", "Atlas owns Beacon.")).toEqual({ purposes: ["extract", "review"], notes: Option.some([]), graph: ["owns"] })
+    expect(yield* run("on-failure", "Atlas owns Beacon. Beacon runs.")).toEqual({ purposes: ["extract", "review"], notes: Option.some([]), graph: ["owns"] })
+    // Off never reviews: the last attempt publishes the chunks without the refused graph.
+    expect(yield* run("off", "Atlas owns Beacon. Beacon runs.")).toEqual({ purposes: ["extract"], notes: Option.some(["Document extraction must not create personal memories"]), graph: [] })
   }))))
 })
 
@@ -372,7 +400,7 @@ describe("bounded document extraction", () => {
 
   test("a long document is extracted in bounded calls whose merged graph cites exact source offsets", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const { utility, calls } = yield* contextUtility
-    const { knowledge, store } = yield* makeRag({ graph: true, review: true, maxExtractionChars: 1_000, maxHelperOutputTokens: 512 }, undefined, undefined, utility)
+    const { knowledge, store } = yield* makeRag({ graph: true, review: "always", maxExtractionChars: 1_000, maxHelperOutputTokens: 512 }, undefined, undefined, utility)
     yield* knowledge.ingest(enqueue("long", text))
     expect(yield* knowledge.process(scope, 1)).toBe(1)
     const windows = knowledgeExtractionWindows(text, 1_000)

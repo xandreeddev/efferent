@@ -68,16 +68,16 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const source = yield* store.source(job.scope, job.source)
     if (Option.isNone(source)) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "The source of the memory job is unavailable" }))
     if (source.value.text.length > config.maxSourceChars) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Split the source into smaller evidence records before capture" }))
-    const reviewed = yield* extractKnowledge({
+    // Without consolidation, staging sees only stated records that replace nothing; with `on-failure`, its refusal is what starts review.
+    return yield* extractKnowledge({
       source: source.value, snapshot, mode: "memory", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
       consolidate: config.consolidate, review: config.review, complete: complete(job),
+      stage: (extraction) => Effect.flatMap(Clock.currentTimeMillis, (now) => stageKnowledgeExtraction(source.value, snapshot, config.consolidate ? extraction : {
+        ...extraction,
+        memories: extraction.memories.filter((memory) => memory.evidence._tag === "Stated").map((memory) => ({ ...memory, supersedes: [] })),
+        assertions: extraction.assertions.map((assertion) => ({ ...assertion, supersedes: [] })),
+      }, now)),
     })
-    const reconciled = config.consolidate ? reviewed : {
-      ...reviewed,
-      memories: reviewed.memories.filter((memory) => memory.evidence._tag === "Stated").map((memory) => ({ ...memory, supersedes: [] })),
-      assertions: reviewed.assertions.map((assertion) => ({ ...assertion, supersedes: [] })),
-    }
-    return yield* stageKnowledgeExtraction(source.value, snapshot, reconciled, yield* Clock.currentTimeMillis)
   })
 
   const leaseOf = (job: KnowledgeJob, token: KnowledgeLeaseToken): Effect.Effect<KnowledgeLease> => Clock.currentTimeMillis.pipe(

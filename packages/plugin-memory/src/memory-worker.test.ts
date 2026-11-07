@@ -19,7 +19,7 @@ const input = (id = "source") => ({ jobId: KnowledgeJobId.make(`${id}:1`), sourc
 const embeddingResponse = (inputs: ReadonlyArray<string>) => ({ results: inputs.map(() => [1, 0]), usage: { inputTokens: inputs.length } })
 const embeddings = (work: (inputs: ReadonlyArray<string>) => Effect.Effect<EmbeddingModel.ProviderResponse> = (inputs) => Effect.succeed(embeddingResponse(inputs))) => EmbeddingModel.make({ embedMany: ({ inputs }) => work(inputs) })
 const open = Effect.fnUntraced(function* (index: KnowledgeIndex, utility: typeof UtilityLlm.Service, model: EmbeddingModel.EmbeddingModel, options: Partial<MemoryConfig> = {}) {
-  const services = yield* Layer.build(MemoryLive({ ...memoryDefaults, namespace: scope.namespace, collection: scope.collection, embeddingDimensions: 2, worker: false, review: false, modelTimeoutMs: 10_000, leaseMs: 30, ...options }).pipe(
+  const services = yield* Layer.build(MemoryLive({ ...memoryDefaults, namespace: scope.namespace, collection: scope.collection, embeddingDimensions: 2, worker: false, review: "off", modelTimeoutMs: 10_000, leaseMs: 30, ...options }).pipe(
     Layer.provide(Layer.mergeAll(Layer.succeed(MemoryStore, index), Layer.succeed(UtilityLlm, utility), Layer.succeed(EmbeddingModel.EmbeddingModel, model))),
   ))
   const worker = Context.get(services, BackgroundWorkers)[0]!
@@ -40,7 +40,7 @@ test("memory heartbeats retain leases throughout extraction, review and embeddin
     Deferred.succeed(n === 0 ? extractionStarted : reviewStarted, undefined).pipe(Effect.andThen(Deferred.await(n === 0 ? allowExtraction : allowReview)), Effect.as(completion)),
   )) })
   const model = yield* embeddings((inputs) => Deferred.succeed(embeddingStarted, undefined).pipe(Effect.andThen(Deferred.await(allowEmbedding)), Effect.as(embeddingResponse(inputs))))
-  const { memory, worker } = yield* open(index, utility, model, { review: true })
+  const { memory, worker } = yield* open(index, utility, model, { review: "always" })
   const job = yield* memory.capture(input())
   const processing = yield* Effect.forkChild(memory.process(scope, 1))
   yield* Deferred.await(extractionStarted)

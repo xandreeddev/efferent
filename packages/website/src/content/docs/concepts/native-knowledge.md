@@ -444,11 +444,27 @@ valid extraction; before version 6 the proposal carried the decoded value's
 copied them back failed the output schema. This validates evidence links;
 semantic entailment still depends on model quality and evaluation.
 
+The engines' `review` option (`KnowledgeReviewPolicy`) says when that pass
+runs. `"always"`, the default, reviews every window's extraction, a second
+helper call per window. `"off"` never reviews. `"on-failure"` extracts every
+window without review and stages the merged extraction; only when staging
+refuses it as a whole with `Invalid` (a repeated entity key, no record that
+survives its checks, a document extraction that proposes personal memories)
+does it review each window's extraction and stage the reviewed merge. A record
+staging drops on its own (a `RecordDropped` note) does not refuse the
+extraction, so it starts no review. A clean source therefore costs one call
+per window under `"on-failure"`, and a refused one costs what `"always"`
+costs. A review whose reply does not decode fails at stage `review`, and a
+reviewed extraction staging still refuses fails at stage `stage`. A boolean
+still decodes: `true` is `"always"`, `false` is `"off"`. Whether review helps
+depends on the helper model: measure with and without it on your own
+evaluation before changing the default.
+
 Extraction calls are bounded by `maxExtractionChars` (48,000 by default on both
 engines), separately from `maxSourceChars`, the largest source an engine
 accepts. A longer source is split into windows at paragraph, line or word
 boundaries (`knowledgeExtractionWindows`); each window is extracted, and
-reviewed, in its own helper calls, one window after another, and its prompt
+reviewed as the `review` policy says, in its own helper calls, one window after another, and its prompt
 frames that part alone and says which part it is. The engine merges the
 windows' results before staging: spans are checked and repaired within their
 window, typography included, then moved to exact offsets into the whole source; an entity named in
@@ -458,7 +474,11 @@ makes exactly the calls of a whole-source extraction. `extractKnowledge` runs
 this for a host that builds its own engine: its `complete` returns the helper's
 `UtilityCompletion`, which `extractKnowledge` decodes, so a reply that does not
 decode fails `Invalid` with its diagnostic (stage, window, path, finish reason
-and output tokens), and a part that repeats an entity key names its window.
+and output tokens), and a part that repeats an entity key names its window. It
+takes the `review` policy and a `stage` function that turns the merged
+extraction into the engine's result (usually `stageKnowledgeExtraction`, after
+any change of the engine's own); under `"on-failure"`, an `Invalid` failure of
+the merge or of `stage` is what starts review.
 
 Profiles and routines are evidence-backed memory kinds. Explicit preferences
 need no recurrence threshold. Inferred routines need support from at least three

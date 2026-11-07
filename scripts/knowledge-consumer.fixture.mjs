@@ -71,7 +71,7 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const memoryContext = yield* Layer.build(MemoryLive({
     ...memoryDefaults, namespace: memoryScope.namespace, collection: memoryScope.collection,
     worker: false, embeddingModel: "packed-vectors", embeddingDimensions: 2,
-    review: true, queryPlanning: false, rerank: false,
+    review: "always", queryPlanning: false, rerank: false,
   }).pipe(Layer.provide(Layer.mergeAll(
     MemoryStoreMemoryLive,
     Layer.succeed(UtilityLlm, helper.utility),
@@ -109,7 +109,7 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const ragContext = yield* Layer.build(RagLive({
     ...ragDefaults, namespace: documentScope.namespace, collection: documentScope.collection,
     worker: false, embeddingModel: "packed-vectors", embeddingDimensions: 2,
-    chunkChars: 200, overlapChars: 40, graph: true, review: true, queryPlanning: false, rerank: false,
+    chunkChars: 200, overlapChars: 40, graph: true, review: "always", queryPlanning: false, rerank: false,
   }).pipe(Layer.provide(Layer.mergeAll(
     KnowledgeStoreMemoryLive,
     Layer.succeed(UtilityLlm, documentHelper.utility),

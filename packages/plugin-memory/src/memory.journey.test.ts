@@ -230,7 +230,7 @@ describe("memory through the real agent", () => {
     const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
     const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
     // The host builds the engine and gives its services (tools, skills, LongTermMemory) to the agent, the section turned off.
-    const options = { recallSection: "off" as const, worker: false, review: false, embeddingDimensions: 2 }
+    const options = { recallSection: "off" as const, worker: false, review: "off" as const, embeddingDimensions: 2 }
     const engine = yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime))))
     const memory = Context.get(engine, LongTermMemory)
     const requests = yield* Ref.make<ReadonlyArray<{ readonly system: string; readonly last: string; readonly tools: ReadonlyArray<string> }>>([])
@@ -1020,6 +1020,82 @@ describe("memory through the real agent", () => {
     expect(proposals.map((proposal) => /"existing":(null|"[^"]*")/.exec(proposal)?.[1])).toEqual(["null", `"${graph.entities[0]!.id}"`])
     expect(graph.assertions.map((assertion) => assertion.text).toSorted()).toEqual(["The user only drinks green tea since March.", "The user takes their tea with oat milk."])
     // A later conversation recalls what both reviewed turns published.
+    yield* Ref.set(requests, [])
+    yield* agent.turn({ turn: { session: second, runId: RunId.make("asking"), userMessage: new UserMessage({ text: "How do I take my tea?" }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    const seen = (yield* Ref.get(requests))[0] ?? ""
+    expect([seen.includes("The user only drinks green tea since March."), seen.includes("The user takes their tea with oat milk.")]).toEqual([true, true])
+  }))))
+
+  test("with review on failure, a clean turn takes one extraction call and a turn staging refuses is reviewed once, publishes and is recalled", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => text.includes("milk") ? [0, 1] : [1, 0]), usage: { inputTokens: undefined } }) })
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The first turn extracts cleanly. The second is extracted as recorded models sometimes do: every record names a speaker
+    // key the reply never defines, so staging drops each one and refuses the whole extraction; the reviewer defines the user.
+    const extraction = (text: string, user: string | null, defined: boolean) => {
+      const drink = text.includes("green tea") ? { quote: "Since March I only drink green tea.", value: "green tea", text: "The user only drinks green tea since March." } : { quote: "I take it with oat milk.", value: "green tea with oat milk", text: "The user takes their tea with oat milk." }
+      const key = defined ? "user" : "speaker:self"
+      return JSON.stringify({
+        entities: defined ? [{ key, name: "User", type: "person", aliases: [], existing: user, spans: [span(text, "User")] }] : [],
+        memories: [{ key: "drink", kind: "preference", text: drink.text, entities: [key], spans: [span(text, drink.quote)], evidence: { _tag: "Stated" }, supersedes: [], supersession: null }],
+        assertions: [{ key: "drinks", subject: key, predicate: "drinks", object: { _tag: "Value", value: drink.value }, text: drink.text, spans: [span(text, drink.quote)], validFrom: null, validTo: null, supersedes: [], supersession: null }],
+      })
+    }
+    const reply = (purpose: string, prompt: string) => {
+      const text = frame("knowledge-source", prompt)
+      const user = /"id":"([^"]*:entity:user)"/.exec(frame("knowledge-candidates", prompt))?.[1] ?? null
+      return extraction(text, user, purpose === "review" || text.includes("green tea"))
+    }
+    const helperPrompts = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly prompt: string }>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.service(CurrentKnowledgeHelperCall).pipe(
+      Effect.map((call) => Option.match(call, { onNone: () => "none", onSome: (value) => value.purpose })),
+      Effect.tap((purpose) => Ref.update(helperPrompts, (all) => [...all, { purpose, prompt }])),
+      Effect.map((purpose) => new UtilityCompletion({ text: reply(purpose, prompt), usage: zeroUsage })),
+    ) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)), streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: "on-failure" as const, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const first = { owner: "on-failure-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c1") }
+    const second = { owner: "on-failure-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000c2") }
+    yield* sessions.create(first)
+    yield* sessions.create(second)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: first.owner, namespace: "default", collection: "memory" }
+    const engine = knowledgeEngineId(`memory:${KNOWLEDGE_EXTRACTION_VERSION}`, { model: "host", version: "1", dimensions: 2 })
+    const capture = (runId: string, text: string) => agent.turn({ turn: { session: first, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => turn.reply("Noted.")).pipe(
+      Effect.andThen(store.pending({ engine, namespace: "default", now: 10_000_000_000_000, limit: 10 })),
+      Effect.tap((jobs) => memory.process(scope, 10).pipe(Effect.map((processed) => expect(processed).toBe(jobs.length)))),
+      Effect.map((jobs) => jobs[0]!),
+    )
+    const clean = yield* capture("tea", "Since March I only drink green tea.")
+    // The clean turn: one extraction call, no review.
+    expect((yield* Ref.get(helperPrompts)).map((call) => call.purpose)).toEqual(["extract"])
+    const refused = yield* capture("milk", "I take it with oat milk.")
+    // The refused turn: its extraction, then one review of the proposal staging refused.
+    const helper = yield* Ref.get(helperPrompts)
+    expect(helper.map((call) => call.purpose)).toEqual(["extract", "extract", "review"])
+    expect(frame("knowledge-proposal", helper[2]!.prompt)).toContain("\"subject\":\"speaker:self\"")
+    const phases = yield* Effect.forEach([clean, refused], (job) => memory.status(scope, job.id).pipe(Effect.map(Option.map((value) => [value.phase._tag, Option.map(value.stage, (stage) => stage.notes ?? [])]))), { concurrency: 1 })
+    expect(phases).toEqual([Option.some(["Complete", Option.some([])]), Option.some(["Complete", Option.some([])])])
+    const snapshot = yield* store.snapshot(scope)
+    expect(snapshot.memories.map((value) => value.text)).toEqual(["The user only drinks green tea since March.", "The user takes their tea with oat milk."])
+    expect(snapshot.graph.entities.map((entity) => entity.name)).toEqual(["User"])
+    // A later conversation recalls what both turns published.
     yield* Ref.set(requests, [])
     yield* agent.turn({ turn: { session: second, runId: RunId.make("asking"), userMessage: new UserMessage({ text: "How do I take my tea?" }) }, services }, (turn) => Effect.gen(function* () {
       yield* turn.tools.select(turn.userMessage)

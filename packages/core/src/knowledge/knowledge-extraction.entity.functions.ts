@@ -5,7 +5,7 @@ import {
 } from "./knowledge.entity.js"
 import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeCorroboration, KnowledgeEventTime, KnowledgeFailureDiagnostic, KnowledgeHelperPurpose, KnowledgeMemory, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeSourceRef, KnowledgeStage, KnowledgeStageNote, KnowledgeSupersession } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
-import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
+import type { KnowledgeExtractionWindow, KnowledgeReviewPolicy } from "./knowledge-extraction.entity.js"
 import type { UtilityCompletion } from "../ports/utility-llm.port.js"
 import { knowledgeCosine, knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeTokens, mergeKnowledgeCorroborations, sameKnowledgeEventTime } from "./knowledge.entity.functions.js"
 
@@ -280,43 +280,49 @@ const mergeWindows = (text: string, parts: ReadonlyArray<WindowExtraction>): Kno
   return { entities: joined.entities, memories, assertions }
 }, { entities: [], memories: [], assertions: [] })
 
+/** A window's extraction and the prompt that asked for it, which its review quotes. */
+type ExtractedWindow = WindowExtraction & { readonly prompt: string }
+
 /**
- * Extract a source in bounded calls: the source is split by
- * `knowledgeExtractionWindows(text, maxExtractionChars)`, each window is
- * extracted (and, with `review`, reviewed) in its own `complete` calls, one
- * window after another, and the windows' results are merged into one
- * extraction whose spans are exact offsets into the whole source, ready for
- * `stageKnowledgeExtraction`. A source that fits one window makes the calls
- * a whole-source extraction makes and returns their result unchanged.
- * `complete` returns the helper's completion, which this decodes as a
- * `KnowledgeExtraction`; a reply that does not decode fails `Invalid` with a
- * `diagnostic` (`KnowledgeFailureDiagnostic`): stage `extract` or `review`,
- * the window, the first decode issue's path, and the completion's finish
- * reason and output tokens. A repeated entity key that refuses the merge of
- * several windows fails at stage `stage`, naming the first part that repeats one.
+ * Extract a source in bounded calls and stage the result: the source is split by
+ * `knowledgeExtractionWindows(text, maxExtractionChars)`, each window is extracted in its own
+ * `complete` call, one window after another, and the windows' results are merged into one
+ * extraction whose spans are exact offsets into the whole source, which `stage` (usually
+ * `stageKnowledgeExtraction`, after any change of the caller's own) turns into the result. A
+ * source that fits one window makes the calls a whole-source extraction makes and stages their
+ * result unchanged. `review` (`KnowledgeReviewPolicy`) says when a window's extraction is reviewed
+ * with `knowledgeReviewPrompt`, in a `review` call for that window: `always` right after its
+ * extraction, `off` never, and `on-failure` only when the merge or `stage` refuses the
+ * unreviewed extraction as a whole with `Invalid`, after which every window's extraction is
+ * reviewed and the reviewed merge is staged; any other failure of `stage` is returned as it is.
+ * `complete` returns the helper's completion, which this decodes as a `KnowledgeExtraction`; a
+ * reply that does not decode fails `Invalid` with a `diagnostic` (`KnowledgeFailureDiagnostic`):
+ * stage `extract` or `review`, the window, the first decode issue's path, and the completion's
+ * finish reason and output tokens. A repeated entity key that refuses the merge of several windows
+ * fails at stage `stage`, naming the first part that repeats one.
  * @public
  */
-export const extractKnowledge = <E, R>(input: {
+export const extractKnowledge = <A, E, R, R2>(input: {
   readonly source: KnowledgeSource
   readonly snapshot: KnowledgeSnapshot
   readonly mode: "memory" | "document"
   readonly maxContextChars: number
   readonly maxExtractionChars: number
   readonly consolidate: boolean
-  readonly review: boolean
+  readonly review: KnowledgeReviewPolicy
   readonly complete: (prompt: string, purpose: Extract<KnowledgeHelperPurpose, "extract" | "review">) => Effect.Effect<UtilityCompletion, E, R>
-}): Effect.Effect<KnowledgeExtraction, E | KnowledgeError, R> => {
+  readonly stage: (extraction: KnowledgeExtraction) => Effect.Effect<A, KnowledgeError, R2>
+}): Effect.Effect<A, E | KnowledgeError, R | R2> => {
   const windows = knowledgeExtractionWindows(input.source.text, input.maxExtractionChars)
   const ask = (prompt: string, purpose: Extract<KnowledgeHelperPurpose, "extract" | "review">, window: KnowledgeExtractionWindow) =>
     input.complete(prompt, purpose).pipe(Effect.flatMap((completion) => decodeReply(completion, purpose, window, UNDECODED[input.mode])))
-  const extractWindow = (window: KnowledgeExtractionWindow) => {
+  const extractWindow = (window: KnowledgeExtractionWindow): Effect.Effect<ExtractedWindow, E | KnowledgeError, R> => {
     const prompt = knowledgeExtractionPrompt(input.source, input.snapshot, input.mode, input.maxContextChars, input.consolidate, window)
-    return ask(prompt, "extract", window).pipe(
-      Effect.flatMap((extracted) => input.review ? ask(knowledgeReviewPrompt(prompt, extracted), "review", window) : Effect.succeed(extracted)),
-      Effect.map((extraction): WindowExtraction => ({ window, extraction })),
-    )
+    return ask(prompt, "extract", window).pipe(Effect.map((extraction) => ({ window, prompt, extraction })))
   }
-  return Effect.forEach(windows, extractWindow, { concurrency: 1 }).pipe(Effect.flatMap((parts): Effect.Effect<KnowledgeExtraction, KnowledgeError> => {
+  const reviewWindow = (part: ExtractedWindow): Effect.Effect<ExtractedWindow, E | KnowledgeError, R> =>
+    ask(knowledgeReviewPrompt(part.prompt, part.extraction), "review", part.window).pipe(Effect.map((extraction) => ({ ...part, extraction })))
+  const merged = (parts: ReadonlyArray<WindowExtraction>): Effect.Effect<KnowledgeExtraction, KnowledgeError> => {
     const only = parts.length === 1 ? parts[0] : undefined
     if (only !== undefined) return Effect.succeed(only.extraction)
     // A repeated key is ambiguous within its part, so it refuses the whole source; a record that names a key no part defines is left to staging, which drops that record alone.
@@ -324,7 +330,21 @@ export const extractKnowledge = <E, R>(input: {
       onNone: () => Effect.succeed(mergeWindows(input.source.text, parts)),
       onSome: ({ window }) => invalid(REPEATED_KEY, { stage: "stage", window: { part: window.part, parts: window.parts } }),
     })
-  }))
+  }
+  const staged = (parts: ReadonlyArray<WindowExtraction>) => merged(parts).pipe(Effect.flatMap(input.stage))
+  const extracted = (each: (window: KnowledgeExtractionWindow) => Effect.Effect<ExtractedWindow, E | KnowledgeError, R>) => Effect.forEach(windows, each, { concurrency: 1 })
+  return Match.value(input.review).pipe(
+    Match.when("always", () => extracted((window) => extractWindow(window).pipe(Effect.flatMap(reviewWindow))).pipe(Effect.flatMap(staged))),
+    Match.when("off", () => extracted(extractWindow).pipe(Effect.flatMap(staged))),
+    // A refusal of the whole extraction is what review can repair; a record staging drops on its own is not one.
+    Match.when("on-failure", () => extracted(extractWindow).pipe(Effect.flatMap((parts) => staged(parts).pipe(
+      Effect.catchTag("KnowledgeError", (refusal) => refusal.reason !== "Invalid" ? Effect.fail(refusal) : Effect.logDebug("Staging refused the unreviewed extraction; reviewing each window", refusal.message).pipe(
+        Effect.andThen(Effect.forEach(parts, reviewWindow, { concurrency: 1 })),
+        Effect.flatMap(staged),
+      )),
+    )))),
+    Match.exhaustive,
+  )
 }
 
 type RecordDropped = Extract<KnowledgeStageNote, { readonly _tag: "RecordDropped" }>

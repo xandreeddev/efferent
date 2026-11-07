@@ -525,7 +525,7 @@ export {
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"
 export { makeKnowledgeIndexMemory, MemoryStoreMemoryLive, KnowledgeStoreMemoryLive, TemporalGraphMemoryLive } from "./knowledge/knowledge.memory.adapter.js"
-export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow } from "./knowledge/knowledge-extraction.entity.js"
+export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity, KnowledgeExtractedMemory, KnowledgeExtractedAssertion, KnowledgeExtractionWindow, KnowledgeReviewPolicy } from "./knowledge/knowledge-extraction.entity.js"
 export { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge/knowledge-query.entity.js"
 export { knowledgeQueryPrompt, knowledgeRerankPrompt, applyKnowledgeRerank, budgetKnowledgeRecall } from "./knowledge/knowledge-query.entity.functions.js"
 export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction, mergeKnowledgeRestatements, knowledgeExtractionWindows, extractKnowledge } from "./knowledge/knowledge-extraction.entity.functions.js"

@@ -132,11 +132,18 @@ Set `recall: true` to inject bounded retrieved evidence into recorded turn
 context automatically; the default leaves retrieval to tools or host calls.
 
 `graph: true` enables document entity and relationship extraction and requires
-`UtilityLlm`. Review is enabled by default: a second helper call reads the
-extraction task and the proposed graph, written in the output schema's wire
-form (an absent identity or validity date as `null`), and returns the
-corrected graph, so a reviewer that keeps the proposal unchanged publishes
-it. A graph omitted under version 5 because the review copied that version's
+`UtilityLlm`. Review is enabled by default (`review: "always"`): a second
+helper call reads the extraction task and the proposed graph, written in the
+output schema's wire form (an absent identity or validity date as `null`), and
+returns the corrected graph, so a reviewer that keeps the proposal unchanged
+publishes it. `review: "off"` skips it; `review: "on-failure"` stages the
+unreviewed graph and reviews it, window by window, only when staging refuses
+it as a whole (a repeated entity key, no record that survives its checks, or
+personal memories a document must not propose), so a clean document costs one
+extraction call per window. A relation dropped on its own with a
+`RecordDropped` note starts no review. `true` and `false` still decode from
+plugin options, as `"always"` and `"off"`; a `RagConfig` written in TypeScript
+takes only the words. A graph omitted under version 5 because the review copied that version's
 proposal back, or under version 6 because a relation that supersedes nothing
 gave a `null` or no `supersession`, is extracted again by ingesting the
 document's next revision. Query planning (`queryPlanning`)
@@ -160,8 +167,8 @@ traversal, is bounded by `queryTimeoutMs`.
 
 One extraction call reads at most `maxExtractionChars` of a document (48,000
 by default; `maxSourceChars`, 200,000 by default, bounds the document). A
-longer document is extracted window by window, each window and its review in
-their own helper calls, and the windows' entities and relationships are merged
+longer document is extracted window by window, each window and any review of
+it in their own helper calls, and the windows' entities and relationships are merged
 with exact offsets into the whole document before anything is staged. A
 quote that differs from the document only in typography (curly or straight
 quotes and apostrophes, a dash for a hyphen, a no-break space) is anchored
@@ -211,7 +218,7 @@ Plugin: `@xandreed/plugin-rag` · Version **0.18.0** · Plugin API **3** · Scop
   "embeddingVersion": "1",
   "embeddingDimensions": 1536,
   "graph": false,
-  "review": true,
+  "review": "always",
   "queryPlanning": false,
   "rerank": false,
   "queryTimeoutMs": 10000,
@@ -276,7 +283,19 @@ Plugin: `@xandreed/plugin-rag` · Version **0.18.0** · Plugin API **3** · Scop
       "type": "boolean"
     },
     "review": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "always",
+            "on-failure",
+            "off"
+          ]
+        },
+        {
+          "type": "boolean"
+        }
+      ]
     },
     "queryPlanning": {
       "type": "boolean"

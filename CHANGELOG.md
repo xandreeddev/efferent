@@ -164,6 +164,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   keeps a failure's new `diagnostic` whole on the job and in its failed
   listing, as `knowledgeStoreConformance`'s `knowledge.failure-reason` check
   now requires.
+- `extractKnowledge` takes `review` as a `KnowledgeReviewPolicy` (`"always"`,
+  `"on-failure"` or `"off"`; `true` was `"always"`, `false` `"off"`) and a
+  `stage` function, and returns what `stage` returns: a host that ran its own
+  engine over it moves its staging into `stage` (usually
+  `(extraction) => stageKnowledgeExtraction(source, snapshot, extraction, now)`,
+  after any change of its own), or passes `Effect.succeed` to keep the merged
+  extraction. `MemoryConfig.review` and `RagConfig.review` are the policy too:
+  options given to the plugins still decode `true` and `false`, but the
+  config's type takes only the words, so TypeScript that builds a
+  `MemoryConfig` or `RagConfig` itself (`{ ...memoryDefaults, review: false }`
+  passed to `MemoryLive` or `RagLive`) no longer compiles until it writes
+  `"off"` for `false` and `"always"` for `true`.
 
 ### Changed
 
@@ -464,6 +476,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the job payload, layout unchanged, return it from `status` and `failed`,
   and decode a failure stored before it without one. No prompt or output
   schema changes, so `KNOWLEDGE_EXTRACTION_VERSION` stays 8.
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: a host
+  chooses when extraction is reviewed, since the review pass costs a second
+  helper call per window, doubles extraction latency and does not help every
+  helper model. The memory and document engines' `review` option is a
+  `KnowledgeReviewPolicy`: `"always"` reviews every window's extraction, as
+  `true` did; `"off"` never reviews, as `false` did; `"on-failure"` extracts
+  every window without review and stages the merged extraction, and only when
+  staging refuses it as a whole with `Invalid` (a repeated entity key, no
+  record that survives its checks, a document extraction that proposes
+  personal memories) reviews each window's extraction with
+  `knowledgeReviewPrompt` and stages the reviewed merge. A record staging
+  drops on its own is reported as a `RecordDropped` note and starts no
+  review. A review reply that does not decode fails with diagnostic stage
+  `review`, and a reviewed extraction staging still refuses fails at stage
+  `stage`. `true` and `false` still decode from plugin options, so existing
+  configurations keep their behaviour, and the default stays `"always"`; a
+  typed `MemoryConfig` or `RagConfig` needs the word (see Migration). `extractKnowledge`
+  takes the policy and the `stage` function its refusal is read from. No
+  prompt or output schema changes, and `CurrentKnowledgeHelperCall`'s
+  purposes are unchanged, so `KNOWLEDGE_EXTRACTION_VERSION` stays 8.
 
 ### Fixed
 

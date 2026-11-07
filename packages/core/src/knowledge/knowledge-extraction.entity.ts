@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Schema, SchemaTransformation } from "effect"
 import { KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemoryId, KnowledgeMemoryKind, KnowledgeSupersession } from "./knowledge.entity.js"
 
 const Key = Schema.Trimmed.check(Schema.isNonEmpty(), Schema.isMaxLength(160))
@@ -77,3 +77,21 @@ export type KnowledgeExtraction = typeof KnowledgeExtraction.Type
  */
 export const KnowledgeExtractionWindow = Schema.Struct({ part: Positive, parts: Positive, start: Offset, end: Offset })
 export type KnowledgeExtractionWindow = typeof KnowledgeExtractionWindow.Type
+/**
+ * When extraction reviews its proposal against the source before staging (`extractKnowledge`).
+ * `always`: every window's extraction is reviewed, a second helper call per window. `off`: none is.
+ * `on-failure`: the windows are extracted without review and their merge is staged; only when
+ * staging refuses it as a whole (`Invalid`: a repeated entity key, no record that survives its
+ * checks) is each window's extraction reviewed and the reviewed merge staged. A record staging
+ * drops on its own (a `RecordDropped` note) does not refuse the extraction, so it starts no
+ * review. A boolean decodes as before: `true` is `always`, `false` is `off`.
+ * @public
+ */
+export const KnowledgeReviewPolicy = Schema.Union([
+  Schema.Literals(["always", "on-failure", "off"]),
+  Schema.Boolean.pipe(Schema.decodeTo(Schema.Literals(["always", "off"]), SchemaTransformation.transform({
+    decode: (review) => review ? "always" as const : "off" as const,
+    encode: (policy) => policy === "always",
+  }))),
+])
+export type KnowledgeReviewPolicy = typeof KnowledgeReviewPolicy.Type

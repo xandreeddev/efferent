@@ -45,7 +45,7 @@ describe("native memory engine", () => {
       const extracted = fixtureExtraction(frame("knowledge-source", prompt))
       return JSON.stringify({ ...extracted, entities: extracted.entities.map((entity) => ({ ...entity, existing: person })) })
     }
-    const fixture = yield* makeMemoryFixture(reply, { review: true })
+    const fixture = yield* makeMemoryFixture(reply, { review: "always" })
     yield* fixture.memory.capture(fixtureEnqueue("session-a", "I prefer tea."))
     expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
     yield* fixture.memory.capture(fixtureEnqueue("session-b", "I prefer coffee now."))
@@ -59,6 +59,33 @@ describe("native memory engine", () => {
     const proposals = (yield* Ref.get(fixture.calls)).filter((_, index) => index % 2 === 1).map((prompt) => frame("knowledge-proposal", prompt))
     expect(proposals.some((proposal) => proposal.includes("\"_id\":\"Option\""))).toBe(false)
     expect(proposals.map((proposal) => /"existing":(null|"[^"]*")/.exec(proposal)?.[1])).toEqual(["null", `"${snapshot.graph.entities[0]!.id}"`])
+  }))))
+
+  test("review on failure asks for one extraction per clean source and reviews only the source whose extraction staging refuses", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const frame = (tag: string, prompt: string) => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(prompt)?.[1] ?? ""
+    // The source that mentions coffee is extracted with every record naming a speaker key it never defines; its review defines the person.
+    const reply = (prompt: string, call: Option.Option<KnowledgeHelperCall>) => {
+      const extracted = fixtureExtraction(frame("knowledge-source", prompt))
+      const undefinedSpeaker = !Option.exists(call, (value) => value.purpose === "review") && frame("knowledge-source", prompt).includes("coffee")
+      return JSON.stringify(undefinedSpeaker ? { entities: [], memories: extracted.memories.map((memory) => ({ ...memory, entities: ["speaker:self"] })), assertions: [] } : extracted)
+    }
+    const purposes = (fixture: { readonly helperCalls: Ref.Ref<ReadonlyArray<Option.Option<KnowledgeHelperCall>>> }) =>
+      Ref.get(fixture.helperCalls).pipe(Effect.map((calls) => calls.map((call) => Option.getOrElse(Option.map(call, (value) => value.purpose), () => "none"))))
+    const fixture = yield* makeMemoryFixture(reply, { review: "on-failure" })
+    yield* fixture.memory.capture(fixtureEnqueue("session-a", "I prefer tea."))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
+    expect(yield* purposes(fixture)).toEqual(["extract"])
+    yield* fixture.memory.capture(fixtureEnqueue("session-b", "I prefer coffee now."))
+    expect(yield* fixture.memory.process(fixtureScope, 10)).toBe(1)
+    expect(yield* purposes(fixture)).toEqual(["extract", "extract", "review"])
+    expect((yield* fixture.store.snapshot(fixtureScope)).memories.map((memory) => memory.text)).toEqual(["I prefer tea.", "I prefer coffee now."])
+    // Off never reviews: the refused source fails at stage.
+    const off = yield* makeMemoryFixture(reply, { review: "off" })
+    const job = yield* off.memory.capture(fixtureEnqueue("session-b", "I prefer coffee now."))
+    yield* Effect.flip(off.memory.process(fixtureScope, 1))
+    expect(yield* purposes(off)).toEqual(["extract"])
+    expect(Option.map(yield* off.memory.status(fixtureScope, job.id), (status) => status.phase._tag === "Failed" ? [status.phase.message, status.phase.diagnostic] : status.phase._tag))
+      .toEqual(Option.some(["The extraction refers to an undefined entity key", { stage: "stage" }]))
   }))))
 
   test("an extraction that gives no supersession for records that supersede nothing publishes them, null or absent alike", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -194,7 +221,7 @@ describe("native memory engine", () => {
     // A reviewer that wrote an absent identity as an encoded option: the review reply drifted at that field.
     const extracted = fixtureExtraction(text)
     const echoed = JSON.stringify({ ...extracted, entities: extracted.entities.map((entity) => ({ ...entity, existing: { _id: "Option", _tag: "None" } })) })
-    const reviewed = yield* failing("reviewed", [whole, new UtilityCompletion({ text: echoed, usage: { ...zeroUsage, outputTokens: 700, totalTokens: 700 }, finishReason: "stop" })], { review: true })
+    const reviewed = yield* failing("reviewed", [whole, new UtilityCompletion({ text: echoed, usage: { ...zeroUsage, outputTokens: 700, totalTokens: 700 }, finishReason: "stop" })], { review: "always" })
     expect(Option.map(reviewed.phase, (phase) => phase._tag === "Failed" ? phase.diagnostic : undefined)).toEqual(Option.some({ stage: "review", path: ["entities", 0, "existing"], finishReason: "stop", outputTokens: 700, window: { part: 1, parts: 1 } }))
     expect(reviewed.attributes["efferent.knowledge.failure.path"]).toBe("$[\"entities\"][0][\"existing\"]")
     // Staging refused it: every record names an entity key the extraction never defines.
@@ -469,7 +496,7 @@ describe("bounded memory extraction", () => {
   }
 
   test("a long source makes several bounded calls, each with its job context, and keeps exact provenance", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const fixture = yield* makeMemoryFixture(reply, { review: true, maxExtractionChars: 1_000, maxSourceChars: 4_000, maxHelperOutputTokens: 256 })
+    const fixture = yield* makeMemoryFixture(reply, { review: "always", maxExtractionChars: 1_000, maxSourceChars: 4_000, maxHelperOutputTokens: 256 })
     const job = yield* fixture.memory.capture(fixtureEnqueue("long", text))
     expect(yield* fixture.memory.process(fixtureScope, 1)).toBe(1)
     const windows = knowledgeExtractionWindows(text, 1_000)
