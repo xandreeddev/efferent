@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { KnowledgeRecallHistoryMode, LogEntry, RunId, SessionAddress } from "@xandreed/core"
+import { KnowledgeRecallHistoryMode, KnowledgeReviewPolicy, LogEntry, RunId, SessionAddress } from "@xandreed/core"
 
 const Positive = Schema.Int.check(Schema.isGreaterThan(0))
 /** Native memory processing and bounded recall. @public */
@@ -9,8 +9,14 @@ export const MemoryConfig = Schema.Struct({
   embeddingModel: Schema.Trimmed.check(Schema.isNonEmpty()),
   embeddingVersion: Schema.Trimmed.check(Schema.isNonEmpty()),
   embeddingDimensions: Positive,
-  /** Review extracted facts against their evidence before publication. */
-  review: Schema.Boolean,
+  /**
+   * When extraction reviews its proposal against the evidence before publication
+   * (`KnowledgeReviewPolicy`): `"always"`, a second helper call per window, the default;
+   * `"on-failure"`, only after staging refuses the unreviewed extraction as a whole (a repeated
+   * entity key, no record that survives); `"off"`, never. `true` and `false` decode as `"always"`
+   * and `"off"`; the decoded config, and so a config built in TypeScript, holds the word.
+   */
+  review: KnowledgeReviewPolicy,
   /** Reconcile updates and derive profiles/routines; false is an additive extraction ablation. */
   consolidate: Schema.Boolean,
   /** Opt in to one UtilityLlm call per recall that plans complementary searches. */
@@ -118,7 +124,7 @@ export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
 export const memoryDefaults: MemoryConfig = {
   namespace: "default", collection: "memory", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
-  review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
+  review: "always", consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
   recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15, restatementSimilarity: 0.92, pastEventWeight: 0.5,

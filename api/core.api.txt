@@ -227,6 +227,7 @@ const KnowledgeRecallResult
 const KnowledgeRecallTemporalMode
 const KnowledgeRequeue
 const KnowledgeRerank
+const KnowledgeReviewPolicy
 const KnowledgeScope
 const KnowledgeSearch
 const KnowledgeSnapshot
@@ -814,6 +815,7 @@ type KnowledgeRecallResult
 type KnowledgeRecallTemporalMode
 type KnowledgeRequeue
 type KnowledgeRerank
+type KnowledgeReviewPolicy
 type KnowledgeScope
 type KnowledgeSearch
 type KnowledgeSnapshot

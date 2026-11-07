@@ -83,8 +83,12 @@ and job.
 
 ## 3. Check the proposal, then embed it
 
-By default, a second helper call reviews the proposal against its source.
-The engine then checks the schema, entity references, supporting memories,
+By default (`review: "always"`), a second helper call reviews the proposal
+against its source. `review: "off"` skips it. `review: "on-failure"` skips it
+unless the checks below refuse the proposal as a whole (an entity key defined
+twice, or no record left once each failed record is dropped): then the engine
+reviews the proposal and checks the reviewed one instead, so a clean source
+costs one helper call. The engine then checks the schema, entity references, supporting memories,
 supersession targets and source spans. For M2, one citation is:
 
 ```json
@@ -289,7 +293,8 @@ recurrence inference, and neither authorizes an action.
 
 ## Defaults and current limits
 
-Review, consolidation and the processing worker are on by default. Query
+Review (`"always"`), consolidation and the processing worker are on by
+default; `review: "on-failure"` reviews only a proposal the checks refuse. Query
 planning and reranking are off: each would add a helper-model call to every
 recall. The worker scans queued work; the host can instead process
 jobs explicitly. Embedding labels describe the host-supplied model's identity;

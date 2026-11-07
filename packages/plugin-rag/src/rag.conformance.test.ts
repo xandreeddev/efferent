@@ -13,7 +13,7 @@ const droppingHelper = UtilityLlm.of({ complete: () => Effect.succeed(new Utilit
 }) })) })
 const checks = knowledgeConformance({
   open: Effect.map(makeRag(), ({ knowledge }) => ({ knowledge, scope })),
-  droppingExtraction: Effect.map(makeRag({ graph: true, review: false }, undefined, undefined, droppingHelper), ({ knowledge }) => ({ knowledge, scope })),
+  droppingExtraction: Effect.map(makeRag({ graph: true, review: "off" }, undefined, undefined, droppingHelper), ({ knowledge }) => ({ knowledge, scope })),
   failingExtraction: Effect.map(makeRag({ graph: true, maxAttempts: 2 }, undefined, undefined, invalidHelper), ({ knowledge }) => ({ knowledge, scope })),
 })
 

@@ -63,14 +63,14 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
       Effect.option,
     ),
   })
-  const extractGraph = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.gen(function* () {
-    const reviewed = yield* extractKnowledge({
-      source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
-      consolidate: true, review: config.review, complete: complete(job),
-    })
-    if (reviewed.memories.length > 0) return yield* Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories", diagnostic: { stage: "stage" } }))
-    return yield* stageKnowledgeExtraction(source, snapshot, reviewed, yield* Clock.currentTimeMillis)
-  }).pipe(Effect.catchDefect((cause) => Effect.fail(unavailable("Document graph extraction encountered an unexpected failure", cause))))
+  const extractGraph = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot): Effect.Effect<KnowledgeStage, KnowledgeError> => Effect.suspend(() => extractKnowledge({
+    source, snapshot, mode: "document", maxContextChars: config.maxCandidateChars, maxExtractionChars: config.maxExtractionChars,
+    consolidate: true, review: config.review, complete: complete(job),
+    // A document proposes no personal memories: staging refuses one as a whole, which `on-failure` reviews.
+    stage: (extraction) => extraction.memories.length > 0
+      ? Effect.fail(new KnowledgeError({ reason: "Invalid", message: "Document extraction must not create personal memories", diagnostic: { stage: "stage" } }))
+      : Effect.flatMap(Clock.currentTimeMillis, (now) => stageKnowledgeExtraction(source, snapshot, extraction, now)),
+  })).pipe(Effect.catchDefect((cause) => Effect.fail(unavailable("Document graph extraction encountered an unexpected failure", cause))))
   // The graph is optional: a failed extraction is retried with the job, and its last attempt publishes the chunks without it.
   const extract = (job: KnowledgeJob, source: KnowledgeSource, snapshot: KnowledgeSnapshot, last: boolean): Effect.Effect<KnowledgeStage, KnowledgeError | RagGraphFailed> => Effect.gen(function* () {
     const chunks = chunkDocument(source, config.chunkChars, config.overlapChars)

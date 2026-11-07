@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Match, Option, Ref, Schema } from "effect"
+import { Effect, Match, Option, Ref, Result, Schema } from "effect"
 import {
-  KnowledgeAssertionId, KnowledgeEntityId, KnowledgeMemory, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId,
+  KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemory, KnowledgeMemoryId, KnowledgeRecallResult, KnowledgeSourceId,
 } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource, KnowledgeStage } from "./knowledge.entity.js"
-import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
+import { KnowledgeExtraction, KnowledgeReviewPolicy } from "./knowledge-extraction.entity.js"
 import { knowledgeMemorySupport, knowledgeRecordDate, validateKnowledgeStage } from "./knowledge.entity.functions.js"
 import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
@@ -85,7 +85,7 @@ describe("native extraction and retrieval contracts", () => {
     // Through extraction with review: a reviewer that returns the proposal unchanged keeps the extraction.
     const reviews = yield* Ref.make<ReadonlyArray<string>>([])
     const reviewed = yield* extractKnowledge({
-      source: { ...source, text }, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: true,
+      source: { ...source, text }, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: "always", stage: Effect.succeed,
       complete: (prompt, purpose) => purpose === "extract" ? Effect.succeed(reply(wire))
         : Ref.update(reviews, (all) => [...all, prompt]).pipe(Effect.as(reply(proposalOf(prompt)))),
     })
@@ -248,7 +248,7 @@ describe("bounded extraction windows", () => {
   test("a long source makes one bounded call per window and merges exact whole-source provenance", () => Effect.runPromise(Effect.gen(function* () {
     const calls = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly part: string }>>([])
     const merged = yield* extractKnowledge({
-      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: true,
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "always", stage: Effect.succeed,
       complete: (prompt, purpose) => Ref.update(calls, (all) => [...all, { purpose, part: sourceFrame(prompt) }]).pipe(
         Effect.as(reply(windowExtractor(sourceFrame(prompt)))),
       ),
@@ -271,7 +271,7 @@ describe("bounded extraction windows", () => {
     const prompts = yield* Ref.make<ReadonlyArray<string>>([])
     const decoded = yield* extraction
     const result = yield* extractKnowledge({
-      source, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      source, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: (prompt) => Ref.update(prompts, (all) => [...all, prompt]).pipe(Effect.as(reply(plain))),
     })
     expect(result).toEqual(decoded)
@@ -284,7 +284,7 @@ describe("bounded extraction windows", () => {
       source: longSource, snapshot: { ...empty, graph: { ...empty.graph, entities: [
         { id: KnowledgeEntityId.make("known-a"), name: "Atlas", type: "project", aliases: [], provenance: [] },
         { id: KnowledgeEntityId.make("known-b"), name: "Atlas", type: "project", aliases: [], provenance: [] },
-      ] } }, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      ] } }, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: (prompt) => {
         const part = sourceFrame(prompt)
         const value = windowExtractor(part)
@@ -311,7 +311,7 @@ describe("bounded extraction windows", () => {
     expect(windows).toHaveLength(2)
     const quote = "Atlas's site moved north - twice."
     const merged = yield* extractKnowledge({
-      source: typographic, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      source: typographic, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: () => Effect.succeed(reply({
         entities: [{ key: "atlas", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Atlas" }] }],
         memories: [],
@@ -333,7 +333,7 @@ describe("bounded extraction windows", () => {
       return { ...value, assertions: [...value.assertions, { ...value.assertions[0]!, key: "stray", subject: "nobody" }] }
     }
     const merged = yield* extractKnowledge({
-      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: (prompt) => Effect.succeed(reply(stray(sourceFrame(prompt)))),
     })
     const stage = yield* stageKnowledgeExtraction(longSource, empty, merged, 30)
@@ -341,7 +341,7 @@ describe("bounded extraction windows", () => {
     expect(stage.notes?.map((note) => [note._tag, Match.valueTags(note, { GraphOmitted: () => "", RecordDropped: (dropped) => dropped.key }), note.message]))
       .toEqual(["stray", ...windows.slice(1).map((window) => `stray~${window.part}`)].map((key) => ["RecordDropped", key, "The extraction refers to an undefined entity key"]))
     const repeated = yield* extractKnowledge({
-      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: (prompt) => {
         const value = windowExtractor(sourceFrame(prompt))
         return Effect.succeed(reply({ ...value, entities: [...value.entities, value.entities[0]!] }))
@@ -817,10 +817,10 @@ const drinkReply = {
 const reported = (text: string, finishReason: "stop" | "length", outputTokens: number) =>
   new UtilityCompletion({ text, usage: { ...zeroUsage, inputTokens: 3_000, outputTokens, totalTokens: 3_000 + outputTokens }, finishReason })
 /** Extract `drink` with these replies, by call: the error it fails with. */
-const failing = (replies: ReadonlyArray<UtilityCompletion>, options: { readonly review: boolean; readonly source?: KnowledgeSource; readonly maxExtractionChars?: number } = { review: false }) => Effect.gen(function* () {
+const failing = (replies: ReadonlyArray<UtilityCompletion>, options: { readonly review: KnowledgeReviewPolicy; readonly source?: KnowledgeSource; readonly maxExtractionChars?: number } = { review: "off" }) => Effect.gen(function* () {
   const calls = yield* Ref.make(0)
   return yield* extractKnowledge({
-    source: options.source ?? drink, snapshot: empty, mode: "memory", maxContextChars: 1_000, maxExtractionChars: options.maxExtractionChars ?? 1_000, consolidate: true, review: options.review,
+    source: options.source ?? drink, snapshot: empty, mode: "memory", maxContextChars: 1_000, maxExtractionChars: options.maxExtractionChars ?? 1_000, consolidate: true, review: options.review, stage: Effect.succeed,
     complete: () => Ref.getAndUpdate(calls, (count) => count + 1).pipe(Effect.map((index) => replies[Math.min(index, replies.length - 1)]!)),
   }).pipe(Effect.flip)
 })
@@ -843,7 +843,7 @@ describe("extraction failure diagnostics", () => {
 
   test("a review reply that echoes an encoded option fails at review, and a completion that reports neither finish nor usage records neither", () => Effect.runPromise(Effect.gen(function* () {
     const echoed = { ...drinkReply, entities: [{ ...drinkReply.entities[0]!, existing: { _id: "Option", _tag: "None" } }] }
-    const error = yield* failing([reported(JSON.stringify(drinkReply), "stop", 640), new UtilityCompletion({ text: JSON.stringify(echoed), usage: zeroUsage })], { review: true })
+    const error = yield* failing([reported(JSON.stringify(drinkReply), "stop", 640), new UtilityCompletion({ text: JSON.stringify(echoed), usage: zeroUsage })], { review: "always" })
     expect([error.message, error.diagnostic]).toEqual(["The extraction model returned an invalid knowledge object", { stage: "review", path: ["entities", 0, "existing"], window: { part: 1, parts: 1 } }])
   })))
 
@@ -851,7 +851,7 @@ describe("extraction failure diagnostics", () => {
     const windows = knowledgeExtractionWindows(longText, 1_000)
     const calls = yield* Ref.make(0)
     const error = yield* extractKnowledge({
-      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: false,
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "off", stage: Effect.succeed,
       complete: (prompt) => Ref.getAndUpdate(calls, (count) => count + 1).pipe(Effect.map((index) => index === 1 ? reported("Here is the extraction you asked for.", "stop", 9) : reply(windowExtractor(sourceFrame(prompt))))),
     }).pipe(Effect.flip)
     expect([error.message, error.diagnostic]).toEqual(["The document model returned an invalid graph extraction", { stage: "extract", path: [], finishReason: "stop", outputTokens: 9, window: { part: 2, parts: windows.length } }])
@@ -868,5 +868,105 @@ describe("extraction failure diagnostics", () => {
     const entitiesOnly = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...drinkReply, memories: [], assertions: [{ ...drinkReply.assertions[0]!, subject: "the-user" }] })
     const orphaned = yield* Effect.flip(stageKnowledgeExtraction(drink, empty, entitiesOnly, 30))
     expect([orphaned.reason, orphaned.message, orphaned.diagnostic]).toEqual(["Invalid", "The extraction refers to an undefined entity key", { stage: "stage" }])
+  })))
+})
+
+/**
+ * Replies staging refuses as a whole, one per class seen from helper models, rewritten over `drink`: every record names a
+ * speaker key the reply never defines, the reply defines an entity key twice, or every record quotes text the source lacks.
+ */
+const refusedReplies = {
+  "The extraction refers to an undefined entity key": { entities: [], memories: [], assertions: [{ ...drinkReply.assertions[0]!, subject: "speaker:self" }] },
+  "The extraction repeats an entity key": { ...drinkReply, entities: [drinkReply.entities[0]!, drinkReply.entities[0]!] },
+  "The extraction cites an invalid source span": { ...drinkReply, entities: [{ ...drinkReply.entities[0]!, spans: [{ start: 12, end: 16, quote: "Nora" }] }] },
+}
+/** Extract `drink` under a policy, staging with `stageKnowledgeExtraction`: extraction replies `extracted`, review replies `drinkReply`. */
+const underPolicy = (review: KnowledgeReviewPolicy, extracted: unknown, source: KnowledgeSource = drink) => Effect.gen(function* () {
+  const purposes = yield* Ref.make<ReadonlyArray<string>>([])
+  const result = yield* extractKnowledge({
+    source, snapshot: empty, mode: "memory", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review,
+    complete: (_, purpose) => Ref.update(purposes, (all) => [...all, purpose]).pipe(Effect.as(reply(purpose === "extract" ? extracted : drinkReply))),
+    stage: (extraction) => stageKnowledgeExtraction(source, empty, extraction, 30),
+  }).pipe(Effect.result)
+  return { result, purposes: yield* Ref.get(purposes) }
+})
+
+describe("extraction review policy", () => {
+  test("the policy decodes its three words, and a boolean as before: true is always, false is off", () => Effect.runPromise(Effect.gen(function* () {
+    const decode = Schema.decodeUnknownEffect(KnowledgeReviewPolicy)
+    expect(yield* Effect.forEach(["always", "on-failure", "off", true, false], (value) => decode(value), { concurrency: 1 })).toEqual(["always", "on-failure", "off", "always", "off"])
+    expect(String(yield* Effect.flip(decode("sometimes")))).toContain("\"always\" | \"on-failure\" | \"off\"")
+    // The policy encodes as its word, so a stored or printed config keeps on-failure.
+    const encode = Schema.encodeEffect(KnowledgeReviewPolicy)
+    expect(yield* Effect.forEach(["always", "on-failure", "off"] as const, (policy) => encode(policy), { concurrency: 1 })).toEqual(["always", "on-failure", "off"])
+  })))
+
+  test("a clean extraction takes two calls when always reviewed, one when off or reviewed on failure, and stages the same records", () => Effect.runPromise(Effect.gen(function* () {
+    const runs = yield* Effect.forEach(["always", "on-failure", "off"] as const, (policy) => underPolicy(policy, drinkReply), { concurrency: 1 })
+    expect(runs.map((run) => run.purposes)).toEqual([["extract", "review"], ["extract"], ["extract"]])
+    const staged = runs.map((run) => Result.map(run.result, (stage) => [stage.entities.map((entity) => entity.name), stage.assertions.map((assertion) => assertion.text), stage.notes ?? []]))
+    expect(staged).toEqual(runs.map(() => Result.succeed([["Noor"], ["Noor only drinks oat milk in her coffee."], []])))
+  })))
+
+  test("an extraction staging refuses as a whole is reviewed once on failure and its review staged; off fails at stage", () => Effect.runPromise(Effect.gen(function* () {
+    yield* Effect.forEach(Object.entries(refusedReplies), ([message, refused]) => Effect.gen(function* () {
+      const onFailure = yield* underPolicy("on-failure", refused)
+      expect(onFailure.purposes).toEqual(["extract", "review"])
+      expect(Result.map(onFailure.result, (stage) => stage.assertions.map((assertion) => assertion.text))).toEqual(Result.succeed(["Noor only drinks oat milk in her coffee."]))
+      const off = yield* underPolicy("off", refused)
+      expect(off.purposes).toEqual(["extract"])
+      expect(Result.match(off.result, { onSuccess: () => undefined, onFailure: (error) => [error.reason, error.message, error.diagnostic] })).toEqual(["Invalid", message, { stage: "stage" }])
+      expect((yield* underPolicy("always", refused)).purposes).toEqual(["extract", "review"])
+    }), { concurrency: 1 })
+  })))
+
+  test("on failure, an extraction that keeps its entities but none of its relations is reviewed, as it published nothing", () => Effect.runPromise(Effect.gen(function* () {
+    const entitiesOnly = { ...drinkReply, assertions: [{ ...drinkReply.assertions[0]!, subject: "speaker:self" }] }
+    const run = yield* underPolicy("on-failure", entitiesOnly)
+    expect(run.purposes).toEqual(["extract", "review"])
+    expect(Result.map(run.result, (stage) => stage.assertions.map((assertion) => assertion.text))).toEqual(Result.succeed(["Noor only drinks oat milk in her coffee."]))
+  })))
+
+  test("on failure, a record staging drops on its own starts no review and is reported as a note", () => Effect.runPromise(Effect.gen(function* () {
+    const oneStray = { ...drinkReply, assertions: [...drinkReply.assertions, { ...drinkReply.assertions[0]!, key: "stray", subject: "speaker:self" }] }
+    const run = yield* underPolicy("on-failure", oneStray)
+    expect(run.purposes).toEqual(["extract"])
+    expect(Result.map(run.result, (stage) => [stage.assertions.length, (stage.notes ?? []).map((note) => note.message)])).toEqual(Result.succeed([1, ["The extraction refers to an undefined entity key"]]))
+  })))
+
+  test("on failure, a review reply that does not decode fails at review, and a failure that is not a refusal is returned unreviewed", () => Effect.runPromise(Effect.gen(function* () {
+    const purposes = yield* Ref.make<ReadonlyArray<string>>([])
+    const extract = (stage: (extraction: KnowledgeExtraction) => Effect.Effect<unknown, KnowledgeError>) => extractKnowledge({
+      source: drink, snapshot: empty, mode: "memory", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "on-failure",
+      complete: (_, purpose) => Ref.update(purposes, (all) => [...all, purpose]).pipe(Effect.as(purpose === "extract" ? reply(refusedReplies["The extraction repeats an entity key"]) : reported("{\"entities\":", "length", 4096))),
+      stage,
+    }).pipe(Effect.flip)
+    const reviewed = yield* extract((extraction) => stageKnowledgeExtraction(drink, empty, extraction, 30))
+    expect([reviewed.reason, reviewed.diagnostic]).toEqual(["Invalid", { stage: "review", path: [], finishReason: "length", outputTokens: 4096, window: { part: 1, parts: 1 } }])
+    expect(yield* Ref.getAndSet(purposes, [])).toEqual(["extract", "review"])
+    const unavailable = yield* extract(() => Effect.fail(new KnowledgeError({ reason: "Unavailable", message: "The store is unavailable" })))
+    expect([unavailable.reason, unavailable.message]).toEqual(["Unavailable", "The store is unavailable"])
+    expect(yield* Ref.get(purposes)).toEqual(["extract"])
+  })))
+
+  test("on failure over several windows, a repeated key that refuses the merge reviews every window once and stages the reviewed merge", () => Effect.runPromise(Effect.gen(function* () {
+    const windows = knowledgeExtractionWindows(longText, 1_000)
+    const calls = yield* Ref.make<ReadonlyArray<{ readonly purpose: string; readonly part: string }>>([])
+    const stage = yield* extractKnowledge({
+      source: longSource, snapshot: empty, mode: "document", maxContextChars: 1_000, maxExtractionChars: 1_000, consolidate: true, review: "on-failure",
+      complete: (prompt, purpose) => {
+        const part = sourceFrame(prompt)
+        const value = windowExtractor(part)
+        // The second window's extraction defines Atlas twice; its review does not.
+        const repeated = purpose === "extract" && part === longText.slice(windows[1]!.start, windows[1]!.end)
+        return Ref.update(calls, (all) => [...all, { purpose, part }]).pipe(Effect.as(reply(repeated ? { ...value, entities: [...value.entities, value.entities[0]!] } : value)))
+      },
+      stage: (extraction) => stageKnowledgeExtraction(longSource, empty, extraction, 30),
+    })
+    const seen = yield* Ref.get(calls)
+    expect(seen.map((call) => call.purpose)).toEqual([...windows.map(() => "extract"), ...windows.map(() => "review")])
+    expect(seen.filter((call) => call.purpose === "review").map((call) => call.part)).toEqual(windows.map((window) => longText.slice(window.start, window.end)))
+    expect(stage.assertions).toHaveLength(windows.length)
+    expect(stage.notes ?? []).toEqual([])
   })))
 })

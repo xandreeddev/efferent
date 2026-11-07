@@ -31,10 +31,11 @@ through KnowledgeStore. Node 24 and Bun.
   Prefer paragraph, heading and line boundaries; never normalize source text.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is
   opt-in and requires UtilityLlm; extracted entity identities and evidence
-  are validated by core before publication. Review is enabled by default.
-  Extraction runs through core's `extractKnowledge`: one call (and one
-  review) per `maxExtractionChars` window, merged before staging; it decodes
-  each helper completion. A failed job is recorded with `knowledgeJobFailure`,
+  are validated by core before publication. Review defaults to `always`;
+  `on-failure` reviews only an extraction staging refuses as a whole.
+  Extraction runs through core's `extractKnowledge`: one call per
+  `maxExtractionChars` window, merged and staged through its `stage`, with
+  review as the policy says; it decodes each helper completion. A failed job is recorded with `knowledgeJobFailure`,
   which keeps an extraction's diagnostic, set on the span with
   `knowledgeFailureAttributes`.
 - Every UtilityLlm call runs inside `CurrentKnowledgeHelperCall` (purpose,

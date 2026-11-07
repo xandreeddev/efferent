@@ -74,6 +74,17 @@ anchored where it matches and stored as the turn's exact text, so a reply
 written with typographic punctuation keeps its memories. Entity matching is conservative; ambiguous names can remain
 separate. Model quality still determines whether an extracted claim is useful.
 
+`review` says when the review pass runs: `"always"` (the default) reviews
+every extraction, a second helper call per window; `"off"` never reviews;
+`"on-failure"` stages the unreviewed extraction and reviews it, window by
+window, only when staging refuses it as a whole (a repeated entity key, or no
+record that survives its checks). A record dropped on its own with a
+`RecordDropped` note starts no review. With `"on-failure"` a clean turn costs
+one extraction call; a refused one is reviewed once and its reviewed
+extraction staged, and a review reply that does not decode fails at stage
+`review`. `true` and `false` still decode from plugin options, as `"always"`
+and `"off"`; a `MemoryConfig` written in TypeScript takes only the words.
+
 One extraction call reads at most `maxExtractionChars` of a source (48,000 by
 default, the same as `maxSourceChars`, so a default source is one call). A
 longer source is extracted window by window and the results are merged with
@@ -317,7 +328,7 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "embeddingModel": "host",
   "embeddingVersion": "1",
   "embeddingDimensions": 1536,
-  "review": true,
+  "review": "always",
   "consolidate": true,
   "queryPlanning": false,
   "rerank": false,
@@ -384,7 +395,19 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
       "exclusiveMinimum": 0
     },
     "review": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "always",
+            "on-failure",
+            "off"
+          ]
+        },
+        {
+          "type": "boolean"
+        }
+      ]
     },
     "consolidate": {
       "type": "boolean"

@@ -2226,7 +2226,7 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "embeddingModel": "host",
   "embeddingVersion": "1",
   "embeddingDimensions": 1536,
-  "review": true,
+  "review": "always",
   "consolidate": true,
   "queryPlanning": false,
   "rerank": false,
@@ -2290,7 +2290,19 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
       "exclusiveMinimum": 0
     },
     "review": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "always",
+            "on-failure",
+            "off"
+          ]
+        },
+        {
+          "type": "boolean"
+        }
+      ]
     },
     "consolidate": {
       "type": "boolean"
@@ -2583,7 +2595,7 @@ Optional: `@xandreed/core/UtilityLlm`
   "embeddingVersion": "1",
   "embeddingDimensions": 1536,
   "graph": false,
-  "review": true,
+  "review": "always",
   "queryPlanning": false,
   "rerank": false,
   "queryTimeoutMs": 10000,
@@ -2645,7 +2657,19 @@ Optional: `@xandreed/core/UtilityLlm`
       "type": "boolean"
     },
     "review": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "always",
+            "on-failure",
+            "off"
+          ]
+        },
+        {
+          "type": "boolean"
+        }
+      ]
     },
     "queryPlanning": {
       "type": "boolean"
