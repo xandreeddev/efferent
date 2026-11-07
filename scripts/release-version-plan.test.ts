@@ -37,6 +37,15 @@ describe("shared release version plans", () => {
     expect(manifests).toHaveLength(24)
     expect(success(sharedReleaseVersion(manifests))).toBe(manifests[0]!.version)
   })
+
+  test("every published-version marker appears once, at the current version, in the files the release rewrites", async () => {
+    const current = success(readSourceManifest(await readFile(new URL("../packages/core/package.json", import.meta.url), "utf8"))).version
+    const files = ["README.md", "packages/website/src/content/docs/getting-started.md", "packages/website/src/pages/index.astro"]
+    for (const name of files) {
+      const source = await readFile(new URL(`../${name}`, import.meta.url), "utf8")
+      expect(Result.isSuccess(publishedVersionText(name, source, current, "999.0.0"))).toBe(true)
+    }
+  })
   test("accepts the captured complete CLI plan and refuses partial, unchanged or foreign releases", () => {
     expect(success(releaseVersionPlan(JSON.stringify(plan), previous))).toEqual({ hasChanges: true, version: next, summaries: ["Preserve source evidence."] })
     expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: plan.releases.slice(1) }), previous))).toBe(true)
