@@ -519,7 +519,7 @@ export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
   knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
-  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, traverseKnowledgeGraph,
+  knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, traverseKnowledgeGraph,
   validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph, isRetryableKnowledgeFailure,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,
 } from "./knowledge/knowledge.entity.functions.js"

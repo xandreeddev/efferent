@@ -66,7 +66,14 @@ section, catch-up and profile included, shares one retrieval timeout. A failed
 semantic recall still permits profile injection. `recallSection: "off"` contributes
 no section and runs no catch-up; `memoryRecallNote` renders the section's text,
 without the catch-up, for a host that places recall in its step context or omits it.
-Keep the note and the section one function: their texts never diverge.
+Keep the note and the section one function: their texts never diverge. Recall
+text (section, note and `recall_memory`) is dated by default (`recallDates`):
+`renderMemoryRecall` labels each record with the UTC date of the revision its
+first span cites (`knowledgeRecordDate`), a memory with its kind and evidence,
+a relation with its validity, from the recall's `sources`; the section reads
+a profile record's dating revision when neither the recall nor the narrowing
+did, and shows the record undated when that read fails. Today's date is said
+only with `recallToday`, so the default text stays stable for cached prefixes.
 
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, window memory, sessions, and tool discovery without adding
@@ -80,8 +87,9 @@ those dependencies to production. See the repository skills and definition of do
 | Parameters, failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:21` | exact, `src/memory-capability.adapter.test.ts:39` |
 | Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:41`, `:47` | exact, `src/memory-capability.adapter.test.ts:57`; exact, `src/memory-capability.adapter.test.ts:60`; exact, `src/memory-capability.adapter.test.ts:61` |
 | Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:44` | exact, `src/memory-capability.adapter.test.ts:58` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:114` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first | `src/memory-capability.adapter.ts:171` | exact, `src/memory-capability.adapter.test.ts:129` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:131`, `:176` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:126`, `:131`, `:176` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:256` | exact, `src/memory-capability.adapter.test.ts:186`; exact, `src/memory-capability.adapter.test.ts:196` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 

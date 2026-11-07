@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { EmbeddingModel, LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
+import { TestClock } from "effect/testing"
+import { ConversationId, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, entriesOfEvents, knowledgeEngineId, makeKnowledgeIndexMemory, zeroUsage } from "@xandreed/core"
 import type { KnowledgeHelperCall } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -310,4 +311,83 @@ describe("memory through the real agent", () => {
     const before = yield* memory.recall({ scope, query: "Oslo Bergen chess", limit: 5, maxChars: 2000, graph: { perspective: { validAt: source.occurredAt - 1 }, depth: 1 } })
     expect(before.graph.assertions.map((assertion) => assertion.text)).toEqual(["The user lives in Bergen."])
   }))))
+  test("turns captured on different days are recalled with the day each was said, and a relation with when it held", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map(() => [1, 0]), usage: { inputTokens: undefined } }) })
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The helper model: the first turn states a drink and a home; the second a move without a date and a daily habit.
+    // It reuses the user entity and supersedes the earlier home from the candidates it is shown.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly entities: ReadonlyArray<{ readonly id: string; readonly name: string }>; readonly assertions: ReadonlyArray<{ readonly id: string; readonly predicate: string }> } =
+        JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const user = (quote: string) => ({ key: "user", name: "User", type: "person", aliases: [], existing: candidates.entities.find((entity) => entity.name === "User")?.id ?? null, spans: [span(text, quote)] })
+      const memory = (key: string, kind: string, said: string, quote: string) => ({ key, kind, text: said, entities: ["user"], spans: [span(text, quote)], evidence: { _tag: "Stated" }, supersedes: [] })
+      const lives = (city: string, quote: string, supersedes: ReadonlyArray<string>) => ({
+        key: "lives", subject: "user", predicate: "lives_in", object: { _tag: "Entity", key: city.toLowerCase() }, text: `The user lives in ${city}.`, spans: [span(text, quote)],
+        validFrom: null, validTo: null, supersedes, supersession: supersedes.length === 0 ? "correction" : "change",
+      })
+      return text.includes("Bergen") ? {
+        entities: [user("I prefer"), { key: "bergen", name: "Bergen", type: "city", aliases: [], existing: null, spans: [span(text, "Bergen")] }],
+        memories: [memory("tea", "preference", "The user prefers tea.", "I prefer tea.")], assertions: [lives("Bergen", "I live in Bergen.", [])],
+      } : {
+        entities: [user("I moved"), { key: "oslo", name: "Oslo", type: "city", aliases: [], existing: null, spans: [span(text, "Oslo")] }],
+        memories: [memory("walks", "fact", "The user walks to work every morning.", "I walk to work every morning.")],
+        assertions: [lives("Oslo", "I moved to Oslo.", candidates.assertions.filter((assertion) => assertion.predicate === "lives_in").map((assertion) => assertion.id))],
+      }
+    }
+    const utility = UtilityLlm.of({ complete: (prompt) => Effect.succeed(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage })) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    // The answering model: in the later conversation it first asks where the user lived before the move, then answers.
+    const before = Date.UTC(2026, 3, 1)
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Effect.gen(function* () {
+        const step = (yield* Ref.getAndUpdate(prompts, (all) => [...all, JSON.stringify(request.prompt.content)])).length
+        return (request.tools.some((tool) => tool.name === "recall_memory") && step === 2
+          ? [{ type: "tool-call", id: "earlier-home", name: "recall_memory", params: { query: "Where did I live?", validAt: before } }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]
+          : [{ type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } }]) as never
+      }),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const told = { owner: "dated-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000b1") }
+    const asked = { owner: "dated-owner", id: ConversationId.make("00000000-0000-4000-8000-0000000000b2") }
+    yield* sessions.create(told)
+    yield* sessions.create(asked)
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: told.owner, namespace: "default", collection: "memory" }
+    const say = (session: typeof told, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    // Each turn is captured with its start time as the source's occurrence time, and processed before the next.
+    yield* TestClock.setTime(Date.UTC(2026, 2, 2, 9, 30))
+    yield* say(told, "drink", "I prefer tea. I live in Bergen.")
+    expect(yield* memory.process(scope, 10)).toBe(1)
+    yield* TestClock.setTime(Date.UTC(2026, 4, 14, 18))
+    yield* say(told, "moved", "I moved to Oslo. I walk to work every morning.")
+    expect(yield* memory.process(scope, 10)).toBe(1)
+    yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
+    yield* say(asked, "asking", "What do I drink, where do I live, and how do I get to work?")
+    const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body] : [])
+    expect(recalled.map((section) => section.version)).toEqual(["2"])
+    const text = recalled[0]?.text ?? ""
+    expect(text).toContain("Each record is dated by when its source was said or written; a validity range bounds when a relationship held.\n\n<recalled-memory>")
+    expect(text).toContain("[2026-03-02 · preference · stated] The user prefers tea.")
+    expect(text).toContain("[2026-05-14 · fact · stated] The user walks to work every morning.")
+    expect(text).toContain("[2026-05-14 · valid 2026-05-14–present (start taken from when it was said)] The user lives in Oslo.")
+    // Today's date is opt-in, and the relation the move ended is not current now.
+    expect(text.includes("Today is")).toBe(false)
+    expect(text.includes("Bergen")).toBe(false)
+    // The tool renders the same way: as of before the move, the earlier home, said in March and held until the move.
+    const toolTurn = (yield* Ref.get(prompts)).at(-1) ?? ""
+    expect(toolTurn).toContain("[2026-03-02 · valid until 2026-05-14] The user lives in Bergen.")
+  })).pipe(Effect.provide(TestClock.layer()))))
 })

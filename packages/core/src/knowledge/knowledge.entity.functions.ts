@@ -99,6 +99,20 @@ export const citedKnowledgeSources = (evidence: Pick<KnowledgeRecallResult, "can
   ]
   return [...new Map(spans.map((span) => [JSON.stringify([span.source.id, span.source.revision]), span.source] as const)).values()]
 }
+/**
+ * When a record was said or written: the occurrence time of the source revision its first span
+ * cites, read from `sources` (a recall result's `sources`, or `KnowledgeIndex.sourceInfo`); none
+ * when that revision is not among them, as for a forgotten source or a result encoded before
+ * `sources` existed. `stageKnowledgeExtraction` puts a record's own spans first, before the
+ * evidence of its entities and of the memories it is inferred from, and a relation's history copy
+ * keeps the earlier relation's spans first, so the first span is where the record was stated.
+ * @public
+ */
+export const knowledgeRecordDate = (provenance: ReadonlyArray<KnowledgeProvenance>, sources: ReadonlyArray<Pick<KnowledgeSourceInfo, "ref" | "occurredAt">>): Option.Option<number> =>
+  Option.fromNullishOr(provenance[0]).pipe(
+    Option.flatMap((first) => Option.fromNullishOr(sources.find((info) => info.ref.id === first.source.id && info.ref.revision === first.source.revision))),
+    Option.map((info) => info.occurredAt),
+  )
 
 const atTime = (start: number, end: Option.Option<number>, time: number): boolean => start <= time && Option.match(end, { onNone: () => true, onSome: (until) => time < until })
 const validEdge = (edge: KnowledgeAssertion, query: KnowledgeTraversal): boolean =>

@@ -29,6 +29,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `dropped-record` check by publishing a source whose extraction proposed
   evidence; giving the subject `droppingExtraction` also checks the note.
 
+- `@xandreed/plugin-memory`: `MemoryConfig` gains the required keys
+  `recallDates` and `recallToday`. Options merged over `memoryDefaults` (the
+  plugin's options, or `{ ...memoryDefaults, … }`) need no change; a host
+  that builds a whole `MemoryConfig` by hand adds both. The default recall
+  text now carries dates: a host that pins it, or wants the earlier text, sets
+  `recallDates: false`.
+
 ### Changed
 
 - `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: one
@@ -71,6 +78,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   without a date, keeping null for an unknown start that supersedes nothing.
   The pinned extraction, document, part and review prompts change
   accordingly; the query and rerank prompts do not.
+- `@xandreed/plugin-memory`: recalled memory shows the model when each
+  record was said. `renderMemoryRecall(result, maxChars, options?)` takes the
+  result's `sources` (optional) and `{ dates?, now? }`; given sources, it
+  states one reading rule above the evidence ("Each record is dated by when
+  its source was said or written; a validity range bounds when a relationship
+  held.") and labels a memory `[YYYY-MM-DD · <kind> · stated|inferred]`, a
+  passage `[YYYY-MM-DD]` and a relation `[YYYY-MM-DD · valid
+  <from>–<to|present>]` (or `valid until <to>`), adding `(start taken from
+  when it was said)` for an observed start. With `now` it adds "Today is
+  YYYY-MM-DD." and marks a relation whose validity ended `(no longer current
+  since <date>)`. Dates are UTC calendar dates of the revision each record's
+  first span cites; a record whose revision is not in `sources` stays
+  undated. Without sources, or with `dates: false`, the text is unchanged.
+  The budget still bounds the records' text; labels add about 30 characters
+  per record. The `memory.recalled` section (version 2), `memoryRecallNote`
+  and `recall_memory` render this way: `MemoryConfig.recallDates` defaults to
+  `true`, which changes their default text (a record's date never changes, so
+  a recorded section stays stable across turns), and `recallToday` defaults
+  to `false`, since today's date changes the text daily. The section dates
+  profile records from the recall's sources and reads a profile record's
+  dating revision once when the recall did not cite it; when that read fails
+  the record is shown undated. Set `recallDates: false` for the earlier text.
+- `@xandreed/core`: `knowledgeRecordDate(provenance, sources)`, the
+  occurrence time of the source revision a record's first span cites. Staging
+  puts a record's own spans first, before its entities' evidence and its
+  supports, and a relation's history copy keeps the earlier relation's spans
+  first; both are now documented and tested.
 - `@xandreed/core`: `knowledgeStoreConformance` gains
   `knowledge.stage-notes` (graph and dropped-record notes kept through
   restaging and publication); `longTermMemoryConformance` and

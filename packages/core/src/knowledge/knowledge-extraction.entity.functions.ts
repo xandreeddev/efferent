@@ -265,6 +265,9 @@ const problemIf = (failed: boolean, message: string): Option.Option<string> => f
  * survive (entities alone do not count; with the first drop's message). A world change that supersedes a record
  * without a `validFrom` takes the source's occurrence time, with basis
  * `observed`; a `validFrom` the extraction gives has basis `stated`.
+ * A staged record cites its own spans first, then its entities' evidence and,
+ * for an inferred memory, its supports' evidence; a relation's history copy
+ * keeps the earlier relation's spans first. `knowledgeRecordDate` relies on it.
  * @public
  */
 export const stageKnowledgeExtraction = Effect.fnUntraced(function* (

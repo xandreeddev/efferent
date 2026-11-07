@@ -101,6 +101,15 @@ neighborhood separately. Graph assertions have no numeric importance or edge
 weight. When enabled, the helper-model reranker can reorder or omit memory
 candidates; it does not rerank the graph assertions themselves.
 
+Recalled evidence is dated (`recallDates`, on by default): each record shows
+the UTC date its source was said or written, a memory its kind and whether it
+was stated or inferred, and a relation its validity, under one reading rule
+([dated memory recall](/docs/concepts/native-knowledge/#dated-memory-recall)).
+The labels add about 30 characters per record beyond `recallChars`, which
+still bounds the records' text. A record's date never changes, so the recorded
+section stays stable; `recallToday` (off by default) also says today's date
+and marks relations that have ended, at the cost of text that changes daily.
+
 Automatic context also prepends up to four active preference/profile records,
 independently of the question's search ranking. See the
 [worked retrieval example](/docs/guides/memory-engine/#5-find-memories-for-a-new-question)
@@ -217,7 +226,9 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
   "graphDepth": 2,
   "recallSection": "turn",
   "sectionOrder": 700,
-  "tools": true
+  "tools": true,
+  "recallDates": true,
+  "recallToday": false
 }
 ```
 
@@ -350,6 +361,12 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     },
     "tools": {
       "type": "boolean"
+    },
+    "recallDates": {
+      "type": "boolean"
+    },
+    "recallToday": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -377,7 +394,9 @@ Plugin: `@xandreed/plugin-memory` · Version **0.18.0** · Plugin API **3** · S
     "graphDepth",
     "recallSection",
     "sectionOrder",
-    "tools"
+    "tools",
+    "recallDates",
+    "recallToday"
   ],
   "additionalProperties": true
 }

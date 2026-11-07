@@ -473,8 +473,55 @@ The text the tools give the model is exported for a host's own tools:
 `read_knowledge` page) from `@xandreed/plugin-rag`, and `renderMemoryRecall`
 and `memorySourcePage` from `@xandreed/plugin-memory`. A host tool that
 retrieves evidence its own way and renders it with them gives the model the
-same framing, citations and data rule as the built-in tools; the metadata is
-for the host and is not added to that text.
+same framing, citations and data rule as the built-in tools. The host's
+metadata is not added to that text; memory recall adds each source's date
+(below).
+
+### Dated memory recall
+
+Memory recall shows the model when each record was said. Given a result's
+`sources`, `renderMemoryRecall(result, maxChars, options)` states one reading
+rule above the evidence, "Each record is dated by when its source was said or
+written; a validity range bounds when a relationship held.", and labels each
+record:
+
+```text
+[2026-03-02 · preference · stated] The user prefers tea.
+Source: conversation:…:1:0 revision 1, characters 6-19
+
+[2026-05-14 · valid 2026-05-14–present (start taken from when it was said)] The user lives in Oslo.
+Source: conversation:…:1:0 revision 1, characters 6-22
+```
+
+- A memory: the date, its kind and whether it was stated or inferred.
+- A passage: the date.
+- A relation: the date and, when known, its validity: `valid <from>–<to>`,
+  `valid <from>–present`, or `valid until <to>` when only its end is known.
+  A start taken from the source's occurrence time (`validFromBasis:
+  "observed"`) says so.
+
+The date is the UTC calendar date of the source revision the record's first
+span cites (`knowledgeRecordDate(provenance, sources)` in
+`@xandreed/core`). Staging puts a record's own spans first, before its
+entities' evidence and its supports, and a relation's history copy keeps the
+earlier relation's spans first, so that revision is where the record was
+stated. A record whose revision is missing from `sources` (forgotten, or a
+result encoded before `sources` existed) keeps its other labels, undated.
+
+`options.now` adds "Today is YYYY-MM-DD." after the reading rule and marks a
+relation whose validity ended by then `(no longer current since <date>)`.
+Without `sources`, or with `dates: false`, the text is exactly as before
+records were dated. The `maxChars` budget still bounds the records' text and
+citations; the labels add about 30 characters per record on top of it.
+
+The memory engine renders its `memory.recalled` section, `memoryRecallNote`
+and `recall_memory` this way. `recallDates` (default `true`) turns the labels
+on: a record's date never changes, so a recorded section or a cached prefix
+stays the same from turn to turn. `recallToday` (default `false`) adds
+today's date from the clock; the text then changes daily, so turn it on only
+where recall is not part of a cached prefix. The section dates its profile
+records from the recall's `sources` and, for a record whose revision the
+recall did not cite, reads that revision (`LongTermMemory.source`) once.
 
 ## Place memory recall yourself
 

@@ -2245,7 +2245,9 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "graphDepth": 2,
   "recallSection": "turn",
   "sectionOrder": 700,
-  "tools": true
+  "tools": true,
+  "recallDates": true,
+  "recallToday": false
 }
 ```
 
@@ -2375,6 +2377,12 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     },
     "tools": {
       "type": "boolean"
+    },
+    "recallDates": {
+      "type": "boolean"
+    },
+    "recallToday": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -2402,7 +2410,9 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "graphDepth",
     "recallSection",
     "sectionOrder",
-    "tools"
+    "tools",
+    "recallDates",
+    "recallToday"
   ],
   "additionalProperties": true
 }

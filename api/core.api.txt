@@ -490,6 +490,7 @@ const knowledgeExtractionPrompt
 const knowledgeExtractionWindows
 const knowledgeNarrowingAdmits
 const knowledgeQueryPrompt
+const knowledgeRecordDate
 const knowledgeRerankPrompt
 const knowledgeReviewPrompt
 const knowledgeScopeKey
