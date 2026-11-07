@@ -9,6 +9,32 @@ import type { MemoryConfig } from "./memory.entity.js"
 import { fixtureEnqueue, fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
 describe("native memory engine", () => {
+  test("processing takes a new memory about the same entity, close enough to an active one, as a restatement of it; restatementSimilarity false keeps both", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // The extraction reuses the person the candidates already know, so both sources' memories are about one entity.
+    const restating = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const person = /"id":"([^"]*:entity:person)"/.exec(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "")?.[1] ?? null
+      const extracted = fixtureExtraction(text)
+      return JSON.stringify({ ...extracted, entities: extracted.entities.map((entity) => ({ ...entity, existing: person })), assertions: [] })
+    }
+    const run = (options: Partial<MemoryConfig>) => Effect.gen(function* () {
+      const fixture = yield* makeMemoryFixture(restating, options)
+      yield* fixture.memory.capture(fixtureEnqueue("session-a", "I prefer tea."))
+      yield* fixture.memory.process(fixtureScope, 10)
+      yield* fixture.memory.capture(fixtureEnqueue("session-b", "I really prefer tea."))
+      yield* fixture.memory.process(fixtureScope, 10)
+      const memories = (yield* fixture.store.snapshot(fixtureScope)).memories
+      const job = yield* fixture.store.status(fixtureScope, KnowledgeJobId.make("job:session-b"))
+      return { memories, corroborations: Option.flatMap(job, (value) => value.stage).pipe(Option.map((stage) => stage.corroborations ?? [])) }
+    })
+    const merged = yield* run({})
+    expect(merged.memories.map((memory) => [memory.text, memory.mentions?.map((ref) => String(ref.id))])).toEqual([["I prefer tea.", ["session-a", "session-b"]]])
+    expect(Option.map(merged.corroborations, (all) => all.map((corroboration) => [corroboration.memory, corroboration.provenance.map((span) => span.quote)]))).toEqual(Option.some([[merged.memories[0]!.id, ["I really prefer tea."]]]))
+    const separate = yield* run({ restatementSimilarity: false })
+    expect(separate.memories.map((memory) => memory.text)).toEqual(["I prefer tea.", "I really prefer tea."])
+    expect(separate.corroborations).toEqual(Option.some([]))
+  }))))
+
   test("capture is durable before processing, then facts and graph evidence are recalled across sessions", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const text = "I prefer tea."
     const fixture = yield* makeMemoryFixture([JSON.stringify(fixtureExtraction(text))])

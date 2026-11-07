@@ -5,7 +5,7 @@ import { check, expect, sameJson } from "../conformance.functions.js"
 import type { Knowledge, LongTermMemory } from "../ports/knowledge.port.js"
 import { KnowledgeJobId, KnowledgeSourceId } from "./knowledge.entity.js"
 import type { KnowledgeRecallResult, KnowledgeScope } from "./knowledge.entity.js"
-import { citedKnowledgeSources } from "./knowledge.entity.functions.js"
+import { citedKnowledgeSources, knowledgeMemoryMentions } from "./knowledge.entity.functions.js"
 
 type MemoryFixture = { readonly memory: Context.Service.Shape<typeof LongTermMemory>; readonly scope: KnowledgeScope }
 /** Fresh native memory service, with workers disabled and valid scripted extraction. @public */
@@ -18,6 +18,13 @@ export interface LongTermMemorySubject {
    * that the source publishes evidence recall cites.
    */
   readonly droppingExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
+  /**
+   * A fresh service like `open` whose extraction of a second source with the kit's text ("I prefer
+   * tea.") names the memory the kit's source published, among its candidates, as the memory it
+   * restates (`restates`). Without it, `restated-source` runs on `open` and shows only that both
+   * sources publish evidence recall cites.
+   */
+  readonly restatingExtraction?: Effect.Effect<MemoryFixture, unknown, Scope.Scope>
 }
 type KnowledgeFixture = { readonly knowledge: Context.Service.Shape<typeof Knowledge>; readonly scope: KnowledgeScope }
 /** Fresh document service, with workers disabled and valid scripted extraction if enabled. @public */
@@ -70,6 +77,27 @@ const droppedRecord = (prefix: string, open: Effect.Effect<Fixture, unknown, Sco
     if (dropping !== undefined) yield* expect(id, Option.exists(Option.flatMap(status, (value) => value.stage), (stage) =>
       (stage.notes ?? []).some((note) => note._tag === "RecordDropped") && stage.memories.length + stage.entities.length + stage.assertions.length > 0),
     "the completed job did not record the record it dropped, or staged none of the others")
+  })))
+}
+
+/** A second source that restates the first one's memory adds its evidence to that memory instead of writing another. */
+const restatedSource = (open: Effect.Effect<Fixture, unknown, Scope.Scope>, restating: Effect.Effect<Fixture, unknown, Scope.Scope> | undefined): ConformanceCheck => {
+  const id = "long_term_memory.restated-source"
+  return check(id, id, () => Effect.scoped(Effect.gen(function* () {
+    const fixture = yield* (restating ?? open)
+    const first = yield* seed(fixture, id)
+    const again = { ...sourceOf(fixture.scope), ref: { id: KnowledgeSourceId.make("facade-again"), revision: 1 } }
+    yield* fixture.facade.accept({ jobId: KnowledgeJobId.make("facade-again-job"), source: again, engine: "facade-kit", expectedRevision: Option.none() })
+    const processed = yield* fixture.facade.process(fixture.scope, 1)
+    const recalled = yield* fixture.facade.recall({ scope: fixture.scope, query: "tea", limit: 10, maxChars: 1000, graph: false })
+    const cited = citedKnowledgeSources(recalled).map((ref) => ref.id)
+    yield* expect(id, processed === 1 && cited.includes(first.source.id) && cited.includes(again.ref.id), "a second source was not processed, or recall did not cite both sources")
+    if (restating === undefined) return
+    const memories = recalled.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory] : [])
+    const mentions = (memory: (typeof memories)[number]) => knowledgeMemoryMentions(memory).map((ref) => ref.id)
+    yield* expect(id, memories.some((memory) => mentions(memory).includes(first.source.id) && mentions(memory).includes(again.ref.id)) &&
+      !memories.some((memory) => memory.provenance.every((span) => span.source.id === again.ref.id)),
+    "the restating source wrote a memory of its own instead of adding its evidence and mention to the memory it restated")
   })))
 }
 
@@ -153,9 +181,15 @@ const facadeConformance = (prefix: string, open: Effect.Effect<Fixture, unknown,
 }
 
 const memoryFacade = ({ memory, scope }: MemoryFixture): Fixture => ({ scope, facade: { ...memory, accept: memory.capture } })
-/** Async processing, isolation, source retention, deletion, cited source info and retrieval contracts, and a dropped record that does not stop the rest; no model-quality assertions. @public */
-export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> =>
-  facadeConformance("long_term_memory", Effect.map(subject.open, memoryFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, memoryFacade))
+/**
+ * Async processing, isolation, source retention, deletion, cited source info and retrieval contracts, a dropped record
+ * that does not stop the rest, and a restating source that adds evidence to the memory it restates; no model-quality assertions.
+ * @public
+ */
+export const longTermMemoryConformance = (subject: LongTermMemorySubject): ReadonlyArray<ConformanceCheck> => [
+  ...facadeConformance("long_term_memory", Effect.map(subject.open, memoryFacade), subject.droppingExtraction === undefined ? undefined : Effect.map(subject.droppingExtraction, memoryFacade)),
+  restatedSource(Effect.map(subject.open, memoryFacade), subject.restatingExtraction === undefined ? undefined : Effect.map(subject.restatingExtraction, memoryFacade)),
+]
 const failedExtraction = (subject: KnowledgeSubject): ConformanceCheck => {
   const id = "knowledge_facade.failed-extraction"
   return check(id, id, () => Effect.scoped(Effect.gen(function* () {

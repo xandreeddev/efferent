@@ -1,7 +1,7 @@
 import { Match, Option, Order } from "effect"
 import {
   KnowledgeError,
-  type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
+  type KnowledgeAssertion, type KnowledgeCandidate, type KnowledgeCandidates, type KnowledgeCorroboration, type KnowledgeEmbeddingSpace, type KnowledgeErrorReason, type KnowledgeJobFailure,
   type KnowledgeMemory, type KnowledgeProvenance, type KnowledgeRecallResult, type KnowledgeScope, type KnowledgeSnapshot, type KnowledgeSource,
   type KnowledgeSourceFilter, type KnowledgeSourceRef, type KnowledgeStage, type KnowledgeSubgraph, type KnowledgeTraversal, type KnowledgeMetadataFilter,
   type KnowledgeMetadataValue, type KnowledgeRecall, type KnowledgeSourceInfo, type KnowledgeSupport,
@@ -136,6 +136,44 @@ export const knowledgeMemoryMentions = (memory: Pick<KnowledgeMemory, "mentions"
     Stated: () => memory.provenance.slice(0, 1).map((span) => span.source),
     Inferred: () => memory.provenance.map((span) => span.source),
   }))
+const sameKnowledgeSpan = (left: KnowledgeProvenance, right: KnowledgeProvenance): boolean =>
+  sameKnowledgeRevision(left.source, right.source) && left.start === right.start && left.end === right.end && left.quote === right.quote
+const distinctSpans = (spans: ReadonlyArray<KnowledgeProvenance>): ReadonlyArray<KnowledgeProvenance> =>
+  spans.filter((span, index) => spans.findIndex((other) => sameKnowledgeSpan(other, span)) === index)
+/** Corroborations of one memory by one revision as one, their spans once each, in first-seen order. */
+export const mergeKnowledgeCorroborations = (corroborations: ReadonlyArray<KnowledgeCorroboration>): ReadonlyArray<KnowledgeCorroboration> =>
+  corroborations.reduce<ReadonlyArray<KnowledgeCorroboration>>((merged, next) => {
+    const same = (prior: KnowledgeCorroboration) => prior.memory === next.memory && sameKnowledgeRevision(prior.mention, next.mention)
+    return merged.some(same)
+      ? merged.map((prior) => same(prior) ? { ...prior, provenance: distinctSpans([...prior.provenance, ...next.provenance]) } : prior)
+      : [...merged, { ...next, provenance: distinctSpans(next.provenance) }]
+  }, [])
+/**
+ * A memory with a corroboration's evidence (`KnowledgeCorroboration`): its spans appended to the
+ * provenance and its revision to the mentions, each once. A memory stored before `mentions` existed
+ * gains them, starting with those its provenance gave it (`knowledgeMemoryMentions`). Stores apply it
+ * at publication.
+ * @public
+ */
+export const corroborateKnowledgeMemory = (memory: KnowledgeMemory, corroboration: KnowledgeCorroboration): KnowledgeMemory => ({
+  ...memory,
+  provenance: distinctSpans([...memory.provenance, ...corroboration.provenance]),
+  mentions: distinctRevisions([...knowledgeMemoryMentions(memory), corroboration.mention]),
+})
+/**
+ * A memory another source published, once `source` (the revision being published) replaces its
+ * earlier revisions: without their spans and mentions, which a corroboration of those revisions
+ * (or the evidence of an entity they defined) put there. None when nothing would be left of its
+ * provenance or of the mentions it has; a store then retires the memory. Stores apply it at
+ * publication to the active memories the publishing source did not publish.
+ * @public
+ */
+export const stripKnowledgeRevisions = (memory: KnowledgeMemory, source: KnowledgeSourceRef): Option.Option<KnowledgeMemory> => {
+  const stale = (ref: KnowledgeSourceRef) => ref.id === source.id && ref.revision !== source.revision
+  const provenance = memory.provenance.filter((span) => !stale(span.source))
+  const mentions = memory.mentions?.filter((ref) => !stale(ref))
+  return provenance.length === 0 || mentions?.length === 0 ? Option.none() : Option.some({ ...memory, provenance, ...(mentions === undefined ? {} : { mentions }) })
+}
 /**
  * The episode a source revision belongs to, as `knowledgeEpisodeCount` tells episodes apart: the
  * nonblank `metadata.episode` its info in `infos` names, else the source itself.
@@ -236,16 +274,34 @@ export const citesKnowledgeSources = (provenance: ReadonlyArray<KnowledgeProvena
 /** Whether every span of a record's provenance cites a revision the predicate admits (`knowledgeNarrowingAdmits`). @public */
 export const citesAdmittedKnowledge = (provenance: ReadonlyArray<KnowledgeProvenance>, admits: (ref: KnowledgeSourceRef) => boolean): boolean =>
   provenance.length > 0 && provenance.every((span) => admits(span.source))
-/** Whether a candidate is evidence from the listed sources only (`KnowledgeSearch.sources`). */
-export const knowledgeCandidateWithin = (candidate: KnowledgeCandidate, sources: KnowledgeSourceFilter): boolean => Match.valueTags(candidate, {
-  Memory: ({ memory }) => citesKnowledgeSources(memory.provenance, sources),
-  Chunk: ({ chunk }) => citesKnowledgeSources([chunk.provenance], sources),
+/**
+ * A memory as a narrowed read shows it (`knowledgeNarrowingAdmits`): none unless every span of its
+ * own evidence cites an admitted revision. The revisions that restated a stated memory after it was
+ * published (`KnowledgeCorroboration`: its mentions after the first) are no part of that evidence: their
+ * spans and mentions stay where admitted and are left out elsewhere, so a restatement outside the
+ * reach neither hides the memory from it nor shows there.
+ * @public
+ */
+export const narrowKnowledgeMemory = (memory: KnowledgeMemory, admits: (ref: KnowledgeSourceRef) => boolean): Option.Option<KnowledgeMemory> => {
+  const later = memory.evidence._tag === "Stated" && memory.mentions !== undefined ? knowledgeMemoryMentions(memory).slice(1) : []
+  const among = (refs: ReadonlyArray<KnowledgeSourceRef>) => (ref: KnowledgeSourceRef) => refs.some((other) => sameKnowledgeRevision(other, ref))
+  if (!citesAdmittedKnowledge(memory.provenance.filter((span) => !among(later)(span.source)), admits)) return Option.none()
+  const hidden = later.filter((ref) => !admits(ref))
+  return Option.some(hidden.length === 0 ? memory : {
+    ...memory, provenance: memory.provenance.filter((span) => !among(hidden)(span.source)), mentions: knowledgeMemoryMentions(memory).filter((ref) => !among(hidden)(ref)),
+  })
+}
+/** A candidate as a narrowed read shows it: a chunk whose revision is admitted, a memory as `narrowKnowledgeMemory` narrows it. */
+export const narrowKnowledgeCandidate = (candidate: KnowledgeCandidate, admits: (ref: KnowledgeSourceRef) => boolean): Option.Option<KnowledgeCandidate> => Match.valueTags(candidate, {
+  Memory: (value) => Option.map(narrowKnowledgeMemory(value.memory, admits), (memory): KnowledgeCandidate => ({ ...value, memory })),
+  Chunk: (value) => citesAdmittedKnowledge([value.chunk.provenance], admits) ? Option.some(value) : Option.none(),
 })
-/** Whether a candidate is evidence from admitted revisions only (`knowledgeNarrowingAdmits`). */
-export const knowledgeCandidateAdmitted = (candidate: KnowledgeCandidate, admits: (ref: KnowledgeSourceRef) => boolean): boolean => Match.valueTags(candidate, {
-  Memory: ({ memory }) => citesAdmittedKnowledge(memory.provenance, admits),
-  Chunk: ({ chunk }) => citesAdmittedKnowledge([chunk.provenance], admits),
-})
+/** Whether a candidate is evidence from the listed sources (`KnowledgeSearch.sources`), as `narrowKnowledgeCandidate` admits it. */
+export const knowledgeCandidateWithin = (candidate: KnowledgeCandidate, sources: KnowledgeSourceFilter): boolean =>
+  Option.isSome(narrowKnowledgeCandidate(candidate, (ref) => sources.includes(ref.id)))
+/** Whether a candidate is evidence from admitted revisions (`knowledgeNarrowingAdmits`), as `narrowKnowledgeCandidate` admits it. */
+export const knowledgeCandidateAdmitted = (candidate: KnowledgeCandidate, admits: (ref: KnowledgeSourceRef) => boolean): boolean =>
+  Option.isSome(narrowKnowledgeCandidate(candidate, admits))
 /**
  * Whether a source revision's metadata matches a filter (`KnowledgeMetadataFilter`): every key
  * holds, at the top level, a value equal to the key's scalar or to one of its alternatives.
@@ -300,11 +356,14 @@ export const narrowKnowledgeGraphBy = (graph: KnowledgeSubgraph, admits: (ref: K
 
 /**
  * Publication checks common to durable adapters. No extraction output is trusted as provenance; a
- * memory's `mentions` must be revisions its provenance cites.
+ * memory's `mentions` must be revisions its provenance cites. A corroboration's spans must cite its
+ * own revision and its memory must be a stated memory of the snapshot (`Invalid` otherwise), still
+ * active and not retired by the stage (`Conflict` otherwise).
  * @public
  */
 export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: KnowledgeSnapshot, sources: ReadonlyArray<KnowledgeSource>): Option.Option<KnowledgeError> => {
-  const spans = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.entities.flatMap((entity) => entity.provenance), ...stage.assertions.flatMap((edge) => edge.provenance)]
+  const corroborations = stage.corroborations ?? []
+  const spans = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.entities.flatMap((entity) => entity.provenance), ...stage.assertions.flatMap((edge) => edge.provenance), ...corroborations.flatMap((corroboration) => corroboration.provenance)]
   const badSpan = spans.some((span) => span.start < 0 || span.end <= span.start || span.quote.length === 0 || !sources.some((source) => source.ref.id === span.source.id && source.ref.revision === span.source.revision && span.end <= source.text.length && source.text.slice(span.start, span.end) === span.quote))
   const ids = [...stage.memories.map((memory) => `memory:${memory.id}`), ...stage.chunks.map((chunk) => `chunk:${chunk.id}`), ...stage.entities.map((entity) => `entity:${entity.id}`), ...stage.assertions.map((edge) => `assertion:${edge.id}`)]
   const entityIds: ReadonlyArray<string> = [...snapshot.graph.entities.map((entity) => entity.id), ...stage.entities.map((entity) => entity.id)]
@@ -325,6 +384,12 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
   }))
   // A memory mentions only revisions its provenance cites, so forgetting any of them removes it with the rest of its evidence.
   const strayMention = stage.memories.some((memory) => (memory.mentions ?? []).some((ref) => !memory.provenance.some((span) => sameKnowledgeRevision(span.source, ref))))
+  // A corroboration's spans are its revision's own, and it evidences a stated memory: a restatement of an inference is no restatement.
+  const corroborated = (id: string) => snapshot.memories.find((memory) => memory.id === id)
+  const strayCorroboration = corroborations.some((corroboration) => corroboration.provenance.some((span) => !sameKnowledgeRevision(span.source, corroboration.mention)) ||
+    corroborated(corroboration.memory)?.evidence._tag === "Inferred" || stage.memories.some((memory) => memory.id === corroboration.memory))
+  const corroborationInactive = corroborations.some((corroboration) => stage.retireMemories.includes(corroboration.memory) ||
+    !Option.exists(Option.fromNullishOr(corroborated(corroboration.memory)), (memory) => Option.isNone(memory.knownTo)))
   const retireMissing = stage.retireMemories.some((id) => !snapshot.memories.some((memory) => memory.id === id && Option.isNone(memory.knownTo))) ||
     stage.retireAssertions.some((id) => !snapshot.graph.assertions.some((edge) => edge.id === id && Option.isNone(edge.knownTo)))
   const intervalInvalid = (start: number, until: Option.Option<number>): boolean => !Number.isInteger(start) || start < 0 || Option.exists(until, (end) => !Number.isInteger(end) || end < start)
@@ -334,8 +399,9 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
       onSome: (from) => intervalInvalid(from, edge.validTo),
     }))
   const unsupportedProvenance = stage.memories.some((memory) => memory.provenance.length === 0) || stage.assertions.some((edge) => edge.provenance.length === 0)
-  if (badSpan || badInterval || unsupportedProvenance || strayMention || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || stage.memories.some((memory) => cyclic(memory.id, []))) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, mentions, intervals, duplicate identities, or unsupported derivations" }))
+  if (badSpan || badInterval || unsupportedProvenance || strayMention || strayCorroboration || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || stage.memories.some((memory) => cyclic(memory.id, []))) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, mentions, corroborations, intervals, duplicate identities, or unsupported derivations" }))
   if (retireMissing) return Option.some(new KnowledgeError({ reason: "Conflict", message: "A retired record is no longer active" }))
+  if (corroborationInactive) return Option.some(new KnowledgeError({ reason: "Conflict", message: "A corroborated memory is no longer active" }))
   const vectors = stage.memories.flatMap((memory) => Option.toArray(memory.embedding)).concat(stage.chunks.flatMap((chunk) => Option.toArray(chunk.embedding)))
   const spaces = vectors.map((vector) => vector.space)
   const existing = snapshot.memories.flatMap((memory: KnowledgeMemory) => Option.isNone(memory.knownTo) ? Option.toArray(memory.embedding).map((vector) => vector.space) : [])

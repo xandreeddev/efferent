@@ -83,12 +83,17 @@ of every source revision a retrieval cites in one query, without their text.
 
 A search's `sources` filter is applied in SQL, before ranking and limits: a
 chunk's source must be listed, and a memory is returned only when none of its
-recorded source links names an unlisted source. An empty list returns nothing.
+recorded source links names an unlisted source, leaving aside the links of the
+revisions that restated it later (a stated memory's mentions after the first).
+Those revisions' spans and mentions are taken out of a returned memory when the
+filter does not admit them (`narrowKnowledgeMemory`). An empty list returns
+nothing.
 
 A search's `metadata` filter is applied in SQL as well, inside the lexical and
 semantic statements, before `ORDER BY` and `LIMIT`: each chunk is joined to the
 source revision it cites, and a memory is returned only when every source
-revision its recorded links name matches. Each key is compared by JSON equality
+revision its recorded links name matches, later restatements aside as for
+`sources`. Each key is compared by JSON equality
 with the revision's top-level metadata value. The joins use the tables' primary
 keys, so the filter needs no layout change and no new index.
 
@@ -148,6 +153,27 @@ cites, so `record_sources` already holds it, and forgetting a mentioned source
 removes the memory through the same closure as the rest of its evidence. A
 memory an earlier release wrote has no mentions and decodes unchanged. The
 adapter passes `knowledgeStoreConformance`'s `knowledge.mentions` check.
+
+A stage's `corroborations` live in the job's payload, and publication applies
+them in its transaction with no DDL: it locks each corroborated memory's row,
+fails with `Conflict` (and writes nothing) when the row is no longer active,
+which includes a memory that publication itself just retired, and otherwise
+rewrites the row's payload with the corroboration's spans and mention and adds
+its `record_sources` rows. A later revision of a source retires the active
+memories the `identities` table says the source published, as before, while a
+memory another source published that cites an earlier revision of it (as a
+corroboration, or through an entity it defined) keeps its row: the payload
+loses that revision's spans and mention and its `record_sources` rows for that
+revision are deleted. Forgetting a corroborating source purges the memory
+through the `record_sources` closure and requeues its other sources. A stage or
+memory an earlier release wrote has no corroborations and decodes unchanged.
+A narrowed search reads the corroborating revisions from the payload's
+`mentions` and leaves their `record_sources` rows out of the narrowing, so a
+restatement from outside the filter neither hides the memory nor shows in it.
+The adapter passes `knowledgeStoreConformance`'s `knowledge.corroboration`,
+`knowledge.corroboration-conflict`, `knowledge.corroboration-revision`,
+`knowledge.corroboration-reach` and `knowledge.corroboration-superseded`
+checks.
 
 `failed` lists failed jobs across owners from the row's `phase`, `engine` and
 `collection` columns, in the rows' recording order; its cursor is the last

@@ -6,8 +6,8 @@ import {
   type KnowledgeSource, type KnowledgeSourceId, type KnowledgeSnapshot, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
-  knowledgeBm25, knowledgeCandidateAdmitted, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCandidateWithin, knowledgeCosine,
-  knowledgeNarrowingAdmits, sameEmbeddingSpace, sameKnowledgeScope, traverseKnowledgeGraph, validateKnowledgeStage,
+  corroborateKnowledgeMemory, knowledgeBm25, knowledgeCandidateKey, knowledgeCandidateText, knowledgeCosine,
+  knowledgeNarrowingAdmits, narrowKnowledgeCandidate, sameEmbeddingSpace, sameKnowledgeScope, stripKnowledgeRevisions, traverseKnowledgeGraph, validateKnowledgeStage,
 } from "./knowledge.entity.functions.js"
 import { KnowledgeStore, MemoryStore, TemporalGraph, type KnowledgeIndex } from "../ports/knowledge.port.js"
 
@@ -179,13 +179,23 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
           const validation = validateKnowledgeStage(stage, snapshotOf(data), current.sources.filter((document) => sameKnowledgeScope(document.scope, lease.scope) && !tombstoned(current, lease.scope, document.ref.id)))
           if (Option.isSome(validation)) return Result.fail(validation.value)
           if (collides(current, data, stage, job.source)) return Result.fail(error("Conflict", "A staged immutable identity already exists"))
+          const corroborations = stage.corroborations ?? []
+          if (corroborations.some((corroboration) => corroboration.mention.id !== job.source.id || corroboration.mention.revision !== job.source.revision)) return Result.fail(error("Invalid", "A corroboration cites another revision than the one published"))
           const spaces = [...data.memories.flatMap((memory) => Option.toArray(memory.embedding)), ...data.chunks.flatMap((chunk) => Option.toArray(chunk.embedding)), ...stage.memories.flatMap((memory) => Option.toArray(memory.embedding)), ...stage.chunks.flatMap((chunk) => Option.toArray(chunk.embedding))].map((vector) => vector.space)
           if (spaces.some((space) => spaces[0] && !sameEmbeddingSpace(spaces[0], space))) return Result.fail(error("EmbeddingMismatch", "The index has a different embedding identity"))
-          const replacedMemory = data.memories.filter((memory) => memory.provenance.some((span) => span.source.id === job.source.id && span.source.revision !== job.source.revision)).map((memory) => memory.id)
+          // A memory citing an earlier revision of this source retires when the source published it, else loses that revision's spans and mention.
+          const ownedBySource = (id: string) => current.identities.some((identity) => sameKnowledgeScope(identity.scope, lease.scope) && identity.kind === "memory" && identity.id === id && identity.source.id === job.source.id)
+          const stale = data.memories.filter((memory) => Option.isNone(memory.knownTo) && memory.provenance.some((span) => span.source.id === job.source.id && span.source.revision !== job.source.revision))
+          const stripped = new Map(stale.filter((memory) => !ownedBySource(memory.id)).map((memory) => [memory.id, stripKnowledgeRevisions(memory, job.source)] as const))
+          const replacedMemory = stale.filter((memory) => Option.isNone(stripped.get(memory.id) ?? Option.none())).map((memory) => memory.id)
           const closed = closeDependents(data.memories, [...new Set([...replacedMemory, ...stage.retireMemories])])
+          const revised = data.memories.map((memory) => Option.isSome(memory.knownTo) ? memory : closed.includes(memory.id) ? { ...memory, knownTo: Option.some(lease.now) } : Option.getOrElse(stripped.get(memory.id) ?? Option.none(), () => memory))
+          // A corroborated memory must still be active once this publication has retired what it replaces.
+          if (corroborations.some((corroboration) => !revised.some((memory) => memory.id === corroboration.memory && Option.isNone(memory.knownTo)))) return Result.fail(error("Conflict", "A corroborated memory is no longer active"))
+          const corroborated = revised.map((memory) => corroborations.filter((corroboration) => corroboration.memory === memory.id).reduce(corroborateKnowledgeMemory, memory))
           const next: ScopeData = {
             ...data, version: data.version + 1,
-            memories: [...data.memories.map((memory) => closed.includes(memory.id) && Option.isNone(memory.knownTo) ? { ...memory, knownTo: Option.some(lease.now) } : memory), ...stage.memories.map((memory) => ({ ...memory, knownFrom: lease.now, knownTo: Option.none<number>() }))],
+            memories: [...corroborated, ...stage.memories.map((memory) => ({ ...memory, knownFrom: lease.now, knownTo: Option.none<number>() }))],
             chunks: [...data.chunks.filter((chunk) => chunk.provenance.source.id !== job.source.id), ...stage.chunks],
             entities: mergeEntities(data.entities, stage.entities),
             assertions: [...data.assertions.map((edge) => (stage.retireAssertions.includes(edge.id) || edge.provenance.some((span) => span.source.id === job.source.id && span.source.revision !== job.source.revision)) && Option.isNone(edge.knownTo) ? { ...edge, knownTo: Option.some(lease.now) } : edge), ...stage.assertions.map((edge) => ({ ...edge, knownFrom: lease.now, knownTo: Option.none<number>() }))],
@@ -241,11 +251,10 @@ export const makeKnowledgeIndexMemory = Effect.fnUntraced(function* () {
         onSome: (time) => memory.knownFrom <= time && Option.match(memory.knownTo, { onNone: () => true, onSome: (until) => time < until }),
       }))
       const stored: ReadonlyArray<KnowledgeCandidate> = [...memories.map((memory): KnowledgeCandidate => ({ _tag: "Memory", memory, score: 0 })), ...data.chunks.map((chunk): KnowledgeCandidate => ({ _tag: "Chunk", chunk, score: 0 }))]
-      const sources = query.sources
-      // Narrowing applies before ranking and the limit: a metadata filter reads the metadata of the revision each span cites.
+      // Narrowing applies before ranking and the limit: a metadata filter reads the metadata of the revision each span cites,
+      // and a memory shows only the corroborating evidence the narrowing admits (`narrowKnowledgeCandidate`).
       const admits = knowledgeNarrowingAdmits(query, revisions)
-      const candidates = query.metadata !== undefined ? stored.filter((candidate) => knowledgeCandidateAdmitted(candidate, admits))
-        : sources === undefined ? stored : stored.filter((candidate) => knowledgeCandidateWithin(candidate, sources))
+      const candidates = query.metadata === undefined && query.sources === undefined ? stored : stored.flatMap((candidate) => Option.toArray(narrowKnowledgeCandidate(candidate, admits)))
       const scores = knowledgeBm25(query.query, candidates.map(knowledgeCandidateText))
       const lexical = candidates.map((candidate, position) => ({ ...candidate, score: scores[position] ?? 0 })).filter((candidate) => candidate.score > 0).toSorted((a, b) => b.score - a.score || Order.String(knowledgeCandidateKey(a), knowledgeCandidateKey(b))).slice(0, query.limit)
       const embeddings = stored.flatMap((candidate) => Match.valueTags(candidate, { Memory: ({ memory }) => Option.toArray(memory.embedding), Chunk: ({ chunk }) => Option.toArray(chunk.embedding) }))

@@ -2,8 +2,8 @@ import { Tool } from "effect/ai"
 import { Cause, Clock, Context, DateTime, Effect, Layer, Match, Option, Schema } from "effect"
 import {
   CurrentToolInvocation, Failure, KnowledgeJobId, KnowledgeNarrowing, KnowledgeRecallHistoryMode, KnowledgeSourceId, LongTermMemory, RunContext, Sessions,
-  admitsKnowledgeSource, budgetKnowledgeRecall, citesAdmittedKnowledge, citesKnowledgeSources, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError,
-  knowledgeAssertionKey, knowledgeCandidateKey, knowledgeNarrowingAdmits, knowledgeRecordDate, userMessageText,
+  admitsKnowledgeSource, budgetKnowledgeRecall, defineCapability, definePromptSection, defineSkill, defineTool, framed, isTurnError,
+  knowledgeAssertionKey, knowledgeCandidateKey, knowledgeNarrowingAdmits, knowledgeRecordDate, narrowKnowledgeMemory, userMessageText,
 } from "@xandreed/core"
 import type {
   KnowledgeAssertion, KnowledgeEvidence, KnowledgeMemory, KnowledgeMemoryKind, KnowledgeProvenance, KnowledgeReach, KnowledgeRecallResult, KnowledgeScope, KnowledgeSource,
@@ -96,13 +96,14 @@ const narrowingOf = (reach: KnowledgeReach) => ({
 const sameRevision = (left: KnowledgeSourceRef, right: KnowledgeSourceRef): boolean => left.id === right.id && left.revision === right.revision
 const infoOf = (source: KnowledgeSource): KnowledgeSourceInfo => ({ ref: source.ref, occurredAt: source.occurredAt, recordedAt: source.recordedAt, metadata: source.metadata })
 /**
- * The profile memories within the reach, in order, at most `limit`: each cites only listed sources and, under a
- * metadata filter, only revisions whose metadata matches, read one revision at a time until `limit` are kept.
+ * The profile memories within the reach, in order, at most `limit`: each one's own evidence cites only listed sources and,
+ * under a metadata filter, only revisions whose metadata matches, read one revision at a time until `limit` are kept;
+ * the evidence of a later restatement outside the reach is left out of the record (`narrowKnowledgeMemory`).
  * `sources` is the info of the revisions it read.
  */
 const profileWithin = Effect.fnUntraced(function* (memory: Context.Service.Shape<typeof LongTermMemory>, scope: KnowledgeScope, reach: KnowledgeReach, memories: ReadonlyArray<KnowledgeMemory>, limit: number) {
   const { sources, metadata } = reach
-  const listed = sources === undefined ? memories : memories.filter((record) => citesKnowledgeSources(record.provenance, sources))
+  const listed = sources === undefined ? memories : memories.flatMap((record) => Option.toArray(narrowKnowledgeMemory(record, knowledgeNarrowingAdmits({ sources }, []))))
   const noneRead: ReadonlyArray<KnowledgeSourceInfo> = []
   if (metadata === undefined) return { memories: listed.slice(0, limit), sources: noneRead }
   const initial: { readonly kept: ReadonlyArray<KnowledgeMemory>; readonly read: ReadonlyArray<KnowledgeSource> } = { kept: [], read: [] }
@@ -110,7 +111,7 @@ const profileWithin = Effect.fnUntraced(function* (memory: Context.Service.Shape
     const unread = record.provenance.map((span) => span.source).filter((ref, index, refs) => refs.findIndex((other) => sameRevision(other, ref)) === index &&
       !state.read.some((source) => sameRevision(source.ref, ref)))
     const read = [...state.read, ...(yield* Effect.forEach(unread, (ref) => memory.source(scope, ref), { concurrency: 1 })).flatMap(Option.toArray)]
-    return { read, kept: citesAdmittedKnowledge(record.provenance, knowledgeNarrowingAdmits({ metadata }, read)) ? [...state.kept, record] : state.kept }
+    return { read, kept: [...state.kept, ...Option.toArray(narrowKnowledgeMemory(record, knowledgeNarrowingAdmits({ metadata }, read)))] }
   }))
   return { memories: kept.kept, sources: kept.read.map(infoOf) }
 })

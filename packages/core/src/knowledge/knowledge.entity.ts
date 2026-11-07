@@ -89,6 +89,9 @@ export type KnowledgeAssertionReplacement = typeof KnowledgeAssertionReplacement
  * inferred memory that revision and every revision that states one of its supports. Its provenance
  * may cite more revisions, for the evidence of its entities, which never count as stating it. A
  * memory stored before `mentions` existed reads them from its provenance (`knowledgeMemoryMentions`).
+ * The first mention is the revision that published the memory; publication appends each revision
+ * that restates it later (`KnowledgeCorroboration`), and a later revision of such a source takes
+ * its earlier revision's mention and spans away again without retiring the memory.
  * @public
  */
 export const KnowledgeMemory = Schema.Struct({
@@ -148,7 +151,7 @@ export type KnowledgeErrorReason = typeof KnowledgeErrorReason.Type
  * failed on the job's last attempt, so the source's chunks publish without entities or assertions.
  * `RecordDropped`: staging left out one extracted record (`record`, by the extraction's local
  * `key`) that failed a check of its own (an invalid span, an unknown identity, an undefined or
- * dropped entity key, an unknown or inactive record it supersedes or cites as support, an
+ * dropped entity key, an unknown or inactive record it supersedes, restates or cites as support, an
  * unsupported inferred routine, an inverted validity interval), and the rest of the extraction
  * was staged. A stage stored before `RecordDropped` existed holds only `GraphOmitted` notes and
  * decodes unchanged.
@@ -162,8 +165,24 @@ export const KnowledgeStageNote = Schema.Union([
 ])
 export type KnowledgeStageNote = typeof KnowledgeStageNote.Type
 /**
+ * The source revision being published states an active stated memory again, without changing it:
+ * publication appends `provenance`, the revision's own spans (each citing `mention`), to the memory's
+ * provenance and `mention` to its `mentions`, so the memory counts one more mention and forgetting
+ * the revision removes it through the source closure. Nothing is written as a new record and the
+ * memory is not retired. A memory published by `mention`'s own source is never a target: publishing
+ * a later revision of a source retires what that source published.
+ * @public
+ */
+export const KnowledgeCorroboration = Schema.Struct({
+  memory: KnowledgeMemoryId, mention: KnowledgeSourceRef,
+  provenance: Schema.Array(KnowledgeProvenance).check(Schema.isNonEmpty()),
+})
+export type KnowledgeCorroboration = typeof KnowledgeCorroboration.Type
+/**
  * Extraction is staged durably before embedding/publication. Scope CAS protects all derived writes.
  * `notes` is written only when a derivation or a record was left out, and stays on the job after publication.
+ * `corroborations` is written only when the source restates active memories (`KnowledgeCorroboration`);
+ * a stage stored before it existed corroborates none.
  * @public
  */
 export const KnowledgeStage = Schema.Struct({
@@ -172,6 +191,7 @@ export const KnowledgeStage = Schema.Struct({
   entities: Schema.Array(KnowledgeEntity), assertions: Schema.Array(KnowledgeAssertion),
   retireMemories: Schema.Array(KnowledgeMemoryId), retireAssertions: Schema.Array(KnowledgeAssertionId),
   notes: Schema.optionalKey(Schema.Array(KnowledgeStageNote)),
+  corroborations: Schema.optionalKey(Schema.Array(KnowledgeCorroboration)),
 })
 export type KnowledgeStage = typeof KnowledgeStage.Type
 /**

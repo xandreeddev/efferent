@@ -58,6 +58,32 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `mentions` whole and refuses a stage whose memory mentions a revision its
   provenance does not cite, as `validateKnowledgeStage` does and
   `knowledgeStoreConformance`'s new `knowledge.mentions` check requires.
+- Native knowledge extraction is at version 4: the engines record their jobs
+  under `memory:4/…` and `rag:4/…`; drain or `retry` version 3 jobs as above.
+  `KnowledgeStage` gains the optional `corroborations`: a host's own
+  `KnowledgeIndex` applies them at publication (appending each one's spans and
+  mention to the active memory it names, refusing with `Conflict` when that
+  memory is no longer active once the publication has retired what it
+  replaces) and, when a source's later revision publishes, strips that
+  source's earlier spans and mentions from the active memories another source
+  published instead of retiring them, as `knowledgeStoreConformance`'s new
+  `knowledge.corroboration`, `knowledge.corroboration-conflict` and
+  `knowledge.corroboration-revision` checks require; `corroborateKnowledgeMemory`
+  and `stripKnowledgeRevisions` do the payload work. Its narrowed search
+  admits a memory by its own evidence alone and leaves out the spans and
+  mentions of the revisions that restated it later where the narrowing does
+  not admit them (`narrowKnowledgeMemory`), as the new
+  `knowledge.corroboration-reach` check requires; the new
+  `knowledge.corroboration-superseded` check publishes a stage an extraction
+  that supersedes a memory and restates it in another record makes. A memory that cites an
+  earlier revision only through an entity that revision defined is now
+  stripped the same way rather than retired. `longTermMemoryConformance` gains
+  `restated-source`; a host's own `LongTermMemory` passes it by publishing
+  both sources, and giving the subject `restatingExtraction` also checks the
+  merge. `@xandreed/plugin-memory`'s `MemoryConfig` gains the required key
+  `restatementSimilarity` (default `0.92`); options merged over
+  `memoryDefaults` need no change, and `false` keeps every memory the
+  extraction writes but those it names as restatements.
 
 ### Changed
 
@@ -228,6 +254,53 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `memory.recalled` section (now version 4) gives its profile records the
   support recall found for them. `supportWeight: 0` reads nothing, ranks as
   before and shows no count.
+- `@xandreed/core`, `@xandreed/plugin-memory`,
+  `@xandreed/plugin-knowledge-postgres`: a statement repeated in another
+  source adds evidence to the memory it restates instead of a new memory with
+  one mention, so recall counts it as said again. Memory ids are scoped to
+  their source and published records are immutable, so before this every
+  repeated mention became a memory of its own. `KnowledgeExtractedMemory`
+  gains the optional `restates`, and the extraction prompt (version 4) asks
+  the model to name the active candidate memory a source restates without
+  changing it rather than writing a new record. `stageKnowledgeExtraction`
+  turns such a proposal into a `KnowledgeCorroboration` (`memory`, the
+  source revision as `mention`, the proposal's own spans as `provenance`) of
+  each named memory that is active, stated, of the proposal's kind and
+  published by another source, in the stage's new `corroborations`; a named
+  memory that is unknown or no longer active drops the proposal with a
+  `RecordDropped` note, and any other leaves it a new memory. A named memory
+  another memory of the same extraction supersedes is never corroborated, as
+  publication would refuse the stage and every retry of the job: a proposal
+  that restates only such memories repeats the state its extraction replaces
+  and is dropped with the note "The extraction restates a memory it also
+  supersedes". After
+  embedding, `mergeKnowledgeRestatements(stage, snapshot, source,
+  minSimilarity)` takes a new stated memory with the kind and exactly the
+  entities of an active stated memory from another source, and an
+  embedding at least `minSimilarity` alike, as a corroboration of the most
+  similar one; memories without entities never merge, so distinct facts
+  about different things stay apart. The memory engine runs it with
+  `MemoryConfig.restatementSimilarity` (default `0.92`, on because merging
+  repeated statements is the point; `false` turns it off).
+  `validateKnowledgeStage` refuses a corroboration whose spans cite another
+  revision or whose memory is inferred (`Invalid`), or whose memory is
+  missing, retired or retired by the stage (`Conflict`). Both stores append
+  the evidence and its source links without retiring the memory, refuse with
+  `Conflict` when the memory was retired after extraction, and, when a
+  corroborating source's later revision publishes, strip its earlier spans
+  and mention from a memory it did not publish (the identities say which)
+  while the memories it published retire as before. Forgetting a
+  corroborating source removes the memory through the source closure and
+  requeues its other sources, which rebuild it with the mentions that
+  survive. The PostgreSQL store does this in its publication transaction
+  with its layout unchanged. A read narrowed by `sources` or `metadata`
+  admits a memory when its own evidence is within the narrowing, as before;
+  the revisions that restated it later (a stated memory's mentions after the
+  first) are no part of that evidence, so a restatement from outside the
+  reach (another episode, project or tenant) neither hides the memory from it
+  nor shows there: `narrowKnowledgeMemory` leaves their spans and mentions
+  out of the record the stores' search, the memory's profile and its earlier
+  states return, and the support recall counts.
 
 ### Fixed
 

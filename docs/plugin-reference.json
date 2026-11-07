@@ -2139,7 +2139,8 @@
       "recallToday": false,
       "recallHistory": "changes",
       "recallHistoryShare": 0.2,
-      "supportWeight": 0.15
+      "supportWeight": 0.15,
+      "restatementSimilarity": 0.92
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2288,6 +2289,21 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "restatementSimilarity": {
+          "anyOf": [
+            {
+              "type": "boolean",
+              "enum": [
+                false
+              ]
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ]
         }
       },
       "required": [
@@ -2320,7 +2336,8 @@
         "recallToday",
         "recallHistory",
         "recallHistoryShare",
-        "supportWeight"
+        "supportWeight",
+        "restatementSimilarity"
       ],
       "additionalProperties": true
     }

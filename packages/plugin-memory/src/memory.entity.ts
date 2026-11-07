@@ -79,6 +79,15 @@ export const MemoryConfig = Schema.Struct({
    * or more shows how often. 0 turns support off: no read, no boost and no count, as before.
    */
   supportWeight: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  /**
+   * How alike a new stated memory and an active one must be for processing to take the new one as
+   * a restatement (`mergeKnowledgeRestatements`): with the same kind and exactly the same entities,
+   * the cosine of their embeddings at least this (above 0, at most 1), the new memory's spans are
+   * added to the earlier one as one more mention instead of being written. Memories without
+   * entities never merge. A restatement the extraction names (`restates`) needs no threshold.
+   * `false` turns the comparison off: only named restatements merge.
+   */
+  restatementSimilarity: Schema.Union([Schema.Literal(false), Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))]),
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -87,7 +96,7 @@ export const memoryDefaults: MemoryConfig = {
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
-  recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15,
+  recallHistory: "changes", recallHistoryShare: 0.2, supportWeight: 0.15, restatementSimilarity: 0.92,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

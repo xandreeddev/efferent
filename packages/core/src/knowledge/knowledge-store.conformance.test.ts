@@ -4,7 +4,7 @@ import type { KnowledgeIndex } from "../ports/knowledge.port.js"
 import { makeKnowledgeIndexMemory } from "./knowledge.memory.adapter.js"
 import { admitsKnowledgeSource, knowledgeCandidateAdmitted } from "./knowledge.entity.functions.js"
 import { knowledgeStoreConformance, temporalGraphConformance } from "./knowledge-store.conformance.js"
-import { KnowledgeJobCursor, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeSourceId, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope } from "./knowledge.entity.js"
+import { KnowledgeJobCursor, KnowledgeJobId, KnowledgeLeaseToken, KnowledgeSourceId, type KnowledgeCandidate, type KnowledgeClaim, type KnowledgeError, type KnowledgeJob, type KnowledgeScope, type KnowledgeSearch } from "./knowledge.entity.js"
 
 const scope: KnowledgeScope = { owner: "test", namespace: "assistant", collection: "memory" }
 const checks = knowledgeStoreConformance({ open: Effect.map(makeKnowledgeIndexMemory(), (index) => ({ index, scope })) })
@@ -15,7 +15,8 @@ describe("knowledge index reference conformance", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry", "knowledge.stage-notes", "knowledge.failure-reason",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
-      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.mentions", "knowledge.source-revision",
+      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.mentions",
+      "knowledge.corroboration", "knowledge.corroboration-conflict", "knowledge.corroboration-revision", "knowledge.corroboration-reach", "knowledge.corroboration-superseded", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
       "knowledge.engine-isolation", "knowledge.failed-listing", "knowledge.requeue", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",
     ])
@@ -71,6 +72,42 @@ test("a store that claims jobs of any engine fails the engine isolation and requ
   const broken = knowledgeStoreConformance({ open: engineBlind })
   const results = await Effect.runPromise(Effect.forEach(broken, (check) => Effect.result(check.run), { concurrency: 1 }))
   expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.engine-isolation", "knowledge.requeue"])
+})
+
+test("a store that stages corroborations without them fails the corroboration checks alone", async () => {
+  const ignoring = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, stage: (lease, { corroborations: _ignored, ...stage }) => real.stage(lease, stage) }))
+  const broken = knowledgeStoreConformance({ open: Effect.map(ignoring, (index) => ({ index, scope })) })
+  const results = await Effect.runPromise(Effect.forEach(broken, (check) => Effect.result(check.run), { concurrency: 1 }))
+  expect(broken.filter((_, index) => Result.isFailure(results[index]!)).map((check) => check.name)).toEqual(["knowledge.corroboration", "knowledge.corroboration-conflict", "knowledge.corroboration-revision", "knowledge.corroboration-reach"])
+})
+
+test("the corroboration-reach check rejects a store that narrows on every span or shows evidence from outside the reach", async () => {
+  const narrowedOnly = (query: KnowledgeSearch) => query.sources !== undefined || query.metadata !== undefined
+  // The rule before corroborations: every span must be admitted, so a restatement from outside hides the memory.
+  const strict = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, search: (query) => Effect.gen(function* () {
+    const found = yield* real.search(query)
+    if (!narrowedOnly(query)) return found
+    const corroborated = (candidate: KnowledgeCandidate) => candidate._tag === "Memory"
+      ? real.memory(query.scope, candidate.memory.id).pipe(Effect.map((stored) => Option.exists(stored, (memory) => (memory.mentions ?? []).length > 1)))
+      : Effect.succeed(false)
+    const kept = (candidates: ReadonlyArray<KnowledgeCandidate>) => Effect.filter(candidates, (candidate) => Effect.map(corroborated(candidate), (hidden) => !hidden))
+    return { lexical: yield* kept(found.lexical), semantic: yield* kept(found.semantic) }
+  }) }))
+  // Admits the right records but shows them whole, the restating source's spans and mention included.
+  const leaky = Effect.map(makeKnowledgeIndexMemory(), (real): KnowledgeIndex => ({ ...real, search: (query) => Effect.gen(function* () {
+    const found = yield* real.search(query)
+    if (!narrowedOnly(query)) return found
+    const { sources: _sources, metadata: _metadata, ...unnarrowed } = query
+    const whole = yield* real.search(unnarrowed)
+    const shown = (candidates: ReadonlyArray<KnowledgeCandidate>) => candidates.map((candidate) => candidate._tag !== "Memory" ? candidate
+      : [...whole.lexical, ...whole.semantic].find((other) => other._tag === "Memory" && other.memory.id === candidate.memory.id) ?? candidate)
+    return { lexical: shown(found.lexical), semantic: shown(found.semantic) }
+  }) }))
+  const failures = await Effect.runPromise(Effect.forEach([strict, leaky], (index) => {
+    const reach = knowledgeStoreConformance({ open: Effect.map(index, (opened) => ({ index: opened, scope })) }).filter((check) => check.name === "knowledge.corroboration-reach")
+    return Effect.forEach(reach, (check) => Effect.map(Effect.result(check.run), Result.isFailure), { concurrency: 1 })
+  }, { concurrency: 1 }))
+  expect(failures).toEqual([[true], [true]])
 })
 
 test("the source-filter check rejects a store that ignores the filter", async () => {

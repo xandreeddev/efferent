@@ -4,13 +4,13 @@ import {
   KnowledgeAssertionId, KnowledgeChunkId, KnowledgeEntityId, KnowledgeJob, KnowledgeJobId, KnowledgeMemoryId,
   KnowledgeRecallResult, KnowledgeSourceId, KnowledgeVector, type KnowledgeErrorReason, type KnowledgeFailureStep, KnowledgeMetadataFilter,
   KnowledgeSearch, KnowledgeMemory as KnowledgeMemoryCodec,
-  type KnowledgeCandidate, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
+  type KnowledgeCandidate, type KnowledgeCorroboration, type KnowledgeMemory, type KnowledgeSource, type KnowledgeStage,
 } from "./knowledge.entity.js"
 import {
   citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
   admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
-  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport,
+  knowledgeEpisodeCount, knowledgeMemoryMentions, knowledgeMemorySupport, corroborateKnowledgeMemory, stripKnowledgeRevisions, narrowKnowledgeMemory,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -326,3 +326,53 @@ test("a job stored with only graph notes and assertions without a validity basis
   expect<unknown>(yield* Schema.encodeEffect(KnowledgeJob)(yield* Schema.decodeUnknownEffect(KnowledgeJob)(current))).toEqual(current)
   expect((yield* Effect.result(Schema.decodeUnknownEffect(KnowledgeJob)({ ...current, stage: { ...current.stage, notes: [{ _tag: "RecordDropped", record: "chunk", key: "x", reason: "Invalid", message: "" }] } })))._tag).toBe("Failure")
 })))
+
+test("a corroboration appends its revision's spans and mention once, and a later revision strips them without emptying the memory", () => {
+  const owner = memory("owner")
+  const restating = source("restating")
+  const corroboration = { memory: owner.id, mention: restating.ref, provenance: [{ source: restating.ref, start: 11, end: 15, quote: "cafe" }] }
+  // A memory stored before mentions existed gains them, starting with the revision its first span cites.
+  const corroborated = corroborateKnowledgeMemory(corroborateKnowledgeMemory(owner, corroboration), corroboration)
+  expect([corroborated.provenance.length, corroborated.mentions]).toEqual([2, [source("owner").ref, restating.ref]])
+  expect(knowledgeMemorySupport(corroborated, [source("owner"), restating].map((value) => ({ ref: value.ref, occurredAt: value.occurredAt, metadata: {} })))).toEqual(Option.some({ episodes: 2, sources: 2, firstSeen: 1, lastSeen: 1 }))
+  // The restating source's second revision takes its first revision's evidence away; its own revision stays.
+  const later = { ...restating.ref, revision: 2 }
+  const again = corroborateKnowledgeMemory(corroborated, { ...corroboration, mention: later, provenance: [{ ...corroboration.provenance[0]!, source: later }] })
+  expect(Option.map(stripKnowledgeRevisions(again, later), (value) => [value.provenance.map((span) => span.source), value.mentions])).toEqual(Option.some([[owner.provenance[0]!.source, later], [owner.provenance[0]!.source, later]]))
+  expect(stripKnowledgeRevisions(owner, later)).toEqual(Option.some(owner))
+  // Nothing of the memory left: none, and the store retires it instead.
+  expect(stripKnowledgeRevisions(owner, { ...owner.provenance[0]!.source, revision: 2 })).toEqual(Option.none())
+})
+
+test("a narrowed read keeps a memory restated from outside it, without the restatement's evidence, and never shows it from the restatement alone", () => {
+  const owner = memory("owner")
+  const restating = source("restating")
+  const corroborated = corroborateKnowledgeMemory(owner, { memory: owner.id, mention: restating.ref, provenance: [{ source: restating.ref, start: 11, end: 15, quote: "cafe" }] })
+  const within = (ids: ReadonlyArray<string>) => (ref: { readonly id: string }) => ids.includes(ref.id)
+  expect(narrowKnowledgeMemory(corroborated, within(["owner", "restating"]))).toEqual(Option.some(corroborated))
+  expect(narrowKnowledgeMemory(corroborated, within(["owner"]))).toEqual(Option.some({ ...corroborated, provenance: owner.provenance, mentions: [source("owner").ref] }))
+  expect([narrowKnowledgeMemory(corroborated, within(["restating"])), narrowKnowledgeMemory(owner, within(["restating"]))]).toEqual([Option.none(), Option.none()])
+  // Evidence of the memory's own that cites another source (its entities') still has to be admitted; an inference's mentions are all its own.
+  const withEntity = { ...corroborated, provenance: [...owner.provenance, { source: source("entity").ref, start: 0, end: 6, quote: "Visits" }, ...corroborated.provenance.slice(1)] }
+  expect([narrowKnowledgeMemory(withEntity, within(["owner"])), Option.isSome(narrowKnowledgeMemory(withEntity, within(["owner", "entity"])))]).toEqual([Option.none(), true])
+  const inferred = { ...corroborated, evidence: { _tag: "Inferred" as const, supports: [KnowledgeMemoryId.make("support")] } }
+  expect(narrowKnowledgeMemory(inferred, within(["owner"]))).toEqual(Option.none())
+  expect([knowledgeCandidateWithin({ _tag: "Memory", score: 1, memory: corroborated }, [KnowledgeSourceId.make("owner")]), knowledgeCandidateAdmitted({ _tag: "Memory", score: 1, memory: corroborated }, within(["restating"]))]).toEqual([true, false])
+})
+
+test("a stage corroborates only an active stated memory of the snapshot, with spans of its own revision", () => {
+  const target = memory("target")
+  const restating = source("restating")
+  const corroboration: KnowledgeCorroboration = { memory: target.id, mention: restating.ref, provenance: [{ source: restating.ref, start: 0, end: 6, quote: "Visits" }] }
+  const only = (corroborations: ReadonlyArray<KnowledgeCorroboration>, retire: ReadonlyArray<KnowledgeMemory["id"]> = []): KnowledgeStage => ({ ...stage(memory("restating")), memories: [], corroborations, retireMemories: retire })
+  const snapshot = (memories: ReadonlyArray<KnowledgeMemory>) => ({ version: 0, memories, graph: emptyGraph })
+  const sources = [source("target"), restating]
+  const reason = (found: Option.Option<{ readonly reason: KnowledgeErrorReason }>) => Option.map(found, (failure) => failure.reason)
+  expect(validateKnowledgeStage(only([corroboration]), snapshot([target]), sources)).toEqual(Option.none())
+  expect(reason(validateKnowledgeStage(only([corroboration]), snapshot([{ ...target, knownTo: Option.some(3) }]), sources))).toEqual(Option.some("Conflict"))
+  expect(reason(validateKnowledgeStage(only([corroboration]), snapshot([]), sources))).toEqual(Option.some("Conflict"))
+  expect(reason(validateKnowledgeStage(only([corroboration], [target.id]), snapshot([target]), sources))).toEqual(Option.some("Conflict"))
+  expect(reason(validateKnowledgeStage(only([{ ...corroboration, provenance: target.provenance }]), snapshot([target]), sources))).toEqual(Option.some("Invalid"))
+  expect(reason(validateKnowledgeStage(only([corroboration]), snapshot([{ ...target, evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("other")] } }]), sources))).toEqual(Option.some("Invalid"))
+  expect(reason(validateKnowledgeStage(only([{ ...corroboration, provenance: [{ ...corroboration.provenance[0]!, quote: "invented" }] }]), snapshot([target]), sources))).toEqual(Option.some("Invalid"))
+})

@@ -598,4 +598,85 @@ describe("memory through the real agent", () => {
     expect(texts(yield* plain.recall(query))).toEqual(["The user's favourite drink is cocoa.", "The user's favourite drink is green tea."])
     expect(texts(yield* memory.recall(query))).toEqual(["The user's favourite drink is green tea.", "The user's favourite drink is cocoa."])
   })).pipe(Effect.provide(TestClock.layer()))))
+
+  test("three conversations that say where the user lives make one memory said three times, and another city stays its own", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeKnowledgeIndexMemory()
+    // The sister's city embeds close to the user's: only its other entity keeps it apart.
+    const embeddings = yield* EmbeddingModel.make({ embedMany: ({ inputs }) => Effect.succeed({ results: inputs.map((text) => /Porto/.test(text) ? [0.99, 0.14] : [1, 0]), usage: { inputTokens: undefined } }) })
+    const span = (text: string, quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    // The helper model: the first conversation states the city; the second names the candidate it restates; the third
+    // writes the same memory again about the same city, which processing recognises; the fourth states another city.
+    const extract = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const candidates: { readonly entities: ReadonlyArray<{ readonly id: string; readonly name: string }>; readonly memories: ReadonlyArray<{ readonly id: string; readonly text: string }> } =
+        JSON.parse(/<knowledge-candidates>\n([\s\S]*?)\n<\/knowledge-candidates>/.exec(prompt)?.[1] ?? "{}")
+      const city = (name: string) => ({ key: name.toLowerCase(), name, type: "city", aliases: [], existing: candidates.entities.find((entity) => entity.name === name)?.id ?? null, spans: [span(text, name)] })
+      const home = (quote: string, restates: ReadonlyArray<string> = []) => ({
+        key: "home", kind: "fact", text: "The user lives in Lisbon.", entities: ["lisbon"], spans: [span(text, quote)], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change",
+        ...(restates.length === 0 ? {} : { restates }),
+      })
+      return text.includes("I live in Lisbon.") ? { entities: [city("Lisbon")], memories: [home("I live in Lisbon.")], assertions: [] }
+        : text.includes("Back home in Lisbon") ? { entities: [city("Lisbon")], assertions: [],
+          memories: [home("Back home in Lisbon", candidates.memories.filter((memory) => memory.text.includes("Lisbon")).map((memory) => memory.id))] }
+          : text.includes("Lisbon is still home") ? { entities: [city("Lisbon")], memories: [home("Lisbon is still home")], assertions: [] }
+            : text.includes("Porto") ? { entities: [city("Porto")], assertions: [], memories: [{
+              key: "sister", kind: "fact", text: "The user's sister lives in Porto.", entities: ["porto"], spans: [span(text, "My sister moved to Porto.")],
+              evidence: { _tag: "Stated" }, supersedes: [], supersession: "change",
+            }] } : { entities: [], memories: [], assertions: [] }
+    }
+    const helperPrompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const utility = UtilityLlm.of({ complete: (prompt) => Ref.update(helperPrompts, (all) => [...all, prompt]).pipe(
+      Effect.as(new UtilityCompletion({ text: JSON.stringify(extract(prompt)), usage: zeroUsage })),
+    ) })
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const runtime = Context.make(MemoryStore, store).pipe(Context.add(UtilityLlm, utility), Context.add(EmbeddingModel.EmbeddingModel, embeddings))
+    const requests = yield* Ref.make<ReadonlyArray<string>>([])
+    const model = yield* LanguageModel.make({
+      generateText: (request) => Ref.update(requests, (all) => [...all, JSON.stringify(request.prompt.content)]).pipe(Effect.as([
+        { type: "text", text: "Noted." }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 5 }, outputTokens: { total: 1 } } },
+      ] as never)),
+      streamText: () => Stream.die("streaming unused") as never,
+    })
+    const options = { worker: false, review: false, embeddingDimensions: 2 }
+    const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: memoryPlugin, options }, memoryCapturePlugin],
+      services: runtime, turnServices: [Sessions, LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const conversation = (id: string) => ({ owner: "city-owner", id: ConversationId.make(`00000000-0000-4000-8000-0000000000${id}`) })
+    const [first, second, third, fourth, asked] = [conversation("f1"), conversation("f2"), conversation("f3"), conversation("f4"), conversation("f5")]
+    yield* Effect.forEach([first, second, third, fourth, asked], (session) => sessions.create(session), { concurrency: 1 })
+    const services = Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model))
+    const memory = Context.get(yield* Layer.build(MemoryPluginLive(options).pipe(Layer.provide(Layer.succeedContext(runtime)))), LongTermMemory)
+    const scope = { owner: "city-owner", namespace: "default", collection: "memory" }
+    const say = (session: typeof first, runId: string, text: string) => agent.turn({ turn: { session, runId: RunId.make(runId), userMessage: new UserMessage({ text }) }, services }, (turn) => Effect.gen(function* () {
+      yield* turn.tools.select(turn.userMessage)
+      const result = yield* turn.run({})
+      return { outcome: result.outcome, reply: Option.some(result.text) }
+    }))
+    const told = [
+      [first, "moved", "I live in Lisbon.", Date.UTC(2026, 1, 3, 9)], [second, "back", "Back home in Lisbon after the trip.", Date.UTC(2026, 3, 20, 18)],
+      [third, "still", "Lisbon is still home for me.", Date.UTC(2026, 6, 9, 12)], [fourth, "sister", "My sister moved to Porto.", Date.UTC(2026, 7, 1, 10)],
+    ] as const
+    yield* Effect.forEach(told, ([session, runId, text, at]) => TestClock.setTime(at).pipe(Effect.andThen(say(session, runId, text)), Effect.andThen(memory.process(scope, 10))), { concurrency: 1 })
+    // The second conversation's extraction saw the first one's memory among its candidates and named it.
+    const prompts = yield* Ref.get(helperPrompts)
+    expect(prompts.find((prompt) => prompt.includes("Back home in Lisbon"))).toContain("restates set to that candidate")
+    // One memory of where the user lives, mentioned by the three conversations; the sister's city is its own memory.
+    const snapshot = yield* store.snapshot(scope)
+    const active = snapshot.memories.filter((record) => Option.isNone(record.knownTo))
+    const home = active.filter((record) => record.text === "The user lives in Lisbon.")
+    const sister = active.filter((record) => record.text === "The user's sister lives in Porto.")
+    expect([active.length, home.length, sister.length, snapshot.memories.length]).toEqual([2, 1, 1, 2])
+    expect(home[0]?.mentions?.map((ref) => ref.id.split(":").slice(0, 2).join(":"))).toEqual([first, second, third].map((session) => `conversation:${session.id}`))
+    expect(home[0]?.provenance.slice(0, 1).map((span) => span.quote)).toEqual(["I live in Lisbon."])
+    expect(home[0]?.provenance.map((span) => span.quote)).toContain("Lisbon is still home")
+    expect(sister[0]?.mentions).toHaveLength(1)
+    // A new conversation's recall section shows the one record and how often it was said, and the other city said once.
+    yield* TestClock.setTime(Date.UTC(2026, 10, 7, 12))
+    yield* say(asked, "asking", "Where do I live?")
+    const recalled = (yield* entriesOfEvents(yield* sessions.read(asked))).flatMap((entry) => entry.body._tag === "TurnContext" && entry.body.sectionId === "memory.recalled" ? [entry.body.text] : [])
+    const lives = "[2026-02-03 · fact · stated · said 3 times, last 2026-07-09] The user lives in Lisbon."
+    const porto = "[2026-08-01 · fact · stated] The user's sister lives in Porto."
+    expect([recalled.length, recalled[0]?.includes(lives), recalled[0]?.includes(porto), recalled[0]?.split("The user lives in Lisbon.").length]).toEqual([1, true, true, 2])
+    expect((yield* Ref.get(requests)).at(-1)).toContain("said 3 times, last 2026-07-09")
+  })).pipe(Effect.provide(TestClock.layer()))))
 })

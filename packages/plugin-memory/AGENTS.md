@@ -27,7 +27,11 @@ merged before staging), and run every UtilityLlm call inside
 `CurrentKnowledgeHelperCall` (purpose, scope, job and attempt, output cap). Stage
 validated extraction before embedding: `stageKnowledgeExtraction` leaves out a
 record that fails its own checks and writes its `RecordDropped` note on the
-stage; never fail a turn's whole capture for one record. Publish through the store's lease and
+stage; never fail a turn's whole capture for one record. A restatement is evidence, not a
+memory: staging turns a named one (`restates`) into a corroboration, and after
+embedding `mergeKnowledgeRestatements` (`restatementSimilarity`) turns a new
+memory with the kind and entities of an active one from another source into
+one; never merge memories without entities. Publish through the store's lease and
 scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
 unfinished processing through leases. Jobs are enqueued, discovered and claimed
@@ -102,11 +106,11 @@ those dependencies to production. See the repository skills and definition of do
 | Parameters (the recall tool's `history` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:141` |
 | Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:46`, `:52` | exact, `src/memory-capability.adapter.test.ts:160`; exact, `src/memory-capability.adapter.test.ts:163`; exact, `src/memory-capability.adapter.test.ts:164` |
 | Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:49` | exact, `src/memory-capability.adapter.test.ts:161` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
-| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:128`, `:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
-| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:99` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:133`, `:196` | exact, `src/memory-capability.adapter.test.ts:129`; exact, `src/memory.journey.test.ts:458` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:298` | exact, `src/memory-capability.adapter.test.ts:238`; exact, `src/memory-capability.adapter.test.ts:244` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:34`; exact, `src/memory-capability.adapter.test.ts:35` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:129`, `:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:61`; exact, `src/memory-capability.adapter.test.ts:69` |
+| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:99` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:134`, `:197` | exact, `src/memory-capability.adapter.test.ts:129`; exact, `src/memory.journey.test.ts:458` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:299` | exact, `src/memory-capability.adapter.test.ts:238`; exact, `src/memory-capability.adapter.test.ts:244` |
 | Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
 | Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
 

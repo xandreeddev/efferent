@@ -4,9 +4,9 @@ import {
   BackgroundWorkers, CurrentKnowledgeHelperCall, KNOWLEDGE_EXTRACTION_VERSION, knowledgeEngineId, KnowledgeError, KnowledgeExtraction,
   KnowledgeLeaseToken, LongTermMemory, MemoryStore, UtilityLlm,
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
-  extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
+  extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, mergeKnowledgeRestatements, stageKnowledgeExtraction,
   isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph, knowledgeNarrowingAdmits, narrowKnowledgeGraphBy,
-  citesAdmittedKnowledge, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport,
+  narrowKnowledgeMemory, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate, knowledgeMemoryMentions, knowledgeMemorySupport,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
@@ -93,7 +93,8 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const stage = Option.isSome(staged) ? staged.value : yield* extract(job, snapshot)
     yield* store.renew(yield* leaseOf(job, token), config.leaseMs)
     yield* store.stage(yield* leaseOf(job, token), stage)
-    const embedded = yield* embedStage(stage)
+    // A new memory that restates an active one, by kind, entities and embedding, becomes one more mention of it.
+    const embedded = yield* embedStage(stage).pipe(Effect.map((ready) => config.restatementSimilarity === false ? ready : mergeKnowledgeRestatements(ready, snapshot, job.source, config.restatementSimilarity)))
     yield* store.renew(yield* leaseOf(job, token), config.leaseMs)
     yield* store.stage(yield* leaseOf(job, token), embedded)
     yield* store.publish(yield* leaseOf(job, token))
@@ -179,7 +180,7 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const admits = knowledgeNarrowingAdmits(input, infos)
     const saidAt = (successor: KnowledgeMemory | KnowledgeAssertion) => Option.getOrElse(knowledgeRecordDate(successor.provenance, infos), () => successor.knownFrom)
     return [
-      ...memories.filter(({ record }) => citesAdmittedKnowledge(record.provenance, admits)).map(({ successor, link, record }): KnowledgeRecallHistory => ({
+      ...memories.flatMap(({ successor, link, record }) => Option.toArray(narrowKnowledgeMemory(record, admits)).map((shown) => ({ successor, link, record: shown }))).map(({ successor, link, record }): KnowledgeRecallHistory => ({
         _tag: "Memory", successor: knowledgeCandidateKey({ _tag: "Memory", memory: successor, score: 0 }), record, supersession: link.supersession, until: saidAt(successor),
       })),
       ...assertions.map(({ successor, link, record }): KnowledgeRecallHistory => ({

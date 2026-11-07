@@ -2250,7 +2250,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "recallToday": false,
   "recallHistory": "changes",
   "recallHistoryShare": 0.2,
-  "supportWeight": 0.15
+  "supportWeight": 0.15,
+  "restatementSimilarity": 0.92
 }
 ```
 
@@ -2404,6 +2405,21 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "restatementSimilarity": {
+      "anyOf": [
+        {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      ]
     }
   },
   "required": [
@@ -2436,7 +2452,8 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "recallToday",
     "recallHistory",
     "recallHistoryShare",
-    "supportWeight"
+    "supportWeight",
+    "restatementSimilarity"
   ],
   "additionalProperties": true
 }

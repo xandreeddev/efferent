@@ -2,10 +2,10 @@ import { Effect, Match, Option, Order, Schema } from "effect"
 import {
   KnowledgeAssertion, KnowledgeChunk, KnowledgeEmbeddingSpace, KnowledgeEntity, KnowledgeError,
   KnowledgeJob, KnowledgeJobCursor, KnowledgeMemory, KnowledgeSource, KnowledgeSourceInfo, sameEmbeddingSpace,
-  validateKnowledgeStage, KnowledgeMetadataValue,
+  validateKnowledgeStage, KnowledgeMetadataValue, corroborateKnowledgeMemory, stripKnowledgeRevisions, knowledgeNarrowingAdmits, narrowKnowledgeMemory,
 } from "@xandreed/core"
 import type {
-  KnowledgeCandidate, KnowledgeCandidates, KnowledgeIndex, KnowledgeLease, KnowledgeMetadataFilter,
+  KnowledgeCandidate, KnowledgeCandidates, KnowledgeCorroboration, KnowledgeIndex, KnowledgeLease, KnowledgeMetadataFilter,
   KnowledgeScope, KnowledgeSnapshot, KnowledgeSourceRef, KnowledgeStage, KnowledgeSubgraph,
   KnowledgeTraversal, KnowledgeVector,
 } from "@xandreed/core"
@@ -49,6 +49,17 @@ const nullable = <A>(value: Option.Option<A>): A | null => Option.getOrNull(valu
 
 /** Independent logical indexes share one physical schema and pool. */
 export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): KnowledgeIndex => {
+  /** The info of the listed revisions that are stored and not forgotten, each once, in the order they are first listed. */
+  const sourceInfoIn = (queries: PostgresQueries, scope: KnowledgeScope, refs: ReadonlyArray<KnowledgeSourceRef>) => Effect.gen(function* () {
+    if (refs.length === 0) return []
+    const listed = yield* encode(Schema.Array(Schema.Struct({ id: Schema.String, revision: Schema.Number })), refs)
+    return yield* payloads(queries, KnowledgeSourceInfo, `SELECT jsonb_build_object('ref',s.payload->'ref','occurredAt',s.payload->'occurredAt','recordedAt',s.payload->'recordedAt','metadata',s.payload->'metadata') AS payload
+      FROM (SELECT DISTINCT ON (r.value->>'id',(r.value->>'revision')::bigint) r.value->>'id' AS source_id,(r.value->>'revision')::bigint AS revision,r.ordinality AS position
+        FROM jsonb_array_elements($5::text::jsonb) WITH ORDINALITY r ORDER BY r.value->>'id',(r.value->>'revision')::bigint,r.ordinality) wanted
+      JOIN efferent_knowledge.sources s ON s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=wanted.source_id AND s.revision=wanted.revision
+      JOIN efferent_knowledge.heads h ON h.domain=s.domain AND h.owner=s.owner AND h.namespace=s.namespace AND h.collection=s.collection AND h.source_id=s.source_id
+      WHERE h.tombstone_at IS NULL ORDER BY wanted.position`, [...params(domain, scope), listed])
+  })
   const ensureScope = (tx: PostgresQueries, scope: KnowledgeScope) => tx.execute(`INSERT INTO efferent_knowledge.scopes (${KEY}) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, params(domain, scope))
   const lockScope = (tx: PostgresQueries, scope: KnowledgeScope) => ensureScope(tx, scope).pipe(Effect.andThen(
     tx.rows(ScopeRow, `SELECT version::float8 AS version, embedding_profile FROM efferent_knowledge.scopes WHERE ${WHERE} FOR UPDATE`, params(domain, scope)),
@@ -149,9 +160,10 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
     [...params(domain, scope), edge.id, edge.subject, edge.predicate, object, nullable(edge.validFrom), nullable(edge.validTo), edge.knownFrom, nullable(edge.knownTo), data])
     yield* recordSources(tx, scope, "assertion", edge.id, edge.provenance)
   })
+  /** A memory published by an earlier revision of the source retires; one it only cites is stripped of those revisions (`stripRevisions`). */
   const closeSource = (tx: PostgresQueries, scope: KnowledgeScope, sourceId: string, now: number) => Effect.gen(function* () {
     yield* tx.execute(`UPDATE efferent_knowledge.memories SET known_to=$6,payload=jsonb_set(payload,'{knownTo}',to_jsonb($6::bigint))
-      WHERE ${WHERE} AND known_to IS NULL AND id IN (SELECT record_id FROM efferent_knowledge.record_sources WHERE ${WHERE} AND kind='memory' AND source_id=$5)`, [...params(domain, scope), sourceId, now])
+      WHERE ${WHERE} AND known_to IS NULL AND id IN (SELECT id FROM efferent_knowledge.identities WHERE ${WHERE} AND kind='memory' AND source_id=$5)`, [...params(domain, scope), sourceId, now])
     yield* tx.execute(`UPDATE efferent_knowledge.assertions SET known_to=$6,payload=jsonb_set(payload,'{knownTo}',to_jsonb($6::bigint))
       WHERE ${WHERE} AND known_to IS NULL AND id IN (SELECT record_id FROM efferent_knowledge.record_sources WHERE ${WHERE} AND kind='assertion' AND source_id=$5)`, [...params(domain, scope), sourceId, now])
     yield* tx.execute(`DELETE FROM efferent_knowledge.chunks WHERE ${WHERE} AND source_id=$5`, [...params(domain, scope), sourceId])
@@ -165,12 +177,41 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
   const closeDependents = (tx: PostgresQueries, scope: KnowledgeScope, sourceId: string, retired: ReadonlyArray<string>, now: number) => Effect.gen(function* () {
     const ids = yield* strings(retired)
     yield* tx.execute(`WITH RECURSIVE closed(id) AS (
-      SELECT record_id FROM efferent_knowledge.record_sources WHERE ${WHERE} AND kind='memory' AND source_id=$5
+      SELECT id FROM efferent_knowledge.identities WHERE ${WHERE} AND kind='memory' AND source_id=$5
       UNION SELECT jsonb_array_elements_text($6::text::jsonb)
       UNION SELECT s.memory_id FROM efferent_knowledge.memory_supports s JOIN closed c ON s.support_id=c.id
         WHERE s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4
     ) UPDATE efferent_knowledge.memories SET known_to=$7,payload=jsonb_set(payload,'{knownTo}',to_jsonb($7::bigint))
       WHERE ${WHERE} AND known_to IS NULL AND id IN (SELECT id FROM closed)`, [...params(domain, scope), sourceId, ids, now])
+  })
+  const retireMemory = (tx: PostgresQueries, scope: KnowledgeScope, id: string, now: number) => tx.execute(`UPDATE efferent_knowledge.memories SET known_to=$6,payload=jsonb_set(payload,'{knownTo}',to_jsonb($6::bigint))
+    WHERE ${WHERE} AND id=$5 AND known_to IS NULL`, [...params(domain, scope), id, now])
+  /**
+   * The active memories another source published that cite an earlier revision of the source lose those revisions' spans,
+   * mentions and source rows (`stripKnowledgeRevisions`); one with nothing left retires, with what was inferred from it.
+   */
+  const stripRevisions = (tx: PostgresQueries, scope: KnowledgeScope, source: KnowledgeSourceRef, now: number) => Effect.gen(function* () {
+    const stale = yield* payloads(tx, KnowledgeMemory, `SELECT payload FROM efferent_knowledge.memories WHERE ${WHERE} AND NOT invalidated AND known_to IS NULL
+      AND id IN (SELECT record_id FROM efferent_knowledge.record_sources WHERE ${WHERE} AND kind='memory' AND source_id=$5 AND source_revision<>$6) ORDER BY id`, [...params(domain, scope), source.id, source.revision])
+    const emptied = yield* Effect.forEach(stale, (memory) => Option.match(stripKnowledgeRevisions(memory, source), {
+      onNone: () => retireMemory(tx, scope, memory.id, now).pipe(Effect.as([memory.id])),
+      onSome: (kept) => Effect.gen(function* () {
+        const data = yield* encode(KnowledgeMemory, kept)
+        yield* tx.execute(`UPDATE efferent_knowledge.memories SET payload=$6::text::jsonb WHERE ${WHERE} AND id=$5`, [...params(domain, scope), memory.id, data])
+        yield* tx.execute(`DELETE FROM efferent_knowledge.record_sources WHERE ${WHERE} AND kind='memory' AND record_id=$5 AND source_id=$6 AND source_revision<>$7`, [...params(domain, scope), memory.id, source.id, source.revision])
+        return []
+      }),
+    }), { concurrency: 1 })
+    return emptied.flat()
+  })
+  /** A corroboration's evidence on the active memory it restates; a memory retired since extraction, or by this publication, is a conflict. */
+  const corroborate = (tx: PostgresQueries, scope: KnowledgeScope, corroboration: KnowledgeCorroboration) => Effect.gen(function* () {
+    const found = yield* payloads(tx, KnowledgeMemory, `SELECT payload FROM efferent_knowledge.memories WHERE ${WHERE} AND id=$5 AND NOT invalidated AND known_to IS NULL FOR UPDATE`, [...params(domain, scope), corroboration.memory])
+    const target = found[0]
+    if (target === undefined) return yield* invalid("Conflict", "a corroborated memory is no longer active")
+    const data = yield* encode(KnowledgeMemory, corroborateKnowledgeMemory(target, corroboration))
+    yield* tx.execute(`UPDATE efferent_knowledge.memories SET payload=$6::text::jsonb WHERE ${WHERE} AND id=$5`, [...params(domain, scope), corroboration.memory, data])
+    yield* recordSources(tx, scope, "memory", corroboration.memory, corroboration.provenance)
   })
   /** Source-level closure makes every output of a requeued source replaceable. */
   const rebuildSources = (tx: PostgresQueries, scope: KnowledgeScope, sourceId: string) => tx.rows(IdRow, `WITH RECURSIVE proofs AS (
@@ -302,8 +343,10 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         if (Option.isNone(job.stage)) return yield* invalid("Conflict", "the knowledge job has no current staged extraction")
         const stage = job.stage.value
         const profile = yield* validateStage(tx, lease, stage)
-        const referenced = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.assertions.flatMap((edge) => edge.provenance), ...stage.entities.flatMap((entity) => entity.provenance)]
+        const corroborations = stage.corroborations ?? []
+        const referenced = [...stage.memories.flatMap((memory) => memory.provenance), ...stage.chunks.map((chunk) => chunk.provenance), ...stage.assertions.flatMap((edge) => edge.provenance), ...stage.entities.flatMap((entity) => entity.provenance), ...corroborations.flatMap((corroboration) => corroboration.provenance)]
         if (referenced.some((span) => span.source.id === job.source.id && span.source.revision !== job.source.revision)) return yield* invalid("Invalid", "the staged extraction cites an earlier revision of its own source")
+        if (corroborations.some((corroboration) => corroboration.mention.id !== job.source.id || corroboration.mention.revision !== job.source.revision)) return yield* invalid("Invalid", "a corroboration cites another revision than the one published")
         const identities: ReadonlyArray<{ readonly kind: "memory" | "chunk" | "assertion"; readonly id: string }> = [
           ...stage.memories.map((memory) => ({ kind: "memory" as const, id: memory.id })),
           ...stage.chunks.map((chunk) => ({ kind: "chunk" as const, id: chunk.id })),
@@ -325,10 +368,13 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         yield* closeSource(tx, lease.scope, job.source.id, lease.now)
         yield* retire(tx, lease.scope, stage, lease.now)
         yield* closeDependents(tx, lease.scope, job.source.id, stage.retireMemories, lease.now)
+        const emptied = yield* stripRevisions(tx, lease.scope, job.source, lease.now)
+        if (emptied.length > 0) yield* closeDependents(tx, lease.scope, job.source.id, emptied, lease.now)
         yield* Effect.forEach(stage.entities, (entity) => insertEntity(tx, lease.scope, entity), { concurrency: 1 })
         yield* Effect.forEach(stage.memories, (memory) => insertMemory(tx, lease.scope, { ...memory, knownFrom: lease.now, knownTo: Option.none() }), { concurrency: 1 })
         yield* Effect.forEach(stage.chunks, (chunk) => insertChunk(tx, lease.scope, chunk), { concurrency: 1 })
         yield* Effect.forEach(stage.assertions, (edge) => insertAssertion(tx, lease.scope, { ...edge, knownFrom: lease.now, knownTo: Option.none() }), { concurrency: 1 })
+        yield* Effect.forEach(corroborations, (corroboration) => corroborate(tx, lease.scope, corroboration), { concurrency: 1 })
         const encodedProfile = profile ? yield* encode(KnowledgeEmbeddingSpace, profile) : null
         yield* tx.execute(`UPDATE efferent_knowledge.scopes SET version=version+1, embedding_profile=coalesce(embedding_profile,$5::text::jsonb) WHERE ${WHERE}`, [...params(domain, lease.scope), encodedProfile])
         yield* tx.execute(`UPDATE efferent_knowledge.heads SET published_revision=$6 WHERE ${WHERE} AND source_id=$5`, [...params(domain, lease.scope), job.source.id, job.source.revision])
@@ -397,21 +443,24 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         const base = params(domain, query.scope)
         const memoryTime = "(($5::float8 IS NULL AND known_to IS NULL) OR ($5::float8 IS NOT NULL AND known_from <= $5 AND (known_to IS NULL OR $5 < known_to)))"
         // Each narrowing is a parameter after the statement's own, applied before ORDER BY and LIMIT. A source list: a
-        // chunk's source is listed, and no span of a memory cites an unlisted one. A metadata filter, as `{ key: [alternatives] }`:
-        // the revision a chunk cites matches, and so does every revision a memory's spans cite (`sources` keeps each revision).
+        // chunk's source is listed, and no span of a memory's own evidence cites an unlisted one. A metadata filter, as
+        // `{ key: [alternatives] }`: the revision a chunk cites matches, and so does every revision a memory's own evidence
+        // cites (`sources` keeps each revision). A stated memory's mentions after the first are the revisions that restated it
+        // later (`narrowKnowledgeMemory`): no part of its own evidence, they are left out of the result where not admitted.
         const listed = query.sources === undefined ? Option.none<string>() : Option.some(yield* strings(query.sources))
         const described = query.metadata === undefined ? Option.none<string>() : Option.some(yield* encode(MetadataAlternatives, metadataAlternatives(query.metadata)))
         const matches = (parameter: number): string => `NOT EXISTS (SELECT 1 FROM jsonb_each($${parameter}::text::jsonb) f WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(f.value) a WHERE s.payload->'metadata'->f.key = a.value))`
         const matching = (source: string, revision: string, parameter: number): string => `SELECT 1 FROM efferent_knowledge.sources s WHERE s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=${source} AND s.revision=${revision} AND ${matches(parameter)}`
+        const ownEvidence = `NOT (memories.payload->'evidence'->>'_tag'='Stated' AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(memories.payload->'mentions','[]'::jsonb)) WITH ORDINALITY m(ref,n) WHERE m.n>1 AND m.ref->>'id'=r.source_id AND (m.ref->>'revision')::bigint=r.source_revision))`
         const narrowings: ReadonlyArray<{ readonly value: string; readonly memory: (parameter: number) => string; readonly chunk: (parameter: number) => string }> = [
           ...Option.toArray(listed).map((value) => ({
             value,
-            memory: (parameter: number) => ` AND NOT EXISTS (SELECT 1 FROM efferent_knowledge.record_sources r WHERE r.domain=$1 AND r.owner=$2 AND r.namespace=$3 AND r.collection=$4 AND r.kind='memory' AND r.record_id=memories.id AND r.source_id NOT IN (SELECT jsonb_array_elements_text($${parameter}::text::jsonb)))`,
+            memory: (parameter: number) => ` AND NOT EXISTS (SELECT 1 FROM efferent_knowledge.record_sources r WHERE r.domain=$1 AND r.owner=$2 AND r.namespace=$3 AND r.collection=$4 AND r.kind='memory' AND r.record_id=memories.id AND ${ownEvidence} AND r.source_id NOT IN (SELECT jsonb_array_elements_text($${parameter}::text::jsonb)))`,
             chunk: (parameter: number) => ` AND source_id IN (SELECT jsonb_array_elements_text($${parameter}::text::jsonb))`,
           })),
           ...Option.toArray(described).map((value) => ({
             value,
-            memory: (parameter: number) => ` AND NOT EXISTS (SELECT 1 FROM efferent_knowledge.record_sources r WHERE r.domain=$1 AND r.owner=$2 AND r.namespace=$3 AND r.collection=$4 AND r.kind='memory' AND r.record_id=memories.id AND NOT EXISTS (${matching("r.source_id", "r.source_revision", parameter)}))`,
+            memory: (parameter: number) => ` AND NOT EXISTS (SELECT 1 FROM efferent_knowledge.record_sources r WHERE r.domain=$1 AND r.owner=$2 AND r.namespace=$3 AND r.collection=$4 AND r.kind='memory' AND r.record_id=memories.id AND ${ownEvidence} AND NOT EXISTS (${matching("r.source_id", "r.source_revision", parameter)}))`,
             chunk: (parameter: number) => ` AND EXISTS (${matching("chunks.source_id", "chunks.source_revision", parameter)})`,
           })),
         ]
@@ -429,8 +478,16 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
           const statement = narrow([...base, vectorText(vector), query.limit], "chunk")
           return tx.rows(chunkScore, `SELECT payload,CASE WHEN vector_norm(embedding)=0 OR vector_norm($5::vector)=0 THEN 0 ELSE 1-(embedding <=> $5::vector) END::float8 AS score FROM efferent_knowledge.chunks WHERE ${WHERE} AND embedding IS NOT NULL${statement.sql} ORDER BY score DESC,id LIMIT $6`, statement.values)
         }) : []
+        // The memories the statements admitted, with the corroborating evidence the narrowing does not admit left out.
+        // A metadata filter reads the info of every revision the found memories cite, only when one of them was restated later.
+        const narrowed = Option.isSome(listed) || Option.isSome(described)
+        const found = narrowed ? [...lexicalMemories, ...semanticMemories].map(({ payload }) => payload) : []
+        const restated = found.some((memory) => memory.evidence._tag === "Stated" && (memory.mentions ?? []).length > 1)
+        const admits = knowledgeNarrowingAdmits(query, query.metadata === undefined || !restated ? [] : yield* sourceInfoIn(tx, query.scope, found.flatMap((memory) => memory.provenance.map((span) => span.source))))
+        const shown = (memories: ReadonlyArray<{ readonly payload: KnowledgeMemory; readonly score: number }>) => !narrowed || !restated ? memories
+          : memories.flatMap(({ payload, score }) => Option.toArray(narrowKnowledgeMemory(payload, admits)).map((memory) => ({ payload: memory, score })))
         const combine = (memories: ReadonlyArray<{ readonly payload: KnowledgeMemory; readonly score: number }>, chunks: ReadonlyArray<{ readonly payload: KnowledgeChunk; readonly score: number }>): ReadonlyArray<KnowledgeCandidate> => [
-          ...memories.map(({ payload, score }): KnowledgeCandidate => ({ _tag: "Memory", memory: payload, score })),
+          ...shown(memories).map(({ payload, score }): KnowledgeCandidate => ({ _tag: "Memory", memory: payload, score })),
           ...chunks.map(({ payload, score }): KnowledgeCandidate => ({ _tag: "Chunk", chunk: payload, score })),
         ].toSorted((a, b) => b.score - a.score || Order.String(a._tag === "Memory" ? a.memory.id : a.chunk.id, b._tag === "Memory" ? b.memory.id : b.chunk.id)).slice(0, query.limit)
         return { lexical: combine(lexicalMemories, lexicalChunks), semantic: combine(semanticMemories, semanticChunks) } satisfies KnowledgeCandidates
@@ -441,16 +498,7 @@ export const makePostgresIndex = (db: PostgresDatabase, domain: Domain): Knowled
         WHERE s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=$5 AND s.revision=$6 AND h.tombstone_at IS NULL`, [...params(domain, scope), ref.id, ref.revision])
       return Option.fromNullishOr(rows[0])
     }),
-    sourceInfo: Effect.fn("knowledge_store.source_info")(function* (scope, refs) {
-      if (refs.length === 0) return []
-      const listed = yield* encode(Schema.Array(Schema.Struct({ id: Schema.String, revision: Schema.Number })), refs)
-      return yield* payloads(db, KnowledgeSourceInfo, `SELECT jsonb_build_object('ref',s.payload->'ref','occurredAt',s.payload->'occurredAt','recordedAt',s.payload->'recordedAt','metadata',s.payload->'metadata') AS payload
-        FROM (SELECT DISTINCT ON (r.value->>'id',(r.value->>'revision')::bigint) r.value->>'id' AS source_id,(r.value->>'revision')::bigint AS revision,r.ordinality AS position
-          FROM jsonb_array_elements($5::text::jsonb) WITH ORDINALITY r ORDER BY r.value->>'id',(r.value->>'revision')::bigint,r.ordinality) wanted
-        JOIN efferent_knowledge.sources s ON s.domain=$1 AND s.owner=$2 AND s.namespace=$3 AND s.collection=$4 AND s.source_id=wanted.source_id AND s.revision=wanted.revision
-        JOIN efferent_knowledge.heads h ON h.domain=s.domain AND h.owner=s.owner AND h.namespace=s.namespace AND h.collection=s.collection AND h.source_id=s.source_id
-        WHERE h.tombstone_at IS NULL ORDER BY wanted.position`, [...params(domain, scope), listed])
-    }),
+    sourceInfo: Effect.fn("knowledge_store.source_info")((scope, refs) => sourceInfoIn(db, scope, refs)),
     memory: Effect.fn("knowledge_store.memory")(function* (scope, id) {
       const rows = yield* payloads(db, KnowledgeMemory, `SELECT payload FROM efferent_knowledge.memories WHERE ${WHERE} AND id=$5 AND NOT invalidated`, [...params(domain, scope), id])
       return Option.fromNullishOr(rows[0])
