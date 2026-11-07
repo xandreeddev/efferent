@@ -16,7 +16,7 @@ import { WorkspaceToolsConfig, workspaceToolsDefaults } from "./workspace-tools.
  * when null) through `resolveBashEnv`'s allowlist.
  */
 export const localSystemPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/local", version: "0.18.0", scope: "runtime",
+  id: "@xandreed/plugin-workspace/local", version: "0.19.0", scope: "runtime",
   config: LocalSystemConfig, defaults: localSystemDefaults,
   provides: [FileSystem, Bash],
   layer: (config) => Layer.merge(FileSystemLive, BashLive(config)),
@@ -38,7 +38,7 @@ export const LocalSystemPluginLive = localSystemPlugin.live
  * `PermissionGrants`.
  */
 export const workspaceToolsPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/tools", version: "0.18.0", scope: "runtime",
+  id: "@xandreed/plugin-workspace/tools", version: "0.19.0", scope: "runtime",
   config: WorkspaceToolsConfig, defaults: workspaceToolsDefaults,
   requires: [FileSystem, SessionEnvironment],
   optional: [Bash, ImageResizer],
@@ -55,7 +55,7 @@ export const WorkspaceToolsPluginLive = workspaceToolsPlugin.live
 
 /** Optional CLI image fitting on the host's matching Bash and FileSystem. @public */
 export const imageResizerPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/images", version: "0.18.0", scope: "runtime",
+  id: "@xandreed/plugin-workspace/images", version: "0.19.0", scope: "runtime",
   config: ImageResizerConfig, defaults: imageResizerDefaults,
   requires: [FileSystem, Bash], provides: [ImageResizer],
   layer: (config) => ImageResizerCliLive(config),

@@ -106,7 +106,7 @@ media storage by composing it with core's session-log decorator.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-session-files/log` · Version **0.18.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-session-files/log` · Version **0.19.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
