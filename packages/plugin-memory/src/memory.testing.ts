@@ -13,7 +13,7 @@ export const fixtureEnqueue = (id: string, text: string, scope = fixtureScope): 
 })
 export const fixtureExtraction = (text: string) => ({
   entities: [{ key: "person", name: "User", type: "person", aliases: [], existing: null, spans: [{ start: 0, end: text.length, quote: text }] }],
-  memories: [{ key: "preference", kind: "preference", text, entities: ["person"], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [] }],
+  memories: [{ key: "preference", kind: "preference", text, entities: ["person"], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
   assertions: [{ key: "prefers", subject: "person", predicate: "prefers", object: { _tag: "Value", value: "tea" }, text, spans: [{ start: 0, end: text.length, quote: text }], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
 })
 /** Replies by call order, or computed from each call's prompt and helper context. */

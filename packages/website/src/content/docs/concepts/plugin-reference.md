@@ -2247,7 +2247,9 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
   "sectionOrder": 700,
   "tools": true,
   "recallDates": true,
-  "recallToday": false
+  "recallToday": false,
+  "recallHistory": "changes",
+  "recallHistoryShare": 0.2
 }
 ```
 
@@ -2383,6 +2385,19 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     },
     "recallToday": {
       "type": "boolean"
+    },
+    "recallHistory": {
+      "type": "string",
+      "enum": [
+        "changes",
+        "all",
+        "none"
+      ]
+    },
+    "recallHistoryShare": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0.5
     }
   },
   "required": [
@@ -2412,7 +2427,9 @@ Requires: `@xandreed/core/MemoryStore`, `@xandreed/core/UtilityLlm`, `effect/ai/
     "sectionOrder",
     "tools",
     "recallDates",
-    "recallToday"
+    "recallToday",
+    "recallHistory",
+    "recallHistoryShare"
   ],
   "additionalProperties": true
 }

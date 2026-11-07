@@ -171,6 +171,7 @@ const JsonObject
 const KNOWLEDGE_EXTRACTION_VERSION
 const KnowledgeAssertion
 const KnowledgeAssertionId
+const KnowledgeAssertionReplacement
 const KnowledgeCandidate
 const KnowledgeCandidates
 const KnowledgeChunk
@@ -204,6 +205,7 @@ const KnowledgeLeaseToken
 const KnowledgeMemory
 const KnowledgeMemoryId
 const KnowledgeMemoryKind
+const KnowledgeMemoryReplacement
 const KnowledgeMetadataFilter
 const KnowledgeMetadataValue
 const KnowledgeNarrowing
@@ -214,6 +216,8 @@ const KnowledgeProvenance
 const KnowledgeQueryPlan
 const KnowledgeReach
 const KnowledgeRecall
+const KnowledgeRecallHistory
+const KnowledgeRecallHistoryMode
 const KnowledgeRecallResult
 const KnowledgeRequeue
 const KnowledgeRerank
@@ -229,6 +233,7 @@ const KnowledgeStage
 const KnowledgeStageNote
 const KnowledgeStoreMemoryLive
 const KnowledgeSubgraph
+const KnowledgeSupersession
 const KnowledgeTraversal
 const KnowledgeVector
 const LogBody
@@ -481,6 +486,7 @@ const isShutdownRefusal
 const isStoreBusy
 const isTurnError
 const journalSchemaOf
+const knowledgeAssertionKey
 const knowledgeBm25
 const knowledgeCandidateKey
 const knowledgeCandidateText
@@ -740,6 +746,7 @@ type JsonObject
 type KeyedKind
 type KnowledgeAssertion
 type KnowledgeAssertionId
+type KnowledgeAssertionReplacement
 type KnowledgeCandidate
 type KnowledgeCandidates
 type KnowledgeChunk
@@ -769,6 +776,7 @@ type KnowledgeLeaseToken
 type KnowledgeMemory
 type KnowledgeMemoryId
 type KnowledgeMemoryKind
+type KnowledgeMemoryReplacement
 type KnowledgeMetadataFilter
 type KnowledgeMetadataValue
 type KnowledgeObject
@@ -778,6 +786,8 @@ type KnowledgeProvenance
 type KnowledgeQueryPlan
 type KnowledgeReach
 type KnowledgeRecall
+type KnowledgeRecallHistory
+type KnowledgeRecallHistoryMode
 type KnowledgeRecallResult
 type KnowledgeRequeue
 type KnowledgeRerank
@@ -792,6 +802,7 @@ type KnowledgeSourceRef
 type KnowledgeStage
 type KnowledgeStageNote
 type KnowledgeSubgraph
+type KnowledgeSupersession
 type KnowledgeTraversal
 type KnowledgeVector
 type LogBody

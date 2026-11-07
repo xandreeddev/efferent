@@ -133,6 +133,15 @@ is unchanged. A stage or an assertion an earlier release wrote, with only
 basis reads as stated). The adapter passes `knowledgeStoreConformance`'s
 `knowledge.stage-notes` check.
 
+A successor's `replaces` links (to the memories it retired, a relation's
+history copy or a corrected relation) are part of the successor's payload,
+with no column, so the layout is unchanged. Publication writes nothing to a
+retired row but its `known_to`, so a retired memory stays readable by id
+(`memory`) until its source is forgotten; forgetting it leaves a successor's
+link dangling, and recall skips such a link. A memory or relation an earlier
+release wrote has no links and decodes unchanged. The adapter passes
+`knowledgeStoreConformance`'s `knowledge.supersession-links` check.
+
 `failed` lists failed jobs across owners from the row's `phase`, `engine` and
 `collection` columns, in the rows' recording order; its cursor is the last
 row's ordinal. A reasons filter reads the reason in the payload, and a job

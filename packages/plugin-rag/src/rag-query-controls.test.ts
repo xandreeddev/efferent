@@ -54,7 +54,7 @@ describe("document query controls", () => {
   test("the tool preserves missing temporal coordinates and explicit graph opt-out", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const inputs = yield* Ref.make<ReadonlyArray<KnowledgeRecall>>([])
     const { knowledge } = yield* makeRag()
-    const service = Knowledge.of({ ...knowledge, retrieve: (input) => Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })) })
+    const service = Knowledge.of({ ...knowledge, retrieve: (input) => Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] })) })
     const run = { session: { owner: scope.owner } } as typeof RunContext.Service
     const search = ragCapability({ ...ragDefaults, graph: true }).tools[0]!
     yield* search.handler({ query: "Atlas", knownAt: 42 }).pipe(Effect.provideService(Knowledge, service), Effect.provideService(RunContext, run))

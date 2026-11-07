@@ -3,13 +3,13 @@ import { clipTo, framed } from "../turn/model-text.js"
 import {
   KnowledgeAssertionId, KnowledgeEntityId, KnowledgeError, KnowledgeMemoryId,
 } from "./knowledge.entity.js"
-import type { KnowledgeAssertion, KnowledgeHelperPurpose, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
+import type { KnowledgeAssertion, KnowledgeAssertionReplacement, KnowledgeHelperPurpose, KnowledgeProvenance, KnowledgeSnapshot, KnowledgeSource, KnowledgeStage, KnowledgeStageNote } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
 import type { KnowledgeExtractionWindow } from "./knowledge-extraction.entity.js"
 import { knowledgeTokens } from "./knowledge.entity.functions.js"
 
 /** Versioned instructions: source text and previously learned material remain untrusted evidence. @public */
-export const KNOWLEDGE_EXTRACTION_VERSION = "2"
+export const KNOWLEDGE_EXTRACTION_VERSION = "3"
 
 const extractionRules = [
   "Extract durable knowledge with exact source evidence. Resolve entities conservatively; reuse only an existing identity supplied below, and keep ambiguous identities separate.",
@@ -17,6 +17,7 @@ const extractionRules = [
   "Use UTF-16 source offsets and an exact quote for every span. A unique exact quote can repair an offset error; repeated quotes need the correct offset. Dates are epoch milliseconds. Resolve relative dates and times against the source occurrence time, never the current time. Recording time is assigned by storage. Preserve historical facts and propose supersession only when the source establishes a correction or change.",
   "Use local entity keys in memories and assertions. Include every referenced entity in entities. Use existing only for an identity from the supplied candidates. Supersedes may name only active supplied records.",
   "For a relationship that changed in the world, use supersession change and supply the new validFrom time. When the source states a present change without a date, set validFrom to the source occurrence time; reserve null for a start that is unknown and supersedes nothing. For an earlier claim that was incorrect, use supersession correction. Keep unknown validity dates null; never invent a date to force an update.",
+  "When a new memory replaces an active candidate memory because the situation changed, list it in supersedes with supersession change; when the candidate was wrong, use correction. Write the new memory so it states the new situation and what it replaces.",
   "Mark inferred memories with supporting memory identities. Infer routines only from at least three distinct source episodes. Explicitly stated routines need no recurrence inference. A routine never authorizes an action.",
   "Consolidate repeated supported observations into concise entity profiles and routines when the evidence warrants them. Preserve supporting identities, supersede redundant derived observations explicitly, and keep disagreements visible instead of inventing a single answer.",
   "Return one JSON object matching the output schema, with no Markdown fences or surrounding prose. Return empty arrays when the evidence supports no durable knowledge.",
@@ -264,7 +265,10 @@ const problemIf = (failed: boolean, message: string): Option.Option<string> => f
  * key, does not encode, or proposed memories or assertions of which none
  * survive (entities alone do not count; with the first drop's message). A world change that supersedes a record
  * without a `validFrom` takes the source's occurrence time, with basis
- * `observed`; a `validFrom` the extraction gives has basis `stated`.
+ * `observed`; a `validFrom` the extraction gives has basis `stated`. A record
+ * that supersedes others links them in `replaces`, with its supersession: a
+ * memory the memories it retires, a relation's change the history copies it
+ * writes, and a relation's correction the relations it retires.
  * A staged record cites its own spans first, then its entities' evidence and,
  * for an inferred memory, its supports' evidence; a relation's history copy
  * keeps the earlier relation's spans first. `knowledgeRecordDate` relies on it.
@@ -349,6 +353,8 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       onNone: () => [], onSome: (id) => snapshot.graph.entities.find((prior) => prior.id === id)?.provenance ?? [],
     })]
   }
+  /** The `replaces` key, written only when the record replaces something, so a record that replaces nothing is stored as before. */
+  const linked = <L>(links: ReadonlyArray<L>): { readonly replaces?: ReadonlyArray<L> } => links.length === 0 ? {} : { replaces: links }
   const stage: KnowledgeStage = {
     expectedVersion: snapshot.version, chunks: [],
     memories: kept.memories.map((memory) => ({
@@ -357,12 +363,26 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
       provenance: [...provenance(memory.spans), ...memory.entities.flatMap(entityEvidence), ...supportEvidence(memory)],
       entities: memory.entities.map(identityOf),
       evidence: memory.evidence, embedding: Option.none(), knownFrom: now, knownTo: Option.none(),
+      ...linked([...new Set(memory.supersedes)].map((id) => ({ id, supersession: memory.supersession }))),
     })),
     entities: kept.entities.map((entity) => ({
       id: identityOf(entity.key), name: entity.name, type: entity.type, aliases: entity.aliases, provenance: entityEvidence(entity.key),
     })),
     assertions: kept.assertions.flatMap((assertion) => {
       const validity = dated(assertion)
+      const priors = activeAssertions.filter((prior) => assertion.supersedes.includes(prior.id))
+      // A change ends each prior relation in a history copy; a correction retires it with no copy.
+      const copies = assertion.supersession !== "change" ? [] : Option.match(validity.validFrom, { onNone: () => [], onSome: (effective) => priors.map((prior) => {
+        // The prior relation ends where the change takes effect, or earlier when it already had, and never before it began.
+        const ended = Math.min(Option.getOrElse(prior.validTo, () => effective), effective)
+        return {
+          ...prior,
+          id: KnowledgeAssertionId.make(`${source.ref.id}:${source.ref.revision}:history:${encodeURIComponent(assertion.key)}:${encodeURIComponent(prior.id)}`),
+          validTo: Option.some(Option.match(prior.validFrom, { onNone: () => ended, onSome: (from) => Math.max(from, ended) })),
+          provenance: [...prior.provenance, ...provenance(assertion.spans)], knownFrom: now, knownTo: Option.none(),
+        }
+      }) })
+      const replaced: ReadonlyArray<KnowledgeAssertionReplacement> = assertion.supersession === "change" ? copies.map(({ id }) => ({ id, supersession: "change" })) : priors.map(({ id }) => ({ id, supersession: "correction" }))
       return [{
         id: KnowledgeAssertionId.make(`${source.ref.id}:${source.ref.revision}:assertion:${encodeURIComponent(assertion.key)}`),
         subject: identityOf(assertion.subject),
@@ -372,19 +392,8 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
           Value: (object) => ({ _tag: "Value" as const, value: object.value }),
         }),
         text: assertion.text, provenance: [...provenance(assertion.spans), ...entityEvidence(assertion.subject), ...Match.valueTags(assertion.object, { Entity: (object) => entityEvidence(object.key), Value: () => [] })],
-        ...validity, validTo: assertion.validTo, knownFrom: now, knownTo: Option.none(),
-      }, ...(assertion.supersession !== "change" ? [] : Option.match(validity.validFrom, { onNone: () => [], onSome: (effective) => activeAssertions
-        .filter((prior) => assertion.supersedes.includes(prior.id))
-        .map((prior) => {
-          // The prior relation ends where the change takes effect, or earlier when it already had, and never before it began.
-          const ended = Math.min(Option.getOrElse(prior.validTo, () => effective), effective)
-          return {
-            ...prior,
-            id: KnowledgeAssertionId.make(`${source.ref.id}:${source.ref.revision}:history:${encodeURIComponent(assertion.key)}:${encodeURIComponent(prior.id)}`),
-            validTo: Option.some(Option.match(prior.validFrom, { onNone: () => ended, onSome: (from) => Math.max(from, ended) })),
-            provenance: [...prior.provenance, ...provenance(assertion.spans)], knownFrom: now, knownTo: Option.none(),
-          }
-        }) }))]
+        ...validity, validTo: assertion.validTo, knownFrom: now, knownTo: Option.none(), ...linked(replaced),
+      }, ...copies]
     }),
     retireMemories: [...new Set(kept.memories.flatMap((memory) => memory.supersedes))],
     retireAssertions: [...new Set(kept.assertions.flatMap((assertion) => assertion.supersedes))],

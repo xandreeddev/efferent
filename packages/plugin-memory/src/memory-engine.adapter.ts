@@ -6,11 +6,12 @@ import {
   KnowledgeQueryPlan, KnowledgeRerank, applyKnowledgeRerank, budgetKnowledgeRecall, citedKnowledgeSources, knowledgeBm25,
   extractKnowledge, fuseKnowledgeCandidates, knowledgeQueryPrompt, knowledgeRerankPrompt, stageKnowledgeExtraction,
   isRetryableKnowledgeFailure, narrowKnowledgeGraph, traverseKnowledgeGraph, knowledgeNarrowingAdmits, narrowKnowledgeGraphBy,
+  citesAdmittedKnowledge, knowledgeAssertionKey, knowledgeCandidateKey, knowledgeRecordDate,
 } from "@xandreed/core"
 import type {
   KnowledgeEmbeddingSpace, KnowledgeEnqueue, KnowledgeHelperPurpose, KnowledgeJob, KnowledgeJobFailure, KnowledgeLease,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeScope, KnowledgeSnapshot, KnowledgeStage, KnowledgeVector,
-  KnowledgeCandidate,
+  KnowledgeAssertion, KnowledgeCandidate, KnowledgeMemory, KnowledgeRecallHistory, KnowledgeSubgraph, KnowledgeSupersession,
 } from "@xandreed/core"
 import type { MemoryConfig } from "./memory.entity.js"
 
@@ -152,10 +153,44 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
     const amounts = yield* Effect.forEach(Array.from({ length: Math.max(0, Math.min(100, Math.floor(limit))) }), () => processOne(scope), { concurrency: 1 })
     return amounts.reduce((sum, amount) => sum + amount, 0)
   })
+  /**
+   * The earlier states the recalled current records replaced, one hop back along their `replaces` links of the
+   * supersessions `follows` admits: a memory read by id, a relation from the snapshot recall already read (narrowed as
+   * the graph is). A link whose record is gone (its source was forgotten), is still current, or cites a revision
+   * outside the narrowing is skipped. `until` is a change's ended validity for a relation, else when its successor was said.
+   */
+  const earlierStates = Effect.fnUntraced(function* (input: KnowledgeRecall, candidates: ReadonlyArray<KnowledgeCandidate>, graph: KnowledgeSubgraph, snapshot: KnowledgeSnapshot, follows: (supersession: KnowledgeSupersession) => boolean) {
+    const memoryLinks = candidates.flatMap((candidate) => candidate._tag === "Memory"
+      ? (candidate.memory.replaces ?? []).filter((link) => follows(link.supersession)).map((link) => ({ successor: candidate.memory, link })) : [])
+    const assertionLinks = graph.assertions.flatMap((successor) => (successor.replaces ?? []).filter((link) => follows(link.supersession)).map((link) => ({ successor, link })))
+    if (memoryLinks.length === 0 && assertionLinks.length === 0) return []
+    const memories = (yield* Effect.forEach(memoryLinks, ({ successor, link }) => store.memory(input.scope, link.id).pipe(
+      Effect.map(Option.map((record) => ({ successor, link, record }))),
+    ), { concurrency: 4 })).flatMap(Option.toArray).filter(({ record }) => Option.isSome(record.knownTo))
+    const assertions = assertionLinks.flatMap(({ successor, link }) => snapshot.graph.assertions.filter((record) => record.id === link.id && (Option.isSome(record.knownTo) || Option.isSome(record.validTo)))
+      .map((record) => ({ successor, link, record })))
+    const successors: ReadonlyArray<KnowledgeMemory | KnowledgeAssertion> = [...memories.map(({ successor }) => successor), ...assertions.map(({ successor }) => successor)]
+    const refs = [
+      ...successors.flatMap((successor) => Option.toArray(Option.fromNullishOr(successor.provenance[0])).map((span) => span.source)),
+      ...(input.metadata === undefined ? [] : memories.flatMap(({ record }) => record.provenance.map((span) => span.source))),
+    ]
+    const infos = refs.length === 0 ? [] : yield* store.sourceInfo(input.scope, refs)
+    const admits = knowledgeNarrowingAdmits(input, infos)
+    const saidAt = (successor: KnowledgeMemory | KnowledgeAssertion) => Option.getOrElse(knowledgeRecordDate(successor.provenance, infos), () => successor.knownFrom)
+    return [
+      ...memories.filter(({ record }) => citesAdmittedKnowledge(record.provenance, admits)).map(({ successor, link, record }): KnowledgeRecallHistory => ({
+        _tag: "Memory", successor: knowledgeCandidateKey({ _tag: "Memory", memory: successor, score: 0 }), record, supersession: link.supersession, until: saidAt(successor),
+      })),
+      ...assertions.map(({ successor, link, record }): KnowledgeRecallHistory => ({
+        _tag: "Assertion", successor: knowledgeAssertionKey(successor), record, supersession: link.supersession,
+        until: link.supersession === "change" ? Option.getOrElse(record.validTo, () => saidAt(successor)) : saidAt(successor),
+      })),
+    ]
+  })
   const recall = Effect.fn("memory.recall")(function* (input: KnowledgeRecall) {
     yield* inScope(input.scope)
     const { sources, metadata } = input
-    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] } satisfies KnowledgeRecallResult
+    if (sources !== undefined && sources.length === 0) return { candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] } satisfies KnowledgeRecallResult
     const now = yield* Clock.currentTimeMillis
     const fallback: KnowledgeQueryPlan = { queries: [input.query], entities: [], validAt: Option.none(), knownAt: Option.none() }
     const plan = config.queryPlanning ? yield* ask(knowledgeQueryPrompt(input.query, now), "plan", input.scope, Option.none()).pipe(
@@ -203,7 +238,9 @@ export const MemoryLive = (config: MemoryConfig) => Layer.effectContext(Effect.g
       return current.items.length < input.limit && current.used + text.length <= input.maxChars
         ? { items: [...current.items, candidate], used: current.used + text.length } : current
     }, { items: [] as ReadonlyArray<KnowledgeCandidate>, used: 0 })
-    const bounded = budgetKnowledgeRecall({ candidates: selected.items, graph, sources: [] }, input.maxChars, input.limit)
+    const mode = input.history ?? "changes"
+    const earlier = mode === "none" ? [] : yield* earlierStates(input, selected.items, graph, snapshot, (supersession) => mode === "all" || supersession === "change")
+    const bounded = budgetKnowledgeRecall({ candidates: selected.items, graph, history: earlier, sources: [] }, input.maxChars, input.limit, input.historyShare)
     return { ...bounded, sources: yield* store.sourceInfo(input.scope, citedKnowledgeSources(bounded)) }
   }, Effect.timeoutOrElse({ duration: config.retrievalTimeoutMs, orElse: () => Effect.fail(failure("Memory retrieval exceeded its time budget")) }))
   const capture = Effect.fn("memory.capture")(function* (input: KnowledgeEnqueue) {

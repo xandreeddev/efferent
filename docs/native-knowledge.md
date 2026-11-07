@@ -35,23 +35,25 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `2`) and its
-embedding space: `knowledgeEngineId("rag:2", space)` is
-`rag:2/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `3`) and its
+embedding space: `knowledgeEngineId("rag:3", space)` is
+`rag:3/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under the previous one (`memory:1/…`,
-`rag:1/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:2/…`,
+`rag:2/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
 calls `Invalid` final, so list those jobs with
 `failed({ namespace, reasons: ["Invalid"] })` and pass them to `retry`
-directly.
+directly. Version 3 asks each extracted memory why it supersedes
+(`supersession`) and links successors to what they replaced; a job of an
+earlier version that failed is retried the same way.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -307,7 +309,18 @@ unknown. The extraction prompt shows the occurrence time as ISO 8601 in UTC
 and in the epoch milliseconds its dates are given in, and asks for relative
 dates to be resolved against it, never against the current time.
 A correction preserves what was previously believed without treating the old
-claim as currently valid. Query `graph.perspective` with separate `validAt` and
+claim as currently valid.
+
+A successor links the earlier state it replaced in `replaces`, a list of `{
+id, supersession }` written on the successor at staging, never on the record
+it retired (whose only change is its `knownTo`). A relation's change links the
+history copy, which carries the ended `validTo`; a relation's correction links
+the retired relation. A memory supersedes too: an extracted memory says why
+(`supersession`, `change` when the situation changed, `correction` when the
+earlier memory was wrong), and the new memory links each memory it retires
+with that supersession. The extraction prompt (version 3) asks for this and
+for the new memory to state the new situation and what it replaces. A record
+stored before links existed decodes with none. Query `graph.perspective` with separate `validAt` and
 `knownAt` coordinates. Temporal graph filtering applies at every hop. Historical
 graph filtering does not make RAG's current chunk index a historical chunk index;
 original source revisions are read explicitly by their reference.
@@ -448,7 +461,7 @@ and `narrowKnowledgeGraphBy` state the rule for a host's own store or tools.
 A `retrieve` or `recall` result names, beside its candidates and graph, the
 source revisions its evidence cites. `sources` holds one `KnowledgeSourceInfo`
 per cited revision, once each, in order of first citation (candidates, then
-relations, then entities): its `ref`, `occurredAt`, `recordedAt` and the
+relations, then entities, then earlier states): its `ref`, `occurredAt`, `recordedAt` and the
 host's `metadata` as ingested, without the text. A host shows a title, link,
 page or date beside a citation without a source read per hit; `source(scope,
 ref)` still returns the text. `citedKnowledgeSources(result)` lists the cited
@@ -511,6 +524,56 @@ today's date from the clock; the text then changes daily, so turn it on only
 where recall is not part of a cached prefix. The section dates its profile
 records from the recall's `sources` and, for a record whose revision the
 recall did not cite, reads that revision (`LongTermMemory.source`) once.
+
+### Earlier states in memory recall
+
+A memory recall also returns the earlier states its current records replaced,
+so the model can answer what was true before ("what did I drink before?")
+without mistaking it for what is true now. `KnowledgeRecallResult.history`
+holds one entry per earlier state, in the rank order of its successor: the
+retired memory, or the relation's history copy or retired relation, as
+`record`, with `successor` (the current record's key: `memory:<id>`, or
+`knowledgeAssertionKey(relation)`, `assertion:<id>`), the `supersession`, and
+`until`: when it stopped being current (a change's ended validity for a
+relation, otherwise the date its successor was said). A result encoded before
+`history` existed decodes with none.
+
+`KnowledgeRecall.history` chooses which: `"changes"` (the default) follows
+changes only, `"all"` also corrections, and `"none"` none. Corrections are
+left out by default because a correction says the earlier belief was wrong.
+`historyShare` (0 to 0.5, default 0.2) is the most of `maxChars` they may
+take. The selection is deterministic, in three passes:
+
+1. Current candidates and relations within `(1 - historyShare) × maxChars`.
+2. One hop of `replaces` from the records pass 1 kept, in their rank order
+   (candidates, then relations), within the share and what pass 1 left, at
+   most `ceil(limit / 2)` of them. A memory is read by id
+   (`MemoryStore.memory`); a relation comes from the snapshot recall already
+   read. A link whose record was forgotten, is still current, or cites a
+   revision outside the recall's `sources` or `metadata` is skipped.
+3. Whatever the share left unused goes to further current records.
+
+When no earlier state is followed, current evidence takes the whole budget,
+exactly as before. `budgetKnowledgeRecall(result, maxChars, limit,
+historyShare)` in `@xandreed/core` is this budget. Document retrieval
+(`Knowledge.retrieve`) returns no earlier states.
+
+`renderMemoryRecall` shows them after the current records, inside the same
+frame, under their own heading:
+
+```text
+Earlier states, no longer current:
+
+previously: The user usually drinks coffee in the morning. (until 2026-06-03; replaced by conversation:…:switched:1:0 revision 1)
+Source: conversation:…:usual:1:0 revision 1, characters 6-44
+```
+
+A correction reads `previously: <text> (corrected YYYY-MM-DD; this was
+wrong)`. Each line names the revision that states its successor, shown among
+the current records. The memory engine's `recallHistory` (default `"changes"`)
+and `recallHistoryShare` (default `0.2`) set both for the section,
+`memoryRecallNote` and `recall_memory`, whose `history` parameter lets the
+model ask for `all` or `none` on one call.
 
 ## Place memory recall yourself
 

@@ -220,6 +220,32 @@ test.skipIf(url.length === 0)("PostgreSQL keeps dropped-record notes and validit
   expect(yield* stored).toEqual([Option.some(notes.slice(0, 1)), [undefined]])
 }))))
 
+test.skipIf(url.length === 0)("PostgreSQL keeps a successor's replaces links in its payload, leaves the retired row unlinked, and reads rows stored without links", () => run(Effect.scoped(Effect.gen(function* () {
+  const { memory: index } = yield* makeKnowledgePostgres(Redacted.make(url))
+  const sql = yield* Effect.acquireRelease(Effect.sync(() => postgres(url)), (connection) => Effect.tryPromise(() => connection.end()).pipe(Effect.orDie))
+  const scope = freshScope()
+  const before = sourceOf(scope, "usual", "Ann usually drinks coffee.")
+  yield* index.publish(yield* prepare(index, before, stageOf(0, [memoryOf(before, "coffee")])))
+  const after = sourceOf(scope, "switched", "Ann switched to tea.")
+  const ann = { id: KnowledgeEntityId.make("switched:1:entity:ann"), name: "Ann", type: "person", aliases: [], provenance: [{ source: after.ref, start: 0, end: 3, quote: "Ann" }] }
+  const tea: KnowledgeMemory = { ...memoryOf(after, "tea"), replaces: [{ id: KnowledgeMemoryId.make("coffee"), supersession: "change" }] }
+  const drinks = {
+    id: KnowledgeAssertionId.make("switched:1:assertion:drinks"), subject: ann.id, predicate: "drinks", object: { _tag: "Value" as const, value: "tea" }, text: after.text,
+    provenance: tea.provenance, validFrom: Option.some(10), validTo: Option.none<number>(), validFromBasis: "observed" as const, knownFrom: 22, knownTo: Option.none<number>(),
+    replaces: [{ id: KnowledgeAssertionId.make("switched:1:history:drinks:earlier"), supersession: "change" as const }],
+  }
+  yield* index.publish(yield* prepare(index, after, { ...stageOf(1, [tea]), entities: [ann], assertions: [drinks], retireMemories: [KnowledgeMemoryId.make("coffee")] }))
+  const stored = Effect.all([index.memory(scope, KnowledgeMemoryId.make("tea")), index.memory(scope, KnowledgeMemoryId.make("coffee")), index.snapshot(scope)], { concurrency: 1 }).pipe(Effect.map(([successor, retired, snapshot]) => [
+    Option.map(successor, (memory) => memory.replaces), Option.map(retired, (memory) => [Option.isSome(memory.knownTo), memory.replaces]), snapshot.graph.assertions.map((edge) => edge.replaces),
+  ]))
+  expect(yield* stored).toEqual([Option.some(tea.replaces), Option.some([true, undefined]), [drinks.replaces]])
+  // Rows an earlier release wrote: a memory and a relation without links.
+  const where = sql`domain='memory' AND owner=${scope.owner} AND namespace=${scope.namespace} AND collection=${scope.collection}`
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.memories SET payload = payload #- '{replaces}' WHERE ${where}`)
+  yield* Effect.tryPromise(() => sql`UPDATE efferent_knowledge.assertions SET payload = payload #- '{replaces}' WHERE ${where}`)
+  expect(yield* stored).toEqual([Option.some(undefined), Option.some([true, undefined]), [undefined]])
+}))))
+
 test.skipIf(url.length === 0)("PostgreSQL scope CAS permits one concurrent publication across pools", () => run(Effect.scoped(Effect.gen(function* () {
   const first = yield* makeKnowledgePostgres(Redacted.make(url))
   const second = yield* makeKnowledgePostgres(Redacted.make(url))

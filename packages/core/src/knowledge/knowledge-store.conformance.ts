@@ -60,7 +60,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
- * revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
+ * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
  * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
  * @public
@@ -259,6 +259,39 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const memory = yield* fixture.index.memory(fixture.scope, KnowledgeMemoryId.make("memory"))
       const snapshot = yield* fixture.index.snapshot(fixture.scope)
       yield* expect("knowledge.forget-tombstone", Result.isFailure(replay) && Option.isNone(source) && Option.isNone(memory) && snapshot.memories.length === 0, "forgotten evidence remained visible or was resurrected")
+    })),
+    indexCheck("knowledge.supersession-links", (fixture) => Effect.gen(function* () {
+      const seeded = yield* seed(fixture)
+      const later = sourceOf(fixture.scope, "Alice prefers tea now", "later")
+      const job = yield* enqueue(fixture, later, "later-job")
+      yield* claim(fixture, 30)
+      const lease = leaseOf(fixture.scope, job, 31)
+      const prior = KnowledgeMemoryId.make("memory")
+      const successor: KnowledgeMemory = { ...memoryOf(later, "successor"), replaces: [{ id: prior, supersession: "change" }] }
+      const alice = { id: KnowledgeEntityId.make("alice"), name: "Alice", type: "person", aliases: [], provenance: [{ source: later.ref, start: 0, end: 5, quote: "Alice" }] }
+      // A relation's link may name a record this store never held: the store keeps it as written, and readers skip it.
+      const relation = {
+        id: KnowledgeAssertionId.make("prefers-tea"), subject: alice.id, predicate: "prefers", object: { _tag: "Value" as const, value: "tea" }, text: later.text,
+        provenance: successor.provenance, validFrom: Option.none<number>(), validTo: Option.none<number>(), knownFrom: 31, knownTo: Option.none<number>(),
+        replaces: [{ id: KnowledgeAssertionId.make("never-stored"), supersession: "correction" as const }],
+      }
+      yield* fixture.index.stage(lease, { ...stageOf(later, 1, "successor"), memories: [successor], entities: [alice], assertions: [relation], retireMemories: [prior] })
+      yield* fixture.index.publish(lease)
+      const linksOf = (found: Option.Option<KnowledgeMemory>) => Option.map(found, (memory) => memory.replaces)
+      const read = yield* fixture.index.memory(fixture.scope, successor.id)
+      const retired = yield* fixture.index.memory(fixture.scope, prior)
+      const snapshot = yield* fixture.index.snapshot(fixture.scope)
+      const stored = snapshot.graph.assertions.find((edge) => edge.id === relation.id)
+      yield* expect("knowledge.supersession-links", sameJson(linksOf(read), Option.some(successor.replaces)) && sameJson(stored?.replaces, relation.replaces) &&
+        sameJson(snapshot.memories.find((memory) => memory.id === successor.id)?.replaces, successor.replaces),
+        "a successor's replaces links were lost or changed by staging, publication or reads")
+      // The retired memory, stored before any link existed, reads by id unchanged but for when it was retired.
+      yield* expect("knowledge.supersession-links", Option.exists(retired, (memory) => sameJson({ ...memory, knownTo: Option.none() }, seeded.stage.memories[0]) && Option.contains(memory.knownTo, 31) && !("replaces" in memory)),
+        "a retired memory is no longer readable by id, gained links, or changed beyond its known end")
+      // Forgetting the earlier source leaves the successor's link dangling: the successor keeps it, the earlier memory is gone.
+      yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
+      yield* expect("knowledge.supersession-links", Option.isNone(yield* fixture.index.memory(fixture.scope, prior)) && sameJson(linksOf(yield* fixture.index.memory(fixture.scope, successor.id)), Option.some(successor.replaces)),
+        "forgetting the earlier source kept its memory readable or removed the successor's link")
     })),
     indexCheck("knowledge.source-revision", (fixture) => Effect.gen(function* () {
       const seeded = yield* seed(fixture)

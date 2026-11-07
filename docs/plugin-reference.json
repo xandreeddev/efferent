@@ -2136,7 +2136,9 @@
       "sectionOrder": 700,
       "tools": true,
       "recallDates": true,
-      "recallToday": false
+      "recallToday": false,
+      "recallHistory": "changes",
+      "recallHistoryShare": 0.2
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2267,6 +2269,19 @@
         },
         "recallToday": {
           "type": "boolean"
+        },
+        "recallHistory": {
+          "type": "string",
+          "enum": [
+            "changes",
+            "all",
+            "none"
+          ]
+        },
+        "recallHistoryShare": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5
         }
       },
       "required": [
@@ -2296,7 +2311,9 @@
         "sectionOrder",
         "tools",
         "recallDates",
-        "recallToday"
+        "recallToday",
+        "recallHistory",
+        "recallHistoryShare"
       ],
       "additionalProperties": true
     }

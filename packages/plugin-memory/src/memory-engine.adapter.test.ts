@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { EmbeddingModel } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Order, Ref } from "effect"
 import { KnowledgeJobId, KnowledgeSourceId, LongTermMemory, MemoryStore, citedKnowledgeSources, knowledgeExtractionWindows } from "@xandreed/core"
-import type { KnowledgeMetadataFilter, KnowledgeRecallResult } from "@xandreed/core"
+import type { KnowledgeMetadataFilter, KnowledgeRecall, KnowledgeRecallResult } from "@xandreed/core"
 import { MemoryLive } from "./memory-engine.adapter.js"
 import { memoryDefaults } from "./memory.entity.js"
 import type { MemoryConfig } from "./memory.entity.js"
@@ -21,7 +21,7 @@ describe("native memory engine", () => {
     expect(result.graph.assertions.map((assertion) => assertion.predicate)).toEqual(["prefers"])
     expect((yield* fixture.memory.profile(fixtureScope)).map((memory) => memory.text)).toEqual([text])
     const other = yield* fixture.memory.recall({ scope: { ...fixtureScope, owner: "other-owner" }, query: "preferred drink", limit: 8, maxChars: 8_000 })
-    expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, sources: [] })
+    expect(other).toEqual({ candidates: [], graph: { entities: [], assertions: [], truncated: false }, history: [], sources: [] })
   }))))
 
   test("a metadata filter recalls memories and graph evidence only from source revisions whose metadata matches", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -93,6 +93,41 @@ describe("native memory engine", () => {
     expect((yield* fixture.memory.capture(fixtureEnqueue("old", previous)).pipe(Effect.result))._tag).toBe("Failure")
   }))))
 
+  test("recall follows a current memory's links to earlier states: changes by default, corrections only with all, none with none", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const said = { a: "I drink coffee.", b: "I drink tea now.", c: "I live in Oslo.", d: "Sorry, I live in Bergen." } as const
+    const memoryOf = (key: string, text: string, supersedes: ReadonlyArray<string>, supersession: string) => ({
+      key, kind: "preference", text, entities: [], spans: [{ start: 0, end: text.length, quote: text }], evidence: { _tag: "Stated" }, supersedes, supersession,
+    })
+    const extraction = (prompt: string) => {
+      const text = /<knowledge-source>\n([\s\S]*?)\n<\/knowledge-source>/.exec(prompt)?.[1] ?? ""
+      const memories = text === said.b ? [memoryOf("drink", text, ["a:1:memory:drink"], "change")]
+        : text === said.d ? [memoryOf("place", text, ["c:1:memory:place"], "correction")]
+          : [memoryOf(text === said.a ? "drink" : "place", text, [], "change")]
+      return JSON.stringify({ entities: [], memories, assertions: [] })
+    }
+    const fixture = yield* makeMemoryFixture(extraction)
+    yield* Effect.forEach(Object.entries(said), ([id, text]) => fixture.memory.capture(fixtureEnqueue(id, text)).pipe(Effect.andThen(fixture.memory.process(fixtureScope, 1))), { concurrency: 1 })
+    const recall = (more: Partial<KnowledgeRecall> = {}) => fixture.memory.recall({ scope: fixtureScope, query: "What do I drink and where do I live?", limit: 8, maxChars: 8_000, ...more })
+    const earlier = (result: KnowledgeRecallResult) => result.history.map((state) => [state.successor, state.record.text, state.supersession, state.until])
+    const current = yield* recall()
+    expect(current.candidates.flatMap((candidate) => candidate._tag === "Memory" ? [candidate.memory.text] : []).toSorted(Order.String)).toEqual([said.d, said.b].toSorted(Order.String))
+    expect(earlier(current)).toEqual([["memory:b:1:memory:drink", said.a, "change", 1]])
+    // The earlier state's revision is among the sources, so a renderer can date and cite it.
+    expect(current.sources.map((info): string => info.ref.id).toSorted(Order.String)).toEqual(["a", "b", "d"])
+    const all = yield* recall({ history: "all" })
+    expect(earlier(all).toSorted((left, right) => Order.String(String(left[1]), String(right[1])))).toEqual([["memory:b:1:memory:drink", said.a, "change", 1], ["memory:d:1:memory:place", said.c, "correction", 1]])
+    expect(earlier(yield* recall({ history: "none" }))).toEqual([])
+    // An earlier state outside the reach is skipped, whether by its source or its metadata.
+    expect(earlier(yield* recall({ sources: [KnowledgeSourceId.make("b"), KnowledgeSourceId.make("d")] }))).toEqual([])
+    expect(earlier(yield* recall({ sources: [KnowledgeSourceId.make("a"), KnowledgeSourceId.make("b")] }))).toEqual([["memory:b:1:memory:drink", said.a, "change", 1]])
+    expect(earlier(yield* recall({ metadata: { session: "b" } }))).toEqual([])
+    expect(earlier(yield* recall({ metadata: { session: ["a", "b"] } }))).toEqual([["memory:b:1:memory:drink", said.a, "change", 1]])
+    // Forgetting the earlier source leaves the current memory's link dangling: it is skipped.
+    yield* fixture.memory.forget(fixtureScope, KnowledgeSourceId.make("a"))
+    const forgotten = yield* recall()
+    expect([forgotten.candidates.some((candidate) => candidate._tag === "Memory" && candidate.memory.text === said.b), earlier(forgotten)]).toEqual([true, []])
+  }))))
+
   test("world changes retain a revised historical graph interval at current knowledge time", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const oldText = "I prefer tea."
     const newText = "I changed to coffee at time 50."
@@ -152,7 +187,7 @@ describe("native memory engine", () => {
     const extracted = fixtureExtraction(text)
     const response = { ...extracted, memories: [
       { ...extracted.memories[0]!, supersedes: ["unknown-old-fact"] },
-      { ...extracted.memories[0]!, key: "inference", kind: "profile", evidence: { _tag: "Inferred", supports: ["unknown-support"] }, supersedes: [] },
+      { ...extracted.memories[0]!, key: "inference", kind: "profile", evidence: { _tag: "Inferred", supports: ["unknown-support"] }, supersedes: [], supersession: "change" },
     ] }
     const fixture = yield* makeMemoryFixture([JSON.stringify(response)], { consolidate: false })
     yield* fixture.memory.capture(fixtureEnqueue("ablation", text))
@@ -177,7 +212,7 @@ describe("bounded memory extraction", () => {
     const span = { start: part.indexOf(sentence), end: part.indexOf(sentence) + sentence.length, quote: sentence }
     return JSON.stringify({
       entities: [{ key: "user", name: "User", type: "person", aliases: [], existing: null, spans: [{ start: part.indexOf("User"), end: part.indexOf("User") + 4, quote: "User" }] }],
-      memories: [{ key: "preference", kind: "preference", text: sentence, entities: ["user"], spans: [span], evidence: { _tag: "Stated" }, supersedes: [] }],
+      memories: [{ key: "preference", kind: "preference", text: sentence, entities: ["user"], spans: [span], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
       assertions: [],
     })
   }

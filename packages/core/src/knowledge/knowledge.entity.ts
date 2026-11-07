@@ -63,13 +63,36 @@ export const KnowledgeEvidence = Schema.Union([
   Schema.TaggedStruct("Inferred", { supports: Schema.Array(KnowledgeMemoryId) }),
 ])
 export type KnowledgeEvidence = typeof KnowledgeEvidence.Type
-/** @public */
+/**
+ * Why a record took the place of an earlier one: the world `change`d (the earlier record held
+ * until then), or the earlier record was wrong and this is its `correction`.
+ * @public
+ */
+export const KnowledgeSupersession = Schema.Literals(["change", "correction"])
+export type KnowledgeSupersession = typeof KnowledgeSupersession.Type
+/** A successor memory's link to a memory it superseded, which publication retired. @public */
+export const KnowledgeMemoryReplacement = Schema.Struct({ id: KnowledgeMemoryId, supersession: KnowledgeSupersession })
+export type KnowledgeMemoryReplacement = typeof KnowledgeMemoryReplacement.Type
+/**
+ * A successor relation's link to the earlier state it replaced: for a `change`, the history copy
+ * that holds the earlier relation with its validity ended; for a `correction`, the retired relation.
+ * @public
+ */
+export const KnowledgeAssertionReplacement = Schema.Struct({ id: KnowledgeAssertionId, supersession: KnowledgeSupersession })
+export type KnowledgeAssertionReplacement = typeof KnowledgeAssertionReplacement.Type
+/**
+ * A durable memory. `replaces` links a successor to the memories it superseded; staging writes it
+ * on the successor only when there is one, and nothing is ever written to the memory it retired
+ * but its `knownTo`. A memory without it, as every one stored before it existed, replaces none.
+ * @public
+ */
 export const KnowledgeMemory = Schema.Struct({
   id: KnowledgeMemoryId, kind: KnowledgeMemoryKind, text: Text,
   provenance: Schema.Array(KnowledgeProvenance).check(Schema.isNonEmpty()),
   entities: Schema.Array(KnowledgeEntityId), evidence: KnowledgeEvidence,
   embedding: Schema.OptionFromNullOr(KnowledgeVector),
   knownFrom: Count, knownTo: Schema.OptionFromNullOr(Count),
+  replaces: Schema.optionalKey(Schema.Array(KnowledgeMemoryReplacement)),
 }).check(Schema.makeFilter((memory) => memory.knownTo._tag === "None" || memory.knownTo.value >= memory.knownFrom || "known interval ends before it starts"))
 export type KnowledgeMemory = typeof KnowledgeMemory.Type
 /** @public */
@@ -95,7 +118,9 @@ export type KnowledgeObject = typeof KnowledgeObject.Type
  * `validFromBasis` says where `validFrom` came from: `stated` by the source, or `observed`, the
  * source's occurrence time, for a change the source states as present without a date (it held
  * by then at the latest). Staging writes it with every `validFrom`; an assertion without it, as
- * every one stored before it existed, reads as stated.
+ * every one stored before it existed, reads as stated. `replaces` links a successor to the earlier
+ * states it replaced (`KnowledgeAssertionReplacement`), written on the successor only when there is
+ * one; an assertion without it replaces none.
  * @public
  */
 export const KnowledgeAssertion = Schema.Struct({
@@ -104,6 +129,7 @@ export const KnowledgeAssertion = Schema.Struct({
   validFrom: Schema.OptionFromNullOr(Count), validTo: Schema.OptionFromNullOr(Count),
   validFromBasis: Schema.optionalKey(Schema.Literals(["stated", "observed"])),
   knownFrom: Count, knownTo: Schema.OptionFromNullOr(Count),
+  replaces: Schema.optionalKey(Schema.Array(KnowledgeAssertionReplacement)),
 }).check(Schema.makeFilter((edge) =>
   (edge.knownTo._tag === "None" || edge.knownTo.value >= edge.knownFrom) &&
   (edge.validFrom._tag === "None" || edge.validTo._tag === "None" || edge.validTo.value >= edge.validFrom.value) || "temporal interval ends before it starts"))
@@ -288,6 +314,9 @@ export type KnowledgeSubgraph = typeof KnowledgeSubgraph.Type
 /** @public */
 export const KnowledgeSnapshot = Schema.Struct({ version: Count, memories: Schema.Array(KnowledgeMemory), graph: KnowledgeSubgraph })
 export type KnowledgeSnapshot = typeof KnowledgeSnapshot.Type
+/** Which earlier states a recall returns (`KnowledgeRecall.history`). @public */
+export const KnowledgeRecallHistoryMode = Schema.Literals(["changes", "all", "none"])
+export type KnowledgeRecallHistoryMode = typeof KnowledgeRecallHistoryMode.Type
 /** @public */
 export const KnowledgeRecall = Schema.Struct({
   scope: KnowledgeScope, query: Schema.String, limit: Positive.check(Schema.isLessThanOrEqualTo(100)),
@@ -296,6 +325,14 @@ export const KnowledgeRecall = Schema.Struct({
   sources: Schema.optionalKey(KnowledgeSourceFilter),
   /** Candidates and graph evidence only from source revisions whose metadata matches; with `sources`, both must hold. */
   metadata: Schema.optionalKey(KnowledgeMetadataFilter),
+  /**
+   * Which earlier states to return beside the current records that replaced them
+   * (`KnowledgeRecallResult.history`): `changes` (the default) those the world changed, `all` also
+   * those a correction found wrong, `none` no earlier state.
+   */
+  history: Schema.optionalKey(KnowledgeRecallHistoryMode),
+  /** The most of `maxChars` earlier states may take, from 0 to 0.5; 0.2 by default. What they leave unused goes to current records. */
+  historyShare: Schema.optionalKey(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 0.5 }))),
 })
 export type KnowledgeRecall = typeof KnowledgeRecall.Type
 /**
@@ -306,13 +343,33 @@ export type KnowledgeRecall = typeof KnowledgeRecall.Type
  */
 export const KnowledgeReach = Schema.Struct({ owner: Text, sources: Schema.optionalKey(KnowledgeSourceFilter), metadata: Schema.optionalKey(KnowledgeMetadataFilter) })
 export type KnowledgeReach = typeof KnowledgeReach.Type
+const historyFields = {
+  /** The key of the current record that replaced it: its candidate key (`memory:<id>`) or `assertion:<id>` for a relation. */
+  successor: Text,
+  supersession: KnowledgeSupersession,
+  /** When it stopped being current: for a change, the time the earlier relation's validity ended, else when its successor was said. */
+  until: Count,
+}
 /**
- * Ranked evidence, its graph, and `sources`: the info of every source revision the evidence cites,
- * once each, in order of first citation (candidates, then relations, then entities). A result
- * encoded before `sources` existed decodes with none. @public
+ * An earlier state a recalled current record replaced, one hop back along its `replaces`: a
+ * retired memory, a relation's history copy (a change) or a retired relation (a correction).
+ * @public
+ */
+export const KnowledgeRecallHistory = Schema.Union([
+  Schema.TaggedStruct("Memory", { ...historyFields, record: KnowledgeMemory }),
+  Schema.TaggedStruct("Assertion", { ...historyFields, record: KnowledgeAssertion }),
+])
+export type KnowledgeRecallHistory = typeof KnowledgeRecallHistory.Type
+/**
+ * Ranked evidence, its graph, `history`: the earlier states that recalled current records replaced,
+ * in the rank order of their successors, and `sources`: the info of every source revision the
+ * evidence cites, once each, in order of first citation (candidates, then relations, then entities,
+ * then earlier states). A result encoded before `sources` or `history` existed decodes with none.
+ * @public
  */
 export const KnowledgeRecallResult = Schema.Struct({
   candidates: Schema.Array(KnowledgeCandidate), graph: KnowledgeSubgraph,
+  history: Schema.Array(KnowledgeRecallHistory).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   sources: Schema.Array(KnowledgeSourceInfo).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 })
 export type KnowledgeRecallResult = typeof KnowledgeRecallResult.Type

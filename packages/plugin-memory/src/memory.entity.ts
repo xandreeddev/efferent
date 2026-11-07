@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { LogEntry, RunId, SessionAddress } from "@xandreed/core"
+import { KnowledgeRecallHistoryMode, LogEntry, RunId, SessionAddress } from "@xandreed/core"
 
 const Positive = Schema.Int.check(Schema.isGreaterThan(0))
 /** Native memory processing and bounded recall. @public */
@@ -61,6 +61,15 @@ export const MemoryConfig = Schema.Struct({
    * from day to day, so it is off by default.
    */
   recallToday: Schema.Boolean,
+  /**
+   * Which earlier states recall shows beside the current records that replaced them, in an
+   * "Earlier states, no longer current:" block (`KnowledgeRecall.history`): `changes` those the world
+   * changed, `all` also beliefs a correction found wrong, `none` no earlier state. The section,
+   * the recall note and `recall_memory` (unless its `history` parameter says otherwise) read it.
+   */
+  recallHistory: KnowledgeRecallHistoryMode,
+  /** The most of `recallChars` earlier states may take, from 0 to 0.5 (`KnowledgeRecall.historyShare`); what they leave goes to current records. */
+  recallHistoryShare: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 0.5 })),
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -69,6 +78,7 @@ export const memoryDefaults: MemoryConfig = {
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
   recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
+  recallHistory: "changes", recallHistoryShare: 0.2,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

@@ -511,6 +511,7 @@ export {
   KnowledgeLease, KnowledgePerspective, KnowledgeCandidate, KnowledgeSearch,
   KnowledgeCandidates, KnowledgeTraversal, KnowledgeSubgraph, KnowledgeSnapshot,
   KnowledgeRecall, KnowledgeRecallResult, KnowledgeErrorReason, KnowledgeError,
+  KnowledgeSupersession, KnowledgeMemoryReplacement, KnowledgeAssertionReplacement, KnowledgeRecallHistoryMode, KnowledgeRecallHistory,
   KnowledgeHelperPurpose, KnowledgeHelperJob, KnowledgeHelperCall,
   KnowledgeSourceFilter, KnowledgeMetadataValue, KnowledgeMetadataFilter, KnowledgeReach,
 } from "./knowledge/knowledge.entity.js"
@@ -518,7 +519,7 @@ export { MemoryStore, KnowledgeStore, TemporalGraph, LongTermMemory, Knowledge, 
 export type { KnowledgeIndex } from "./ports/knowledge.port.js"
 export {
   knowledgeScopeKey, knowledgeSourceKey, sameKnowledgeScope, sameEmbeddingSpace, knowledgeEngineId,
-  knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey,
+  knowledgeCosine, knowledgeTokens, knowledgeBm25, knowledgeCandidateKey, knowledgeAssertionKey,
   knowledgeCandidateText, fuseKnowledgeCandidates, citedKnowledgeSources, knowledgeRecordDate, traverseKnowledgeGraph,
   validateKnowledgeStage, citesKnowledgeSources, narrowKnowledgeGraph, isRetryableKnowledgeFailure,
   citesAdmittedKnowledge, matchesKnowledgeMetadata, knowledgeNarrowingAdmits, admitsKnowledgeSource, narrowKnowledgeGraphBy,

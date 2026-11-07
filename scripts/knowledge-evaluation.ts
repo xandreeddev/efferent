@@ -217,8 +217,9 @@ export const nativeMemoryKnowledgeBackend = (options: {
         return { usage: options.usage === undefined ? unknownEvaluationUsage : yield* options.usage }
       }),
       recall: (budget) => Effect.gen(function* () {
+        // Current evidence only, as this protocol version has always read it: earlier states would take a share of the budget it does not show.
         const result = yield* memory.recall({ scope, query: input.question, limit: budget.topK, maxChars: budget.contextTokens * 20,
-          graph: options.graph ? { perspective: { validAt: input.queryAt, knownAt: yield* Clock.currentTimeMillis }, depth: 2 } : false,
+          graph: options.graph ? { perspective: { validAt: input.queryAt, knownAt: yield* Clock.currentTimeMillis }, depth: 2 } : false, history: "none",
         }).pipe(Effect.mapError((cause) => failure("Native evaluation recall failed", cause)))
         const memories: ReadonlyArray<EvaluationEvidence> = result.candidates.map((candidate) => Match.valueTags(candidate, {
             Memory: ({ memory }) => ({ id: memory.id, text: memory.text, sources: [...new Set(memory.provenance.map((span) => String(span.source.id)))] }),

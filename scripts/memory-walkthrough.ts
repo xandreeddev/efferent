@@ -55,7 +55,7 @@ export const runMemoryWalkthrough = Effect.fn("example.memory_walkthrough")(func
     const span = { start: at, end: at + preference.length, quote: preference }
     const extraction = at < 0 ? { entities: [], memories: [], assertions: [] } : {
       entities: [{ key: "user", name: "Example user", type: "person", aliases: [], existing: null, spans: [span] }],
-      memories: [{ key: "summary-style", kind: "preference", text: "The user prefers concise release summaries.", entities: ["user"], spans: [span], evidence: { _tag: "Stated" }, supersedes: [] }],
+      memories: [{ key: "summary-style", kind: "preference", text: "The user prefers concise release summaries.", entities: ["user"], spans: [span], evidence: { _tag: "Stated" }, supersedes: [], supersession: "change" }],
       assertions: [{ key: "prefers", subject: "user", predicate: "prefers", object: { _tag: "Value", value: "concise release summaries" }, text: "The user prefers concise release summaries.", spans: [span], validFrom: null, validTo: null, supersedes: [], supersession: "correction" }],
     }
     const output = JSON.stringify(extraction)
