@@ -2134,7 +2134,9 @@
       "graphDepth": 2,
       "recallSection": "turn",
       "sectionOrder": 700,
-      "tools": true
+      "tools": true,
+      "recallDates": true,
+      "recallToday": false
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2259,6 +2261,12 @@
         },
         "tools": {
           "type": "boolean"
+        },
+        "recallDates": {
+          "type": "boolean"
+        },
+        "recallToday": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2286,7 +2294,9 @@
         "graphDepth",
         "recallSection",
         "sectionOrder",
-        "tools"
+        "tools",
+        "recallDates",
+        "recallToday"
       ],
       "additionalProperties": true
     }

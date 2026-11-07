@@ -47,6 +47,20 @@ export const MemoryConfig = Schema.Struct({
   recallSection: Schema.Literals(["turn", "off"]),
   sectionOrder: Schema.Int,
   tools: Schema.Boolean,
+  /**
+   * Label each recalled record with the UTC date its source was said or written, a memory also
+   * with its kind and whether it was stated or inferred, and a relation with its validity
+   * (`renderMemoryRecall`'s `dates`), in the section, the recall note and `recall_memory`. A
+   * record's date never changes, so a cached prefix holding it stays valid. False renders as
+   * before dates were shown.
+   */
+  recallDates: Schema.Boolean,
+  /**
+   * With `recallDates`, also say today's UTC date in recalled evidence and mark a relation whose
+   * validity has ended as no longer current (`renderMemoryRecall`'s `now`). The text then changes
+   * from day to day, so it is off by default.
+   */
+  recallToday: Schema.Boolean,
 })
 export type MemoryConfig = typeof MemoryConfig.Type
 /** Embedding identity must match the host's EmbeddingModel. @public */
@@ -54,7 +68,7 @@ export const memoryDefaults: MemoryConfig = {
   namespace: "default", collection: "memory", embeddingModel: "host", embeddingVersion: "1", embeddingDimensions: 1536,
   review: true, consolidate: true, queryPlanning: false, rerank: false, retrievalTimeoutMs: 10_000, worker: true, pollMs: 2_000, batchSize: 10, maxAttempts: 3, leaseMs: 180_000, modelTimeoutMs: 60_000,
   maxSourceChars: 48_000, maxExtractionChars: 48_000, maxCandidateChars: 32_000, recallChars: 8_000, recallLimit: 8, graphDepth: 2,
-  recallSection: "turn", sectionOrder: 700, tools: true,
+  recallSection: "turn", sectionOrder: 700, tools: true, recallDates: true, recallToday: false,
 }
 
 /** Bounded journal capture over committed turns; no provider processing runs inside the observer. @public */

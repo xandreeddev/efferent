@@ -5,6 +5,7 @@ import {
 } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource } from "./knowledge.entity.js"
 import { KnowledgeExtraction } from "./knowledge-extraction.entity.js"
+import { knowledgeRecordDate } from "./knowledge.entity.functions.js"
 import { KNOWLEDGE_EXTRACTION_VERSION, extractKnowledge, extractionCandidateContext, knowledgeExtractionPrompt, knowledgeExtractionWindows, knowledgeReviewPrompt, stageKnowledgeExtraction } from "./knowledge-extraction.entity.functions.js"
 import { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge-query.entity.js"
 import { applyKnowledgeRerank, budgetKnowledgeRecall, knowledgeQueryPrompt, knowledgeRerankPrompt } from "./knowledge-query.entity.functions.js"
@@ -257,6 +258,29 @@ describe("staging dates undated changes and drops only the records that fail the
     expect([later.assertions[1]?.validFrom, later.assertions[1]?.validTo]).toEqual([Option.some(1_800_000_000_000), Option.some(1_800_000_000_000)])
     const undated = yield* stageOf(empty, { entities: [ann, oslo], memories: [], assertions: [{ ...livesIn, supersession: "change" }] })
     expect([undated.assertions[0]?.validFrom, undated.assertions[0]?.validFromBasis]).toEqual([Option.none(), undefined])
+  })))
+
+  test("a staged record cites its own spans first, before entity evidence and supports, so its first span dates it", () => Effect.runPromise(Effect.gen(function* () {
+    const earlier = KnowledgeMemoryId.make("earlier-tea")
+    const snapshot: KnowledgeSnapshot = { ...withPrior(Option.none()), memories: [{
+      id: earlier, kind: "preference", text: "Ann drank tea.", provenance: knownAnn.provenance, entities: [], evidence: { _tag: "Stated" },
+      embedding: Option.none(), knownFrom: 5, knownTo: Option.none(),
+    }] }
+    const stage = yield* stageOf(snapshot, {
+      entities: [{ ...ann, existing: knownAnn.id }, oslo],
+      memories: [{ ...drinks, evidence: { _tag: "Inferred", supports: [earlier] } }],
+      assertions: [{ ...livesIn, supersedes: [livedIn(Option.none()).id], supersession: "change" }],
+    })
+    const own = (start: number, end: number) => ({ source: city.ref, start, end, quote: city.text.slice(start, end) })
+    // The memory: its own sentence, then its entity's spans here and before, then the supporting memory's evidence.
+    expect(stage.memories[0]?.provenance).toEqual([own(19, 34), own(0, 3), ...knownAnn.provenance, ...knownAnn.provenance])
+    const [current, history] = stage.assertions
+    // The new relation: its own sentence first; its history copy keeps the earlier relation's spans first.
+    expect(current?.provenance[0]).toEqual(own(0, 18))
+    expect(history?.provenance).toEqual([...livedIn(Option.none()).provenance, own(0, 18)])
+    const sources = [{ ref: city.ref, occurredAt: city.occurredAt }, { ref: knownAnn.provenance[0]!.source, occurredAt: 1_500_000_000_000 }]
+    expect([stage.memories[0], current, history].map((record) => knowledgeRecordDate(record?.provenance ?? [], sources)))
+      .toEqual([Option.some(city.occurredAt), Option.some(city.occurredAt), Option.some(1_500_000_000_000)])
   })))
 
   test("each record-local failure drops that record with a note and stages the others", () => Effect.runPromise(Effect.gen(function* () {

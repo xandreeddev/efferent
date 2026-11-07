@@ -9,7 +9,7 @@ import {
 import {
   citedKnowledgeSources, citesKnowledgeSources, fuseKnowledgeCandidates, isRetryableKnowledgeFailure, knowledgeBm25, knowledgeCandidateWithin,
   knowledgeCosine, knowledgeEngineId, knowledgeScopeKey, narrowKnowledgeGraph, traverseKnowledgeGraph, validateKnowledgeStage,
-  admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy,
+  admitsKnowledgeSource, citesAdmittedKnowledge, knowledgeCandidateAdmitted, knowledgeNarrowingAdmits, matchesKnowledgeMetadata, narrowKnowledgeGraphBy, knowledgeRecordDate,
 } from "./knowledge.entity.functions.js"
 
 const scope = { owner: "owner", namespace: "assistant", collection: "memory" }
@@ -88,6 +88,17 @@ test("cited sources are every revision the evidence cites, once each, candidates
   const cited = citedKnowledgeSources({ candidates: [{ _tag: "Memory", memory: memory("one"), score: 1 }, chunk, chunk], graph: { entities: [entity], assertions: [edge], truncated: false } })
   expect(cited).toEqual([span("one").source, span("guide", 2).source, span("guide", 1).source, span("map").source])
   expect(citedKnowledgeSources({ candidates: [], graph: emptyGraph })).toEqual([])
+})
+test("a record is dated by the revision its first span cites, and undated when that revision's info is missing", () => {
+  const span = (name: string, revision = 1) => ({ source: { id: KnowledgeSourceId.make(name), revision }, start: 0, end: 4, quote: "Visi" })
+  const info = (name: string, revision: number, occurredAt: number) => ({ ref: { id: KnowledgeSourceId.make(name), revision }, occurredAt })
+  const sources = [info("support", 1, 100), info("own", 2, 300), info("own", 1, 200)]
+  expect(knowledgeRecordDate([span("own", 1), span("support")], sources)).toEqual(Option.some(200))
+  expect(knowledgeRecordDate([span("own", 2)], sources)).toEqual(Option.some(300))
+  // Only the first span dates the record: the evidence after it (entities, supports) never does.
+  expect(knowledgeRecordDate([span("forgotten"), span("support")], sources)).toEqual(Option.none())
+  expect(knowledgeRecordDate([span("own", 3)], sources)).toEqual(Option.none())
+  expect(knowledgeRecordDate([], sources)).toEqual(Option.none())
 })
 test("a recall result encoded before sources existed decodes with none", async () => {
   const decoded = await Effect.runPromise(Schema.decodeUnknownEffect(KnowledgeRecallResult)({ candidates: [], graph: emptyGraph }))
