@@ -90,11 +90,19 @@ export const KnowledgeObject = Schema.Union([
   Schema.TaggedStruct("Value", { value: Schema.Json }),
 ])
 export type KnowledgeObject = typeof KnowledgeObject.Type
-/** A bitemporal relation. Valid time is world time; known time is observation time. @public */
+/**
+ * A bitemporal relation. Valid time is world time; known time is observation time.
+ * `validFromBasis` says where `validFrom` came from: `stated` by the source, or `observed`, the
+ * source's occurrence time, for a change the source states as present without a date (it held
+ * by then at the latest). Staging writes it with every `validFrom`; an assertion without it, as
+ * every one stored before it existed, reads as stated.
+ * @public
+ */
 export const KnowledgeAssertion = Schema.Struct({
   id: KnowledgeAssertionId, subject: KnowledgeEntityId, predicate: Text, object: KnowledgeObject,
   text: Text, provenance: Schema.Array(KnowledgeProvenance).check(Schema.isNonEmpty()),
   validFrom: Schema.OptionFromNullOr(Count), validTo: Schema.OptionFromNullOr(Count),
+  validFromBasis: Schema.optionalKey(Schema.Literals(["stated", "observed"])),
   knownFrom: Count, knownTo: Schema.OptionFromNullOr(Count),
 }).check(Schema.makeFilter((edge) =>
   (edge.knownTo._tag === "None" || edge.knownTo.value >= edge.knownFrom) &&
@@ -106,13 +114,24 @@ export type KnowledgeErrorReason = typeof KnowledgeErrorReason.Type
 /**
  * A derivation an engine left out of a stage, and why. `GraphOmitted`: optional graph extraction
  * failed on the job's last attempt, so the source's chunks publish without entities or assertions.
+ * `RecordDropped`: staging left out one extracted record (`record`, by the extraction's local
+ * `key`) that failed a check of its own (an invalid span, an unknown identity, an undefined or
+ * dropped entity key, an unknown or inactive record it supersedes or cites as support, an
+ * unsupported inferred routine, an inverted validity interval), and the rest of the extraction
+ * was staged. A stage stored before `RecordDropped` existed holds only `GraphOmitted` notes and
+ * decodes unchanged.
  * @public
  */
-export const KnowledgeStageNote = Schema.TaggedStruct("GraphOmitted", { reason: KnowledgeErrorReason, message: Schema.String })
+export const KnowledgeStageNote = Schema.Union([
+  Schema.TaggedStruct("GraphOmitted", { reason: KnowledgeErrorReason, message: Schema.String }),
+  Schema.TaggedStruct("RecordDropped", {
+    record: Schema.Literals(["entity", "memory", "assertion"]), key: Schema.String, reason: KnowledgeErrorReason, message: Schema.String,
+  }),
+])
 export type KnowledgeStageNote = typeof KnowledgeStageNote.Type
 /**
  * Extraction is staged durably before embedding/publication. Scope CAS protects all derived writes.
- * `notes` is written only when a derivation was left out, and stays on the job after publication.
+ * `notes` is written only when a derivation or a record was left out, and stays on the job after publication.
  * @public
  */
 export const KnowledgeStage = Schema.Struct({

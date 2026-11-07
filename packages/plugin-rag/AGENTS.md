@@ -22,7 +22,9 @@ through KnowledgeStore. Node 24 and Bun.
   extraction or review fails the attempt with `RagGraphFailed`, recorded on
   the job with step `Graph` and retried within `maxAttempts` whatever its
   reason; the last attempt stages the chunks without the graph and a
-  `GraphOmitted` stage note. Every other failure is recorded with step
+  `GraphOmitted` stage note. A graph record staging leaves out for a failure
+  of its own is no graph failure: its `RecordDropped` notes stay on the stage
+  beside the chunks and the rest of the graph. Every other failure is recorded with step
   `Required`; whether it is retried is `isRetryableKnowledgeFailure` (core),
   the rule hosts share, never a local reason check.
 - Chunk text and provenance are exact UTF-16 slices of the original source.
@@ -90,12 +92,14 @@ prompts. This package owns the following text contracts:
   replacement failure/retry, worker restart, owner isolation, forgetting,
   temporal two-hop GraphRAG, document/personal-memory separation, windowed
   graph extraction with exact provenance, helper call contexts, graph
-  extraction retried within `maxAttempts` and omitted on the last attempt, an
+  extraction retried within `maxAttempts` and omitted on the last attempt, a
+  graph record dropped with a note while the chunks and the rest publish, an
   unavailable source failing unretried, query planning, reranking and bounded
   model-assistance fallback.
 - `src/rag.conformance.test.ts`: `knowledgeConformance`, its
   `failed-extraction` check on an engine whose helper always answers invalid
-  JSON.
+  JSON, and its `dropped-record` check on one whose graph has a relation about
+  an undefined entity.
 - `src/rag-capability.adapter.test.ts`: exact text pins.
 - `src/rag.journey.test.ts`: real Agent search/read tools, source citations,
   cited sources' metadata, the exported evidence text, model requests and

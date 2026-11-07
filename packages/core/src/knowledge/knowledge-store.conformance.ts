@@ -11,7 +11,7 @@ import {
   KnowledgeMemoryId, KnowledgeSourceId,
   type KnowledgeCandidates, type KnowledgeError, type KnowledgeFailedQuery, type KnowledgeJob, type KnowledgeJobCursor, type KnowledgeJobFailure,
   type KnowledgeLease, type KnowledgeMemory, type KnowledgeScope, type KnowledgeSource, type KnowledgeSourceInfo, type KnowledgeStage,
-  type KnowledgeMetadataFilter, type KnowledgeSearch,
+  type KnowledgeMetadataFilter, type KnowledgeSearch, type KnowledgeStageNote,
 } from "./knowledge.entity.js"
 
 /**
@@ -59,7 +59,7 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
 
 /**
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
- * durable staging (its notes included), failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
+ * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters, forgetting,
  * revision replacement, batched source info, engine-scoped discovery and claims, failed-job listing and requeueing
  * under another engine, and bitemporal traversal. Each check
  * opens a fresh fixture.
@@ -99,6 +99,26 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       const resumed = yield* fixture.index.status(fixture.scope, job.id)
       const kept = Option.exists(resumed, (value) => Option.exists(value.stage, (stage) => stage.notes?.length === 1 && stage.notes[0]?.reason === "Invalid" && stage.notes[0].message === "graph left out"))
       yield* expect("knowledge.stage-retry", queued.phase._tag === "Queued" && kept && Option.exists(resumed, (value) => value.attempt === 2), "retry discarded staged extraction, its notes or attempts")
+    })),
+    indexCheck("knowledge.stage-notes", (fixture) => Effect.gen(function* () {
+      const source = sourceOf(fixture.scope)
+      const job = yield* enqueue(fixture, source)
+      yield* claim(fixture)
+      const lease = leaseOf(fixture.scope, job)
+      const notesOf = Effect.map(fixture.index.status(fixture.scope, job.id), (found) => Option.flatMap(found, (value) => value.stage).pipe(Option.map((stage) => stage.notes ?? [])))
+      const omitted: ReadonlyArray<KnowledgeStageNote> = [{ _tag: "GraphOmitted", reason: "Unavailable", message: "graph left out" }]
+      yield* fixture.index.stage(lease, { ...stageOf(source), notes: omitted })
+      const graphOnly = yield* notesOf
+      const dropped: ReadonlyArray<KnowledgeStageNote> = [...omitted,
+        { _tag: "RecordDropped", record: "entity", key: "someone", reason: "Invalid", message: "The extraction names an unknown entity" },
+        { _tag: "RecordDropped", record: "assertion", key: "relation", reason: "Invalid", message: "The extraction refers to an entity it dropped" }]
+      yield* fixture.index.stage(lease, { ...stageOf(source), notes: dropped })
+      const restaged = yield* notesOf
+      yield* fixture.index.publish(lease)
+      const published = yield* notesOf
+      const complete = Option.exists(yield* fixture.index.status(fixture.scope, job.id), (value) => value.phase._tag === "Complete")
+      yield* expect("knowledge.stage-notes", sameJson(graphOnly, Option.some(omitted)) && sameJson(restaged, Option.some(dropped)) && sameJson(published, Option.some(dropped)) && complete,
+        "a stage's notes, a graph omission or dropped records, were lost or changed by staging, restaging or publication")
     })),
     indexCheck("knowledge.failure-reason", (fixture) => Effect.gen(function* () {
       const source = sourceOf(fixture.scope)

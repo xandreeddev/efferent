@@ -4,7 +4,13 @@ import { longTermMemoryConformance } from "@xandreed/core/conformance"
 import { fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
 const open = makeMemoryFixture([JSON.stringify(fixtureExtraction("I prefer tea."))])
-const checks = longTermMemoryConformance({ open: Effect.map(open, ({ memory }) => ({ memory, scope: fixtureScope })) })
+const grounded = fixtureExtraction("I prefer tea.")
+/** The grounded records, and a memory about an entity the extraction never defines. */
+const dropping = makeMemoryFixture([JSON.stringify({ ...grounded, memories: [...grounded.memories, { ...grounded.memories[0]!, key: "stranger", entities: ["stranger"] }] })])
+const checks = longTermMemoryConformance({
+  open: Effect.map(open, ({ memory }) => ({ memory, scope: fixtureScope })),
+  droppingExtraction: Effect.map(dropping, ({ memory }) => ({ memory, scope: fixtureScope })),
+})
 
 describe("native memory facade conformance", () => {
   checks.forEach((check) => test(check.name, () => Effect.runPromise(check.run)))

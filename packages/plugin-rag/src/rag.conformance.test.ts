@@ -5,8 +5,15 @@ import { knowledgeConformance } from "@xandreed/core/conformance"
 import { makeRag, scope } from "./rag.testing.js"
 
 const invalidHelper = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "not JSON", usage: zeroUsage })) })
+const tea = { start: 9, end: 12, quote: "tea" }
+/** A grounded entity and relation for the kit's source, "I prefer tea.", and a relation about an entity the extraction never defines. */
+const droppingHelper = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ usage: zeroUsage, text: JSON.stringify({
+  entities: [{ key: "tea", name: "tea", type: "drink", aliases: [], existing: null, spans: [tea] }], memories: [],
+  assertions: ["tea", "stranger"].map((subject) => ({ key: subject, subject, predicate: "preferred", object: { _tag: "Value", value: true }, text: "Tea is preferred.", spans: [tea], validFrom: null, validTo: null, supersedes: [], supersession: "correction" })),
+}) })) })
 const checks = knowledgeConformance({
   open: Effect.map(makeRag(), ({ knowledge }) => ({ knowledge, scope })),
+  droppingExtraction: Effect.map(makeRag({ graph: true, review: false }, undefined, undefined, droppingHelper), ({ knowledge }) => ({ knowledge, scope })),
   failingExtraction: Effect.map(makeRag({ graph: true, maxAttempts: 2 }, undefined, undefined, invalidHelper), ({ knowledge }) => ({ knowledge, scope })),
 })
 

@@ -125,6 +125,14 @@ still reads `Failed`, and the layout is unchanged. A job failed by an earlier
 release, whose payload has only a message, decodes with reason `Unavailable`
 at step `Required`.
 
+A stage's notes, `GraphOmitted` and `RecordDropped` (the extracted records
+staging left out), are part of the job's stored payload, and an assertion's
+`validFromBasis` is part of its payload; neither has a column, so the layout
+is unchanged. A stage or an assertion an earlier release wrote, with only
+`GraphOmitted` notes or no basis, decodes unchanged (an assertion without a
+basis reads as stated). The adapter passes `knowledgeStoreConformance`'s
+`knowledge.stage-notes` check.
+
 `failed` lists failed jobs across owners from the row's `phase`, `engine` and
 `collection` columns, in the rows' recording order; its cursor is the last
 row's ordinal. A reasons filter reads the reason in the payload, and a job

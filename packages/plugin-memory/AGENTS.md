@@ -25,7 +25,9 @@ Extraction and query protocols are core's shared native knowledge helpers. Extra
 through `extractKnowledge` (one call and review per `maxExtractionChars` window,
 merged before staging), and run every UtilityLlm call inside
 `CurrentKnowledgeHelperCall` (purpose, scope, job and attempt, output cap). Stage
-validated extraction before embedding. Publish through the store's lease and
+validated extraction before embedding: `stageKnowledgeExtraction` leaves out a
+record that fails its own checks and writes its `RecordDropped` note on the
+stage; never fail a turn's whole capture for one record. Publish through the store's lease and
 scope revision checks; external model work never runs inside a transaction.
 Workers stop claims before shutdown, retain durable queued work, and recover
 unfinished processing through leases. Jobs are enqueued, discovered and claimed

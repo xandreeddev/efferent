@@ -8,6 +8,78 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- Native knowledge extraction is at version 2 (`KNOWLEDGE_EXTRACTION_VERSION`),
+  so the memory and document engines record their jobs under new engine ids
+  (`memory:2/…`, `rag:2/…`). A job still queued under version 1 waits for a
+  worker of that version: let one drain the queue before upgrading, as for a
+  change of embedding space. A job failed under version 1 is started over
+  under version 2 by `LongTermMemory.retry` or `Knowledge.retry`; jobs version
+  1 failed with `Invalid` for one record's sake (among them "A world change
+  needs an evidenced effective date") now stage, so a host lists them with
+  `KnowledgeIndex.failed({ namespace, reasons: ["Invalid"] })` and retries
+  them, although `isRetryableKnowledgeFailure` calls `Invalid` final.
+- `KnowledgeStageNote` is a union of `GraphOmitted` and the new
+  `RecordDropped`: code that reads a note's `reason` and `message` is
+  unchanged, and code that matches its `_tag` exhaustively adds the new case.
+  A host's own `KnowledgeIndex` that stores stages keeps their notes whole, as
+  `knowledgeStoreConformance`'s new `knowledge.stage-notes` check requires.
+  A host's own `LongTermMemory` or `Knowledge` passes the facade kits' new
+  `dropped-record` check by publishing a source whose extraction proposed
+  evidence; giving the subject `droppingExtraction` also checks the note.
+
+### Changed
+
+- `@xandreed/core`, `@xandreed/plugin-memory`, `@xandreed/plugin-rag`: one
+  bad extracted record no longer loses a whole turn or document graph.
+  `stageKnowledgeExtraction` leaves out a record that fails a check of its own
+  (a span that is not the exact source text after quote repair, an `existing`
+  entity identity that is not a supplied candidate, an undefined entity key, a
+  `supersedes` entry naming an unknown or inactive record, an unknown
+  supporting memory, an inferred routine with fewer than three supporting
+  episodes, a validity interval that ends before it starts), and every record
+  that refers to a dropped entity's key, and stages the rest; each record left
+  out adds a `RecordDropped` note (`record`, its local `key`, reason
+  `Invalid`, `message`) to `KnowledgeStage.notes`, read through `status`. An
+  entity that only dropped records referred to is left out with them. The
+  job still fails with `Invalid` when the extraction repeats an entity key,
+  does not encode, or proposed memories or relations and kept none of them,
+  its entities alone not counting (with the first drop's message, so
+  `KnowledgeIndex.failed` keeps listing extractions broken throughout);
+  publication's checks are unchanged. Over several extraction
+  windows, a record naming a key no part defines is dropped at staging rather
+  than refusing the source; a part that repeats a key still refuses it. The
+  document engine keeps a graph whose records were partly dropped (its chunks
+  publish with the rest and the notes) and records `GraphOmitted` only when
+  the whole graph fails.
+- `@xandreed/core`: a world change that supersedes a record without a stated
+  date (`supersession: "change"`, `validFrom: null`) is dated at the source's
+  occurrence time instead of failing the job with "A world change needs an
+  evidenced effective date": the latest time the source shows the new state
+  held. `KnowledgeAssertion.validFromBasis` (optional, stored in the
+  assertion's payload) records `"observed"` for such a date and `"stated"`
+  for one the extraction gave; assertions stored without it read as stated.
+  The superseded relation's history copy ends at that time as before, and now
+  never before its own `validFrom`. An assertion that supersedes nothing keeps
+  an unknown start unknown.
+- `@xandreed/core`: the extraction prompt (version 2) shows the source's
+  occurrence time as ISO 8601 in UTC with its epoch milliseconds
+  (`Source occurrence time: 2026-11-06T09:30:00.000Z (epoch milliseconds
+  1793957400000)`), asks for relative dates to be resolved against it, never
+  the current time, and to set `validFrom` to it for a present change stated
+  without a date, keeping null for an unknown start that supersedes nothing.
+  The pinned extraction, document, part and review prompts change
+  accordingly; the query and rerank prompts do not.
+- `@xandreed/core`: `knowledgeStoreConformance` gains
+  `knowledge.stage-notes` (graph and dropped-record notes kept through
+  restaging and publication); `longTermMemoryConformance` and
+  `knowledgeConformance` gain `dropped-record`, with an optional
+  `droppingExtraction` subject. `@xandreed/plugin-knowledge-postgres` passes
+  the new check with its layout unchanged: notes and the validity basis live
+  in the job and assertion payloads, and rows an earlier release wrote decode
+  unchanged.
+
 ## 0.18.0 — 2026-11-06
 
 ### Migration

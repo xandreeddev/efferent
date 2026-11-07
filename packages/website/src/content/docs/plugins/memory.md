@@ -138,13 +138,23 @@ Capture returning a job means durable acceptance, not completed learning.
 The runtime worker processes it asynchronously. Inspect `status`, use `retry`,
 or set `worker: false` and schedule bounded `process(scope, limit)` calls.
 Model or embedding failures publish no partial knowledge; valid staged
-extraction can survive retry. Shutdown stops new claims and bounds active work.
+extraction can survive retry. One extracted record that fails a check of its
+own (an invalid span, an undefined entity key, an unknown record it
+supersedes, …) is left out with a `RecordDropped` note on the job's stage
+(`status`), and the rest of the turn's knowledge publishes; the job fails with
+`Invalid` only when no memory or relation survives (entities alone do not
+count) or the extraction repeats an entity key. A change stated without a date ("I moved to Oslo") is dated at the
+captured turn's time, with `validFromBasis: "observed"` (see
+[graph, time and evidence](/docs/concepts/native-knowledge/#graph-time-and-evidence)).
+Shutdown stops new claims and bounds active work.
 
-Captured jobs are recorded under an engine id derived from the embedding
-options (`knowledgeEngineId("memory:1", { model, version, dimensions })`). The
-worker and `process` discover and claim only jobs of that id, so engines
-configured with different embedding spaces on one store never learn from each
-other's sources. After changing the embedding options, capture the source again
+Captured jobs are recorded under an engine id derived from the extraction
+version and the embedding options
+(`knowledgeEngineId("memory:2", { model, version, dimensions })`, version 2
+since dropped records and observed dates). The worker and `process` discover
+and claim only jobs of that id, so engines configured with different embedding
+spaces on one store never learn from each other's sources, and a job queued
+under the earlier extraction version waits for a worker of that version. After changing the embedding options, capture the source again
 as its next revision to process it under the new configuration.
 
 `retry` starts a failed job over: it requeues the job under the engine's

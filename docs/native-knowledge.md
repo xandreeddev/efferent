@@ -34,15 +34,24 @@ host's actual embedding space. Configure the same identity on both engines when
 sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
-Each engine records its jobs under an engine id that names the engine and its
-embedding space: `knowledgeEngineId("rag:1", space)` is
-`rag:1/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+Each engine records its jobs under an engine id that names the engine, the
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `2`) and its
+embedding space: `knowledgeEngineId("rag:2", space)` is
+`rag:2/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
-`engine` the caller passes.
+`engine` the caller passes. A new extraction version changes the id, like a
+new embedding space: a job still queued under the previous one (`memory:1/…`,
+`rag:1/…`) waits for a worker of that version, so let one drain the queue
+before switching. A job that failed under it is started over under the
+current id by `retry` (below). Extraction version 2 stages what version 1
+failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
+calls `Invalid` final, so list those jobs with
+`failed({ namespace, reasons: ["Invalid"] })` and pass them to `retry`
+directly.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -239,13 +248,39 @@ records a failure with `KnowledgeIndex.fail(lease, { reason, message, step })`. 
 reused after an embedding failure. Scope-version conflicts trigger reconciliation
 against the updated graph.
 
+Staging (`stageKnowledgeExtraction`) checks each extracted record on its own.
+A record that fails a check of its own is left out and the rest of the
+extraction is staged and published: a span that is not the exact source text
+even after its quote repaired the offsets, an `existing` entity identity that is
+not among the supplied candidates, a reference to an entity key the extraction
+does not define, a `supersedes` entry that names an unknown or inactive record,
+an inferred memory's unknown supporting memory, an inferred routine with fewer
+than three supporting episodes, or a validity interval that ends before it
+starts. Leaving out an entity also leaves out every memory and assertion that
+refers to its key, and an entity that only left-out records referred to is
+left out with them. Each record left out adds a `RecordDropped` note to the
+stage (`record`: `entity`, `memory` or `assertion`; the extraction's local
+`key`; reason `Invalid`; and the message), read through `status` like
+`GraphOmitted`. The job still fails with `Invalid`, as before, when the
+extraction repeats an entity key, does not encode, or proposed memories or
+assertions and had every one of them left out (its entities alone are no
+surviving knowledge); it then fails with the first record's message, so
+`KnowledgeIndex.failed({ reasons: ["Invalid"] })` still lists extractions that
+are broken throughout. Publication's own checks (provenance against the stored
+source, support cycles, routine episodes by source metadata) are unchanged and
+still refuse the whole stage. Over several windows, a part that repeats an
+entity key refuses the source; a record that names a key no part defines is
+left to staging, which drops it alone.
+
 A document's graph is optional; its chunks are not. When graph extraction or its
 review fails, or the helper's answer is invalid, the failure is recorded on the
 job with step `Graph` and the job is retried within `maxAttempts`: an invalid model answer is not
 an invalid source. The last attempt stages and publishes the source's chunks
 without entities or assertions, and the completed job's stage carries a
 `GraphOmitted` note with the failure's reason and message
-(`stage.notes`, read through `status`). Ingest the next revision to extract its
+(`stage.notes`, read through `status`). A graph some of whose records were
+left out at staging is no failure: the chunks publish with the rest of the
+graph and the stage carries their `RecordDropped` notes. Ingest the next revision to extract its
 graph again. A source that is itself invalid or unavailable still fails without
 retry.
 
@@ -261,7 +296,17 @@ tool a routine uses, or when a preference changed.
 Each assertion has world validity (`validFrom`, `validTo`) and recorded knowledge
 time (`knownFrom`, `knownTo`). Intervals are half-open. Unknown validity is
 explicit. A world change emits a revised historical interval and a replacement;
-a correction preserves what was previously believed without treating the old
+the historical copy ends where the change takes effect (or earlier, where it
+had already ended), never before it began. A change the source states as
+present without a date ("I moved to Oslo") takes effect at the source's
+occurrence time: the latest time the source shows the new state held. Its
+`validFrom` is then that time and `validFromBasis` is `observed`; a date the
+source states has basis `stated`, and an assertion stored without the key
+reads as stated. An assertion that supersedes nothing keeps an unknown start
+unknown. The extraction prompt shows the occurrence time as ISO 8601 in UTC
+and in the epoch milliseconds its dates are given in, and asks for relative
+dates to be resolved against it, never against the current time.
+A correction preserves what was previously believed without treating the old
 claim as currently valid. Query `graph.perspective` with separate `validAt` and
 `knownAt` coordinates. Temporal graph filtering applies at every hop. Historical
 graph filtering does not make RAG's current chunk index a historical chunk index;
@@ -271,7 +316,7 @@ Entity identities are resolved conservatively from supplied candidates. Every
 entity and assertion retains exact source evidence. Ambiguous identities remain
 distinct. The extractor cannot invent source identities, retire another scope's
 records, or publish invalid intervals. Every extracted span includes a literal quote. A quote found in the source repairs offset
-errors (its occurrence nearest the proposed start); invented quotes are rejected. A review pass checks extraction
+errors (its occurrence nearest the proposed start); a record with an invented quote is left out. A review pass checks extraction
 against the source before embedding and publication. This validates evidence links;
 semantic entailment still depends on model quality and evaluation.
 
