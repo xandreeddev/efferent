@@ -46,17 +46,17 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `7`) and its
-embedding space: `knowledgeEngineId("rag:7", space)` is
-`rag:7/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `8`) and its
+embedding space: `knowledgeEngineId("rag:8", space)` is
+`rag:8/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:6/…`,
-`rag:6/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:7/…`,
+`rag:7/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -72,7 +72,9 @@ version 5 gives a memory the time of the dated event it concerns (`eventAt`)
 writes the review's proposal in the output schema's wire form
 ([evidence review](#graph-time-and-evidence)); version 7 asks for a
 `supersession` only from a record that supersedes others
-([graph, time and evidence](#graph-time-and-evidence)). A job of an earlier version
+([graph, time and evidence](#graph-time-and-evidence)); version 8 tells
+memory extraction how to refer to the conversation's user
+([conversation and action capture](#conversation-and-action-capture)). A job of an earlier version
 that failed is retried the same way: `retry` requeues it under the current
 id through `KnowledgeIndex.requeue`. A memory job whose review copied
 version 5's proposal back failed with `Invalid` ("The extraction model
@@ -81,7 +83,10 @@ calls final, so list it with `failed({ namespace, reasons: ["Invalid"] })`
 and `retry` it directly; a document whose graph was omitted that way is
 extracted again by ingesting its next revision. A job that failed under
 version 6 with the same message because a record that supersedes nothing gave
-a `null` or no `supersession` is retried the same way.
+a `null` or no `supersession` is retried the same way, and so is a memory
+job that failed under version 7 with `Invalid` and "The extraction refers to
+an undefined entity key" because every record it proposed named the user
+without defining it.
 
 Build typed layers when the host needs direct ingestion, status and backfill
 APIs beside the agent. `stackPlugins` retains every capability and background
@@ -301,6 +306,26 @@ source, support cycles, routine episodes by source metadata) are unchanged and
 still refuse the whole stage. Over several windows, a part that repeats an
 entity key refuses the source; a record that names a key no part defines is
 left to staging, which drops it alone.
+
+Memory extraction (version 8 on) also says how to refer to the
+conversation's user, whom every memory is already about: a memory never lists
+the user in its `entities`, and a relationship whose subject or object is the
+user defines the user in `entities` like any other entity, with a span where
+the user speaks or refers to themselves. Every key a memory or relationship
+names is defined in `entities`, as the output schema now also says of a
+memory's `entities` and a relationship's `subject` and object `key`. A
+memory's entities seed recall's graph traversal, so a memory that names no
+user no longer brings each of the user's relationships into every recall that
+finds it; recall reaches them through the other entities the memory or the
+question names. Before version 8, extraction models often named an
+undefined `user` key in a memory or a relationship, or another name for it
+such as `user:self`, and staging
+dropped that record with a `RecordDropped` note ("The extraction refers to an
+undefined entity key"), losing the memory. Staging still drops such a record:
+the rule changes what the model is asked, not what staging accepts. The
+document prompt is unchanged but for the schema's descriptions. A completed
+job keeps what it published; `retry` does not extract it again, so a memory it
+dropped is learned again only when a later source states it.
 
 A document's graph is optional; its chunks are not. When graph extraction or its
 review fails, or the helper's answer is invalid, the failure is recorded on the

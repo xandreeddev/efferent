@@ -142,6 +142,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   it from a decoded extraction handles `null` and absence, and reads it only
   when `supersedes` is non-empty. A host that pins the extraction, document,
   part or review prompt updates the pin.
+- Native knowledge extraction is at version 8: the engines record their jobs
+  under `memory:8/…` and `rag:8/…`; drain version 7 jobs, or `retry` them
+  (which requeues each under the new id through `KnowledgeIndex.requeue`).
+  A memory job that failed under version 7 with `Invalid` ("The extraction
+  refers to an undefined entity key") because every record it proposed named
+  the conversation's user without defining it is worth that retry, although
+  `isRetryableKnowledgeFailure` calls `Invalid` final: list it with
+  `KnowledgeIndex.failed({ namespace, reasons: ["Invalid"] })`. A completed
+  job keeps what it published. A host that pins the extraction, document,
+  part or review prompt updates the pin.
 
 ### Changed
 
@@ -498,6 +508,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and stages as before. Extraction version 7 (`KNOWLEDGE_EXTRACTION_VERSION`)
   and the pinned extraction, document, part and review prompts record the
   new output schema; the prompts' instructions are unchanged.
+
+- `@xandreed/core`, `@xandreed/plugin-memory`: memory extraction says how to
+  refer to the conversation's user. Extraction models commonly named an
+  undefined `user` key, or another name for it such as `user:self`, in a
+  memory's `entities` or as a relation's subject; staging drops each such
+  record with a `RecordDropped` note ("The extraction refers to an undefined
+  entity key"), so the memory was lost. `knowledgeExtractionPrompt` in memory
+  mode now adds one rule after "Extract conversational memory and its
+  relationships.": memories are already about the conversation's user, so a
+  memory never lists the user in its `entities`; a relation whose subject or
+  object is the user defines the user in `entities` like any other entity,
+  with a span where the user speaks or refers to themselves; and every key a
+  memory or relation names is defined in `entities`. The output schema, shared
+  by both modes, describes `KnowledgeExtractedMemory.entities` and
+  `KnowledgeExtractedAssertion.subject` and its entity object's `key` as keys
+  defined in `entities`. The document prompt is otherwise unchanged, and
+  staging is unchanged: a record naming an undefined key is still dropped
+  alone. A memory's entities seed recall's graph traversal, so a memory that
+  no longer lists the user no longer brings each of the user's relations into
+  every recall that finds it. Extraction version 8
+  (`KNOWLEDGE_EXTRACTION_VERSION`) and the pinned extraction, document, part
+  and review prompts record the change.
 
 ## 0.18.0 — 2026-11-06
 

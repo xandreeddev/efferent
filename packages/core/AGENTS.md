@@ -577,7 +577,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Native memory and document extraction prompts, output schema, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
+| Native memory and document extraction prompts (the memory mode's rule for referring to the conversation's user included), output schema with its field descriptions, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Part note of an extraction prompt over one window of a longer source (`window`, `knowledgeExtractionWindows`) | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Independent extraction evidence-review prompt | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
 | Bounded query-planning and evidence-reranking prompts | `src/knowledge/knowledge-query.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
