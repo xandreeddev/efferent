@@ -25,7 +25,10 @@ Extraction and query protocols are core's shared native knowledge helpers. Extra
 through `extractKnowledge` (one call per `maxExtractionChars` window, merged
 and staged through its `stage`; it decodes each helper completion and reviews
 as the `review` policy says: `always`, `on-failure` after an `Invalid`
-whole-extraction refusal, or `off`), record a failed
+whole-extraction refusal, or `off`). When enabled, a malformed extraction reply uses
+that window's one review for shape repair from its original evidence; the raw proposal
+is bounded and untrusted, the reviewed reply remains strictly decoded and staged,
+and the window is never reviewed twice. Off retains its strict decode refusal. Record a failed
 job with `knowledgeJobFailure`, which keeps an extraction's diagnostic, and set
 that diagnostic on the span with `knowledgeFailureAttributes`, and run every UtilityLlm call inside
 `CurrentKnowledgeHelperCall` (purpose, scope, job and attempt, output cap). Stage

@@ -121,6 +121,18 @@ const atlasGraph = { entities: [
 ], memories: [], assertions: [{ key: "owns", subject: "a", predicate: "owns", object: { _tag: "Entity", key: "b" }, text: "Atlas owns Beacon", spans: [{ start: 0, end: 18, quote: "Atlas owns Beacon." }], validFrom: 10, validTo: null, supersedes: [], supersession: "correction" }] }
 
 describe("native temporal GraphRAG", () => {
+  test.each(["always", "on-failure"] as const)("%s repairs malformed graph JSON with one review before native publication", (review) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { utility, prompts } = yield* scriptedUtility(['{"entities":[', JSON.stringify(atlasGraph)])
+    const { knowledge } = yield* makeRag({ graph: true, review }, undefined, undefined, utility)
+    const captured = yield* knowledge.ingest(enqueue("shape", "Atlas owns Beacon."))
+    expect(yield* knowledge.process(scope, 1)).toBe(1)
+    expect(Option.map(yield* knowledge.status(scope, captured.id), (job) => job.phase._tag)).toEqual(Option.some("Complete"))
+    const found = yield* knowledge.retrieve({ scope, query: "Atlas", limit: 3, maxChars: 2400, graph: { perspective: { validAt: 20, knownAt: yield* Clock.currentTimeMillis }, depth: 1 } })
+    expect(found.graph.assertions.map((assertion) => [assertion.predicate, assertion.provenance[0]?.quote])).toEqual([["owns", "Atlas owns Beacon."]])
+    expect((yield* knowledge.retrieve({ scope: { ...scope, owner: "another-owner" }, query: "Atlas", limit: 3, maxChars: 2400 })).candidates).toEqual([])
+    expect(yield* Ref.get(prompts)).toHaveLength(2)
+  }))))
+
   test("document graphs are opt-in and expand two hops beyond the retrieved chunk", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const first = { entities: [
       { key: "a", name: "Atlas", type: "project", aliases: [], existing: null, spans: [{ start: 0, end: 5, quote: "Atlas" }] },

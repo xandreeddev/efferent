@@ -1,15 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { startRecordingProxy } from "./recording-proxy.testing.js"
 
 const temporary = await mkdtemp(join(tmpdir(), "efferent-node-transport-"))
 const target = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("node transport fixture") })
 beforeAll(async () => {
   await mkdir(join(temporary, "node_modules"))
-  await symlink(resolve(import.meta.dir, "../../node_modules/effect"), join(temporary, "node_modules/effect"), "dir")
-  await symlink(resolve(import.meta.dir, "../../node_modules/undici"), join(temporary, "node_modules/undici"), "dir")
+  // Resolve the installed packages rather than assuming a package-local layout:
+  // frozen hoisted installs are valid too.
+  await symlink(dirname(fileURLToPath(import.meta.resolve("effect/package.json"))), join(temporary, "node_modules/effect"), "dir")
+  await symlink(dirname(fileURLToPath(import.meta.resolve("undici/package.json"))), join(temporary, "node_modules/undici"), "dir")
   const built = await Bun.build({
     entrypoints: [join(import.meta.dir, "models-transport.node.testing.ts")], outdir: temporary,
     target: "node", format: "esm", external: ["effect", "effect/*", "undici"],

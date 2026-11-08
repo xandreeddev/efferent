@@ -80,9 +80,10 @@ export type KnowledgeExtractionWindow = typeof KnowledgeExtractionWindow.Type
 /**
  * When extraction reviews its proposal against the source before staging (`extractKnowledge`).
  * `always`: every window's extraction is reviewed, a second helper call per window. `off`: none is.
- * `on-failure`: the windows are extracted without review and their merge is staged; only when
+ * Invalid extraction JSON or shape uses that window's one review when enabled; off fails strictly.
+ * `on-failure`: decoded windows are extracted without review and their merge is staged; when
  * staging refuses it as a whole (`Invalid`: a repeated entity key, no record that survives its
- * checks) is each window's extraction reviewed and the reviewed merge staged. A record staging
+ * checks), each window not already reviewed is reviewed and the reviewed merge staged. A record staging
  * drops on its own (a `RecordDropped` note) does not refuse the extraction, so it starts no
  * review. A boolean decodes as before: `true` is `always`, `false` is `off`.
  * @public
