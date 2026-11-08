@@ -114,7 +114,7 @@ and [session files](/docs/plugins/session-files/) for durable local storage.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-memory-window` · Version **0.19.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-memory-window` · Version **0.19.2** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

@@ -221,7 +221,7 @@ for the two independent persistence paths.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-knowledge-postgres` · Version **0.19.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-knowledge-postgres` · Version **0.19.2** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
