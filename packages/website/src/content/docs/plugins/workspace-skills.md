@@ -93,7 +93,7 @@ Their references are listed by discovery's catalogue, not in that section.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-workspace/skills` · Version **0.19.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-workspace/skills` · Version **0.19.2** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

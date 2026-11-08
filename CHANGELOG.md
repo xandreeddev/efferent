@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.19.2 — 2026-11-08
+
 ### Fixed
 
 - Evaluation JSON reads and writes use bounded text buffers within individual
@@ -28,6 +30,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Drain version 9 jobs with their existing worker before upgrading. A failed
   job can be explicitly retried under the new engine; existing published
   records and missing memories are not rewritten or reconstructed.
+
+### Changes
+
+- Encode and parse evaluation JSON in bounded text chunks within runs, trials and event lines. Preserve native JSON bytes, atomic writes, strict decoding and incomplete-trial evidence; decoded scalar values and the complete object graph still require runtime memory.
+
+- Use one configured review per extraction window to repair malformed JSON or output shape, with bounded untrusted proposals and unchanged schema and source validation. Keep review off strict and version the shared extraction protocol and engine ids at 10; drain older queued jobs before upgrading.
 
 ## 0.19.1 — 2026-11-08
 
