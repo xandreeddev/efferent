@@ -35,17 +35,17 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `8`) and its
-embedding space: `knowledgeEngineId("rag:8", space)` is
-`rag:8/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `9`) and its
+embedding space: `knowledgeEngineId("rag:9", space)` is
+`rag:9/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:7/…`,
-`rag:7/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:8/…`,
+`rag:8/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -328,6 +328,12 @@ source, support cycles, routine episodes by source metadata) are unchanged and
 still refuse the whole stage. Over several windows, a part that repeats an
 entity key refuses the source; a record that names a key no part defines is
 left to staging, which drops it alone.
+
+Memory extraction (version 9 on) preserves each durable user statement
+independently of an unrelated assistant answer. Review checks for supported
+statements missing from the proposal as well as removing unsupported claims.
+Both keep exact source evidence; review does not bypass source-span checks or
+change which statements the host admits for capture.
 
 Memory extraction (version 8 on) also says how to refer to the
 conversation's user, whom every memory is already about: a memory never lists

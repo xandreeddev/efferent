@@ -8,6 +8,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- Conversational extraction preserves durable user statements independently of
+  an unrelated assistant answer. Evidence review now checks for supported
+  omissions as well as unsupported claims; source-span validation is unchanged.
+
+### Migration
+
+- Native knowledge extraction is at version 9 (`KNOWLEDGE_EXTRACTION_VERSION`),
+  so new memory and document jobs use `memory:9/…` and `rag:9/…` engine ids.
+  Drain queued version 8 jobs with their existing worker before upgrading;
+  failed jobs can be retried under the new engine. Existing published records
+  are unchanged and missing memories are not reconstructed automatically.
+
 ## 0.19.0 — 2026-11-07
 
 ### Migration

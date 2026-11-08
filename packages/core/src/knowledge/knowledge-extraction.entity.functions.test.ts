@@ -27,7 +27,7 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("8")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("9")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
@@ -55,6 +55,39 @@ describe("native extraction and retrieval contracts", () => {
       "The key of the related entity, defined in entities.",
     ].map((description) => schemaOf(paragraphs("document")).includes(`"description":"${description}"`))).toEqual([true, true, true])
   })
+
+  test.each([
+    { kind: "preference", statement: "I prefer morning appointments.", memory: "The user prefers morning appointments.", answer: "The library opens at 09:00." },
+    { kind: "goal", statement: "I plan to learn pottery this winter.", memory: "The user plans to learn pottery this winter.", answer: "The community hall is on Maple Road." },
+  ] as const)("review can restore an omitted $kind independently of an unrelated assistant answer, with exact evidence", ({ kind, statement, memory, answer }) => Effect.runPromise(Effect.gen(function* () {
+    const text = `User: ${statement}\n\nAssistant final reply: ${answer}`
+    const current = { ...source, text }
+    const at = (quote: string) => ({ start: text.indexOf(quote), end: text.indexOf(quote) + quote.length, quote })
+    const answerMemory = { ...plain.memories[0]!, key: "answer", text: answer, entities: [], spans: [at(answer)] }
+    const omitted = { entities: [], memories: [answerMemory], assertions: [] }
+    const restored = { ...answerMemory, key: "personal", kind, text: memory, spans: [at(statement)] }
+    const complete = { ...omitted, memories: [answerMemory, restored] }
+    const calls = yield* Ref.make<ReadonlyArray<{ readonly prompt: string; readonly purpose: string }>>([])
+    const staged = yield* extractKnowledge({
+      source: current, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1000, consolidate: true, review: "always",
+      complete: (prompt, purpose) => Ref.update(calls, (all) => [...all, { prompt, purpose }]).pipe(Effect.as(reply(purpose === "extract" ? omitted : complete))),
+      stage: (decoded) => stageKnowledgeExtraction(current, empty, decoded, 30),
+    })
+    const prompt = knowledgeExtractionPrompt(current, empty, "memory", 1000)
+    expect(yield* Ref.get(calls)).toEqual([
+      { purpose: "extract", prompt },
+      { purpose: "review", prompt: knowledgeReviewPrompt(prompt, yield* Schema.decodeUnknownEffect(KnowledgeExtraction)(omitted)) },
+    ])
+    // Completeness adds the user's supported statement without discarding the assistant's supported fact.
+    expect(staged.memories.map((entry) => entry.text)).toEqual([answer, memory])
+    expect(staged.memories[1]!.provenance.map((span) => ({ source: span.source, start: span.start, end: span.end, quote: span.quote }))).toEqual([{ source: current.ref, ...at(statement) }])
+    expect(staged.notes ?? []).toEqual([])
+    // A review that fills an omission must still pass the unchanged source-evidence checks.
+    const ungrounded = yield* Schema.decodeUnknownEffect(KnowledgeExtraction)({ ...complete, memories: [answerMemory, { ...restored, spans: [{ start: 0, end: 11, quote: "Not stated." }] }] })
+    const refused = yield* stageKnowledgeExtraction(current, empty, ungrounded, 30)
+    expect(refused.memories.map((entry) => entry.text)).toEqual([answer])
+    expect(refused.notes).toEqual([{ _tag: "RecordDropped", record: "memory", key: "personal", reason: "Invalid", message: "The extraction cites an invalid source span" }])
+  })))
 
   test("the review proposal is the output schema's wire form, so a reviewer that returns it unchanged returns the same extraction", () => Effect.runPromise(Effect.gen(function* () {
     const text = "Since March I only drink green tea. Maya opens the café at eight."
