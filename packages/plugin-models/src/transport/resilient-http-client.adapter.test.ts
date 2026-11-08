@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Deferred, Effect, Exit, Fiber, Option, Ref, Stream } from "effect"
+import { Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Ref, Stream } from "effect"
 import { AiError } from "effect/ai"
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { TestClock } from "effect/testing"
@@ -31,7 +31,67 @@ const inClock = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.
   return yield* Fiber.join(fiber)
 }).pipe(Effect.provide(TestClock.layer()), Effect.timeout("2 seconds")))
 
+/** A timer can fire while the wall clock still reads one millisecond before its deadline. */
+const earlyHeaderTimeout = (settled: boolean, reserveFallback = false) => Effect.runPromise(Effect.gen(function* () {
+  const now = yield* Ref.make(0)
+  const sent = yield* Deferred.make<void>()
+  const sends: Array<number> = []
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => Ref.getUnsafe(now),
+    currentTimeMillis: Ref.get(now),
+    currentTimeNanosUnsafe: () => BigInt(Ref.getUnsafe(now)) * 1_000_000n,
+    currentTimeNanos: Ref.get(now).pipe(Effect.map((at) => BigInt(at) * 1_000_000n)),
+    monotonicTimeNanosUnsafe: () => BigInt(Ref.getUnsafe(now)) * 1_000_000n,
+    monotonicTimeNanos: Ref.get(now).pipe(Effect.map((at) => BigInt(at) * 1_000_000n)),
+    sleep: (duration) => Deferred.await(sent).pipe(Effect.andThen(Ref.update(now, (at) => at + Math.max(0, Duration.toMillis(duration) - 1)))),
+  }
+  const raw = HttpClient.make(() => Effect.gen(function* () {
+    sends.push(yield* Clock.currentTimeMillis)
+    yield* Deferred.succeed(sent, undefined)
+    return yield* Effect.never
+  }))
+  return yield* Effect.gen(function* () {
+    const call = yield* makeModelRequestCall({ reserveFallback })
+    const failure = yield* Effect.flip(resilientRequest(raw, request, { protocol: "anthropic", settled }).pipe(Effect.provideService(CurrentModelRequestCall, Option.some(call))))
+    return { sends, kind: modelFailureOf(failure), now: yield* Clock.currentTimeMillis, deadline: call.deadline,
+      state: yield* modelRequestSnapshot(call), fallback: yield* enterModelFallback(call, failure) }
+  }).pipe(Effect.provideService(Clock.Clock, clock), Effect.provideService(CurrentModelRetryPolicy, {
+    ...policy, maxAttempts: 2, requestTimeoutMs: 20, totalTimeoutMs: 100,
+  }))
+}).pipe(Effect.timeout("2 seconds")))
+
 describe("bounded model HTTP requests", () => {
+  test.each([false, true])("a settled pending-header Timeout is final before the wall-clock deadline (fallback reserved: %p)", async (reserveFallback) => {
+    const result = await earlyHeaderTimeout(true, reserveFallback)
+    expect(result.kind).toEqual(Option.some("Timeout"))
+    expect(result.now).toBeLessThan(result.deadline)
+    expect(result.sends).toEqual([0])
+    expect(result.state).toEqual({ _tag: "Final", rung: "Primary", attempts: 1, kind: "Timeout" })
+    expect(result.fallback).toBe(false)
+  })
+
+  test("a streamed pending-header Timeout still retries before the deadline", async () => {
+    const result = await earlyHeaderTimeout(false)
+    expect(result.kind).toEqual(Option.some("Timeout"))
+    expect(result.sends).toEqual([0, 19])
+    expect(result.state._tag).toBe("Rejected")
+  })
+
+  test("a settled transport-proven connection failure still retries before any generation", async () => {
+    const sends: Array<number> = []
+    const raw = HttpClient.make((request) => Effect.suspend(() => {
+      sends.push(sends.length + 1)
+      return sends.length === 1
+        ? Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, cause: { code: "ECONNREFUSED" } }) }))
+        : Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok")))
+    }))
+    const result = await Effect.runPromise(resilientRequest(raw, request, { protocol: "anthropic", settled: true }).pipe(
+      Effect.flatMap((response) => response.text), Effect.provideService(CurrentModelRetryPolicy, policy),
+    ))
+    expect(result).toBe("ok")
+    expect(sends).toEqual([1, 2])
+  })
+
   test("mixed transport and status failures use one counter before a readable success", async () => {
     const raw = scripted(["transport", rejected(429, "rate_limit_error"), rejected(529), { status: 200, body: "ok" }])
     const observed = await Effect.runPromise(Effect.gen(function* () {

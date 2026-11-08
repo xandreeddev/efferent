@@ -54,6 +54,13 @@ describe("request policy decisions", () => {
     expect(enterFallbackState({ ...rejected, rung: "Fallback", attempts: 4 }, modelRetryDefaults, true)).toEqual(Option.none())
   })
 
+  test("an explicitly final timeout cannot retry or enter a distinct fallback before its deadline", () => {
+    const state: ModelRequestState = { _tag: "Final", rung: "Primary", attempts: 1, kind: "Timeout" }
+    expect(startAttemptState(state, modelRetryDefaults, false)).toEqual(Option.none())
+    expect(startAttemptState(state, modelRetryDefaults, true)).toEqual(Option.none())
+    expect(enterFallbackState(state, modelRetryDefaults, true)).toEqual(Option.none())
+  })
+
   test("committed, permanent, one-shot and unexhausted requests cannot enter a fallback", () => {
     const states: ReadonlyArray<ModelRequestState> = [
       { _tag: "Committed", rung: "Primary", attempts: 1 },

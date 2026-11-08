@@ -30,6 +30,8 @@ export const ModelRequestState = Schema.Union([
   Schema.TaggedStruct("Ready", { rung: ModelRequestRung, attempts: nonnegative }),
   Schema.TaggedStruct("Sending", { rung: ModelRequestRung, attempts: positive }),
   Schema.TaggedStruct("Rejected", { rung: ModelRequestRung, attempts: positive, kind: ModelFailureKind, replayable: Schema.Boolean, retryAt: Schema.optionalKey(nonnegative) }),
+  // A settled header timeout may already have generated a response; neither retry nor fallback is safe.
+  Schema.TaggedStruct("Final", { rung: ModelRequestRung, attempts: positive, kind: ModelFailureKind }),
   Schema.TaggedStruct("Committed", { rung: ModelRequestRung, attempts: positive }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModelRequestState = typeof ModelRequestState.Type

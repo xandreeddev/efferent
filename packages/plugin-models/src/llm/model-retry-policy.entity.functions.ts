@@ -50,11 +50,12 @@ export const startAttemptState = (state: ModelRequestState, policy: ModelRetryPo
     Sending: () => Option.none(),
     Rejected: (value) => retryableModelFailure(value.kind) && value.replayable ? start() : Option.none(),
     Committed: () => Option.none(),
+    Final: () => Option.none(),
   })
 }
 
 export const enterFallbackState = (state: ModelRequestState, policy: ModelRetryPolicy, reserveFallback: boolean): Option.Option<ModelRequestState> => ModelRequestState.match(state, {
-  Ready: () => Option.none(), Sending: () => Option.none(), Committed: () => Option.none(),
+  Ready: () => Option.none(), Sending: () => Option.none(), Committed: () => Option.none(), Final: () => Option.none(),
   Rejected: (value) => reserveFallback && policy.maxAttempts >= 2 && value.rung === "Primary" && value.attempts >= primaryAttemptLimit(policy, true) && value.attempts < policy.maxAttempts && value.replayable && retryableModelFailure(value.kind)
     // The primary's backoff and server hint belong to its provider: the fallback sends at once.
     ? Option.some<ModelRequestState>({ _tag: "Ready", rung: "Fallback", attempts: value.attempts }) : Option.none(),

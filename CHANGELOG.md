@@ -10,6 +10,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Fixed
 
+- A settled model request whose pending headers time out is explicitly final,
+  even when the wall clock still reads just before its deadline. Neither a retry
+  nor a fallback can start a second generation. Streamed header timeouts and
+  transport-proven connection failures retain their bounded retries.
 - Conversational extraction preserves durable user statements independently of
   an unrelated assistant answer. Evidence review now checks for supported
   omissions as well as unsupported claims; source-span validation is unchanged.
