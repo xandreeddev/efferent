@@ -8,6 +8,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- Evaluation JSON reads and writes use bounded text buffers within individual
+  trials, run metadata and event lines, removing the previous whole-trial
+  string allocation ceiling. Existing JSON bytes, schemas, atomic file writes
+  and incomplete-trial evidence are preserved. Decoded scalar values and the
+  full evaluation object graph still need runtime memory.
+
 ## 0.19.1 — 2026-11-08
 
 ### Fixed
