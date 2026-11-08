@@ -424,7 +424,7 @@ const config: typeof GateSuiteConfig.Encoded = {
   boundaries: {
     layers: [
       // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
-      ...testLayer("evals-cli", ["evals-cli", "evals", "core"], ["effect", "node:", "bun:test"]),
+      ...testLayer("evals-cli", ["evals-cli", "evals", "core"], ["effect", "node:", "bun:test", "fast-check"]),
       { name: "evals-cli", path: src("evals-cli"), canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api"] },
       ...testLayer("evals-langfuse", ["evals-langfuse", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langfuse", path: src("evals-langfuse"), canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:"] },

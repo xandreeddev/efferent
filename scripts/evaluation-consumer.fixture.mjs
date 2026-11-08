@@ -19,7 +19,7 @@ import {
   gradingContext,
   unknownEvaluationUsage
 } from "@xandreed/evals"
-import { evaluationCli } from "@xandreed/evals-cli"
+import { evaluationCli, readJson, writeJson } from "@xandreed/evals-cli"
 import { langfuseExporter } from "@xandreed/evals-langfuse"
 import { langsmithExporter } from "@xandreed/evals-langsmith"
 
@@ -28,6 +28,23 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
   process.exit(1)
 }
 const directory = await mkdtemp(join(process.cwd(), "evals-node-"))
+// Exercise the published IO adapter on Node, including native raw JSON and
+// strings that cross both escaping and UTF-8 chunk boundaries.
+const jsonPath = join(directory, "bounded.json")
+const jsonValue = {
+  text: '\u0000\\"é日本語😀\ud800'.repeat(18000),
+  raw: JSON.rawJSON("12345678901234567890"),
+  boxed: new Number(7),
+  transformed: { toJSON(key) { return { key, value: "converted" } } },
+}
+const jsonText = JSON.stringify(jsonValue, null, 2)
+await Effect.runPromise(writeJson(jsonPath, jsonValue))
+const jsonActual = await readFile(jsonPath, "utf8")
+const jsonDecoded = await Effect.runPromise(readJson(jsonPath, Schema.Json))
+if (jsonActual !== jsonText || JSON.stringify(jsonDecoded) !== JSON.stringify(JSON.parse(jsonText))) {
+  console.error("The packaged Node JSON adapter changed native bytes or values")
+  process.exit(1)
+}
 const Runnable = runnableExecutionPort("consumer")
 const Environment = evaluationEnvironmentPort("consumer")
 const runnable = defineRunnable({
