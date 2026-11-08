@@ -35,17 +35,17 @@ sharing a model. Incompatible stored and query vectors fail explicitly. Changing
 models requires a new collection or a deliberate reindex.
 
 Each engine records its jobs under an engine id that names the engine, the
-extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `9`) and its
-embedding space: `knowledgeEngineId("rag:9", space)` is
-`rag:9/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
+extraction version (`KNOWLEDGE_EXTRACTION_VERSION`, now `10`) and its
+embedding space: `knowledgeEngineId("rag:10", space)` is
+`rag:10/<model>/<version>/<dimensions>` (a `/` or `%` in the model or version is
 escaped). A worker discovers (`pending`) and claims (`claim`, also by job id)
 only jobs recorded under its own id, so processes configured with different
 embedding spaces can share one store without indexing each other's sources. A
 job queued under another configuration waits for a worker of that
 configuration. The engine sets the id on `ingest` and `capture`, whatever
 `engine` the caller passes. A new extraction version changes the id, like a
-new embedding space: a job still queued under a previous one (`memory:8/…`,
-`rag:8/…`) waits for a worker of that version, so let one drain the queue
+new embedding space: a job still queued under a previous one (`memory:9/…`,
+`rag:9/…`) waits for a worker of that version, so let one drain the queue
 before switching. A job that failed under it is started over under the
 current id by `retry` (below). Extraction version 2 stages what version 1
 failed with `Invalid` for one record's sake, but `isRetryableKnowledgeFailure`
@@ -329,6 +329,20 @@ still refuse the whole stage. Over several windows, a part that repeats an
 entity key refuses the source; a record that names a key no part defines is
 left to staging, which drops it alone.
 
+Extraction version 10 lets the configured review repair an extraction reply
+that is malformed JSON or does not match the output schema. Its original
+extraction task and a raw proposal clipped to `maxExtractionChars` are framed
+as untrusted data. The reviewer must return a complete schema-valid extraction
+from the source evidence; there is no enum alias coercion, invented quote or
+automatic supersession. `always` reuses its planned review, `on-failure` uses
+one when the decode fails, and `off` fails the original decode. Each window is
+reviewed at most once, including a later whole-merge or staging refusal; if all
+windows were already reviewed, that refusal propagates without restaging.
+Malformed review replies fail with stage `review`. Transport failures and
+interruption do not start shape repair. Source-span, identity, supersession and
+publication checks are unchanged. Existing helper telemetry keeps the original
+completions; failure diagnostics never contain the raw proposal.
+
 Memory extraction (version 9 on) preserves each durable user statement
 independently of an unrelated assistant answer. Review checks for supported
 statements missing from the proposal as well as removing unsupported claims.
@@ -441,11 +455,13 @@ semantic entailment still depends on model quality and evaluation.
 
 The engines' `review` option (`KnowledgeReviewPolicy`) says when that pass
 runs. `"always"`, the default, reviews every window's extraction, a second
-helper call per window. `"off"` never reviews. `"on-failure"` extracts every
-window without review and stages the merged extraction; only when staging
-refuses it as a whole with `Invalid` (a repeated entity key, no record that
-survives its checks, a document extraction that proposes personal memories)
-does it review each window's extraction and stage the reviewed merge. A record
+helper call per window, including shape repair when the first reply cannot
+decode. `"off"` never reviews. `"on-failure"` first decodes each window,
+reviewing a malformed reply once, and stages the merged extraction. When
+staging refuses it as a whole with `Invalid` (a repeated entity key, no record
+that survives its checks, a document extraction that proposes personal memories),
+it reviews only windows that have not already used their review, then stages
+the reviewed merge. If none remain, the refusal propagates unchanged. A record
 staging drops on its own (a `RecordDropped` note) does not refuse the
 extraction, so it starts no review. A clean source therefore costs one call
 per window under `"on-failure"`, and a refused one costs what `"always"`

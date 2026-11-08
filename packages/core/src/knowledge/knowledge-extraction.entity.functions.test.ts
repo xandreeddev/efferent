@@ -27,12 +27,18 @@ describe("native extraction and retrieval contracts", () => {
   test("extraction, review, query and rerank prompts are pinned in full", async () => {
     const decoded = await Effect.runPromise(extraction)
     const prompt = knowledgeExtractionPrompt(source, empty, "memory", 1000)
-    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("9")
+    expect(KNOWLEDGE_EXTRACTION_VERSION).toBe("10")
     expect(prompt).toBe(await Bun.file(new URL("../../golden/knowledge-extraction.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "document", 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-document.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt({ ...source, text: "A note.\n\nA second note." }, empty, "document", 1000, true, { part: 2, parts: 2, start: 9, end: 23 })).toBe(await Bun.file(new URL("../../golden/knowledge-extraction-part.prompt.txt", import.meta.url)).text())
     expect(knowledgeExtractionPrompt(source, empty, "memory", 1000, true, { part: 1, parts: 1, start: 0, end: source.text.length })).toBe(prompt)
     expect(knowledgeReviewPrompt(prompt, decoded)).toBe(await Bun.file(new URL("../../golden/knowledge-review.prompt.txt", import.meta.url)).text())
+    const calls: Array<string> = []
+    await Effect.runPromise(extractKnowledge({
+      source, snapshot: empty, mode: "memory", maxContextChars: 1000, maxExtractionChars: 1000, consolidate: true, review: "always", stage: Effect.succeed,
+      complete: (prompt, purpose) => Effect.sync(() => { calls.push(prompt); return reply(purpose === "extract" ? '{"memories":' : plain) }),
+    }))
+    expect(calls[1]).toBe(await Bun.file(new URL("../../golden/knowledge-review-repair.prompt.txt", import.meta.url)).text())
     expect(knowledgeQueryPrompt("Who works on Atlas?", 100)).toBe(await Bun.file(new URL("../../golden/knowledge-query.prompt.txt", import.meta.url)).text())
     expect(knowledgeRerankPrompt("Who?", [], empty.graph, 1000)).toBe(await Bun.file(new URL("../../golden/knowledge-rerank.prompt.txt", import.meta.url)).text())
   })

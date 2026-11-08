@@ -16,6 +16,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and incomplete-trial evidence are preserved. Decoded scalar values and the
   full evaluation object graph still need runtime memory.
 
+- Native memory and document extraction can use their configured review to
+  repair malformed JSON or an invalid output shape. A bounded, framed raw
+  proposal is reviewed against the original evidence; the final schema and
+  source checks remain strict. Each window uses at most one review, and review
+  off never repairs a reply. Provider failures and cancellation start no repair.
+
+### Migration
+
+- Knowledge extraction is version 10: new jobs use `memory:10/…` and `rag:10/…`.
+  Drain version 9 jobs with their existing worker before upgrading. A failed
+  job can be explicitly retried under the new engine; existing published
+  records and missing memories are not rewritten or reconstructed.
+
 ## 0.19.1 — 2026-11-08
 
 ### Fixed

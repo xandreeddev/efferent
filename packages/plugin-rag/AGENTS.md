@@ -32,7 +32,10 @@ through KnowledgeStore. Node 24 and Bun.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is
   opt-in and requires UtilityLlm; extracted entity identities and evidence
   are validated by core before publication. Review defaults to `always`;
-  `on-failure` reviews only an extraction staging refuses as a whole.
+  `on-failure` reviews an extraction staging refuses as a whole, or a malformed
+  extraction reply. Each window has at most one review: shape repair consumes
+  that review, strictly decodes the result and retains all source checks.
+  Off never repairs a malformed reply.
   Extraction runs through core's `extractKnowledge`: one call per
   `maxExtractionChars` window, merged and staged through its `stage`, with
   review as the policy says; it decodes each helper completion. A failed job is recorded with `knowledgeJobFailure`,

@@ -10,6 +10,21 @@ import type { MemoryConfig } from "./memory.entity.js"
 import { fixtureEnqueue, fixtureExtraction, fixtureScope, makeMemoryFixture } from "./memory.testing.js"
 
 describe("native memory engine", () => {
+  test.each(["always", "on-failure"] as const)("%s uses one review to repair an invalid enum before publication and recall", (review) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const text = "I prefer tea."
+    const valid = fixtureExtraction(text)
+    const malformed = { ...valid, memories: valid.memories.map((memory) => ({ ...memory, kind: "interest" })) }
+    const fixture = yield* makeMemoryFixture([JSON.stringify(malformed), JSON.stringify(valid)], { review, maxAttempts: 1 })
+    const captured = yield* fixture.memory.capture(fixtureEnqueue("shape", text))
+    expect(yield* fixture.memory.process(fixtureScope, 1)).toBe(1)
+    expect(Option.map(yield* fixture.memory.status(fixtureScope, captured.id), (job) => job.phase._tag)).toEqual(Option.some("Complete"))
+    expect((yield* Ref.get(fixture.helperCalls)).map((call) => Option.map(call, (value) => value.purpose))).toEqual([Option.some("extract"), Option.some("review")])
+    const result = yield* fixture.memory.recall({ scope: fixtureScope, query: "preferred drink", limit: 6, maxChars: 2400 })
+    expect(result.candidates.map((candidate) => candidate._tag === "Memory" ? [candidate.memory.kind, candidate.memory.text] : [])).toEqual([["preference", text]])
+    expect((yield* fixture.memory.recall({ scope: { ...fixtureScope, owner: "another-owner" }, query: "tea", limit: 6, maxChars: 2400 })).candidates).toEqual([])
+    expect(yield* Ref.get(fixture.calls)).toHaveLength(2)
+  }))))
+
   test("processing takes a new memory about the same entity, close enough to an active one, as a restatement of it; restatementSimilarity false keeps both", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     // The extraction reuses the person the candidates already know, so both sources' memories are about one entity.
     const restating = (prompt: string) => {
