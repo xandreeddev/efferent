@@ -208,7 +208,7 @@ const awaitReady = Effect.fnUntraced(function* (call: ModelRequestCall): Effect.
   const now = yield* Clock.currentTimeMillis
   if (now >= call.deadline) return yield* Effect.fail(timeoutFailure())
   const state = yield* Ref.get(call.state)
-  const readyAt = ModelRequestState.match(state, { Ready: () => now, Rejected: (value) => value.retryAt ?? now, Sending: () => now, Committed: () => now })
+  const readyAt = ModelRequestState.match(state, { Ready: () => now, Rejected: (value) => value.retryAt ?? now, Sending: () => now, Committed: () => now, Final: () => now })
   if (readyAt > now) yield* Effect.sleep(Duration.millis(Math.min(readyAt - now, call.deadline - now)))
   if ((yield* Clock.currentTimeMillis) >= call.deadline) return yield* Effect.fail(timeoutFailure())
 })
@@ -257,20 +257,30 @@ export const resilientRequest = Effect.fn("models.request")(function* <R>(client
       Effect.flatMap((spend) => beginModelAttempt(call.completion, ordinal, options.protocol, spend)),
     ))
     const execute = Ref.set(attempt.reach, "Sent").pipe(Effect.andThen(client.execute(request)), Effect.provideService(CurrentModelRequestCall, Option.some(call)), Effect.catchTag("HttpClientError", (error) => error.reason._tag === "StatusCodeError" ? Effect.succeed(error.reason.response) : Effect.fail(error)))
-    const result = yield* Effect.result(pendingRead(execute, call, headerBound).pipe(Effect.flatMap((response): Effect.Effect<ResilientHttpResponse, ResilientHttpError> => response.status >= 200 && response.status < 300
+    const headers = yield* Effect.result(pendingRead(execute, call, headerBound))
+    const result = headers._tag === "Failure" ? headers : yield* Effect.result(Effect.suspend((): Effect.Effect<ResilientHttpResponse, ResilientHttpError> => {
+      const response = headers.success
+      return response.status >= 200 && response.status < 300
       ? Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal ? { _tag: "Committed", rung: state.rung, attempts: ordinal } : state).pipe(Effect.andThen(wrapResponse(response, call, ordinal, attempt)))
-      : Ref.set(attempt.reach, reachOfStatus(response.status)).pipe(Effect.andThen(errorBody(response, call, attempt)), Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol)))),
-    )))
+      : Ref.set(attempt.reach, reachOfStatus(response.status)).pipe(Effect.andThen(errorBody(response, call, attempt)), Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol))))
+    }))
     if (result._tag === "Success") return result.success
     const failure = result.failure
     if (isTurnError(failure)) return yield* Effect.fail(failure)
     const kind = errorKind(failure)
     if (HttpClientError.isHttpClientError(failure) && failure.reason._tag === "TransportError" && neverConnected(failure.reason.cause)) yield* Ref.set(attempt.reach, "Unsent")
+    // Timer completion is authoritative even when the wall clock still reads before the deadline.
+    // Keep rejected-body and streamed timeouts retryable; only a possibly sent settled header wait is final.
+    const finalHeaderTimeout = settled && headers._tag === "Failure" && kind === "Timeout" && (yield* Ref.get(attempt.reach)) !== "Unsent"
     yield* completeModelAttempt(attempt, { _tag: "Failed", failure: Option.some(kind) })
     const now = yield* Clock.currentTimeMillis
     const hint = AiError.isAiError(failure) && "http" in failure.reason ? retryHintMillis(failure.reason.http?.response?.headers ?? {}, now) : Option.none()
     const delay = retryDelayMillis(call.policy, ordinal, yield* Random.next, hint)
-    yield* Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal ? { _tag: "Rejected", rung: state.rung, attempts: ordinal, kind, replayable, ...(retryableModelFailure(kind) && replayable ? { retryAt: now + delay } : {}) } : state)
+    yield* Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal
+      ? finalHeaderTimeout
+        ? { _tag: "Final", rung: state.rung, attempts: ordinal, kind }
+        : { _tag: "Rejected", rung: state.rung, attempts: ordinal, kind, replayable, ...(retryableModelFailure(kind) && replayable ? { retryAt: now + delay } : {}) }
+      : state)
     const state = yield* Ref.get(call.state)
     return Option.isSome(startAttemptState(state, call.policy, call.reserveFallback)) ? yield* run(Option.some(failure)) : yield* Effect.fail(failure)
   })
