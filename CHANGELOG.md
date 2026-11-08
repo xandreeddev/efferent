@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.19.1 — 2026-11-08
+
 ### Fixed
 
 - Conversational extraction preserves durable user statements independently of
@@ -21,6 +23,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Drain queued version 8 jobs with their existing worker before upgrading;
   failed jobs can be retried under the new engine. Existing published records
   are unchanged and missing memories are not reconstructed automatically.
+
+### Changes
+
+- Preserve durable user statements independently of an unrelated reply, and review supported omissions with exact source evidence.
 
 ## 0.19.0 — 2026-11-07
 

@@ -16,7 +16,7 @@ npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xan
 
 `effect` (4.x) and `@xandreed/core` are peer dependencies: your code and the
 packages share one copy of each. `@xandreed/plugin-models` needs Node 24.5 or newer.
-Workspace packages share version `0.19.0`.
+Workspace packages share version `0.19.1`.
 
 ## Hello, agent
 
