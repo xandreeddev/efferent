@@ -182,8 +182,17 @@ These are recorded, not resolved; each is needed before the release.
 - Sessions stored in an unsupported (older) format can be neither read nor
   removed through `Sessions`; whether to add a purge or remove path for them
   is open.
+- A removed file-store generation keeps its claim
+  (`sessions/<id>/claims/<generation>.json`) as it was written, its claim
+  time included. Fencing and numbering need only the id and the incarnation;
+  whether removal should rewrite the claim without its time (claims are
+  never rewritten today) is open.
 
 ## Verification
+
+The table records the runs on `cf508a857ec`, the pull request as first
+opened; the follow-up commits after it are covered by the runs below the
+table, not by these counts.
 
 | Check | Evidence |
 | --- | --- |
@@ -200,6 +209,17 @@ These are recorded, not resolved; each is needed before the release.
 | Documentation generation | Pass and idempotent; current event/plugin/stored-format references and guide snippets are committed. |
 | Website | 46 pages built, all internal links pass; browser layout measured at 375/800/1280 px. |
 | Unused-diagnostic classification | Five deliberate declaration anchors remain; no ordinary unused imports/parameters remain in the scan. This optional stricter scan intentionally reports those five anchors. |
+
+On the follow-up head `ae2dba2d121` (the review fixes after the file
+layout's move to `lives/<id>.<incarnation>/`, the removal journal and the
+kit's new checks):
+
+| Check | Evidence |
+| --- | --- |
+| Repository gates/typecheck | Pass, zero findings and an empty baseline. |
+| Default full suite | 4,945 pass, 106 skips, 0 fail across 401 files, without PostgreSQL configured (its conformance and integration tests skipped). |
+| File-store, sessions, turn-bus and foundry signal suites, randomized | 5/5 seeds (3101–3105), 676 tests per run, 0 fail. |
+| Documentation generation | Pass and idempotent: no change after `docs:generate`. |
 
 The PR records the final tarball consumer result against the committed build;
 CI repeats the build and Node/Bun consumer matrix. The initial system-temporary
