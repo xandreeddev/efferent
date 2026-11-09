@@ -80,7 +80,7 @@ durable jobs after restart and renew leases during processing.
 
 Jobs are recorded under an engine id derived from the extraction version and
 the embedding options (`knowledgeEngineId("rag:10", { model, version, dimensions })`,
-for example `rag:10/host-embedding/1/768`; version 10 since the output schema says every key a relation names is defined in its entities, version 7 since a `supersession` is asked for only from a relation that supersedes, version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
+for example `rag:10/host-embedding/1/768`; version 10 since the review repairs malformed JSON or an invalid output shape, version 9 since the review restores supported statements the proposal left out, version 8 since the output schema says every key a relation names is defined in its entities, version 7 since a `supersession` is asked for only from a relation that supersedes, version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
 version 3 since memory supersessions and successor links, version 2 since dropped records and observed dates, and a
 job queued under an earlier version waits for a worker of that version).
 `retrieve` returns current evidence only: its `history` is always empty. The worker and `process` discover and claim only
@@ -141,7 +141,12 @@ unreviewed graph and reviews it, window by window, when decoding fails or stagin
 it as a whole (a repeated entity key, no record that survives its checks, or
 personal memories a document must not propose), so a clean document costs one
 extraction call per window. A relation dropped on its own with a
-`RecordDropped` note starts no review. `true` and `false` still decode from
+`RecordDropped` note starts no review. A first reply that is malformed JSON
+or does not match the output schema uses the window's one review to repair
+it, unless review is `"off"`: the reviewer receives the extraction task, the
+original evidence and the raw proposal, clipped and framed as untrusted text,
+and the reviewed reply passes the same schema and source checks. Provider
+failures and cancellation start no repair. `true` and `false` still decode from
 plugin options, as `"always"` and `"off"`; a `RagConfig` written in TypeScript
 takes only the words. A graph omitted under version 5 because the review copied that version's
 proposal back, or under version 6 because a relation that supersedes nothing
@@ -446,8 +451,3 @@ Plugin: `@xandreed/plugin-rag` · Version **0.19.2** · Plugin API **3** · Scop
 </details>
 
 <!-- plugin-reference:end -->
-
-Malformed JSON or an invalid output shape may also use the window's one review
-when review is enabled. The reviewer receives a bounded, framed raw proposal
-and the original evidence; the final schema and source checks remain strict.
-Provider failures and cancellation start no repair. `off` never repairs.

@@ -88,13 +88,13 @@ against its source. `review: "off"` skips it. `review: "on-failure"` skips it
 unless decoding fails or the checks below refuse the proposal as a whole (an entity key defined
 twice, or no record left once each failed record is dropped): then the engine
 reviews the proposal and checks the reviewed one instead, so a clean source
-costs one helper call. The engine then checks the schema, entity references, supporting memories,
-supersession targets and source spans. For M2, one citation is:
+costs one helper call. A malformed JSON or schema-invalid first reply can use
+that same one review per window. The original task and source evidence remain
+authoritative; the bounded raw proposal is framed as untrusted text. Review
+off, provider failures and cancellation never start repair.
 
-A malformed JSON or schema-invalid first reply can use that same one review per
-window. The original task and source evidence remain authoritative; the bounded
-raw proposal is framed as untrusted text. The final schema and staging checks
-still apply. Review off, provider failures and cancellation never start repair.
+The engine then checks the schema, entity references, supporting memories,
+supersession targets and source spans. For M2, one citation is:
 
 ```json
 {

@@ -12,6 +12,26 @@ test("the website's native knowledge contract matches the canonical current guid
   expect(canonical).toContain(`KNOWLEDGE_EXTRACTION_VERSION\`, now \`${KNOWLEDGE_EXTRACTION_VERSION}\``)
 })
 
+/** The plugin pages' engine-version history: one "version N since …" for every version from 2 to the current one, none twice. */
+for (const [page, engine] of [["plugins/memory.md", "memory"], ["plugins/rag.md", "rag"]] as const) {
+  test(`${page} names the current extraction version and why each version since 2 changed`, async () => {
+    const text = (await readFile(join(root, "packages/website/src/content/docs", page), "utf8")).replace(/\s+/g, " ")
+    expect(text).toContain(`knowledgeEngineId("${engine}:${KNOWLEDGE_EXTRACTION_VERSION}"`)
+    const versions = [...text.matchAll(/version (\d+) since/g)].map((match) => Number(match[1]))
+    expect(versions.toSorted((a, b) => a - b)).toEqual(Array.from({ length: KNOWLEDGE_EXTRACTION_VERSION - 1 }, (_, index) => index + 2))
+  })
+
+  test(`${page} keeps its own prose above the generated reference`, async () => {
+    const text = await readFile(join(root, "packages/website/src/content/docs", page), "utf8")
+    expect(text.slice(text.indexOf("<!-- plugin-reference:end -->") + "<!-- plugin-reference:end -->".length).trim()).toBe("")
+  })
+}
+
+test("the memory engine guide introduces its citation example directly", async () => {
+  const guide = await readFile(join(root, "packages/website/src/content/docs/guides/memory-engine.mdx"), "utf8")
+  expect(guide).toMatch(/For M2, one citation is:\n\n```json\n/)
+})
+
 test("the documented standalone spend composition actually defines an agent", async () => {
   const framework = await readFile(join(root, "docs/framework.md"), "utf8")
   const section = framework.slice(framework.indexOf("The models plugin's `spend` option"))
