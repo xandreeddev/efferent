@@ -23,8 +23,11 @@ the additional observations are recorded below the matrix.
   through retries instead of rebinding to a replacement session.
 - `SessionLog.remove` is no longer idempotent: removing a missing, already
   removed, stale or wrong-owner reference fails with `SessionMissing` (the
-  log kit requires it). A direct caller that retries a removal, or removes
-  children before their parent, handles `SessionMissing`. `Sessions.remove`
+  log kit requires it, reading, committing to and removing the captured
+  references directly). A direct caller that retries a removal, or removes
+  children before their parent, handles `SessionMissing`. The file log first
+  finishes what a removal stopped part way left (children, payloads), and
+  keeps of a removed session only its claim and tombstone. `Sessions.remove`
   is unchanged: it already refused a missing session.
 - Standalone loops and custom tool registries supply a `PreparedToolkit` using
   `prepareToolkit`. Parameter codecs decode once before any handler in a batch
@@ -52,7 +55,7 @@ The changeset records the intended minor release of the fixed package group.
 | Finding | Status | Change and evidence |
 | --- | --- | --- |
 | FW-10 | Resolved | Authorize before checking a locally sealed writer. [Sessions tests](../packages/plugin-sessions/src/sessions.adapter.test.ts) seal a locally held turn, cancel it as the wrong owner and verify it stays open with nothing stored, then cancel it as its owner: one sealed ending with its reply. The shared [Sessions kit](../packages/core/src/session/sessions.conformance.ts) checks a wrong owner's cancel of an open turn (`cancel`) and of a locally sealed one (`sealed`), and its [self-tests](../packages/plugin-sessions/src/sessions.conformance.test.ts) include a backend taking the sealed shortcut before the owner check. |
-| FW-11 | Resolved | Capture full references, fence every adapter and preserve immutable file generations/tombstones. [Sessions race tests](../packages/plugin-sessions/src/sessions.adapter.test.ts) pause reads/removals across owner replacement; the [log kit](../packages/core/src/session/session-log.conformance.ts) rejects stale and foreign references, including fork parents. |
+| FW-11 | Resolved | Capture full references, fence every adapter and preserve immutable file generations/tombstones. [Sessions race tests](../packages/plugin-sessions/src/sessions.adapter.test.ts) pause reads/removals across owner replacement; the [log kit](../packages/core/src/session/session-log.conformance.ts) rejects stale and foreign references, including another owner's fork parent, and reads, commits to and removes removed references directly (its [self-tests](../packages/core/src/session/session-log.memory.adapter.test.ts) run it against stores that still answer for them). The [file log's removal tests](../packages/plugin-session-files/src/session-log.adapter.test.ts) check that nothing of a removed family stays on disk, that listing and removal work does not grow with removed sessions, and that a removal or creation stopped part way is finished. |
 | CORE-KNOWLEDGE-1 | Resolved | Topological inference validation visits each node/edge once. [Knowledge tests](../packages/core/src/knowledge/knowledge.entity.functions.test.ts) count visits in an 80-node shared DAG and retain cycle checks. Only supports present in the validated graph count toward a cycle, so retiring the support of an active inference still publishes and closes the dependent: a unit repro and the [knowledge kit](../packages/core/src/knowledge/knowledge-store.conformance.ts)'s `knowledge.supersede-support`, run on the in-memory and PostgreSQL stores. |
 | E1 | Resolved | Capture every terminal Exit before completing the attempt ACK and phase. [Completion tests](../packages/plugin-models/src/llm/model-completion.adapter.test.ts) inject a ledger defect and require repeated settlement to terminate; accounting tests retain durable interruption facts. |
 | E2 | Resolved | Open exclusive credential temporaries at mode 0600 before serialization and scope their handles/removal. [Storage tests](../packages/plugin-models/src/storage/json-file.test.ts) inspect permissions during serialization and exercise failed serialization cleanup. |

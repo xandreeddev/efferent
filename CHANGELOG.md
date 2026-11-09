@@ -66,10 +66,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   its claim is settled the same way. Listing and removing read only the
   sessions not removed, so their work no longer grows with every session
   ever created. Another session's damaged header no longer fails a listing
-  or a removal, a reference whose id or incarnation is not a UUID is
-  `SessionMissing` before any path is built from it, two handles opening a
-  fresh directory at once both open it, and every open checks for hard
-  links again (a store copied onto a mount without them is refused with
+  or a removal, and a reference whose id or incarnation is not a UUID is
+  `SessionMissing` before any path is built from it. As in 0.19.2, two
+  handles may open a fresh directory at once, and every open checks for
+  hard links (a store copied onto a mount without them is refused with
   `store.open`).
 - The in-memory `SessionLog` refuses a fork parent of another owner with
   `SessionMissing`, as the file and SQLite logs do, and its removal follows
