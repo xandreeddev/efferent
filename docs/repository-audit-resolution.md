@@ -212,7 +212,8 @@ table, not by these counts.
 
 On the follow-up head `ae2dba2d121` (the review fixes after the file
 layout's move to `lives/<id>.<incarnation>/`, the removal journal and the
-kit's new checks):
+kit's new checks), and on `a50bba84a9e`, whose only change after it is this
+document:
 
 | Check | Evidence |
 | --- | --- |
@@ -220,6 +221,9 @@ kit's new checks):
 | Default full suite | 4,945 pass, 106 skips, 0 fail across 401 files, without PostgreSQL configured (its conformance and integration tests skipped). |
 | File-store, sessions, turn-bus and foundry signal suites, randomized | 5/5 seeds (3101–3105), 676 tests per run, 0 fail. |
 | Documentation generation | Pass and idempotent: no change after `docs:generate`. |
+| Website | 46 pages built, all internal links resolve. |
+| Public build/API, packed consumers | `build:packages` and `verify:packages` pass on `a50bba84a9e`: 32 API entries match, both SessionLog kits pass over the packed file store on Node, and the regex worker fixture passes on Node and Bun. |
+| Foundry demo | Accepted on attempt 3. |
 
 The PR records the final tarball consumer result against the committed build;
 CI repeats the build and Node/Bun consumer matrix. The initial system-temporary
