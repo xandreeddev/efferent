@@ -96,6 +96,31 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(startOnlyLog)))).toEqual(["read-latest"])
   })
 
+  test("one that ends a turn it sealed here before checking the canceller's owner fails only the sealed check", async () => {
+    const sealedHere = new Set<string>()
+    const shortcut = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => Option.match(Option.fromNullishOr(writer.seal), {
+        onNone: () => writer,
+        onSome: (seal) => ({ ...writer, seal: seal.pipe(Effect.tap((sealed) => Effect.sync(() => {
+          if (Option.isSome(sealed)) sealedHere.add(canonicalJson([address.id, writer.admitted.turn]))
+        }))) }),
+      }))),
+      cancel: (address, turn) => sealedHere.has(canonicalJson([address.id, turn]))
+        ? memoryLog.head(address.id).pipe(Effect.flatMap((head) => instance.sessions.cancel({ id: address.id, owner: head.header.owner }, turn)))
+        : instance.sessions.cancel(address, turn),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, shortcut)))).toEqual(["sealed"])
+  })
+
+  test("one whose cancel ignores the owner fails the checks that cancel as another owner", async () => {
+    const anyOwner = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      cancel: (address, turn) => memoryLog.head(address.id).pipe(Effect.flatMap((head) => instance.sessions.cancel({ id: address.id, owner: head.header.owner }, turn))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, anyOwner)))).toEqual(["cancel", "create", "sealed"])
+  })
+
   test("one whose changes follows a session for any owner fails only the changes check", async () => {
     const anyOwner = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
       ...instance.sessions,

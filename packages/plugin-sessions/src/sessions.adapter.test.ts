@@ -1674,11 +1674,20 @@ test("a wrong owner cannot cancel a locally sealed turn", () => withLog((log) =>
   const address = yield* created(sessions!)
   const writer = yield* sessions!.begin(address, say("sealed"))
   yield* writer.closing([frameworkDraft("turn.reply", { entry: "sealed:reply", runId: writer.admitted.runId, step: 0, at: 0, body: { outcome: "completed", reply: "answer" } })])
-  yield* writer.seal ?? Effect.void
+  // Sealed here, so a cancel could take this instance's sealed shortcut: the owner is checked before it.
+  expect(Option.isSome(yield* writer.seal!)).toBe(true)
+  const seq = (yield* sessions!.get(address)).seq
   const result = yield* Effect.result(sessions!.cancel({ ...address, owner: "another-owner" }, writer.admitted.turn))
   expect(result._tag).toBe("Failure")
   if (result._tag === "Failure") expect(result.failure._tag).toBe("SessionMissing")
+  const after = yield* sessions!.get(address)
+  expect([after.seq, Option.map(after.open, (open) => open.turn)]).toEqual([seq, Option.some(1)])
   expect(yield* sessions!.read(address, { kinds: ["turn.ended"] })).toEqual([])
+  // The owner's cancel ends it once, as it sealed, with its reply.
+  expect((yield* sessions!.cancel(address, writer.admitted.turn)).cancelled).toBe(true)
+  const ended = yield* sessions!.read(address, { kinds: ["turn.ended"] })
+  expect(ended.map((event) => [event.turn, event.data["reason"]])).toEqual([[Option.some(1), "completed"]])
+  expect((yield* sessions!.read(address, { kinds: ["turn.reply"] })).map((event) => event.data["body"])).toEqual([{ outcome: "completed", reply: "answer" }])
 })))
 
 test.each(["read", "remove"] as const)("a paused %s cannot reach a replacement owner's session", (operation) => withLog((raw) => Effect.gen(function* () {

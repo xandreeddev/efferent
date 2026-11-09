@@ -25,6 +25,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `SessionMissing` for another owner's address or a missing session, and
   with `SessionLogError` for a store failure.
   Sessions conformance subjects expose a raw unsupported-format snapshot probe.
+  The Sessions kit also requires another owner's cancel of an open turn, and
+  of a turn sealed on the cancelling instance, to fail with `SessionMissing`
+  and change nothing.
 - Standalone loops and custom registries use `prepareToolkit` around their
   Effect toolkit. Parameters decode once before any handler runs; immutable
   raw input remains the durable evidence. Input is read as JSON text would

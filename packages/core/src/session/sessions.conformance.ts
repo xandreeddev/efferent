@@ -612,7 +612,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         `a cancelled turn stored ${fourth}, and a hold after the cancel gave ${cancelled}`)
     })),
 
-    scoped("a turn sealed by its final reply ends as it sealed, with that reply, whoever closes it: a cancel and its time limit here, its own end with any ending, a reap once its holder is gone; one with no final reply is not sealed", "sealed", (owner) => Effect.gen(function* () {
+    scoped("a turn sealed by its final reply ends as it sealed, with that reply, whoever closes it: a cancel and its time limit here, its own end with any ending, a reap once its holder is gone; one with no final reply is not sealed; another owner cannot cancel it", "sealed", (owner) => Effect.gen(function* () {
       const [steady, holder, other] = [yield* leased(), yield* leased(SHORT), yield* leased(SHORT)]
       const sealOf = (writer: TurnWriter) => Option.match(Option.fromNullishOr(writer.seal), { onNone: () => Effect.succeedNone, onSome: (seal) => seal })
       const probe = yield* created(steady.sessions, owner)
@@ -634,12 +634,18 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const cancelled = yield* created(steady.sessions, owner)
       const viaCancel = yield* Effect.scoped(Effect.gen(function* () {
         const { writer, waiter } = yield* sealedWriter(steady.sessions, cancelled, say("cancel me"))
+        // Another owner's cancel of the sealed turn this instance holds is SessionMissing, and leaves it open, as it is.
+        const before = yield* steady.sessions.get(cancelled)
+        const foreign = yield* answerOf(steady.sessions.cancel({ ...cancelled, owner: `${owner}-stranger` }, 1))
+        const untouched = yield* steady.sessions.get(cancelled)
         const answer = yield* steady.sessions.cancel(cancelled, 1)
         const told = yield* Option.match(waiter, { onNone: () => Effect.succeed(false), onSome: (wait) => Effect.forkChild(wait).pipe(Effect.flatMap((fiber) => settles(fiber, 2_000))) })
         const ended = yield* answerOf(writer.end({ reason: "failed", failure: Option.some({ code: "conformance.late", message: "too late" }) }))
-        return { sealed: Option.isSome(waiter), cancelled: answer.cancelled, told, ended }
+        return { sealed: Option.isSome(waiter), foreign, kept: untouched.seq === before.seq && Option.exists(untouched.open, (open) => open.turn === 1), cancelled: answer.cancelled, told, ended }
       }))
       const cancelEnd = yield* storedOf(steady.sessions, cancelled)
+      yield* expect("sealed", viaCancel.foreign === "SessionMissing" && viaCancel.kept,
+        `another owner's cancel of a sealed turn answered ${viaCancel.foreign}${viaCancel.kept ? "" : " and changed the session"}`)
       yield* expect("sealed", viaCancel.sealed && viaCancel.cancelled && viaCancel.told && viaCancel.ended === "done" && cancelEnd === "1:completed:none | 1",
         `a cancel of a sealed turn answered ${canonicalJson(viaCancel)} and stored ${cancelEnd}`)
       // Its own end with another ending: still the sealed one.
@@ -900,10 +906,17 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting-input", !(yield* settles(unanswered)), "idle completed with input waiting in a session created again under an observed address")
     })),
 
-    scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {
+    scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write; another owner's cancel is SessionMissing", "cancel", (owner) => Effect.gen(function* () {
       const [holder, other] = [yield* leased(), yield* leased()]
       const address = yield* created(holder.sessions, owner)
       const local = yield* holder.sessions.begin(address, say("stop me"))
+      // Another owner's cancel of the open turn, on its holder's instance or another, is SessionMissing and changes nothing.
+      const stranger: SessionAddress = { ...address, owner: `${owner}-stranger` }
+      const seq = (yield* holder.sessions.get(address)).seq
+      const foreign = [yield* answerOf(holder.sessions.cancel(stranger, 1)), yield* answerOf(other.sessions.cancel(stranger, 1))]
+      const kept = yield* holder.sessions.get(address)
+      yield* expect("cancel", foreign.every((answer) => answer === "SessionMissing") && kept.seq === seq && Option.exists(kept.open, (open) => open.turn === 1),
+        `another owner's cancel of the open turn answered ${foreign.join()} and left seq ${kept.seq} (was ${seq})`)
       const cancelled = yield* holder.sessions.cancel(address, 1)
       yield* expect("cancel", cancelled.cancelled && cancelled.pending === 0, `cancelling the open turn answered ${canonicalJson(cancelled)}`)
       const closed = yield* local.closed
