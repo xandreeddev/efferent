@@ -238,10 +238,15 @@ describe("the directory", () => {
     expect(observed).toBe(0)
   })
 
-  test("a directory without hard links is refused with store.open", async () => {
+  test("a directory without hard links is refused with store.open, fresh or holding a store already", async () => {
     const noLinks: FilesIo = { ...nodeFilesIo, link: () => Promise.reject(Object.assign(new Error("not supported"), { code: "EPERM" })) }
-    const outcome = await Effect.runPromise(Effect.scoped(outcomeOf(makeSessionLogFiles(mkdtempSync(join(directory, "nolinks-")), { io: noLinks }))))
-    expect(outcome).toBe("store.open")
+    /** The code and whether the message names hard links. */
+    const refusal = (root: string) => Effect.runPromise(Effect.scoped(Effect.flip(makeSessionLogFiles(root, { io: noLinks })).pipe(Effect.map((error) => [error.code, error.message.includes("hard links")]))))
+    const fresh = mkdtempSync(join(directory, "nolinks-"))
+    // A store initialized where links work, then copied or restored onto a mount without them.
+    const existing = mkdtempSync(join(directory, "nolinks-existing-"))
+    await Effect.runPromise(Effect.scoped(makeSessionLogFiles(existing)))
+    expect({ fresh: await refusal(fresh), existing: await refusal(existing) }).toEqual({ fresh: ["store.open", true], existing: ["store.open", true] })
   })
 
   test("a call that does not answer within stallMs fails with store.stalled; later calls fail at once until one, let through a stallMs later, answers", async () => {

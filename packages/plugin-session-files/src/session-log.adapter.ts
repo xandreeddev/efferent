@@ -225,11 +225,22 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   }
   yield* Effect.forEach([root, sessionsDir, stagingDir, join(root, "quarantine")], (path) =>
     call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(Effect.mapError(storeError("store.open", "create its folders")))
+  /** A link that failed because the directory cannot hold hard links (some SMB and FUSE mounts): the store cannot publish anything there. */
+  const linkError = (what: string) => (error: Failed): SessionLogError => isCode(error, "EPERM", "EOPNOTSUPP", "ENOTSUP", "ENOSYS", "EXDEV")
+    ? new SessionLogError({ code: "store.open", message: `the session directory ${root} does not support hard links, which this store needs to publish exclusively`, cause: error.cause })
+    : storeError("store.open", what)(error)
+  // A link from a file of its own, at every open: a store copied or restored onto a directory without hard links is refused here, not at its first write.
+  const probe = staged("link-probe", openedAt)
+  yield* call("create", probe, () => io.create(probe, encoder.encode("probe\n"))).pipe(Effect.mapError(storeError("store.open", "write a file")))
+  const linked = yield* call("link", `${probe}.linked`, () => io.link(probe, `${probe}.linked`)).pipe(Effect.mapError(linkError("link a file")), Effect.exit)
+  yield* bestEffort("unlink", probe, () => io.unlink(probe))
+  yield* bestEffort("unlink", `${probe}.linked`, () => io.unlink(`${probe}.linked`))
+  yield* linked
   if (Option.isNone(existing)) {
     const temporary = staged("store.json", openedAt)
     yield* call("create", temporary, () => io.create(temporary, encoder.encode(`${JSON.stringify({ layout: FILES_LAYOUT })}\n`))).pipe(
-      Effect.andThen(call("link", markerPath, () => io.link(temporary, markerPath)).pipe(Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void))),
       Effect.mapError(storeError("store.open", "initialize store.json")),
+      Effect.andThen(call("link", markerPath, () => io.link(temporary, markerPath)).pipe(Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void), Effect.mapError(linkError("initialize store.json")))),
     )
     yield* bestEffort("unlink", temporary, () => io.unlink(temporary))
     const marker = yield* readMarker
