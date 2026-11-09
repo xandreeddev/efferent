@@ -46,6 +46,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and provider SSE input, and
   cancel scripted hooks, regex workers, workspace temporaries and implementors.
+- The in-memory file system treats a trailing separator as the native one
+  does in `stat` without following links, `rename`, `write` and `append`; a
+  refused write no longer leaves a directory at its target.
 - Tool views, compaction and digests decode detached copies of a call's
   stored input and result, so an authored codec that rewrites its input no
   longer changes what later requests send.
