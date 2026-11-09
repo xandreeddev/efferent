@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, TurnShutdown, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -1744,4 +1744,26 @@ test("a drain keeps the session it resolved first: one removed and created again
   if (drained._tag === "Failure") expect(drained.failure._tag).toBe("SessionMissing")
   expect(yield* all(other!, address)).toEqual(["inbox.queued"])
   expect((yield* other!.get(address)).pending).toBe(1)
+})))
+
+test.each(["closed", "open"] as const)("on one instance, the turn of a session removed and created again stays apart from the new session's turn of the same number, its stale scope %s: activity lists and a shutdown closes the live one", (stale) => withLog((log) => Effect.gen(function* () {
+  const context = yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))
+  const [sessions, activity, shutdown] = [Context.get(context, Sessions), Context.get(context, TurnActivity), Context.get(context, TurnShutdown)]
+  const address = yield* created(sessions)
+  const staleScope = yield* Scope.make()
+  const before = yield* sessions.begin(address, say("before")).pipe(Scope.provide(staleScope))
+  yield* sessions.remove(address)
+  expect((yield* before.closed).reason).toBe("removed")
+  yield* sessions.create({ owner, id: address.id })
+  const live = yield* sessions.begin(address, say("after"))
+  expect(live.admitted.turn).toBe(1)
+  if (stale === "closed") {
+    yield* Scope.close(staleScope, Exit.void)
+    expect((yield* activity.current).open.map((open) => [open.session, open.turn])).toEqual([[address.id, 1]])
+  }
+  yield* shutdown.interrupt
+  expect((yield* live.closed).reason).toBe("interrupted")
+  const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => event.data["failure"])
+  expect(ended).toEqual([{ code: "turn.shutdown", message: "the process shut down before the turn ended" }])
+  yield* Scope.close(staleScope, Exit.void)
 })))

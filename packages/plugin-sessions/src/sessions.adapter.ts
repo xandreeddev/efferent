@@ -162,12 +162,19 @@ const onSession = <A, E, R>(effect: Effect.Effect<A, E, R>, address: SessionAddr
   return Effect.annotateCurrentSpan(ids).pipe(Effect.andThen(effect), Effect.annotateLogs(ids))
 }
 
+/** A turn this instance holds open, and the session it holds it in, its incarnation included. */
+interface HeldHere {
+  readonly active: ActiveTurn
+  readonly reference: SessionRef
+}
+
 /**
  * What this instance has in flight: the turns it holds open, one entry per
- * session and turn (`<session>:<turn>`), and the begins still in progress.
+ * session (id, owner and incarnation) and turn (`heldKey`), and the begins
+ * still in progress.
  */
 interface InFlight {
-  readonly held: ReadonlyMap<string, ActiveTurn>
+  readonly held: ReadonlyMap<string, HeldHere>
   readonly beginning: number
 }
 
@@ -267,7 +274,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   /** Where this instance is in a shutdown: running, refusing every begin, or also closing every turn it holds. */
   const stopping = yield* Ref.make<"running" | "refusing" | "interrupting">("running")
   const refuseIfStopping = (address: SessionAddress) => Ref.get(stopping).pipe(Effect.flatMap((now) => now === "running" ? Effect.void : Effect.fail(shutdownRefusal(address.id))))
-  const heldKey = (id: string, turn: number) => `${id}:${turn}`
+  /** A held turn's key: a session removed and created again under its id numbers its turns from 1 again, so its incarnation tells the two apart. */
+  const heldKey = (reference: SessionRef, turn: number) => canonicalJson([reference.id, reference.owner, reference.incarnation, turn])
   const beginSettled = SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning - 1 }))
   /**
    * Signal the session's followers after any commit, and every local inbox
@@ -762,7 +770,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // Runs after the writer's own finalizers (last added, first run): the turn counts until its end is stored.
       yield* Effect.addFinalizer(() => letGoUnended.pipe(
         Effect.andThen(Ref.update(writers, (all) => new Map([...all].filter(([id, open]) => id !== writerKey(address) || open.turn !== turn)))),
-        Effect.andThen(SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, held: new Map([...now.held].filter(([key]) => key !== heldKey(address.id, turn))) })))))
+        Effect.andThen(SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, held: new Map([...now.held].filter(([key]) => key !== heldKey(address, turn))) })))))
       const runId = begun.result.admitted.runId
       /** Completed once the writer's own commit leaves the turn closed (its end stored): the time limit stops then. */
       const ended = yield* Deferred.make<void>()
@@ -779,7 +787,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // Held from now (this process's Clock): the begin stops counting as it starts counting as open, in one update.
       const since = yield* Clock.currentTimeMillis
       yield* SubscriptionRef.update(inFlight, (now): InFlight => ({
-        held: new Map([...now.held, [heldKey(address.id, turn), { session: address.id, turn, since }]]),
+        held: new Map([...now.held, [heldKey(address, turn), { active: { session: address.id, turn, since }, reference: address }]]),
         beginning: now.beginning - 1,
       }))
       // The turn's time limit runs from now, until the turn ends, is closed from elsewhere, or its scope closes.
@@ -889,10 +897,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     stopping: Ref.get(stopping).pipe(Effect.map((now) => now !== "running")),
     interrupt: Effect.gen(function* () {
       yield* Ref.set(stopping, "interrupting")
-      const held = [...(yield* SubscriptionRef.get(inFlight)).held.values()].sort((left, right) => left.since - right.since)
+      const held = [...(yield* SubscriptionRef.get(inFlight)).held.values()].sort((left, right) => left.active.since - right.active.since)
       const all = yield* Ref.get(writers)
-      // The turns held now whose writer this instance still has: one whose scope is closing ended already.
-      const open = held.flatMap((active) => Option.toArray(Option.filter(Option.fromNullishOr([...all.values()].find((writer) => writer.reference.id === active.session && writer.turn === active.turn)), (writer) => writer.turn === active.turn))
+      // The turns held now whose writer this instance still has, of that very session: one whose scope is closing ended already.
+      const open = held.flatMap(({ active, reference }) => Option.toArray(Option.filter(Option.fromNullishOr(all.get(writerKey(reference))), (writer) => writer.turn === active.turn))
         .map((writer) => ({ active, address: writer.reference, runId: writer.writer.admitted.runId })))
       yield* Effect.forEach(open, ({ active, address, runId }) => closeForShutdown(address, active.turn, runId), { concurrency: 4, discard: true })
       return open.map(({ active }) => active)
@@ -978,7 +986,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
 
   const activity = TurnActivity.of({
     current: SubscriptionRef.get(inFlight).pipe(Effect.map((now) => ({
-      open: [...now.held.values()].sort((left, right) => left.since - right.since),
+      open: [...now.held.values()].map((entry) => entry.active).sort((left, right) => left.since - right.since),
       beginning: now.beginning,
     }))),
     idle: SubscriptionRef.changes(inFlight).pipe(Stream.filter((now) => now.held.size === 0 && now.beginning === 0), Stream.take(1), Stream.runDrain),

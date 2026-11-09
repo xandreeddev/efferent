@@ -47,6 +47,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Fence session operations against replacement owners and incarnations, check
   sealed-turn cancellation ownership, and retain immutable file generations
   and tombstones through removal races and crashes.
+- On one `Sessions` instance, a turn still held in a session that was removed
+  and created again under its id no longer hides the new session's turn of
+  the same number: `TurnActivity` lists the live turn, and `TurnShutdown`
+  closes it with `turn.shutdown`.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and provider SSE input, and
   cancel scripted hooks, regex workers, workspace temporaries and implementors.
