@@ -198,7 +198,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   worker's start. A worker that fails to load or dies between files fails the
   call with `SearchFailed` and its own reason (its cause logged) instead of
   crashing the host process or waiting out the deadline, and a search over
-  many files no longer adds worker listeners per file.
+  many files no longer adds worker listeners per file. The grep description
+  the model reads says the search stops after `grepTimeoutMs` whichever
+  engine runs (it said so only for ripgrep).
 - `@xandreed/core`: a turn-event subscription made inside another
   subscription's handler no longer keeps that handler's reaction depth, so a
   reaction cycle through it fails with `events.depth` instead of running
