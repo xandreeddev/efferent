@@ -52,10 +52,35 @@ const groupAlive = (child: ChildProcess): boolean => Option.match(Option.fromNul
   }),
 })
 
-/** Wait until the implementor's group has no process left, for at most `STOP_GRACE_MS`. */
-const groupStopped = (child: ChildProcess): Effect.Effect<void> => {
-  const poll: Effect.Effect<void> = Effect.suspend(() => groupAlive(child) ? Effect.sleep("20 millis").pipe(Effect.andThen(poll)) : Effect.void)
-  return poll.pipe(Effect.timeoutOrElse({ duration: STOP_GRACE_MS, orElse: () => Effect.void }))
+/**
+ * Wait until the implementor's group has no process left, for at most
+ * `STOP_GRACE_MS`: whether some process of it was still there at the
+ * deadline. A group found empty is never signalled again, since its id is
+ * free for another process group to take.
+ */
+const groupOutlived = (child: ChildProcess): Effect.Effect<boolean> => {
+  const poll: Effect.Effect<boolean> = Effect.suspend(() => groupAlive(child) ? Effect.sleep("20 millis").pipe(Effect.andThen(poll)) : Effect.succeed(false))
+  return poll.pipe(Effect.timeoutOrElse({ duration: STOP_GRACE_MS, orElse: () => Effect.succeed(true) }))
+}
+
+/**
+ * The process groups of the implementors still running, by their leader's
+ * pid, until their scope has stopped them. A module's own set rather than a
+ * `Ref`: `killImplementorGroups` runs from a process `exit` handler, which
+ * is synchronous and has no runtime to read one with.
+ */
+const liveGroups = new Set<number>()
+
+/**
+ * Kill every implementor group still running, at once (SIGKILL), when the
+ * process must end before their scopes could stop them: a second signal,
+ * or an exit. Synchronous; a group already gone is no failure. A process
+ * killed outright (SIGKILL, the out-of-memory killer) runs no handler, so
+ * its implementors are not stopped.
+ */
+export const killImplementorGroups = (): void => {
+  liveGroups.forEach((pid) => { Result.try(() => process.kill(-pid, "SIGKILL")) })
+  liveGroups.clear()
 }
 
 /**
@@ -66,8 +91,10 @@ const groupStopped = (child: ChildProcess): Effect.Effect<void> => {
  * attempt ends (an exit, its deadline or an interruption) the group gets
  * SIGTERM, then up to `STOP_GRACE_MS` until every process in it (the
  * implementor and each tool process it started) has stopped, then SIGKILL
- * for what is left, so no tool process it left keeps changing the
- * workspace that the gates, or the next attempt, then read.
+ * for what is left at that deadline, so no tool process it left keeps
+ * changing the workspace that the gates, or the next attempt, then read.
+ * Until then its group is known to `killImplementorGroups`, which the
+ * command line runs when it must end at once.
  */
 export const implementCommand = (input: ImplementInput, command: ReadonlyArray<string>, timeoutMs = IMPLEMENT_TIMEOUT_MS) => Effect.scoped(Effect.gen(function* () {
     const failed = (cause: unknown) => new ImplementorError({ attempt: input.attempt, message: "claude execution failed", cause })
@@ -80,6 +107,7 @@ export const implementCommand = (input: ImplementInput, command: ReadonlyArray<s
       Effect.try({
         try: () => {
           const child = spawn(program ?? "", args, { cwd: input.workspaceDir, detached: true, stdio: ["ignore", "pipe", "pipe"] })
+          if (child.pid !== undefined) liveGroups.add(child.pid)
           child.once("error", (cause) => { Deferred.doneUnsafe(exited, Effect.fail(failed(cause))) })
           child.once("exit", (code, signal) => { Deferred.doneUnsafe(exited, Effect.succeed(code === null ? `on ${signal ?? "an unknown signal"}` : String(code))) })
           child.once("close", () => { Deferred.doneUnsafe(closed, Effect.void) })
@@ -91,8 +119,8 @@ export const implementCommand = (input: ImplementInput, command: ReadonlyArray<s
       }),
       (child) => Effect.gen(function* () {
         signalGroup(child, "SIGTERM", yield* Deferred.isDone(exited))
-        yield* groupStopped(child)
-        signalGroup(child, "SIGKILL", yield* Deferred.isDone(exited))
+        if (yield* groupOutlived(child)) signalGroup(child, "SIGKILL", yield* Deferred.isDone(exited))
+        if (child.pid !== undefined) liveGroups.delete(child.pid)
         yield* Deferred.await(exited).pipe(
           Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.logWarning("the implementor did not acknowledge termination") }),
           Effect.ignore({ log: "Warn", message: "could not finish implementor cleanup" }),

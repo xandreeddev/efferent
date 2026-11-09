@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Effect, Fiber, Option, Result } from "effect"
 import { AttemptNumber, WorkspacePath } from "../domain/Brands.js"
+import { errorCodeOf } from "../domain/Errors.js"
 import { ForgeLimits, Spec } from "../domain/Spec.js"
 import { implementCommand, implementationPrompt } from "./claudeImplementor.js"
 
@@ -65,6 +66,45 @@ test("interrupting an implementor stops the processes it started too, after a gr
     expect(await goneWithin(pids[1]!, 2000)).toBe(true)
     expect(await readFile(join(directory, "terminated"), "utf8")).toBe("yes")
   })().finally(() => rm(directory, { recursive: true, force: true }))
+}, 15_000)
+
+test("a group that stopped within the grace period is never signalled again: its id may already be another group's", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "foundry-implementor-"))
+  const original = process.kill
+  const calls: Array<readonly [number, string | number, string]> = []
+  // Every signal this process sends, and how it was answered.
+  process.kill = ((pid: number, signal?: string | number) => {
+    const sent = Result.try(() => original.call(process, pid, signal))
+    calls.push([pid, signal ?? "SIGTERM", Result.isSuccess(sent) ? "ok" : Option.getOrElse(errorCodeOf(sent.failure), () => "failed")])
+    return Result.getOrThrow(sent)
+  }) as typeof process.kill
+  await (async () => {
+    const input = { spec, feedback: Option.none<string>(), attempt: AttemptNumber.make(1), workspaceDir: WorkspacePath.make(directory) }
+    const program = [
+      'const { spawn } = require("node:child_process")',
+      'const { writeFileSync } = require("node:fs")',
+      'const tool = spawn("sleep", ["30"], { stdio: "ignore" })',
+      'process.on("SIGTERM", () => process.exit(0))',
+      'writeFileSync("pids", JSON.stringify([process.pid, tool.pid]))',
+      "setInterval(() => {}, 1000)",
+    ].join("\n")
+    const leader = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const child = yield* Effect.forkScoped(implementCommand(input, [process.execPath, "-e", program]))
+      const wait: Effect.Effect<ReadonlyArray<number>, Error> = Effect.tryPromise(() => readFile(join(directory, "pids"), "utf8")).pipe(
+        Effect.map((text): ReadonlyArray<number> => text.split(/[^0-9]+/).filter((part) => part.length > 0).map(Number)),
+        Effect.catch(() => Effect.sleep("10 millis").pipe(Effect.andThen(Effect.suspend(() => wait)))))
+      const pids = yield* wait.pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.interrupt(child)
+      return pids[0]!
+    })))
+    const group = calls.filter(([pid]) => pid === -leader)
+    const emptied = group.findIndex(([, signal, answer]) => signal === 0 && answer === "ESRCH")
+    expect(emptied).toBeGreaterThan(0)
+    expect(group.slice(emptied + 1)).toEqual([])
+  })().finally(() => {
+    process.kill = original
+    return rm(directory, { recursive: true, force: true })
+  })
 }, 15_000)
 
 test.each(["interrupted", "exited"] as const)("a tool process still stopping when its implementor %s gets the grace period before SIGKILL", async (ending) => {
