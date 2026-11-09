@@ -3272,8 +3272,9 @@ Existing data is left untouched; use a fresh store. Physical backends require
 file layout 2 or SQLite schema 3 independently, with `store.version` on mismatch.
 
 ```ts
-const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
+const view = yield* sessions.create({ owner })                 // SessionView: header, incarnation, turns, title, open, pending
 const address = { id: view.header.id, owner }                  // another owner's address finds nothing
+// `{ ...address, incarnation: view.incarnation }` is fenced to this life of the session: SessionMissing once it is removed and created again
 yield* Effect.scoped(Effect.gen(function* () {
   const writer = yield* sessions.begin(address, { _tag: "User", userMessage, runId, key, command: {} })
   yield* agent.turn({ turn: writer, services }, use)              // the agent runs it; the host ends it
@@ -3922,7 +3923,8 @@ accepted, the ordinary inbox drainer's explicit startup takeover handles it.
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
-after a cursor, then follows `changes` and polls. A host that also
+after a cursor, then follows `changes` (the owner's only: another owner's
+address is `SessionMissing`, and the feed `forbidden`) and polls. A host that also
 streams what the journal never stores (a reply as it is written, a
 preview) passes it to `RenderFeed.frames` as `live`, in the options after
 the projection: those payloads go out as transient frames after the ready
