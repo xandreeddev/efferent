@@ -75,8 +75,9 @@ For text-only routes, set `readImages: false` on workspace tools instead;
 that reports images as binary files and avoids storing unseen image bytes.
 
 Converters have the shell's authority. File-tool confinement is a guardrail,
-not a sandbox; Bash is unconfined. The related tools' builtin `grep` is not
-time-bounded, while ripgrep runs with a deadline.
+not a sandbox; Bash is unconfined. The related tools' `grep` stops at
+`grepTimeoutMs` with either engine: ripgrep runs with that deadline, and the
+builtin engine runs regular expressions in a worker it terminates there.
 
 ## Related guides
 

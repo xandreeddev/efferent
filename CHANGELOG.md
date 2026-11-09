@@ -103,6 +103,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   line length, tool-call count and per-call arguments (a chunk packed with
   fragments of one call is merged in linear time), and cancel scripted hooks,
   regex workers, workspace temporaries and implementors.
+- Builtin regex `grep` runs an inline worker program (no module file beside
+  the adapter, so bundled and compiled hosts keep it), started at the first
+  file it searches. `grepTimeoutMs` bounds the builtin engine as well as
+  ripgrep, with partial results and `timedOut`, and does not count the
+  worker's start. A worker that fails to load or dies between files fails the
+  call with `SearchFailed` and its own reason (its cause logged) instead of
+  crashing the host process or waiting out the deadline, and a search over
+  many files no longer adds worker listeners per file.
 - The in-memory file system treats a trailing separator as the native one
   does in `stat` without following links, `rename`, `write` and `append`; a
   refused write no longer leaves a directory at its target.

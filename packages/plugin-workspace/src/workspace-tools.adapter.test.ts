@@ -966,6 +966,31 @@ test("interrupting a write at rename removes its full-content temporary", async 
   expect(result.removed._tag).toBe("Failure")
 })
 
+/** The builtin grep tool over a memory file system holding `files`, run once with `params`. */
+const memoryGrep = (files: Readonly<Record<string, string>>, params: unknown, options: Partial<WorkspaceToolsConfig> = {}) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const fs = yield* makeMemoryFileSystem()
+  yield* fs.mkdir("/workspace", { recursive: true })
+  yield* Effect.forEach(Object.entries(files), ([name, text]) => fs.write(`/workspace/${name}`, text), { concurrency: 1 })
+  const tools = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", tools: ["grep"], ...options })
+  const tool = tools.tools.find((entry) => entry.tool.name === "grep")!
+  return yield* tool.handler(params).pipe(Effect.provide(Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))))
+})))
+
+test("builtin regex grep spends its deadline matching, not starting its worker", async () => {
+  expect(await memoryGrep({ "a.txt": "fixture text\n" }, { path: "a.txt", pattern: "fix.ure" }, { grepTimeoutMs: 40 })).toMatchObject({ matches: 1, timedOut: false })
+})
+
+test("builtin regex grep over many files leaves no listener behind on its worker", async () => {
+  const warnings: Array<string> = []
+  const heard = (warning: Error) => { warnings.push(warning.name) }
+  process.on("warning", heard)
+  const result = await memoryGrep(Object.fromEntries(Array.from({ length: 12 }, (_, at) => [`f${at}.txt`, "hit\n"])), { pattern: "h.t" }, { grepMatches: 48 })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  process.off("warning", heard)
+  expect(result).toMatchObject({ matches: 12, files: 12, timedOut: false })
+  expect(warnings).toEqual([])
+})
+
 test("builtin grep terminates overlapping-alternative backtracking at its deadline", async () => {
   const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const fs = yield* makeMemoryFileSystem()

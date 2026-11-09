@@ -2400,8 +2400,9 @@ backreferences), receives patterns on stdin and runs with `grepTimeoutMs`
 `grepIgnoreFiles: true`, searches files hidden by ignore files too. With that
 option it honours `.gitignore`, `.ignore` and other ripgrep ignore rules.
 A timeout returns partial results with `timedOut: true` and a note in grep view
-version 4. Builtin regex `grep` uses one scoped worker and a shared
-`grepTimeoutMs` match deadline. Timeout or interruption terminates the worker,
+version 4. Builtin regex `grep` uses one scoped worker, started at the first
+file it searches, and a shared `grepTimeoutMs` deadline that the worker's
+start does not use. Timeout or interruption terminates the worker,
 including native backtracking over overlapping alternatives. It returns partial
 results with `timedOut: true`. Literal matching remains local. Nested repetition
 is still refused early; line clipping controls displayed/searched text, not
