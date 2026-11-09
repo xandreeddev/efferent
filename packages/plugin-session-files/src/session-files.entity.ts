@@ -7,14 +7,18 @@ import { ConversationId, JsonObject, SessionHeader, SessionIncarnation } from "@
  * the only fencing and no writer ever waits on a lock. Layout under the
  * root (directories 0700, files 0600):
  *
- *   store.json                              layout marker
- *   sessions/<id>/claims/<generation>.json   immutable creation claim
- *   sessions/<id>/lives/<incarnation>/header.json
- *   sessions/<id>/lives/<incarnation>/commits/<revision>.jsonl
- *   sessions/<id>/lives/<incarnation>/tmp/
- *   sessions/<id>/lives/<incarnation>/removed permanent generation tombstone
- *   staging/                                 bounded abandoned marker staging
- *   quarantine/<id>/<incarnation>/            damaged tails retained as evidence
+ *   store.json                                layout marker
+ *   sessions/<id>/claims/<generation>.json     permanent creation claim (id, incarnation, claim time)
+ *   sessions/<id>/removed/<incarnation>        permanent generation tombstone
+ *   lives/<id>.<incarnation>/header.json       the header and initial state
+ *   lives/<id>.<incarnation>/commits/<revision>.jsonl
+ *   lives/<id>.<incarnation>/tmp/
+ *   removing/<id>.<incarnation>                a removal under way, finished by the next open
+ *   staging/                                   bounded abandoned marker staging
+ *   quarantine/<id>/<incarnation>/             damaged tails retained as evidence
+ *
+ * Removing a generation deletes its `lives/` payload and its quarantine;
+ * only its claim and its tombstone stay.
  */
 
 /** The version of the directory's layout; any other version is refused (`store.version`). Fresh stores only; no migration. */
