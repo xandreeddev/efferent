@@ -15,7 +15,7 @@ import { ConversationId, JsonObject, SessionHeader, SessionIncarnation } from "@
  *   lives/<id>.<incarnation>/tmp/
  *   removing/<id>.<incarnation>                a removal under way, finished by the next open
  *   staging/                                   bounded abandoned marker staging
- *   quarantine/<id>/<incarnation>/             damaged tails retained as evidence
+ *   quarantine/<id>.<incarnation>/             damaged tails retained as evidence
  *
  * Removing a generation deletes its `lives/` payload and its quarantine;
  * only its claim and its tombstone stay.

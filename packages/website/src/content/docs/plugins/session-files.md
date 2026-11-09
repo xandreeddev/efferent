@@ -57,7 +57,7 @@ lives/<session-id>.<incarnation>/commits/000000000001.jsonl
 lives/<session-id>.<incarnation>/tmp/
 removing/
 staging/
-quarantine/<session-id>/<incarnation>/
+quarantine/<session-id>.<incarnation>/
 ```
 
 Each immutable commit file contains metadata, the session head's state,
@@ -76,7 +76,10 @@ nothing of its owner, metadata, state or events. A removal stopped part way
 the store is opened again, or when the same reference is removed again:
 `SessionLog.remove`, or `Sessions.remove` given the session's `SessionRef`
 (its `SessionView.incarnation` with the id and owner), which then fails with
-`SessionMissing`.
+`SessionMissing`. Removing a reference whose removal finished does nothing
+more. A fork whose creating process stopped right after publishing it, while
+its parent was being removed, stays hidden and is removed by a later open of
+the store.
 
 The SDK records user and assistant messages, structured tool results,
 selected lifecycle events, and request evidence in that journal. Streaming
@@ -104,7 +107,7 @@ only through the recorded fork boundary, not their later turns.
 
 On reopening, an incomplete or corrupt final commit is set aside in
 `quarantine` and the previous whole commit becomes the head. Damage before
-the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation. Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent; listing and removing sessions read only the sessions not removed, so that work does not grow with the sessions removed before. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
+the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation (`staging/` may hold the probe and marker another process opening the same new root staged there; anything else in it counts). Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent; listing and removing sessions read only the sessions not removed, so that work does not grow with the sessions removed before. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
 
 ## Admission and lifecycle
 

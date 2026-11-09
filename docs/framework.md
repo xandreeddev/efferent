@@ -3248,12 +3248,15 @@ background tasks. Two layers split the work:
   owner, metadata, state or events. A removal stopped part way is recorded
   in `removing/` and finished by the next open, or by removing the same
   reference again (`SessionLog.remove`, or `Sessions.remove` given the
-  session's `SessionRef`), which then fails with `SessionMissing`; a
+  session's `SessionRef`), which then fails with `SessionMissing`; once
+  finished, removing it again does nothing more; a
   `Sessions.remove` that fails once its session is gone still closes that
   instance's turns of it before it reports the failure. Listing and
   removal read only the sessions not removed, so their work does not grow
   with the sessions removed before. Reads verify ancestor references and
-  tombstones too, so a crash cannot expose an orphan; a reference whose id
+  tombstones too, so a crash cannot expose an orphan, and an open removes a
+  child its creator published under a parent removed meanwhile, then stopped
+  before checking; a reference whose id
   or incarnation is not a UUID is `SessionMissing` before any path is built
   from it. Replacement generations use different paths. A removed reference
   is `SessionMissing`. At most two underlying file system promises are in
@@ -3271,7 +3274,8 @@ background tasks. Two layers split the work:
   after a position finds its first commit by a binary search over the
   commits' first lines, so the commits before it are not read either. Like the SQLite log it stamps time with the caller's
   `Clock`. Only file layout 2 is supported; any other marker or a nonempty unmarked directory fails to open with
-  `store.version`; one without hard links (some SMB mounts), with
+  `store.version` (its `staging/` may hold names the store writes, staged by
+  another handle opening it at once); one without hard links (some SMB mounts), with
   `store.open`, at every open.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both

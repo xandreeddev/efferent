@@ -42,9 +42,11 @@ const lifeDirectory = (root: string, id: ConversationId): string => {
   expect(life).toBeDefined()
   return join(root, "lives", life!)
 }
+/** The quarantine folder of the session's generation: `quarantine/<id>.<incarnation>`. */
 const quarantineDirectory = (root: string, id: ConversationId) => {
-  const parent = join(root, "quarantine", id)
-  return join(parent, readdirSync(parent)[0]!)
+  const folder = readdirSync(join(root, "quarantine")).find((name) => name.startsWith(`${id}.`))
+  expect(folder).toBeDefined()
+  return join(root, "quarantine", folder!)
 }
 
 type LogFailure = SessionLogError | SessionMissing | SessionExists | RevisionConflict | LeaseExpired
@@ -204,14 +206,17 @@ describe("the directory", () => {
     expect(await opened(root)).toEqual({ outcome: "store.version", unchanged: true })
   })
 
-  test("an unmarked directory is adopted only when it holds nothing but empty sessions/, staging/ and quarantine/ folders; anything else is refused as it was", async () => {
+  test("an unmarked directory is adopted only when it holds nothing but empty sessions/ and quarantine/ folders and a staging/ folder of names the store writes; anything else is refused as it was", async () => {
     const foreign = written("unmarked-foreign-", { "notes.txt": "a host's own file" })
     const sessions = written("unmarked-sessions-", { "sessions/someone/header.json": "{}" })
     const quarantine = written("unmarked-quarantine-", { "quarantine/torn": "bytes" })
+    const staged = written("unmarked-staging-", { "staging/notes.txt": "a host's own file", [`staging/${stagingName("link-probe", 1_000, crypto.randomUUID())}`]: "probe\n" })
     const empty = written("unmarked-empty-", { "sessions/": "", "staging/": "", "quarantine/": "" })
-    const outcomes = await Promise.all([foreign, sessions, quarantine].map(opened))
-    expect(outcomes).toEqual([{ outcome: "store.version", unchanged: true }, { outcome: "store.version", unchanged: true }, { outcome: "store.version", unchanged: true }])
-    expect((await opened(empty)).outcome).toBe("succeeded")
+    // Another handle opening it at once may have staged its probe or its marker: names the store writes, with their time.
+    const opening = written("unmarked-opening-", { "sessions/": "", [`staging/${stagingName("store.json", Date.now(), crypto.randomUUID())}`]: "{}" })
+    const outcomes = await Promise.all([foreign, sessions, quarantine, staged].map(opened))
+    expect(outcomes).toEqual([foreign, sessions, quarantine, staged].map(() => ({ outcome: "store.version", unchanged: true })))
+    expect([(await opened(empty)).outcome, (await opened(opening)).outcome]).toEqual(["succeeded", "succeeded"])
     expect(readFileSync(join(empty, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2 })}\n`)
   })
 
@@ -388,6 +393,30 @@ describe("the directory", () => {
     expect(observed).toEqual({ repaired: 1, again: 2, seen: [2, { n: 20 }], ns: [1, 20], quarantined: 1 })
   })
 
+  test("a handle that read a torn tail while the session is removed leaves no quarantine folder of it behind", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { root, id, commits } = yield* withSession(2)
+      const tail = join(commits, revisionFile(2))
+      const whole = readFileSync(tail)
+      writeFileSync(tail, whole.subarray(0, whole.length - 20))
+      const making = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      const gated = { first: true }
+      // This handle read the torn tail and stops right before it makes the quarantine folder.
+      const late = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, mkdir: (path) => path.includes("/quarantine/") && gated.first
+        ? (gated.first = false, Effect.runFork(Deferred.succeed(making, undefined)), resumed.then(() => nodeFilesIo.mkdir(path)))
+        : nodeFilesIo.mkdir(path) } })
+      const reading = yield* Effect.forkChild(outcomeOf(late.head(id)))
+      yield* Deferred.await(making)
+      const other = yield* makeSessionLogFiles(root)
+      yield* other.remove(sessionRef(yield* other.head(id)))
+      yield* Deferred.succeed(release, undefined)
+      return { read: yield* Fiber.join(reading), quarantine: readdirSync(join(root, "quarantine")) }
+    })))
+    expect(observed).toEqual({ read: "SessionMissing", quarantine: [] })
+  })
+
   test("an open sweeps what stopped creates and probes left in staging long ago, never a staging in flight", async () => {
     const root = mkdtempSync(join(directory, "staging-"))
     await Effect.runPromise(Effect.scoped(makeSessionLogFiles(root)))
@@ -549,9 +578,9 @@ describe("removal", () => {
       const reopened = yield* makeSessionLogFiles(root)
       const repaired = (yield* reopened.head(parent)).revision
       yield* reopened.remove(parentRef)
-      return { repaired, parent: yield* outcomeOf(reopened.head(parent)), child: yield* outcomeOf(reopened.head(child)), left: filesHolding(root, secret) }
+      return { repaired, parent: yield* outcomeOf(reopened.head(parent)), child: yield* outcomeOf(reopened.head(child)), left: filesHolding(root, secret), quarantine: readdirSync(join(root, "quarantine")) }
     })))
-    expect(observed).toEqual({ repaired: 1, parent: "SessionMissing", child: "SessionMissing", left: [] })
+    expect(observed).toEqual({ repaired: 1, parent: "SessionMissing", child: "SessionMissing", left: [], quarantine: [] })
   })
 
   test("a listing and a removal do the same file system work however many sessions were removed before them", async () => {
@@ -588,9 +617,10 @@ describe("removal", () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const store = yield* makeSessionLogFiles(root)
       const { parent, child, parentRef } = yield* secretFamily(store, secret)
-      const fault = { armed: true }
-      // The remover's first read of anything of the child fails: the removal cannot tell whether it is a child.
+      const fault = { armed: false }
+      // The remover's first read of anything of the child, once it is open, fails: the removal cannot tell whether it is a child.
       const remover = yield* makeSessionLogFiles(root, { io: { ...nodeFilesIo, read: (path) => fault.armed && path.includes(child) ? (fault.armed = false, failing("EIO")) : nodeFilesIo.read(path) } })
+      fault.armed = true
       const first = yield* outcomeOf(remover.remove(parentRef))
       const hidden = [yield* outcomeOf(store.head(parent)), yield* outcomeOf(store.head(child))]
       const again = yield* outcomeOf(store.remove(parentRef))
@@ -694,6 +724,62 @@ describe("removal", () => {
       return { created, tombstone, payload, head, again: [claimOf(root, child, 2).incarnation === again.incarnation, again.incarnation !== claimed.incarnation], left: filesHolding(root, secret) }
     })))
     expect(observed).toEqual({ created: "SessionMissing", tombstone: true, payload: false, head: "SessionMissing", again: [true, true], left: [] })
+  })
+
+  test("a child published after its parent's removal looked for children, its creator stopped before its check, is removed by an open once it is older than any creation takes", async () => {
+    const root = mkdtempSync(join(directory, "orphan-"))
+    const parent = ConversationId.make(crypto.randomUUID())
+    const child = ConversationId.make(crypto.randomUUID())
+    const secret = crypto.randomUUID()
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      const gate = { armed: true, stopped: false }
+      // The creator's rename into lives/ waits for the parent's removal; every call after it fails, as if its process stopped there.
+      const creator = yield* makeSessionLogFiles(root, { io: {
+        ...aroundIo((_paths, run) => gate.stopped ? failing("EIO") : run()),
+        rename: (from, to) => gate.stopped ? failing("EIO") : gate.armed && to.includes(`/lives/${child}.`)
+          ? (gate.armed = false, Effect.runFork(Deferred.succeed(entered, undefined)), resumed.then(() => nodeFilesIo.rename(from, to)).then(() => { gate.stopped = true }))
+          : nodeFilesIo.rename(from, to),
+      } })
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
+      const remover = yield* makeSessionLogFiles(root)
+      const parentRef = sessionRef(yield* remover.create({ header: header(parent), state: {} }))
+      const creating = yield* Effect.forkChild(outcomeOf(creator.create({ header: { ...header(child), meta: { title: `meta-${secret}` }, parent: Option.some({ ...parentRef, through: 0, turnAtFork: 0 }) }, state: { kept: `state-${secret}` } })))
+      yield* Deferred.await(entered)
+      yield* remover.remove(parentRef)
+      yield* Deferred.succeed(release, undefined)
+      const created = yield* Fiber.join(creating)
+      const hidden = yield* outcomeOf(remover.head(child))
+      // An open soon after leaves a generation that young alone (its creator may still be checking it); one an hour later removes it.
+      yield* makeSessionLogFiles(root)
+      const soon = filesHolding(root, secret).length > 0
+      const reopened = yield* later(2 * 3_600_000)(makeSessionLogFiles(root))
+      return { created, hidden, soon, child: yield* outcomeOf(reopened.head(child)), left: filesHolding(root, secret) }
+    })))
+    expect(observed).toEqual({ created: "store.io", hidden: "SessionMissing", soon: true, child: "SessionMissing", left: [] })
+  })
+
+  test("removing again a reference whose removal finished writes nothing and reads no other session, whatever owner it names", async () => {
+    const root = mkdtempSync(join(directory, "finished-"))
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const touched: Array<string> = []
+      const counting = { on: false }
+      const spying = aroundIo((paths, run) => { if (counting.on) touched.push(...paths); return run() })
+      const store = yield* makeSessionLogFiles(root, { io: { ...spying,
+        create: (path, bytes) => { if (counting.on) touched.push(`create ${path}`); return nodeFilesIo.create(path, bytes) },
+        list: (path) => { if (counting.on) touched.push(`list ${path}`); return nodeFilesIo.list(path) },
+      } })
+      yield* Effect.forEach([1, 2, 3], () => store.create({ header: header(ConversationId.make(crypto.randomUUID()), "owner-other"), state: {} }), { concurrency: 1, discard: true })
+      const removed = sessionRef(yield* store.create({ header: header(ConversationId.make(crypto.randomUUID())), state: {} }))
+      yield* store.remove(removed)
+      counting.on = true
+      const outcomes = [yield* outcomeOf(store.remove(removed)), yield* outcomeOf(store.remove({ ...removed, owner: "owner-stranger" }))]
+      counting.on = false
+      return { outcomes, writes: touched.filter((entry) => entry.startsWith("create ")), listings: touched.filter((entry) => entry.startsWith("list ")), others: touched.filter((path) => path.includes("/lives/") && !path.includes(removed.id)) }
+    })))
+    expect(observed).toEqual({ outcomes: ["SessionMissing", "SessionMissing"], writes: [], listings: [], others: [] })
   })
 
   test("a creation claimed but not yet published holds its id: another creation of it is SessionExists, and the first one lands", async () => {

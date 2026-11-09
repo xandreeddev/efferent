@@ -9869,7 +9869,7 @@
     {
       "code": "store.version",
       "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`), opening the store",
-      "meaning": "The store is not at the one physical version this release opens, older or newer: for SQLite, a schema version (`PRAGMA user_version`) other than the release's, or an unversioned database that is nonempty (read from a read-only connection, before its mode, WAL or main file can change); for the file store, a `store.json` layout other than the release's, or a nonempty directory without one. Only an empty database or directory is initialized. Nothing was read or written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
+      "meaning": "The store is not at the one physical version this release opens, older or newer: for SQLite, a schema version (`PRAGMA user_version`) other than the release's, or an unversioned database that is nonempty (read from a read-only connection, before its mode, WAL or main file can change); for the file store, a `store.json` layout other than the release's, or a nonempty directory without one. Only an empty database or directory is initialized (a directory's `staging/` may hold what another handle opening it at once staged there, names the store writes; anything else in it counts as content). Nothing was read or written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
     },
     {
       "code": "tasks.encode",

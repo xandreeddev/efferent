@@ -54,14 +54,16 @@ The format is identical to the combined file plugin:
 <root>/lives/<session-id>.<incarnation>/tmp/
 <root>/removing/
 <root>/staging/
-<root>/quarantine/<session-id>/<incarnation>/
+<root>/quarantine/<session-id>.<incarnation>/
 ```
 
 A removed session keeps only its claim and its tombstone: its header,
 commits and quarantined bytes are deleted.
 
 Only layout 2 is supported. Other markers and nonempty unmarked roots are
-refused with `store.version` without mutation. Configure a fresh location;
+refused with `store.version` without mutation (`staging/` may hold the probe
+and marker another process opening the same new root staged there; anything
+else in it counts). Configure a fresh location;
 there is no migration or automatic deletion.
 
 A commit holds metadata, head state, ordered event rows, and a length/CRC-32
