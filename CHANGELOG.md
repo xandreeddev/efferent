@@ -43,6 +43,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and provider SSE input, and
   cancel scripted hooks, regex workers, workspace temporaries and implementors.
+- Tool views, compaction and digests decode detached copies of a call's
+  stored input and result, so an authored codec that rewrites its input no
+  longer changes what later requests send.
 - Create credential files privately, reject corrupt fallback tiers before
   writes, preserve auth error causes, and validate SSE event names.
 - Remove quadratic replay/history/media/trace batching, exponential graph

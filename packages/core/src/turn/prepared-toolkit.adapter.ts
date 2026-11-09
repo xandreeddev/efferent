@@ -2,17 +2,9 @@ import { Effect, Option, Schema } from "effect"
 import { AiError, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 
+import { jsonTextCopy as copy } from "./json-copy.entity.functions.js"
 import type { PreparedToolkit, PreparedToolHandler, PreparedToolExecution } from "../ports/prepared-toolkit.port.js"
 
-/**
- * A detached JSON copy of `input`, read as JSON text would carry it: keys whose
- * value is `undefined` are left out and `toJSON` gives a value its JSON form (a
- * `Date` its ISO string), as when a provider sends the same object. A value JSON
- * cannot encode (a BigInt, a cycle, `undefined` alone) fails.
- */
-const copy = (input: unknown) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(input).pipe(
-  Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))),
-)
 const immutable = (input: Schema.Json): Schema.Json => {
   if (typeof input === "object" && input !== null) {
     Object.values(input).forEach(immutable)

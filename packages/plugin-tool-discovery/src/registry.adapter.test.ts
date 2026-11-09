@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Schema, SchemaGetter } from "effect"
 import { defineCapability, defineSkill, defineTool, Failure, Media, mediaFromBase64, UserMessage } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"
@@ -74,6 +74,47 @@ describe("a tool's digest task", () => {
     const task = Option.getOrThrow(found)
     expect(task.apply({ keep: [], summary: Option.some("r-1 matched") })).toEqual(Option.none())
     expect(task.apply({ keep: [], summary: Option.some("r-1 and r-2 matched") })).toEqual(Option.some("r-1 and r-2 matched"))
+  })
+})
+
+describe("views decode detached copies of the stored input and result", () => {
+  const counts = { params: 0, result: 0 }
+  // Codecs that rewrite their input in place, as an authored codec may.
+  const Lookup = Tool.make("lookup", {
+    description: "Look a record up.",
+    // `Schema.Unknown` hands the codec the nested object itself, not a decoded copy.
+    parameters: Schema.Struct({ filter: Schema.Unknown }).pipe(Schema.decodeTo(Schema.Struct({ filter: Schema.Unknown }), {
+      decode: SchemaGetter.transform((value) => { counts.params++; Reflect.set(Object(value.filter), "id", "codec-mutated"); return value }),
+      encode: SchemaGetter.transform((value) => value),
+    })),
+    success: Schema.Struct({ record: Schema.Unknown }).pipe(Schema.decodeTo(Schema.Struct({ record: Schema.Unknown }), {
+      decode: SchemaGetter.transform((value) => { counts.result++; Reflect.set(Object(value.record), "text", "codec-mutated"); return value }),
+      encode: SchemaGetter.transform((value) => value),
+    })),
+    failure: Failure,
+    failureMode: "return",
+  })
+  const capability = defineCapability({
+    id: "lookup", version: "1",
+    tools: [defineTool({
+      tool: Lookup, handler: () => Effect.die("unused"),
+      view: {
+        version: "1", render: (result, params) => `${JSON.stringify(params.filter)}: ${JSON.stringify(result.record)}`, compact: (result) => JSON.stringify(result.record),
+        digest: { _tag: "Summarize", version: "1", instructions: "Summarize the record.", preserve: () => [] },
+      },
+    })],
+  })
+  const views = Effect.runSync(makeRegistry(config, [capability]).pipe(Effect.map((registry) => registry.views)))
+
+  test("the stored tool-call input and encoded result are unchanged by a view, a compaction or a digest, and the codecs see their own copies", () => {
+    const params = { filter: { id: "stored" } }
+    const encoded = { record: { text: "stored" } }
+    const view = Effect.runSync(views.view("lookup", encoded, params, false))
+    const compact = Effect.runSync(views.compact("lookup", encoded, params))
+    Effect.runSync(views.digest("lookup", encoded, params, new UserMessage({ text: "find" })))
+    expect([view.text, compact]).toEqual(['{"id":"codec-mutated"}: {"text":"codec-mutated"}', Option.some('{"text":"codec-mutated"}')])
+    expect({ params, encoded }).toEqual({ params: { filter: { id: "stored" } }, encoded: { record: { text: "stored" } } })
+    expect(counts).toEqual({ params: 3, result: 3 })
   })
 })
 

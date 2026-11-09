@@ -33,7 +33,7 @@ import {
   ToolInterceptor,
   ToolInterceptOutcome,
 } from "@xandreed/core"
-import { CurrentToolResultReceipt, toolInterceptError, withToolResultReceiptGuard } from "@xandreed/core/internal"
+import { CurrentToolResultReceipt, jsonTextCopy, toolInterceptError, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { afterToolIntercept, beforeToolIntercept, interceptedToolkit, toolInterceptBoundary, toolInterceptMutableJson, toolInterceptSnapshot } from "./tool-interceptor.adapter.js"
 import type { ToolInterceptCapture } from "./tool-interceptor.adapter.js"
 import { ToolPolicy } from "./tool-policy.entity.js"
@@ -218,8 +218,9 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       Option.match(Option.fromNullishOr(byName.get(name)), {
         onNone: () => Effect.succeed(Option.none()),
         onSome: (entry) => Effect.gen(function* () {
-          const input = yield* Schema.isSchema(entry.tool.parametersSchema) ? Schema.decodeUnknownEffect(contextFree(entry.tool.parametersSchema))(params) : Effect.succeed(params)
-          const result = yield* Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded)
+          // Authored codecs decode detached copies: the stored input and result stay the evidence the journal holds.
+          const input = yield* Schema.isSchema(entry.tool.parametersSchema) ? jsonTextCopy(params).pipe(Effect.flatMap(Schema.decodeUnknownEffect(contextFree(entry.tool.parametersSchema)))) : Effect.succeed(params)
+          const result = yield* jsonTextCopy(encoded).pipe(Effect.flatMap(Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))))
           return Option.some({ entry, result, params: input })
         }).pipe(
           Effect.provide(services),
