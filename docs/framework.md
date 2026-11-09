@@ -3244,7 +3244,10 @@ background tasks. Two layers split the work:
   quarantined bytes: only the claim and the tombstone stay, nothing of its
   owner, metadata, state or events. A removal stopped part way is recorded
   in `removing/` and finished by the next open, or by removing the same
-  reference again, which then fails with `SessionMissing`. Listing and
+  reference again (`SessionLog.remove`, or `Sessions.remove` given the
+  session's `SessionRef`), which then fails with `SessionMissing`; a
+  `Sessions.remove` that fails once its session is gone still closes that
+  instance's turns of it before it reports the failure. Listing and
   removal read only the sessions not removed, so their work does not grow
   with the sessions removed before. Reads verify ancestor references and
   tombstones too, so a crash cannot expose an orphan; a reference whose id

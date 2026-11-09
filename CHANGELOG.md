@@ -29,8 +29,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Code that calls `SessionLog.remove` itself and relied on removing twice
   doing nothing handles `SessionMissing`. A file-log removal that stopped
   after its tombstone (a crash, an unreachable mount) is finished by
-  removing the same reference again, which then reports `SessionMissing`,
-  or by the next open.
+  removing the same reference again (`SessionLog.remove`, or
+  `Sessions.remove` given the session's `SessionRef`), which then reports
+  `SessionMissing`, or by the next open.
 - Code that reads `TurnToAdmit.session`, `AdmittedTurn.session` or
   `CommittedTurn.session` receives a `SessionRef` (id, owner and
   incarnation). A stream from `Sessions.changes` can now fail
@@ -148,7 +149,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   children's: only a minimal claim (id, incarnation, creation time) and a
   tombstone stay. A removal that fails or stops after its tombstone is
   finished by removing the reference again or by the next open, and a
-  creation that stopped after its claim is settled the same way. Listing and
+  creation that stopped after its claim is settled the same way.
+  `Sessions.remove` given the session's `SessionRef` finishes it too, and a
+  `Sessions.remove` that fails once its session is gone still closes that
+  instance's turns of it before it reports the failure. Listing and
   removing read only the sessions not removed, so their work no longer grows
   with every session ever created. Another session's damaged header no
   longer fails a listing or a removal, and a reference whose id or
@@ -172,13 +176,6 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   in a session that was removed and created again under its id no longer
   hides the new session's turn of the same number: `TurnActivity` lists the
   live turn, and `TurnShutdown` closes it with `turn.shutdown`.
-  `WaitingInput` keeps refreshing an observed address after its session is
-  removed and created again elsewhere, so input enqueued into the new one is
-  counted and `idle` waits for it. A begin counts in `TurnActivity` before
-  its first store read again, and that read stays interruptible, so a begin
-  waiting on a stalled store stops when interrupted. `@xandreed/core`: the
-  SessionLog recovery kit's `interrupted-commit` check interrupts the commit
-  itself again, never a head read before it.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and a provider stream's
   line length, tool-call count and per-call arguments (a chunk packed with

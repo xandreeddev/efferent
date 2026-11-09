@@ -1738,7 +1738,40 @@ test("an address with an incarnation is fenced to that life of the session: once
   expect(yield* all(sessions!, address)).toEqual([])
 })))
 
-test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it", () => withLog((log) => Effect.gen(function* () {
+/** A log whose removal removes the session, then fails as a file log does when it stopped after its tombstone; it records each removal asked of it. */
+const stoppingAfterTombstone = (raw: Log, asked: Ref.Ref<ReadonlyArray<string>>, stops: Ref.Ref<number>): Log => SessionLog.of({ ...raw,
+  remove: (reference) => Ref.update(asked, (all) => [...all, `${reference.id}:${reference.incarnation}`]).pipe(
+    Effect.andThen(raw.remove(reference)),
+    Effect.andThen(Ref.getAndUpdate(stops, (left) => left - 1)),
+    Effect.flatMap((left) => left > 0 ? Effect.fail(new SessionLogError({ code: "store.io", message: "the session is removed, but what goes with it could not be" })) : Effect.void),
+  ),
+})
+
+test("a removal that fails once its session is gone still closes the instance's turn, then reports the failure", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(1)), sessionsDefaults)
+  const address = yield* created(sessions!)
+  const writer = yield* sessions!.begin(address, say("open"))
+  const failed = yield* Effect.flip(sessions!.remove(address))
+  expect(failed._tag).toBe("SessionLogError")
+  const closed = yield* writer.closed.pipe(Effect.timeoutOption("1 second"))
+  expect(Option.map(closed, (by) => by.reason)).toEqual(Option.some("removed"))
+})))
+
+test("a later remove with the session's reference finishes a removal that stopped after its tombstone, and reports the session missing", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(1)), sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionLogError")
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+  expect(yield* Ref.get(asked)).toEqual([`${view.header.id}:${view.incarnation}`, `${view.header.id}:${view.incarnation}`])
+  // An address without an incarnation names no life to finish: it is missing, and the log is asked nothing.
+  expect((yield* Effect.flip(sessions!.remove({ id: view.header.id, owner })))._tag).toBe("SessionMissing")
+  expect((yield* Ref.get(asked)).length).toBe(2)
+})))
+
+test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it",() => withLog((log) => Effect.gen(function* () {
   const [sessions, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
   const address = yield* created(sessions!)
   yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "the first notice" })

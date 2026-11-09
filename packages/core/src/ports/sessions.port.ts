@@ -226,7 +226,14 @@ export class Sessions extends Context.Service<Sessions, {
     readonly before?: SessionListCursor
     readonly parent?: ConversationId
   }) => Effect.Effect<SessionPage, SessionLogError>
-  /** Remove a session and its children; an open turn on this instance is closed. */
+  /**
+   * Remove a session and its children; an open turn on this instance is
+   * closed. A session already removed is `SessionMissing`; given its
+   * `SessionRef`, the store is first asked to remove it again, which
+   * finishes a removal that stopped part way (the file log). A removal that
+   * fails once the session is gone still closes this instance's turns of it,
+   * then fails with the store's error.
+   */
   readonly remove: (address: SessionAddress) => Effect.Effect<void, SessionMissing | SessionLogError>
   /**
    * The session's own events after `after` (0), of `kinds` (all), ascending.

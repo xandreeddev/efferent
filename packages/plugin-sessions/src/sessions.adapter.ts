@@ -1083,14 +1083,29 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }
     }),
     remove: Effect.fn("sessions.remove")(function* (address) {
-      const head = yield* owned(address)
+      // A session already removed is SessionMissing. Given its reference, the log is asked to remove it again first,
+      // which finishes a removal that stopped after its tombstone (a crash, an unreachable mount) and changes nothing else.
+      const head = yield* owned(address).pipe(Effect.catchTag("SessionMissing", (missing) => Option.match(Schema.decodeUnknownOption(SessionRef)(address), {
+        onNone: () => Effect.fail(missing),
+        onSome: (reference) => log.remove(reference).pipe(Effect.catchTag("SessionMissing", () => Effect.void), Effect.andThen(Effect.fail(missing))),
+      })))
       const reference = sessionRef(head)
       yield* Effect.uninterruptible(Effect.gen(function* () {
-        yield* log.remove(reference)
-        yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
-        yield* forget(address)
-        yield* closeLocal(reference, "removed", Option.none())
-        yield* wake(address, true)
+        const removed = yield* Effect.exit(log.remove(reference))
+        // A removal that failed once the session is gone (it stopped after its tombstone) is a removal here all the same:
+        // this instance lets go of the session and closes its turns, then reports the failure.
+        const gone = Exit.isSuccess(removed) || (yield* log.head(address.id).pipe(
+          Effect.map((now) => !sameSession(reference, now)),
+          Effect.catchTag("SessionMissing", () => Effect.succeed(true)),
+          Effect.catchTag("SessionLogError", () => Effect.succeed(false)),
+        ))
+        if (gone) {
+          yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
+          yield* forget(address)
+          yield* closeLocal(reference, "removed", Option.none())
+          yield* wake(address, true)
+        }
+        return yield* removed
       }))
     }, onSession),
     read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap((head) => log.read(sessionRef(head), {

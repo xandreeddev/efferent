@@ -73,7 +73,10 @@ was created) and a tombstone file named by the incarnation: enough to refuse
 a stale reference and to number the next session created under the same id,
 nothing of its owner, metadata, state or events. A removal stopped part way
 (a crash, an unreachable mount) is recorded in `removing/` and finished when
-the store is opened again, or when the same reference is removed again.
+the store is opened again, or when the same reference is removed again:
+`SessionLog.remove`, or `Sessions.remove` given the session's `SessionRef`
+(its `SessionView.incarnation` with the id and owner), which then fails with
+`SessionMissing`.
 
 The SDK records user and assistant messages, structured tool results,
 selected lifecycle events, and request evidence in that journal. Streaming
