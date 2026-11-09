@@ -9493,7 +9493,7 @@
     {
       "code": "events.capacity",
       "where": "a background event reaction",
-      "meaning": "A reentrant publication found a full background queue; the turn fails instead of overflowing or deadlocking."
+      "meaning": "A background handler published into its own full queue; the turn fails instead of overflowing or deadlocking."
     },
     {
       "code": "events.depth",

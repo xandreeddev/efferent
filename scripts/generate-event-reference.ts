@@ -117,7 +117,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.persisted", where: "`TurnMemory.persistMessage`", meaning: "The user's message was taken twice in one turn." },
   { code: "turn.numbering", where: "the turn's memory", meaning: "Memory numbered the user's message differently from the turn the session stored." },
   { code: "events.reserved", where: "publishing a host event; a turn writer's `append` or `transact` and `Sessions.transact` (`ReservedKind`)", meaning: "The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`)." },
-  { code: "events.capacity", where: "a background event reaction", meaning: "A reentrant publication found a full background queue; the turn fails instead of overflowing or deadlocking." },
+  { code: "events.capacity", where: "a background event reaction", meaning: "A background handler published into its own full queue; the turn fails instead of overflowing or deadlocking." },
   { code: "events.depth", where: "publishing an event", meaning: "Reactions nested deeper than `maxEventDepth` (8 by default)." },
   { code: "events.background", where: "a background subscription", meaning: "A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`)." },
   { code: "events.encode", where: "a host event's `make` / `draft` / `publish`; the turn storing a bus event", meaning: "The payload did not encode with the host event's schema, or its encoded form held a value JSON cannot (a BigInt), or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step)." },

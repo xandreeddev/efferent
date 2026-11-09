@@ -16,6 +16,7 @@ import { entriesOfEvents, readStored, readStoredKeys, turnUsageOf } from "../ses
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { InboxItemId } from "../session/sessions.entity.js"
 import type { SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
+import type { TurnEvent } from "./turn-event.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { replayModelRequest } from "./model-request.entity.functions.js"
@@ -104,7 +105,8 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * nothing; an interrupted turn ends at once, its reply and end recorded,
  * though a background reaction to its reply never returns; and a
  * background reaction publishing what it takes does
- * not hang the turn. Those last two wait up to two seconds on the live
+ * not hang the turn, and one publishing into another subscription's full
+ * queue waits for room rather than failing it. Those last three wait up to two seconds on the live
  * clock, so run the kit on it.
  *
  * `runner` is acquired afresh for each check. `services` are merged into
@@ -394,6 +396,34 @@ export const turnConformance = (
       yield* expect("self-publication", Option.isSome(result), `the turn did not end within ${WAIT}: a background reaction publishing to its own full queue hung it`)
       const seen = (yield* Ref.get(handled)).join()
       yield* expect("self-publication", seen === "0,1,2,3", `the reaction handled [${seen}], not each event once in order`)
+    })),
+    check("a background reaction publishing into another subscription's full queue waits for room, and the turn delivers every event", "cross-lane-publication", (turns, session) => Effect.gen(function* () {
+      const forwarded = yield* Ref.make<ReadonlyArray<number>>([])
+      const entered = yield* Deferred.make<void>()
+      const reacting = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const note = (n: number) => ({ _tag: "host" as const, name: "conformance.note", data: { n } })
+      const numbered = (event: TurnEvent) => event._tag === "host" && event.name === "conformance.note" && typeof event.data.n === "number" ? Option.some(event.data.n) : Option.none()
+      const result = yield* turns.turn(input(session, "run-1"), (turn) => Effect.gen(function* () {
+        // A reaction on its own lane republishes the trigger (100) as 200.
+        yield* turn.events.subscribe(numbered, (n) => n === 100 ? Deferred.succeed(reacting, undefined).pipe(Effect.andThen(turn.events.publish(note(200)))) : Effect.void, { mode: "background" })
+        // A slow forwarder, held on its first event while the turn fills its queue.
+        yield* turn.events.subscribe(numbered, (n) => Ref.update(forwarded, (all) => [...all, n]).pipe(
+          Effect.andThen(n === 0 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void),
+        ), { mode: "background", capacity: 2 })
+        yield* turn.events.publish(note(0))
+        yield* Deferred.await(entered)
+        yield* Effect.forEach([1, 2], (n) => turn.events.publish(note(n)), { concurrency: 1, discard: true })
+        const trigger = yield* Effect.forkChild(turn.events.publish(note(100)))
+        yield* Deferred.await(reacting)
+        yield* Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(trigger)
+        return yield* reply("forwarded")
+      })).pipe(Effect.timeoutOption(WAIT))
+      yield* expect("cross-lane-publication", Option.isSome(result), `the turn did not end within ${WAIT}`)
+      const seen = (yield* Ref.get(forwarded)).toSorted((left, right) => left - right).join()
+      yield* expect("cross-lane-publication", seen === "0,1,2,100,200", `the forwarder handled [${seen}], not every event once: a reaction's publication into its full queue was refused or lost`)
     })),
   ]
 }

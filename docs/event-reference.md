@@ -409,7 +409,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `turn.persisted` | `TurnMemory.persistMessage` | The user's message was taken twice in one turn. |
 | `turn.numbering` | the turn's memory | Memory numbered the user's message differently from the turn the session stored. |
 | `events.reserved` | publishing a host event; a turn writer's `append` or `transact` and `Sessions.transact` (`ReservedKind`) | The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`). |
-| `events.capacity` | a background event reaction | A reentrant publication found a full background queue; the turn fails instead of overflowing or deadlocking. |
+| `events.capacity` | a background event reaction | A background handler published into its own full queue; the turn fails instead of overflowing or deadlocking. |
 | `events.depth` | publishing an event | Reactions nested deeper than `maxEventDepth` (8 by default). |
 | `events.background` | a background subscription | A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`). |
 | `events.encode` | a host event's `make` / `draft` / `publish`; the turn storing a bus event | The payload did not encode with the host event's schema, or its encoded form held a value JSON cannot (a BigInt), or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step). |

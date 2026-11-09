@@ -23,8 +23,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   raw input remains the durable evidence. Tool and schema objects are unchanged.
 - Auth/settings conformance kits take subjects that open fresh scoped fixtures
   per check, including probes for every backing tier.
-- Reentrant turn-event publication fails with `events.capacity` when its finite
-  queue is full. Provider SSE permits at most 128 tool calls and 1 MiB of
+- A background turn-event handler publishing into its own subscription's full
+  queue fails with `events.capacity`; into another subscription's full queue
+  it waits for room. A background `capacity` must be a positive safe integer:
+  `Infinity` (previously an unbounded lane) and other values die with
+  `config.limits` at subscribe. Provider SSE permits at most 128 tool calls and 1 MiB of
   accumulated arguments per call, with nonnegative safe-integer indices.
 - Blanket `no-let` and `no-loop-statements` gates are removed. Confined builders
   are allowed; resource ownership, typed errors and architectural boundaries

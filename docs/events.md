@@ -155,10 +155,15 @@ A handler is part of the turn:
   `turn.defect`, its message without the stack); one that is interrupted
   fails it with `events.background`.
 - A background queue holds 256 events unless the subscription's `capacity`
-  says otherwise. When it is full, `publish` waits: a slow handler slows the
-  step loop. A background handler's own publications never wait, to its own
-  subscription or another's: a full queue fails with `events.capacity`.
-  The capacity remains finite during reentry. A publisher waiting
+  says otherwise; `capacity` is a positive safe integer, and any other value
+  (`Infinity`, 0, a fraction) dies with `config.limits` when the subscription
+  is made. When a queue is full, `publish` waits: a slow handler slows the
+  step loop, and a background handler publishing into another subscription's
+  full queue waits too. A background handler's publications into its own
+  subscription's full queue never wait (it could not make room while it
+  waits): they fail with `events.capacity`. Two background handlers that each
+  publish into the other's full queue wait for each other until the turn is
+  cancelled. The capacity remains finite during reentry. A publisher waiting
   for room can always be interrupted.
 - On success the turn drains every background subscription before it
   records its reply. A handler that never returns keeps the reply from being

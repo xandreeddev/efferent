@@ -1461,10 +1461,12 @@ A subscription can instead run in the background:
 `onEvent`, `onTool` and a host event's `on`. It gets its own bounded queue and
 fiber. `publish` returns once the event is queued, and the handler sees events
 in publication order. When the queue is full (`capacity`, 256 by default),
-`publish` waits for room, interruptibly wherever it runs; a background
-handler's own publications (to its own subscription or another's, and what
-it runs inline) never wait: a full queue fails with `events.capacity`,
-so reentry preserves the finite capacity. Reaction chains are also bounded by
+`publish` waits for room, interruptibly wherever it runs, a background
+handler publishing into another subscription's queue included; a background
+handler's publications into its own subscription (and what it runs inline)
+never wait: its full queue fails with `events.capacity`, so reentry
+preserves the finite capacity. `capacity` is a positive safe integer; any
+other value dies with `config.limits` when the subscription is made. Reaction chains are also bounded by
 `maxEventDepth`. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need,

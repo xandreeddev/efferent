@@ -24,8 +24,9 @@ the additional observations are recorded below the matrix.
 - Auth/settings conformance subjects open a fresh scoped fixture per check and
   declare writable, refresh and corruption probes. Sessions conformance subjects
   supply an unsupported-format raw snapshot probe.
-- Reentrant event publication fails with `events.capacity` when the finite queue
-  is full. External producers wait interruptibly. Provider SSE permits 128 tool
+- A background handler's publication into its own full queue fails with
+  `events.capacity`; other producers, other lanes' handlers included, wait
+  interruptibly. Background capacity is a positive safe integer. Provider SSE permits 128 tool
   calls and 1 MiB of accumulated arguments per call; indices must be nonnegative
   safe integers.
 - The blanket `no-let` and `no-loop-statements` rules are retired. Confined local
@@ -96,7 +97,7 @@ The changeset records the intended minor release of the fixed package group.
 
 | Observation | Resolution and evidence |
 | --- | --- |
-| FW-7: queue breadth | Finite event queues, interruptible external offers and explicit `events.capacity`; [bus tests](../packages/core/src/turn/turn-bus.adapter.test.ts) cover reentrant overflow and the turn kit waits for actual delivery. |
+| FW-7: queue breadth | Finite event queues, interruptible external offers and explicit `events.capacity`; [bus tests](../packages/core/src/turn/turn-bus.adapter.test.ts) cover reentrant overflow, a cross-lane publication that waits for room and is delivered, and the capacity bounds; the turn kit waits for actual delivery. |
 | FW-8: hidden native coupling | ProcessLiveness imports node:os/node:process explicitly; the boundary profile declares those dependencies, and the injectable service remains. |
 | FW-9: public helper aliases | Public glob, message mapping and tool-schema implementations live in public role modules and are named root exports. Internal exports remain explicit. |
 | Regex native backtracking | Builtin regex execution uses one scoped worker per grep, one file at a time, with the remaining grep deadline. Cancellation terminates native backtracking. [Workspace regression](../packages/plugin-workspace/src/workspace-tools.adapter.test.ts) and [packed fixture](../scripts/regex-search-consumer.fixture.mjs) cover overlapping alternatives on Bun and Node. Literal searches stay local. |
