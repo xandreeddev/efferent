@@ -248,7 +248,8 @@ const mergeToolFragment = (moduleName: string) => (
   [calls, parts]: readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>],
   fragment: StreamToolCall,
 ): Effect.Effect<readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>], AiError.AiError> => {
-  const index = fragment.index
+  // A gateway that leaves the index out sends one call at a time: it is call 0.
+  const index = fragment.index ?? 0
   const call = calls.get(index) ?? emptyAccum
   const piece = fragment.function?.arguments ?? ""
   if ((!calls.has(index) && calls.size >= MAX_TOOL_CALLS) || call.args.length + piece.length > MAX_TOOL_ARGUMENT_CHARS) {

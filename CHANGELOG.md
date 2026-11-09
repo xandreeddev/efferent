@@ -48,7 +48,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   it waits for room. A background `capacity` must be a positive safe integer:
   `Infinity` (previously an unbounded lane) and other values die with
   `config.limits` at subscribe. Provider SSE permits at most 128 tool calls and 1 MiB of
-  accumulated arguments per call, with nonnegative safe-integer indices.
+  accumulated arguments per call. A tool-call index the stream sends must be a
+  nonnegative safe integer; one it leaves out or sends as `null` is call 0, as
+  before.
 - Blanket `no-let` and `no-loop-statements` gates are removed. Confined builders
   are allowed; resource ownership, typed errors and architectural boundaries
   remain enforced. No service keys are renamed.

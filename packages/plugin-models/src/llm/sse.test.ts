@@ -680,9 +680,26 @@ test("sparse safe indices produce only the calls actually sent", async () => {
   expect(parts.filter((part) => typeof part === "object" && part !== null && "type" in part && part.type === "tool-call")).toHaveLength(1)
 })
 
+test.each([null, undefined])("a tool-call fragment whose index is %s belongs to call 0, as a gateway that leaves it out means", async (index) => {
+  const parts = await collect(wire(
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, id: "only", function: { name: "echo", arguments: "{\"a\":" } }] } }] }),
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: "1}" } }] } }] }),
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "" } }] }, finish_reason: "tool_calls" }] }),
+    "[DONE]",
+  ))
+  expect(parts).toEqual([
+    { type: "tool-params-start", id: "only", name: "echo" },
+    { type: "tool-params-delta", id: "only", delta: "{\"a\":" },
+    { type: "tool-params-delta", id: "only", delta: "1}" },
+    { type: "tool-params-end", id: "only" },
+    { type: "tool-call", id: "only", name: "echo", params: { a: 1 } },
+    { type: "finish", reason: "tool-calls", usage: zeroUsage },
+  ])
+})
+
 const protocolFailure = (text: string) => Effect.runPromise(Effect.flip(Stream.runDrain(sseStreamParts({ moduleName: "Test", body: bodyFromChunks([enc.encode(text)]) }))))
 
-test.each([-1, 0.5, null, undefined, Number.MAX_SAFE_INTEGER + 1])("invalid tool index %s is a protocol failure", async (index) => {
+test.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "0"])("invalid tool index %s is a protocol failure", async (index) => {
   const error = await protocolFailure(wire(JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, function: { name: "echo", arguments: "{}" } }] } }] }), "[DONE]"))
   expect(error.reason._tag).toBe("InvalidResponseError")
 })
