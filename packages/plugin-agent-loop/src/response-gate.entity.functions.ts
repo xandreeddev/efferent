@@ -1,6 +1,6 @@
-import { Match, Schema } from "effect"
+import { Effect, Match, Option, Predicate, Schema } from "effect"
 import { clipTo, framed, hostNote } from "@xandreed/core"
-import type { Failure, FinishReason } from "@xandreed/core"
+import type { Failure, FinishReason, PreparedToolCall, PreparedToolHandler } from "@xandreed/core"
 import { WholeReason } from "./response-gate.entity.js"
 import type { CutReason, MalformedCall, RejectedCall, ResponseVerdict } from "./response-gate.entity.js"
 
@@ -20,6 +20,37 @@ export const duplicateCallCorrective = (tools: ReadonlyArray<string>): string =>
  */
 export const verdictOf = (reason: FinishReason, callsToRun: boolean): ResponseVerdict =>
   isWhole(reason) || (reason === "unknown" && !callsToRun) ? { _tag: "Whole" } : { _tag: "Cut", reason }
+
+/** A whole response's call as the gate checked it: why the loop will not run it, or the call prepared to run. */
+export interface CheckedCall {
+  readonly rejection: Option.Option<MalformedCall>
+  readonly prepared: Option.Option<PreparedToolCall>
+}
+
+/**
+ * Each of a whole response's tool calls checked and prepared, in call order:
+ * a call whose id an earlier call of the response has is a `DuplicateId`; one
+ * naming no tool the step has (`tools`' own keys only, so `constructor` or
+ * `toString` names none) is `NotFound`; otherwise `execution` prepares it,
+ * decoding its parameters once (a JSON Schema tool's pass through), and one
+ * that does not prepare is `Invalid` with the decoder's report. Preparation
+ * starts no handler, so every call is checked before any runs.
+ */
+export const checkCalls = (
+  calls: ReadonlyArray<{ readonly id?: string | undefined; readonly name: string; readonly params: unknown }>,
+  tools: Readonly<Record<string, unknown>>,
+  execution: PreparedToolHandler,
+): Effect.Effect<ReadonlyArray<CheckedCall>> => Effect.forEach(calls, (call, index): Effect.Effect<CheckedCall> => {
+  if (call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)) return Effect.succeed({ rejection: Option.some({ _tag: "DuplicateId", toolName: call.name }), prepared: Option.none() })
+  if (!Object.hasOwn(tools, call.name)) return Effect.succeed({ rejection: Option.some({ _tag: "NotFound", toolName: call.name }), prepared: Option.none() })
+  return execution.prepare(call.name, call.params).pipe(Effect.match({
+    onSuccess: (prepared): CheckedCall => ({ rejection: Option.none(), prepared: Option.some(prepared) }),
+    onFailure: (error): CheckedCall => ({
+      rejection: Option.some({ _tag: "Invalid", toolName: call.name, description: Predicate.hasProperty(error.reason, "description") && typeof error.reason.description === "string" ? error.reason.description : error.message }),
+      prepared: Option.none(),
+    }),
+  }))
+}, { concurrency: 1 })
 
 /** How a cut reply ended, in words: the model reads them in each of its calls' results, the host in the run's failure. */
 const cutWords: Readonly<Record<CutReason, string>> = {

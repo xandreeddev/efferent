@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Predicate, Ref, Result, Schema, Stream } from "effect"
+import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
 import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
 import { CurrentToolResultReceipt, foldStreamParts, makeToolResultReceipt, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, InvalidCallPolicy, MalformedLimit } from "@xandreed/core"
@@ -13,8 +13,9 @@ import { plannedCallIdOf, responseModelOf, ToolCallId } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
-import { DUPLICATE_CALL_IDS, duplicateCallCorrective, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { checkCalls, DUPLICATE_CALL_IDS, duplicateCallCorrective, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 import type { CutReason, MalformedCall, RejectedCall } from "./response-gate.entity.js"
+import type { CheckedCall } from "./response-gate.entity.functions.js"
 import { claimRecovery, initialAttempt, settledAttempt, visibleAttempt } from "./request-attempt.entity.functions.js"
 
 /**
@@ -844,14 +845,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // parameters decode: one that does not is a malformed response, and none of them ran. Under
         // `invalidCalls: "answer"` only a repeated id is: a call the loop can answer alone is answered
         // with a failure result, and the others run.
-        const checked = verdict._tag === "Whole" ? yield* Effect.forEach(calls, (call, index) => {
-          if (call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)) return Effect.succeed({ rejection: Option.some<MalformedCall>({ _tag: "DuplicateId", toolName: call.name }), prepared: Option.none<PreparedToolCall>() })
-          if (!Object.hasOwn(selectedTools, call.name)) return Effect.succeed({ rejection: Option.some<MalformedCall>({ _tag: "NotFound", toolName: call.name }), prepared: Option.none<PreparedToolCall>() })
-          return execution.prepare(call.name, call.params).pipe(Effect.match({
-            onSuccess: (prepared) => ({ rejection: Option.none<MalformedCall>(), prepared: Option.some(prepared) }),
-            onFailure: (error) => ({ rejection: Option.some<MalformedCall>({ _tag: "Invalid", toolName: call.name, description: Predicate.hasProperty(error.reason, "description") && typeof error.reason.description === "string" ? error.reason.description : error.message }), prepared: Option.none<PreparedToolCall>() }),
-          }))
-        }, { concurrency: 1 }) : calls.map(() => ({ rejection: Option.none<MalformedCall>(), prepared: Option.none<PreparedToolCall>() }))
+        const checked: ReadonlyArray<CheckedCall> = verdict._tag === "Whole" ? yield* checkCalls(calls, selectedTools, execution)
+          : calls.map(() => ({ rejection: Option.none<MalformedCall>(), prepared: Option.none<PreparedToolCall>() }))
         const rejections = checked.map((call) => call.rejection)
         const malformed = Arr.findFirst(rejections, (rejection) => policy.invalidCalls === "answer"
           ? Option.filter(rejection, (found) => !isRejectedCall(found))
