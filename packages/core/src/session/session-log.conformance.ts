@@ -261,12 +261,25 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       const forked = yield* log.create({ header: headerOf(child, owner, Option.some({ ...sessionRef(yield* log.head(parent)), through: 1, turnAtFork: 1 })), state: {} })
       yield* expect("lineage", Option.exists(forked.header.parent, (lineage) => lineage.id === parent && lineage.through === 1 && lineage.turnAtFork === 1), "the lineage changed")
       yield* log.create({ header: headerOf(grandchild, owner, Option.some({ ...sessionRef(yield* log.head(child)), through: 0, turnAtFork: 1 })), state: {} })
-      yield* Effect.gen(function* () { const sessionHead = yield* log.head(parent); return yield* log.remove({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }) })
+      const [parentRef, childRef, grandchildRef] = [sessionRef(yield* log.head(parent)), sessionRef(yield* log.head(child)), sessionRef(yield* log.head(grandchild))]
+      // A child belongs to its parent's owner: another owner's fork of this session is refused and leaves nothing.
+      const foreign = yield* freshId
+      const crossed = yield* Effect.flip(log.create({ header: headerOf(foreign, `${owner}-other`, Option.some({ ...parentRef, through: 0, turnAtFork: 0 })), state: {} }))
+      yield* expect("lineage", crossed._tag === "SessionMissing", `a child of another owner's session gave ${crossed._tag}`)
+      yield* expect("lineage", (yield* Effect.flip(log.head(foreign)))._tag === "SessionMissing", "another owner's refused child is there")
+      const crossedListed = yield* log.list({ owner: `${owner}-other`, limit: 10, before: Option.none(), parent: Option.some(parentRef) })
+      yield* expect("lineage", crossedListed.length === 0, "another owner's refused child is listed under the parent")
+      yield* log.remove(parentRef)
       const gone = yield* Effect.forEach([parent, child, grandchild], (id) => Effect.flip(log.head(id)), { concurrency: 1 })
       yield* expect("lineage", gone.every((error) => error._tag === "SessionMissing"), "a removed session or child is still there")
-      const read = yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* log.head(parent); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: 0, limit: Option.none(), kinds: [] }) }))
-      yield* expect("lineage", read._tag === "SessionMissing", "a removed session still reads")
-      yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* log.head(parent); return yield* log.remove({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }) }))
+      // The references read before the removal, used directly: no head lookup stands in for the call.
+      const everything = { after: 0, limit: Option.none<number>(), kinds: [] }
+      const reads = yield* Effect.forEach([parentRef, childRef, grandchildRef], (reference) => Effect.flip(log.read(reference, everything)), { concurrency: 1 })
+      yield* expect("lineage", reads.every((error) => error._tag === "SessionMissing"), `a removed session or a child removed with it still reads: ${reads.map((error) => error._tag).join()}`)
+      const written = yield* Effect.flip(log.commit(childRef, { expect: 0, ...noEvents, events: [draft("late", {})] }))
+      yield* expect("lineage", written._tag === "SessionMissing", `a commit to a child removed with its parent gave ${written._tag}`)
+      const again = yield* Effect.forEach([parentRef, childRef], (reference) => Effect.flip(log.remove(reference)), { concurrency: 1 })
+      yield* expect("lineage", again.every((error) => error._tag === "SessionMissing"), `removing a removed session again gave ${again.map((error) => error._tag).join()}`)
     })),
     check("a missing session is SessionMissing to every operation", "missing", (owner) => Effect.gen(function* () {
       const id = yield* freshId

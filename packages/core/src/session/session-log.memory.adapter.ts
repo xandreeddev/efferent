@@ -31,10 +31,13 @@ const copyEvent = (event: SessionLogEvent): SessionLogEvent => ({
   ...event, turn: Option.map(event.turn, (turn) => turn), data: structuredClone(event.data),
 })
 
-/** Every session under `ids`, their children, and theirs. */
+/** Every session under `ids`, their children (whose parent reference names one of them whole: id, owner and incarnation), and theirs. */
 const withDescendants = (all: Store, ids: ReadonlySet<string>): ReadonlySet<string> => {
   const next = new Set([...ids, ...[...all.entries()].flatMap(([id, session]) =>
-    Option.match(session.head.header.parent, { onNone: () => [], onSome: (parent) => ids.has(parent.id) ? [id] : [] }))])
+    Option.match(session.head.header.parent, {
+      onNone: () => [],
+      onSome: (parent) => ids.has(parent.id) && Option.exists(Option.fromNullishOr(all.get(parent.id)), (stored) => matches(parent, stored)) ? [id] : [],
+    }))])
   return next.size === ids.size ? ids : withDescendants(all, next)
 }
 
@@ -60,7 +63,8 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
     create: Effect.fn("session_log.create")(function* ({ header, state: initial }) {
       return yield* Effect.all([encoded(header.meta), now, randomUuid, encoded(initial)], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at, minted, initial]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
         if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
-        if (Option.isSome(header.parent) && (all.get(header.parent.value.id) === undefined || !matches(header.parent.value, all.get(header.parent.value.id)!))) return [Effect.fail(missing(header.parent.value.id)), all]
+        // A child's parent is a live session of the child's own owner, named whole.
+        if (Option.isSome(header.parent) && (header.parent.value.owner !== header.owner || all.get(header.parent.value.id) === undefined || !matches(header.parent.value, all.get(header.parent.value.id)!))) return [Effect.fail(missing(header.parent.value.id)), all]
         const head = {
           header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) },
           incarnation: SessionIncarnation.make(minted), seq: 0, revision: 0, state: initial, updatedAt: at,

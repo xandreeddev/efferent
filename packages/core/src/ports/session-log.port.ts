@@ -29,7 +29,7 @@ import type {
  * (the kit checks one).
  */
 export class SessionLog extends Context.Service<SessionLog, {
-  /** Create an empty session (seq 0, revision 0), as a new incarnation. A child's parent must exist. */
+  /** Create an empty session (seq 0, revision 0), as a new incarnation. A child's parent must exist, named by its full reference, and belong to the child's owner; otherwise SessionMissing, and nothing is created. */
   readonly create: (input: { readonly header: SessionHeader; readonly state: JsonObject }) => Effect.Effect<SessionHead, SessionExists | SessionMissing | SessionLogError>
   readonly head: (id: ConversationId) => Effect.Effect<SessionHead, SessionMissing | SessionLogError>
   readonly list: (query: SessionListQuery) => Effect.Effect<ReadonlyArray<SessionHead>, SessionLogError>

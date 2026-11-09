@@ -57,6 +57,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Fence session operations against replacement owners and incarnations, check
   sealed-turn cancellation ownership, and retain immutable file generations
   and tombstones through removal races and crashes.
+- The in-memory `SessionLog` refuses a fork parent of another owner with
+  `SessionMissing`, as the file and SQLite logs do, and its removal follows
+  only children that name the removed session whole. The log kit's `lineage`
+  check requires that refusal and reads, commits to and removes the captured
+  references of removed sessions and their children directly, so a store
+  that still serves them fails it.
 - On one `Sessions` instance, a turn still held in a session that was removed
   and created again under its id no longer hides the new session's turn of
   the same number: `TurnActivity` lists the live turn, and `TurnShutdown`
