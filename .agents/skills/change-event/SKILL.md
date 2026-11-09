@@ -1,6 +1,6 @@
 ---
 name: change-event
-description: Add or change a TurnEvent, a journal kind or a stored payload in efferent — the union and its name lists, transient vs journaled vs recorded elsewhere, storedPayload and laterKeys, RESERVED_KINDS and frameworkDraft, the hand-kept tables of the event reference, journal fixtures and goldens, docs:generate. Read before touching turn-event.entity.ts, session-event.entity.ts or session-event.entity.functions.ts.
+description: Add or change a TurnEvent, a journal kind or a stored payload in efferent — the union and its name lists, transient vs journaled vs recorded elsewhere, storedPayload, current-format-only stored shapes, RESERVED_KINDS and frameworkDraft, the hand-kept tables of the event reference, journal fixtures and goldens, docs:generate. Read before touching turn-event.entity.ts, session-event.entity.ts or session-event.entity.functions.ts.
 ---
 
 # Add or change an event
@@ -61,7 +61,17 @@ when they do not. Work through this list instead.
   shape, then appends the new format's row to `docs/stored-format.json`.
   Name the new format in the CHANGELOG entry. A description alone is not a
   change.
-- Removing, renaming or retyping a stored key requires a new store. Add a CHANGELOG **Breaking** entry; no update path is required.
+- Every `STORED_FORMAT` bump needs a fresh store, an added optional key
+  included: Sessions refuses every session of another format, reads and
+  `list` included (`session.version`). The format is checked per session,
+  inside Sessions; the backends check only their own layout when they open
+  (files `FILES_LAYOUT`, SQLite `SCHEMA_VERSION`, `store.version`). A release
+  that bumps the format alone therefore opens old stores and then refuses
+  each session in them, and one such session fails its owner's whole `list`.
+  Add a CHANGELOG **Breaking** entry and a **Migration** step (a fresh store;
+  read old sessions with the release that wrote them); no update path is
+  required. State the new format where `scripts/session-store-docs.test.ts`
+  requires it.
 - Never re-record a released version's fixture. `bun scripts/record-journal-fixture.ts`
   records the current version's at release time (skill `release`) and refuses
   to overwrite it. During development, `--unreleased --force` refreshes only
