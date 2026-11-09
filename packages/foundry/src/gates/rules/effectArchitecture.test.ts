@@ -28,6 +28,26 @@ describe("the Effect architecture pack", () => {
     expect(run(noRawPromiseCore, "/src/http-issue.adapter.ts", body)).toEqual([])
   })
 
+  test("every Effect runner, called or passed as a value, belongs at a runtime edge, never in the core", () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["Effect.runFork(p)", "runFork"],
+      ["Effect.runCallback(p)", "runCallback"],
+      ["Effect.runPromiseExit(p)", "runPromiseExit"],
+      ["Effect.runSyncExit(p)", "runSyncExit"],
+      ["Effect.runForkWith(services)(p)", "runForkWith"],
+      ["Effect.runPromise(p)", "runPromise"],
+      ["p.pipe(Effect.runFork)", "runFork"],
+      ["[p].map(Effect.runSync)", "runSync"],
+    ]
+    cases.forEach(([text, runner]) => {
+      expect(run(noRawPromiseCore, "/src/x.usecase.functions.ts", `export const started = ${text}`)).toEqual([`Effect.${runner} belongs at a runtime edge`])
+      expect(run(noRawPromiseCore, "/src/x.adapter.ts", `export const started = ${text}`)).toEqual([])
+    })
+    expect(run(noRawPromiseCore, "/src/x.entity.functions.ts", 'import { runFork, map } from "effect/Effect"')).toEqual(["Effect.runFork belongs at a runtime edge"])
+    expect(run(noRawPromiseCore, "/src/x.entity.functions.ts", 'import { runFork as start } from "effect/Effect"')).toEqual(["Effect.runFork belongs at a runtime edge"])
+    expect(run(noRawPromiseCore, "/src/x.entity.functions.ts", 'import { run } from "./local.js"\nexport const r = Stream.runCollect(s)')).toEqual([])
+  })
+
   test("runtime imports are rejected in the core", () => {
     expect(
       run(

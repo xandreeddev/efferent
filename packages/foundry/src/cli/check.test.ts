@@ -8,7 +8,7 @@ import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
-import { effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
+import { effectArchitecturePack, effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
 import { makePrivateTextGate } from "../gates/privateTextGate.js"
 import { makeRegistrationGate } from "../gates/registrationGate.js"
 import { TsProjectCachedLive } from "../gates/TsProject.port.js"
@@ -28,6 +28,32 @@ const TSCONFIG = JSON.stringify({
   },
   include: ["src/**/*.ts"],
 })
+
+/** A workspace whose core files break every rule of the effect-architecture
+ *  pack, runners called, passed as values and imported by name included. */
+const seedArchitectureViolations = (dir: string): void => {
+  writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
+  mkdirSync(path.join(dir, "src"), { recursive: true })
+  writeFileSync(
+    path.join(dir, "src", "core.usecase.functions.ts"),
+    [
+      'import { Effect, Layer } from "effect"',
+      'import { runCallback } from "effect/Effect"',
+      'import { readFile } from "node:fs/promises"',
+      "export const started = Effect.runFork(Effect.void)",
+      "export const passed = [Effect.void].map(Effect.runFork)",
+      "export const read = async () => await readFile(\"x\")",
+      "export const layer = Layer.empty",
+      "export const callback = runCallback",
+      "",
+    ].join("\n"),
+  )
+  writeFileSync(path.join(dir, "src", "core.entity.ts"), ["export const close = () => true", ""].join("\n"))
+  writeFileSync(
+    path.join(dir, "src", "store.service.ts"),
+    ['import { Context } from "effect"', 'export class Store extends Context.Service<Store, {}>()("Store") {}', ""].join("\n"),
+  )
+}
 
 /** A workspace whose src violates several effect rules — the shared golden
  *  fixture for library-vs-vendored parity. `errors.ts` declares the error
@@ -318,6 +344,51 @@ describe("vendored packs — plain twins of the library", () => {
     // An adapter reads the time from `Clock`, but may draw from the platform generator.
     expect(normalized(libraryFindings).filter((f) => f.file === "src/clock.adapter.ts")).toEqual([
       { rule: "effect/no-ambient-time-random", message: "`Date.now` reads the wall clock", file: "src/clock.adapter.ts", line: 1 },
+    ])
+    expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
+  })
+
+  test("GOLDEN: the vendored effect-architecture pack produces byte-identical findings to the library pack", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "foundry-vendor-architecture-"))
+    seedArchitectureViolations(dir)
+    symlinkSync(REPO_NODE_MODULES, path.join(dir, "node_modules"), "dir")
+    const files = await Effect.runPromise(vendoredPackFiles("effect-architecture"))
+    expect(files.length).toBeGreaterThan(0)
+    files.forEach((file) => {
+      const target = path.join(dir, ".efferent", "gates", file.path)
+      mkdirSync(path.dirname(target), { recursive: true })
+      writeFileSync(target, file.content)
+    })
+    const ruleIds = effectArchitecturePack.rules.map((rule) => String(rule.id))
+    const configPath = writeConfig(
+      dir,
+      [
+        'import { rules } from "./.efferent/gates/effect-architecture/rules.js"',
+        "export const customRules = rules",
+        "export default {",
+        '  tsconfig: "tsconfig.json",',
+        `  rules: [${ruleIds.map((id) => `{ rule: "${id}", include: ["src/**"] }`).join(", ")}],`,
+        "  typecheck: false,",
+        "}",
+        "",
+      ].join("\n"),
+    )
+    const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
+    expect(registry.length).toBe(effectArchitecturePack.rules.length)
+    const vendoredFindings = await Effect.runPromise(
+      gatesFromConfig(config, registry)[0]!.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    const libraryFindings = await Effect.runPromise(
+      makeIdiomGate(effectArchitecturePack.rules, ruleIds.map((id) => Schema.decodeUnknownSync(RuleConfig)({ rule: id, include: ["src/**"] })), "tsconfig.json")
+        .run({ rootDir: dir, files: [] })
+        .pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    // Every rule of the pack fires on the seeded files, so drift in any one shows.
+    expect(new Set(libraryFindings.map((f) => String(f.rule)))).toEqual(new Set(ruleIds))
+    expect(normalized(libraryFindings).filter((f) => f.message.endsWith("belongs at a runtime edge")).map((f) => f.message)).toEqual([
+      "Effect.runCallback belongs at a runtime edge",
+      "Effect.runFork belongs at a runtime edge",
+      "Effect.runFork belongs at a runtime edge",
     ])
     expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
   })

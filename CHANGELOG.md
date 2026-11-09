@@ -129,6 +129,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
+- `architecture/no-raw-promise-core` also flags an `Effect.run*` runner
+  passed as a value (`pipe(Effect.runFork)`) or imported by name from
+  `effect/Effect`, in the library and the vendored pack.
 - Release confirmation stops at once only on release metadata that names
   another package, version or commit (or none); a provenance read the
   registry does not answer (a 404 after the version was found, a refusal

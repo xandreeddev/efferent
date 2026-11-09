@@ -35,6 +35,15 @@ const isEffectExport = (checker: ts.TypeChecker, access: ts.PropertyAccessExpres
     /[\\/]node_modules[\\/]effect[\\/]/.test(declaration.getSourceFile().fileName))
 }
 
+/** `Effect.run*`, called or passed as a value: every runner of Effect 4 starts with `run`. */
+const isEffectRunner = (node: ts.Node): node is ts.PropertyAccessExpression =>
+  ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Effect" && node.name.text.startsWith("run")
+
+/** A runner imported by name from `effect/Effect` (`import { runFork } from "effect/Effect"`), aliased or not. */
+const isRunnerImport = (node: ts.Node): node is ts.ImportSpecifier =>
+  ts.isImportSpecifier(node) && (node.propertyName ?? node.name).text.startsWith("run") &&
+  ts.isStringLiteral(node.parent.parent.parent.moduleSpecifier) && node.parent.parent.parent.moduleSpecifier.text === "effect/Effect"
+
 const noRawPromiseCore = {
   id: "architecture/no-raw-promise-core",
   defaultSeverity: "error",
@@ -62,10 +71,9 @@ const noRawPromiseCore = {
           matches.push({ node, message: `Promise.${method} is banned; use Effect concurrency` })
         }
         if (method === "then" || (method === "catch" && !isEffectExport(checker, node.expression))) matches.push({ node, message: `.${method}() is banned in the Effect core` })
-        if (ts.isIdentifier(owner) && owner.text === "Effect" && method.startsWith("run")) {
-          matches.push({ node, message: `Effect.${method} belongs at a runtime edge` })
-        }
       }
+      if (isEffectRunner(node)) matches.push({ node, message: `Effect.${node.name.text} belongs at a runtime edge` })
+      if (isRunnerImport(node)) matches.push({ node, message: `Effect.${(node.propertyName ?? node.name).text} belongs at a runtime edge` })
     })
     return matches
   },

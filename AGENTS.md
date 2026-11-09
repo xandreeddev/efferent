@@ -100,7 +100,7 @@ nothing fails.
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
 | `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |
 | `quality/exports-have-consumers` | every published entry (`CURATED_ENTRIES` lists each file, and the registration gate requires each package's root entry there): an export of a package entry that no other package, script or doc code block imports and that has no `@public` tag; `export *` in an entry; a `@deprecated` export that first-party code still imports | import it where it is used, tag documented host API `@public`, or stop exporting it; name each export; move a deprecated export's importers to its replacement |
-| `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` in entity and use-case files | Effect values; promises belong in an adapter |
+| `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` (called, passed as a value or imported by name from `effect/Effect`) in entity and use-case files | Effect values; promises belong in an adapter |
 | `architecture/no-runtime-imports-core` | `node:`, `bun` and host imports in entity and use-case files | a port, implemented in a `.adapter.ts` |
 | `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
