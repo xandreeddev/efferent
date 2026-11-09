@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
+import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Predicate, Ref, Result, Schema, Stream } from "effect"
 import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
 import { CurrentToolResultReceipt, foldStreamParts, makeToolResultReceipt, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, InvalidCallPolicy, MalformedLimit } from "@xandreed/core"
@@ -599,6 +599,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const eventContext = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentToolResultReceipt)(replayableContext(yield* Effect.context<R>()))
     const onEvent = (event: LoopEvent) => withToolResultReceiptGuard(Effect.suspend(() => options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext)))
     // Resolve the toolkit's handlers once — they're stable across turns.
+    // A toolkit from JavaScript, or one cast from `Toolkit.make`, may lack the preparation boundary.
+    if (!Predicate.hasProperty(options.toolkit, "execution") || !Effect.isEffect(options.toolkit.execution)) {
+      return yield* Effect.fail(harnessError("config.options", "The loop's toolkit is not a PreparedToolkit: wrap it with prepareToolkit"))
+    }
     const toolkit = yield* options.toolkit
     const execution = yield* options.toolkit.execution
 

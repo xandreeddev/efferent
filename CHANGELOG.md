@@ -22,7 +22,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Effect toolkit. Parameters decode once before any handler runs; immutable
   raw input remains the durable evidence. Input is read as JSON text would
   carry it: host-planned params may leave optional fields `undefined` (left
-  out) and hold `toJSON` values such as a `Date` (their JSON form). Tool and schema objects are unchanged.
+  out) and hold `toJSON` values such as a `Date` (their JSON form).
+  `toolRegistryConformance` calls tools through that boundary and checks it
+  (`prepare-decode-once`, `prepare-raw-input`, `prepare-before-run`); `runLoop`
+  fails with `config.options` when its toolkit has no `execution`. Tool and schema objects are unchanged.
 - Auth/settings conformance kits take subjects that open fresh scoped fixtures
   per check, including probes for every backing tier.
 - A background turn-event handler publishing into its own subscription's full

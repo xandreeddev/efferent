@@ -1824,6 +1824,19 @@ describe("the loop checks a call's parameters as the toolkit decodes them", () =
 })
 
 describe("the loop prepares each call once, keeping the provider's arguments as its evidence", () => {
+  test("a toolkit without the preparation boundary fails the run with config.options before any model call", async () => {
+    const calls = { count: 0 }
+    // A plain Effect toolkit, as JavaScript would pass it: no `execution`.
+    const plain: typeof kit = Object.create(Toolkit.make(Echo))
+    const result = await Effect.runPromise(Effect.result(runLoop({ system: "sys", messages: [user("go")], toolkit: plain }).pipe(
+      Effect.provide(handlers),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel(() => { calls.count++; return [{ type: "text", text: "done" }, finish("stop")] })),
+    )))
+    expect(result._tag === "Failure" ? harnessCodeOf(result.failure) : Option.none()).toEqual(Option.some("config.options"))
+    expect(calls.count).toBe(0)
+  })
+
+
   test("a codec that mutates its input decodes once per call; the stored request, tool_start and the provider's object keep the original", async () => {
     const counter = { decodes: 0 }
     const handled: unknown[] = []

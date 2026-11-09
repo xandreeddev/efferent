@@ -1,6 +1,6 @@
 import { SessionIncarnation } from "@xandreed/core"
 import { Tool } from "effect/ai"
-import { Array as Arr, Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
+import { Array as Arr, Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Ref, Scheduler, Schema, SchemaGetter, Stream } from "effect"
 import type { Scope } from "effect"
 import {
   ActionPolicy,
@@ -38,6 +38,7 @@ import type {
   BeforeToolDecision,
   AfterToolDecision,
   MemoryPolicy,
+  PreparedToolCall,
   RunTools,
   SessionLogEvent,
   ToolRefusalReason,
@@ -128,7 +129,24 @@ const Flaky = Tool.make("kit_flaky", {
   description: "Exercise handler failures.", parameters: Schema.Struct({ outcome: Schema.Literals(["success", "failure", "defect"]) }),
   success: Schema.String, failure: Failure, failureMode: "return",
 })
-const TOOLS = [Ping.name, Report.name, Durability.name, Where.name, Vault.name, Archive.name, Flaky.name]
+/**
+ * A tool whose parameter codec counts its runs in `decodes` and rewrites its
+ * input in place (`payload` passes through undecoded, so the codec holds the
+ * object it was given): it tells a single decode of a detached copy from a
+ * second decode, or a decode of the caller's own object. Its handler answers
+ * with the `n` it received.
+ */
+const decodeTool = (decodes: Ref.Ref<number>) => Tool.make(DECODE, {
+  description: "Say which payload the handler received.",
+  parameters: Schema.Struct({ payload: Schema.Unknown }).pipe(Schema.decodeTo(Schema.Struct({ payload: Schema.Unknown }), {
+    decode: SchemaGetter.transformEffect((value) => Ref.update(decodes, (count) => count + 1).pipe(Effect.as(value), Effect.tap(({ payload }) =>
+      Predicate.hasProperty(payload, "n") ? Effect.sync(() => Reflect.set(payload, "n", `${String(payload.n)}:decoded`)) : Effect.void))),
+    encode: SchemaGetter.transform((value) => value),
+  })),
+  success: Schema.String, failure: Failure, failureMode: "return",
+})
+const DECODE = "kit_decode"
+const TOOLS = [Ping.name, Report.name, Durability.name, Where.name, Vault.name, Archive.name, Flaky.name, DECODE]
 const SKILLS = ["kit.basics", "kit.vault", "kit.archiving"]
 
 /**
@@ -136,12 +154,13 @@ const SKILLS = ["kit.basics", "kit.vault", "kit.archiving"]
  * when it runs. `kit_where` declares the one service it reads, the
  * `SessionEnvironment`, which the kit's turns open the tools with.
  */
-const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
+const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>, decodes: Ref.Ref<number>): Capability => {
   const note = (tool: string) => Ref.update(ran, (all) => [...all, tool])
   return defineCapability({
     id: "conformance.tools",
     version: "1",
     tools: [
+      defineTool({ tool: decodeTool(decodes), handler: ({ payload }) => note(DECODE).pipe(Effect.as(Predicate.hasProperty(payload, "n") ? String(payload.n) : "none")) }),
       defineTool({ tool: Flaky, handler: ({ outcome }) => note(Flaky.name).pipe(Effect.andThen(Effect.service(ExecutionProbe)), Effect.flatMap((probe) => probe(Flaky.name)), Effect.andThen(outcome === "defect" ? Effect.die(new Error("broken handler")) : outcome === "failure" ? Effect.fail({ error: "ToolFailed", message: "try a different input" }) : Effect.succeed("ok"))) }),
       defineTool({ tool: Durability, handler: () => Effect.service(DurableStarted).pipe(Effect.flatten) }),
       defineTool({ tool: Ping, handler: ({ n }) => note(Ping.name).pipe(Effect.as(`pong ${n}`)), annotations: { maxCallsPerRun: Option.some(2) } }),
@@ -167,7 +186,7 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
       defineTool({ tool: Archive, handler: ({ id }) => note(Archive.name).pipe(Effect.as(`archived ${id}`)) }),
     ],
     skills: [
-      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Durability.name, Where.name, Flaky.name], always: true }),
+      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Durability.name, Where.name, Flaky.name, DECODE], always: true }),
       defineSkill({ id: "kit.vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["kit.vault"] }),
       defineSkill({ id: "kit.archiving", summary: "Archive records.", tools: [Archive.name] }),
     ],
@@ -237,8 +256,12 @@ interface KitTurn {
   /** The registry's catalog. */
   readonly catalog: CapabilityCatalog
   readonly tools: RunTools
-  /** Call a tool through the open toolkit's handlers at `step`, as the loop (or a host) does. */
+  /** Call a tool at `step` as the loop does: prepared through the open toolkit's execution with its handlers, then run. */
   readonly call: (name: string, params: unknown, step?: number, toolCallId?: string, ordinal?: number) => Effect.Effect<CallResult, unknown>
+  /** Prepare a call as the loop does, without running it. */
+  readonly prepare: (name: string, params: unknown) => Effect.Effect<PreparedToolCall, unknown>
+  /** How many times `kit_decode`'s parameter codec ran. */
+  readonly decodes: Effect.Effect<number>
   /** Another open of this same registry, proving per-tool permits are outside open's turn-local state. */
   readonly reopenCall: (name: string, params: unknown) => Effect.Effect<CallResult, unknown>
   /** The `tool.*` and `skills.activated` events published so far, in order. */
@@ -310,7 +333,11 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * `tool-call-limit`) takes its invocation id first, publishes one
  * `tool.refused` with its input and no `tool.started`, never runs the
  * handler, and fails with the refusal's message as its result, under a
- * PascalCase name (`Failure.error`).
+ * PascalCase name (`Failure.error`). The kit calls a tool as the loop does,
+ * through `RunTools.toolkit.execution`: `prepare`, then `run`. A call's
+ * parameters decode once, on a copy (the handler gets the decoded value; the
+ * caller's arguments are unchanged); the prepared input equals the caller's
+ * arguments, deeply frozen; and preparing a batch starts no handler.
  * The registry publishes these events on the run's bus (`RunContext.events`)
  * only, and never writes the journal itself: the turn journals them (the sdk's
  * `TurnLive` keeps `tool.progress` out and stores a `tool.refused` without
@@ -330,7 +357,8 @@ export const toolRegistryConformance = (
 ): ReadonlyArray<ConformanceCheck> => {
   const inTurn = (setup: TurnSetup, body: (turn: KitTurn) => Effect.Effect<void, unknown>) => Effect.scoped(Effect.gen(function* () {
     const ran = yield* Ref.make<ReadonlyArray<string>>([])
-    const registry = yield* make([capabilityOf(ran)], { maxCallsPerRun: setup.maxCallsPerRun ?? 32, ...(setup.readConcurrency === undefined ? {} : { readConcurrency: setup.readConcurrency }), ...(setup.toolPolicy === undefined ? {} : { toolPolicy: setup.toolPolicy }) })
+    const decodes = yield* Ref.make(0)
+    const registry = yield* make([capabilityOf(ran, decodes)], { maxCallsPerRun: setup.maxCallsPerRun ?? 32, ...(setup.readConcurrency === undefined ? {} : { readConcurrency: setup.readConcurrency }), ...(setup.toolPolicy === undefined ? {} : { toolPolicy: setup.toolPolicy }) })
     const recorded = yield* memoryWriter
     const writer: TurnWriter = setup.auditFailure === undefined ? recorded.writer : {
       ...recorded.writer,
@@ -366,17 +394,21 @@ export const toolRegistryConformance = (
       )
       const tools = yield* opening
       yield* tools.select(run.userMessage)
-      const callWith = (selected: RunTools, name: string, params: unknown, step = 1, toolCallId?: string, ordinal = 0): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
-        const kit = yield* selected.toolkit.pipe(Effect.provide(selected.handlers))
-        const results = yield* Stream.runCollect(yield* kit.handle(name, params, toolCallId))
-        const last = results.at(-1)
-        return { isFailure: last?.isFailure ?? true, result: last?.result, encoded: last?.encodedResult }
-      }) as Effect.Effect<CallResult, unknown>).pipe(
+      const asCaller = (step: number, ordinal: number) => <A>(effect: Effect.Effect<A, unknown>): Effect.Effect<A, unknown> => effect.pipe(
         Effect.provideService(CurrentAgentStep, Option.some(step)),
         Effect.provideService(CurrentAgentRun, Option.some({ id: RUN, turn: 1, ordinal: RunOrdinal.make(ordinal) })),
         Effect.provideService(Opener, "the caller's"),
         Effect.provideService(SessionEnvironment, { workspace: "the caller's" }),
       )
+      // As the loop prepares a call: once, through the toolkit's execution with its handlers, starting none of them.
+      const prepareWith = (selected: RunTools, name: string, params: unknown) =>
+        selected.toolkit.execution.pipe(Effect.provide(selected.handlers), Effect.flatMap((execution) => execution.prepare(name, params)))
+      const callWith = (selected: RunTools, name: string, params: unknown, step = 1, toolCallId?: string, ordinal = 0): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
+        const prepared = yield* prepareWith(selected, name, params)
+        const results = yield* Stream.runCollect(yield* prepared.run(toolCallId))
+        const last = results.at(-1)
+        return { isFailure: last?.isFailure ?? true, result: last?.result, encoded: last?.encodedResult }
+      }) as Effect.Effect<CallResult, unknown>).pipe(asCaller(step, ordinal))
       const call = (name: string, params: unknown, step?: number, toolCallId?: string, ordinal?: number) => callWith(tools, name, params, step, toolCallId, ordinal)
       const reopened = yield* registry.open(memory.session).pipe(
         Effect.provideService(SessionEnvironment, { workspace: "the opener's" }),
@@ -387,6 +419,8 @@ export const toolRegistryConformance = (
         catalog: registry.catalog,
         tools,
         call,
+        prepare: (name, params) => prepareWith(tools, name, params).pipe(asCaller(1, 0)),
+        decodes: Ref.get(decodes),
         reopenCall,
         published: run.flush.pipe(Effect.orDie, Effect.andThen(Ref.get(published))),
         stored: run.flush.pipe(Effect.orDie, Effect.andThen(recorded.stored)),
@@ -820,6 +854,31 @@ export const toolRegistryConformance = (
       yield* expect("provider-call-id", direct.length === 4 && direct.every((event) => !("toolCallId" in event)), "a direct call inherited another call's provider id")
     }))),
 
+    check("a call's parameters decode once, on a copy: the handler gets the decoded value and the caller's arguments stay as they were", "prepare-decode-once", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const params = { payload: { n: "provider" } }
+      const outcome = yield* turn.call(DECODE, params)
+      const decodes = yield* turn.decodes
+      yield* expect("prepare-decode-once", decodes === 1, `the parameter codec ran ${decodes} times for one call`)
+      yield* expect("prepare-decode-once", !outcome.isFailure && outcome.result === "provider:decoded", `the handler received ${JSON.stringify(outcome.result)}, not the decoded parameters`)
+      yield* expect("prepare-decode-once", params.payload.n === "provider", "the codec rewrote the caller's own arguments")
+    }))),
+    check("a prepared call's input is the caller's arguments, deeply frozen, and neither preparing nor running it changes them", "prepare-raw-input", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const params = { payload: { n: "provider" } }
+      const prepared = yield* turn.prepare(DECODE, params)
+      const frozen = (value: unknown): boolean => !Predicate.isObject(value) || (Object.isFrozen(value) && Object.values(value).every(frozen))
+      yield* expect("prepare-raw-input", JSON.stringify(prepared.input) === JSON.stringify({ payload: { n: "provider" } }) && prepared.input !== params, `the prepared input is ${JSON.stringify(prepared.input)}, or the caller's own object`)
+      yield* expect("prepare-raw-input", frozen(prepared.input), "the prepared input can still be changed")
+      yield* Stream.runDrain(yield* prepared.run())
+      yield* expect("prepare-raw-input", JSON.stringify(prepared.input) === JSON.stringify({ payload: { n: "provider" } }) && params.payload.n === "provider", "running the call changed its prepared input or the caller's arguments")
+    }))),
+    check("preparing every call of a batch starts no handler; each runs only when run", "prepare-before-run", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const prepared = yield* Effect.forEach([[Ping.name, { n: 1 }], [DECODE, { payload: { n: "batch" } }]] as const, ([name, params]) => turn.prepare(name, params), { concurrency: 1 })
+      const before = yield* turn.ran
+      yield* expect("prepare-before-run", before.length === 0, `preparing the batch ran ${before.join()}`)
+      yield* Effect.forEach(prepared, (call) => call.run().pipe(Effect.flatMap(Stream.runDrain)), { concurrency: 1, discard: true })
+      const after = yield* turn.ran
+      yield* expect("prepare-before-run", after.join() === `${Ping.name},${DECODE}`, `running the prepared batch ran ${after.join() || "nothing"}`)
+    }))),
     check("a handler starts only after its tool.started record was flushed", "started-durable", () => inTurn({}, (turn) => Effect.gen(function* () {
       const outcome = yield* turn.call(Durability.name, {})
       yield* expect("started-durable", !outcome.isFailure && outcome.result === true, "the handler ran before its tool.started record was flushed")
