@@ -154,20 +154,24 @@ test("response schema constrains offered choices and fractional score bounds", (
   expect(Schema.is(schema)({ answers: { ...answers, completeness: { type: "score", score: 3 } } })).toBe(false)
 })
 
-test("provider response schema uses finite properties without propertyNames", () => {
+test("the judge's response schema, exactly: one property per question, probability in 0..1, score within the scale, choice among the offered keys, nothing else", () => {
   const schema = SchemaRepresentation.toJsonSchemaDocument(SchemaRepresentation.toRepresentation(semanticResponseSchema(input.questions).ast), { onExcessProperty: "error" }).schema
   expect(JSON.stringify(schema)).not.toContain("propertyNames")
-  expect(schema).toMatchObject({
-    type: "object", additionalProperties: false,
+  const answer = (type: string, properties: object) => ({ type: "object", properties: { type: { type: "string", enum: [type] }, ...properties }, required: ["type", ...Object.keys(properties)], additionalProperties: false })
+  expect(schema).toEqual({
+    type: "object",
     properties: { answers: {
-      type: "object", additionalProperties: false,
-      required: ["groundedness", "completeness", "preference"],
+      type: "object",
       properties: {
-        groundedness: { properties: { probability: { minimum: 0, maximum: 1 } } },
-        completeness: { properties: { score: { minimum: 0, maximum: 2 } } },
-        preference: { properties: { choice: { enum: ["A", "B", "tie"] } } },
+        groundedness: answer("boolean", { probability: { type: "number", minimum: 0, maximum: 1 } }),
+        completeness: answer("score", { score: { type: "number", minimum: 0, maximum: 2 } }),
+        preference: answer("choice", { choice: { type: "string", enum: ["A", "B", "tie"] } }),
       },
+      required: ["groundedness", "completeness", "preference"],
+      additionalProperties: false,
     } },
+    required: ["answers"],
+    additionalProperties: false,
   })
 })
 

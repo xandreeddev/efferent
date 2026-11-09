@@ -39,10 +39,10 @@ Both entries name each export, and `quality/exports-have-consumers` checks each 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `render_component` description | `src/render-output.tools.ts:7` | exact assertion suites `src/render-output.test.ts#exact-assertions` |
-| Its parameters (`UiOutputProposal` and `UiRelease` fields, each with a description; the two hashes with their pattern), as core's `toolParametersSchema` gives them | `src/domain/render-output.entity.ts:78-84`, `:63-70`, `:56` | exact assertion suites `src/render-output.test.ts#exact-assertions` |
-| Failures as `{ error, message }`: each `UiOutputError` code under a name of its own (`invalid` `InvalidComponent`, `forbidden` `ComponentNotAllowed`, `unavailable` `RendererUnavailable`, `conflict` `OperationIdReused`, `storage` `StorageUnavailable`; the code stays the host's, in spans and logs), and the message (admission and journal messages are the host's) | `src/render-output.adapter.ts:29-38` | exact assertion suites `src/render-output.test.ts#exact-assertions` |
-| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:16`, `:19`, `:21` | exact assertion suites `src/render-output.test.ts#exact-assertions` |
+| `render_component` description | `src/render-output.tools.ts:7` | exact tests `src/render-output.test.ts#render_component's description and parameters, as the model reads them` |
+| Its parameters (`UiOutputProposal` and `UiRelease` fields, each with a description; the two hashes with their pattern), as core's `toolParametersSchema` gives them | `src/domain/render-output.entity.ts:78-84`, `:63-70`, `:56` | exact tests `src/render-output.test.ts#render_component's description and parameters, as the model reads them` |
+| Failures as `{ error, message }`: each `UiOutputError` code under a name of its own (`invalid` `InvalidComponent`, `forbidden` `ComponentNotAllowed`, `unavailable` `RendererUnavailable`, `conflict` `OperationIdReused`, `storage` `StorageUnavailable`; the code stays the host's, in spans and logs), and the message (admission and journal messages are the host's) | `src/render-output.adapter.ts:29-38` | exact tests `src/render-output.test.ts#a refusal reaches the model as { error, message }` |
+| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:16`, `:19`, `:21` | exact tests `src/render-output.test.ts#emit refuses a proposal that does not decode as invalid`; `src/render-output.test.ts#a refusal reaches the model as { error, message }` |
 
 ## Erasure files
 

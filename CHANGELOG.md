@@ -129,6 +129,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
+- Each package's model-text inventory cites the tests that pin a row by
+  title (`path.test.ts#<title>`) instead of a fixed `#exact-assertions`
+  suffix, and the inventory check resolves each citation to exactly one test
+  of its file that must hold an exact assertion, so deleting a cited test's
+  pin or renaming it fails the check. The judge's response schema is pinned
+  exactly, and the workspace tool descriptions in a test of their own.
 - Foundry's claude implementor leads a process group of its own; when its
   attempt ends (exit, deadline or interruption) the group gets SIGTERM, three
   seconds for the implementor to stop what it started, then SIGKILL, so its

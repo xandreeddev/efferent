@@ -524,7 +524,7 @@ describe("ls, find and grep", () => {
     }
   })
 
-  test("read, ls, find and grep show the model the largest limit they take, and refuse a larger one; each tool carries its description", async () => {
+  test("read, ls, find and grep show the model the largest limit they take, and refuse a larger one", async () => {
     const options = { maxLines: 40, lsEntries: 30, findResults: 20, grepMatches: 10 }
     const tools = await scoped(Effect.gen(function* () {
       const { capability } = yield* bench(options)
@@ -539,6 +539,14 @@ describe("ls, find and grep", () => {
     const decodes = (name: string, params: unknown) => Schema.is(tool(name).parametersSchema)(params)
     expect([decodes("ls", { limit: 30 }), decodes("ls", { limit: 31 }), decodes("grep", { pattern: "x", limit: 11 }), decodes("read", { path: "a", limit: 0 })])
       .toEqual([true, false, false, false])
+  })
+
+  test("each tool carries its description, as toolDescriptions words it for the capability's options", async () => {
+    const options = { maxLines: 40, lsEntries: 30, findResults: 20, grepMatches: 10 }
+    const tools = await scoped(Effect.gen(function* () {
+      const { capability } = yield* bench(options)
+      return capability.tools
+    }))
     // The descriptions' words are pinned beside toolDescriptions.
     expect(Object.fromEntries(tools.map((entry) => [entry.tool.name, entry.tool.description]))).toEqual(toolDescriptions({ ...workspaceToolsDefaults, ...options }))
   })

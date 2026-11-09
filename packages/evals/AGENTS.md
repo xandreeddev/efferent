@@ -41,8 +41,8 @@ The prompts are the app's (`SemanticLlmOptions.prompt`, the judge given to `sema
 
 | Text | Source | Pinned by |
 |---|---|---|
-| The judge's structured-output name, `semantic_assessment` | `src/adapters/semantic-llm.adapter.ts:28` | exact assertion suites `src/semantic.test.ts#exact-assertions` |
-| The judge's response schema: one property per question id, `probability` in 0..1, `score` within the scale, `choice` among the offered keys, nothing else | `src/semantic.entity.functions.ts:46-55` | exact assertion suites `src/semantic.test.ts#exact-assertions` |
+| The judge's structured-output name, `semantic_assessment` | `src/adapters/semantic-llm.adapter.ts:28` | exact tests `src/semantic.test.ts#the LLM judge asks for its answers as the object semantic_assessment` |
+| The judge's response schema: one property per question id, `probability` in 0..1, `score` within the scale, `choice` among the offered keys, nothing else | `src/semantic.entity.functions.ts:46-55` | exact tests `src/semantic.test.ts#the judge's response schema, exactly` |
 
 ## Erasure files
 

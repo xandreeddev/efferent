@@ -200,7 +200,7 @@ self-check never see their deliberate violations.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Implementor brief: goal, acceptance list and optional previous feedback | `src/adapters/claudeImplementor.ts` | exact assertion suite `src/adapters/claudeImplementor.test.ts#exact-assertions` |
-| Gate feedback: failures, fix hints, skipped gates and counted overflow | `src/pipeline/renderFeedback.ts` | exact assertion suite `src/pipeline/renderFeedback.test.ts#exact-assertions` |
-| Armed rule descriptions, fix hints and judge evasion instructions | `src/gates/renderQualityBar.ts` | exact assertion suite `src/gates/renderQualityBar.test.ts#exact-assertions` |
-| Lessons: recurrence counts, examples and fix hints for the next implementor | `src/pipeline/lessons.ts` | exact assertion suite `src/pipeline/lessons.test.ts#exact-assertions` |
+| Implementor brief: goal, acceptance list and optional previous feedback | `src/adapters/claudeImplementor.ts` | exact assertion suite `src/adapters/claudeImplementor.test.ts#implementation prompt includes the exact goal, acceptance and previous feedback` |
+| Gate feedback: failures, fix hints, skipped gates and counted overflow | `src/pipeline/renderFeedback.ts` | exact assertion suite `src/pipeline/renderFeedback.test.ts#golden: deterministic, grouped per gate, sorted by file/line, skip note present`; `src/pipeline/renderFeedback.test.ts#caps per-gate findings with an exact overflow count` |
+| Armed rule descriptions, fix hints and judge evasion instructions | `src/gates/renderQualityBar.ts` | exact assertion suite `src/gates/renderQualityBar.test.ts#the armed quality bar renders exact model-facing instructions` |
+| Lessons: recurrence counts, examples and fix hints for the next implementor | `src/pipeline/lessons.ts` | exact assertion suite `src/pipeline/lessons.test.ts#deterministic section; empty renders empty`; `src/pipeline/lessons.test.ts#a spec check recurring across RUNS carries the promotion hint` |

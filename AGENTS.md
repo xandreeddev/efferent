@@ -172,12 +172,16 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 Text the model reads is a contract and part of cached prompt prefixes: frame
 it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), pin
 it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
-Each package's `AGENTS.md` inventories its model-facing text and cites stable
-assertion suite ids (`path.test.ts#exact-assertions`). The suites run actual
-rendered-text or golden comparisons. `scripts/model-text-pins.test.ts` checks
-that cited modules exist and contain exact expectations, including a negative
-control with assertions removed. This is inventory validation: semantic review
-must still verify complete coverage of each row; a citation alone proves none.
+Each package's `AGENTS.md` inventories its model-facing text and cites the
+tests that pin each row by title (`path.test.ts#<part of a test's title>`).
+The tests run actual rendered-text or golden comparisons.
+`scripts/model-text-pins.test.ts` checks that each citation names exactly one
+`test`, `it` or `describe` of its file and that that block holds an exact
+expectation (in its body or a helper of the file), with negative controls for
+a missing title, a shared title and a deleted pin. This is inventory
+validation: deleting one expectation among several of a cited test still
+passes it, so give a row's pin a test of its own, and semantic review must
+still verify complete coverage of each row; a citation alone proves none.
 
 ## Definition of done
 

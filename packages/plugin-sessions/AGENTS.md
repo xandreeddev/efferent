@@ -62,10 +62,10 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:611` | exact assertion suites `src/sessions.adapter.test.ts#exact-assertions` |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:492` | exact assertion suites `src/sessions.adapter.test.ts#exact-assertions` |
-| Default user message when the inbox drainer resumes interrupted work, a host note: `[Host note: The previous turn stopped before it finished. Continue it.]` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact assertion suites `src/inbox-drain.entity.functions.test.ts#exact-assertions` |
-| Invalid selected memory snapshot message, also used for an invalid snapshot publication | `src/memory-snapshot.adapter.ts:10` | exact assertion suites `src/memory-snapshot.adapter.test.ts#exact-assertions` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:611` | exact tests `src/sessions.adapter.test.ts#the items one inbox turn takes are its message, in delivery order, joined by a blank line` |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:492` | exact tests `src/sessions.adapter.test.ts#an item stored without content is shown as its id` |
+| Default user message when the inbox drainer resumes interrupted work, a host note: `[Host note: The previous turn stopped before it finished. Continue it.]` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact tests `src/inbox-drain.entity.functions.test.ts#the default resume message is an exact host note` |
+| Invalid selected memory snapshot message, also used for an invalid snapshot publication | `src/memory-snapshot.adapter.ts:10` | exact tests `src/memory-snapshot.adapter.test.ts#a selected %s snapshot fails honestly instead of returning partial memory` |
 
 ## Erasure files
 

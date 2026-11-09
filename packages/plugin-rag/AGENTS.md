@@ -91,10 +91,10 @@ prompts. This package owns the following text contracts:
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Tool descriptions, parameter descriptions, skill summary and failure messages | `src/rag-capability.adapter.ts:12` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
-| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:33` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
-| Traversal result-limit note | `src/rag.entity.functions.ts:42` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
-| Source page framing and continuation | `src/rag.entity.functions.ts:51` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
+| Tool descriptions, parameter descriptions, skill summary and failure messages | `src/rag-capability.adapter.ts:12` | exact tests `src/rag-capability.adapter.test.ts#tool, parameter, skill and failure text is pinned exactly` |
+| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:33` | exact tests `src/rag-capability.adapter.test.ts#evidence and source page views are pinned exactly` |
+| Traversal result-limit note | `src/rag.entity.functions.ts:42` | exact tests `src/rag-capability.adapter.test.ts#tool, parameter, skill and failure text is pinned exactly`; `src/rag-capability.adapter.test.ts#evidence and source page views are pinned exactly` |
+| Source page framing and continuation | `src/rag.entity.functions.ts:51` | exact tests `src/rag-capability.adapter.test.ts#evidence and source page views are pinned exactly` |
 
 ## Tests
 

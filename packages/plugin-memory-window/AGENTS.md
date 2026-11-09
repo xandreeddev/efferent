@@ -28,11 +28,11 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `recall_context` description | `src/plugin.adapter.ts:153` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| `locator` and `offset` descriptions | `src/plugin.adapter.ts:155-156` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:83` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:168` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:189`, `:191` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| `recall_context` description | `src/plugin.adapter.ts:153` | exact tests `src/plugin.adapter.test.ts#recall_context says what it returns and how to page` |
+| `locator` and `offset` descriptions | `src/plugin.adapter.ts:155-156` | exact tests `src/plugin.adapter.test.ts#recall_context says what it returns and how to page` |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:83` | exact tests `src/plugin.adapter.test.ts#the preview says how many characters it left out and the offset to read them from` |
+| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:168` | exact tests `src/plugin.adapter.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
+| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:189`, `:191` | exact tests `src/plugin.adapter.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
 
 ## Erasure files
 

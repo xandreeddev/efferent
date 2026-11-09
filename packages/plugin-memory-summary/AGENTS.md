@@ -32,9 +32,9 @@ All of it goes to the summarizer (the utility model), not to the agent's model.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact tests `src/plugin.adapter.test.ts#the default instructions open it` |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
 
 ## Erasure files
 
