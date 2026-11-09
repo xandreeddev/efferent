@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Match, Option, Predicate, PubSub, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionIncarnation, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TransactDuplicate, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
+import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionIncarnation, SessionLog, SessionLogMemoryLive, sessionRef, Sessions, STORED_FORMAT, TransactDuplicate, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { BeginTurn, JsonObject, SessionAddress, SessionContended, SessionLogError, SessionMissing, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
@@ -571,6 +571,16 @@ describe("the Sessions kit catches careless backends", () => {
   test("one that never reads the stored format (the stamp does not reach it) fails only the stored-format check", async () => {
     const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.succeed(Effect.succeed("unchanged")) }
     expect(await failedChecks(sessionsConformance(unread))).toEqual(["stored-format"])
+  })
+
+  test("one whose remove deletes a session in another stored format, instead of refusing it, fails only the stored-format check", async () => {
+    const purging = subjectOver(memoryLog, (instance) => ({ ...instance, sessions: Sessions.of({ ...instance.sessions,
+      remove: (address) => instance.sessions.remove(address).pipe(Effect.catchIf(
+        (error) => error._tag === "SessionLogError" && error.code === "session.version",
+        () => memoryLog.head(address.id).pipe(Effect.flatMap((head) => memoryLog.remove(sessionRef(head)))),
+      )),
+    }) }))
+    expect(await failedChecks(sessionsConformance(purging))).toEqual(["stored-format"])
   })
 
   test("the stored-format check runs only for a backend that keeps a stored format", () => {

@@ -105,7 +105,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   listing and no write).
 - `@xandreed/core`: the Sessions kit. Its subjects expose an
   unsupported-format probe (`newerFormat`: any format but the current one,
-  refused for reads too) that returns a snapshot of the stored head. The kit
+  refused for reads and for `remove` too) that returns a snapshot of the
+  stored head. The kit
   also requires another owner's cancel of an open turn, and of a turn
   sealed on the cancelling instance, to fail with `SessionMissing` and
   change nothing.

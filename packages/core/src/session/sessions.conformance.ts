@@ -1519,7 +1519,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     ...Option.match(Option.fromNullishOr(subject.newerFormat), {
       onNone: () => [],
       onSome: (newerFormat) => [
-        scoped("an unsupported session format refuses reads, writes and turns without changing stored data", "stored-format", (owner) => Effect.gen(function* () {
+        scoped("an unsupported session format refuses reads, writes, turns and its removal without changing stored data", "stored-format", (owner) => Effect.gen(function* () {
           const { sessions } = yield* leased()
           const address = yield* created(sessions, owner)
           yield* Effect.scoped(sessions.begin(address, say("before the upgrade")).pipe(Effect.flatMap((writer) => writer.end(completed))))
@@ -1537,6 +1537,8 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
             yield* answerOf(sessions.read(address)),
             yield* answerOf(sessions.list({ owner })),
             yield* answerOf(sessions.list({ owner, parent: address.id })),
+            // Last: a backend that removes it anyway leaves nothing for the others.
+            yield* answerOf(sessions.remove(address)),
           ]
           yield* expect("stored-format", answers.every((answer) => answer === "SessionLogError(session.version)"),
             `unsupported-format operations gave ${answers.join()}`)
