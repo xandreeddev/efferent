@@ -158,6 +158,20 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, anyOwner)))).toEqual(["changes"])
   })
 
+  test("one whose changes keys followers by id and owner and skips the owner check fails only the changes check, without hanging", async () => {
+    // Another owner's follower listens where nobody publishes: it neither fails nor ends.
+    const silentStranger = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      changes: (address) => Stream.unwrap(memoryLog.head(address.id).pipe(
+        Effect.map((head) => head.header.owner === address.owner ? instance.sessions.changes(address) : Stream.never),
+        Effect.orDie,
+      )),
+    }) })
+    const changes = sessionsConformance(subjectOver(memoryLog, silentStranger)).filter((check) => check.name.includes("a follower is signalled"))
+    const outcome = await Promise.race([failedChecks(changes), Bun.sleep(3_000).then(() => ["hung"])])
+    expect(outcome).toEqual(["changes"])
+  })
+
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
     const blind = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,

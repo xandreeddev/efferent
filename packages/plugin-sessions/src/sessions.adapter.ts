@@ -1098,7 +1098,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       ...(query?.from === undefined ? {} : { from: query.from }),
     }))), onSession),
     waiting: Stream.unwrap(PubSub.subscribe(waitingHub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
-    // Followed only by its owner: another owner's address, or a session removed (or, for a reference, created again), is SessionMissing.
+    // Followed only by its owner: on the first pull, another owner's address, or a session removed (or, for a reference, created again), is
+    // SessionMissing. Checked once: the follower is then woken by every commit under the id and owner, a later life's included.
     changes: (address) => Stream.unwrap(owned(address).pipe(Effect.andThen(RcMap.get(followers, followerKey(address))), Effect.map(Stream.fromPubSub))),
     lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap((head) => keyed(sessionRef(head), key)), Effect.map(Option.map((found) => found.turn))), onSession),
     transact,

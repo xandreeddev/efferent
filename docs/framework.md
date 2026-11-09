@@ -3494,8 +3494,12 @@ makes a child session (a background task's): with `inherit` its history is
 the parent's up to its last closed turn, and its turns count on from there.
 `changes(address)` signals the session's followers at least once after each
 commit this instance makes, the signals a follower has not taken merged into
-one (a feed polls for the others' commits), and `lookup(address, key)` finds
-a key's turn.
+one (a feed polls for the others' commits). It checks the address once, on
+its first pull (another owner's address or a missing session is
+`SessionMissing`); a follower is then woken by every commit under that id
+and owner, a session created again under the id included, and reads with
+its address to see which session changed. `lookup(address, key)` finds a
+key's turn.
 
 **Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
 that opens every turn (a direct or queued user's, the inbox's, a task's),

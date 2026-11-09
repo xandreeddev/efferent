@@ -190,7 +190,8 @@ export interface TurnWriter {
  * its id, the address is `SessionMissing`, so a host that keeps it acts on
  * the session it read and never on its replacement. An address without one
  * names whichever session holds the id for that owner at each call; one call
- * keeps the session it resolved first (a drain all its turns).
+ * keeps the session it resolved first (a drain all its turns). `changes` is
+ * the exception: it checks the address once, on its first pull (see there).
  */
 export class Sessions extends Context.Service<Sessions, {
   /**
@@ -247,7 +248,11 @@ export class Sessions extends Context.Service<Sessions, {
    * (followers poll for the commits of other instances). Only the owner
    * follows: on its first pull, another owner's address or a missing session
    * fails the stream with `SessionMissing`, and a store failure with
-   * `SessionLogError`.
+   * `SessionLogError`. That check runs once: a follower is then woken by
+   * every commit under the id and owner, its session's removal and a session
+   * created again under the id for that owner included, so it reads with
+   * its address to learn which session changed (with a `SessionRef`, a read
+   * after the removal fails with `SessionMissing`).
    */
   readonly changes: (address: SessionAddress) => Stream.Stream<void, SessionMissing | SessionLogError>
   /** The turn begun with this key, if any. */

@@ -1,7 +1,7 @@
 import { Deferred, Effect, Exit, Fiber, Match, Option, Ref, Schema, Scope, Stream } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, eventually, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
+import { check, eventually, expect, fail, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
@@ -815,6 +815,11 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const answered = (tries: number): Effect.Effect<void, unknown> => stranger.pollUnsafe() !== undefined || tries <= 0 ? Effect.void
         : note(followed).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => answered(tries - 1))))
       yield* answered(20)
+      // A follower that neither failed nor ended after 20 commits never will: report it rather than wait for it.
+      if (stranger.pollUnsafe() === undefined) {
+        yield* Fiber.interrupt(stranger)
+        return yield* fail("changes", "another owner's follower of the session neither failed with SessionMissing nor ended after 20 commits")
+      }
       const strangerAnswer = yield* Fiber.join(stranger)
       yield* expect("changes", strangerAnswer === "SessionMissing", `another owner's follower of the session ${strangerAnswer === "done" ? "was signalled by its commits" : `answered ${strangerAnswer}`}`)
     })),

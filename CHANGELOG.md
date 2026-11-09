@@ -74,7 +74,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   drain keeps the session it resolved first for all its turns.
   `Sessions.changes` follows only the owner's session: its stream fails with
   `SessionMissing` for another owner's address or a missing session, and
-  with `SessionLogError` for a store failure.
+  with `SessionLogError` for a store failure. It checks the address once, on
+  its first pull: a follower is then woken by every commit under that id and
+  owner, a session created again under the id included.
 - `@xandreed/plugin-sessions`: sessions are stored in format 19 only
   (`STORED_FORMAT`). A session in any other format, older, newer or
   unmarked, is refused for every operation, `get`, `list`, `read` and
