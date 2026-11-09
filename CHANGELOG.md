@@ -174,6 +174,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   in a session that was removed and created again under its id no longer
   hides the new session's turn of the same number: `TurnActivity` lists the
   live turn, and `TurnShutdown` closes it with `turn.shutdown`.
+  `Sessions.remove` can be interrupted while the store removes the session
+  (a slow mount, many forks); once the session is gone, the instance still
+  closes its turns of it, and keeps nothing of a turn it held there.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and a provider stream's
   line length, tool-call count and per-call arguments (a chunk packed with

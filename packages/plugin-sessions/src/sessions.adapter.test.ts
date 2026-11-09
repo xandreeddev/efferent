@@ -5,7 +5,7 @@ import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, Le
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { SessionsLive } from "./sessions.adapter.js"
+import { makeSessions, SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
 import type { HolderProcess, SessionsConfig } from "./sessions-state.entity.js"
 
@@ -1779,6 +1779,58 @@ test("another owner's reference to a live session is SessionMissing, and Session
   expect((yield* Effect.flip(sessions!.remove(stranger)))._tag).toBe("SessionMissing")
   expect(yield* Ref.get(asked)).toEqual([])
   expect((yield* sessions!.get({ id: view.header.id, owner })).incarnation).toBe(view.incarnation)
+})))
+
+/** How a writer stands right now: the reason it was closed with, or `open` when it has not been closed yet. */
+const closedNow = (writer: TurnWriter) => Effect.raceFirst(
+  writer.closed.pipe(Effect.map((by): string => by.reason)),
+  Effect.yieldNow.pipe(Effect.repeat({ times: 20 }), Effect.as("open")),
+)
+
+test("a removal interrupted while the store removes it returns at once, and closes the instance's turn of the session all the same", () => withLog((raw) => Effect.gen(function* () {
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  // The log removes the session, then takes long to finish what goes with it (a slow mount, many children).
+  const slow = SessionLog.of({ ...raw, remove: (reference) => raw.remove(reference).pipe(Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Deferred.await(release))) })
+  const [sessions] = yield* instancesOver(slow, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  const writer = yield* sessions!.begin(reference, say("open"))
+  const removing = yield* Effect.forkChild(sessions!.remove(reference))
+  yield* Deferred.await(entered)
+  const stopping = yield* Effect.forkChild(Fiber.interrupt(removing))
+  const interrupted = yield* Effect.raceFirst(Fiber.join(stopping).pipe(Effect.as("returned")), Effect.yieldNow.pipe(Effect.repeat({ times: 50 }), Effect.as("waiting")))
+  yield* Deferred.succeed(release, undefined)
+  yield* Fiber.join(stopping)
+  expect([interrupted, yield* closedNow(writer)]).toEqual(["returned", "removed"])
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+})))
+
+test("a removal whose failure and head both fail, finished by a later remove with the reference, closes the instance's turn of the session", () => withLog((raw) => Effect.gen(function* () {
+  const stalled = yield* Ref.make(false)
+  const stall = new SessionLogError({ code: "store.stalled", message: "the store did not answer" })
+  // The store stalls right after the session's tombstone: the removal fails, and so does the head read after it.
+  const stalling = SessionLog.of({ ...raw,
+    remove: (reference) => raw.remove(reference).pipe(Effect.andThen(Ref.getAndSet(stalled, true)), Effect.flatMap((was) => was ? Effect.void : Effect.fail(stall))),
+    head: (id) => Ref.get(stalled).pipe(Effect.flatMap((now) => now ? Effect.fail(stall) : raw.head(id))),
+  })
+  const [sessions] = yield* instancesOver(stalling, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  const writer = yield* sessions!.begin(reference, say("open"))
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionLogError")
+  const unknown = yield* closedNow(writer)
+  yield* Ref.set(stalled, false)
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+  expect([unknown, yield* closedNow(writer)]).toEqual(["open", "removed"])
+})))
+
+test("a session removed while its turn is open here leaves nothing of that turn held once the turn's scope closes", () => withLog((log) => Effect.gen(function* () {
+  const made = yield* makeSessions(sessionsDefaults).pipe(Effect.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))
+  const sessions = Context.get(made.context, Sessions)
+  const address = yield* created(sessions)
+  yield* Effect.scoped(sessions.begin(address, say("open")).pipe(Effect.andThen(sessions.remove(address))))
+  expect([...(yield* made.released).keys()]).toEqual([])
 })))
 
 test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it",() => withLog((log) => Effect.gen(function* () {

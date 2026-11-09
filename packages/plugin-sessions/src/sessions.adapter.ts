@@ -203,7 +203,15 @@ interface Known {
 /** What a resume's check reads of a `turn.started`: its origin and the turn it resumed, never the message and its images. */
 const decodeResumeKeys = Schema.decodeUnknownEffect(TurnStartedData.mapFields(Struct.pick(["origin", "resumes"])))
 
-export const SessionsLive = (config: SessionsConfig, options?: { readonly liveness?: ProcessLiveness }): Layer.Layer<Sessions | TurnActivity | TurnShutdown | WaitingInput, HarnessError, SessionLog | TurnAdmission> => Layer.effectContext(Effect.gen(function* () {
+export const SessionsLive = (config: SessionsConfig, options?: { readonly liveness?: ProcessLiveness }): Layer.Layer<Sessions | TurnActivity | TurnShutdown | WaitingInput, HarnessError, SessionLog | TurnAdmission> =>
+  Layer.effectContext(makeSessions(config, options).pipe(Effect.map((made) => made.context)))
+
+/**
+ * What `SessionsLive` builds: its services, and the turns this instance let
+ * go of per session (`released`), which only its tests read. Not exported by
+ * the package.
+ */
+export const makeSessions = Effect.fnUntraced(function* (config: SessionsConfig, options?: { readonly liveness?: ProcessLiveness }) {
   yield* Schema.decodeUnknownEffect(Ownership)(config.ownership).pipe(
     Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: "@xandreed/plugin-sessions", message: `ownership: ${error.message}` })))
   const log = yield* SessionLog
@@ -780,7 +788,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // turn open in the head under this instance: let it go, so it is not held here until the process exits.
       const letGoUnended = Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.fromNullishOr(all.get(writerKey(address))), {
         onNone: () => Effect.void,
-        onSome: (open) => open.turn !== turn ? Effect.void : open.ended.pipe(Effect.flatMap((ended) => ended ? Effect.void : letGo(address.id, turn, open.writer.admitted.runId))),
+        // A turn of a session removed meanwhile is held by nobody: nothing to let go of (no commit would ever forget it).
+        onSome: (open) => open.turn !== turn ? Effect.void : Effect.all([open.ended, open.removed], { concurrency: 1 }).pipe(
+          Effect.flatMap(([ended, removed]) => ended || removed ? Effect.void : letGo(address.id, turn, open.writer.admitted.runId))),
       })))
       // Runs after the writer's own finalizers (last added, first run): the turn counts until its end is stored.
       yield* Effect.addFinalizer(() => letGoUnended.pipe(
@@ -1030,7 +1040,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const waiting = WaitingInput.of({ current, cached, idle })
 
   // Each call but `changes` is a `sessions.<op>` span, with the session's id (`efferent.session.id`) on it and on its logs.
-  return Context.make(TurnActivity, activity).pipe(Context.add(TurnShutdown, shutdown), Context.add(WaitingInput, waiting), Context.add(Sessions, Sessions.of({
+  const context = Context.make(TurnActivity, activity).pipe(Context.add(TurnShutdown, shutdown), Context.add(WaitingInput, waiting), Context.add(Sessions, Sessions.of({
     create: Effect.fn("sessions.create")(function* (input) {
       const id = input.id ?? (yield* freshId)
       yield* Effect.annotateCurrentSpan(sessionAttributes(id))
@@ -1083,37 +1093,48 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }
     }),
     remove: Effect.fn("sessions.remove")(function* (address) {
+      /**
+       * Let go of a removed session here: the turns let go of under its id,
+       * its waiting input, this instance's turns of it (closed as removed)
+       * and its waiters. Not interrupted half way.
+       */
+      const letGoLocally = (reference: SessionRef) => Effect.uninterruptible(Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== reference.id))).pipe(
+        Effect.andThen(forget(address)),
+        Effect.andThen(closeLocal(reference, "removed", Option.none())),
+        Effect.andThen(wake(address, true)),
+      ))
       // A session already removed is SessionMissing. Given its reference, the log is asked to remove it again first,
       // which finishes a removal that stopped after its tombstone (a crash, an unreachable mount) and changes nothing else.
       // Only when no session holds the id, or the owner's own session does (the reference is a life of it before):
-      // another owner's reference never reaches the log.
-      const finishable = (reference: SessionRef) => log.head(reference.id).pipe(
-        Effect.map((now) => now.header.owner === reference.owner),
-        Effect.catchTag("SessionMissing", () => Effect.succeed(true)),
+      // another owner's reference never reaches the log. Then this instance lets go of that life as a removal does
+      // (of its turns only, while the owner's later life holds the id).
+      const finishing = (reference: SessionRef) => log.head(reference.id).pipe(
+        Effect.map((now): "vacant" | "later" | "another" => now.header.owner === reference.owner ? "later" : "another"),
+        Effect.catchTag("SessionMissing", () => Effect.succeed<"vacant" | "later" | "another">("vacant")),
       )
       const head = yield* owned(address).pipe(Effect.catchTag("SessionMissing", (missing) => Option.match(Schema.decodeUnknownOption(SessionRef)(address), {
         onNone: () => Effect.fail(missing),
-        onSome: (reference) => finishable(reference).pipe(
-          Effect.flatMap((ours) => ours ? log.remove(reference).pipe(Effect.catchTag("SessionMissing", () => Effect.void)) : Effect.void),
+        onSome: (reference) => finishing(reference).pipe(
+          Effect.flatMap((holder) => holder === "another" ? Effect.void : Effect.exit(log.remove(reference).pipe(Effect.catchTag("SessionMissing", () => Effect.void))).pipe(
+            Effect.tap(() => holder === "vacant" ? letGoLocally(reference) : Effect.uninterruptible(closeLocal(reference, "removed", Option.none()))),
+            Effect.flatten,
+          )),
           Effect.andThen(Effect.fail(missing)),
         ),
       })))
       const reference = sessionRef(head)
-      yield* Effect.uninterruptible(Effect.gen(function* () {
-        const removed = yield* Effect.exit(log.remove(reference))
-        // A removal that failed once the session is gone (it stopped after its tombstone) is a removal here all the same:
-        // this instance lets go of the session and closes its turns, then reports the failure.
+      // The store's removal may be interrupted (a store that keeps what it did, such as the files log, finishes it at its
+      // next removal or open); what this instance does once the session is gone is not.
+      yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+        const removed = yield* Effect.exit(restore(log.remove(reference)))
+        // A removal that failed or was interrupted once the session is gone (it stopped after its tombstone) is a removal
+        // here all the same: this instance lets go of the session and closes its turns, then reports how it ended.
         const gone = Exit.isSuccess(removed) || (yield* log.head(address.id).pipe(
           Effect.map((now) => !sameSession(reference, now)),
           Effect.catchTag("SessionMissing", () => Effect.succeed(true)),
           Effect.catchTag("SessionLogError", () => Effect.succeed(false)),
         ))
-        if (gone) {
-          yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
-          yield* forget(address)
-          yield* closeLocal(reference, "removed", Option.none())
-          yield* wake(address, true)
-        }
+        if (gone) yield* letGoLocally(reference)
         return yield* removed
       }))
     }, onSession),
@@ -1179,4 +1200,5 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     })).pipe(Effect.map((done) => done.result)), onSession),
     drain,
   })))
-}))
+  return { context, released: Ref.get(released) }
+})

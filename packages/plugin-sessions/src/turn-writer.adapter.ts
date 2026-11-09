@@ -115,6 +115,8 @@ export interface OpenWriter {
   readonly writer: TurnWriter
   readonly close: (reason: ClosedBy) => Effect.Effect<void>
   readonly ended: Effect.Effect<boolean>
+  /** Whether it was closed because its session was removed. */
+  readonly removed: Effect.Effect<boolean>
   /** Count the inbox items the turn took as tried, though it wrote nothing (a drain `run` that interrupted itself). */
   readonly markTried: Effect.Effect<void>
   /** A held reply's outcome, before the closing commit; a drain preserves a partial reply. */
@@ -597,6 +599,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     writer,
     close: closeBy,
     ended: phaseNow.pipe(Effect.map(WriterPhase.guards.Ended)),
+    removed: phaseNow.pipe(Effect.map((current) => WriterPhase.guards.Closed(current) && current.reason === "removed")),
     markTried: Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) })),
     replyEnding: phaseNow.pipe(Effect.map((current) => WriterPhase.match(current, {
       Open: (open) => replyEndingOf(open.closing), Ending: (ending) => Option.some(ending.ending),

@@ -230,9 +230,12 @@ export class Sessions extends Context.Service<Sessions, {
    * Remove a session and its children; an open turn on this instance is
    * closed. A session already removed is `SessionMissing`; given its
    * `SessionRef`, the store is first asked to remove it again, which
-   * finishes a removal that stopped part way (the file log). A removal that
-   * fails once the session is gone still closes this instance's turns of it,
-   * then fails with the store's error.
+   * finishes a removal that stopped part way (the file log), and this
+   * instance's turns of that life are closed too. A removal that fails, or is
+   * interrupted while the store removes it, once the session is gone still
+   * closes this instance's turns of it, then fails (or is interrupted) as the
+   * store's removal was; the store's removal can be interrupted, what this
+   * instance does once the session is gone cannot.
    */
   readonly remove: (address: SessionAddress) => Effect.Effect<void, SessionMissing | SessionLogError>
   /**
