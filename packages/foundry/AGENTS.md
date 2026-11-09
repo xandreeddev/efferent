@@ -107,7 +107,10 @@ bun test packages/foundry                  # colocated unit tests (no LLM, no ne
 `--update-baseline` only shrinks the baseline. `--allow-grow` grandfathers
 new findings and prints a warning: a profile with `baseline: "empty"` (the
 repo profile, so `bun run typecheck` and CI) grandfathers nothing and fails
-with `quality/baseline-empty` while the file holds a fingerprint. Never use
+with `quality/baseline-empty` while the file holds a fingerprint. A gate
+crash (`foundry/gate-crashed`, `foundry/verifier-unavailable`) is never
+compared with the baseline: it fails the check, and the update refuses to
+write while one stands, `--allow-grow` or not. Never use
 either flag against this repository's `.foundry/baseline.json`: fix the
 finding, or, where type erasure is the design, add the file to
 `ERASURE_BOUNDARY` in the root `foundry.config.ts` with the reason in the PR.

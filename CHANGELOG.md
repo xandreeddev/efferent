@@ -129,6 +129,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
+- `foundry check --baseline` never grandfathers a gate crash: a crash finding
+  fails the check whatever the baseline holds, and `--update-baseline`
+  refuses to write while a gate crashed, even with `--allow-grow`.
 - `architecture/no-raw-promise-core` also flags an `Effect.run*` runner
   passed as a value (`pipe(Effect.runFork)`) or imported by name from
   `effect/Effect`, in the library and the vendored pack.

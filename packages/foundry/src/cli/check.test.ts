@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema, Tracer } from "effect"
-import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
+import { BaselineFile, baselineRefusal, fingerprint } from "../domain/baseline.js"
+import { RuleId } from "../domain/Brands.js"
+import { Finding } from "../domain/Finding.js"
 import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
@@ -402,7 +404,7 @@ describe("vendored packs — plain twins of the library", () => {
 
 /** A one-rule workspace (`local/no-fixme`) for the baseline flows; `fixme`
  *  seeds the one finding. */
-const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty"; readonly fixme: boolean }): string => {
+const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty"; readonly fixme: boolean; readonly crash?: boolean }): string => {
   const dir = mkdtempSync(path.join(tmpdir(), "foundry-baseline-"))
   writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
   mkdirSync(path.join(dir, "src"), { recursive: true })
@@ -413,10 +415,13 @@ const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty";
       "export const customRules = [{",
       '  id: "local/no-fixme", defaultSeverity: "error", description: "no FIXME", fixHint: "fix it",',
       '  check: (ctx) => ctx.sourceFile.text.includes("FIXME") ? [{ node: ctx.sourceFile, message: "FIXME marker" }] : [],',
+      "}, {",
+      '  id: "local/explodes", defaultSeverity: "warning", description: "always crashes", fixHint: "n/a",',
+      '  check: () => { throw new Error("boom") },',
       "}]",
       "export default {",
       '  tsconfig: "tsconfig.json",',
-      '  rules: [{ rule: "local/no-fixme", include: ["src/**"] }],',
+      `  rules: [{ rule: "local/no-fixme", include: ["src/**"] }${options.crash === true ? ', { rule: "local/explodes", include: ["src/**"] }' : ""}],`,
       "  typecheck: false,",
       ...(options.policy === undefined ? [] : [`  baseline: "${options.policy}",`]),
       "}",
@@ -512,6 +517,29 @@ describe("the baseline policy", () => {
       allowGrow: true,
     })
     expect(ratchet.output).toContain("WARNING: --allow-grow grandfathered 1 NEW finding")
+  })
+})
+
+describe("a crashed gate and the baseline", () => {
+  const crashFingerprint = fingerprint(
+    new Finding({ rule: RuleId.make("foundry/gate-crashed"), severity: "error", message: "any", location: Option.none(), fixHint: Option.none() }),
+    Option.none(),
+  )
+
+  test("a crash fails the check even when the baseline holds the crash's fingerprint", async () => {
+    const dir = seedBaselineWorkspace({ fixme: false, crash: true })
+    const result = await check(dir, { baseline: writeBaseline(dir, [crashFingerprint]) })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("[foundry/gate-crashed]")
+  })
+
+  test("--update-baseline --allow-grow refuses to write while a gate crashed, and never stores its fingerprint", async () => {
+    const dir = seedBaselineWorkspace({ fixme: true, crash: true })
+    const baseline = writeBaseline(dir, [])
+    const result = await check(dir, { baseline, update: true, allowGrow: true })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("REFUSING to update while a gate crashed")
+    expect(storedFingerprints(baseline)).toEqual([])
   })
 })
 
