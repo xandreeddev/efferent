@@ -42,7 +42,7 @@ describe("formatProblems", () => {
 
   test("a changed shape without a bump is a problem that names it and the format to raise to", () => {
     expect(formatProblems(recorded, shapesWith(Added), 1)).toEqual([
-      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 2 and name the change in CHANGELOG.md",
+      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 2, name the change in CHANGELOG.md and state the new format where scripts/session-store-docs.test.ts requires it",
     ])
   })
 
@@ -54,7 +54,7 @@ describe("formatProblems", () => {
     expect(bumped.history[0]?.fingerprint).toBe(original.fingerprint)
     expect(formatProblems(Option.some(bumped), added, 2)).toEqual([])
     expect(formatProblems(Option.some(bumped), shapesWith(Tightened), 2)).toEqual([
-      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 3 and name the change in CHANGELOG.md",
+      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 3, name the change in CHANGELOG.md and state the new format where scripts/session-store-docs.test.ts requires it",
     ])
   })
 

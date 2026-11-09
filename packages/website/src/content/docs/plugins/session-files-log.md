@@ -60,6 +60,10 @@ The format is identical to the combined file plugin:
 A removed session keeps only its claim and its tombstone: its header,
 commits and quarantined bytes are deleted.
 
+Only layout 2 is supported. Other markers and nonempty unmarked roots are
+refused with `store.version` without mutation. Configure a fresh location;
+there is no migration or automatic deletion.
+
 A commit holds metadata, head state, ordered event rows, and a length/CRC-32
 trailer. The SDK's recorded messages, tool results, requests and lifecycle
 records become these rows. The log does not read arbitrary workspace files

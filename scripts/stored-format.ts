@@ -128,7 +128,7 @@ export const formatProblems = (recorded: Option.Option<StoredFormatRecord>, curr
         ? [`STORED_FORMAT is ${format}, below the last recorded format ${last}: a format is never lowered`]
         : format > last + 1 ? [`STORED_FORMAT is ${format}, but the last recorded format is ${last}: bump it by one`] : []
       const unbumped = format === last && history.at(-1)?.fingerprint !== current.fingerprint
-        ? [`A stored shape changed (${changedShapes(record.shapes, current.shapes).join(", ")}) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to ${last + 1} and name the change in CHANGELOG.md`]
+        ? [`A stored shape changed (${changedShapes(record.shapes, current.shapes).join(", ")}) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to ${last + 1}, name the change in CHANGELOG.md and state the new format where scripts/session-store-docs.test.ts requires it`]
         : []
       const idle = format === last + 1 && history.at(-1)?.fingerprint === current.fingerprint
         ? [`STORED_FORMAT was raised to ${format}, but no stored shape changed since format ${last}: a format names a change`]

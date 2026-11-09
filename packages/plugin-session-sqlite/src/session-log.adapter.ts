@@ -41,7 +41,7 @@ const HeadRow = Schema.Struct({
   revision: Schema.Int,
   state: JsonColumn,
   updated_at: Schema.Number,
-  /** Empty for a row a release without schema 2 wrote into a file this release migrated (it fences nothing). */
+  /** The session's incarnation, given when its row is created. */
   incarnation: SessionIncarnation,
 })
 
@@ -94,7 +94,8 @@ const operation = <A>(work: () => A) => whileBusy(Effect.try({ try: work, catch:
 const onSession = <A, E, R>(effect: Effect.Effect<A, E, R>, id: ConversationId): Effect.Effect<A, E, R> =>
   Effect.annotateCurrentSpan("efferent.session.id", id).pipe(Effect.andThen(effect))
 
-const SCHEMA_VERSION = 3
+/** The only schema (`PRAGMA user_version`) this release opens: any other is refused with `store.version`. */
+export const SCHEMA_VERSION = 3
 const CURRENT_SCHEMA = `
   CREATE TABLE session_heads (
     id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
@@ -171,14 +172,14 @@ export const openSessionDatabase = Effect.fn("session_log.open")(function* (path
   )
   yield* operation(() => chmodSync(path, 0o600))
   yield* operation(() => db.exec("PRAGMA busy_timeout = 0; PRAGMA foreign_keys = ON;"))
-  // Switching a new file to WAL takes a lock that another process opening it at once may hold: tried until it is WAL.
+  // Under the write lock, so a process never creates its tables over a schema another is still writing.
   yield* initializeSessionDatabase(db)
+  // Switching a new file to WAL takes a lock that another process opening it at once may hold: tried until it is WAL.
   yield* whileBusy(Effect.try({
     try: () => db.query<{ readonly journal_mode: string }, []>("PRAGMA journal_mode = WAL").get()?.journal_mode,
     catch: failure("store.io"),
   }).pipe(Effect.filterOrFail((mode) => mode === "wal", (mode) => new SessionLogError({ code: "store.busy", message: `the journal stayed ${mode ?? "unknown"}, not WAL` }))))
   yield* operation(() => db.exec("PRAGMA synchronous = NORMAL;"))
-  // Under the write lock, so a process never creates its tables over a schema another is still writing.
   return db
 })
 

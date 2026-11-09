@@ -9812,8 +9812,8 @@
     },
     {
       "code": "session.version",
-      "where": "plugin-sessions' `Sessions` (a `SessionLogError`), before it plans a write",
-      "meaning": "A newer release wrote the session: the stored format in its head (`STORED_FORMAT`) is above this release's. Nothing was written: `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` refuse it, while `get`, `list` and `read` still read it. Use that release or a later one."
+      "where": "plugin-sessions' `Sessions` and its turn writer (a `SessionLogError`), before anything is read or planned",
+      "meaning": "The stored format in the session's head is not this release's `STORED_FORMAT`: older, newer or absent (a session stored before formats were stamped). Every operation on the session refuses it, `get`, `list`, `read`, `remove`, `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` alike, and one such session fails a whole `list` page of its owner. Nothing was written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
     },
     {
       "code": "session.defect",
@@ -9868,7 +9868,7 @@
     {
       "code": "store.version",
       "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`), opening the store",
-      "meaning": "A newer release wrote the store: the SQLite file's schema version (`PRAGMA user_version`), or the directory's layout (`store.json`), is above the last one this release knows. Nothing was read or written; open it with that release or a later one. A SQLite file without a version, as 0.14.0 wrote it, still opens."
+      "meaning": "The store is not at the one physical version this release opens, older or newer: for SQLite, a schema version (`PRAGMA user_version`) other than the release's, or an unversioned database that is nonempty (read from a read-only connection, before its mode, WAL or main file can change); for the file store, a `store.json` layout other than the release's, or a nonempty directory without one. Only an empty database or directory is initialized. Nothing was read or written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
     },
     {
       "code": "tasks.encode",
