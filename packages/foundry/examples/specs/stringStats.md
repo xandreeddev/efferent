@@ -10,7 +10,7 @@ Implement a `stringStats` module at `src/stringStats.ts`.
 ## Acceptance (the gates)
 
 - `longest` returns `Option<string>`, never `string | undefined` (`effect/no-nullable-return`).
-- No `let` bindings — state is folded (`effect/no-let`).
+- Failures are values: no `try`/`catch` or `throw` (`effect/no-try-catch`), and no `as any` (`effect/no-as-any`).
 - The module typechecks under `strict` + `noUncheckedIndexedAccess` (`typecheck`).
 
 This spec is what `bun run foundry demo` forges: the scripted implementor fails

@@ -158,7 +158,7 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 
 | Area | Spans |
 |---|---|
-| sdk, core | `agent.turn.begin`, `agent.turn`, `turn.persist_reply`, `skills.collect`, `plugin.activate`, the in-memory log's `session_log.<op>` |
+| sdk, core | `agent.turn.begin`, `agent.turn`, `turn.persist_reply`, `skills.collect`, the in-memory log's `session_log.<op>` |
 | plugin-sessions | `sessions.<op>` (each `Sessions` call but `changes`), `turn_writer.commit`, `turn_writer.flush`, `turn_writer.end` |
 | plugin-session-sqlite | `session_log.open`, `session_log.<create\|head\|list\|read\|commit\|remove>` |
 | plugin-models | `providers.generate` (around `models.credentials`, the build and the request), `models.utility` |
@@ -166,7 +166,7 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 | plugin-tasks | `tasks.<op>`, `task.run` |
 | plugin-workspace | `bash.exec`, `skills.settle` |
 | plugin-render | `render.emit` |
-| evals | `eval.run`, `eval.trial`, `eval.grade`, `eval.regrade`, `eval.calibrate`, `eval.calibration.execute`, `eval.calibration.project`, `eval.pairwise`, `eval.retrieval.assess`, `eval.semantic.run`, `eval.semantic.llm`, `eval.semantic.jev`, `eval.evaluator` |
+| evals | `eval.run`, `eval.trial`, `eval.grade`, `eval.regrade`, `eval.calibrate`, `eval.calibration.execute`, `eval.calibration.project`, `eval.retrieval.assess`, `eval.semantic.run`, `eval.semantic.llm`, `eval.semantic.jev`, `eval.evaluator` |
 | evals exporters, evals-cli | `eval.export`, `eval.cli` |
 | foundry | `foundry.check`, `foundry.run`, `foundry.attempt`, `foundry.pipeline`, `foundry.gate` |
 
