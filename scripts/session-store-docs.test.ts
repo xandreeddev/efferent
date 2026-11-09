@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { STORED_FORMAT } from "@xandreed/core"
 import { FILES_LAYOUT } from "../packages/plugin-session-files/src/session-files.entity.js"
 import { SCHEMA_VERSION } from "../packages/plugin-session-sqlite/src/session-log.adapter.js"
+import { MAX_SSE_LINE_CHARS, MAX_TOOL_ARGUMENT_CHARS, MAX_TOOL_CALLS } from "../packages/plugin-models/src/llm/sse.js"
 
 /*
  * The guides name the one stored format, file layout and SQLite schema this
@@ -11,6 +12,8 @@ import { SCHEMA_VERSION } from "../packages/plugin-session-sqlite/src/session-lo
  * `STORED_FORMAT`, `FILES_LAYOUT` or the SQLite `SCHEMA_VERSION` fails here
  * until every page states the new one. The error-code reference describes
  * the refusal as the code makes it: every other version, reads included.
+ * The providers page states the bounds of an OpenAI-compatible stream with
+ * the numbers `src/llm/sse.ts` enforces.
  */
 
 const root = join(import.meta.dir, "..")
@@ -55,4 +58,13 @@ describe("the session store versions in the guides", () => {
     expect(store).toContain("configure a fresh store")
     expect(store).not.toContain("still opens")
   })
+})
+
+test("the providers page states the bounds an OpenAI-compatible stream is held to", async () => {
+  const page = (await read(website("concepts/providers.md"))).replace(/\s+/g, " ")
+  const grouped = (value: number) => value.toLocaleString("en-US")
+  expect(page).toContain(`at most ${MAX_TOOL_CALLS} tool calls`)
+  expect(page).toContain(`at most ${grouped(MAX_TOOL_ARGUMENT_CHARS)} characters (UTF-16 code units)`)
+  expect(page).toContain(`at most ${grouped(MAX_SSE_LINE_CHARS)} characters`)
+  expect(page).toContain("`model.invalid-response`")
 })

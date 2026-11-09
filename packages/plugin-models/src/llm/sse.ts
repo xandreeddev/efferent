@@ -237,8 +237,8 @@ const emptyAccum: ToolCallAccum = { id: "", name: "", args: "", streamed: Option
 /** The id a call's argument stream is grouped by: the provider's, else its wire index's. */
 const streamIdOf = (call: ToolCallAccum, index: number): string => call.id.length > 0 ? call.id : `call-${index}`
 
-const MAX_TOOL_CALLS = 128
-const MAX_TOOL_ARGUMENT_CHARS = 1_048_576
+export const MAX_TOOL_CALLS = 128
+export const MAX_TOOL_ARGUMENT_CHARS = 1_048_576
 
 /** The calls of a stream by wire index, and the parts merging a chunk's fragments emitted. */
 type ToolMerge = readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>]
@@ -430,7 +430,7 @@ const step = (
  * it is decoded: room for one call's largest arguments fragment
  * (`MAX_TOOL_ARGUMENT_CHARS`) even with every character escaped.
  */
-const MAX_SSE_LINE_CHARS = 8_388_608
+export const MAX_SSE_LINE_CHARS = 8_388_608
 
 /**
  * The length of the line still open once `text` follows an open line of
