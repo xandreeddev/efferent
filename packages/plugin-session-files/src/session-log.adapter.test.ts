@@ -213,6 +213,31 @@ describe("the directory", () => {
     expect(readFileSync(join(empty, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2 })}\n`)
   })
 
+  test.each(["the root", "its sessions"] as const)("a handle that inspects %s of a fresh directory while another opens it and creates a session opens it too", async (inspected) => {
+    const root = mkdtempSync(join(directory, "fresh-race-"))
+    const id = ConversationId.make(crypto.randomUUID())
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const resumed = Effect.runPromise(Deferred.await(release))
+      const gate = { armed: true }
+      const target = inspected === "the root" ? root : join(root, "sessions")
+      // An empty sessions folder makes the late handle look inside it too.
+      if (inspected === "its sessions") mkdirSync(target)
+      // The late handle stops right before it lists what it inspects, until the other has opened and created a session.
+      const late = yield* Effect.forkChild(makeSessionLogFiles(root, { io: { ...nodeFilesIo, list: (path) => gate.armed && path === target
+        ? (gate.armed = false, Effect.runFork(Deferred.succeed(entered, undefined)), resumed.then(() => nodeFilesIo.list(path)))
+        : nodeFilesIo.list(path) } }))
+      yield* Deferred.await(entered)
+      const first = yield* makeSessionLogFiles(root)
+      yield* first.create({ header: header(id), state: {} })
+      yield* Deferred.succeed(release, undefined)
+      const opened = yield* Effect.exit(Fiber.join(late))
+      return Exit.isSuccess(opened) ? (yield* opened.value.head(id)).revision : Option.getOrUndefined(Exit.findErrorOption(opened))?.code
+    })))
+    expect(observed).toBe(0)
+  })
+
   test("a directory without hard links is refused with store.open", async () => {
     const noLinks: FilesIo = { ...nodeFilesIo, link: () => Promise.reject(Object.assign(new Error("not supported"), { code: "EPERM" })) }
     const outcome = await Effect.runPromise(Effect.scoped(outcomeOf(makeSessionLogFiles(mkdtempSync(join(directory, "nolinks-")), { io: noLinks }))))

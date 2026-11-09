@@ -200,17 +200,27 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   const existing = yield* readMarker.pipe(Effect.map(Option.some), Effect.catchIf(vanished, () => Effect.succeedNone))
   const unsupported = (layout: number) => new SessionLogError({ code: "store.version", message: `the session directory uses unsupported layout ${layout}; configure a fresh store for layout ${FILES_LAYOUT}` })
   if (Option.isSome(existing) && existing.value.layout !== FILES_LAYOUT) return yield* Effect.fail(unsupported(existing.value.layout))
+  /**
+   * What an unmarked directory looks like is settled by its marker read
+   * again: another handle may have initialized it since (and created
+   * sessions in it), so a marker of this layout opens it, another fails,
+   * and still none fails as unsupported layout 0.
+   */
+  const refuseUnmarked: Effect.Effect<void, SessionLogError> = readMarker.pipe(Effect.map(Option.some), Effect.catchIf(vanished, () => Effect.succeedNone), Effect.flatMap((marker) => Option.match(marker, {
+    onNone: (): Effect.Effect<void, SessionLogError> => Effect.fail(unsupported(0)),
+    onSome: (found): Effect.Effect<void, SessionLogError> => found.layout === FILES_LAYOUT ? Effect.void : Effect.fail(unsupported(found.layout)),
+  })))
   if (Option.isNone(existing)) {
     const contents = yield* call("list", root, () => io.list(root)).pipe(
       Effect.catchIf((error) => isCode(error, "ENOENT"), () => Effect.succeed<ReadonlyArray<string>>([])),
       Effect.mapError(storeError("store.open", "inspect the new store")),
     )
-    if (contents.length > 0) {
-      if (contents.some((name) => !["sessions", "staging", "quarantine"].includes(name))) return yield* Effect.fail(unsupported(0))
+    if (contents.some((name) => !["sessions", "staging", "quarantine"].includes(name))) yield* refuseUnmarked
+    else if (contents.length > 0) {
       const occupied = yield* Effect.forEach(["sessions", "quarantine"], (name) => call("list", join(root, name), () => io.list(join(root, name))).pipe(
         Effect.catchIf((error) => isCode(error, "ENOENT"), () => Effect.succeed<ReadonlyArray<string>>([])), Effect.mapError(storeError("store.open", "inspect an initializing store")),
       ), { concurrency: 1 })
-      if (occupied.some((names) => names.length > 0)) return yield* Effect.fail(unsupported(0))
+      if (occupied.some((names) => names.length > 0)) yield* refuseUnmarked
     }
   }
   yield* Effect.forEach([root, sessionsDir, stagingDir, join(root, "quarantine")], (path) =>
