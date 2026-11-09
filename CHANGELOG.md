@@ -51,10 +51,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   queue fails with `events.capacity`; into another subscription's full queue
   it waits for room. A background `capacity` must be a positive safe integer:
   `Infinity` (previously an unbounded lane) and other values die with
-  `config.limits` at subscribe. Provider SSE permits at most 128 tool calls and 1 MiB of
-  accumulated arguments per call. A tool-call index the stream sends must be a
-  nonnegative safe integer; one it leaves out or sends as `null` is call 0, as
-  before.
+  `config.limits` at subscribe. Provider SSE permits at most 128 tool calls,
+  1,048,576 characters (UTF-16 code units) of accumulated arguments per call
+  and lines of at most 8,388,608 characters; a longer line fails the stream
+  with `InvalidResponseError` before it is decoded. A tool-call index the
+  stream sends must be a nonnegative safe integer; one it leaves out or sends
+  as `null` is call 0, as before.
 - Blanket `no-let` and `no-loop-statements` gates are removed. Confined builders
   are allowed; resource ownership, typed errors and architectural boundaries
   remain enforced. No service keys are renamed.
@@ -97,8 +99,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   interrupted. The SessionLog recovery kit's `interrupted-commit` check
   interrupts the commit itself again, never a head read before it.
 - Settle model-attempt acknowledgements on ledger defects, close resources
-  outside registry admission, bound event reentry and provider SSE input, and
-  cancel scripted hooks, regex workers, workspace temporaries and implementors.
+  outside registry admission, bound event reentry and a provider stream's
+  line length, tool-call count and per-call arguments (a chunk packed with
+  fragments of one call is merged in linear time), and cancel scripted hooks,
+  regex workers, workspace temporaries and implementors.
 - The in-memory file system treats a trailing separator as the native one
   does in `stat` without following links, `rename`, `write` and `append`; a
   refused write no longer leaves a directory at its target.

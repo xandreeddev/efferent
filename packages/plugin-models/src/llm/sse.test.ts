@@ -711,6 +711,43 @@ test("a stream cannot accumulate unbounded distinct calls or argument data", asy
   expect([calls.reason._tag, argumentsFailure.reason._tag]).toEqual(["InvalidResponseError", "InvalidResponseError"])
 })
 
+/** The longest SSE line, in characters, a stream may send; a longer one fails before it is decoded. */
+const MAX_LINE = 8_388_608
+const [LINE_OPEN, LINE_CLOSE] = ["data: {\"choices\":[{\"delta\":{\"content\":\"", "\"}}]}"]
+/** A decodable content line of exactly `length` characters. */
+const contentLine = (length: number) => `${LINE_OPEN}${"x".repeat(length - LINE_OPEN.length - LINE_CLOSE.length)}${LINE_CLOSE}`
+/** `bytes` in pieces of 1 MiB, so no piece ends a line. */
+const inPieces = (bytes: Uint8Array): ReadonlyArray<Uint8Array> =>
+  Array.from({ length: Math.ceil(bytes.length / 1_048_576) }, (_, at) => bytes.subarray(at * 1_048_576, (at + 1) * 1_048_576))
+
+test("a line of the longest length a stream may send is read, whether it arrives in pieces or whole", async () => {
+  const text = `${contentLine(MAX_LINE)}\n\ndata: [DONE]\n\n`
+  const deltas = (parts: ReadonlyArray<unknown>) => parts.flatMap((part) => typeof part === "object" && part !== null && "type" in part && part.type === "text-delta" && "delta" in part && typeof part.delta === "string" ? [part.delta.length] : [])
+  expect([deltas(await collect(text, inPieces)), deltas(await collect(text))]).toEqual([[MAX_LINE - LINE_OPEN.length - LINE_CLOSE.length], [MAX_LINE - LINE_OPEN.length - LINE_CLOSE.length]])
+})
+
+test.each([
+  ["in pieces, with no line break until its end", inPieces],
+  ["whole, between two other lines", (bytes: Uint8Array) => [bytes]],
+] as const)("a longer line fails the stream as an invalid response before it is decoded, arriving %s", async (_, pieces) => {
+  const text = `data: {"choices":[{"delta":{"content":"a"}}]}\n\n${contentLine(MAX_LINE + 1)}\n\ndata: [DONE]\n\n`
+  const error = await Effect.runPromise(Effect.flip(Stream.runDrain(sseStreamParts({ moduleName: "Test", body: bodyFromChunks(pieces(enc.encode(text))) }))))
+  expect(error.reason).toMatchObject({ _tag: "InvalidResponseError", description: `the stream sent a line longer than ${MAX_LINE} characters` })
+})
+
+test("a line packed with many fragments of one call is merged in time linear in their number", async () => {
+  const count = 100_000
+  const fragments = [
+    { index: 0, id: "packed", function: { name: "echo", arguments: "{\"a\":\"" } },
+    ...Array.from({ length: count }, () => ({ index: 0, function: { arguments: "x" } })),
+    { index: 0, function: { arguments: "\"}" } },
+  ]
+  const parts = await collect(wire(JSON.stringify({ choices: [{ delta: { tool_calls: fragments }, finish_reason: "tool_calls" }] }), "[DONE]"))
+  const typed = parts.flatMap((part) => typeof part === "object" && part !== null && "type" in part && typeof part.type === "string" ? [part.type] : [])
+  expect([typed.filter((type) => type === "tool-params-delta").length, parts.find((part) => typeof part === "object" && part !== null && "type" in part && part.type === "tool-call")])
+    .toEqual([count + 2, { type: "tool-call", id: "packed", name: "echo", params: { a: "x".repeat(count) } }])
+}, 5_000)
+
 test("interleaved calls sent out of index order stream in arrival order and are emitted in index order, each with its own arguments", async () => {
   const fragment = (index: number, fields: object) => JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, ...fields }] } }] })
   const parts = await collect(wire(
