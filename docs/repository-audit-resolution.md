@@ -41,8 +41,9 @@ the additional observations are recorded below the matrix.
 - A background handler's publication into its own full queue fails with
   `events.capacity`; other producers, other lanes' handlers included, wait
   interruptibly. Background capacity is a positive safe integer. Provider SSE permits 128 tool
-  calls and 1 MiB of accumulated arguments per call; indices must be nonnegative
-  safe integers.
+  calls, 1,048,576 characters of accumulated arguments per call and lines of at
+  most 8,388,608 characters; an index that is sent must be a nonnegative safe
+  integer, and an absent or `null` one is call 0.
 - The blanket `no-let` and `no-loop-statements` rules are retired. Confined local
   builders are allowed; typed failures, scoped ownership, decoding, bounded work,
   architectural boundaries and stable service keys remain required.
