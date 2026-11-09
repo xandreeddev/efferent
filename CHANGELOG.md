@@ -86,7 +86,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-session-files` and `@xandreed/plugin-session-sqlite`:
   only file layout 2 and SQLite schema 3 open. Older or newer stores and
   unmarked nonempty ones are refused with `store.version` without
-  migration or deletion.
+  migration or deletion (a file store's `staging/` may hold names the store
+  writes, which another handle opening the same new directory staged there;
+  any other name in it counts as content).
+- `@xandreed/plugin-session-files`: file layout 2 keeps, for every
+  generation ever created under an id, a permanent claim
+  (`sessions/<id>/claims/<generation>.json`: the id, the incarnation and
+  when it was claimed) and, once it is removed, a permanent tombstone
+  (`sessions/<id>/removed/<incarnation>`). 0.19.2 deleted a removed
+  session's whole folder; now `sessions/` gains an entry for every id ever
+  created, and removal deletes only the payload under `lives/` and the
+  bytes set aside under `quarantine/<id>.<incarnation>/`. Removing a
+  reference whose removal finished does nothing (`SessionMissing`, no
+  listing and no write).
 - `@xandreed/core`: the Sessions kit. Its subjects expose an
   unsupported-format probe (`newerFormat`: any format but the current one,
   refused for reads too) that returns a snapshot of the stored head. The kit
@@ -141,27 +153,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Fixed
 
-- Fence session operations against replacement owners and incarnations, check
-  sealed-turn cancellation ownership, and retain immutable file generations
-  and tombstones through removal races and crashes.
-- `@xandreed/plugin-session-files`: removing a session deletes its header,
-  metadata, initial state, commits and quarantined bytes, and its
-  children's: only a minimal claim (id, incarnation, creation time) and a
-  tombstone stay. A removal that fails or stops after its tombstone is
-  finished by removing the reference again or by the next open, and a
-  creation that stopped after its claim is settled the same way.
-  `Sessions.remove` given the session's `SessionRef` finishes it too, and a
-  `Sessions.remove` that fails once its session is gone still closes that
-  instance's turns of it before it reports the failure. Listing and
-  removing read only the sessions not removed, so their work no longer grows
-  with every session ever created. Another session's damaged header no
+- Fence session operations against replacement owners and incarnations, and
+  check sealed-turn cancellation ownership.
+- `@xandreed/plugin-session-files`: another session's damaged header no
   longer fails a listing or a removal, and a reference whose id or
   incarnation is not a UUID is `SessionMissing` before any path is built
-  from it. As in 0.19.2, two handles may open a fresh directory at once, and
-  every open checks for hard links (a store copied onto a mount without them
-  is refused with `store.open`). A read after a position finds its first
-  commit by a binary search over the commits' first lines, so the commits
-  before it are not read.
+  from it. A read after a position finds its first commit by a binary search
+  over the commits' first lines, so the commits before it are not read.
 - `@xandreed/core`: the in-memory `SessionLog` refuses a fork parent of
   another owner with `SessionMissing`, as the file and SQLite logs do, and
   its removal follows only children that name the removed session whole.
