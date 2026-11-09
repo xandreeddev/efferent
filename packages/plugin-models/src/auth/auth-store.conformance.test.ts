@@ -3,7 +3,7 @@ import { Clock, Deferred, Effect, Match, Option, Redacted, Ref, Schema, Semaphor
 import { ProviderId } from "@xandreed/core"
 import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
-import type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./auth-store.conformance.js"
+import type { AuthStoreSubject, AuthStoreRefreshProbe } from "./auth-store.conformance.js"
 
 type Store = typeof AuthStore.Service
 
@@ -34,7 +34,9 @@ const reference = Effect.gen(function* () {
   })
 })
 
-const failedChecks = (store: Store, options: AuthStoreConformanceOptions = {}) => Effect.runPromise(Effect.forEach(authStoreConformance(store, options), (check) =>
+type Options = { readonly refresh?: AuthStoreRefreshProbe; readonly corrupt?: Effect.Effect<void, never, import("effect").Scope.Scope> }
+const subjectOf = (store: Store, options: Options = {}): AuthStoreSubject => ({ refresh: !!options.refresh, corrupt: !!options.corrupt, open: () => Effect.succeed({ store, ...(options.refresh ? { refresh: options.refresh } : {}), corruptions: options.corrupt ? [options.corrupt] : [] }) })
+const failedChecks = (store: Store, options: Options = {}) => Effect.runPromise(Effect.forEach(authStoreConformance(subjectOf(store, options)), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))).pipe(Effect.map((failed) => failed.flat().toSorted())))
 
 /** A token endpoint in Effect: it counts requests and, while held, keeps each one waiting. */
@@ -109,36 +111,32 @@ const refreshingReference = (behaviour: { readonly locked: boolean; readonly che
     remove: (provider) => readable(write(provider, Option.none()), undefined),
   })
   const corrupt = Effect.acquireRelease(Ref.set(damaged, true), () => Ref.set(damaged, false))
-  return { store, options: { refresh: probe, corrupt } satisfies AuthStoreConformanceOptions }
+  return { store, options: { refresh: probe, corrupt } satisfies Options }
 })
 
 describe("the AuthStore kit", () => {
-  const store = Effect.runSync(reference)
-  authStoreConformance(store).map((check) => test(check.name, async () => {
+  const subject: AuthStoreSubject = { open: () => reference.pipe(Effect.map((store) => ({ store }))) }
+  authStoreConformance(subject).map((check) => test(check.name, async () => {
     const exit = await Effect.runPromise(Effect.result(check.run))
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
 
-  test("leaves a shared store as it found it", async () => {
-    await failedChecks(store)
-    expect((await Effect.runPromise(store.all)).size).toBe(0)
+  test("checks pass in either order with fresh fixtures", async () => {
+    const checks = authStoreConformance(subject)
+    const run = (ordered: typeof checks) => Effect.runPromise(Effect.forEach(ordered, (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect((await run(checks)).every((result) => result._tag === "Success")).toBe(true)
+    expect((await run(checks.toReversed())).every((result) => result._tag === "Success")).toBe(true)
   })
 })
 
 describe("the AuthStore kit over a store with a refresh flow and backing data", () => {
-  const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "fail" }))
-  authStoreConformance(store, options).map((check) => test(check.name, async () => {
+  const subject: AuthStoreSubject = { refresh: true, corrupt: true, open: () => refreshingReference({ locked: true, checked: true, damaged: "fail" }).pipe(
+    Effect.map(({ store, options }) => ({ store, ...(options.refresh ? { refresh: options.refresh } : {}), corruptions: [options.corrupt] })),
+  ) }
+  authStoreConformance(subject).map((check) => test(check.name, async () => {
     const exit = await Effect.runPromise(Effect.result(check.run))
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
-
-  test("puts back the probe's provider as it found it, and sends one request per refresh check", async () => {
-    await Effect.runPromise(store.set(options.refresh.provider, { type: "api_key", key: Redacted.make("the host's own") }))
-    const sent = await Effect.runPromise(options.refresh.requests)
-    expect(await failedChecks(store, options)).toEqual([])
-    expect(plain(Option.getOrThrow(await Effect.runPromise(store.get(options.refresh.provider))))).toEqual({ type: "api_key", key: "the host's own" })
-    expect(await Effect.runPromise(options.refresh.requests)).toBe(sent + 2)
-  })
 })
 
 describe("the AuthStore kit catches stores that break the contract", () => {

@@ -215,18 +215,22 @@ describe("the turn event bus", () => {
     ])
   })
 
-  test("a background handler that publishes what it takes, past its queue's size, neither deadlocks nor drops or reorders it", async () => {
-    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("a reentrant publication fails at capacity without overflowing or deadlocking", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const events = yield* makeTurnEvents({ maxDepth: 4 })
-      const seen = yield* Ref.make<ReadonlyArray<number>>([])
-      yield* onEvent("step.started", (event) => Ref.update(seen, (all) => [...all, event.step]).pipe(
-        Effect.andThen(event.step === 0 ? Effect.forEach([1, 2, 3], (step) => events.publish(started(step)), { discard: true }) : Effect.void),
-      ), { mode: "background", capacity: 1 })(events)
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      yield* onEvent("step.started", (event) => event.step === 0 ? Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)), Effect.andThen(events.publish(started(2))),
+      ) : Effect.void, { mode: "background", capacity: 1 })(events)
       yield* events.publish(started(0))
-      const drained = yield* events.drain.pipe(Effect.timeoutOption("2 seconds"))
-      return { drained: Option.isSome(drained), seen: yield* Ref.get(seen) }
+      yield* Deferred.await(entered)
+      yield* events.publish(started(1))
+      yield* Deferred.succeed(release, undefined)
+      return yield* Effect.result(events.drain)
     })))
-    expect(outcome).toEqual({ drained: true, seen: [0, 1, 2, 3] })
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure") expect(failureCode(result.failure)).toBe("events.capacity")
   })
 
   test("a publisher waiting for room in a full background queue can be interrupted, even where it is uninterruptible", async () => {

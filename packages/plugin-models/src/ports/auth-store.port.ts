@@ -35,6 +35,7 @@ export type Credential = typeof Credential.Type
 export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
   provider: Schema.String,
   message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
   /**
    * `auth.corrupt`: the store's backing data could not be read or decoded.
    * Nothing was read as absent and nothing was written over it.

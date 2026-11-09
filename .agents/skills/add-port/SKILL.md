@@ -35,8 +35,9 @@ export class Thing extends Context.Service<Thing, {
 
 - Name intents (`Bash.exec`, `FileSystem.list`), never a provider or SDK.
   Give it the fewest methods its callers need.
-- Methods return `Effect` or `Stream` with `R = never`. Only a callback
-  pass-through carries the caller's `R` (`Sessions.drain`).
+- Methods return `Effect` or `Stream` with explicit requirements. Ordinary
+  operations use `R = never`; caller-owned resources may require `Scope`, and
+  factories/callback pass-throughs retain their declared generic requirements.
 - Expected failures: a `Schema.TaggedError` with a `reason` literal
   (`BashError { reason, message }`). Absence: `Option`. Outcomes the caller
   reads (a non-zero exit, a timeout) are results, not errors. The doc
@@ -107,6 +108,6 @@ export class Thing extends Context.Service<Thing, {
 - [ ] New key `@xandreed/<package>/<Name>`; no existing key renamed
 - [ ] Methods are `Effect.fn("<thing>.<method>")`
 - [ ] Kit exported from its entry (core: `src/conformance/index.ts`) and self-tested against careless stubs
-- [ ] Every adapter runs the kit on Bun and, packed, on Node
+- [ ] Every adapter runs its kit on each declared runtime; SQLite is Bun only
 - [ ] One foreign-error mapping per adapter; no provider types escape
 - [ ] docs:generate, CHANGELOG, typecheck, tests

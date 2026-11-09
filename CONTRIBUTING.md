@@ -25,7 +25,9 @@ The tests expect no proxy in the environment: Bun's fetch sends even the
 loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
 those unset (the proxy tests that would go direct skip when one is set).
 
-## The gates are the review
+## Gates and semantic review
+
+Gates check declared syntax and dependency contracts. Review must also assess ownership, races, bounded work, algorithmic cost, meaningful assertions and current documentation. Confined local builders are allowed when mutation does not escape. Passing a gate does not establish these semantic properties.
 
 The definition of done is the root `AGENTS.md` "Definition of done": the
 commands `.github/workflows/ci.yml` runs, in order. Its "Gate rules" table

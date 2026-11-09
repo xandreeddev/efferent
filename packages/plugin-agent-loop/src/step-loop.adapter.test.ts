@@ -1,8 +1,10 @@
+import { prepareToolkit } from "@xandreed/core"
+import type { PreparedToolkit } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Response, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Schema, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, StreamPartId, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, harnessError, isTurnError, makeTurnEvents, makeTurnTasks, modelFailureCodeOf, modelFailureOf, plannedCallIdOf, reasonOf, RunId, RunOrdinal, StepLoop, StepLoopReferences, StreamPartId, ToolCallId, TurnClosed, zeroUsage } from "@xandreed/core"
 import { extractUsage, foldStreamParts, responseText, responseToAgentMessages, responseToolCalls, toPromptMessages, withToolCallIds } from "@xandreed/core/internal"
 import { stepLoopConformance } from "@xandreed/core/conformance"
 import { acceptedModelInputOf, harnessDefectsAsFailures, modelOverflowEvidenceOf } from "@xandreed/core"
@@ -511,7 +513,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
   const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
   yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]).pipe(
     Effect.andThen(options.failOn !== undefined && event._tag === options.failOn.tag ? Effect.fail(options.failOn.error) : Effect.void)))
-  const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.empty
+  const toolkit: PreparedToolkit<Record<string, Tool.Any>> = prepareToolkit(Toolkit.empty)
   const tools: RunTools = {
     toolkit, handlers: yield* toolkit.toHandlers({}), active: Effect.succeed([]), activate: () => Effect.succeed([]),
     match: (userMessage) => Effect.succeed({ userMessage, skills: [], probabilities: Option.none(), record: Option.none() }),
@@ -655,4 +657,11 @@ test("the recorded-results check catches a loop that drops the durable snapshot 
   expect(check).toBeDefined()
   const result = await Effect.runPromise(Effect.result(check?.run ?? Effect.void))
   expect(result._tag === "Failure" ? result.failure.check : "passed").toBe("recorded-results")
+})
+
+test("the awaiting contract remains causal when planning takes longer than task scheduling", async () => {
+  const slow = StepLoop.of({ id: "slow-plan", version: "1", run: (request) => runSteps({ ...request, plan: (info) => request.plan(info).pipe(Effect.delay("50 millis")) }) })
+  const check = stepLoopConformance(slow).find((check) => check.name.startsWith("an awaiting verdict"))!
+  const result = await Effect.runPromise(Effect.result(check.run))
+  expect(result._tag === "Failure" ? result.failure.message : "ok").toBe("ok")
 })

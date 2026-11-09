@@ -43,21 +43,21 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `start_task`, `task_status` and the four helper control descriptions | `src/tasks-capability.adapter.ts:8`, `:16`, `:24`, `:28`, `:32`, `:36` | exact, `src/tasks-capability.adapter.test.ts:11-12`, `src/tasks-capability.adapter.test.ts:17-22` |
-| Failures: `TaskRefused` (a nested task; `maxRunning` reached), `UnknownTask`, `TasksUnavailable` | `src/tasks.adapter.ts:437`, `:463`; `src/tasks-capability.adapter.ts:77`, `:52`, `:41` | exact, `src/tasks.adapter.test.ts:364`, `:360` (`start_task` returns a refusal's text as it is, `src/tasks-capability.adapter.test.ts:89`); `src/tasks-capability.adapter.test.ts:64-65`, `:90-91`; the nested task's refusal as a model reads it through an agent, `packages/sdk/src/tasks.journey.test.ts` |
-| The notice: `[Background task <id> <how it stands>]`, the status in words (`statusText`: `completed`, `stopped before it finished`, `failed`, `was cancelled`, `was interrupted`, `has not started yet`, `is still running`; never the status's name), and the reply in `<task-output>` | `src/task.entity.functions.ts:143`, `:121-130` | exact, `src/tasks.adapter.test.ts:128`, `:275`, `:290`; every status, `src/task.entity.functions.test.ts:55` |
-| A reply clipped to `replyChars` (core's `clipTo`: `[… N characters clipped]`) that cannot close the frame | `src/task.entity.functions.ts:141` | exact, `src/tasks.adapter.test.ts:581` |
-| `(no reply: <failure message>)` with `task.lost`, `task.deadline` or `task.turn`'s message, or a failed turn's (a `HarnessError`'s own message; the other `TurnError` tags in words, `failureText`); `(no reply)` | `src/task.entity.functions.ts:140`, `:58`, `:102`, `:105`, `:113`, `:114`, `:85-91`, `:73-79` | exact, `src/task.entity.functions.test.ts:45-51` (`(no reply)`, `task.deadline`, `task.turn`, a tag's, a `HarnessError`'s); `src/tasks.adapter.test.ts:290` (`task.lost`), `:380`, `:436` (a host's reason) |
+| `start_task`, `task_status` and the four helper control descriptions | `src/tasks-capability.adapter.ts:8`, `:16`, `:24`, `:28`, `:32`, `:36` | exact assertion suites `src/tasks-capability.adapter.test.ts#exact-assertions` |
+| Failures: `TaskRefused` (a nested task; `maxRunning` reached), `UnknownTask`, `TasksUnavailable` | `src/tasks.adapter.ts:437`, `:463`; `src/tasks-capability.adapter.ts:77`, `:52`, `:41` | exact assertion suites `src/tasks.adapter.test.ts#exact-assertions`; `src/tasks-capability.adapter.test.ts#exact-assertions`; `packages/sdk/src/tasks.journey.test.ts#exact-assertions` |
+| The notice: `[Background task <id> <how it stands>]`, the status in words (`statusText`: `completed`, `stopped before it finished`, `failed`, `was cancelled`, `was interrupted`, `has not started yet`, `is still running`; never the status's name), and the reply in `<task-output>` | `src/task.entity.functions.ts:143`, `:121-130` | exact assertion suites `src/tasks.adapter.test.ts#exact-assertions`; `src/task.entity.functions.test.ts#exact-assertions` |
+| A reply clipped to `replyChars` (core's `clipTo`: `[… N characters clipped]`) that cannot close the frame | `src/task.entity.functions.ts:141` | exact assertion suites `src/tasks.adapter.test.ts#exact-assertions` |
+| `(no reply: <failure message>)` with `task.lost`, `task.deadline` or `task.turn`'s message, or a failed turn's (a `HarnessError`'s own message; the other `TurnError` tags in words, `failureText`); `(no reply)` | `src/task.entity.functions.ts:140`, `:58`, `:102`, `:105`, `:113`, `:114`, `:85-91`, `:73-79` | exact assertion suites `src/task.entity.functions.test.ts#exact-assertions`; `src/tasks.adapter.test.ts#exact-assertions` |
 
 The following helper texts extend the model contract:
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Question notice fixed header/instruction, framed canonical task and question ids, and clipped question text | `src/task-controls.entity.functions.ts:37` | exact, `src/task-controls.entity.functions.test.ts:7` |
-| Parent answer host note and framed canonical question id/clipped text | `src/task-controls.entity.functions.ts:43` | exact, `src/task-controls.entity.functions.test.ts:7` |
-| Inactive, waiting, one-question, unknown-question and context refusals | `src/task-controls.entity.functions.ts:48` | exact, `src/task-controls.entity.functions.test.ts:17`; the unknown question id, `src/tasks.adapter.test.ts:702` |
-| Waiting status in words, `needs your answer` | `src/task.entity.functions.ts:124` | exact, `src/task.entity.functions.test.ts:55` |
-| Task control context/conflict failures | `src/tasks-capability.adapter.ts:46`, `:49` | exact, `src/tasks-capability.adapter.test.ts:111-112` |
+| Question notice fixed header/instruction, framed canonical task and question ids, and clipped question text | `src/task-controls.entity.functions.ts:37` | exact assertion suites `src/task-controls.entity.functions.test.ts#exact-assertions` |
+| Parent answer host note and framed canonical question id/clipped text | `src/task-controls.entity.functions.ts:43` | exact assertion suites `src/task-controls.entity.functions.test.ts#exact-assertions` |
+| Inactive, waiting, one-question, unknown-question and context refusals | `src/task-controls.entity.functions.ts:48` | exact assertion suites `src/task-controls.entity.functions.test.ts#exact-assertions`; `src/tasks.adapter.test.ts#exact-assertions` |
+| Waiting status in words, `needs your answer` | `src/task.entity.functions.ts:124` | exact assertion suites `src/task.entity.functions.test.ts#exact-assertions` |
+| Task control context/conflict failures | `src/tasks-capability.adapter.ts:46`, `:49` | exact assertion suites `src/tasks-capability.adapter.test.ts#exact-assertions` |
 
 ## Erasure files
 

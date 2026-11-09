@@ -133,6 +133,7 @@ export {
   SessionHead,
   SessionHeader,
   SessionIncarnation,
+  SessionRef,
   SessionLineage,
   SessionListCursor,
   SessionListQuery,
@@ -141,7 +142,7 @@ export {
   SessionMissing,
   SessionReadQuery,
 } from "./session/session-log.entity.js"
-export { isRevisionConflict, isStoreBusy, storedJson } from "./session/session-log.entity.functions.js"
+export { isRevisionConflict, isStoreBusy, storedJson, sessionRef, sameSession } from "./session/session-log.entity.functions.js"
 export { SessionLog } from "./ports/session-log.port.js"
 export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
 export {
@@ -464,36 +465,10 @@ export { recordDecision } from "./decision-record.entity.functions.js"
 export { CollectSkillFilesOptions, SkillFile, SkillFileIssue, SkillFilesOptions, SkillTree, SkillTreeEntry } from "./harness/skill-files.entity.js"
 export { collectSkillFiles, readSkillFiles, skillIssuesText, skillsFromFiles } from "./harness/skill-files.entity.functions.js"
 
-// Declared in `internal/` and still a root name, as the same value or a
-// type of the same shape: a root entry may not re-export what that folder
-// declares (`scripts/api-snapshot.ts`).
-import * as glob from "./internal/glob.entity.functions.js"
-import * as mapping from "./internal/mapping.entity.functions.js"
-import * as toolSchema from "./internal/tool-schema.entity.functions.js"
-
-export const compileGlob: typeof glob.compileGlob = glob.compileGlob
-/** @public */
-export interface GlobMatcher extends glob.GlobMatcher {}
-/** @public */
-export interface GlobMatchOptions extends glob.GlobMatchOptions {}
-/** @public */
-export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
-/** @public */
-export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
-/**
- * A tool's parameters as the model sees them, in the model-facing JSON Schema
- * form: a host fingerprints the tool contracts it sends, to version them.
- *
- * @public
- */
-export const toolParametersSchema: typeof toolSchema.toolParametersSchema = toolSchema.toolParametersSchema
-/**
- * Any schema in the model-facing JSON Schema form tool parameters take: a
- * host fingerprints the contracts it sends beside its tools, to version them.
- *
- * @public
- */
-export const strictJsonSchema: typeof toolSchema.strictJsonSchema = toolSchema.strictJsonSchema
+export { compileGlob } from "./workspace/glob.entity.functions.js"
+export type { GlobMatcher, GlobMatchOptions } from "./workspace/glob.entity.functions.js"
+export { assistantModel, assistantUsage } from "./domain/message-mapping.entity.functions.js"
+export { toolParametersSchema, strictJsonSchema } from "./turn/tool-schema.entity.functions.js"
 
 export { ImageResizer } from "./ports/image-resizer.port.js"
 export { ImageInput, ImageFitTarget, ImageResizeReason, ImageResizeError } from "./domain/image-resize.entity.js"
@@ -529,3 +504,6 @@ export { KnowledgeExtraction, KnowledgeExtractionSpan, KnowledgeExtractedEntity,
 export { KnowledgeQueryPlan, KnowledgeRerank } from "./knowledge/knowledge-query.entity.js"
 export { knowledgeQueryPrompt, knowledgeRerankPrompt, applyKnowledgeRerank, budgetKnowledgeRecall } from "./knowledge/knowledge-query.entity.functions.js"
 export { KNOWLEDGE_EXTRACTION_VERSION, knowledgeExtractionPrompt, knowledgeReviewPrompt, stageKnowledgeExtraction, mergeKnowledgeRestatements, knowledgeExtractionWindows, extractKnowledge } from "./knowledge/knowledge-extraction.entity.functions.js"
+
+export { prepareToolkit } from "./turn/prepared-toolkit.adapter.js"
+export type { PreparedToolkit, PreparedToolCall, PreparedToolHandler, PreparedToolExecution } from "./ports/prepared-toolkit.port.js"

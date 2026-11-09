@@ -91,10 +91,10 @@ prompts. This package owns the following text contracts:
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Tool descriptions, parameter descriptions, skill summary and failure messages | `src/rag-capability.adapter.ts:12` | exact, `src/rag-capability.adapter.test.ts:11` |
-| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:33` | exact, `src/rag-capability.adapter.test.ts:33` |
-| Traversal result-limit note | `src/rag.entity.functions.ts:42` | exact, `src/rag-capability.adapter.test.ts:34` |
-| Source page framing and continuation | `src/rag.entity.functions.ts:51` | exact, `src/rag-capability.adapter.test.ts:35`; exact, `src/rag-capability.adapter.test.ts:36` |
+| Tool descriptions, parameter descriptions, skill summary and failure messages | `src/rag-capability.adapter.ts:12` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
+| Retrieved evidence and turn-section rendering | `src/rag.entity.functions.ts:33` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
+| Traversal result-limit note | `src/rag.entity.functions.ts:42` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
+| Source page framing and continuation | `src/rag.entity.functions.ts:51` | exact assertion suites `src/rag-capability.adapter.test.ts#exact-assertions` |
 
 ## Tests
 

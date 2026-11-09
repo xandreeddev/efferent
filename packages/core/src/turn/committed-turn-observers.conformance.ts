@@ -1,6 +1,7 @@
 import { Effect, Ref } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect } from "../conformance.functions.js"
+import { SessionIncarnation } from "../session/session-log.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
 import { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
@@ -10,7 +11,7 @@ import type { CommittedTurn } from "./committed-turn.entity.js"
 /** Notification application edge, implemented by notifyCommittedTurn. @public */
 export type CommittedTurnNotifier = (turn: CommittedTurn, observers: ReadonlyArray<CommittedTurnObserver>) => Effect.Effect<void>
 
-const turn: CommittedTurn = { session: { id: ConversationId.make("00000000-0000-4000-8000-0000000000c1"), owner: "fixture" }, runId: RunId.make("committed-fixture"), turn: 1 }
+const turn: CommittedTurn = { session: { id: ConversationId.make("00000000-0000-4000-8000-0000000000c1"), owner: "fixture", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, runId: RunId.make("committed-fixture"), turn: 1 }
 
 /** Sequential delivery, independent snapshots, soft failures and bounded callbacks. @public */
 export const committedTurnObserversConformance = (notify: CommittedTurnNotifier): ReadonlyArray<ConformanceCheck> => [

@@ -59,7 +59,7 @@ export const SessionsState = Schema.Struct({
    * session whose format is above this release's is refused for writes and
    * turns (`session.version`).
    */
-  format: Schema.optionalKey(Schema.Int),
+  format: Schema.Int,
   /** The highest turn number begun (a fork starts from its parent's). */
   turns: Schema.Int,
   open: Schema.OptionFromNullOr(HeldTurn),

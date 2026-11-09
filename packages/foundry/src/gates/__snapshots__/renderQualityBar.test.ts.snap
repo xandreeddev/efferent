@@ -1,0 +1,19 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`the armed quality bar renders exact model-facing instructions 1`] = `
+"## Quality bar (armed — violations WILL be rejected)
+effect/no-nullable-return
+Write to these rules the first time; fixHints arrive with any finding."
+`;
+
+exports[`the armed quality bar renders exact model-facing instructions 2`] = `
+"## Quality bar (ARMED in this workspace — the deterministic gates WILL reject violations; write to these rules the first time)
+- [effect/no-nullable-return] exported functions must not return \`A | undefined\` / \`A | null\` — fix: return Option<A> (Option.fromNullishOr at the boundary); keep nullable unions for wire schemas only"
+`;
+
+exports[`the armed quality bar renders exact model-facing instructions 3`] = `
+"## Standing quality contract (deterministic rules armed in this workspace)
+- effect/no-nullable-return: exported functions must not return \`A | undefined\` / \`A | null\`
+
+These rules are enforced by earlier gates — do NOT re-litigate style. DO treat EVASION of the contract (weakened or skipped tests, disabled rules, outputs shaped to satisfy a check) as dishonesty."
+`;

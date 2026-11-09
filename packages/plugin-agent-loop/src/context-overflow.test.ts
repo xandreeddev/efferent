@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
@@ -26,7 +27,7 @@ test("overflow after stream fallback keeps settled mode and frozen choices while
       streamText: () => Stream.unwrap(Ref.update(streamed, count => count + 1).pipe(Effect.as(Stream.fail(transient)))),
     })
     yield* runLoop({
-      system: "original", messages: [], toolkit: Toolkit.make(), streaming: true,
+      system: "original", messages: [], toolkit: prepareToolkit(Toolkit.make()), streaming: true,
       prepareModel: () => Ref.update(plans, count => count + 1).pipe(Effect.as({ model, system: Prompt.make([{ role: "system", content: "frozen system" }]) })),
       stepDirective: () => Ref.update(directives, count => count + 1).pipe(Effect.as({ toolChoice: Option.none() })),
       render: () => Ref.update(renders, count => count + 1).pipe(Effect.andThen(Ref.get(recoveries)), Effect.map(count => [{ role: "user", content: count === 0 ? "large old context" : "kept" }])),
@@ -55,7 +56,7 @@ test.each([{ errors: [image, overflow, image] }, { errors: [overflow, image, ove
       streamText: () => Stream.die("not scripted"),
     })
     const result = yield* Effect.result(runLoop({
-      system: "fixture", messages: [], toolkit: Toolkit.make(),
+      system: "fixture", messages: [], toolkit: prepareToolkit(Toolkit.make()),
       onMediaRejected: () => Ref.update(media, count => count + 1).pipe(Effect.as(true)),
       onContextOverflow: () => Ref.update(recovered, count => count + 1).pipe(Effect.as(true)),
       onTail: () => Ref.update(records, count => count + 1).pipe(Effect.as([])),
@@ -75,7 +76,7 @@ test.each(["render", "dispatch", "fallback-event"] as const)("a callback's overf
       streamText: () => Stream.unwrap(Ref.update(calls, count => count + 1).pipe(Effect.as(Stream.fail(transient)))),
     })
     const result = yield* Effect.result(runLoop({
-      system: "fixture", messages: [], toolkit: Toolkit.make(), streaming: stage === "fallback-event",
+      system: "fixture", messages: [], toolkit: prepareToolkit(Toolkit.make()), streaming: stage === "fallback-event",
       render: () => stage === "render" ? Effect.fail(overflow) : Effect.succeed([]),
       beforeDispatch: () => stage === "dispatch" ? Effect.fail(overflow) : Effect.void,
       onEvent: event => stage === "fallback-event" && event.type === "stream_fallback" ? Effect.fail(overflow) : Effect.void,
@@ -102,7 +103,7 @@ test.each(["silent", "empty-delta", "empty-tool-start", "visible"] as const)("a 
       streamText: () => Stream.unwrap(Ref.getAndUpdate(calls, count => count + 1).pipe(Effect.map(count => Stream.fromIterable(count === 0 ? failed : [{ type: "finish", reason: "stop", usage: { inputTokens: { total: 12 }, outputTokens: { total: 0 } } }])))),
     })
     const result = yield* Effect.result(runLoop({
-      system: "fixture", messages: [], toolkit: Toolkit.make(), streaming: true,
+      system: "fixture", messages: [], toolkit: prepareToolkit(Toolkit.make()), streaming: true,
       onContextOverflow: () => Ref.update(recoveries, count => count + 1).pipe(Effect.as(true)),
       onTail: () => Ref.update(records, count => count + 1).pipe(Effect.as([])),
     }).pipe(Effect.provideService(LanguageModel.LanguageModel, model)))
@@ -123,7 +124,7 @@ test.each(["render", "dispatch", "overflow-hook", "media-hook", "fallback-event"
         ? Stream.fromIterable<Response.StreamPartEncoded>([{ type: "text-start", id: "text" }, { type: "text-delta", id: "text", delta: "visible" }]) : Stream.fail(transient)))),
     })
     const result = yield* Effect.result(runLoop({
-      system: "fixture", messages: [], toolkit: Toolkit.make(), streaming: stage === "fallback-event" || stage === "delta",
+      system: "fixture", messages: [], toolkit: prepareToolkit(Toolkit.make()), streaming: stage === "fallback-event" || stage === "delta",
       render: () => stage === "render" ? Effect.fail(failure) : Effect.succeed([]),
       beforeDispatch: () => stage === "dispatch" ? Effect.fail(failure) : Effect.void,
       onContextOverflow: () => Effect.fail(failure),

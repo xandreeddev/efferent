@@ -21,13 +21,13 @@ const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) => Promise.all(ch
 
 /** A session's head state as the next release would leave it: its stored format one above this release's, the rest as it was. */
 const stampNewer = (log: Log) => (address: SessionAddress) => log.head(address.id).pipe(
-  Effect.flatMap((head) => log.commit(address.id, {
+  Effect.flatMap((head) => Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
     expect: head.revision,
     notAfter: Option.none(),
     events: [],
     state: Option.some({ ...head.state, sessions: { ...(head.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
-  })),
-  Effect.asVoid,
+  }) })),
+  Effect.as(log.head(address.id).pipe(Effect.map((head) => JSON.stringify({ ...head, now: 0 })))),
 )
 
 /**
@@ -82,7 +82,7 @@ describe("the Sessions kit catches careless backends", () => {
   })
 
   test("one over a log that ignores a commit's incarnation fails only the recreate check: a removed session's writer writes into the one created again", async () => {
-    const careless = SessionLog.of({ ...memoryLog, commit: (id, { incarnation: _incarnation, ...commit }) => memoryLog.commit(id, commit) })
+    const careless = SessionLog.of({ ...memoryLog, commit: (id, commit) => memoryLog.head(id.id).pipe(Effect.flatMap((head) => memoryLog.commit({ ...id, incarnation: head.incarnation }, commit))) })
     expect(await failedChecks(sessionsConformance(subjectOver(careless)))).toEqual(["recreate"])
   })
 
@@ -493,7 +493,7 @@ describe("the Sessions kit catches careless backends", () => {
   })
 
   test("one that never reads the stored format (the stamp does not reach it) fails only the stored-format check", async () => {
-    const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.void }
+    const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.succeed(Effect.succeed("unchanged")) }
     expect(await failedChecks(sessionsConformance(unread))).toEqual(["stored-format"])
   })
 

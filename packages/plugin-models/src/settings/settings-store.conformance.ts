@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
 import type { Context, Scope } from "effect"
-import { canonicalJson, harnessCodeOf, parseModelSelection } from "@xandreed/core"
+import { canonicalJson, harnessCodeOf } from "@xandreed/core"
 import { check, ConformanceFailure } from "@xandreed/core/conformance"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { randomUuid } from "@xandreed/core/internal"
@@ -28,39 +28,6 @@ const others = (settings: EngineSettings, except: Field): string =>
   canonicalJson(Object.fromEntries(FIELDS.filter((field) => field !== except).map((field) => [field, Option.getOrNull(valueOf(settings, field))])))
 /** A selection no real store holds, so the kit can run against a shared store. */
 const selection = (label: string): Effect.Effect<string> => Effect.map(randomUuid, (id) => `conformance:${label}-${id}`)
-
-const SELECTIONS: ReadonlySet<Field> = new Set(["model", "codeModel", "fastModel", "fallbackModel"])
-const COUNTS: ReadonlySet<Field> = new Set(["maxAttempts", "budgetMillis"])
-
-/**
- * Whether the kit can write `value` back to `field`: not a value the
- * contract makes every writable store refuse (a selection that is not
- * `"<provider>:<modelId>"`, a count below 1), as a store may still hold one
- * written before it checked its values.
- */
-const restorable = (field: Field, value: string): boolean =>
-  SELECTIONS.has(field) ? Option.isSome(parseModelSelection(value))
-    : COUNTS.has(field) ? Number.isInteger(Number(value)) && Number(value) >= 1
-    : true
-
-/**
- * Run `body`, then put `field` back as `load` read it before: the kit leaves
- * every key it touches as it found it. A field already equal to that value
- * is not written again, so a value read from a store's lower tier is not
- * copied into the tier it writes. A field holding a value the store would
- * refuse to write back fails check `id` before anything is written.
- */
-const restoring = (store: Store, id: string, field: Field, write: (value: Option.Option<string>) => Effect.Effect<void, unknown>) =>
-  <A, E>(body: Effect.Effect<A, E>): Effect.Effect<A, E | unknown> => store.load.pipe(Effect.flatMap((before) => Option.match(Option.filter(valueOf(before, field), (value) => !restorable(field, value)), {
-    onSome: (value): Effect.Effect<A, unknown> => fail(id, `the store holds ${field} "${value}", which a conforming store refuses to write, so the kit could not put it back; it changed nothing. Correct the value, then run the kit`),
-    onNone: (): Effect.Effect<A, unknown> => body.pipe(Effect.ensuring(store.load.pipe(
-      Effect.flatMap((after) => Option.getOrNull(valueOf(after, field)) === Option.getOrNull(valueOf(before, field)) ? Effect.void : write(valueOf(before, field))),
-      Effect.ignore({ log: "Warn", message: `the kit could not put back ${field}` }),
-    ))),
-  })))
-
-const restoringRole = (store: Store, id: string, role: ModelRole) => restoring(store, id, ROLE_FIELDS[role], (value) => store.setRole(role, value))
-const restoringKey = (store: Store, id: string, key: SettingsKey) => restoring(store, id, key, (value) => store.set(key, value))
 
 /** `write` must fail with a SettingsError and leave every value as it was. */
 const refused = (store: Store, id: string, what: string, write: Effect.Effect<void, unknown>) => Effect.gen(function* () {
@@ -95,22 +62,17 @@ const BAD: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string }> =
   { key: "reasoningEffort", text: "extreme" },
 ]
 
-/**
- * What the kit is told about a store, and can do to it beyond calling it.
- *
- * @public
- */
-export interface SettingsStoreConformanceOptions {
-  /** Whether `setRole` and `set` write, or every write is refused. */
+/** A fresh, scoped fixture per check. Its backing tiers may each supply a corruption probe. @public */
+export interface SettingsStoreSubject {
   readonly writable: boolean
-  /**
-   * Damage the store's backing data (a file that is not JSON) for the
-   * scope's lifetime, and repair it when the scope closes: the corrupt check.
-   * Damage what the store writes to, so a write that ignores the damage shows.
-   * A store with nothing to damage, such as one in memory, leaves it out.
-   */
-  readonly corrupt?: Effect.Effect<void, never, Scope.Scope>
+  readonly corrupt?: boolean
+  readonly open: () => Effect.Effect<{
+    readonly store: Store
+    readonly corruptions?: ReadonlyArray<Effect.Effect<void, never, Scope.Scope>>
+  }, unknown, Scope.Scope>
 }
+
+type CaseBuilder = (name: string, id: string, body: (store: Store) => Effect.Effect<void, unknown>) => ConformanceCheck
 
 /** `effect` must fail with a `SettingsError` of code `settings.corrupt`. */
 const corrupted = (what: string, effect: Effect.Effect<unknown, unknown>) => Effect.result(effect).pipe(Effect.flatMap((result) => {
@@ -136,44 +98,34 @@ const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<vo
       yield* expect("corrupt", snapshot(yield* store.load) === before, "once the backing data is repaired, the store does not read what it held before")
     })
     // A write that ignored the damage is put back like any other.
-    return writable ? body.pipe(restoringRole(store, "corrupt", "general"), restoringKey(store, "corrupt", "maxAttempts")) : body
+    return body
   })
 
 /**
- * The SettingsStore contract. Every store: `load` is stable. A writable
- * store: each role reads back what `setRole` wrote and clearing it returns
- * the value before the set; `set` accepts each key's canonical string form
- * and `load` gives it typed; `None` clears a key back to the value before the
- * set; a value that does not parse (a selection that is not
- * `"<provider>:<modelId>"`, a count that is not a whole number of at least
- * 1, an unknown effort) fails with a `SettingsError` and changes
- * nothing, through `set` and `setRole` alike. A read-only store refuses
- * every write with a `SettingsError` and changes nothing.
- *
- * The kit writes the store's shared keys (settings have no per-check ids),
- * and restores each key it touches; do not run it against settings that are
- * in use. A key it would touch that holds a value the store must refuse (a
- * selection that is not `"<provider>:<modelId>"`, a count below 1, left by
- * an older, unchecked write) could not be put back, so the check that would
- * touch it fails before writing anything.
- *
- * With `options.corrupt`, a store whose backing data cannot be read fails
- * `load` (and, writable, `setRole` and `set`) with a `SettingsError` of code
- * `settings.corrupt` instead of reading it as defaults.
- *
+ * Prove reads, writes, clearing, refusal and corruption against a fresh fixture
+ * for each check. The fixture owns its stores and cleanup. The kit never tries
+ * to restore merged effective settings into a writable tier.
  * @public
  */
-export const settingsStoreConformance = (store: Store, options: SettingsStoreConformanceOptions): ReadonlyArray<ConformanceCheck> => [
-  check("load is stable: two loads with no write between them agree", "load", () => Effect.gen(function* () {
-    const first = snapshot(yield* store.load)
-    yield* expect("load", snapshot(yield* store.load) === first, "two loads disagree")
-  })),
-  ...(options.writable ? writableChecks(store) : readOnlyChecks(store)),
-  ...Option.match(Option.fromNullishOr(options.corrupt), { onNone: () => [], onSome: (corrupt) => [corruptCheck(store, options.writable, corrupt)] }),
-]
+export const settingsStoreConformance = (subject: SettingsStoreSubject): ReadonlyArray<ConformanceCheck> => {
+  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(subject.open().pipe(Effect.flatMap(({ store }) => body(store)))))
+  return [
+    caseOf("load is stable: two loads with no write between them agree", "load", (store) => Effect.gen(function* () {
+      const first = snapshot(yield* store.load)
+      yield* expect("load", snapshot(yield* store.load) === first, "two loads disagree")
+    })),
+    ...(subject.writable ? writableChecks(caseOf) : readOnlyChecks(caseOf)),
+    ...(subject.corrupt ? [check("every backing tier refuses corrupt data without changing settings", "corrupt", () => Effect.scoped(Effect.gen(function* () {
+      const fixture = yield* subject.open()
+      const probes = fixture.corruptions ?? []
+      yield* expect("corrupt", probes.length > 0, "the subject declares corruption checks but supplies no probes")
+      yield* Effect.forEach(probes, (probe) => corruptCheck(fixture.store, subject.writable, probe).run, { concurrency: 1, discard: true })
+    })))] : []),
+  ]
+}
 
-const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
-  check("each role reads back what setRole wrote, and clearing it returns the value before the set", "role", () => Effect.forEach(ROLES, (role) => Effect.gen(function* () {
+const writableChecks = (caseOf: CaseBuilder): ReadonlyArray<ConformanceCheck> => [
+  caseOf("each role reads back what setRole wrote, and clearing it returns the value before the set", "role", (store) => Effect.forEach(ROLES, (role) => Effect.gen(function* () {
     const field = ROLE_FIELDS[role]
     yield* store.setRole(role, Option.none())
     const base = yield* store.load
@@ -184,8 +136,8 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     yield* expect("role", others(set, field) === others(base, field), `setting the ${role} role changed another value`)
     yield* store.setRole(role, Option.none())
     yield* expect("role", snapshot(yield* store.load) === snapshot(base), `clearing the ${role} role did not return the value before the set`)
-  }).pipe(restoringRole(store, "role", role)), { concurrency: 1, discard: true })),
-  check("set accepts each key's canonical string form and load reads it back typed", "values", () => selection("fallback").pipe(Effect.flatMap((fallback) => Effect.forEach([
+  }), { concurrency: 1, discard: true })),
+  caseOf("set accepts each key's canonical string form and load reads it back typed", "values", (store) => selection("fallback").pipe(Effect.flatMap((fallback) => Effect.forEach([
     ...CANONICAL,
     { key: "fallbackModel" as const, text: fallback, reads: undefined },
   ], ({ key, text, reads }) => Effect.gen(function* () {
@@ -196,8 +148,8 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     const read = Option.getOrNull(fieldOf(after, key))
     yield* expect("values", read === expected, `${key} "${text}" reads back as ${JSON.stringify(read)}`)
     yield* expect("values", others(after, key) === others(before, key), `setting ${key} changed another value`)
-  }).pipe(restoringKey(store, "values", key)), { concurrency: 1, discard: true })))),
-  check("None clears a key back to the value before the set", "clear", () => Effect.forEach(CLEARED, ({ key, texts }) => Effect.gen(function* () {
+  }), { concurrency: 1, discard: true })))),
+  caseOf("None clears a key back to the value before the set", "clear", (store) => Effect.forEach(CLEARED, ({ key, texts }) => Effect.gen(function* () {
     yield* store.set(key, Option.none())
     const base = yield* store.load
     // A value the key does not hold already, so a clear that changes nothing shows.
@@ -205,16 +157,16 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     yield* store.set(key, Option.some(text))
     yield* store.set(key, Option.none())
     yield* expect("clear", snapshot(yield* store.load) === snapshot(base), `clearing ${key} did not return the value before the set`)
-  }).pipe(restoringKey(store, "clear", key)), { concurrency: 1, discard: true })),
-  check("set refuses a value that does not parse with a SettingsError and changes nothing", "bad-values", () => Effect.forEach(BAD, ({ key, text }) =>
-    refused(store, "bad-values", `${key} "${text}"`, store.set(key, Option.some(text))).pipe(restoringKey(store, "bad-values", key)), { concurrency: 1, discard: true })),
-  check("setRole refuses a selection that is not \"<provider>:<modelId>\" with a SettingsError and changes nothing", "bad-role", () => Effect.forEach(ROLES, (role) =>
+  }), { concurrency: 1, discard: true })),
+  caseOf("set refuses a value that does not parse with a SettingsError and changes nothing", "bad-values", (store) => Effect.forEach(BAD, ({ key, text }) =>
+    refused(store, "bad-values", `${key} "${text}"`, store.set(key, Option.some(text))), { concurrency: 1, discard: true })),
+  caseOf("setRole refuses a selection that is not \"<provider>:<modelId>\" with a SettingsError and changes nothing", "bad-role", (store) => Effect.forEach(ROLES, (role) =>
     Effect.forEach(["not-a-selection", ":model", "provider:"], (text) => refused(store, "bad-role", `the ${role} role "${text}"`, store.setRole(role, Option.some(text))), { concurrency: 1, discard: true })
-      .pipe(restoringRole(store, "bad-role", role)), { concurrency: 1, discard: true })),
+      , { concurrency: 1, discard: true })),
 ]
 
-const readOnlyChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
-  check("a read-only store refuses every write with a SettingsError and changes nothing", "read-only", () => Effect.gen(function* () {
+const readOnlyChecks = (caseOf: CaseBuilder): ReadonlyArray<ConformanceCheck> => [
+  caseOf("a read-only store refuses every write with a SettingsError and changes nothing", "read-only", (store) => Effect.gen(function* () {
     yield* Effect.forEach(ROLES, (role) => Effect.all([
       selection(role).pipe(Effect.flatMap((value) => refused(store, "read-only", `setRole ${role}`, store.setRole(role, Option.some(value))))),
       refused(store, "read-only", `clearing the ${role} role`, store.setRole(role, Option.none())),

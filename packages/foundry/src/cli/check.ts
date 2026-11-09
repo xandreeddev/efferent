@@ -2,7 +2,7 @@ import { Array as Arr, Effect, Option, Schema } from "effect"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
-import { ConfigError, WorkspaceError } from "../domain/Errors.js"
+import { errorCodeOf, ConfigError, WorkspaceError } from "../domain/Errors.js"
 import type { Finding } from "../domain/Finding.js"
 import { GateSuiteConfig } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
@@ -124,7 +124,7 @@ export const fingerprintFindings = (
 const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, ConfigError> =>
   Effect.tryPromise({
     try: () => fs.readFile(baselinePath, "utf8"),
-    catch: () => new ConfigError({ path: baselinePath, message: "unreadable" }),
+    catch: (cause) => new ConfigError({ path: baselinePath, message: "cannot read the baseline", cause }),
   }).pipe(
     Effect.flatMap((text) =>
       Schema.decodeUnknownEffect(Schema.fromJsonString(BaselineFile))(text).pipe(
@@ -135,7 +135,7 @@ const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, 
     ),
     Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
     // An absent baseline means "nothing grandfathered", not an error.
-    Effect.catch(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
+    Effect.catchIf((error) => Option.contains(errorCodeOf(error.cause), "ENOENT"), () => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
   )
 
 const writeBaseline = (

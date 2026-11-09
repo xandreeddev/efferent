@@ -14,7 +14,7 @@ describe("renderQualityBar", () => {
     const config = decode({
       tsconfig: "tsconfig.json",
       rules: [
-        { rule: "effect/no-let", include: ["src/**"] },
+        { rule: "effect/no-nullable-return", include: ["src/**"] },
         { rule: "quality/no-skipped-tests", include: ["src/**"] },
       ],
       boundaries: {
@@ -27,7 +27,7 @@ describe("renderQualityBar", () => {
     const bar = Option.getOrThrow(renderQualityBar(config, registry))
     expect(bar.full).toContain("ARMED")
     expect(bar.full).toContain("write to these rules the first time")
-    expect(bar.full).toContain("[effect/no-let] `let` and `var` are banned — fix:")
+    expect(bar.full).toContain("[effect/no-nullable-return]")
     expect(bar.full).toContain("[quality/no-skipped-tests]")
     // Unarmed registry rules never appear.
     expect(bar.full).not.toContain("effect/no-try-catch")
@@ -42,7 +42,7 @@ describe("renderQualityBar", () => {
       rules: effectPack.rules.map((rule) => ({ rule: String(rule.id), include: ["src/**"] })),
     })
     const bar = Option.getOrThrow(renderQualityBar(config, registry))
-    expect(bar.compact).toContain("effect/no-let · ")
+    expect(bar.compact).toContain("effect/no-nullable-return · ")
     expect(bar.compact).not.toContain("fix:")
     expect(bar.compact.length).toBeLessThanOrEqual(800 + 30)
     expect(bar.judge).toContain("Standing quality contract")
@@ -56,7 +56,7 @@ describe("renderQualityBar", () => {
   test("byte-stable per config (prompt-cache friendly) and None when nothing is armed", () => {
     const config = decode({
       tsconfig: "tsconfig.json",
-      rules: [{ rule: "effect/no-let", include: ["src/**"] }],
+      rules: [{ rule: "effect/no-nullable-return", include: ["src/**"] }],
     })
     const first = Option.getOrThrow(renderQualityBar(config, registry))
     const second = Option.getOrThrow(renderQualityBar(config, registry))
@@ -72,4 +72,12 @@ describe("renderQualityBar", () => {
     })
     expect(Option.isNone(renderQualityBar(unknown, registry))).toBe(true)
   })
+})
+
+test("the armed quality bar renders exact model-facing instructions", () => {
+  const config = decode({ tsconfig: "tsconfig.json", rules: [{ rule: "effect/no-nullable-return", include: ["src/**"] }] })
+  const bar = Option.getOrThrow(renderQualityBar(config, registry))
+  expect(bar.compact).toMatchSnapshot()
+  expect(bar.full).toMatchSnapshot()
+  expect(bar.judge).toMatchSnapshot()
 })

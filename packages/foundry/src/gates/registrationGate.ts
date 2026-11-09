@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as ts from "typescript"
 import { GateName, RuleId } from "../domain/Brands.js"
-import { GateCrash } from "../domain/Errors.js"
+import { errorCodeOf, GateCrash } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import type {
   ConstRegistry,
@@ -39,12 +39,11 @@ const crash = (message: string, wrapped: { readonly cause?: unknown } = {}): Gat
 
 const Manifest = Schema.fromJsonString(Schema.Struct({ name: Schema.NonEmptyString }))
 
-/** A directory without a readable `package.json` is not a package. */
-const isFile = (file: string): Effect.Effect<boolean> =>
-  Effect.tryPromise({ try: () => fs.stat(file), catch: () => "absent" as const }).pipe(
+/** Only a missing manifest means that a directory is not a package. */
+const isFile = (file: string): Effect.Effect<boolean, GateCrash> =>
+  Effect.tryPromise({ try: () => fs.stat(file), catch: (cause) => crash(`cannot stat ${file}`, { cause }) }).pipe(
     Effect.map((stat) => stat.isFile()),
-    Effect.tapError(() => Effect.logDebug(`${file} is absent or unreadable`)),
-    Effect.orElseSucceed(() => false),
+    Effect.catchIf((error) => Option.contains(errorCodeOf(error.cause), "ENOENT"), () => Effect.succeed(false)),
   )
 
 /** Each child directory of a root that holds a `package.json`, by path. */

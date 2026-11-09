@@ -1,7 +1,9 @@
+import type { PreparedToolkit } from "@xandreed/core"
+import { prepareToolkit } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import {
@@ -55,7 +57,7 @@ const registry = ToolRegistry.of({
   open: () => Effect.gen(function* () {
     const run = yield* RunContext
     const active = yield* Ref.make<ReadonlyArray<string>>([])
-    const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make()
+    const toolkit: PreparedToolkit<Record<string, Tool.Any>> = prepareToolkit(Toolkit.make())
     const tools: RunTools = {
       toolkit,
       handlers: yield* toolkit.toHandlers({}),

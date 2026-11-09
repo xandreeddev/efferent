@@ -119,8 +119,7 @@ What the frames mean:
   endpoints alike stream them; a compatible endpoint's call sent without an
   id streams under `call-<index>` (its place among the reply's calls), and
   the loop mints the call's own id.
-- `assistant.message` is published once per provider response, after the
-  step's tools have run: it restates the step's text. Replace the step's
+- `assistant.message` is published once per provider response, after its complete assistant request is durable and before any tool handler runs: it restates the response's text. Replace the step's
   deltas with it. Its `finishReason` says why the response ended: `stop`,
   `tool-calls` and `pause` are whole; `length` (the output limit),
   `content-filter`, `error` and `other` cut it short, and so does
@@ -161,8 +160,8 @@ A handler is part of the turn:
 - A background queue holds 256 events unless the subscription's `capacity`
   says otherwise. When it is full, `publish` waits: a slow handler slows the
   step loop. A background handler's own publications never wait, to its own
-  subscription or another's: they are queued past the capacity, so a
-  handler that publishes what it takes cannot deadlock. A publisher waiting
+  subscription or another's: a full queue fails with `events.capacity`.
+  The capacity remains finite during reentry. A publisher waiting
   for room can always be interrupted.
 - On success the turn drains every background subscription before it
   records its reply. A handler that never returns keeps the reply from being
@@ -493,7 +492,8 @@ Across requests, instances and processes:
 
 - Every reader needs the same `SessionLog` the writer commits to.
   `SessionLogMemoryLive` is one process's memory, and `SessionLogSqliteLive`
-  (`@xandreed/plugin-session-sqlite`) a file on Bun; anything else is your
+  (`@xandreed/plugin-session-sqlite`) a file on Bun, and `SessionLogFilesLive`
+  (`@xandreed/plugin-session-files`) a shared directory on Node and Bun; other backends are your
   own store over your database, checked with `sessionLogConformance` and
   `sessionLogRecoveryConformance` (see [the sessions
   section](https://github.com/xandreeddev/efferent/blob/main/docs/framework.md#sessions-one-log-per-session)).
@@ -523,15 +523,15 @@ Three places say how a turn ended; two of them carry the failure's code:
 - `agent.turn`'s result: a `TurnResult` (`outcome`, `reply`, `usage`, and,
   for a turn it began, `pending`: the inbox items its end left waiting, a
   background task's result delivered meanwhile, which you drain), or a
-  failure with a `HarnessError` whose `code` says why.
-- The stored `turn.ended`: `reason` (completed, partial, failed, cancelled,
+  failure in the typed `TurnError` union (including begin/session errors); use `harnessCodeOf` for a framework code.
+- The stored `turn.ended`: `reason` (completed, partial, waiting, failed, cancelled,
   interrupted) and `failure`, `{ code, message }`. A turn that `Agent.turn`
   began ends with `turnEndingOf` its exit: the failing error's own code
   (a subscriber's, a plugin's, yours), else `turn.failed`, `turn.defect` or
   `turn.interrupted`. A turn its writer's scope closed before anyone ended it
   stores `turn.unended`, and a reaped one `turn.lease`. The
   [event reference](/docs/concepts/event-reference/#error-codes) lists them.
-- The live `turn.ended`: `outcome` (completed, partial or failed), `reply`
+- The live `turn.ended`: `outcome` (completed, partial, waiting or failed), `reply`
   and `usage`, no code.
 
 ## Resuming, leases and the busy signal
@@ -961,7 +961,7 @@ On the client, read the turn's stream with `fetch` and a stream reader
 (`EventSource` cannot send a POST or a body). When it drops, follow the
 journal route from the `after` of its `started` frame, and match records to
 frames by `turn` and `step`: the turn keeps running, and the text of each
-step arrives with its `memory.message` record once the step has ended.
+response arrives with its `memory.message` record before tool handlers run; final tool results are committed as they finish.
 
 ## Known limitations
 
@@ -970,8 +970,8 @@ step arrives with its `memory.message` record once the step has ended.
   is whole, and only the events after that carry it.
 - Bus events carry no `seq`: handing a client from the live stream to the
   journal takes a cursor the host reads, as the `started` frame's `after`
-  does. Deltas are never journaled, so a step's text reaches the journal
-  only once the step has ended.
+  does. Deltas are transient; the complete assistant response is journaled
+  before handlers, and each final result is stored as it completes.
 - `Sessions.changes` is per instance: a feed on another instance polls. To
   wake it at once, implement plugin-render's `JournalTail` over
   `Sessions.read`, with a `changes` stream fed by your database's
@@ -979,5 +979,5 @@ step arrives with its `memory.message` record once the step has ended.
 - No event marks a provider retry or a compaction as it happens; a
   compaction is recorded as `memory.compaction`, and counted in
   `context.built.compactions`.
-- No shared `SessionLog` for Node ships: a deployment with several
-  instances implements the port over its own database.
+- Shared directory storage ships for Node and Bun. A deployment using its
+  own database implements `SessionLog` and runs its conformance kits.

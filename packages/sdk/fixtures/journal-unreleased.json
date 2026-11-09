@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 18,
+  "storedFormat": 19,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -49,7 +49,7 @@
         "origin": "user",
         "createdAt": 1767225600000,
         "meta": {
-          "recorded": "0.16.2"
+          "recorded": "0.19.2"
         },
         "parent": null
       },
@@ -215,7 +215,7 @@
                 },
                 {
                   "id": "tool-discovery.catalogue",
-                  "version": "1",
+                  "version": "2",
                   "fingerprint": "e984ef9197"
                 },
                 {
@@ -1126,7 +1126,7 @@
                 },
                 {
                   "id": "tool-discovery.catalogue",
-                  "version": "1",
+                  "version": "2",
                   "fingerprint": "e984ef9197"
                 },
                 {
@@ -2110,7 +2110,7 @@
                 },
                 {
                   "id": "tool-discovery.catalogue",
-                  "version": "1",
+                  "version": "2",
                   "fingerprint": "e984ef9197"
                 },
                 {
@@ -3365,6 +3365,8 @@
         },
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
+          "owner": "fixture",
+          "incarnation": "88542164-ed7b-4280-8f49-f253221922c2",
           "through": 116,
           "turnAtFork": 6
         }
@@ -3434,6 +3436,8 @@
         },
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
+          "owner": "fixture",
+          "incarnation": "88542164-ed7b-4280-8f49-f253221922c2",
           "through": 0,
           "turnAtFork": 0
         }
@@ -4645,7 +4649,7 @@
                 },
                 {
                   "id": "tool-discovery.catalogue",
-                  "version": "1",
+                  "version": "2",
                   "fingerprint": "e984ef9197"
                 },
                 {
@@ -5490,6 +5494,8 @@
         },
         "parent": {
           "id": "00000000-0000-4000-8000-000000006023",
+          "owner": "fixture",
+          "incarnation": "45ae117a-0def-4b52-aae1-73582fd8f56f",
           "through": 0,
           "turnAtFork": 0
         }
@@ -5745,6 +5751,8 @@
         },
         "parent": {
           "id": "00000000-0000-4000-8000-000000006024",
+          "owner": "fixture",
+          "incarnation": "bf7aa0f4-3314-4ce8-8cb9-ad7c54dd6a41",
           "through": 0,
           "turnAtFork": 0
         }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
-import { Effect, Match, Option, Stream } from "effect"
+import { Deferred, Effect, Match, Option, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { finishReasonFromWire, sseStreamParts } from "./sse.js"
@@ -634,38 +634,17 @@ describe("compat streamText", () => {
   })
 
   test("live dribble: the first delta arrives while the server still holds the tail", async () => {
-    // A scripted reply served over a real socket, its tail held 300 ms after the first text.
-    const scripted = scriptedChatCompletions([{ text: ["first", " second"], beforeChunk: (chunk) => chunk === 2 ? Effect.sleep("300 millis") : Effect.void }])
-    const server = Bun.serve({
-      port: 0,
-      fetch: async (request) => scripted.fetch(request.url, { method: request.method, headers: request.headers, body: await request.text() }),
-    })
-    const stamps = await Effect.runPromise(
-      Effect.gen(function* () {
-        const svc = yield* makeCompatLanguageModel({
-          moduleName: "Test",
-          chatUrl: `http://localhost:${server.port}/chat`,
-          apiKey: "k",
-          model: "m",
-        })
-        return yield* Stream.runFold(
-          svc.streamText({ prompt: [{ role: "user", content: "hi" }] } as never),
-          (): ReadonlyArray<{ readonly type: string; readonly at: number }> => [],
-          (acc, part) => [
-            ...acc,
-            { type: (part as { type: string }).type, at: performance.now() },
-          ],
-        )
-      }).pipe(Effect.scoped),
-    )
-    server.stop(true)
-    const firstDelta = stamps.find((stamp) => stamp.type === "text-delta")
-    const finish = stamps[stamps.length - 1]
-    expect(firstDelta).toBeDefined()
-    expect(finish?.type).toBe("finish")
-    // The server held the tail 300ms — a buffered (non-incremental) client
-    // would observe near-zero spread between the first delta and the finish.
-    expect((finish?.at ?? 0) - (firstDelta?.at ?? 0)).toBeGreaterThan(150)
+    const release = Effect.runSync(Deferred.make<void>())
+    const scripted = scriptedChatCompletions([{ text: ["first", " second"], beforeChunk: (chunk) => chunk === 2 ? Deferred.await(release) : Effect.void }])
+    const server = Bun.serve({ port: 0, fetch: async (request) => scripted.fetch(request.url, { method: request.method, headers: request.headers, body: await request.text() }) })
+    await (async () => {
+      const parts = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+        const svc = yield* makeCompatLanguageModel({ moduleName: "Test", chatUrl: `http://localhost:${server.port}/chat`, apiKey: "k", model: "m" })
+        return yield* svc.streamText({ prompt: "hi" }).pipe(Stream.tap((part) => part.type === "text-delta" && part.delta === "first" ? Deferred.succeed(release, undefined) : Effect.void), Stream.runCollect)
+      })))
+      expect(parts.filter((part) => part.type === "text-delta").map((part) => part.delta)).toEqual(["first", " second"])
+      expect(parts.at(-1)?.type).toBe("finish")
+    })().finally(async () => { Effect.runSync(Deferred.succeed(release, undefined)); await server.stop(true) })
   })
 })
 
@@ -694,4 +673,23 @@ test("SSE keeps missing tool-call ids empty for the loop to assign, and preserve
     { type: "tool-call", id: "", name: "echo", params: {} },
     { type: "finish", reason: "tool-calls", usage: zeroUsage },
   ])
+})
+
+test("sparse safe indices produce only the calls actually sent", async () => {
+  const parts = await collect(wire(JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: Number.MAX_SAFE_INTEGER, id: "only", function: { name: "echo", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }), "[DONE]"))
+  expect(parts.filter((part) => typeof part === "object" && part !== null && "type" in part && part.type === "tool-call")).toHaveLength(1)
+})
+
+const protocolFailure = (text: string) => Effect.runPromise(Effect.flip(Stream.runDrain(sseStreamParts({ moduleName: "Test", body: bodyFromChunks([enc.encode(text)]) }))))
+
+test.each([-1, 0.5, null, undefined, Number.MAX_SAFE_INTEGER + 1])("invalid tool index %s is a protocol failure", async (index) => {
+  const error = await protocolFailure(wire(JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, function: { name: "echo", arguments: "{}" } }] } }] }), "[DONE]"))
+  expect(error.reason._tag).toBe("InvalidResponseError")
+})
+
+test("a stream cannot accumulate unbounded distinct calls or argument data", async () => {
+  const fragments = Array.from({ length: 129 }, (_, index) => ({ index, function: { name: "echo", arguments: "{}" } }))
+  const calls = await protocolFailure(wire(JSON.stringify({ choices: [{ delta: { tool_calls: fragments } }] }), "[DONE]"))
+  const argumentsFailure = await protocolFailure(wire(JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "echo", arguments: "x".repeat(1_048_577) } }] } }] }), "[DONE]"))
+  expect([calls.reason._tag, argumentsFailure.reason._tag]).toEqual(["InvalidResponseError", "InvalidResponseError"])
 })

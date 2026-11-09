@@ -1,3 +1,4 @@
+import { prepareToolkit } from "./prepared-toolkit.adapter.js"
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
 import { Context, Deferred, Effect, Option, Ref, Result, Schema, Stream } from "effect"
@@ -40,9 +41,9 @@ const Probe = Tool.make("probe", {
   failureMode: "return",
 })
 /** Handlers bind to the typed toolkit; the loop sees the erased one, as with the registry. */
-const typed = Toolkit.make(Probe)
+const typed = prepareToolkit(Toolkit.make(Probe))
 const erased: ReadonlyArray<Tool.Any> = [Probe]
-const toolkit = Toolkit.make(...erased)
+const toolkit = prepareToolkit(Toolkit.make(...erased))
 
 type Part = Response.PartEncoded
 const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
@@ -1232,10 +1233,11 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
     name: "an awaiting verdict joins its tasks and is evaluated once more",
     run: Effect.gen(function* () {
       const done = yield* Ref.make(false)
+      const observedAwaiting = yield* Deferred.make<void>()
       const { events, providerCalls, result } = yield* observe(loop, {
         script: [probeCall("c1", 1)],
-        before: (tasks) => tasks.fork("work", Effect.sleep("20 millis").pipe(Effect.andThen(Ref.set(done, true)))),
-        completion: () => Ref.get(done).pipe(Effect.map((complete): CompletionVerdict => ({ complete, awaiting: complete ? [] : ["work"], facts: {} }))),
+        before: (tasks) => tasks.fork("work", Deferred.await(observedAwaiting).pipe(Effect.andThen(Ref.set(done, true)))),
+        completion: () => Ref.get(done).pipe(Effect.tap((complete) => complete ? Effect.void : Deferred.succeed(observedAwaiting, undefined)), Effect.map((complete): CompletionVerdict => ({ complete, awaiting: complete ? [] : ["work"], facts: {} }))),
       })
       const verdicts = events.flatMap((event) => event._tag === "completion.evaluated" && event.step === 0 ? [event.verdict] : [])
       yield* expect("awaiting", verdicts.length === 2 && verdicts[0]?.complete === false && verdicts[1]?.complete === true, `step 0 verdicts: ${JSON.stringify(verdicts)}`)

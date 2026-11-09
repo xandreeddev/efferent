@@ -50,12 +50,13 @@ Under the configured root, the backend creates:
 
 ```text
 store.json
-sessions/<session-id>/header.json
-sessions/<session-id>/commits/000000000001.jsonl
-sessions/<session-id>/tmp/
+sessions/<session-id>/claims/<generation>.json
+sessions/<session-id>/lives/<incarnation>/header.json
+sessions/<session-id>/lives/<incarnation>/commits/000000000001.jsonl
+sessions/<session-id>/lives/<incarnation>/tmp/
+sessions/<session-id>/lives/<incarnation>/removed
 staging/
-trash/
-quarantine/<session-id>/
+quarantine/<session-id>/<incarnation>/
 ```
 
 Each immutable commit file contains metadata, the session head's state,
@@ -88,9 +89,7 @@ only through the recorded fork boundary, not their later turns.
 
 On reopening, an incomplete or corrupt final commit is set aside in
 `quarantine` and the previous whole commit becomes the head. Damage before
-the tail fails the read instead of silently discarding history. Unsupported
-newer directory layouts are refused. Keep the existing directory when
-restarting; deleting it removes conversation history.
+the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation. Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
 
 ## Admission and lifecycle
 

@@ -231,3 +231,18 @@ describe("scriptedChatCompletions: under the compat client", () => {
     expect((await Effect.runPromise(scripted.requests)).map((request) => request.step)).toEqual([Option.some(0)])
   })
 })
+
+test("aborting a pending chunk hook interrupts and awaits its finalizer", async () => {
+  const started = Effect.runSync(Deferred.make<void>())
+  const finalized = Effect.runSync(Deferred.make<void>())
+  const endpoint = scriptedChatCompletions([{ text: "pending", beforeChunk: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Deferred.succeed(finalized, undefined))) }])
+  const abort = new AbortController()
+  const response = await endpoint.fetch(chatUrl, { ...post({ model: "m", stream: true }), signal: abort.signal })
+  const reader = response.body!.getReader()
+  const reading = reader.read().then((value) => value, () => ({ done: true }))
+  await Effect.runPromise(Deferred.await(started))
+  abort.abort()
+  await reading
+  await reader.cancel().then(() => undefined, () => undefined)
+  expect(Effect.runSync(Deferred.isDone(finalized))).toBe(true)
+})

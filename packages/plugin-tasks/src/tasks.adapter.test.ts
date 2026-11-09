@@ -26,7 +26,7 @@ import {
   TurnRefused,
   UserMessage,
 } from "@xandreed/core"
-import type { JsonObject, BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnError, TurnOutcome, TurnWriter } from "@xandreed/core"
+import type { JsonObject, BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
 import { noticeOf } from "./task.entity.functions.js"

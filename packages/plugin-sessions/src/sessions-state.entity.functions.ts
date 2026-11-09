@@ -8,7 +8,7 @@ const decodeState = Schema.decodeUnknownEffect(SessionsState)
 const encodeState = Schema.encodeEffect(SessionsState)
 
 /** A session's state before its first turn, in this release's stored format: a fork counts from its parent's turns. */
-export const initialState = (head: SessionHead): State => ({
+export const initialState = (head: Pick<SessionHead, "header">): State => ({
   v: 1,
   format: STORED_FORMAT,
   turns: Option.match(head.header.parent, { onNone: () => 0, onSome: (parent) => parent.turnAtFork }),
@@ -19,9 +19,9 @@ export const initialState = (head: SessionHead): State => ({
 
 /** The plugin's state from a head (the initial state when there is none yet). */
 export const stateOf = (head: SessionHead): Effect.Effect<State, Schema.SchemaError> =>
-  head.state.sessions === undefined ? Effect.succeed(initialState(head)) : decodeState(head.state.sessions)
+  decodeState(head.state.sessions)
 
-const decodeFormat = Schema.decodeUnknownEffect(Schema.Struct({ format: SessionsState.fields.format }))
+const decodeFormat = Schema.decodeUnknownEffect(Schema.Struct({ format: Schema.optionalKey(Schema.Int) }))
 
 /**
  * The stored format the head's state says the session was last written in,
@@ -30,13 +30,10 @@ const decodeFormat = Schema.decodeUnknownEffect(Schema.Struct({ format: Sessions
  * commit, it is 1, the first.
  */
 export const storedFormatOf = (head: SessionHead): Effect.Effect<number, Schema.SchemaError> =>
-  head.state.sessions === undefined ? Effect.succeed(1) : decodeFormat(head.state.sessions).pipe(Effect.map((stored) => stored.format ?? 1))
+  decodeFormat(head.state.sessions ?? {}).pipe(Effect.map((stored) => stored.format ?? 0))
 
 /** Whether a session stored in `format` was written by a newer release than this one, which reads up to `STORED_FORMAT`. */
-export const isNewerFormat = (format: number): boolean => format > STORED_FORMAT
-
-/** The state in this release's stored format: raised when it says a lower one or none, the same value otherwise (so a commit that changes nothing else writes no state). */
-export const withFormat = (state: State): State => (state.format ?? 0) < STORED_FORMAT ? { ...state, format: STORED_FORMAT } : state
+export const isUnsupportedFormat = (format: number): boolean => format !== STORED_FORMAT
 
 /** The state as the head stores it. */
 export const stateJson = (state: State): Effect.Effect<JsonObject, Schema.SchemaError> =>

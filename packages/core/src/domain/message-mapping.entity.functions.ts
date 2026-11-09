@@ -1,23 +1,23 @@
 import { Array as Arr, Match, Option, Order, Schema } from "effect"
 import { Response } from "effect/ai"
 import type { Prompt } from "effect/ai"
-import { ENGINE_KEY, ResponseStamp } from "../domain/engine-stamp.entity.js"
-import { mergeEngineStamp } from "../domain/engine-stamp.entity.functions.js"
-import type { ToolCallSummary } from "../domain/tool-call-summary.entity.js"
-import type { Media } from "../domain/media.entity.js"
-import { toolCallIdOf } from "../domain/run.entity.functions.js"
-import type { RunRef } from "../domain/run.entity.js"
-import { ProviderOptions, ToolCallId } from "../domain/message.entity.js"
+import { ENGINE_KEY, ResponseStamp } from "./engine-stamp.entity.js"
+import { mergeEngineStamp } from "./engine-stamp.entity.functions.js"
+import type { ToolCallSummary } from "./tool-call-summary.entity.js"
+import type { Media } from "./media.entity.js"
+import { toolCallIdOf } from "./run.entity.functions.js"
+import type { RunRef } from "./run.entity.js"
+import { ProviderOptions, ToolCallId } from "./message.entity.js"
 import type {
   AgentMessage,
   AssistantMessage,
   ToolResultPart,
   UserContentPart,
-} from "../domain/message.entity.js"
-import { TokenUsage } from "../domain/token-usage.entity.js"
-import { tokenUsage } from "../domain/token-usage.entity.functions.js"
+} from "./message.entity.js"
+import { TokenUsage } from "./token-usage.entity.js"
+import { tokenUsage } from "./token-usage.entity.functions.js"
 import { framed, hostNote } from "../turn/model-text.js"
-import { isVolatileContext } from "./volatile-context.entity.functions.js"
+import { isVolatileContext } from "../internal/volatile-context.entity.functions.js"
 
 /**
  * Bridges the persisted `AgentMessage` with `@effect/ai`'s `Prompt`/`Response`
@@ -411,6 +411,7 @@ export const assistantUsage = (msg: AgentMessage): Option.Option<TokenUsage> =>
   msg.role !== "assistant" ? Option.none() : decodeUsage(msg.providerOptions?.[ENGINE_KEY])
 
 /** The `provider:modelId` embedded alongside the usage stamp, if any. */
+/** @public */
 export const assistantModel = (msg: AgentMessage): Option.Option<string> =>
   msg.role !== "assistant"
     ? Option.none()

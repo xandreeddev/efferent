@@ -62,7 +62,7 @@ const noRawPromiseCore = {
           matches.push({ node, message: `Promise.${method} is banned; use Effect concurrency` })
         }
         if (method === "then" || (method === "catch" && !isEffectExport(checker, node.expression))) matches.push({ node, message: `.${method}() is banned in the Effect core` })
-        if (ts.isIdentifier(owner) && owner.text === "Effect" && (method.startsWith("runPromise") || method.startsWith("runSync"))) {
+        if (ts.isIdentifier(owner) && owner.text === "Effect" && method.startsWith("run")) {
           matches.push({ node, message: `Effect.${method} belongs at a runtime edge` })
         }
       }

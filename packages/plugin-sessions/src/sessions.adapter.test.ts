@@ -187,6 +187,7 @@ describe("one turn at a time", () => {
     const first = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
     yield* Deferred.await(entered)
     const second = yield* Effect.forkChild(writer.end({ reason: "failed", failure: Option.none() }))
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
     // Its own end under way: the writer's own `TurnClosed`, `ended`.
     expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "late", data: {} }])))).toBe("TurnClosed:ended")
     expect(refusalOf(yield* Effect.flip(writer.write(Ref.set(changed, true))))).toBe("TurnClosed:ended")
@@ -380,31 +381,22 @@ describe("one turn at a time", () => {
 })
 
 describe("the stored format", () => {
-  /** The format the head's state names, or none (as a release before it wrote it). */
-  const formatIn = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.map((head) => (head.state["sessions"] as JsonObject | undefined)?.["format"]))
-  /** The head's state as a release before the stored format wrote it: no format key. */
-  const asEarlier = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) => {
-    const { format: _, ...earlier } = head.state["sessions"] as JsonObject
-    return log.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ ...head.state, sessions: earlier }) })
-  }))
-
-  test("a session is written in this release's format, and one an earlier release wrote is raised to it by the next commit, a turn's included", () => withLog((log) => Effect.gen(function* () {
+  test.each([0, STORED_FORMAT - 1, STORED_FORMAT + 1])("unsupported format %s is refused without changing stored data", (format) => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
-    yield* sessions!.deliver(address, { id: InboxItemId.make("first"), content: "first", source: {} })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
-    yield* asEarlier(log, address)
-    expect(yield* formatIn(log, address)).toBeUndefined()
-    // A read does not write: the format stays as the earlier release left it.
-    expect((yield* sessions!.get(address)).pending).toBe(1)
-    expect(yield* formatIn(log, address)).toBeUndefined()
-    yield* sessions!.deliver(address, { id: InboxItemId.make("second"), content: "second", source: {} })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
-    // A turn's writer raises it too, when an earlier release wrote the state since the begin.
-    const writer = yield* sessions!.begin(address, say("go"))
-    yield* asEarlier(log, address)
-    yield* writer.end({ reason: "completed", failure: Option.none() })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
+    const head = yield* log.head(address.id)
+    expect((head.state.sessions as JsonObject).format).toBe(STORED_FORMAT)
+    const stored = { ...head.state, sessions: { ...(head.state.sessions as JsonObject), format } }
+    yield* log.commit({ id: address.id, owner: address.owner, incarnation: head.incarnation }, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some(stored) })
+    const before = yield* log.head(address.id)
+    const outcomes = [
+      yield* Effect.flip(sessions!.get(address)), yield* Effect.flip(sessions!.read(address)),
+      yield* Effect.flip(sessions!.deliver(address, { id: InboxItemId.make("refused"), source: {}, content: "refused" })),
+      yield* Effect.flip(Effect.scoped(sessions!.begin(address, say("refused")))),
+    ]
+    expect(outcomes.map((error) => error._tag === "SessionLogError" ? error.code : error._tag)).toEqual(outcomes.map(() => "session.version"))
+    const after = yield* log.head(address.id)
+    expect([after.revision, after.state]).toEqual([before.revision, before.state])
   })))
 })
 
@@ -926,7 +918,7 @@ describe("check, then append", () => {
       ...inner,
       read: (id, query) => Effect.gen(function* () {
         if (query.after > 0 && !(yield* Ref.modify(injected, (seen) => [seen, true]))) {
-          const head = yield* inner.head(id)
+          const head = yield* inner.head(id.id)
           yield* inner.commit(id, { expect: head.revision, notAfter: Option.none(), state: Option.none(), events: [{ kind: "canvas.updated", turn: Option.none(), data: {} }] }).pipe(Effect.orDie)
         }
         return yield* inner.read(id, query)
@@ -1003,7 +995,7 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
-        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))))
+        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 }))))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
@@ -1037,7 +1029,7 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
-        ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))
+        ? Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 }))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
@@ -1065,7 +1057,7 @@ describe("contention and a broken log", () => {
       // The next `losing` commits lose to another writer: refused, nothing stored.
       commit: (id, commit) => Ref.update(commits, (n) => n + 1).pipe(
         Effect.andThen(Ref.modify(losing, (left) => [left > 0, Math.max(0, left - 1)])),
-        Effect.flatMap((loses) => loses ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 })) : inner.commit(id, commit))),
+        Effect.flatMap((loses) => loses ? Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 })) : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
     const address = yield* created(sessions!)
@@ -1125,12 +1117,12 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       // A session created without a parent reported missing.
-      create: (header) => Ref.get(broken).pipe(Effect.flatMap((on) => on ? Effect.fail(new SessionMissing({ session: header.id })) : inner.create(header))),
+      create: (header) => Ref.get(broken).pipe(Effect.flatMap((on) => on ? Effect.fail(new SessionMissing({ session: header.header.id })) : inner.create(header))),
       commit: (id, commit) => Ref.get(broken).pipe(Effect.flatMap((on) => !on ? inner.commit(id, commit)
         // A turn's opening commit stored, and answered without its events.
         : commit.events.some((event) => event.kind === "turn.started") ? inner.commit(id, commit).pipe(Effect.map((committed) => ({ ...committed, events: [] })))
         // A commit without `notAfter` refused as expired.
-        : commit.events.some((event) => event.kind === "note") ? Effect.fail(new LeaseExpired({ session: id, notAfter: 0, now: 1 }))
+        : commit.events.some((event) => event.kind === "note") ? Effect.fail(new LeaseExpired({ session: id.id, notAfter: 0, now: 1 }))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
@@ -1676,3 +1668,41 @@ describe("traces and logs", () => {
     }).pipe(Effect.provide(capturingLogger(lines))))
   })
 })
+
+test("a wrong owner cannot cancel a locally sealed turn", () => withLog((log) => Effect.gen(function* () {
+  const [sessions] = yield* instancesOver(log, sessionsDefaults)
+  const address = yield* created(sessions!)
+  const writer = yield* sessions!.begin(address, say("sealed"))
+  yield* writer.closing([frameworkDraft("turn.reply", { entry: "sealed:reply", runId: writer.admitted.runId, step: 0, at: 0, body: { outcome: "completed", reply: "answer" } })])
+  yield* writer.seal ?? Effect.void
+  const result = yield* Effect.result(sessions!.cancel({ ...address, owner: "another-owner" }, writer.admitted.turn))
+  expect(result._tag).toBe("Failure")
+  if (result._tag === "Failure") expect(result.failure._tag).toBe("SessionMissing")
+  expect(yield* sessions!.read(address, { kinds: ["turn.ended"] })).toEqual([])
+})))
+
+test.each(["read", "remove"] as const)("a paused %s cannot reach a replacement owner's session", (operation) => withLog((raw) => Effect.gen(function* () {
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  const hold = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+  const wrapped = SessionLog.of({ ...raw,
+    read: (reference, query) => operation === "read" ? hold.pipe(Effect.andThen(raw.read(reference, query))) : raw.read(reference, query),
+    remove: (reference) => operation === "remove" ? hold.pipe(Effect.andThen(raw.remove(reference))) : raw.remove(reference),
+  })
+  const [original] = yield* instancesOver(wrapped, sessionsDefaults)
+  const [concurrent] = yield* instancesOver(raw, sessionsDefaults)
+  const address = yield* created(original!)
+  const pending = yield* Effect.forkChild(Effect.result(operation === "read" ? original!.read(address).pipe(Effect.asVoid) : original!.remove(address)))
+  yield* Effect.gen(function* () {
+    yield* Deferred.await(entered)
+    yield* concurrent!.remove(address)
+    const replacement = { ...address, owner: "replacement-owner" }
+    yield* concurrent!.create(replacement)
+    yield* concurrent!.transact(replacement, () => Effect.succeed({ drafts: [{ kind: "audit.secret", data: { value: "replacement" } }], result: undefined }))
+    yield* Deferred.succeed(release, undefined)
+    const result = yield* Fiber.join(pending)
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure") expect(result.failure._tag).toBe("SessionMissing")
+    expect((yield* concurrent!.read(replacement)).map((event) => event.kind)).toEqual(["audit.secret"])
+  }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+})))

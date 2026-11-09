@@ -31,6 +31,9 @@ import {
   Sessions,
   shutdownRefusal,
   STORED_FORMAT,
+  SessionRef,
+  sessionRef,
+  sameSession,
   TurnActivity,
   TurnAdmission,
   TurnDuplicate,
@@ -77,7 +80,7 @@ import type {
   WaitingInputCount,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, droppedData, heldTurn, isNewerFormat, keyedData, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged, withFormat } from "./sessions-state.entity.functions.js"
+import { initialState, closedState, droppedData, heldTurn, isUnsupportedFormat, keyedData, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, waitingChanged } from "./sessions-state.entity.functions.js"
 import type { Holder, ReleasedTurn } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SealedTurn, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
@@ -258,7 +261,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     quiet: now.quiet.filter((seen) => seen.id !== address.id || seen.owner !== address.owner),
   }))
   /** The writer this instance holds per session, for a local cancel or removal. */
-  const writers = yield* Ref.make(new Map<string, OpenWriter & { readonly turn: number }>())
+  const writerKey = (reference: SessionRef) => canonicalJson([reference.id, reference.owner, reference.incarnation])
+  const writers = yield* Ref.make(new Map<string, OpenWriter & { readonly turn: number; readonly reference: SessionRef }>())
   const inFlight = yield* SubscriptionRef.make<InFlight>({ held: new Map(), beginning: 0 })
   /** Where this instance is in a shutdown: running, refusing every begin, or also closing every turn it holds. */
   const stopping = yield* Ref.make<"running" | "refusing" | "interrupting">("running")
@@ -289,14 +293,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * this release cannot tell what that release's records mean, and must not
    * write its own beside them. Reads are not refused.
    */
-  const refuseNewer = (head: SessionHead) => storedFormatOf(head).pipe(
+  const refuseUnsupported = (head: SessionHead) => storedFormatOf(head).pipe(
     Effect.mapError(storage("session.state")),
-    Effect.flatMap((format) => isNewerFormat(format)
-      ? Effect.fail(new SessionLogError({ code: "session.version", message: `the session holds stored format ${format}, written by a newer release; this release reads up to ${STORED_FORMAT}` }))
+    Effect.flatMap((format) => isUnsupportedFormat(format)
+      ? Effect.fail(new SessionLogError({ code: "session.version", message: `the session uses unsupported stored format ${format}; configure a fresh store for format ${STORED_FORMAT}` }))
       : Effect.void),
   )
-  const owned = (address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) =>
-    head.header.owner === address.owner ? observe(address).pipe(Effect.as(head)) : Effect.fail(new SessionMissing({ session: address.id }))))
+  const owned = (address: SessionAddress): Effect.Effect<SessionHead, SessionMissing | SessionLogError> => Effect.gen(function* () {
+    const head = yield* log.head(address.id)
+    const reference = Schema.decodeUnknownOption(SessionRef)(address)
+    if (head.header.owner !== address.owner || Option.exists(reference, (value) => !sameSession(value, head))) return yield* Effect.fail(new SessionMissing({ session: address.id }))
+    yield* refuseUnsupported(head)
+    yield* observe(address)
+    return head
+  })
   const viewFrom = (head: SessionHead) => stateFrom(head).pipe(Effect.flatMap((state) => viewOf(head, state, holder)))
 
   /**
@@ -310,12 +320,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * state so even when the plan leaves it as it was (once, for a session
    * an earlier release wrote).
    */
-  const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => {
-    const once: Effect.Effect<Guarded<A>, E | SessionMissing | RevisionConflict | SessionLogError> = Effect.gen(function* () {
-      const head = yield* owned(address)
-      yield* refuseNewer(head)
+  const guarded = <A, E>(locator: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => owned(locator).pipe(Effect.flatMap((initial) => {
+    const address = sessionRef(initial)
+    const once = (head: SessionHead): Effect.Effect<Guarded<A>, E | SessionMissing | RevisionConflict | SessionLogError> => Effect.gen(function* () {
+      yield* refuseUnsupported(head)
       const held = yield* stateFrom(head)
-      const current = withFormat(held)
+      const current = held
       const planned = yield* plan(head, current)
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) {
         if (planned.validateRead === true) {
@@ -324,14 +334,14 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         }
         return { result: planned.result, head, committed: Option.none() }
       }
-      const next = Option.orElse(planned.next, () => current === held ? Option.none() : Option.some(current))
+      const next = planned.next
       const state = yield* Option.match(next, {
         onNone: () => Effect.succeedNone,
         onSome: (written) => stateJson(written).pipe(Effect.map(Option.some), Effect.orDie),
       })
       return yield* Effect.uninterruptible(Effect.gen(function* () {
-        const outcome = yield* Effect.result(log.commit(address.id, {
-          expect: head.revision, notAfter: Option.none(), events: planned.drafts, state, incarnation: head.incarnation,
+        const outcome = yield* Effect.result(log.commit(sessionRef(head), {
+          expect: head.revision, notAfter: Option.none(), events: planned.drafts, state,
         }))
         if (outcome._tag === "Success") {
           yield* stored(planned.result)
@@ -346,11 +356,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         return yield* (error._tag === "LeaseExpired" ? Effect.die(error) : Effect.fail(error))
       }))
     })
-    return once.pipe(
-      Effect.retry({ times: config.retries - 1, while: isRevisionConflict }),
-      Effect.catchIf(isRevisionConflict, () => Effect.fail(new SessionContended({ session: address.id, attempts: config.retries }))),
+    const retry = (head: SessionHead, remaining: number): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => once(head).pipe(
+      Effect.catchIf(isRevisionConflict, () => remaining <= 1
+        ? Effect.fail(new SessionContended({ session: address.id, attempts: config.retries }))
+        : owned(address).pipe(Effect.flatMap((next) => retry(next, remaining - 1)))),
     )
-  }
+    return retry(initial, config.retries)
+  }))
 
   /**
    * An open turn nobody holds any more (its lease ran out, or its process is
@@ -399,17 +411,17 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return Option.isSome(reap.closed) ? { drafts: reap.drafts, next: Option.some(reap.state), result: reap.closed } : { drafts: [], next: Option.none<SessionsState>(), result: Option.none<number>() }
   })).pipe(
     // Taken over here, as an opening commit's reap would: this instance's writer of it, if any, is closed at once.
-    Effect.flatMap((done) => Option.match(done.result, { onNone: () => Effect.void, onSome: (taken) => closeLocal(address.id, "interrupted", Option.some(taken)) })),
+    Effect.flatMap((done) => Option.match(done.result, { onNone: () => Effect.void, onSome: (taken) => closeLocal(sessionRef(done.head), "interrupted", Option.some(taken)) })),
   )
 
   /**
    * A session's own `turn.started` events, for lookups that decode their keys
    * alone: a media-storing log leaves the messages' images as references.
    */
-  const startsOf = (id: ConversationId, through?: number) => log.read(id, { after: 0, ...(through === undefined ? {} : { through }), limit: Option.none(), kinds: ["turn.started"], media: "references" })
+  const startsOf = (id: SessionRef, through?: number) => log.read(id, { after: 0, ...(through === undefined ? {} : { through }), limit: Option.none(), kinds: ["turn.started"], media: "references" })
 
   /** One `turn.started` a lookup found, read again whole, its images included. */
-  const startedWhole = (id: ConversationId, found: SessionLogEvent) => log.read(id, { after: found.seq - 1, through: found.seq, limit: Option.some(1), kinds: ["turn.started"] }).pipe(
+  const startedWhole = (id: SessionRef, found: SessionLogEvent) => log.read(id, { after: found.seq - 1, through: found.seq, limit: Option.some(1), kinds: ["turn.started"] }).pipe(
     Effect.flatMap((events) => Option.match(Option.fromNullishOr(events.find((event) => event.seq === found.seq)), {
       onNone: () => Effect.fail(new SessionLogError({ code: "session.decode", message: "a turn.started a lookup found is no longer stored" })),
       onSome: (event) => turnStartedOf(event).pipe(Effect.mapError(storage("session.decode"))),
@@ -423,7 +435,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   )
 
   /** The turn begun with `key`, and what it was begun with. */
-  const keyed = (id: ConversationId, key: string) => startsOf(id).pipe(Effect.flatMap((starts) => keyIn(starts, key)))
+  const keyed = (id: SessionRef, key: string) => startsOf(id).pipe(Effect.flatMap((starts) => keyIn(starts, key)))
 
   /**
    * The turn begun under `runId`: of the session's own `turn.started` events
@@ -439,11 +451,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     )
     const inherited = (lineage: SessionHead["header"]["parent"]): Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError> => Option.match(lineage, {
       onNone: () => Effect.succeed(Option.none()),
-      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent.id, parent.through).pipe(
+      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent, parent.through).pipe(
         Effect.flatMap((events) => begunIn(events, parent.through)),
         Effect.flatMap(Option.match({
           onSome: (turn) => Effect.succeed(Option.some(turn)),
-          onNone: () => log.head(parent.id).pipe(Effect.flatMap((head) => inherited(head.header.parent))),
+          onNone: () => owned(parent).pipe(Effect.flatMap((head) => inherited(head.header.parent))),
         }))),
     })
     return begunIn(starts, Number.POSITIVE_INFINITY).pipe(Effect.flatMap(Option.match({ onSome: (turn) => Effect.succeed(Option.some(turn)), onNone: () => inherited(header.parent) })))
@@ -454,7 +466,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * ended (when it was), for a resume's check; `reapedNow`, a turn this
    * commit closes as interrupted, counts as ended so.
    */
-  const turnsOf = (id: ConversationId, reapedNow: Option.Option<{ readonly turn: number; readonly reason: TurnEnding["reason"] }>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"], media: "references" }).pipe(
+  const turnsOf = (id: SessionRef, reapedNow: Option.Option<{ readonly turn: number; readonly reason: TurnEnding["reason"] }>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"], media: "references" }).pipe(
     Effect.flatMap((events) => Effect.gen(function* () {
       const numbered = (event: SessionLogEvent) => Option.getOrElse(event.turn, () => 0)
       const endings = new Map(yield* Effect.forEach(events.filter((event) => event.kind === "turn.ended"), (event) =>
@@ -473,24 +485,24 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   )
 
   /** The session's keyed transact under `key`, its record decoded, if it recorded one. */
-  const keyedTransact = (id: ConversationId, key: string) => log.read(id, { after: 0, limit: Option.none(), kinds: ["transact.keyed"] }).pipe(
+  const keyedTransact = (id: SessionRef, key: string) => log.read(id, { after: 0, limit: Option.none(), kinds: ["transact.keyed"] }).pipe(
     Effect.flatMap((events) => readStored("transact.keyed", events).pipe(Effect.mapError(storage("session.decode")))),
     Effect.map((keyed) => Option.fromNullishOr(keyed.find((found) => found.data.key === key))),
   )
 
   /** A repeat of a keyed transact: the first one's events (directly after its record, in its commit), or a conflict when its command differs. */
-  const repeated = (address: SessionAddress, options: TransactOptions, found: Stored<"transact.keyed">) =>
+  const repeated = (address: SessionRef, options: TransactOptions, found: Stored<"transact.keyed">) =>
     canonicalJson(found.data.command) !== canonicalJson(options.command ?? {})
       ? Effect.fail(new TransactConflict({ session: address.id, key: options.key }))
-      : (found.data.events === 0 ? Effect.succeed([]) : log.read(address.id, { after: found.event.seq, through: found.event.seq + found.data.events, limit: Option.none(), kinds: [] })).pipe(
+      : (found.data.events === 0 ? Effect.succeed([]) : log.read(address, { after: found.event.seq, through: found.event.seq + found.data.events, limit: Option.none(), kinds: [] })).pipe(
         Effect.flatMap((events) => Effect.fail(new TransactDuplicate({ session: address.id, key: options.key, events }))),
       )
 
   // A keyed transact's record opens its commit: a repeat finds it (a racing one, after its commit conflicts) and decides nothing.
   const runTransact = Effect.fn("sessions.transact")(<A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>, options?: TransactOptions) => guarded(address, (head, state) => Effect.gen(function* () {
     if (options !== undefined) {
-      const earlier = yield* keyedTransact(address.id, options.key)
-      if (Option.isSome(earlier)) return yield* repeated(address, options, earlier.value)
+      const earlier = yield* keyedTransact(sessionRef(head), options.key)
+      if (Option.isSome(earlier)) return yield* repeated(sessionRef(head), options, earlier.value)
     }
     const decision = yield* decide(yield* viewOf(head, state, holder))
     const reserved = decision.drafts.find((draft) => RESERVED_KINDS.includes(draft.kind))
@@ -511,12 +523,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   }
 
   /** The session's `inbox.queued` records, decoded. */
-  const queuedIn = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
+  const queuedIn = (id: SessionRef) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
     Effect.flatMap((events) => readStored("inbox.queued", events).pipe(Effect.mapError(storage("session.decode")))),
   )
 
   /** A consumed steer is acknowledged by its receipt's outer turn, not a fabricated queued begin. */
-  const takenInputOf = (id: ConversationId, wanted: InboxItemId, through: number) => log.read(id, { after: 0, through, limit: Option.none(), kinds: ["inbox.taken"] }).pipe(
+  const takenInputOf = (id: SessionRef, wanted: InboxItemId, through: number) => log.read(id, { after: 0, through, limit: Option.none(), kinds: ["inbox.taken"] }).pipe(
     Effect.flatMap((events) => readStored("inbox.taken", events.filter((event) => event.seq <= through)).pipe(Effect.mapError(storage("session.decode")))),
     Effect.flatMap((taken) => {
       const receipt = taken.find(({ data }) => data.id === wanted)
@@ -529,7 +541,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   )
 
   /** Immutable user input, decoded separately from legacy notice deliveries. */
-  const queuedInputOf = (id: ConversationId, wanted: InboxItemId) => queuedIn(id).pipe(Effect.map((queued) =>
+  const queuedInputOf = (id: SessionRef, wanted: InboxItemId) => queuedIn(id).pipe(Effect.map((queued) =>
     Option.fromNullishOr(queued.flatMap(({ data }): ReadonlyArray<QueuedInput> => data.id === wanted && data.input !== undefined
       ? [{ id: data.id, source: data.source, ...data.input }] : []).at(0))))
 
@@ -543,26 +555,26 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     Option.fromNullishOr(starts.filter((started) => started.keys.input === id).map(({ event }) => Option.getOrElse(event.turn, () => 0)).at(-1))
 
   /** Resolve the real input and attempt key before the host's admission sees them. */
-  const prepareAsked = (address: SessionAddress, input: BeginTurn, asked: Asked) => Effect.gen(function* () {
+  const prepareAsked = (address: SessionRef, input: BeginTurn, asked: Asked) => Effect.gen(function* () {
     if (input._tag === "Queued") {
       yield* owned(address)
-      const queued = yield* queuedInputOf(address.id, input.input)
+      const queued = yield* queuedInputOf(address, input.input)
       if (Option.isNone(queued)) return yield* Effect.fail(new NothingPending({ session: address.id }))
-      const starts = yield* inputStartsOf(yield* startsOf(address.id))
+      const starts = yield* inputStartsOf(yield* startsOf(address))
       const retry = starts.find((started) => started.keys.input === input.input && started.keys.runId === input.runId)
       return { ...asked, input: queued, userMessage: Option.some(queued.value.userMessage), key: retry?.keys.key ?? attemptKey(input.input, lastInputTurn(starts, input.input), input.runId) }
     }
     if (Option.isNone(asked.resumes)) return asked
     const resumed = asked.resumes.value
     yield* owned(address)
-    const starts = yield* inputStartsOf(yield* startsOf(address.id))
+    const starts = yield* inputStartsOf(yield* startsOf(address))
     const target = starts.find(({ event }) => Option.contains(event.turn, resumed))
     if (target?.keys.input === undefined) return asked
-    return { ...asked, input: yield* queuedInputOf(address.id, target.keys.input) }
+    return { ...asked, input: yield* queuedInputOf(address, target.keys.input) }
   })
 
   /** The inbox items with these ids, as delivered. */
-  const inboxItems = (id: ConversationId, ids: ReadonlyArray<InboxItemId>) => queuedIn(id).pipe(
+  const inboxItems = (id: SessionRef, ids: ReadonlyArray<InboxItemId>) => queuedIn(id).pipe(
     Effect.map((queued) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(queued.find((item) => item.data.id === wanted && item.data.input === undefined))).map(({ data }) => ({
       id: wanted,
       source: data.source,
@@ -606,7 +618,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * stops counting then, unless it committed a turn, which counts until the
    * scope has closed that turn.
    */
-  const openTurn = (address: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+  const openTurn = (locator: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+    const address = sessionRef(yield* owned(locator))
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const meta = input.meta ?? {}
@@ -639,9 +652,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         yield* refuseIfStopping(address)
         const reap = yield* reaped(head, stored, input.takeOver ?? false)
         const state = reap.state
-        const starts = yield* startsOf(address.id)
+        const starts = yield* startsOf(address)
         if (input._tag === "Queued") {
-          const taken = yield* takenInputOf(address.id, input.input, head.seq)
+          const taken = yield* takenInputOf(sessionRef(head), input.input, head.seq)
           if (Option.isSome(taken)) return yield* Effect.fail(new TurnDuplicate({
             session: address.id, turn: taken.value, open: Option.exists(state.open, (open) => open.turn === taken.value),
           }))
@@ -651,7 +664,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           const brought = asked.userMessage.value
           const previous = yield* keyIn(starts, key)
           if (Option.isSome(previous)) {
-            const started = yield* startedWhole(address.id, previous.value.event)
+            const started = yield* startedWhole(sessionRef(head), previous.value.event)
             // The key's fingerprint is the message, the command, the turn resumed and the task, never `meta`: a retry with other metadata is the same turn.
             const same = sameUserMessage(started.userMessage, brought) && canonicalJson(started.command) === canonicalJson(asked.command)
               && Equal.equals(Option.fromNullishOr(started.resumes), resumes)
@@ -676,13 +689,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         }
         // A resume is checked in the commit that opens it, against the turns as stored (a turn reaped by this commit is interrupted).
         if (Option.isSome(resumes)) {
-          const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, Option.all({ turn: reap.closed, reason: reap.closedAs })))
+          const refusal = resumeRefusal(resumes.value, yield* turnsOf(sessionRef(head), Option.all({ turn: reap.closed, reason: reap.closedAs })))
           if (Option.isSome(refusal)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: resumes.value, reason: refusal.value }))
         }
         // An inbox turn takes every item waiting, and its message is theirs.
         const waiting = origin === "inbox" ? pendingOf(state).filter((slot) => slot.delivery === undefined).map((slot) => slot.id) : []
         if (origin === "inbox" && waiting.length === 0) return yield* Effect.fail(new NothingPending({ session: address.id }))
-        const claimed = yield* inboxItems(address.id, waiting)
+        const claimed = yield* inboxItems(sessionRef(head), waiting)
         const inputWaiting = Option.toArray(asked.input).flatMap((queued) => pendingOf(state).some((slot) => slot.id === queued.id && slot.delivery !== undefined) ? [queued.id] : [])
         const taking = [...waiting, ...inputWaiting]
         const userMessage = Option.getOrElse(asked.userMessage, () => new UserMessage({ text: claimed.map((item) => item.content).join("\n\n") }))
@@ -739,16 +752,16 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       })
       const turn = begun.result.admitted.turn
       // A turn taken over that this instance still held: its writer is closed now, not at its next write.
-      yield* Option.match(begun.result.tookOver, { onNone: () => Effect.void, onSome: (taken) => closeLocal(address.id, "interrupted", Option.some(taken)) })
+      yield* Option.match(begun.result.tookOver, { onNone: () => Effect.void, onSome: (taken) => closeLocal(address, "interrupted", Option.some(taken)) })
       // A writer that closed without storing its end (the store refused it, the scope's own try included) leaves the
       // turn open in the head under this instance: let it go, so it is not held here until the process exits.
-      const letGoUnended = Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.fromNullishOr(all.get(address.id)), {
+      const letGoUnended = Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.fromNullishOr(all.get(writerKey(address))), {
         onNone: () => Effect.void,
         onSome: (open) => open.turn !== turn ? Effect.void : open.ended.pipe(Effect.flatMap((ended) => ended ? Effect.void : letGo(address.id, turn, open.writer.admitted.runId))),
       })))
       // Runs after the writer's own finalizers (last added, first run): the turn counts until its end is stored.
       yield* Effect.addFinalizer(() => letGoUnended.pipe(
-        Effect.andThen(Ref.update(writers, (all) => new Map([...all].filter(([id, open]) => id !== address.id || open.turn !== turn)))),
+        Effect.andThen(Ref.update(writers, (all) => new Map([...all].filter(([id, open]) => id !== writerKey(address) || open.turn !== turn)))),
         Effect.andThen(SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, held: new Map([...now.held].filter(([key]) => key !== heldKey(address.id, turn))) })))))
       const runId = begun.result.admitted.runId
       /** Completed once the writer's own commit leaves the turn closed (its end stored): the time limit stops then. */
@@ -762,7 +775,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         ),
       }, scope)
       yield* Ref.set(unowned, Option.none())
-      yield* Ref.update(writers, (all) => new Map([...all, [address.id, { ...open, turn }]]))
+      yield* Ref.update(writers, (all) => new Map([...all, [writerKey(address), { ...open, turn, reference: address }]]))
       // Held from now (this process's Clock): the begin stops counting as it starts counting as open, in one update.
       const since = yield* Clock.currentTimeMillis
       yield* SubscriptionRef.update(inFlight, (now): InFlight => ({
@@ -803,8 +816,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   ), onSession)
 
   /** Close this instance's writer of a session, if it holds `turn` (or any turn). */
-  const closeLocal = (id: string, reason: ClosedBy, turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>
-    Option.match(Option.fromNullishOr(all.get(id)), {
+  const closeLocal = (reference: SessionRef, reason: ClosedBy, turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>
+    Option.match(Option.fromNullishOr(all.get(writerKey(reference))), {
       onNone: () => Effect.void,
       onSome: (open) => Option.match(turn, { onNone: () => true, onSome: (wanted) => wanted === open.turn }) ? open.close(reason) : Effect.void,
     })))
@@ -818,10 +831,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * and the outcome does not depend on which came first. The writer's
    * `TurnClosed` gives `closedBy`.
    */
-  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean; readonly closedBy: ClosedBy }) => endSealedLocal(address.id, turn).pipe(Effect.flatMap(Option.match({
+  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean; readonly closedBy: ClosedBy }) => owned(address).pipe(Effect.flatMap((head) => endSealedLocal(sessionRef(head), turn).pipe(Effect.flatMap(Option.match({
     // A sealed turn held here ends through its own writer: its held reply and drafts with its sealed ending.
     onSome: (stored) => Effect.succeed({ closed: true, pending: stored.pending }),
-    onNone: () => guarded(address, (head, stored) => Effect.gen(function* () {
+    onNone: () => guarded(sessionRef(head), (head, stored) => Effect.gen(function* () {
       const reap = yield* reaped(head, stored)
       const state = reap.state
       if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { closed: false, pending: pendingOf(state).length } }
@@ -833,11 +846,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const draft = yield* turnEndedDraft(turn, closing).pipe(Effect.orDie)
       const dropped = yield* droppedDrafts(after.dropped, turn)
       return { drafts: [...sealedDrafts(sealed, turn), draft, ...dropped], next: Option.some(after.state), result: { closed: true, pending: pendingOf(after.state).length } }
-    })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(address.id, ending.closedBy, Option.some(turn)) : Effect.void), Effect.map((done) => done.result)),
-  })))
+    })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(sessionRef(done.head), ending.closedBy, Option.some(turn)) : Effect.void), Effect.map((done) => done.result)),
+  })))))
 
   /** End a sealed turn this instance holds through its own writer; none when it holds no sealed writer of it, or that end was not stored. */
-  const endSealedLocal = (id: string, turn: number) => Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.filter(Option.fromNullishOr(all.get(id)), (open) => open.turn === turn), {
+  const endSealedLocal = (reference: SessionRef, turn: number) => Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.filter(Option.fromNullishOr(all.get(writerKey(reference))), (open) => open.turn === turn), {
     onNone: () => Effect.succeedNone,
     onSome: (open) => open.endSealed.pipe(
       Effect.tapError((error) => Effect.logWarning("a sealed turn's own end was not stored; its sealed state ends it instead", error)),
@@ -851,16 +864,16 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * the store answers, so its body stops; an end not stored is logged, and
    * the turn is let go of, for the next begin or process to reap.
    */
-  const interruptHeld = (address: SessionAddress, turn: number, runId: string, failure: TurnFailure, tried: boolean, closedBy: ClosedBy) =>
+  const interruptHeld = (address: SessionRef, turn: number, runId: string, failure: TurnFailure, tried: boolean, closedBy: ClosedBy) =>
     closeOpen(address, turn, { reason: "interrupted", failure: Option.some(failure), tried, closedBy }).pipe(
       Effect.asVoid,
-      Effect.tapError(() => letGo(address.id, turn, runId).pipe(Effect.andThen(closeLocal(address.id, closedBy, Option.some(turn))))),
+      Effect.tapError(() => letGo(address.id, turn, runId).pipe(Effect.andThen(closeLocal(address, closedBy, Option.some(turn))))),
       Effect.ignore({ log: "Warn", message: `a turn closed with ${failure.code} did not store its end; this instance lets it go, for the next begin or process to reap` }),
       Effect.annotateLogs(sessionAttributes(address.id)),
     )
 
   /** Close a turn this instance holds for a shutdown: `turn.shutdown`, no attempt counted (the items it took were not why it stopped). */
-  const closeForShutdown = (address: SessionAddress, turn: number, runId: string) =>
+  const closeForShutdown = (address: SessionRef, turn: number, runId: string) =>
     interruptHeld(address, turn, runId, { code: "turn.shutdown", message: "the process shut down before the turn ended" }, false, "interrupted")
 
   /**
@@ -868,7 +881,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * an attempt counted (the items it took may be why it ran so long), its
    * writer's `TurnClosed` `timed-out`.
    */
-  const closeForTimeLimit = (address: SessionAddress, turn: number, runId: string, limitMs: number) =>
+  const closeForTimeLimit = (address: SessionRef, turn: number, runId: string, limitMs: number) =>
     interruptHeld(address, turn, runId, { code: "turn.time-limit", message: `the turn ran past its time limit of ${limitMs} ms` }, true, "timed-out")
 
   const shutdown = TurnShutdown.of({
@@ -879,8 +892,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const held = [...(yield* SubscriptionRef.get(inFlight)).held.values()].sort((left, right) => left.since - right.since)
       const all = yield* Ref.get(writers)
       // The turns held now whose writer this instance still has: one whose scope is closing ended already.
-      const open = held.flatMap((active) => Option.toArray(Option.filter(Option.fromNullishOr(all.get(active.session)), (writer) => writer.turn === active.turn))
-        .map((writer) => ({ active, address: writer.writer.admitted.session, runId: writer.writer.admitted.runId })))
+      const open = held.flatMap((active) => Option.toArray(Option.filter(Option.fromNullishOr([...all.values()].find((writer) => writer.reference.id === active.session && writer.turn === active.turn)), (writer) => writer.turn === active.turn))
+        .map((writer) => ({ active, address: writer.reference, runId: writer.writer.admitted.runId })))
       yield* Effect.forEach(open, ({ active, address, runId }) => closeForShutdown(address, active.turn, runId), { concurrency: 4, discard: true })
       return open.map(({ active }) => active)
     }),
@@ -997,10 +1010,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const id = input.id ?? (yield* freshId)
       yield* Effect.annotateCurrentSpan(sessionAttributes(id))
       // Created without a parent: a log that answers `SessionMissing` broke its contract.
-      const head = yield* log.create({
+      const header = {
         id, owner: input.owner, origin: input.origin ?? "user",
         createdAt: yield* Clock.currentTimeMillis, meta: input.meta ?? {}, parent: Option.none(),
-      }).pipe(
+      }
+      const head = yield* log.create({ header, state: yield* stateJson(initialState({ header })).pipe(Effect.orDie) }).pipe(
         Effect.catchTag("SessionMissing", Effect.die),
         Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
         Effect.uninterruptible,
@@ -1009,18 +1023,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }),
     fork: Effect.fn("sessions.fork")(function* (parent, input) {
       // A fork of a newer release's session would carry its records into a session this release writes.
-      yield* refuseNewer(yield* owned(parent))
-      const endings = input.inherit ? yield* log.read(parent.id, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) : []
+      const parentHead = yield* owned(parent)
+      const reference = sessionRef(parentHead)
+      const endings = input.inherit ? yield* log.read(reference, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) : []
       const last = Option.fromNullishOr(endings.at(-1))
-      const head = yield* log.create({
+      const header = {
         id: input.id ?? (yield* freshId), owner: parent.owner, origin: input.origin,
         createdAt: yield* Clock.currentTimeMillis, meta: input.meta ?? {},
         parent: Option.some({
-          id: parent.id,
+          ...reference,
           through: Option.match(last, { onNone: () => 0, onSome: (event) => event.seq }),
           turnAtFork: Option.match(last, { onNone: () => 0, onSome: (event) => Option.getOrElse(event.turn, () => 0) }),
         }),
-      }).pipe(
+      }
+      const head = yield* log.create({ header, state: yield* stateJson(initialState({ header })).pipe(Effect.orDie) }).pipe(
         Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
         Effect.uninterruptible,
       )
@@ -1029,10 +1045,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     get: Effect.fn("sessions.get")((address) => owned(address).pipe(Effect.flatMap(viewFrom)), onSession),
     list: Effect.fn("sessions.list")(function* (query) {
       const limit = query.limit ?? 50
+      const parent = query.parent === undefined ? Option.none<SessionRef>() : yield* owned({ id: query.parent, owner: query.owner }).pipe(Effect.map((head) => Option.some(sessionRef(head))), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
+      if (query.parent !== undefined && Option.isNone(parent)) return { sessions: [], next: Option.none() }
       const heads = yield* log.list({
-        owner: query.owner, limit, before: Option.fromNullishOr(query.before), parent: Option.fromNullishOr(query.parent),
+        owner: query.owner, limit, before: Option.fromNullishOr(query.before), parent,
       })
-      const sessions = yield* Effect.forEach(heads, viewFrom, { concurrency: 1 })
+      const sessions = yield* Effect.forEach(heads, (head) => refuseUnsupported(head).pipe(Effect.andThen(viewFrom(head))), { concurrency: 1 })
       const last = Option.fromNullishOr(heads.at(-1))
       return {
         sessions,
@@ -1040,22 +1058,23 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }
     }),
     remove: Effect.fn("sessions.remove")(function* (address) {
-      yield* owned(address)
+      const head = yield* owned(address)
+      const reference = sessionRef(head)
       yield* Effect.uninterruptible(Effect.gen(function* () {
-        yield* log.remove(address.id)
+        yield* log.remove(reference)
         yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
         yield* forget(address)
-        yield* closeLocal(address.id, "removed", Option.none())
+        yield* closeLocal(reference, "removed", Option.none())
         yield* wake(address.id, true)
       }))
     }, onSession),
-    read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap(() => log.read(address.id, {
+    read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap((head) => log.read(sessionRef(head), {
       after: query?.after ?? 0, limit: Option.fromNullishOr(query?.limit), kinds: query?.kinds ?? [],
       ...(query?.from === undefined ? {} : { from: query.from }),
     }))), onSession),
     waiting: Stream.unwrap(PubSub.subscribe(waitingHub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
     changes: (address) => Stream.unwrap(RcMap.get(followers, address.id).pipe(Effect.map(Stream.fromPubSub))),
-    lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap(() => keyed(address.id, key)), Effect.map(Option.map((found) => found.turn))), onSession),
+    lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap((head) => keyed(sessionRef(head), key)), Effect.map(Option.map((found) => found.turn))), onSession),
     transact,
     // A turn nobody holds any more is reaped, as by a begin or a delivery, whichever comes first: it is not open, so the
     // cancel cancels nothing, and the outcome (interrupted, its items waiting again) does not depend on the order.
@@ -1069,7 +1088,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       return yield* guarded(address, (head, stored) => Effect.gen(function* () {
         const reap = yield* reaped(head, stored)
         const state = reap.state
-        const earlier = (yield* queuedIn(address.id)).find(({ data }) => data.id === ready.id)
+        const earlier = (yield* queuedIn(sessionRef(head))).find(({ data }) => data.id === ready.id)
         if (earlier !== undefined) {
           const previous = earlier.data
           if (previous.input === undefined || !sameUserMessage(previous.input.userMessage, ready.userMessage)
@@ -1096,7 +1115,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const state = reap.state
       const reapedOnly = { drafts: reap.drafts, next: reap.drafts.length === 0 ? Option.none<SessionsState>() : Option.some(state) }
       if (state.inbox.some((slot) => slot.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
-      const earlier = yield* queuedIn(address.id)
+      const earlier = yield* queuedIn(sessionRef(head))
       if (earlier.some((queued) => queued.data.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
       if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
       const next: SessionsState = { ...state, inbox: [...state.inbox, { id: item.id, attempts: 0, claimedBy: Option.none() }] }

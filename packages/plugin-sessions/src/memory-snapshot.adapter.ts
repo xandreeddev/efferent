@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import type { Context } from "effect"
-import { JournalCursor, MemorySnapshotData, SessionLogError } from "@xandreed/core"
-import type { SessionDraft, SessionHeader, SessionLog, SessionLogEvent, SessionMissing } from "@xandreed/core"
+import { JournalCursor, MemorySnapshotData, SessionLogError, SessionMissing, sameSession } from "@xandreed/core"
+import type { SessionDraft, SessionHeader, SessionLog, SessionLogEvent, SessionRef } from "@xandreed/core"
 import type { SessionsState } from "./sessions-state.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
@@ -12,7 +12,7 @@ const invalid = (cause: unknown) => new SessionLogError({ code: "session.decode"
 /** Authorized slices in lineage order; a sequence number never crosses a session boundary. */
 const lineageOf = (log: Log, header: SessionHeader, through: number): Effect.Effect<ReadonlyArray<JournalCursor>, SessionMissing | SessionLogError> => Option.match(header.parent, {
   onNone: () => Effect.succeed([{ session: header.id, seq: through }]),
-  onSome: (parent) => parent.through <= 0 ? Effect.succeed([{ session: header.id, seq: through }]) : log.head(parent.id).pipe(
+  onSome: (parent) => parent.through <= 0 ? Effect.succeed([{ session: header.id, seq: through }]) : log.head(parent.id).pipe(Effect.flatMap((head) => sameSession(parent, head) ? Effect.succeed(head) : Effect.fail(new SessionMissing({ session: parent.id }))),
     Effect.flatMap((head) => lineageOf(log, head.header, parent.through)),
     Effect.map((earlier) => [...earlier, { session: header.id, seq: through }]),
   ),
@@ -39,20 +39,20 @@ export const snapshotState = Effect.fnUntraced(function* (log: Log, header: Sess
 })
 
 /** Read one eligible pointer; never fetch an ineligible future publication. */
-export const readMemorySnapshot = Effect.fnUntraced(function* (log: Log, header: SessionHeader, started: SessionLogEvent, state: SessionsState): Effect.fn.Return<Option.Option<SessionLogEvent>, SessionMissing | SessionLogError> {
-  const selected = (current: SessionHeader, ceiling: number, pointer: Option.Option<JournalCursor>): Effect.Effect<Option.Option<SessionLogEvent>, SessionMissing | SessionLogError> => Option.match(pointer, {
+export const readMemorySnapshot = Effect.fnUntraced(function* (log: Log, header: SessionHeader, reference: SessionRef, started: SessionLogEvent, state: SessionsState): Effect.fn.Return<Option.Option<SessionLogEvent>, SessionMissing | SessionLogError> {
+  const selected = (current: SessionHeader, reference: SessionRef, ceiling: number, pointer: Option.Option<JournalCursor>): Effect.Effect<Option.Option<SessionLogEvent>, SessionMissing | SessionLogError> => Option.match(pointer, {
     onNone: () => Option.match(current.parent, {
       onNone: () => Effect.succeed(Option.none()),
-      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : log.head(parent.id).pipe(Effect.flatMap((head) =>
+      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : log.head(parent.id).pipe(Effect.flatMap((head) => sameSession(parent, head) ? Effect.succeed(head) : Effect.fail(new SessionMissing({ session: parent.id }))),Effect.flatMap((head) =>
         Schema.decodeUnknownEffect(pointerSchema)(head.state.sessions ?? {}).pipe(
           Effect.mapError(invalid),
-          Effect.flatMap((decoded) => selected(head.header, parent.through, Option.fromNullishOr(decoded.memorySnapshot))),
+          Effect.flatMap((decoded) => selected(head.header, parent, parent.through, Option.fromNullishOr(decoded.memorySnapshot))),
         ))),
     }),
     onSome: (cursor) => Effect.gen(function* () {
       if (cursor.session !== current.id) return yield* Effect.fail(invalid({ pointer: cursor, session: current.id }))
       if (cursor.seq > ceiling) return Option.none()
-      const rows = yield* log.read(current.id, { after: cursor.seq - 1, through: cursor.seq, limit: Option.some(1), kinds: ["memory.snapshot"] })
+      const rows = yield* log.read(reference, { after: cursor.seq - 1, through: cursor.seq, limit: Option.some(1), kinds: ["memory.snapshot"] })
       const row = rows[0]
       if (rows.length !== 1 || row === undefined || row.session !== current.id || row.seq !== cursor.seq || row.kind !== "memory.snapshot") {
         return yield* Effect.fail(invalid({ pointer: cursor, rows }))
@@ -62,5 +62,5 @@ export const readMemorySnapshot = Effect.fnUntraced(function* (log: Log, header:
       return Option.some(row)
     }),
   })
-  return yield* selected(header, started.seq - 1, Option.fromNullishOr(state.memorySnapshot))
+  return yield* selected(header, reference, started.seq - 1, Option.fromNullishOr(state.memorySnapshot))
 })

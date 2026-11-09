@@ -1,7 +1,7 @@
 import { EvalId, EvaluationError, TranscriptEvent, Trial, type EvaluationApp } from "@xandreed/evals"
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
-import { mkdtemp, readdir, readFile } from "node:fs/promises"
+import { mkdtemp as nativeMkdtemp, rm, readdir, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Schedule, Schema } from "effect"
@@ -129,3 +129,7 @@ test("a run killed mid-trial leaves the trial's events on disk, one JSON line ea
   expect([running.status, running.transcript]).toEqual(["running", []])
   expect(events.map((event): string => event.id)).toEqual([`${running.id}/event/0`, `${running.id}/event/1`])
 }, 30_000)
+
+const temporaryDirectories = new Set<string>()
+const mkdtemp = async (prefix: string) => { const directory = await nativeMkdtemp(prefix); temporaryDirectories.add(directory); return directory }
+afterEach(async () => { await Promise.all([...temporaryDirectories].map((directory) => rm(directory, { recursive: true, force: true }))); temporaryDirectories.clear() })

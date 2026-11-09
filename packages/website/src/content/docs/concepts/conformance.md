@@ -40,8 +40,8 @@ endpoint (see [testing helpers](#testing-helpers)).
 | `fileSystemConformance(subject)` | round trips, `createParents`, byte ranges, append, rename, `stat` and links, sorted listings, `glob`, `mkdir`, `realPath`, the `remove` rules, the `reason` of every failure | a way to open a `FileSystem` over an empty directory |
 | `imageResizerConformance(subject)` | provider byte and side limits, requested geometry/aspect, no upscaling, unsupported bytes as typed failures; valid pure PNG fixtures and careless-backend self-tests | a fresh `ImageResizer` |
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
-| `authStoreConformance(store, { refresh?, corrupt? })` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), `get` and `all` hand out every secret `Redacted`, holding the value that was set, an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated; with `refresh`, concurrent calls on one expired token send one token request and a `remove` during it sticks; with `corrupt`, damaged backing data fails every call with `auth.corrupt` | an `AuthStore` |
-| `settingsStoreConformance(store, { writable, corrupt? })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
+| `authStoreConformance(subject)` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), `get` and `all` hand out every secret `Redacted`, holding the value that was set, an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated; with `refresh`, concurrent calls on one expired token send one token request and a `remove` during it sticks; with `corrupt`, damaged backing data fails every call with `auth.corrupt` | an `AuthStore` |
+| `settingsStoreConformance(subject)` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
 | `modelRequestConformance(subject?)` | one counter for mixed transport/status failures, permanent structured errors before status retries, execution-time policy overrides and total attempt limits, a settled request never sent again after its headers time out, a lost successful body read as a transient failure | a request-policy subject over a supplied raw `HttpClient`, the first-party engine by default |
 | `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
@@ -213,7 +213,7 @@ records what it is shown, holds a begin, or refuses one), so an instance
 must use the admission it is given. `@xandreed/plugin-sessions` runs the kit
 over `SessionsLive` and the in-memory log, each check under a `TestClock` of
 its own; `@xandreed/plugin-session-sqlite` runs it over the SQLite log the
-same way, and `verify:packages` on Node:
+same way on Bun. `verify:packages` checks Sessions over memory/files on Node:
 
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
@@ -651,7 +651,7 @@ const checks = toolRegistryConformance((capabilities, limits) =>
   (`Failure.error`).
 
 A registry publishes on the run's bus (`RunContext.events`) and never
-writes the journal itself: the turn journals what it publishes, and core's
+writes the journal itself: the turn journals what it publishes, and the sdk's
 `TurnLive` is what keeps `tool.progress` out of the journal and stores a
 `tool.refused` without its input. The kit reads the journal to catch a
 registry that writes it directly, so those checks guard the registry, not
@@ -856,47 +856,27 @@ const checks = bashConformance({
 
 ## The AuthStore and SettingsStore kits
 
-`authStoreConformance(store)` and `settingsStoreConformance(store, { writable })`
-(from `@xandreed/plugin-models/conformance`) call the store and nothing
-else. Two options reach further, and each turns on its checks:
+Both kits take a subject with `open()`, which returns a fresh scoped fixture
+for every check. The fixture owns its cleanup. They never copy effective
+fallback values back into a writable tier or restore host credentials.
 
 ```ts
-interface AuthStoreConformanceOptions {
-  /** The token endpoint the store refreshes through, which the test controls. */
-  readonly refresh?: AuthStoreRefreshProbe
-  /** Damage the store's backing data for the scope's lifetime, repairing it when the scope closes. */
-  readonly corrupt?: Effect.Effect<void, never, Scope.Scope>
-}
-interface AuthStoreRefreshProbe {
-  /** A provider whose expired OAuth token the store refreshes through the endpoint. */
-  readonly provider: ProviderId
-  /** The token requests the endpoint has received. */
-  readonly requests: Effect.Effect<number>
-  /** Hold requests unanswered until the returned effect runs. */
-  readonly hold: Effect.Effect<Effect.Effect<void>>
-}
+import { Effect } from "effect"
+import { SettingsStore, MemorySettingsStoreLive } from "@xandreed/plugin-models"
+import { settingsStoreConformance } from "@xandreed/plugin-models/conformance"
+
+const checks = settingsStoreConformance({
+  writable: true,
+  open: () => Effect.service(SettingsStore).pipe(
+    Effect.provide(MemorySettingsStoreLive()),
+    Effect.map((store) => ({ store })),
+  ),
+})
 ```
 
-- **refresh-once**: four concurrent `resolveKey` calls on one expired token
-  send one token request, all get its new token, and the store keeps it.
-- **refresh-remove**: a `remove` made while the token request is held sticks:
-  the refreshed token is not stored.
-- **corrupt**: while the backing data is damaged, `get`, `all`,
-  `resolveKey`, `set` and `remove` fail with an `AuthError` of code
-  `auth.corrupt`, and the store reads its data again once it is repaired.
-
-The refresh checks write the probe's provider and put back what it held. They
-wait for the store's token requests on the live clock (up to two seconds), so
-run them without a `TestClock`. `SettingsStoreConformanceOptions` takes the
-same `corrupt` beside `writable`: `load`, and for a writable store `setRole`
-and `set`, fail with a `SettingsError` of code `settings.corrupt`. Damage what
-the store writes to, so that a write over the damage shows. A store in memory
-has nothing to damage and leaves `corrupt` out.
-
-`@xandreed/plugin-models` runs both kits with these options over its file
-stores (the probe is a `fetch` the store is built over, the damage is text that
-is not JSON written over `auth.json` or `config.json`) and the refresh checks
-over its memory store, on Bun and on Node:
+A local auth subject opens disposable directories and supplies the host's
+transport. The directory resource must be fresh on every acquisition and remove
+its files when the check's scope closes:
 
 ```ts
 import { Effect, Layer } from "effect"
@@ -904,16 +884,34 @@ import type { Scope } from "effect"
 import { AuthStore, LocalAuthStoreLive, ModelsTransport } from "@xandreed/plugin-models"
 import type { ModelsFetch } from "@xandreed/plugin-models"
 import { authStoreConformance } from "@xandreed/plugin-models/conformance"
-import type { AuthStoreRefreshProbe } from "@xandreed/plugin-models/conformance"
 
-declare const cwd: string, home: string
-declare const endpoint: { readonly fetch: ModelsFetch; readonly probe: AuthStoreRefreshProbe } // a fetch that answers token requests
-declare const damaged: (path: string) => Effect.Effect<void, never, Scope.Scope> // writes "{ not json", restores on close
-
-const store = await Effect.runPromise(Effect.service(AuthStore).pipe(Effect.provide(
-  LocalAuthStoreLive(cwd, home, ".efferent/runtime").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch })))))))
-const checks = authStoreConformance(store, { refresh: endpoint.probe, corrupt: damaged(`${home}/.efferent/runtime/auth.json`) })
+declare const directories: Effect.Effect<{ cwd: string; home: string }, never, Scope.Scope>
+const fetch: ModelsFetch = globalThis.fetch
+const checks = authStoreConformance({ open: () => Effect.gen(function* () {
+  const { cwd, home } = yield* directories
+  const store = yield* Effect.service(AuthStore).pipe(Effect.provide(
+    LocalAuthStoreLive(cwd, home).pipe(Layer.provide(Layer.succeed(ModelsTransport, { fetch }))),
+  ))
+  return { store }
+}) })
 ```
+
+`AuthStoreSubject` may declare `refresh: true` and return a fresh
+`AuthStoreRefreshProbe` from each fixture. The checks hold the token endpoint,
+prove one refresh across concurrent readers, and prove logout wins a refresh
+race. Run refresh checks on the live clock with their bounded endpoint wait.
+
+Either subject may declare `corrupt: true` and return `corruptions`: scoped
+probes for every backing tier, including fallback tiers. While each probe
+holds, reads and writes must fail with `auth.corrupt` or `settings.corrupt`,
+and the repaired store must retain its original values. A declared capability
+without its probes fails conformance. Memory fixtures omit corruption.
+
+The settings checks separately cover writable and read-only stores, typed
+values, invalid values and selections, role/key clearing and stable reads.
+The auth checks cover absent, API-key, local and OAuth credentials, redacted
+secrets, expiry, replacement, removal and provider isolation. Every check
+runs independently, so test order cannot hide mutations from an earlier check.
 
 ## The model-request kit
 

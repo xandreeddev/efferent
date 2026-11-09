@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Data, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Ref, Result, Schema, SchemaGetter, Stream, Tracer } from "effect"
@@ -77,7 +78,7 @@ const Echo = Tool.make("echo", {
   failureMode: "return",
 })
 
-const kit = Toolkit.make(Echo)
+const kit = prepareToolkit(Toolkit.make(Echo))
 const handlers = Layer.mergeAll(
   kit.toLayer({ echo: ({ value }) => Effect.succeed({ echoed: value }) }),
 )
@@ -618,7 +619,7 @@ describe("runLoop streaming", () => {
         streamText: () => Stream.die("stream unavailable"),
       })
       yield* runLoop({
-        system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true,
+        system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty), streaming: true,
         beforeDispatch: (step) => Ref.update(checks, (all) => [...all, step]),
       }).pipe(Effect.provideService(LanguageModel.LanguageModel, model))
       return { checks: yield* Ref.get(checks), calls: yield* Ref.get(calls), frozen: yield* Ref.get(frozen) }
@@ -727,7 +728,7 @@ describe("runLoop streaming", () => {
         generateText: () => Effect.succeed([{ type: "text" as const, text: "done" }, finish("stop")]),
         streamText: () => Stream.die("x".repeat(1_000)),
       })
-      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty), streaming: true, onEvent })
         .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
     }))
     const fallbacks = events.flatMap((e) => e.type === "stream_fallback" ? [e.message] : [])
@@ -741,7 +742,7 @@ describe("runLoop streaming", () => {
         generateText: () => Effect.succeed([{ type: "text" as const, text: "done" }, finish("stop")]),
         streamText: () => Stream.die({ status: 502, reason: "bad gateway" }),
       })
-      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty), streaming: true, onEvent })
         .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
     }))
     expect(events.flatMap((e) => e.type === "stream_fallback" ? [e.message] : [])).toEqual(["{\"status\":502,\"reason\":\"bad gateway\"}"])
@@ -754,7 +755,7 @@ describe("runLoop streaming", () => {
         generateText: () => Effect.die("settled path must not run"),
         streamText: () => Stream.concat(Stream.fromIterable(toStreamParts([{ type: "text", text: "partial" }])), Stream.die("cut off")) as never,
       })
-      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty), streaming: true, onEvent })
         .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
     }))
     expect(exit._tag).toBe("Failure")
@@ -856,7 +857,7 @@ describe("runLoop — the decisions, pure", () => {
       const model = yield* LanguageModel.make({ generateText: () => Ref.update(called, (n) => n + 1).pipe(Effect.as([{ type: "text" as const, text: "unexpected" }, finish("stop")])), streamText: () => Stream.empty })
       const results = yield* Effect.forEach([
         { malformedLimit: 0 }, { malformedLimit: Infinity }, { degenerate: { _tag: "Enabled" as const, nudgeAfter: 3, breakAfter: 2 } },
-      ], (options) => runLoop({ ...options, system: "sys", messages: [user("go")], toolkit: Toolkit.empty }).pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.result), { concurrency: 1 })
+      ], (options) => runLoop({ ...options, system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty) }).pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.result), { concurrency: 1 })
       return {
         calls: yield* Ref.get(called), failures: results.map((exit) => exit._tag === "Failure" ? Option.getOrElse(harnessCodeOf(exit.failure), () => "none") : "succeeded"),
         messages: results.map((exit) => exit._tag === "Failure" && "message" in exit.failure ? exit.failure.message : "succeeded"),
@@ -917,7 +918,7 @@ describe("runLoop — the decisions, pure", () => {
 
 test("capability selection is recomputed after a tool expands the active recipe", async () => {
   const Done = Tool.make("done", { parameters: Schema.Struct({}), success: Schema.Boolean })
-  const dynamicKit = Toolkit.make(Echo, Done)
+  const dynamicKit = prepareToolkit(Toolkit.make(Echo, Done))
   const visible: string[][] = []
   await Effect.runPromise(Effect.gen(function* () {
     const active = yield* Ref.make<ReadonlyArray<"echo" | "done">>(["echo"])
@@ -1004,7 +1005,7 @@ test("the run's model calls and callbacks read the run's trace content switch", 
       generateText: () => read("model").pipe(Effect.as([{ type: "text" as const, text: "done" }, finish("stop")])),
       streamText: () => Stream.die("unused"),
     })
-    yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, captureTraceContent: true, onEvent: (event) => event.type === "turn_start" ? read("event") : Effect.void })
+    yield* runLoop({ system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty), captureTraceContent: true, onEvent: (event) => event.type === "turn_start" ? read("event") : Effect.void })
       .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
     return yield* Ref.get(reads)
   }))
@@ -1040,7 +1041,7 @@ test("standalone loops provide the exact run or none to callbacks and providers,
       const model = yield* LanguageModel.make({ generateText: () => read.pipe(Effect.as([{ type: "text" as const, text: "done" }, finish("stop")])), streamText: () => Stream.empty })
       yield* runLoop({
         ...Option.match(current, { onNone: () => ({}), onSome: (run) => ({ run }) }),
-        system: "sys", messages: [user("go")], toolkit: Toolkit.empty,
+        system: "sys", messages: [user("go")], toolkit: prepareToolkit(Toolkit.empty),
         render: () => read.pipe(Effect.as([user("go")])),
       }).pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provideService(CurrentAgentRun, Option.some(outer)))
       return yield* Ref.get(reads)
@@ -1786,7 +1787,7 @@ describe("the loop checks a call's parameters as the toolkit decodes them", () =
     }),
     success: Schema.String,
   })
-  const laterKit = Toolkit.make(Later)
+  const laterKit = prepareToolkit(Toolkit.make(Later))
   const laterHandlers = laterKit.toLayer({ later: ({ value }) => Effect.succeed(`got ${value}`) })
 
   test("a whole response calling a tool whose parameters decode asynchronously runs it, and the run goes on", async () => {
@@ -1923,4 +1924,17 @@ test("synthetic planning trace marks only the artificial native inference operat
   expect(native).toHaveLength(2)
   expect(native.map((span) => span.attributes.get("efferent.inference.synthetic"))).toEqual([true, undefined])
   expect(spans.filter((span) => span.name === "loop.tool_call").map((span) => span.attributes.has("efferent.inference.synthetic"))).toEqual([false])
+})
+
+test("distinct result suffixes after a long common prefix keep a run progressing", async () => {
+  const calls = Effect.runSync(Ref.make(0))
+  const own = kit.toLayer({ echo: () => Ref.updateAndGet(calls, (n) => n + 1).pipe(Effect.map((n) => ({ echoed: "x".repeat(400) + n }))) })
+  const result = await Effect.runPromise(runLoop({ system: "sys", messages: [user("go")], toolkit: kit, maxSteps: 10 }).pipe(
+    Effect.provide(own),
+    Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call < 8
+      ? [{ type: "tool-call", id: `progress-${call}`, name: "echo", params: { value: "same" } }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }]
+      : [{ type: "text", text: "done" }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }])),
+  ))
+  expect(result.finalText).toBe("done")
+  expect(Effect.runSync(Ref.get(calls))).toBe(8)
 })

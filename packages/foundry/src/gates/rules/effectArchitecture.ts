@@ -55,7 +55,7 @@ export const noRawPromiseCore: IdiomRule = {
         if (
           ts.isIdentifier(owner) &&
           owner.text === "Effect" &&
-          (method.startsWith("runPromise") || method.startsWith("runSync"))
+          method.startsWith("run")
         ) {
           matches.push({ node, message: `Effect.${method} belongs at a runtime edge` })
         }

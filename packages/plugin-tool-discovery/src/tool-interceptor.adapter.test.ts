@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { Cause, Context, Deferred, Effect, Fiber, Option, Ref, Schema, SchemaGetter, Stream } from "effect"
 import type { Scope } from "effect"
@@ -36,7 +37,7 @@ const fixture = (tools: Capability["tools"], options: {
   yield* events.subscribe((event) => Option.some(event), (event) => Ref.update(seen, (all) => [...all, event]))
   const tasks = yield* makeTurnTasks(yield* Effect.scope)
   const context = RunContext.of({ conversation: address.id, session: address, runId, userMessage,
-    admitted: { session: address, runId, turn: 1, key: runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
+    admitted: { session: { ...address, incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, runId, turn: 1, key: runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     memory: session, events, tasks, activate: () => Effect.succeed([]), flush: options.flush ?? Effect.void, write: (op) => op, usage: Effect.succeed(zeroUsage),
   })
   const registry = yield* makeRegistry({ ...config, ...options.policy }, [capability(tools)])

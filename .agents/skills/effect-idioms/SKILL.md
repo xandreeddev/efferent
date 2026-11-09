@@ -179,7 +179,8 @@ service method that only returns `Effect.gen(…)` is one of the two below.
   `_tag`, `type`, `role` or `mode` (`effect/match-over-tag-switch`;
   `Match.discriminators("type")` for a field other than `_tag`;
   `Match.orElse` where a default is deliberate).
-- No `let`, no loops, no `try`/`catch`/`throw`: the gates refuse them.
+- Confined local builders may use mutation and loops without mutating inputs or
+  leaking mutable state. Use `Ref` for shared state. No `try`/`catch`/`throw`.
 
 ## Checklist
 

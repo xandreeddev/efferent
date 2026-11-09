@@ -138,7 +138,7 @@ export const withMediaStore: (
       // Normalize ALL siblings and metadata before the first put can suspend.
       const copied = yield* storedJson({ expect: input.expect, notAfter: Option.getOrElse(input.notAfter, () => null), state: Option.getOrElse(input.state, () => null),
         events: input.events.map((event) => ({ kind: event.kind, turn: Option.getOrElse(event.turn, () => null), data: event.data })),
-        ...(input.incarnation === undefined ? {} : { incarnation: input.incarnation }) }).pipe(
+ }).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(SessionCommit)), Effect.mapError((cause) => failed("store.encode", "session commit did not encode", cause)),
       )
       yield* Effect.forEach(copied.events, (draft) => logical(draft.kind, draft.data, "store.encode"), { concurrency: 1, discard: true })
@@ -149,7 +149,7 @@ export const withMediaStore: (
       const committed = yield* inner.commit(id, { ...copied, events: drafts })
       if (committed.events.length !== expectedRows.length || committed.events.some((event, index) => {
         const expected = expectedRows[index]!
-        return event.session !== id || event.kind !== expected.kind || Option.getOrElse(event.turn, () => null) !== expected.turn || canonicalJson(event.data) !== expected.data
+        return event.session !== id.id || event.kind !== expected.kind || Option.getOrElse(event.turn, () => null) !== expected.turn || canonicalJson(event.data) !== expected.data
       })) return yield* Effect.fail(failed("store.decode", "committed media rows differ from the submitted physical data"))
       // Original logical snapshots are operation-local, so echo hydration never
       // performs fresh get IO after a successful journal ACK (even with cache0).

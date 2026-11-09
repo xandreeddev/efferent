@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import {
-  CommittedTurnObservers, ConversationId, definePlugin, notifyCommittedTurn, RunId, SessionLogError, SessionLogMemoryLive,
+  CommittedTurnObservers, ConversationId, definePlugin, notifyCommittedTurn, RunId, SessionLogError, SessionIncarnation, SessionLogMemoryLive,
   Sessions, TurnAdmissionOpen, UserMessage,
 } from "@xandreed/core"
 import type { CommittedTurn, CommittedTurnObserver } from "@xandreed/core"
@@ -30,7 +30,8 @@ describe("committed turn observers through Agent.turn", () => {
           const events = yield* ownSessions.read(turn.session).pipe(Effect.orDie)
           expect(events.at(-1)?.kind).toBe("turn.ended")
           expect(events.find((event) => event.kind === "turn.reply")?.data.body).toMatchObject({ reply: "host final reply", outcome: "completed" })
-          expect(turn).toEqual({ session: address, runId: RunId.make("committed-success"), turn: 1 })
+          expect(turn.session.incarnation.length).toBeGreaterThan(0)
+          expect(turn).toEqual({ session: { ...address, incarnation: turn.session.incarnation }, runId: RunId.make("committed-success"), turn: 1 })
           yield* Ref.update(calls, (all) => [...all, "observed"])
         }) }]
       })),
@@ -90,7 +91,7 @@ describe("committed turn observers through Agent.turn", () => {
     expect(yield* Ref.get(called)).toBe(0)
     expect((yield* sessions.read(address)).some((event) => event.kind === "turn.ended")).toBe(false)
     yield* writer.end({ reason: "completed", failure: Option.none() })
-    yield* notifyCommittedTurn({ session: address, runId: writer.admitted.runId, turn: writer.admitted.turn }).pipe(Effect.provideService(CommittedTurnObservers, observers))
+    yield* notifyCommittedTurn({ session: { ...address, incarnation: SessionIncarnation.make("00000000-0000-4000-8000-0000000000c3") }, runId: writer.admitted.runId, turn: writer.admitted.turn }).pipe(Effect.provideService(CommittedTurnObservers, observers))
     expect(yield* Ref.get(called)).toBe(1)
   }))))
 })

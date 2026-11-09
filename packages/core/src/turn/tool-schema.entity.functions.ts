@@ -61,6 +61,7 @@ const modelFacing = (representation: Representation): Representation =>
  * - Numbers are finite, since JSON has no `NaN` or `Infinity`.
  * - Definitions are inlined under `$defs`.
  */
+/** @public */
 export const strictJsonSchema = (schema: Schema.Top): JsonSchema.JsonSchema => {
   const document = SchemaRepresentation.toRepresentation(schema.ast)
   const compiled = SchemaRepresentation.toJsonSchemaDocument(
@@ -73,5 +74,6 @@ export const strictJsonSchema = (schema: Schema.Top): JsonSchema.JsonSchema => {
 }
 
 /** A tool's parameters as the model sees them. */
+/** @public */
 export const toolParametersSchema = (tool: Tool.Any): JsonSchema.JsonSchema =>
   strictJsonSchema(tool.parametersSchema)

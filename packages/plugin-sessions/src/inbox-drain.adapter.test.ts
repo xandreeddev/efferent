@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
@@ -59,7 +60,7 @@ describe("InboxDrainLive", () => {
         yield* Ref.update(stored, (events) => [...events, started])
         yield* Ref.set(open, Option.some({ turn: 1, runId: asked.runId, key: "input:q", origin: "user", holder: "fake", expiresAt: Option.none() }))
         const writer: TurnWriter = {
-          admitted: { session: address, turn: 1, runId: asked.runId, key: "input:q", origin: "user", userMessage: input.userMessage, command: {}, claimed: [], input, meta: {} }, started,
+          admitted: { session: { ...address, incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn: 1, runId: asked.runId, key: "input:q", origin: "user", userMessage: input.userMessage, command: {}, claimed: [], input, meta: {} }, started,
           history: () => Effect.succeed([]), snapshot: () => Ref.get(stored), steers: Effect.succeed([]), take: () => Effect.succeed(false),
           append: () => Effect.die("unused"), write: () => Effect.die("unused"), transact: () => Effect.die("unused"), flush: Effect.void, closing: () => Effect.die("unused"), closed: Effect.never,
           end: (ending) => Ref.update(stored, (events) => [...events, { session: address.id, seq: events.length + 1, turn: Option.some(1), kind: "turn.ended", at: 0, data: { reason: ending.reason, failure: null } }]).pipe(
@@ -71,8 +72,7 @@ describe("InboxDrainLive", () => {
     })
     const runner = InboxRunner.of({ run: (writer) => Ref.update(seen, (values) => [...values, `${writer.admitted.origin}:${writer.admitted.input?.id}:${writer.admitted.userMessage.text}`]).pipe(Effect.as({ outcome: "completed", reply: Option.none() })) })
     const built = yield* Layer.build(InboxDrainLive({ owners: [address.owner], resume: { _tag: "Never" } })).pipe(Effect.provideService(Sessions, fake), Effect.provideService(InboxRunner, runner))
-    const completed = yield* Deferred.await(ended).pipe(Effect.timeoutOption("150 millis"))
-    expect(Option.isSome(completed)).toBe(true)
+    yield* Deferred.await(ended)
     yield* Context.get(built, DrainActivity).idle
     expect(yield* Ref.get(seen)).toEqual(["user:q:queued work"])
     expect(yield* Context.get(built, DrainActivity).running).toBe(0)
@@ -274,7 +274,7 @@ describe("InboxDrainLive over real Sessions", () => {
     expect(yield* Ref.get(calls)).toBe(1)
   })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
 
-  test("partial and failed input back off by payload identity despite own commits, then complete without a retry ceiling", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("partial and failed input preserve payload backoff across own commits, then complete within the retry budget", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const subject = yield* real
     const address = yield* create(subject.sessions, 5640)
     yield* subject.sessions.enqueue(address, queued("same-payload"))
@@ -448,8 +448,7 @@ describe("InboxDrainLive over real Sessions", () => {
     const shutdown = Context.get(subject.context, TurnShutdown)
     yield* shutdown.refuse
     yield* shutdown.interrupt
-    const idle = yield* activity.idle.pipe(Effect.timeoutOption("150 millis"))
-    expect(Option.isSome(idle)).toBe(true)
+    yield* activity.idle
     expect((yield* subject.sessions.get(address)).pending).toBe(1)
     yield* subject.sessions.enqueue(address, queued("after-shutdown"))
     yield* eventually(Ref.get(calls), () => false, 100)

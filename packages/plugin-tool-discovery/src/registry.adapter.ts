@@ -1,6 +1,7 @@
 import { Tool, Toolkit } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Match, Option, Ref, Result, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
+  prepareToolkit,
   ActionPolicy,
   activationsOf,
   attachmentsOf,
@@ -564,7 +565,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))]))).pipe(
       Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),
     )
-    const providedToolkit = Option.isNone(interceptor) ? toolkit : interceptedToolkit(toolkit, runServices, (name, capture) => {
+    const providedToolkit = Option.isNone(interceptor) ? prepareToolkit(toolkit) : interceptedToolkit(toolkit, runServices, (name, capture) => {
       const entry = byName.get(name)
       return toolkit.toHandlers(entry === undefined ? {} : { [name]: wrap(entry, handlerOf(entry), Option.some(capture)) }).pipe(
         Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),

@@ -65,7 +65,7 @@ const build = (root, options = {}) => Effect.gen(function* () {
 const visible = (log, address, through) => Effect.gen(function* () {
   const head = yield* log.head(address.id)
   const inherited = yield* Option.match(head.header.parent, { onNone: () => Effect.succeed([]), onSome: (lineage) => visible(log, { id: lineage.id, owner }, lineage.through) })
-  return [...inherited, ...yield* log.read(address.id, { ...query, ...(through === undefined ? {} : { through }) })]
+  return [...inherited, ...yield* Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, ...(through === undefined ? {} : { through }) }) })]
 })
 const runTurn = (sessions, address, runName, options = {}) => Effect.gen(function* () {
   const observed = options.observed ?? []
@@ -150,7 +150,7 @@ const stable = (root) => Effect.scoped(Effect.gen(function* () {
   const queued = yield* runTurn(sessions, parent, "media-queued", { queued: true })
   yield* saveCalls(root, queued.observed)
   const state = yield* audit(root, log, parent)
-  const physical = yield* raw.read(parent.id, query)
+  const physical = yield* Effect.gen(function* () { const sessionHead = yield* raw.head(parent.id); return yield* raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
   const wrapped = physical.filter((event) => Object.hasOwn(event.data, "$efferent.media"))
   assert.ok(wrapped.some((event) => event.kind === "turn.started"))
   assert.ok(wrapped.some((event) => event.kind === "inbox.queued"))
@@ -230,7 +230,7 @@ const integrity = (root) => Effect.scoped(Effect.gen(function* () {
     const sentA = parts(observed[0].prompt).filter((part) => part.type === "file" && part.data === pixel).map((part) => part.fileName)
     assert.deepEqual(sentA.toSorted(), ["attachment.png", "tool.png"], `${kind} media bytes reached the model as an image`)
     assert.ok(JSON.stringify(observed[0].prompt).includes(label), `${kind} media was not shown as its label`)
-    const events = yield* log.read(parent.id, query)
+    const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(parent.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     assert.ok(events.some((event) => event.kind === "turn.started" && event.data.userMessage.attachments?.[0]?.data === UNAVAILABLE_MEDIA_DATA), `${kind} media was not kept as its label`)
     yield* Effect.tryPromise(() => writeFile(path, bytesA))
   }
@@ -262,7 +262,7 @@ const blobHolder = (root, after) => Effect.scoped(Effect.gen(function* () {
 }))
 const inspectBlob = (root, after) => Effect.scoped(Effect.gen(function* () {
   const { raw, media } = yield* build(root)
-  assert.equal((yield* raw.read(parent.id, query)).length, 0, "journal referenced a blob before its put ACK")
+  assert.equal((yield* Effect.gen(function* () { const sessionHead = yield* raw.head(parent.id); return yield* raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })).length, 0, "journal referenced a blob before its put ACK")
   assert.equal(Option.isSome(yield* media.get(hashA)), after)
   return { publicationVerified: true, durableBlob: after, noDanglingReference: true }
 }))
@@ -276,7 +276,7 @@ const ackHolder = (root) => Effect.scoped(Effect.gen(function* () {
 }))
 const inspectAck = (root) => Effect.scoped(Effect.gen(function* () {
   const { raw, log } = yield* build(root)
-  const events = yield* log.read(parent.id, query)
+  const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(parent.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
   assert.ok(events.some((event) => event.kind === "turn.started" && event.data.userMessage.attachments?.[0].data === pixel))
   assert.equal(events.filter((event) => event.kind === "request.prepared").length, 1)
   assert.equal(events.filter((event) => event.kind === "tool.started" || event.kind === "turn.ended").length, 0)

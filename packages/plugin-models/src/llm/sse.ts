@@ -153,7 +153,7 @@ interface SseState {
   /** Fragments merged by wire index — id/name land on the first fragment,
    *  arguments concatenate across the rest. Streamed as they arrive, and
    *  emitted whole at flush. */
-  readonly toolCalls: ReadonlyArray<ToolCallAccum>
+  readonly toolCalls: ReadonlyMap<number, ToolCallAccum>
   readonly finishReason: Option.Option<string>
   readonly usage: Option.Option<CompletionUsage>
   readonly flushed: boolean
@@ -164,7 +164,7 @@ const initialState: SseState = {
   reasoningOpen: Option.none(),
   textSeq: 0,
   reasoningSeq: 0,
-  toolCalls: [],
+  toolCalls: new Map(),
   finishReason: Option.none(),
   usage: Option.none(),
   flushed: false,
@@ -241,17 +241,19 @@ const streamIdOf = (call: ToolCallAccum, index: number): string => call.id.lengt
  * arguments that arrived before it, as one delta), then a delta per
  * non-empty arguments fragment.
  */
-const mergeToolFragment = (
-  [calls, parts]: readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>],
+const MAX_TOOL_CALLS = 128
+const MAX_TOOL_ARGUMENT_CHARS = 1_048_576
+
+const mergeToolFragment = (moduleName: string) => (
+  [calls, parts]: readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>],
   fragment: StreamToolCall,
-): readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>] => {
-  const index = fragment.index ?? 0
-  const padded =
-    calls.length > index
-      ? calls
-      : [...calls, ...Array.from({ length: index + 1 - calls.length }, () => emptyAccum)]
-  const call = padded[index] ?? emptyAccum
+): Effect.Effect<readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>], AiError.AiError> => {
+  const index = fragment.index
+  const call = calls.get(index) ?? emptyAccum
   const piece = fragment.function?.arguments ?? ""
+  if ((!calls.has(index) && calls.size >= MAX_TOOL_CALLS) || call.args.length + piece.length > MAX_TOOL_ARGUMENT_CHARS) {
+    return Effect.fail(AiError.make({ module: moduleName, method: "streamText", reason: new AiError.InvalidResponseError({ description: "the stream exceeded its tool-call or argument size limit" }) }))
+  }
   const merged: ToolCallAccum = {
     id: call.id.length > 0 ? call.id : (fragment.id ?? ""),
     name: call.name.length > 0 ? call.name : (fragment.function?.name ?? ""),
@@ -264,16 +266,15 @@ const mergeToolFragment = (
     onNone: (): readonly [ToolCallAccum, ReadonlyArray<Part>] => {
       if (merged.name.length === 0) return [merged, []]
       const id = streamIdOf(merged, index)
-      return [
-        { ...merged, streamed: Option.some(id) },
-        [
-          { type: "tool-params-start", id, name: merged.name },
-          ...(merged.args.length > 0 ? [{ type: "tool-params-delta" as const, id, delta: merged.args }] : []),
-        ],
-      ]
+      return [{ ...merged, streamed: Option.some(id) }, [
+        { type: "tool-params-start", id, name: merged.name },
+        ...(merged.args.length > 0 ? [{ type: "tool-params-delta" as const, id, delta: merged.args }] : []),
+      ]]
     },
   })
-  return [padded.map((other, at) => at === index ? next : other), [...parts, ...emitted]]
+  const updated = new Map(calls)
+  updated.set(index, next)
+  return Effect.succeed([updated, [...parts, ...emitted]])
 }
 
 const malformed = (moduleName: string, description: string): AiError.AiError =>
@@ -311,15 +312,13 @@ const applyChunk = (
     typeof content === "string" && content.length > 0 ? emitText(s, content) : [s, []],
   )
   const [folded, parts] = afterText
-  const [toolCalls, toolParts] = (delta?.tool_calls ?? []).reduce(mergeToolFragment, [folded.toolCalls, parts] as const)
-  const next: SseState = {
-    ...folded,
-    toolCalls,
-    // The last reason that names something: a blank one on a later chunk keeps it.
-    finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
-    usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
-  }
-  return Effect.succeed([next, toolParts])
+  return Effect.reduce(delta?.tool_calls ?? [], () => [folded.toolCalls, parts] as readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>], mergeToolFragment(moduleName)).pipe(
+    Effect.map(([toolCalls, toolParts]): Emit => [{
+      ...folded, toolCalls,
+      finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
+      usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
+    }, toolParts]),
+  )
 }
 
 /** The end-of-stream flush: close open chunks, decide the finish reason,
@@ -335,8 +334,8 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState, end: 
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
         const reason: WireFinishReason = end === "eof" && Option.isNone(closed.finishReason) ? "unknown"
-          : finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
-        const toolParts = yield* Effect.forEach(closed.toolCalls, (call) =>
+          : finishReasonFromWire(closed.finishReason, closed.toolCalls.size > 0)
+        const toolParts = yield* Effect.forEach([...closed.toolCalls.entries()].toSorted(([a], [b]) => a - b).map(([, call]) => call), (call) =>
           toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
             malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
           ).pipe(

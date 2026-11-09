@@ -34,11 +34,13 @@ const readConfig = (path: string): Effect.Effect<Record<string, unknown>, Settin
 /** Write (or drop) one key in the LOCAL config, every other key preserved. */
 const writeKey = (
   cwd: string,
+  home: string,
   key: string,
   value: Option.Option<unknown>,
 ): Effect.Effect<void, SettingsError> => {
   const path = join(cwd, ".efferent", "config.json")
   return withFileLock(path)(Effect.gen(function* () {
+    yield* Effect.forEach(configPaths(cwd, home), readConfig, { concurrency: 1, discard: true })
     const current = yield* readConfig(path)
     const next = Option.match(value, {
       onNone: () => Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
@@ -55,13 +57,13 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
       Effect.map((configs) => settingsFromRecord(configs.reduce((acc, c) => ({ ...acc, ...c }), {}))),
     ),
     setRole: (role: ModelRole, selection: Option.Option<string>) =>
-      roleSelection(role, selection).pipe(Effect.flatMap((checked) => writeKey(cwd, ROLE_FIELDS[role], checked))),
+      roleSelection(role, selection).pipe(Effect.flatMap((checked) => writeKey(cwd, home, ROLE_FIELDS[role], checked))),
     set: (key: SettingsKey, value: Option.Option<string>) =>
       Option.match(value, {
-        onNone: () => writeKey(cwd, key, Option.none()),
+        onNone: () => writeKey(cwd, home, key, Option.none()),
         onSome: (raw) =>
           coerceSettingValue(key, raw).pipe(
-            Effect.flatMap((coerced) => writeKey(cwd, key, Option.some(coerced))),
+            Effect.flatMap((coerced) => writeKey(cwd, home, key, Option.some(coerced))),
           ),
       }),
   })

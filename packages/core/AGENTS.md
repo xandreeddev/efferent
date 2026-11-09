@@ -35,14 +35,7 @@ The package has three entries, each an `index.ts` of explicit named exports:
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
-repeat what these entries hold: a kit is imported from its entry. A few names
-declared in `internal/` are root API too, declared again at the end of
-`src/index.ts` (the same value, or a type of the same shape, since a root
-entry may not re-export what that folder declares:
-`scripts/api-snapshot.ts`): `compileGlob` and its types (the workspace
-plugin uses them), `assistantModel` and `assistantUsage` (documented for
-hosts), and `toolParametersSchema` and `strictJsonSchema` (a host
-fingerprints the tool contracts the model sees, to version them).
+repeat what these entries hold. Public glob helpers live in `workspace/`, public tool-schema helpers in `turn/`, and message mapping in `domain/`; the internal entry re-exports the subset first-party consumers need. Root exports name their declarations directly. No alias redeclaration conceals a module's role.
 
 The credential and settings stores (`AuthStore`, `SettingsStore`) are not
 core's: they are the models plugin's own ports, exported with their kits by
@@ -577,26 +570,26 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Native memory and document extraction prompts (the memory mode's rules for user identities and independent durable user statements included), output schema with its field descriptions, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
-| Part note of an extraction prompt over one window of a longer source (`window`, `knowledgeExtractionWindows`) | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
-| Independent extraction evidence-review prompt, including supported omissions; bounded malformed-proposal repair prompt, exact in `golden/knowledge-review-repair.prompt.txt` | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
-| Bounded query-planning and evidence-reranking prompts | `src/knowledge/knowledge-query.entity.functions.ts` | exact, `src/knowledge/knowledge-extraction.entity.functions.test.ts:22` |
-| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:97` |
-| Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
-| Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact, `src/turn/model-request-hook.entity.functions.test.ts:26-32` |
-| Request-hook invalid-edge and foreign-failure reporting message (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:12` | exact, `src/turn/model-request-hook.entity.functions.test.ts:38-40` |
-| Tool-interceptor invalid-edge and foreign-failure reporting message (`toolInterceptError`) | `src/domain/tool-interceptor.entity.functions.ts:7` | exact, `src/domain/tool-interceptor.entity.test.ts:33` |
-| A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
-| The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
-| A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
-| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:49-56` | exact, `src/internal/mapping.entity.functions.test.ts:402` |
-| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:82` | exact, `src/memory/memory-log.entity.test.ts:409` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-635` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:579-611` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
-| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:154-164` | exact, `src/memory/memory-log.entity.test.ts:426-428` |
-| An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:181-182` | exact, `src/domain/media.entity.test.ts:148-150` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:638-641` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
-| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-634` | exact, `src/memory/memory-log.entity.test.ts:622` |
-| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:504`, `:518`, `:579-593` | exact, `src/memory/memory-log.entity.test.ts:611`, `:612`, `:613`, `:623` |
+| Native memory and document extraction prompts (the memory mode's rules for user identities and independent durable user statements included), output schema with its field descriptions, source frames and candidate budget | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact assertion suites `src/knowledge/knowledge-extraction.entity.functions.test.ts#exact-assertions` |
+| Part note of an extraction prompt over one window of a longer source (`window`, `knowledgeExtractionWindows`) | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact assertion suites `src/knowledge/knowledge-extraction.entity.functions.test.ts#exact-assertions` |
+| Independent extraction evidence-review prompt, including supported omissions; bounded malformed-proposal repair prompt, exact in `golden/knowledge-review-repair.prompt.txt` | `src/knowledge/knowledge-extraction.entity.functions.ts` | exact assertion suites `src/knowledge/knowledge-extraction.entity.functions.test.ts#exact-assertions` |
+| Bounded query-planning and evidence-reranking prompts | `src/knowledge/knowledge-query.entity.functions.ts` | exact assertion suites `src/knowledge/knowledge-extraction.entity.functions.test.ts#exact-assertions` |
+| Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact assertion suites `packages/plugin-agent-loop/src/model-failures.test.ts#exact-assertions` |
+| Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact assertion suites `src/domain/model-call.entity.test.ts#exact-assertions` |
+| Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact assertion suites `src/turn/model-request-hook.entity.functions.test.ts#exact-assertions` |
+| Request-hook invalid-edge and foreign-failure reporting message (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:12` | exact assertion suites `src/turn/model-request-hook.entity.functions.test.ts#exact-assertions` |
+| Tool-interceptor invalid-edge and foreign-failure reporting message (`toolInterceptError`) | `src/domain/tool-interceptor.entity.functions.ts:7` | exact assertion suites `src/domain/tool-interceptor.entity.test.ts#exact-assertions` |
+| A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact assertion suites `src/turn/model-text.test.ts#exact-assertions` |
+| The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact assertion suites `src/turn/model-text.test.ts#exact-assertions` |
+| A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact assertion suites `src/turn/model-text.test.ts#exact-assertions` |
+| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/domain/message-mapping.entity.functions.ts:49-56` | exact assertion suites `src/internal/mapping.entity.functions.test.ts#exact-assertions` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:82` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-635` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:579-611` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:154-164` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:181-182` | exact assertion suites `src/domain/media.entity.test.ts#exact-assertions` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:638-641` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-634` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:504`, `:518`, `:579-593` | exact assertion suites `src/memory/memory-log.entity.test.ts#exact-assertions` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

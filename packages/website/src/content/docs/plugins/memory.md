@@ -77,7 +77,7 @@ separate. Model quality still determines whether an extracted claim is useful.
 `review` says when the review pass runs: `"always"` (the default) reviews
 every extraction, a second helper call per window; `"off"` never reviews;
 `"on-failure"` stages the unreviewed extraction and reviews it, window by
-window, only when staging refuses it as a whole (a repeated entity key, or no
+window, when decoding fails or staging refuses it as a whole (a repeated entity key, or no
 record that survives its checks). A record dropped on its own with a
 `RecordDropped` note starts no review. With `"on-failure"` a clean turn costs
 one extraction call; a refused one is reviewed once and its reviewed
@@ -258,7 +258,7 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:8", { model, version, dimensions })`, version 8
+(`knowledgeEngineId("memory:10", { model, version, dimensions })`, version 10
 since the prompt says how to refer to the conversation's user, version 7
 since a `supersession` is asked for only from a record that supersedes, version 6
 since the review's wire-form proposal, version 5 since event times, version 4 since restatements, version 3 since memory supersessions and successor links,
@@ -608,3 +608,8 @@ Plugin: `@xandreed/plugin-memory` · Version **0.19.2** · Plugin API **3** · S
 </details>
 
 <!-- plugin-reference:end -->
+
+Malformed JSON or an invalid output shape may also use the window's one review
+when review is enabled. The reviewer receives a bounded, framed raw proposal
+and the original evidence; the final schema and source checks remain strict.
+Provider failures and cancellation start no repair. `off` never repairs.

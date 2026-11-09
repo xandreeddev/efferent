@@ -79,8 +79,8 @@ Use `status`, `retry`, and `process` for host-controlled operation. With
 durable jobs after restart and renew leases during processing.
 
 Jobs are recorded under an engine id derived from the extraction version and
-the embedding options (`knowledgeEngineId("rag:8", { model, version, dimensions })`,
-for example `rag:8/host-embedding/1/768`; version 8 since the output schema says every key a relation names is defined in its entities, version 7 since a `supersession` is asked for only from a relation that supersedes, version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
+the embedding options (`knowledgeEngineId("rag:10", { model, version, dimensions })`,
+for example `rag:10/host-embedding/1/768`; version 10 since the output schema says every key a relation names is defined in its entities, version 7 since a `supersession` is asked for only from a relation that supersedes, version 6 since the review's wire-form proposal, version 5 since memory event times, version 4 since memory restatements,
 version 3 since memory supersessions and successor links, version 2 since dropped records and observed dates, and a
 job queued under an earlier version waits for a worker of that version).
 `retrieve` returns current evidence only: its `history` is always empty. The worker and `process` discover and claim only
@@ -137,7 +137,7 @@ helper call reads the extraction task and the proposed graph, written in the
 output schema's wire form (an absent identity or validity date as `null`), and
 returns the corrected graph, so a reviewer that keeps the proposal unchanged
 publishes it. `review: "off"` skips it; `review: "on-failure"` stages the
-unreviewed graph and reviews it, window by window, only when staging refuses
+unreviewed graph and reviews it, window by window, when decoding fails or staging refuses
 it as a whole (a repeated entity key, no record that survives its checks, or
 personal memories a document must not propose), so a clean document costs one
 extraction call per window. A relation dropped on its own with a
@@ -446,3 +446,8 @@ Plugin: `@xandreed/plugin-rag` · Version **0.19.2** · Plugin API **3** · Scop
 </details>
 
 <!-- plugin-reference:end -->
+
+Malformed JSON or an invalid output shape may also use the window's one review
+when review is enabled. The reviewer receives a bounded, framed raw proposal
+and the original evidence; the final schema and source checks remain strict.
+Provider failures and cancellation start no repair. `off` never repairs.

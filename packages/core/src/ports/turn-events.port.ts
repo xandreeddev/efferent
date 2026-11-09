@@ -19,8 +19,8 @@ export interface SubscribeOptions {
   /**
    * Background queue size; publishing waits when it is full (interruptibly,
    * wherever the publisher runs). A background handler's own publications,
-   * to its own subscription or another's, never wait: they are queued past
-   * the size, so a handler that publishes what it takes cannot deadlock.
+   * to its own subscription or another's, never wait: a full queue fails with `events.capacity`. Capacity remains
+   * a total queued-event bound during reentry too.
    */
   readonly capacity?: number
 }

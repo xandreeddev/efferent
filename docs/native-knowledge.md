@@ -1078,7 +1078,7 @@ as optional controlled evaluation baselines.
 
 Conformance, scripted models and real PostgreSQL tests prove the contracts;
 they do not establish competitive extraction or answer accuracy. The
-[evaluation guide](knowledge-evaluation.md) provides LongMemEval/LoCoMo
+[evaluation guide](https://github.com/xandreeddev/efferent/blob/main/docs/knowledge-evaluation.md) provides LongMemEval/LoCoMo
 normalization, matched-budget comparisons and graph ablations. Run those with
 explicit models and credentials before claiming parity. The initial exact-vector implementation and scoped
 extraction snapshots suit modest corpora; measure memory, indexing and retrieval

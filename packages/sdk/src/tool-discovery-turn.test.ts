@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Cause, Effect, Layer, Logger, Option, Ref, References, Schema, Stream } from "effect"
@@ -96,7 +97,7 @@ const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effe
       session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: next.data,
     }))])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "test" }, turn: 1, runId: RunId.make("run-1"), key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
+    admitted: { session: { id: session, owner: "test", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn: 1, runId: RunId.make("run-1"), key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: () => Effect.succeed([]),
     snapshot: () => Ref.get(stored),

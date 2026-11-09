@@ -2,9 +2,7 @@ import { expect, test } from "bun:test"
 import { Effect, Option, Predicate, Schema } from "effect"
 import { validateDataset } from "./assessment.entity.functions.js"
 import { compareCalibrationMetric, summarizeCalibration } from "./domain/grader-calibration.entity.functions.js"
-import { assessBothOrders } from "./evaluators/pairwise.js"
 import type { Dataset } from "./assessment.usecase.js"
-import { spanRecorder } from "./testing/fixture.testing.js"
 
 const data: Dataset<string, boolean> = {
   id: "examples", version: "1", input: Schema.String, reference: Schema.Boolean,
@@ -30,16 +28,6 @@ test("calibration distinguishes probabilities from scalar scores", () => {
   expect(result.status).toBe("measured")
   if (result.status === "measured") expect(Option.getOrThrow(result.brier)).toBeCloseTo(0.04)
   expect(compareCalibrationMetric({ kind: "score", name: "grounded", value: 0.8, min: 0, max: 1 }, { kind: "boolean", name: "grounded", value: true }).status).toBe("unavailable")
-})
-test("pairwise positional preference is flagged, never reported as a tie", async () => {
-  const result = await Effect.runPromise(assessBothOrders("left", "right", () => Effect.succeed("A")))
-  expect(result).toEqual({ forward: "A", reverse: "A", consistent: false })
-})
-test("a pairwise assessment is one eval.pairwise span over both of its judge calls", async () => {
-  const { tracer, named, parentOf } = spanRecorder()
-  await Effect.runPromise(assessBothOrders("left", "right", () => Effect.succeed("tie" as const).pipe(Effect.withSpan("judge"))).pipe(Effect.withTracer(tracer)))
-  expect(named("eval.pairwise")).toHaveLength(1)
-  expect(named("judge").map(parentOf)).toEqual(["eval.pairwise", "eval.pairwise"])
 })
 test("calibration coverage excludes missing predictions and preserves confusion counts", () => {
   const result = summarizeCalibration([

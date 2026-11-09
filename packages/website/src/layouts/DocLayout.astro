@@ -80,7 +80,7 @@ const next = i >= 0 && i < docsOrder.length - 1 ? docsOrder[i + 1] : undefined
     margin: 0;
     padding: 0 1.75rem;
     display: grid;
-    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 2.5rem;
     align-items: start;
   }
@@ -180,6 +180,7 @@ const next = i >= 0 && i < docsOrder.length - 1 ? docsOrder[i + 1] : undefined
   }
 
   @media (min-width: 880px) {
+    .shell { grid-template-columns: 240px minmax(0, 1fr); }
     .col-side {
       display: block;
     }

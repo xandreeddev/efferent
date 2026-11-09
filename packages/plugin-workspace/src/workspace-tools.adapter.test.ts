@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { Bash, BashError, Capabilities, FileSystem, Failure, ImageResizeError, ImageResizer, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
@@ -947,3 +947,33 @@ test("builtin grep caps each file of a directory at a quarter of its limit even 
   }))
   expect(seen).toMatchObject({ matches: 2, files: 1, truncated: true })
 })
+
+test("interrupting a write at rename removes its full-content temporary", async () => {
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem()
+    yield* fs.mkdir("/workspace", { recursive: true })
+    const reached = yield* Deferred.make<string>()
+    const wrapped = { ...fs, rename: (from: string) => Deferred.succeed(reached, from).pipe(Effect.andThen(Effect.never)) }
+    const tools = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", tools: ["write"] })
+    const tool = tools.tools.find((entry) => entry.tool.name === "write")!
+    const services = Context.make(FileSystem, wrapped).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))
+    const fiber = yield* tool.handler({ path: "new.txt", content: "fixture-only" }).pipe(Effect.provide(services), Effect.forkScoped)
+    const temp = yield* Deferred.await(reached)
+    yield* Fiber.interrupt(fiber)
+    return { entries: yield* fs.list("/workspace"), removed: yield* Effect.result(fs.read(temp)) }
+  })))
+  expect(result.entries).toEqual([])
+  expect(result.removed._tag).toBe("Failure")
+})
+
+test("builtin grep terminates overlapping-alternative backtracking at its deadline", async () => {
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem()
+    yield* fs.mkdir("/workspace", { recursive: true })
+    yield* fs.write("/workspace/slow.txt", "a".repeat(100) + "!")
+    const tools = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", tools: ["grep"], grepTimeoutMs: 100 })
+    const tool = tools.tools.find((entry) => entry.tool.name === "grep")!
+    return yield* tool.handler({ path: "slow.txt", pattern: "(a|a)*$" }).pipe(Effect.provide(Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))))
+  })))
+  expect(result).toMatchObject({ timedOut: true, truncated: true, matches: 0 })
+}, 5000)

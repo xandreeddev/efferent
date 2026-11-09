@@ -31,7 +31,7 @@ const build = (root) => Effect.gen(function* () {
   return { raw, sessions: Context.get(context, Sessions) }
 })
 const audit = (log) => Effect.gen(function* () {
-  const events = yield* log.read(target.id, query)
+  const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(target.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
   yield* Effect.forEach(events, (event) => Option.match(journalSchemaOf(event.kind), { onNone: () => Effect.die(`unknown journal kind ${event.kind}`), onSome: (schema) => Schema.decodeUnknownEffect(schema)(event.data) }), { concurrency: 1, discard: true })
   const entries = yield* entriesOfEvents(events)
   const states = yield* toolCallStatesOf(events)

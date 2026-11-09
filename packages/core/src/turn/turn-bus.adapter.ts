@@ -1,4 +1,4 @@
-import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref, Semaphore } from "effect"
+import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
@@ -15,9 +15,9 @@ interface Subscriber {
   readonly drain: Effect.Effect<void, TurnError>
 }
 
-/** One queued delivery (`roomed`: it took a place of the lane's capacity), or a marker the drain waits on. */
+/** One queued delivery or a marker the drain waits on. */
 type Queued<E> =
-  | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean; readonly roomed: boolean }
+  | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean }
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, TurnError> }
 
 /**
@@ -45,10 +45,9 @@ const defaultCapacity = 256
  * subscribers get the event on their own queue and handle it in order on
  * their own fiber; `drain` waits for them. A publisher waits while a
  * background queue is full, except a background handler of this bus (of any
- * subscription, and what it runs inline): its publications are queued past
- * the capacity, since the queue it would wait on may be its own, or one
- * whose handler waits on it, and only that lane's fiber takes from it; its
- * reaction chains stay bounded by `maxDepth`. A publisher waiting for room
+ * subscription, and what it runs inline): a full queue fails immediately
+ * with events.capacity. It never waits on a lane that may depend on it,
+ * and the queue stays finite. Reaction depth is also bounded by maxDepth. A publisher waiting for room
  * can always be interrupted. `activity` counts background deliveries so
  * far, so a caller can tell whether a drain left new work.
  */
@@ -71,16 +70,10 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
     yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { concurrency: 1, discard: true }).pipe(Effect.provideService(depth, current + 1))
   })
 
-  /**
-   * A queue and a fiber: handled in order, off the publisher's path; its
-   * depth and trace content switch travel with each event. `room` holds
-   * the capacity: a publisher takes a place before it queues an event, and
-   * the lane gives it back as it takes the event. A background handler
-   * queues without a place (it never waits), markers too.
-   */
+  /** A finite queue and a scoped consumer. Reentrant publication never waits:
+   * a full queue fails with events.capacity, preserving the memory bound. */
   const background = <E>(handle: (event: E) => Effect.Effect<void, TurnError>, capacity: number) => Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<Queued<E>>()
-    const room = yield* Semaphore.make(capacity)
+    const queue = yield* Queue.bounded<Queued<E>>(capacity)
     const failed = yield* Ref.make(Option.none<Cause.Cause<TurnError>>())
     const take: Effect.Effect<void> = Queue.take(queue).pipe(Effect.flatMap((item) => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
@@ -88,7 +81,6 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
         yield* Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (cause) => Deferred.failCause(item.done, cause) })
         return
       }
-      if (item.roomed) yield* room.release(1)
       if (Option.isSome(failure)) return
       yield* handle(item.event).pipe(
         Effect.provideService(depth, item.depth),
@@ -103,11 +95,12 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
       if (Option.isSome(failure)) return yield* Effect.failCause(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
       const item = { _tag: "Event" as const, event, depth: yield* Effect.service(depth), traceContent: yield* Effect.service(CurrentTraceContent) }
-      // A background handler of this bus never waits for room: it may be what would make room.
-      if (yield* Effect.service(inLane)) return yield* Queue.offer(queue, { ...item, roomed: false }).pipe(Effect.asVoid)
-      // The wait for room can be interrupted even where the publisher is not (a failed turn recording its reply);
-      // a place taken is always used.
-      yield* Effect.uninterruptible(Effect.interruptible(room.take(1)).pipe(Effect.andThen(Queue.offer(queue, { ...item, roomed: true }))))
+      if (yield* Effect.service(inLane)) {
+        const accepted = yield* Effect.sync(() => Queue.offerUnsafe(queue, item))
+        if (!accepted) return yield* Effect.fail(new HarnessError({ code: "events.capacity", message: "a background event queue reached its capacity during a reaction" }))
+        return
+      }
+      yield* Effect.interruptible(Queue.offer(queue, item))
     })
     const drain = Deferred.make<void, TurnError>().pipe(Effect.flatMap((done) =>
       Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
@@ -121,8 +114,10 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
       const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1)
       const handled = (selected: E) => handle(selected).pipe(Effect.provide(context))
       const mode = subscribeOptions?.mode ?? "inline"
+      const capacity = subscribeOptions?.capacity ?? defaultCapacity
+      if (mode === "background" && (!Number.isSafeInteger(capacity) || capacity < 1)) return yield* Effect.die(new HarnessError({ code: "config.limits", message: "a background event queue needs a positive finite integer capacity" }))
       const lane = mode === "background"
-        ? yield* background(handled, subscribeOptions?.capacity ?? defaultCapacity)
+        ? yield* background(handled, capacity)
         : { deliver: handled, drain: Effect.void }
       const deliver = (event: TurnEvent): Effect.Effect<void, TurnError> => Option.match(select(event), {
         onNone: () => Effect.void,

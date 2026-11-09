@@ -317,5 +317,11 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* expect("remove-paths", show(links) === show(["NotFound", "NotFound"]) && show(left) === show([false, "kept", "symlink"]),
         `after removing link/ and recursive-link/ they are ${show(links)}; after removing via/sub, dir/sub exists ${show(left[0])}, dir/other/kept.txt reads ${show(left[1])} and via is a ${show(left[2])}`)
     })),
+    fsCheck("dot segments and trailing separators still require traversal through directories", "dot-paths", ({ fs, symlink }, at) => Effect.gen(function* () {
+      yield* fs.write(at("file"), "content")
+      yield* symlink(at("file"), at("link"))
+      yield* Effect.forEach(["file/.", "file/..", "file/", "link/.", "link/..", "link/"], (path) => refuses("dot-paths", `reading ${path}`, fs.read(at(path)), "NotDirectory", at(path)), { concurrency: 1, discard: true })
+      yield* refuses("dot-paths", "reading a missing path followed by dot", fs.read(at("missing/.")), "NotFound", at("missing/."))
+    })),
   ]
 }

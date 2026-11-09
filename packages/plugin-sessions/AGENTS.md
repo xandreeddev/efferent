@@ -1,11 +1,12 @@
 # @xandreed/plugin-sessions
 
-Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (`BeginTurn`'s direct User, Queued user input, Inbox notices or Task, told apart by `Match.valueTags` in `askedOf`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops), plus owner-observed `WaitingInput`. The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (`BeginTurn`'s direct User, Queued user input, Inbox notices or Task, told apart by `Match.valueTags` in `askedOf`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops), plus owner-observed `WaitingInput`. The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core, with declared `node:os` and `node:process` in the process-liveness adapter).
 
 ## Rules
 
 - Change the head's `sessions` state only in a guarded commit (`guarded`: compare-and-swap on the revision, planned again after a conflict) with the events that justify it; no backend reads that state.
-- Stamp the state with core's `STORED_FORMAT` in every commit that writes it (`withFormat`), and refuse a session a newer release stamped before planning any write or turn (`refuseNewer`, `session.version`); never refuse a read. A change to `SessionsState` is a stored-shape change: it bumps `STORED_FORMAT` (skill `change-event`).
+- Creation atomically stamps core's `STORED_FORMAT` in `SessionsState`. Every owned operation accepts only this format (`isUnsupportedFormat`, `session.version`), including reads. Other formats are refused without mutation or migration; hosts configure fresh stores. A state-shape change bumps `STORED_FORMAT` (skill `change-event`).
+
 - Fail with `SessionLogError` only for the store (the log's own, or stored data that does not decode: `session.state`, `session.decode`, its `cause` kept); `guarded` gives up as `SessionContended` after `retries` conflicts; a value of the plugin's own that does not encode, or an answer the log's contract rules out, is a defect (`Effect.orDie`, `Effect.die`).
 - Read a stored record's fields through core's `readStored` (`turn.ended`, `inbox.queued`), and look a turn up by its key or run through `readStoredKeys`, which decodes the keys alone, never the message and its images; never read `event.data.<field>` unchecked. A row that does not decode fails with `session.decode`.
 - Pass a known snapshot or fork ceiling as `SessionReadQuery.through` before reading event data. Filtering after a read is too late for a decorating store that hydrates blobs. Keep the final sequence filter as defense for custom backends, and never compare sequence numbers across sessions.
@@ -36,7 +37,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Signal `changes` through one hub per followed session, `PubSub.sliding(1)` held in an `RcMap` (released with its last follower): a commit wakes only its own session's followers, and a follower that does not pull holds one signal. Never `dropping` (it loses the last signal) nor a `SubscriptionRef` (it signals a follower on subscribing, before any commit).
 - Keep the in-memory `SessionChannel` (`SessionChannelMemoryLive`, `makeMemorySessionChannel`) as `changes` keeps its signals: one `PubSub.sliding(capacity)` per followed session in an `RcMap` keyed by the whole address (id and owner), released with its last follower; a publish to a session nobody follows takes no hub (`RcMap.getOption`) and is dropped. Never store, replay or block on a payload: the journal is the only record. Change its behaviour by adding the check to core's `sessionChannelConformance` first.
 - Trace each `Sessions` call but `changes` as `sessions.<op>` (`Effect.fn`; the `onSession` pipeable puts `sessionAttributes` on its span and its logs), each writer commit as `turn_writer.commit` under the span of the call that queued it (`underCaller`: the writer's fiber was forked under the begin), and the writer's `flush` and `end` as `turn_writer.flush` and `turn_writer.end`, all with `turnAttributes`; the writer's fibers carry the turn's ids on their spans and logs. A log line names no id: the ids are its annotations. Trace nothing per append or per `write`.
-- Import no `node:` module: `processLiveness` reaches `node:os` through `process.getBuiltinModule` and works without a process.
+- Keep native process access in `process-liveness.adapter.ts`, with declared `node:os` and `node:process` dependencies. Hosts may inject `ProcessLiveness`.
 - Change behaviour by adding the check to core's `sessionsConformance` first, with a careless instance in `src/sessions.conformance.test.ts` that it catches.
 
 - `Sessions.waiting` broadcasts one initial signal after subscribing, then coalesced local commits that change the open turn or an inbox slot (`waitingChanged`), or create or remove a session, through a scoped sliding-one hub. A turn's own appends and lease renewals signal nothing there. Keep per-session `changes` commit-only: it wakes after every commit, a writer's included.
@@ -61,10 +62,10 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:611` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:492` | exact, `src/sessions.adapter.test.ts:1314` |
-| Default user message when the inbox drainer resumes interrupted work, a host note: `[Host note: The previous turn stopped before it finished. Continue it.]` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact, `src/inbox-drain.entity.functions.test.ts:25` |
-| Invalid selected memory snapshot message, also used for an invalid snapshot publication | `src/memory-snapshot.adapter.ts:10` | exact, `src/memory-snapshot.adapter.test.ts:148` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:611` | exact assertion suites `src/sessions.adapter.test.ts#exact-assertions` |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:492` | exact assertion suites `src/sessions.adapter.test.ts#exact-assertions` |
+| Default user message when the inbox drainer resumes interrupted work, a host note: `[Host note: The previous turn stopped before it finished. Continue it.]` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact assertion suites `src/inbox-drain.entity.functions.test.ts#exact-assertions` |
+| Invalid selected memory snapshot message, also used for an invalid snapshot publication | `src/memory-snapshot.adapter.ts:10` | exact assertion suites `src/memory-snapshot.adapter.test.ts#exact-assertions` |
 
 ## Erasure files
 

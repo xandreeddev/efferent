@@ -77,7 +77,7 @@ await Promise.all(names.map(async (name) => {
     if (await Bun.file(join(source, asset)).exists() || Array.from(new Bun.Glob(`${asset}/**/*`).scanSync({ cwd: source })).length > 0) await cp(join(source, asset), join(target, asset), { recursive: true })
   }))
   const exportTarget = (path: string) => path.endsWith(".json") ? { default: path } : ({ types: path.replace("./src/", "./dist/").replace(/\.tsx?$/, ".d.ts"), default: path.replace("./src/", "./dist/").replace(/\.tsx?$/, ".js") })
-  const exports = Object.fromEntries(Object.entries(original.exports ?? { ".": "./src/index.ts" }).filter(([key]) => key !== "./tui-testing").map(([key, path]) => [key, exportTarget(String(path))]))
+  const exports = Object.fromEntries(Object.entries(original.exports ?? { ".": "./src/index.ts" }).map(([key, path]) => [key, exportTarget(String(path))]))
   if (exports["./*"]) exports["./*.js"] = exports["./*"]
   const missing = Object.entries(original.dependencies ?? {}).filter(([key, value]) => String(value).startsWith("workspace:") && !versions.has(key))
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }

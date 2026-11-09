@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { PrincipalId, ThreadId } from "./render-output.entity.js"
 
-const Id = Schema.Trimmed.check(Schema.isNonEmpty())
+const Id = Schema.Trimmed.check(Schema.isNonEmpty(), Schema.makeFilter((value) => !/[\r\n\0]/.test(value) || "event names cannot contain CR, LF or NUL"))
 /** A record's payload: a JSON object, every value JSON. */
 const Json = Schema.JsonObject
 

@@ -62,13 +62,26 @@ const WORDING = new Set(["description", "title", "examples", "$comment"])
 
 const isObject = (value: unknown): value is { readonly [key: string]: unknown } => typeof value === "object" && value !== null && !Array.isArray(value)
 
-/** A JSON value without its wording, its object keys sorted. */
-const canonical = (value: unknown): unknown =>
-  Array.isArray(value)
-    ? value.map(canonical)
-    : isObject(value)
-      ? Object.fromEntries(Object.keys(value).filter((key) => !WORDING.has(key)).toSorted().map((key) => [key, canonical(value[key])]))
-      : value
+/** Preserve arbitrary JSON data, including keys named like schema annotations. */
+const canonicalData = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalData)
+  : isObject(value) ? Object.fromEntries(Object.keys(value).toSorted().map((key) => [key, canonicalData(value[key])])) : value
+
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "definitions", "$defs", "dependentSchemas"])
+const SCHEMA_ARRAYS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"])
+const SCHEMA_VALUES = new Set(["additionalProperties", "additionalItems", "contains", "not", "if", "then", "else", "propertyNames", "unevaluatedProperties", "unevaluatedItems"])
+
+/** Strip annotations at schema nodes only; property/definition names are data. */
+export const canonicalSchema = (value: unknown): unknown => {
+  if (!isObject(value)) return canonicalData(value)
+  return Object.fromEntries(Object.keys(value).filter((key) => !WORDING.has(key)).toSorted().map((key) => {
+    const child = value[key]
+    if (SCHEMA_MAPS.has(key) && isObject(child)) return [key, Object.fromEntries(Object.keys(child).toSorted().map((name) => [name, canonicalSchema(child[name])]))]
+    if (SCHEMA_ARRAYS.has(key) && Array.isArray(child)) return [key, child.map(canonicalSchema)]
+    if (key === "items") return [key, Array.isArray(child) ? child.map(canonicalSchema) : canonicalSchema(child)]
+    if (key === "dependencies" && isObject(child)) return [key, Object.fromEntries(Object.keys(child).toSorted().map((name) => [name, Array.isArray(child[name]) ? canonicalData(child[name]) : canonicalSchema(child[name])]))]
+    return [key, SCHEMA_VALUES.has(key) ? canonicalSchema(child) : canonicalData(child)]
+  }))
+}
 
 /**
  * A shape as canonical JSON: its JSON Schema (draft 07, as the event
@@ -78,7 +91,7 @@ const canonical = (value: unknown): unknown =>
  */
 export const canonicalShape = (schema: Schema.Top): string => {
   const document = JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
-  return JSON.stringify(canonical({ schema: document.schema, definitions: document.definitions }))
+  return JSON.stringify({ schema: canonicalSchema(document.schema), definitions: Object.fromEntries(Object.entries(document.definitions).toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, schema]) => [name, canonicalSchema(schema)])) })
 }
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex")

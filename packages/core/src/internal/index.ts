@@ -14,10 +14,10 @@ export {
   toPromptMessages,
   withToolCallIds,
   withUsageOnAssistant,
-} from "./mapping.entity.functions.js"
+} from "../domain/message-mapping.entity.functions.js"
 export { foldStreamParts } from "./stream-fold.entity.functions.js"
 export { isVolatileContext, markVolatileContext, stripVolatileContext } from "./volatile-context.entity.functions.js"
-export { strictJsonSchema, toolParametersSchema } from "./tool-schema.entity.functions.js"
+export { strictJsonSchema, toolParametersSchema } from "../turn/tool-schema.entity.functions.js"
 export { randomUuid } from "./random-id.entity.functions.js"
 // the turn engine's (`@xandreed/sdk`): a run's request checks, the memory it renders, what it journals
 export { entriesSendingMedia, estimateTokens } from "../memory/memory-log.entity.functions.js"

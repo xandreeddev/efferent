@@ -32,9 +32,9 @@ All of it goes to the summarizer (the utility model), not to the agent's model.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact, `src/plugin.adapter.test.ts:76`; sdk compaction golden |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact, `src/plugin.adapter.test.ts:59`; sdk compaction golden |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact, `src/plugin.adapter.test.ts:59`; sdk compaction golden |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
 
 ## Erasure files
 

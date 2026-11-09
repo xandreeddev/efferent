@@ -21,13 +21,27 @@ export const JsonObject = Schema.JsonObject
 export type JsonObject = Schema.JsonObject
 
 /**
+ * Which life of a session a head belongs to: the store gives a new one each
+ * time it creates a session, so a session removed and created again under
+ * its id is another incarnation. Stable for that life, whichever handle or
+ * process reads it. A commit that names one (`SessionCommit.incarnation`)
+ * lands only in that incarnation.
+ */
+export const SessionIncarnation = Schema.String.pipe(Schema.brand("SessionIncarnation"))
+export type SessionIncarnation = typeof SessionIncarnation.Type
+
+/** An exact owner-qualified life of a session; required for every data operation. @public */
+export const SessionRef = Schema.Struct({ id: ConversationId, owner: Name, incarnation: SessionIncarnation })
+export type SessionRef = typeof SessionRef.Type
+
+/**
  * Where a forked session starts: the parent, the last parent event it
  * inherits, and the parent's turns at that point.
  *
  * @public
  */
 export const SessionLineage = Schema.Struct({
-  id: ConversationId,
+  ...SessionRef.fields,
   through: Schema.Int,
   turnAtFork: Schema.Int,
 })
@@ -45,16 +59,6 @@ export const SessionHeader = Schema.Struct({
   parent: Schema.OptionFromNullOr(SessionLineage),
 })
 export type SessionHeader = typeof SessionHeader.Type
-
-/**
- * Which life of a session a head belongs to: the store gives a new one each
- * time it creates a session, so a session removed and created again under
- * its id is another incarnation. Stable for that life, whichever handle or
- * process reads it. A commit that names one (`SessionCommit.incarnation`)
- * lands only in that incarnation.
- */
-export const SessionIncarnation = Schema.String.pipe(Schema.brand("SessionIncarnation"))
-export type SessionIncarnation = typeof SessionIncarnation.Type
 
 /** A session's head: the header, its incarnation, the last sequence number, the revision and the plugin's state. */
 export const SessionHead = Schema.Struct({
@@ -94,7 +98,7 @@ export type SessionLogEvent = typeof SessionLogEvent.Type
 /**
  * One atomic commit: accepted only while the head's revision is `expect`,
  * the storage clock is at most `notAfter` (when given) and the session is
- * still the `incarnation` the writer read (when given: one removed and
+ * still the owner and `incarnation` of its mandatory SessionRef (one removed and
  * created again under its id is `SessionMissing` to it, and nothing is
  * written, whatever its revision). `state`, when given, replaces the head's
  * state; `events` may be empty.
@@ -104,7 +108,6 @@ export const SessionCommit = Schema.Struct({
   notAfter: Schema.OptionFromNullOr(Schema.Number),
   events: Schema.Array(SessionDraft),
   state: Schema.OptionFromNullOr(JsonObject),
-  incarnation: Schema.optionalKey(SessionIncarnation),
 })
 export type SessionCommit = typeof SessionCommit.Type
 
@@ -161,7 +164,7 @@ export const SessionListQuery = Schema.Struct({
   owner: Name,
   limit: Schema.Int,
   before: Schema.OptionFromNullOr(SessionListCursor),
-  parent: Schema.OptionFromNullOr(ConversationId),
+  parent: Schema.OptionFromNullOr(SessionRef),
 })
 export type SessionListQuery = typeof SessionListQuery.Type
 

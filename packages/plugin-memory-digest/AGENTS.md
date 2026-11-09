@@ -28,9 +28,9 @@ All of it goes to the digester (the utility model); the task's own `instructions
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Select: data rule and reply format | `src/plugin.adapter.ts:36`, `:39` | exact, `src/plugin.adapter.test.ts:27` |
-| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:43`, `:44`, `:47` | exact, `src/plugin.adapter.test.ts:38` |
-| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:32`, `:38`, `:46` | exact, `src/plugin.adapter.test.ts:27`, `:38`; clip sizes `:50` |
+| Select: data rule and reply format | `src/plugin.adapter.ts:36`, `:39` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:43`, `:44`, `:47` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:32`, `:38`, `:46` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
 
 ## Erasure files
 

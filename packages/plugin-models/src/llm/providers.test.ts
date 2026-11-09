@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { ConfigProvider, Effect, Exit, Metric, Option, Redacted, Schema, Stream } from "effect"
+import { ConfigProvider, Effect, Exit, Metric, Option, Redacted, Stream } from "effect"
 import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId } from "@xandreed/core"

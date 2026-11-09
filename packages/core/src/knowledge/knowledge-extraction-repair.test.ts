@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Cause, Effect, Exit, Option, Ref, Result } from "effect"
+import { Cause, Effect, Exit, Ref, Result } from "effect"
 import { KnowledgeError, KnowledgeSourceId } from "./knowledge.entity.js"
 import type { KnowledgeSnapshot, KnowledgeSource, KnowledgeStage } from "./knowledge.entity.js"
 import type { KnowledgeExtraction, KnowledgeReviewPolicy } from "./knowledge-extraction.entity.js"

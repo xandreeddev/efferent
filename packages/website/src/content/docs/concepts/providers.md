@@ -286,11 +286,11 @@ declare const vault: {
 const services = Context.make(HostCredentials, HostCredentials.of({
   load: Effect.tryPromise({
     try: () => vault.read(),
-    catch: (error) => new AuthError({ provider: "*", message: `the vault could not be read: ${String(error)}` }),
+    catch: (error) => new AuthError({ provider: "*", message: "the vault could not be read", cause: error }),
   }),
   save: (provider, credential) => Effect.tryPromise({
     try: () => vault.write(provider, credential),
-    catch: (error) => new AuthError({ provider, message: `the vault did not save: ${String(error)}` }),
+    catch: (error) => new AuthError({ provider, message: "the vault did not save", cause: error }),
   }),
 }))
 ```

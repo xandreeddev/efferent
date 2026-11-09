@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { Tool } from "effect/ai"
 import { Array as Arr, Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
@@ -206,7 +207,7 @@ const memoryWriter = Effect.gen(function* () {
   )
   const held = yield* Ref.make<ReadonlyArray<TurnDraft>>([])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "conformance" }, turn: 1, runId: RUN, key: RUN, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
+    admitted: { session: { id: session, owner: "conformance", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn: 1, runId: RUN, key: RUN, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: () => Effect.succeed([]),
     snapshot: (kinds, after) => Ref.get(stored).pipe(Effect.map((events) => events.filter((event) =>

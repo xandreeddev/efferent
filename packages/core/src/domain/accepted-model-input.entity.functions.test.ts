@@ -5,7 +5,7 @@ import { AcceptedModelInput } from "./accepted-model-input.entity.js"
 import { acceptedModelInputOf } from "./accepted-model-input.entity.functions.js"
 import { stampResponseModel } from "./engine-stamp.entity.functions.js"
 import { parseModelSelection } from "./model-selection.entity.functions.js"
-import { extractUsage } from "../internal/mapping.entity.functions.js"
+import { extractUsage } from "./message-mapping.entity.functions.js"
 
 const sdkUsage = (inputTokens: Response.Usage["inputTokens"], output = 2) => new Response.Usage({ inputTokens, outputTokens: { total: output } })
 const finish = (usage: Response.Usage) => Response.makePart("finish", { reason: "stop", usage })

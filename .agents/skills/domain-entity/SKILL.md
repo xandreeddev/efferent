@@ -97,7 +97,8 @@ JSON has no `undefined`, and stored payloads outlive the code that wrote them.
 
 - Prefer `Schema.optionalKey` to `Schema.optional`, which also admits an
   explicit `undefined` that JSON cannot carry.
-- A key added to a stored payload is optional to older records: skill `change-event`.
+- A stored-shape change bumps the format. Target current schemas and reject old
+  stores; do not add optional fields solely for legacy decoding. Skill `change-event`.
 - Functions return `Option`, never `A | undefined` (`effect/no-nullable-return`).
 
 ## 7. Aggregates

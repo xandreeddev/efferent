@@ -8,6 +8,47 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Breaking
+
+- Session logs require fresh stores: file layout 2, SQLite schema 3 and stored
+  format 19. Older or unmarked nonempty stores are refused without migration
+  or deletion. Session references include owner and incarnation; reads,
+  commits, removals and fork lineage require that reference. Creation takes
+  the header and initial state atomically. `head(id)` remains a trusted
+  bootstrap lookup; hosts must authorize its returned owner before use.
+  `AdmittedTurn.session` and `CommittedTurn.session` carry the full reference.
+  Sessions conformance subjects expose a raw unsupported-format snapshot probe.
+- Standalone loops and custom registries use `prepareToolkit` around their
+  Effect toolkit. Parameters decode once before any handler runs; immutable
+  raw input remains the durable evidence. Tool and schema objects are unchanged.
+- Auth/settings conformance kits take subjects that open fresh scoped fixtures
+  per check, including probes for every backing tier.
+- Reentrant turn-event publication fails with `events.capacity` when its finite
+  queue is full. Provider SSE permits at most 128 tool calls and 1 MiB of
+  accumulated arguments per call, with nonnegative safe-integer indices.
+- Blanket `no-let` and `no-loop-statements` gates are removed. Confined builders
+  are allowed; resource ownership, typed errors and architectural boundaries
+  remain enforced. No service keys are renamed.
+
+### Fixed
+
+- Fence session operations against replacement owners and incarnations, check
+  sealed-turn cancellation ownership, and retain immutable file generations
+  and tombstones through removal races and crashes.
+- Settle model-attempt acknowledgements on ledger defects, close resources
+  outside registry admission, bound event reentry and provider SSE input, and
+  cancel scripted hooks, regex workers, workspace temporaries and implementors.
+- Create credential files privately, reject corrupt fallback tiers before
+  writes, preserve auth error causes, and validate SSE event names.
+- Remove quadratic replay/history/media/trace batching, exponential graph
+  validation, lossy progress identities, dead eval helpers and unused assets
+  and dependencies. Correct provenance comparison and CLI command ownership.
+- Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
+  schema fingerprints, immutable fixture recording and release confirmation.
+- Reconcile agent guidance and current docs with the implemented contracts;
+  retain historical audit and release artifacts as historical evidence.
+
+
 ## 0.19.2 — 2026-11-08
 
 ### Fixed

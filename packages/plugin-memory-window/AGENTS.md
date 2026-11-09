@@ -28,11 +28,11 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `recall_context` description | `src/plugin.adapter.ts:153` | exact, `src/plugin.adapter.test.ts:63`; sdk golden; sdk compaction golden |
-| `locator` and `offset` descriptions | `src/plugin.adapter.ts:155-156` | exact, `src/plugin.adapter.test.ts:64`; sdk golden; sdk compaction golden |
-| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:83` | exact, `src/plugin.adapter.test.ts:58`; sdk compaction golden |
-| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:168` | exact, `src/plugin.adapter.test.ts:75` |
-| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:189`, `:191` | exact, `src/plugin.adapter.test.ts:78`, `:77` |
+| `recall_context` description | `src/plugin.adapter.ts:153` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| `locator` and `offset` descriptions | `src/plugin.adapter.ts:155-156` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:83` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:168` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
+| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:189`, `:191` | exact assertion suites `src/plugin.adapter.test.ts#exact-assertions` |
 
 ## Erasure files
 

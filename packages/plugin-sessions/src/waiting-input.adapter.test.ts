@@ -1,3 +1,4 @@
+import { STORED_FORMAT } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
 import { awaitIdle, ConversationId, InboxItemId, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, shutdownGracefully, TurnAdmissionOpen, UserMessage, WaitingInput } from "@xandreed/core"
@@ -35,7 +36,7 @@ test("observing raw history keeps reads available when head state does not decod
   expect(yield* probe.current).toEqual([{ session: address.id, pending: 1 }])
   const before = yield* sessions.read(address)
   const head = yield* log.head(address.id)
-  yield* log.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { invalid: true } }) })
+  yield* Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { invalid: true, format: STORED_FORMAT } }) }) })
   expect(yield* sessions.read(address)).toEqual(before)
   expect(yield* Effect.flip(probe.current)).toMatchObject({ _tag: "SessionLogError", code: "session.state" })
   expect(yield* probe.cached).toEqual([{ session: address.id, pending: 1 }])
@@ -78,7 +79,7 @@ ackOperations.map((operation) => test(`an interrupted ${operation} acknowledges 
   yield* Effect.sync(() => caller.interruptUnsafe())
   yield* Deferred.succeed(acknowledge, undefined)
   yield* Fiber.await(caller)
-  expect(Option.isSome(yield* Deferred.await(changed).pipe(Effect.timeoutOption("200 millis")))).toBe(true)
+  yield* Deferred.await(changed)
   expect(yield* probe.cached).toEqual(operation === "enqueue" ? [{ session: address.id, pending: 1 }] : [])
 })).pipe(Effect.timeout("3 seconds")))))
 

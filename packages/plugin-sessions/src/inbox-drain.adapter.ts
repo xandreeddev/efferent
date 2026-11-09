@@ -1,4 +1,4 @@
-import { Cause, Clock, Deferred, Effect, Exit, Layer, Match, Option, PubSub, Ref, Schema, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Deferred, Effect, Layer, Match, Option, PubSub, Ref, Schema, Stream, SubscriptionRef } from "effect"
 import type { Scope } from "effect"
 import {
   canonicalJson, DrainActivity, HarnessError, harnessDefectsAsFailures, InboxDroppedData, InboxRunner, InboxTakenData,

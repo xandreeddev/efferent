@@ -42,7 +42,7 @@ export const comparisonIssues = (baseline: EvaluationRun, candidate: EvaluationR
     ...(baseline.fingerprints.gradingConfiguration !== candidate.fingerprints.gradingConfiguration ? ["Grader definitions or projection policy differs"] : []),
     ...(baseline.application !== candidate.application ? ["Different applications"] : []),
     ...(identities(baseline) !== identities(candidate) ? ["Task, dataset or repetition coverage differs"] : []),
-    ...(Object.entries(baseline.fingerprints).filter(([key]) => key.startsWith("fixture:") || key.startsWith("protocol:")).some(([key, value]) => candidate.fingerprints[key] !== value) ? ["Fixture or protocol provenance differs"] : []),
+    ...([...new Set([...Object.keys(baseline.fingerprints), ...Object.keys(candidate.fingerprints)])].filter((key) => key.startsWith("fixture:") || key.startsWith("protocol:")).some((key) => baseline.fingerprints[key] !== candidate.fingerprints[key]) ? ["Fixture or protocol provenance differs"] : []),
     ...(coverage(baseline) !== coverage(candidate) ? ["Grader or projection coverage differs"] : []),
     ...([baseline, candidate].some((run) => run.trials.some((trial) => trial.status !== "completed" || trial.grades.some((grade) => grade.status !== "scored") || trial.task.graders.some((binding) => !trial.grades.some((grade) => `${grade.grader}@${grade.version}` === binding.grader && grade.scope === binding.scope && grade.status === "scored")))) ? ["Incomplete trials or grade coverage"] : []),
   ]

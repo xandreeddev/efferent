@@ -1,9 +1,10 @@
+import { callRejections, malformedCall } from "./response-validation.testing.js"
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Effect, Option, Schema, SchemaGetter } from "effect"
 import { FinishReason } from "@xandreed/core"
 import type { ResponseVerdict } from "./response-gate.entity.js"
-import { callRejections, isRejectedCall, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 
 describe("verdictOf: whether a response may run its tool calls", () => {
   /** Each reason's verdict for a response that holds calls the loop would run, and for one that holds none. */

@@ -111,11 +111,12 @@ exported from `@xandreed/core`); never hand-roll a frame or a marker.
   Read every changed string and explain it in the PR. Never re-record to
   silence a failure you cannot explain. `EFFERENT_UPDATE_GOLDEN=1` (the
   journal golden) is for deliberate storage changes only.
-- A row in the package `AGENTS.md` "Model-facing text" table: the text,
-  its source (`file:line`) and, under "Pinned by", the test that pins it
-  (`exact, src/x.test.ts:12`) or the golden. `scripts/model-text-pins.test.ts`
-  fails on a cell that says `unpinned`, `contains`, `codes only` or
-  `by reference only`, and on a cited test file or line that does not exist.
+- A row in the package `AGENTS.md` "Model-facing text" table names the
+  text, source module and stable assertion suite (`src/x.test.ts#exact-assertions`).
+  `scripts/model-text-pins.test.ts` checks that cited modules contain exact
+  assertions and rejects an assertion-free negative control. This validates
+  inventory evidence, not semantic coverage: review the whole rendered value
+  against the row and keep parameterized cases for distinct template branches.
 - CHANGELOG entry under Unreleased naming the text that changed.
 
 ## Checklist

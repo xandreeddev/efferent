@@ -1,5 +1,7 @@
+import type { PreparedToolkit } from "@xandreed/core"
+import { prepareToolkit } from "@xandreed/core"
 import { expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
 import type { Scope } from "effect"
 import { LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
@@ -19,7 +21,7 @@ import { recordingTurnWriter } from "./testing.js"
 const views: ToolViews = { view: () => Effect.succeed({ text: "", version: "1", subjects: [], artifacts: [], pinned: false }), compact: () => Effect.succeed(Option.none()), digest: () => Effect.succeed(Option.none()) }
 const registry = ToolRegistry.of({
   catalog: { version: "1", recipes: [], tools: [] }, open: () => Effect.gen(function* () {
-    const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make()
+    const toolkit: PreparedToolkit<Record<string, Tool.Any>> = prepareToolkit(Toolkit.make())
     return { toolkit, handlers: yield* toolkit.toHandlers({}), active: Effect.succeed([]), activate: () => Effect.succeed([]), apply: () => Effect.succeed([]), select: () => Effect.succeed([]), match: (userMessage) => Effect.succeed({ userMessage, skills: [], probabilities: Option.none(), record: Option.none() }), views, pollable: [], skills: [] } satisfies RunTools
   }),
 })

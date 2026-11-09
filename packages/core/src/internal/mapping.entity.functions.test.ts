@@ -21,7 +21,7 @@ import {
   withToolCallIds,
   withUsageOnAssistant,
   handoffToMessage,
-} from "./mapping.entity.functions.js"
+} from "../domain/message-mapping.entity.functions.js"
 
 /** effect/ai response parts, as a provider's response holds them. */
 const textPart = (text: string, metadata: Response.TextPartMetadata = {}) => Response.makePart("text", { text, metadata })

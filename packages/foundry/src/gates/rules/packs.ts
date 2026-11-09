@@ -8,8 +8,6 @@ import { matchOverTagSwitch } from "./matchOverTagSwitch.js"
 import { noAsAny } from "./noAsAny.js"
 import { noAsNever } from "./noAsNever.js"
 import { noEmptyCatch } from "./noEmptyCatch.js"
-import { noLet } from "./noLet.js"
-import { noLoopStatements } from "./noLoopStatements.js"
 import { noNullableReturn } from "./noNullableReturn.js"
 import { noParallelInterface } from "./noParallelInterface.js"
 import { noSkippedTests } from "./noSkippedTests.js"
@@ -42,7 +40,7 @@ export interface RulePack {
 }
 
 /** The Effect.ts house style — errors are values (kept, logged when
- *  dropped, told apart by tag), state is a fold, concurrency is stated,
+ *  dropped, told apart by tag), shared state has an owner, concurrency is stated,
  *  what an effect requires is in its type, and what crosses a boundary
  *  (text, the environment, time, randomness, foreign promises) is decoded
  *  or comes from a service. */
@@ -50,8 +48,6 @@ export const effectPack: RulePack = {
   name: "effect",
   rules: [
     noTryCatch,
-    noLet,
-    noLoopStatements,
     noNullableReturn,
     matchOverTagSwitch,
     noAsAny,

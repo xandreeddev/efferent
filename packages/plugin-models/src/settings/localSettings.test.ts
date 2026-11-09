@@ -49,7 +49,7 @@ describe("LocalSettingsStoreLive", () => {
       const store = yield* SettingsStore
       const load = yield* Effect.flip(store.load)
       const write = yield* Effect.flip(store.set("maxAttempts", Option.some("3")))
-      return [load.code, load.message.includes("could not be read"), write.code, write.message.includes("does not hold a JSON object")]
+      return [load.code, load.message.includes("could not be read"), write.code, write.message.includes("could not be read")]
     }).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home))))
     expect(codes).toEqual(["settings.corrupt", true, "settings.corrupt", true])
   })

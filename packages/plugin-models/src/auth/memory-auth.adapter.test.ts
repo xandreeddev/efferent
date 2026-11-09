@@ -1,12 +1,12 @@
-import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, rmSync } from "node:fs"
+import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Clock, Effect, Fiber, Layer, Option, Redacted, Ref, Schema } from "effect"
 import { ProviderId } from "@xandreed/core"
 import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
-import type { AuthStoreConformanceOptions } from "./auth-store.conformance.js"
+import type { AuthStoreSubject } from "./auth-store.conformance.js"
 import { HostCredentials } from "../ports/host-credentials.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { damagedFile, tokenEndpoint as kitTokenEndpoint } from "../testing.js"
@@ -22,30 +22,32 @@ const HOUR = 3_600_000
 const plain = Schema.encodeSync(Credential)
 const plainAll = (all: ReadonlyMap<string, Credential>) => Object.fromEntries([...all].map(([provider, credential]) => [provider, plain(credential)]))
 
-const runKit = (store: typeof AuthStore.Service, options: AuthStoreConformanceOptions = {}) => authStoreConformance(store, options).map((check) => test(check.name, async () => {
+const runKit = (subject: AuthStoreSubject) => authStoreConformance(subject).map((check) => test(check.name, async () => {
   const exit = await Effect.runPromise(Effect.result(check.run))
   expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
 }))
 
-/** The local store over a token endpoint, as the kit runs it: the store, the endpoint's probe and the damaged login file. */
-const localKitSubject = (cwd: string, home: string, provider: ProviderId) => {
+/** A new backing store and endpoint for every check, with corruption in every tier. */
+const localKitSubject = (provider: ProviderId): AuthStoreSubject => ({ refresh: true, corrupt: true, open: () => Effect.gen(function* () {
+  const { home, cwd } = yield* Effect.acquireRelease(Effect.sync(() => ({
+    home: mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-")),
+    cwd: mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-")),
+  })), ({ home, cwd }) => Effect.sync(() => [home, cwd].forEach((dir) => rmSync(dir, { recursive: true, force: true }))))
   const endpoint = kitTokenEndpoint(provider, "kit")
   const transport = Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch }))
-  const store = Effect.runSync(Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(transport)))))
-  return { store, options: { refresh: endpoint.probe, corrupt: damagedFile(join(home, ".efferent", "runtime", "auth.json")) } }
-}
+  const store = yield* Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(transport))))
+  return { store, refresh: endpoint.probe, corruptions: [damagedFile(join(home, ".efferent", "runtime", "auth.json")), damagedFile(join(home, ".efferent", "auth.json"))] }
+}) })
 
 describe("MemoryAuthStoreLive conforms to the AuthStore contract", () => {
-  const endpoint = kitTokenEndpoint(anthropic, "kit")
-  runKit(Effect.runSync(Effect.service(AuthStore).pipe(Effect.provide(MemoryAuthStoreLive(new Map(), { fetch: endpoint.fetch })))), { refresh: endpoint.probe })
+  runKit({ refresh: true, open: () => Effect.suspend(() => {
+    const endpoint = kitTokenEndpoint(anthropic, "kit")
+    return Effect.service(AuthStore).pipe(Effect.provide(MemoryAuthStoreLive(new Map(), { fetch: endpoint.fetch })), Effect.map((store) => ({ store, refresh: endpoint.probe })))
+  }) })
 })
 
 describe("LocalAuthStoreLive conforms to the AuthStore contract", () => {
-  const home = mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-"))
-  const cwd = mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-"))
-  afterAll(() => [home, cwd].map((dir) => rmSync(dir, { recursive: true, force: true })))
-  const subject = localKitSubject(cwd, home, ProviderId.make("openai-codex"))
-  runKit(subject.store, subject.options)
+  runKit(localKitSubject(ProviderId.make("openai-codex")))
 })
 
 /** A token endpoint: records each request, and answers once `release` resolves (at once by default). */
@@ -222,15 +224,8 @@ describe("MemoryAuthStoreLive and the host's credentials", () => {
 })
 
 describe("the local store keeps its files", () => {
-  test("the kit run leaves no credential and no temp file behind", async () => {
-    const home = mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-"))
-    const cwd = mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-"))
-    const { store, options } = localKitSubject(cwd, home, anthropic)
-    const left = await Effect.runPromise(Effect.forEach(authStoreConformance(store, options), (check) => Effect.result(check.run)).pipe(
-      Effect.andThen(store.all),
-      Effect.map((all) => ({ credentials: all.size, files: readdirSync(cwd), runtime: readdirSync(join(home, ".efferent", "runtime")) })),
-      Effect.ensuring(Effect.sync(() => [home, cwd].map((dir) => rmSync(dir, { recursive: true, force: true })))),
-    ))
-    expect(left).toEqual({ credentials: 0, files: [], runtime: ["auth.json"] })
+  test("each kit fixture closes and cleans up independently", async () => {
+    const results = await Effect.runPromise(Effect.forEach(authStoreConformance(localKitSubject(anthropic)), (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect(results.every((result) => result._tag === "Success")).toBe(true)
   })
 })

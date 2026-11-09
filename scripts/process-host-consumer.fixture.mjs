@@ -173,7 +173,7 @@ const start = (directory, kind = "idle", hardDeadlineMs = 1200) => {
 
 const audit = (directory) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const raw = Context.get(yield* Layer.build(SessionLogFilesLive(join(directory, "sessions"))), SessionLog)
-  const events = yield* raw.read(target.id, query)
+  const events = yield* Effect.gen(function* () { const sessionHead = yield* raw.head(target.id); return yield* raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
   return { events, states: yield* toolCallStatesOf(events), head: yield* raw.head(target.id) }
 })))
 const begin = (requestId = "begin", extra = {}) => ({ _tag: "begin", requestId, session: target, runId: RunId.make(requestId), userMessage: new UserMessage({ text: "Find the checkpoint." }), ...extra })

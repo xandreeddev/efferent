@@ -169,7 +169,7 @@ export const newestFirst: Order.Order<SessionHead> = Order.combine(
 export const inListing = (record: HeaderRecord, query: SessionListQuery): boolean =>
   record.header.owner === query.owner && Option.match(query.parent, {
     onNone: () => Option.isNone(record.header.parent),
-    onSome: (parent) => Option.exists(record.header.parent, (lineage) => lineage.id === parent),
+    onSome: (parent) => Option.exists(record.header.parent, (lineage) => lineage.id === parent.id && lineage.owner === parent.owner && lineage.incarnation === parent.incarnation),
   })
 
 /** The heads strictly older than the listing's cursor, in order, at most its limit. */
@@ -190,7 +190,7 @@ export const admitCall = (health: StoreHealth, now: number, stallMs: number): re
       : [false, health]
 
 /** A call's outcome on the store's health: one that answered heals it; one that stalled marks it stalled from now. */
-export const afterCall = (health: StoreHealth, answered: boolean, now: number): StoreHealth =>
+export const afterCall = (_health: StoreHealth, answered: boolean, now: number): StoreHealth =>
   answered ? { _tag: "Healthy" } : { _tag: "Stalled", since: now, probing: false }
 
 /** Cancellation abandons a probe without turning an answered healthy mount into a stalled one. */

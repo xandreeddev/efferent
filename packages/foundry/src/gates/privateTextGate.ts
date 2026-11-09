@@ -3,7 +3,7 @@ import { execFile } from "node:child_process"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { GateName, RuleId } from "../domain/Brands.js"
-import { GateCrash } from "../domain/Errors.js"
+import { errorCodeOf, GateCrash } from "../domain/Errors.js"
 import { Finding, SourceLocation } from "../domain/Finding.js"
 import type { PrivateTextConfig } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
@@ -49,10 +49,9 @@ const textOf = (
   file: string,
   stat: (file: string) => Promise<{ readonly isFile: () => boolean }>,
 ): Effect.Effect<Option.Option<string>, GateCrash> =>
-  Effect.tryPromise({ try: () => stat(file), catch: () => "absent" as const }).pipe(
+  Effect.tryPromise({ try: () => stat(file), catch: (cause) => crash(`cannot stat ${file}`, { cause }) }).pipe(
     Effect.map((found) => found.isFile()),
-    Effect.tapError(() => Effect.logDebug(`${file} has no file to read`)),
-    Effect.orElseSucceed(() => false),
+    Effect.catchIf((error) => Option.contains(errorCodeOf(error.cause), "ENOENT"), () => Effect.succeed(false)),
     Effect.flatMap((regular) =>
       regular
         ? Effect.tryPromise({

@@ -77,10 +77,11 @@ export interface SessionsSubject {
    * Stamp a session as a newer release would leave it: its stored format
    * above `STORED_FORMAT`, everything else as it was. The kit calls it on a
    * session an instance has written to (a turn begun and ended, an item
-   * delivered). Leave it out for a backend that keeps no stored format: the
+   * delivered). Return a raw-store snapshot effect to prove refusal changes
+   * neither the head nor the journal. Leave it out for a backend that keeps no stored format: the
    * stored-format check is then not run.
    */
-  readonly newerFormat?: (address: SessionAddress) => Effect.Effect<void, unknown>
+  readonly newerFormat?: (address: SessionAddress) => Effect.Effect<Effect.Effect<string, unknown>, unknown>
 }
 
 /** Admits every turn. */
@@ -1469,14 +1470,13 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     ...Option.match(Option.fromNullishOr(subject.newerFormat), {
       onNone: () => [],
       onSome: (newerFormat) => [
-        scoped("a session a newer release stamped (its stored format above STORED_FORMAT) refuses every write and turn with session.version, writing nothing, and is still read", "stored-format", (owner) => Effect.gen(function* () {
+        scoped("an unsupported session format refuses reads, writes and turns without changing stored data", "stored-format", (owner) => Effect.gen(function* () {
           const { sessions } = yield* leased()
           const address = yield* created(sessions, owner)
           yield* Effect.scoped(sessions.begin(address, say("before the upgrade")).pipe(Effect.flatMap((writer) => writer.end(completed))))
           yield* sessions.deliver(address, item("waiting"))
-          yield* newerFormat(address)
-          const before = yield* sessions.get(address)
-          const stored = kindsOf(yield* sessions.read(address))
+          const snapshot = yield* newerFormat(address)
+          const before = yield* snapshot
           const answers = [
             yield* answerOf(Effect.scoped(sessions.begin(address, say("after the upgrade")))),
             yield* answerOf(sessions.deliver(address, item("late"))),
@@ -1484,18 +1484,14 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
             yield* answerOf(sessions.cancel(address, 1)),
             yield* answerOf(sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))),
             yield* answerOf(sessions.fork(address, { origin: "conformance", inherit: true })),
+            yield* answerOf(sessions.get(address)),
+            yield* answerOf(sessions.read(address)),
+            yield* answerOf(sessions.list({ owner })),
+            yield* answerOf(sessions.list({ owner, parent: address.id })),
           ]
           yield* expect("stored-format", answers.every((answer) => answer === "SessionLogError(session.version)"),
-            `begin, deliver, drain, cancel, transact and fork of a newer release's session gave ${answers.join()}`)
-          const after = yield* sessions.get(address)
-          yield* expect("stored-format", after.seq === before.seq && after.updatedAt === before.updatedAt && after.turns === 1 && after.pending === 1 && Option.isNone(after.open),
-            `the refused calls wrote to the session: ${after.turns} turns, ${after.pending} waiting, seq ${before.seq} then ${after.seq}`)
-          const read = kindsOf(yield* sessions.read(address))
-          yield* expect("stored-format", read === stored, `the session was read as ${read}, not ${stored}`)
-          const listed = (yield* sessions.list({ owner })).sessions.map((view) => view.header.id)
-          const children = (yield* sessions.list({ owner, parent: address.id })).sessions.length
-          yield* expect("stored-format", listed.includes(address.id) && children === 0,
-            `the owner's sessions listed ${listed.includes(address.id) ? "it" : "without it"}, and ${children} children under it`)
+            `unsupported-format operations gave ${answers.join()}`)
+          yield* expect("stored-format", (yield* snapshot) === before, "refusing an unsupported format changed its raw head or journal")
         })),
       ],
     }),

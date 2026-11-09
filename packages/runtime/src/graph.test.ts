@@ -136,3 +136,11 @@ describe("plugin graph", () => {
     expect(other).not.toBe(written)
   })
 })
+
+test("unconsumed service keys cannot be both provided and contributed", async () => {
+  const plain = definePlugin({ id: "plain-items", version: "1", config: Schema.Struct({}), defaults: {}, provides: [Items], layer: () => Layer.succeed(Items, []) })
+  const contributor = definePlugin({ id: "extra-items", version: "1", config: Schema.Struct({}), defaults: {}, provides: [], contributes: [Items], layer: () => Layer.succeed(Items, []) })
+  const result = await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("plain"), use: plain.id }, { id: PluginInstanceId.make("extra"), use: contributor.id }] }, [plain, contributor])))
+  expect(result._tag).toBe("Failure")
+  expect(result._tag === "Failure" && result.failure.code).toBe("config.graph")
+})

@@ -419,20 +419,36 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
   const badSpan = spans.some((span) => span.start < 0 || span.end <= span.start || span.quote.length === 0 || !sources.some((source) => source.ref.id === span.source.id && source.ref.revision === span.source.revision && span.end <= source.text.length && source.text.slice(span.start, span.end) === span.quote))
   const ids = [...stage.memories.map((memory) => `memory:${memory.id}`), ...stage.chunks.map((chunk) => `chunk:${chunk.id}`), ...stage.entities.map((entity) => `entity:${entity.id}`), ...stage.assertions.map((edge) => `assertion:${edge.id}`)]
   const entityIds: ReadonlyArray<string> = [...snapshot.graph.entities.map((entity) => entity.id), ...stage.entities.map((entity) => entity.id)]
-  const memoryIds = [...snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && !stage.retireMemories.includes(memory.id)).map((memory) => memory.id), ...stage.memories.map((memory) => memory.id)]
+  const memoryIds = new Set([...snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && !stage.retireMemories.includes(memory.id)).map((memory) => memory.id), ...stage.memories.map((memory) => memory.id)])
   const unknownEntity = stage.entities.some((entity) => entity.provenance.length === 0) || stage.assertions.some((edge) => endpoints(edge).some((id) => !entityIds.includes(id))) || stage.memories.some((memory) => memory.entities.some((id) => !entityIds.includes(id)))
   const unknownSupport = stage.memories.some((memory) => Match.valueTags(memory.evidence, {
-    Stated: () => false, Inferred: ({ supports }) => supports.length === 0 || supports.some((id) => !memoryIds.includes(id) || id === memory.id),
+    Stated: () => false, Inferred: ({ supports }) => supports.length === 0 || supports.some((id) => !memoryIds.has(id) || id === memory.id),
   }))
   const allMemories = [...snapshot.memories.filter((memory) => Option.isNone(memory.knownTo) && !stage.retireMemories.includes(memory.id)), ...stage.memories]
-  const cyclic = (id: string, seen: ReadonlyArray<string>): boolean => {
-    if (seen.includes(id)) return true
-    const memory = allMemories.find((item) => item.id === id)
-    return memory ? Match.valueTags(memory.evidence, { Stated: () => false, Inferred: ({ supports }) => supports.some((support) => cyclic(support, [...seen, id])) }) : false
+  const memoryById = new Map(allMemories.map((memory) => [String(memory.id), memory]))
+  const remaining = new Map<string, number>()
+  const dependents = new Map<string, Array<string>>()
+  for (const memory of allMemories) {
+    const supports = Match.valueTags(memory.evidence, { Stated: () => [], Inferred: (value) => value.supports })
+    remaining.set(memory.id, supports.length)
+    for (const support of supports) {
+      const children = dependents.get(support)
+      if (children) children.push(memory.id)
+      else dependents.set(support, [memory.id])
+    }
   }
+  const ready = [...remaining].filter(([, count]) => count === 0).map(([id]) => id)
+  for (let at = 0; at < ready.length; at++) {
+    for (const dependent of dependents.get(ready[at]!) ?? []) {
+      const count = remaining.get(dependent)! - 1
+      remaining.set(dependent, count)
+      if (count === 0) ready.push(dependent)
+    }
+  }
+  const cyclic = ready.length !== memoryById.size
   const unsupportedRoutine = stage.memories.some((memory) => memory.kind === "routine" && Match.valueTags(memory.evidence, {
     Stated: () => false,
-    Inferred: ({ supports }) => knowledgeEpisodeCount(supports.flatMap((id) => allMemories.find((item) => item.id === id)?.provenance.map((span) => span.source) ?? []), sources) < 3,
+    Inferred: ({ supports }) => knowledgeEpisodeCount(supports.flatMap((id) => Option.match(Option.fromNullishOr(memoryById.get(id)), { onNone: () => [], onSome: knowledgeMemoryMentions })), sources) < 3,
   }))
   // A memory mentions only revisions its provenance cites, so forgetting any of them removes it with the rest of its evidence.
   const strayMention = stage.memories.some((memory) => (memory.mentions ?? []).some((ref) => !memory.provenance.some((span) => sameKnowledgeRevision(span.source, ref))))
@@ -451,7 +467,7 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
       onSome: (from) => intervalInvalid(from, edge.validTo),
     }))
   const unsupportedProvenance = stage.memories.some((memory) => memory.provenance.length === 0) || stage.assertions.some((edge) => edge.provenance.length === 0)
-  if (badSpan || badInterval || unsupportedProvenance || strayMention || strayCorroboration || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || stage.memories.some((memory) => cyclic(memory.id, []))) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, mentions, corroborations, intervals, duplicate identities, or unsupported derivations" }))
+  if (badSpan || badInterval || unsupportedProvenance || strayMention || strayCorroboration || new Set(ids).size !== ids.length || unknownEntity || unknownSupport || unsupportedRoutine || cyclic) return Option.some(new KnowledgeError({ reason: "Invalid", message: "The staged index has invalid provenance, mentions, corroborations, intervals, duplicate identities, or unsupported derivations" }))
   if (retireMissing) return Option.some(new KnowledgeError({ reason: "Conflict", message: "A retired record is no longer active" }))
   if (corroborationInactive) return Option.some(new KnowledgeError({ reason: "Conflict", message: "A corroborated memory is no longer active" }))
   const vectors = stage.memories.flatMap((memory) => Option.toArray(memory.embedding)).concat(stage.chunks.flatMap((chunk) => Option.toArray(chunk.embedding)))

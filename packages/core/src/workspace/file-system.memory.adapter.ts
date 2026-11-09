@@ -39,7 +39,7 @@ const decoder = new TextDecoder()
 const maxHops = 40
 
 const failure = (path: string, reason: FsReason, message: string) => new FsError({ path, reason, message })
-const segmentsOf = (path: string): ReadonlyArray<string> => path.split("/").filter((segment) => segment.length > 0 && segment !== ".")
+const segmentsOf = (path: string, trailing = true): ReadonlyArray<string> => [...path.split("/").filter((segment) => segment.length > 0), ...(trailing && path.length > 1 && path.endsWith("/") ? ["."] : [])]
 const parentOf = (path: string): string => {
   const at = path.lastIndexOf("/")
   return at <= 0 ? "/" : path.slice(0, at)
@@ -82,6 +82,7 @@ const resolveIn = (tree: Tree, asked: string, followLast: boolean): Result.Resul
   const step = (current: string, rest: ReadonlyArray<string>, hops: number): Result.Result<string, FsError> => {
     const [name, ...tail] = rest
     if (name === undefined) return Result.succeed(current)
+    if (name === ".") return step(current, tail, hops)
     if (name === "..") return step(parentOf(current), tail, hops)
     const next = join(current, name)
     const node = tree.get(next)
@@ -93,7 +94,7 @@ const resolveIn = (tree: Tree, asked: string, followLast: boolean): Result.Resul
     if (tail.length > 0 && node._tag === "File") return Result.fail(failure(asked, "NotDirectory", `not a directory: ${next}`))
     return step(next, tail, hops)
   }
-  return step("/", segmentsOf(asked), 0)
+  return step("/", segmentsOf(asked, followLast), 0)
 }
 
 /** Apply a change atomically: what it returns, and the tree after it. */

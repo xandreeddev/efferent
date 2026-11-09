@@ -25,6 +25,7 @@ export const HARNESS_CODES = [
   "config.profile",
   "context.budget",
   "events.background",
+  "events.capacity",
   "events.depth",
   "events.encode",
   "events.reserved",

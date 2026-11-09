@@ -337,6 +337,7 @@ const SessionLogEvent
 const SessionLogMemoryLive
 const SessionPage
 const SessionReadQuery
+const SessionRef
 const SessionView
 const ShutdownReport
 const SkillDefinition
@@ -550,6 +551,7 @@ const openLogSession
 const parseModelSelection
 const pendingCompaction
 const plannedCallIdOf
+const prepareToolkit
 const processActivity
 const provideDeclared
 const publishToolProgress
@@ -574,10 +576,12 @@ const resumeRefusal
 const rewrittenBy
 const sameEmbeddingSpace
 const sameKnowledgeScope
+const sameSession
 const sameUserMessage
 const scaledSize
 const scaledTokens
 const sessionAttributes
+const sessionRef
 const shareTransient
 const shutdownGracefully
 const shutdownRefusal
@@ -656,6 +660,9 @@ interface ModelChoice
 interface ModelDispatch
 interface NewTurn
 interface Plugin
+interface PreparedToolCall
+interface PreparedToolHandler
+interface PreparedToolkit
 interface PromptContext
 interface PromptSection
 interface RegisteredTool
@@ -877,6 +884,7 @@ type OpenTurn
 type PartialOptions
 type PluginEntry
 type PluginInstanceId
+type PreparedToolExecution
 type ProcessActivity
 type PromptProvenance
 type PromptTier
@@ -914,6 +922,7 @@ type SessionListQuery
 type SessionLogEvent
 type SessionPage
 type SessionReadQuery
+type SessionRef
 type SessionView
 type ShutdownReport
 type SkillDefinition

@@ -60,9 +60,8 @@ export const singleLinePattern = (pattern: string): Result.Result<string, Failur
  * The expression `grep` matches with: the pattern as a JavaScript regular
  * expression, or, with `literal`, as plain text; `ignoreCase` ignores
  * case. Fails with `InvalidPattern` when the pattern does not compile, or
- * when it repeats a repeating group (`repeatsRepetition`): matching runs
- * in the host's process and cannot be interrupted, and such a pattern can
- * take exponential time on one line.
+ * when it repeats a repeating group (`repeatsRepetition`): known nested repetition is refused early. The grep adapter runs other
+ * regular expressions in a scoped worker with a deadline.
  */
 export const compilePattern = (pattern: string, options: { readonly literal: boolean; readonly ignoreCase: boolean }): Result.Result<RegExp, Failure> => {
   const source = options.literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern
@@ -79,8 +78,8 @@ export const compilePattern = (pattern: string, options: { readonly literal: boo
  * Search a file's text line by line. Each line is cut to `lineChars`
  * characters first and only the cut line is matched (a match past the cut
  * is not found), so how long a line may take is bounded by the cut, not by
- * the line. That bound holds for patterns that match in linear time: the
- * expression runs synchronously in the host's process, and a backtracking
+ * the line. That bound holds for patterns that match in linear time: this pure
+ * matcher runs synchronously in its caller, and a backtracking
  * one can still take long on a cut line. `compilePattern` refuses nested
  * repetition, the usual exponential form, but not every slow pattern
  * (overlapping alternatives such as `(a|a)*`). At most `cap` matching lines

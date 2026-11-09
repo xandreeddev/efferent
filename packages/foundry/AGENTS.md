@@ -81,10 +81,9 @@ test code its `<name>-tests` layer (`testLayer`, one entry per
 - **Match, not tag switches**: union branching via `Match.value(...).pipe(
   Match.tag(...), Match.exhaustive)` or `Option.match`/`Result.match`
   (`effect/match-over-tag-switch`). A single `_tag` guard is fine.
-- **No `let`/`var`** (`effect/no-let`): state is an immutable fold — a
-  recursive Effect step (the forge loop's `iterate`), `Effect.reduce` (the
-  pipeline), `Array` combinators — or a `Ref`. (`Effect.iterate` does not
-  exist in Effect 4.)
+- **Confined builders**: local mutation and loops are allowed when inputs stay
+  unchanged and mutable state does not escape. Shared state has an explicit
+  owner and uses `Ref`; choose linear algorithms over repeated collection copies.
 - **No try/catch/throw/.catch()** (`effect/no-try-catch`): typed errors are
   `Schema.TaggedError` (they cross serialization boundaries — the FactoryRun
   artifact); wrap foreign promises with `Effect.tryPromise`.
@@ -193,3 +192,12 @@ package's root entry. The vendored `quality` pack does not carry it.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.
+
+## Model-facing text
+
+| Text | Source | Pinned by |
+|---|---|---|
+| Implementor brief: goal, acceptance list and optional previous feedback | `src/adapters/claudeImplementor.ts` | exact assertion suite `src/adapters/claudeImplementor.test.ts#exact-assertions` |
+| Gate feedback: failures, fix hints, skipped gates and counted overflow | `src/pipeline/renderFeedback.ts` | exact assertion suite `src/pipeline/renderFeedback.test.ts#exact-assertions` |
+| Armed rule descriptions, fix hints and judge evasion instructions | `src/gates/renderQualityBar.ts` | exact assertion suite `src/gates/renderQualityBar.test.ts#exact-assertions` |
+| Lessons: recurrence counts, examples and fix hints for the next implementor | `src/pipeline/lessons.ts` | exact assertion suite `src/pipeline/lessons.test.ts#exact-assertions` |

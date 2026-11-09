@@ -26,7 +26,6 @@ import {
   type TranscriptEvent,
   type Trial
 } from "../index.js"
-import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 
 import { fixture, FixtureEnvironment, spanRecorder } from "./fixture.testing.js"
 import {

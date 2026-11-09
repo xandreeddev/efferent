@@ -59,7 +59,7 @@ Effect.runFork(program.pipe(Effect.provide(OtlpTelemetryLive({
 
 These layers take their options as given. They ignore `OTEL_SERVICE_NAME`
 and the `service.name` in `OTEL_RESOURCE_ATTRIBUTES`: `serviceName` (or the
-`"efferent"` default) always names the service, so set it there or use
+`resourceAttributes["service.name"]`, then `"efferent"` fallback) names the service, so set it there or use
 `OtlpTelemetryFromEnv`. Effect's exporter still merges the other
 `OTEL_RESOURCE_ATTRIBUTES` into the resource, under `resourceAttributes`,
 and reads `OTEL_SERVICE_VERSION` when no `serviceVersion` is given.

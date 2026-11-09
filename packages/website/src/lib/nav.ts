@@ -13,7 +13,6 @@ export const href = (path: string): string => {
 }
 
 export const GITHUB = "https://github.com/xandreeddev/efferent"
-export const NPM = "https://www.npmjs.com/package/@xandreed/sdk"
 
 export const topNav = [
   { label: "Docs", href: "/docs/getting-started" },

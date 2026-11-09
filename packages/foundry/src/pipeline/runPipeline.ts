@@ -62,7 +62,7 @@ const crashVerdict = (
   })
 
 const runGate = <R>(gate: Gate<R>, workspace: Workspace): Effect.Effect<GateVerdict, never, R> =>
-  gate.run(workspace).pipe(
+  Effect.suspend(() => gate.run(workspace)).pipe(
     Effect.timed,
     Effect.map(([elapsed, findings]) =>
       toVerdict(gate.name, Duration.toMillis(elapsed), findings),

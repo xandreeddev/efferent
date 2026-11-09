@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { Effect, Option, Random, Schema, Semaphore } from "effect"
 import { errorCodeOf } from "@xandreed/core"
@@ -20,16 +20,16 @@ const isMissing = (cause: unknown): boolean => Option.contains(errorCodeOf(cause
  * cannot be read (any error but ENOENT: permissions, a directory) or does
  * not hold a JSON object fails with `unusable(reason)`.
  */
-export const readJsonObject = <E>(path: string, unusable: (reason: string) => E): Effect.Effect<Option.Option<Schema.JsonObject>, E> =>
+export const readJsonObject = <E>(path: string, unusable: (reason: string, cause?: unknown) => E): Effect.Effect<Option.Option<Schema.JsonObject>, E> =>
   Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: (cause) => cause }).pipe(
     Effect.map(Option.some),
     Effect.catchIf(isMissing, () => Effect.succeed(Option.none<string>())),
-    Effect.mapError((cause) => unusable(`could not be read (${Option.getOrElse(errorCodeOf(cause), () => String(cause))})`)),
+    Effect.mapError((cause) => unusable(`could not be read (${Option.getOrElse(errorCodeOf(cause), () => "unknown error")})`, cause)),
     Effect.flatMap(Option.match({
       onNone: () => Effect.succeed(Option.none<Schema.JsonObject>()),
       onSome: (text) => decodeJsonObject(text).pipe(
         Effect.map(Option.some),
-        Effect.mapError(() => unusable("does not hold a JSON object")),
+        Effect.mapError((cause) => unusable("does not hold a JSON object", cause)),
       ),
     })),
   )
@@ -44,21 +44,22 @@ export const writeJsonObject = <E>(
   path: string,
   value: Record<string, unknown>,
   mode: Option.Option<number>,
-  failed: (reason: string) => E,
+  failed: (reason: string, cause?: unknown) => E,
 ): Effect.Effect<void, E> =>
   Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER).pipe(Effect.flatMap((suffix) => {
     const tmp = `${path}.tmp-${process.pid}-${suffix.toString(36)}`
-    return Effect.tryPromise({
-      try: async () => {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, JSON.stringify(value, null, 2), "utf-8")
-        await Option.match(mode, { onNone: () => Promise.resolve(), onSome: (bits) => chmod(tmp, bits) })
-        await rename(tmp, path)
-      },
-      catch: (cause) => failed(String(cause)),
-    }).pipe(Effect.tapError(() => Effect.tryPromise({ try: () => rm(tmp, { force: true }), catch: (cause) => cause }).pipe(
-      Effect.catch((cause) => Effect.logWarning(`could not remove the temporary file ${tmp}`, cause)),
-    )))
+    const io = <A>(run: (signal: AbortSignal) => Promise<A>) => Effect.tryPromise({ try: run, catch: (cause) => failed("the file operation failed", cause) })
+    return Effect.scoped(Effect.gen(function* () {
+      yield* io(() => mkdir(dirname(path), { recursive: true, mode: 0o700 }))
+      const file = yield* Effect.acquireRelease(io(() => open(tmp, "wx", Option.getOrElse(mode, () => 0o600))), (handle) =>
+        Effect.tryPromise({ try: () => handle.close(), catch: (cause) => cause }).pipe(
+          Effect.ignore({ log: "Warn", message: "could not close a temporary JSON file" }),
+          Effect.andThen(Effect.tryPromise({ try: () => rm(tmp, { force: true }), catch: (cause) => cause }).pipe(Effect.ignore({ log: "Warn", message: "could not remove a temporary JSON file" }))),
+        ))
+      yield* io((signal) => file.writeFile(JSON.stringify(value, null, 2), { encoding: "utf8", signal }))
+      yield* io(() => file.sync())
+      yield* io(() => rename(tmp, path))
+    }))
   }))
 
 /** One lock per key (a file's resolved path), for every store in the process. */

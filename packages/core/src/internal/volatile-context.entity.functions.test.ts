@@ -3,7 +3,7 @@ import type { Prompt } from "effect/ai"
 import { ENGINE_KEY } from "../domain/engine-stamp.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
-import { toPromptMessages } from "./mapping.entity.functions.js"
+import { toPromptMessages } from "../domain/message-mapping.entity.functions.js"
 import { isVolatileContext, markVolatileContext, stripVolatileContext } from "./volatile-context.entity.functions.js"
 
 const messages: ReadonlyArray<AgentMessage> = [

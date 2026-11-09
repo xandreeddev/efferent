@@ -103,7 +103,7 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * fails with the refusal itself (`SessionBusy`), running and storing
  * nothing; an interrupted turn ends at once, its reply and end recorded,
  * though a background reaction to its reply never returns; and a
- * background reaction publishing what it takes past its queue's size does
+ * background reaction publishing what it takes does
  * not hang the turn. Those last two wait up to two seconds on the live
  * clock, so run the kit on it.
  *
@@ -377,16 +377,18 @@ export const turnConformance = (
       const recorded = ["turn.reply", "turn.ended"].map((kind) => own.filter((event) => event.kind === kind).length).join()
       yield* expect("stuck-reaction", recorded === "1,1", `the interrupted turn stored ${recorded} of turn.reply and turn.ended, not one each`)
     })),
-    check("a background reaction that publishes what it takes, past its queue's size, does not hang the turn", "self-publication", (turns, session) => Effect.gen(function* () {
+    check("a background reaction publishes within its finite queue without hanging the turn", "self-publication", (turns, session) => Effect.gen(function* () {
       const handled = yield* Ref.make<ReadonlyArray<number>>([])
+      const delivered = yield* Deferred.make<void>()
       const echo = (n: number) => ({ _tag: "host" as const, name: "conformance.echo", data: { n } })
       const result = yield* turns.turn(input(session, "run-1"), (turn) => Effect.gen(function* () {
         yield* turn.events.subscribe(
           (event) => event._tag === "host" && event.name === "conformance.echo" && typeof event.data.n === "number" ? Option.some(event.data.n) : Option.none(),
-          (n) => Ref.update(handled, (all) => [...all, n]).pipe(Effect.andThen(n === 0 ? Effect.forEach([1, 2, 3], (next) => turn.events.publish(echo(next)), { concurrency: 1, discard: true }) : Effect.void)),
-          { mode: "background", capacity: 1 },
+          (n) => Ref.update(handled, (all) => [...all, n]).pipe(Effect.andThen(n === 0 ? Effect.forEach([1, 2, 3], (next) => turn.events.publish(echo(next)), { concurrency: 1, discard: true }) : n === 3 ? Deferred.succeed(delivered, undefined) : Effect.void)),
+          { mode: "background", capacity: 3 },
         )
         yield* turn.events.publish(echo(0))
+        yield* Deferred.await(delivered)
         return yield* reply("echoed")
       })).pipe(Effect.timeoutOption(WAIT))
       yield* expect("self-publication", Option.isSome(result), `the turn did not end within ${WAIT}: a background reaction publishing to its own full queue hung it`)

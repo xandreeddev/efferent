@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { Effect, Logger, Option, References, Tracer } from "effect"
 import { ConversationId, HarnessError, RunId, SessionBusy, tokenUsage, UserMessage, zeroUsage } from "@xandreed/core"
@@ -9,7 +10,7 @@ const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
 /** A writer of turn 3 of `session`: `traceTurn` reads only what was admitted. */
 const writerWith = (meta: JsonObject, resumes?: number): TurnWriter => ({
   admitted: {
-    session: { id: session, owner: "test" }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
+    session: { id: session, owner: "test", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
     userMessage: new UserMessage({ text: "hello" }), command: {}, claimed: [], meta,
     ...(resumes === undefined ? {} : { resumes }),
   },

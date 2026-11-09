@@ -69,6 +69,7 @@ describe("a traced begin over the sessions plugin", () => {
     expect(begin.map((span) => [span.name, ancestors(spans, span)[0]])).toEqual([
       ["sessions.begin", "agent.turn.begin"],
       ["session_log.head", "sessions.begin"],
+      ["session_log.head", "sessions.begin"],
       ["session_log.read", "sessions.begin"],
       ["session_log.read", "sessions.begin"],
       ["store.commit", "sessions.begin"],

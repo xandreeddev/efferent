@@ -12,12 +12,11 @@
  * `truncated` (`step.ended`) and the response's finish reason
  * (`step.usage`'s `finishReason`).
  *
- * The sessions plugin stamps a session with the format of the release that
- * last wrote it, and refuses to write to, or run a turn over, a session a
- * newer release stamped (`SessionLogError`, code `session.version`); reads
- * still work. A backend keeps its own marker for its own layout (the SQLite
- * log's `user_version`, `store.version`).
+ * The sessions plugin stamps the format at creation and accepts only this
+ * format for reads and writes. Other formats fail with session.version.
+ * Backends independently require their current physical layout. Existing
+ * stores are left untouched; configure a fresh location. There is no migration.
  *
  * @public
  */
-export const STORED_FORMAT: number = 18
+export const STORED_FORMAT: number = 19

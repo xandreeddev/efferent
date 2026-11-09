@@ -5,7 +5,7 @@ import { RunId } from "../domain/run.entity.js"
 import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
+import { JsonObject, SessionRef, SessionHeader, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
 import { TaskRef } from "./tasks.entity.js"
 
 /*
@@ -187,7 +187,7 @@ export type BeginTurn = typeof BeginTurn.Type
 
 /** An admitted turn, as the turn's code reads it. */
 export const AdmittedTurn = Schema.Struct({
-  session: SessionAddress,
+  session: SessionRef,
   turn: Schema.Int,
   runId: RunId,
   key: Schema.String,

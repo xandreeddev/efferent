@@ -22,17 +22,34 @@ export type ReferenceRequest = (method: "GET" | "POST" | "DELETE", path: string,
 const failed = (message: string, cause?: unknown) => new EvaluationError({ code: "unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const decode = <A>(schema: Schema.Codec<A, unknown>, value: unknown) => Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError((cause) => failed("The pinned reference deployment returned an incompatible response", cause)))
 
-const http = (deployment: KnowledgeReferenceDeployment): ReferenceRequest => (method, path, body) => Effect.tryPromise({
+/** Body size and cancellation are part of the same configured request deadline. */
+const responseText = (response: Response) => Effect.acquireUseRelease(
+  Effect.sync(() => response.body?.getReader()),
+  (reader) => Effect.gen(function* () {
+    if (!reader) return ""
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (true) {
+      const chunk = yield* Effect.tryPromise({ try: () => reader.read(), catch: (cause) => failed("The reference response body could not be read", cause) })
+      if (chunk.done) return new TextDecoder().decode(Buffer.concat(chunks))
+      size += chunk.value.byteLength
+      if (size > 8 * 1024 * 1024) return yield* Effect.fail(failed("The reference response exceeds 8 MiB"))
+      chunks.push(chunk.value)
+    }
+  }),
+  (reader) => reader ? Effect.tryPromise(() => reader.cancel()).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())), Effect.ignore({ log: "Warn", message: "Reference response cleanup failed" })) : Effect.void,
+)
+
+export const referenceRequest = (deployment: KnowledgeReferenceDeployment): ReferenceRequest => (method, path, body) => Effect.acquireUseRelease(Effect.tryPromise({
   try: (signal) => fetch(`${deployment.baseUrl.replace(/\/$/, "")}${path}`, {
     method, signal,
     headers: { "Content-Type": "application/json", ...(deployment.apiKey === undefined ? {} : deployment.kind === "mem0" ? { "X-API-Key": Redacted.value(deployment.apiKey) } : { Authorization: `Bearer ${Redacted.value(deployment.apiKey)}` }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }),
-  catch: (cause) => failed("The reference deployment could not be reached", cause),
-}).pipe(
-  Effect.flatMap((response) => response.ok
-    ? response.status === 204 ? Effect.succeed(null) : Effect.tryPromise({ try: () => response.text(), catch: (cause) => failed("The reference response body could not be read", cause) }).pipe(Effect.flatMap((text) => text.length === 0 ? Effect.succeed(null) : decode(Schema.fromJsonString(Schema.Json), text)))
-    : Effect.fail(failed(`The reference deployment refused the request with HTTP ${response.status}`))),
+  }), catch: (cause) => failed("The reference deployment could not be reached", cause),
+}), (response) => response.ok
+  ? response.status === 204 ? Effect.succeed(null) : responseText(response).pipe(Effect.flatMap((text) => text.length === 0 ? Effect.succeed(null) : decode(Schema.fromJsonString(Schema.Json), text)))
+  : Effect.fail(failed(`The reference deployment refused the request with HTTP ${response.status}`)),
+(response) => response.body && !response.body.locked ? Effect.tryPromise(() => response.body!.cancel()).pipe(Effect.ignore({ log: "Warn", message: "Reference response cancellation failed" })) : Effect.void).pipe(
   Effect.timeoutOrElse({ duration: deployment.timeoutMs, orElse: () => Effect.fail(failed("The reference request exceeded its configured deadline")) }),
 )
 
@@ -63,7 +80,7 @@ export const referenceKnowledgeBackend = (deployment: KnowledgeReferenceDeployme
     extractionModel: deployment.extractionModel, embeddingModel: deployment.embeddingModel,
     embeddingVersion: deployment.embeddingVersion, embeddingDimensions: deployment.embeddingDimensions,
   }
-  const request = suppliedRequest ?? http(deployment)
+  const request = suppliedRequest ?? referenceRequest(deployment)
   return {
     manifest,
     open: (input: KnowledgeEvaluationInput) => Effect.gen(function* () {

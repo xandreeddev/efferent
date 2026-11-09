@@ -432,3 +432,21 @@ test("a stored memory decodes with or without an event time, and an event that e
   expect(Schema.decodeUnknownSync(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 5 } }).eventAt).toEqual({ start: 5 })
   expect(Schema.decodeUnknownExit(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 9, end: 5 } })._tag).toBe("Failure")
 })
+
+test("a shared inference DAG visits each evidence node once", () => {
+  const records: Array<KnowledgeMemory> = []
+  const visits = { count: 0 }
+  for (let index = 0; index < 80; index++) {
+    const supports = records.slice(-2).map((record) => record.id)
+    const evidence: KnowledgeMemory["evidence"] = supports.length === 0 ? { _tag: "Stated" } : { _tag: "Inferred", get supports() { visits.count++; return supports } }
+    records.push({ ...memory("one"), id: KnowledgeMemoryId.make(`dag-${index}`), evidence })
+  }
+  expect(Option.isNone(validateKnowledgeStage({ ...stage(records[0]!), memories: records }, { version: 0, memories: [], graph: emptyGraph }, [source("one")]))).toBe(true)
+  expect(visits.count).toBeLessThanOrEqual(records.length * 3)
+})
+
+test("entity-only provenance cannot satisfy an inferred routine's recurrence", () => {
+  const support: KnowledgeMemory = { ...memory("one"), mentions: [source("one").ref], provenance: ["one", "two", "three"].flatMap((name) => memory(name).provenance) }
+  const routine: KnowledgeMemory = { ...memory("routine"), kind: "routine", provenance: support.provenance, evidence: { _tag: "Inferred", supports: [support.id] } }
+  expect(Option.isSome(validateKnowledgeStage(stage(routine), { version: 0, memories: [support], graph: emptyGraph }, [source("one"), source("two"), source("three")]))).toBe(true)
+})

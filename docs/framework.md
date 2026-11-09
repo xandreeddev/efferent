@@ -797,11 +797,14 @@ import { Context, Effect, Layer } from "effect"
 import { ModelSpend, ModelSpendMemoryLive, modelSpendExceededOf } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { modelsPlugin } from "@xandreed/plugin-models"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 
 const program = Effect.gen(function* () {
   const ledger = Context.get(yield* Layer.build(ModelSpendMemoryLive), ModelSpend)
   const agent = yield* Agent.define({
-    plugins: [{ plugin: modelsPlugin, options: {
+    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: modelsPlugin, options: {
       model: "anthropic:claude-sonnet-4-5",
       spend: {
         prices: { "anthropic:claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
@@ -876,6 +879,14 @@ refused under it, and records each trial's and the run's settled spend in
 the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget)).
 
 ## Host-planned initial tool batch
+
+Standalone `runLoop` takes a `PreparedToolkit`: wrap `Toolkit.make(...)` with `prepareToolkit` from core. Authored parameter codecs run once, on isolated copies, before any handler in the response runs. The journal retains raw wire arguments. Custom registries implement this same preparation boundary.
+
+The default preparation executes handlers by the toolkit's tool IDs. A registry
+that customizes `Toolkit.handle` supplies `prepareToolkit(base, execute)` so its
+policy and receipt handling surround the prepared call. The execution hook receives
+the identity-parameter toolkit, immutable raw input and the private decoded value;
+it executes the decoded value and keeps the raw input for evidence.
 
 `runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify
 from a finite plan set or construct a structured plan, validate the whole batch
@@ -1452,8 +1463,8 @@ fiber. `publish` returns once the event is queued, and the handler sees events
 in publication order. When the queue is full (`capacity`, 256 by default),
 `publish` waits for room, interruptibly wherever it runs; a background
 handler's own publications (to its own subscription or another's, and what
-it runs inline) never wait but are queued past the capacity, so a handler
-that publishes what it takes cannot deadlock, its reaction chains bounded by
+it runs inline) never wait: a full queue fails with `events.capacity`,
+so reentry preserves the finite capacity. Reaction chains are also bounded by
 `maxEventDepth`. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need,
@@ -1843,8 +1854,8 @@ provider decode error from the model's ordinary malformed output.
 `taskRunnerConformance(make, { interruptsOnClose? })`,
 `tasksConformance(make)`, `toolRegistryConformance(make)`,
 `fileSystemConformance(subject)`,
-`bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
-`settingsStoreConformance(store, { writable, corrupt? })` and
+`bashConformance(subject)`, `authStoreConformance(subject)`,
+`settingsStoreConformance(subject)` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core/conformance`;
 the credential and settings store kits from `@xandreed/plugin-models/conformance`, and
 `toolRegistryConformance`, which runs its turns over the sdk's `TurnLive`,
@@ -1874,7 +1885,7 @@ and `load_skill`'s, under a PascalCase name, never a host's code.
 `@xandreed/plugin-sessions`
 (over the memory log), `@xandreed/plugin-session-sqlite` (over SQLite),
 `@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` run them, and
-`verify:packages` runs all four on Node.
+`verify:packages` runs the sessions, tasks and registry kits on Node and Bun; the SQLite adapter is verified on Bun only.
 
 **Files and commands.** Agent tools reach the machine through two core ports,
 `FileSystem` and `Bash`. Core ships the ports, the in-memory
@@ -2378,7 +2389,7 @@ FileSystem, a container's Bash, a wrapper around either) auto selects the
 builtin engine without probing. `grepEngine: "ripgrep"` runs `rg` over
 whatever pair the host supplies, which must see the same tree (a container
 whose FileSystem and Bash both run inside it), and refuses activation if the
-probe fails; `"builtin"` selects the synchronous JavaScript engine. Both
+probe fails; `"builtin"` selects the JavaScript engine in a scoped worker. Both
 engines refuse a pattern with a line break (`InvalidPattern`): grep matches
 one line at a time, and ripgrep would read each line of it as a pattern.
 Ripgrep uses its default regular-expression syntax (no lookaround or
@@ -2387,10 +2398,12 @@ backreferences), receives patterns on stdin and runs with `grepTimeoutMs`
 `grepIgnoreFiles: true`, searches files hidden by ignore files too. With that
 option it honours `.gitignore`, `.ignore` and other ripgrep ignore rules.
 A timeout returns partial results with `timedOut: true` and a note in grep view
-version 4. Builtin `grep` is not time-bounded: its expression runs in the host
-process and cannot be interrupted. It cuts lines before matching and refuses
-nested repetition (`(a+)+`), but overlapping alternatives such as `(a|a)*` can
-still hold the process on a hostile line.
+version 4. Builtin regex `grep` uses one scoped worker and a shared
+`grepTimeoutMs` match deadline. Timeout or interruption terminates the worker,
+including native backtracking over overlapping alternatives. It returns partial
+results with `timedOut: true`. Literal matching remains local. Nested repetition
+is still refused early; line clipping controls displayed/searched text, not
+regexp execution time. File size and result caps apply to both paths.
 
 Commands get the configured `bashEnv` over an
 allowlist of the host's variables (`bashEnvAllow`, the same names as
@@ -3049,9 +3062,7 @@ open turn per session, durable input and recovery rules. `Agent.turn` or another
 `TurnRunner` executes admitted turns. Share those same Sessions and, when used,
 Tasks across the agent, task executor and inbox drainer. The
 [session contracts](#sessions-one-log-per-session) describe storage choices,
-format compatibility and ownership. The stored-format gate allows reading and
-listing newer payload formats while refusing writes and replay; backend layouts
-have separate version checks.
+format compatibility and ownership. Sessions accepts only stored format 19 for reads and writes. Backends independently require their current physical layout; configure fresh locations for unsupported stores, leaving old data intact.
 
 Use `Sessions.enqueue(address, { id, userMessage, source, delivery })` to save
 input while a turn runs. An input ID names one immutable normalized message,
@@ -3161,19 +3172,18 @@ background tasks. Two layers split the work:
   isRevisionConflict })`) and, with `notAfter`, only while the
   storage's clock has not passed it; events get dense `seq`s and the
   storage's time; a commit may carry state and no events. Each create gives
-  the session a new `incarnation` (a session removed and created again under
-  its id has another), and a commit naming one (`incarnation`, as the
-  sessions plugin's every commit does) is `SessionMissing` to a session
-  created again since, nothing written, whatever its revision: a turn's
-  writer on another instance never writes into a session that replaced its
-  own (its next write fails `TurnClosed`, `removed`). The storage's
+  the session a new `incarnation`. `SessionRef` contains its id, owner and
+  incarnation: `read`, `commit` and `remove` require this reference, and fork
+  lineage contains the same identity. Stale and wrong-owner references fail
+  as `SessionMissing` before reaching a replacement generation. Creation takes
+  `{ header, state }` atomically. `head(id)` is a trusted bootstrap lookup;
+  authorize the returned owner before using `sessionRef(head)`. The storage's
   clock is whatever the backend reads: the memory and SQLite logs read the
   committing process's Effect `Clock` (SQLite once it holds the write lock),
   so instances sharing them need clocks in step; a host's own store may read
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins, that a commit naming a removed incarnation lands
-  nowhere, that a read from the end returns the newest matches of its kinds
+  concurrent commits wins, that stale or wrong-owner reads, commits, removals and fork parents are refused, that a read from the end returns the newest matches of its kinds
   below its ceiling, across commits, in ascending order and every match
   without a limit (`read-latest`), that data with an `undefined` field commits and
   reads back without it, and that an event as large as a message's images
@@ -3205,11 +3215,10 @@ background tasks. Two layers split the work:
   the last commits, never tear one), and a row that does not decode fails
   with code `store.decode`. A read from the end walks the session's rows
   newest first along its indexes and stops at its `limit`. The file records its schema version
-  (`PRAGMA user_version`): opening it applies the migrations it lacks, under
-  the write lock, and a file a newer release wrote fails to open with code
-  `store.version`, neither read nor written; a 0.14.0 file, without a
-  version, opens as it was. Schema 2 gives each session its incarnation,
-  the sessions already there one each.
+  (`PRAGMA user_version`): only schema 3 is supported. An empty unversioned
+  database initializes directly; every other schema version or nonempty
+  unversioned database fails with `store.version` before schema or WAL changes.
+  There is no migration. Parent foreign keys include owner and incarnation.
   `@xandreed/plugin-session-files` ships `SessionLogFilesLive(path)` and
   `makeSessionLogFiles(path)`, the log as files in a directory, on Node 24 and
   Bun, local or on a network mount (NFS): one immutable file per commit,
@@ -3222,10 +3231,7 @@ background tasks. Two layers split the work:
   revision puts it back); damage before the tail fails with `store.decode`.
   A commit's `notAfter` is checked again right before its link, and so is
   the session's header (its nonce is the incarnation): a session removed and
-  created again while a commit wrote its file gets nothing. Removing a
-  session moves it away first, then its children, so a child created
-  meanwhile never outlives it; a session removed while it is read is
-  `SessionMissing`. At most two underlying file system promises are in
+  created again while a commit wrote its file gets nothing. Removing a session writes a permanent tombstone for its immutable generation, then clears that generation's payloads and children. Reads verify ancestor references and tombstones too, so a crash cannot expose an orphan. Replacement generations use different paths. A removed reference is `SessionMissing`. At most two underlying file system promises are in
   flight per handle. Queued admission and each native await have separate
   `stallMs` deadlines (10 s): one that does not answer fails with
   `store.stalled`, and so does every call after it until one, let through a
@@ -3234,11 +3240,10 @@ background tasks. Two layers split the work:
   go, and the next begin reaps it if it landed). A timed-out operation
   retains its slot until its original promise settles, so cooldown probes
   cannot accumulate further pending work, and healthy calls queue for the
-  slot left rather than fail. An open sweeps what stopped creates and probes
-  left in `staging/`, and a handle caches a bounded number of sessions and
+  slot left rather than fail. A handle caches a bounded number of sessions and
   commit first lines. A read from the end opens commits newest first and
   stops once it holds its `limit`, so older commits are not read. Like the SQLite log it stamps time with the caller's
-  `Clock`. A directory whose layout a newer release wrote fails to open with
+  `Clock`. Only file layout 2 is supported; any other marker or a nonempty unmarked directory fails to open with
   `store.version`; one without hard links (some SMB mounts), with
   `store.open`.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
@@ -3256,14 +3261,10 @@ one with each change to one of them that a reader can tell (a key, a type,
 an optionality, a check; a description is not one), and `bun run
 docs:generate` fails on a change that does not bump it: it fingerprints the
 shapes into `docs/stored-format.json`, which keeps every format's
-fingerprint. Every commit the sessions plugin makes stamps the session with
-its release's format, raised from a lower one (or none: an earlier release
-wrote none). A session a newer release stamped is refused before anything is
-planned, with a `SessionLogError` of code `session.version`, by `begin`,
-`deliver`, `drain`, `cancel`, `transact` and `fork`: this release cannot tell
-what that release's records mean, and writes nothing beside them. `get`,
-`list` and `read` still read it. A backend keeps its own marker for its own
-layout: the SQLite file's `user_version` (`store.version`).
+fingerprint. Creation stamps stored format 19. Sessions rejects every other
+format on reads and writes with `SessionLogError` code `session.version`.
+Existing data is left untouched; use a fresh store. Physical backends require
+file layout 2 or SQLite schema 3 independently, with `store.version` on mismatch.
 
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending

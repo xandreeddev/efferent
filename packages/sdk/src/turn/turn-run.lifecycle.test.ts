@@ -1,3 +1,5 @@
+import type { PreparedToolkit } from "@xandreed/core"
+import { prepareToolkit } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { LanguageModel, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
@@ -23,7 +25,7 @@ const views: ToolViews = {
 const registry = ToolRegistry.of({
   catalog: { version: "1", recipes: [], tools: [] },
   open: () => Effect.gen(function* () {
-    const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make()
+    const toolkit: PreparedToolkit<Record<string, Tool.Any>> = prepareToolkit(Toolkit.make())
     return {
       toolkit, handlers: yield* toolkit.toHandlers({}), active: Effect.succeed([]),
       activate: () => Effect.succeed([]), apply: () => Effect.succeed([]), select: () => Effect.succeed([]),

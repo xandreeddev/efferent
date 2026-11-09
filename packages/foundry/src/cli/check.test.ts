@@ -167,7 +167,7 @@ describe("loadConfig — the plug-in registry", () => {
     ])
   })
 
-  test("a plugged rule that CRASHES reports itself as a finding — fail-closed, not a defect", async () => {
+  test("a crashed advisory rule fails the gate regardless of its configured severity", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "foundry-plug-"))
     seedViolations(dir)
     const configPath = writeConfig(
@@ -176,7 +176,7 @@ describe("loadConfig — the plug-in registry", () => {
         "export const customRules = [",
         "  {",
         '    id: "local/explodes",',
-        '    defaultSeverity: "error",',
+        '    defaultSeverity: "warning",',
         '    description: "always crashes",',
         '    fixHint: "n/a",',
         '    check: () => { throw new Error("boom") },',
@@ -192,12 +192,12 @@ describe("loadConfig — the plug-in registry", () => {
     )
     const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
     const idiomGate = gatesFromConfig(config, registry)[0]!
-    const findings = await Effect.runPromise(
-      idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
-    )
-    expect(findings.length).toBeGreaterThan(0)
-    expect(findings.every((f) => f.message.includes("crashed"))).toBe(true)
-    expect(findings.every((f) => f.message.includes("boom"))).toBe(true)
+    const exit = await Effect.runPromiseExit(idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)))
+    expect(exit._tag).toBe("Failure")
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toContain("crashed")
+      expect(String(exit.cause)).toContain("boom")
+    }
   })
 
   test("bad meta / non-function check / duplicate ids are ConfigErrors that NAME the entry", async () => {

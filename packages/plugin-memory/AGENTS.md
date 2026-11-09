@@ -132,18 +132,18 @@ tool discovery without adding those dependencies to production. See the reposito
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact, `src/memory-capability.adapter.test.ts:17`; exact, `src/memory-capability.adapter.test.ts:24` |
-| Parameters (the recall tool's `history` and `temporal` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact, `src/memory-capability.adapter.test.ts:169` |
-| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:47`, `:53` | exact, `src/memory-capability.adapter.test.ts:189`; exact, `src/memory-capability.adapter.test.ts:192`; exact, `src/memory-capability.adapter.test.ts:193` |
-| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:50` | exact, `src/memory-capability.adapter.test.ts:190` |
-| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:35`; exact, `src/memory-capability.adapter.test.ts:36` |
-| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:139`, `:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:62`; exact, `src/memory-capability.adapter.test.ts:70` |
-| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:100` |
-| Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:144`, `:170`, `:225` | exact, `src/memory-capability.adapter.test.ts:125`; exact, `src/memory-capability.adapter.test.ts:131` |
-| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact, `src/memory-capability.adapter.test.ts:157`; exact, `src/memory.journey.test.ts:500` |
-| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:331` | exact, `src/memory-capability.adapter.test.ts:333`; exact, `src/memory-capability.adapter.test.ts:343` |
-| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact, `src/memory.journey.test.ts:55` |
-| Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact, `src/memory-capture.adapter.test.ts:16`; exact, `src/memory-capture.adapter.test.ts:161` |
+| Memory tool descriptions and skill summaries | `src/memory-capability.adapter.ts:17` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Parameters (the recall tool's `history` and `temporal` included), failures, forgotten receipt and source data rule | `src/memory-capability.adapter.ts:25` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Saved receipt and source page framing/continuation | `src/memory-capability.adapter.ts:47`, `:53` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Saved note request/assistant evidence distinction | `src/memory-capability.adapter.ts:50` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Recall evidence, source locators, inference guidance and truncation | `src/memory-capability.adapter.ts:144`, `:225` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Dated recall: reading rule, today's date, record dates, memory kind and evidence words, relation validity | `src/memory-capability.adapter.ts:139`, `:144`, `:225` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Support count: a memory said in two episodes or more labelled `said <n> times, last YYYY-MM-DD` | `src/memory-capability.adapter.ts:144`, `:225` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Event time: a memory about a dated event followed by `(event on YYYY-MM-DD)`, a range for one that ends on a later day, and `(event on YYYY-MM-DD, past)` when recall marked it past | `src/memory-capability.adapter.ts:144`, `:170`, `:225` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Earlier states: the "Earlier states, no longer current:" heading, a change's `previously: … (until …; replaced by …)` and a correction's `previously: … (corrected …; this was wrong)` | `src/memory-capability.adapter.ts:144`, `:225` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions`; `src/memory.journey.test.ts#exact-assertions` |
+| Recall note (`memoryRecallNote`): the `memory.recalled` section's text, profile records first, dated | `src/memory-capability.adapter.ts:331` | exact assertion suites `src/memory-capability.adapter.test.ts#exact-assertions` |
+| Captured user and final-reply evidence | `src/memory-capture.adapter.ts:21` | exact assertion suites `src/memory.journey.test.ts#exact-assertions` |
+| Tool result, correlated arguments and handler receipt evidence | `src/memory-capture.adapter.ts:29`, `:33` | exact assertion suites `src/memory-capture.adapter.test.ts#exact-assertions` |
 
 ## Layout
 

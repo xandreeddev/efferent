@@ -7,18 +7,18 @@ import { ConversationId, JsonObject, SessionHeader } from "@xandreed/core"
  * the only fencing and no writer ever waits on a lock. Layout under the
  * root (directories 0700, files 0600):
  *
- *   store.json                              the layout's version (`StoreMarker`)
- *   sessions/<id>/header.json               the header, as created (`HeaderRecord`)
- *   sessions/<id>/commits/<revision>.jsonl  the commit that made that revision (`CommitMeta`,
- *                                           `CommitState`, one `CommitEvent` per event, `CommitTrailer`)
- *   sessions/<id>/tmp/                      commits being written, before their link
- *   staging/, trash/                        sessions being created or removed
- *                                           (a name in staging/ carries the time it was staged)
- *   quarantine/<id>/                        torn tails, kept as they were found
+ *   store.json                              layout marker
+ *   sessions/<id>/claims/<generation>.json   immutable creation claim
+ *   sessions/<id>/lives/<incarnation>/header.json
+ *   sessions/<id>/lives/<incarnation>/commits/<revision>.jsonl
+ *   sessions/<id>/lives/<incarnation>/tmp/
+ *   sessions/<id>/lives/<incarnation>/removed permanent generation tombstone
+ *   staging/                                 bounded abandoned marker staging
+ *   quarantine/<id>/<incarnation>/            damaged tails retained as evidence
  */
 
-/** The version of the directory's layout; a later one is refused (`store.version`). Shipped: change it only with a migration. */
-export const FILES_LAYOUT = 1
+/** The version of the directory's layout; any other version is refused (`store.version`). Fresh stores only; no migration. */
+export const FILES_LAYOUT = 2
 
 /**
  * How long something stays in `staging/` before an open sweeps it as left
@@ -38,6 +38,7 @@ export type PublishNonce = typeof PublishNonce.Type
 /** `header.json`: the header, the storage time it was created at, and its creator's nonce. */
 export const HeaderRecord = Schema.Struct({
   header: SessionHeader,
+  state: JsonObject,
   createdNow: Schema.Number,
   nonce: PublishNonce,
 })
