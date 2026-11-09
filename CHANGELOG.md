@@ -129,6 +129,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
+- Foundry's claude implementor leads a process group of its own; when its
+  attempt ends (exit, deadline or interruption) the group gets SIGTERM, three
+  seconds for the implementor to stop what it started, then SIGKILL, so its
+  tool processes no longer outlive it in the workspace.
 - `foundry check --baseline` never grandfathers a gate crash: a crash finding
   fails the check whatever the baseline holds, and `--update-baseline`
   refuses to write while a gate crashed, even with `--allow-grow`.
