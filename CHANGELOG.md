@@ -234,9 +234,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   pin or renaming it fails the check. The judge's response schema is pinned
   exactly, and the workspace tool descriptions in a test of their own.
 - Foundry's claude implementor leads a process group of its own; when its
-  attempt ends (exit, deadline or interruption) the group gets SIGTERM, three
-  seconds for the implementor to stop what it started, then SIGKILL, so its
-  tool processes no longer outlive it in the workspace.
+  attempt ends (exit, deadline or interruption) the group gets SIGTERM, up to
+  three seconds until every process in it has stopped, then SIGKILL for what
+  is left, so its tool processes no longer outlive it in the workspace.
+  `foundry` turns SIGINT and SIGTERM into an interruption of its program, so
+  a Ctrl-C stops the implementor's group too instead of leaving it running.
 - `foundry check --baseline` never grandfathers a gate crash: a crash finding
   fails the check whatever the baseline holds, and `--update-baseline`
   refuses to write while a gate crashed, even with `--allow-grow`.

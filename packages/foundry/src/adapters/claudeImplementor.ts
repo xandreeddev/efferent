@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import type { ChildProcess } from "node:child_process"
 import { Deferred, Effect, Layer, Option, Result } from "effect"
-import { ImplementorError } from "../domain/Errors.js"
+import { errorCodeOf, ImplementorError } from "../domain/Errors.js"
 import type { Spec } from "../domain/Spec.js"
 import { Implementor } from "../ports/Implementor.js"
 import type { ImplementInput } from "../ports/Implementor.js"
@@ -22,7 +22,7 @@ export const implementationPrompt = (spec: Spec, feedback: Option.Option<string>
   ].join("\n")
 
 const IMPLEMENT_TIMEOUT_MS = 10 * 60 * 1000
-/** How long an implementor that is stopped may take to stop the processes it started before they are all killed. */
+/** How long the processes of a stopped implementor's group (it and the tool processes it started) may take to stop before they are all killed. */
 const STOP_GRACE_MS = 3_000
 /** How long the implementor's output is read after it exits: a process it left may hold the pipes open. */
 const OUTPUT_GRACE_MS = 1_000
@@ -43,15 +43,31 @@ const signalGroup = (child: ChildProcess, signal: NodeJS.Signals, exited: boolea
   },
 })
 
+/** Whether the implementor's process group still has a process: a signal 0 to it finds one (`EPERM` too: one this user cannot signal). */
+const groupAlive = (child: ChildProcess): boolean => Option.match(Option.fromNullishOr(child.pid), {
+  onNone: () => false,
+  onSome: (pid) => Result.match(Result.try(() => process.kill(-pid, 0)), {
+    onSuccess: () => true,
+    onFailure: (error) => Option.contains(errorCodeOf(error), "EPERM"),
+  }),
+})
+
+/** Wait until the implementor's group has no process left, for at most `STOP_GRACE_MS`. */
+const groupStopped = (child: ChildProcess): Effect.Effect<void> => {
+  const poll: Effect.Effect<void> = Effect.suspend(() => groupAlive(child) ? Effect.sleep("20 millis").pipe(Effect.andThen(poll)) : Effect.void)
+  return poll.pipe(Effect.timeoutOrElse({ duration: STOP_GRACE_MS, orElse: () => Effect.void }))
+}
+
 /**
  * A real agent behind the same port — `claude -p` in the workspace (the
  * precedent set by the runtime's `Verifier`). Skeleton-minimal: no receipt
  * introspection (the snapshot + gates judge the result, not the agent's
  * self-report). The implementor leads a process group of its own; when the
  * attempt ends (an exit, its deadline or an interruption) the group gets
- * SIGTERM, `STOP_GRACE_MS` for the implementor to stop what it started, then
- * SIGKILL, so no tool process it left keeps changing the workspace that the
- * gates, or the next attempt, then read.
+ * SIGTERM, then up to `STOP_GRACE_MS` until every process in it (the
+ * implementor and each tool process it started) has stopped, then SIGKILL
+ * for what is left, so no tool process it left keeps changing the
+ * workspace that the gates, or the next attempt, then read.
  */
 export const implementCommand = (input: ImplementInput, command: ReadonlyArray<string>, timeoutMs = IMPLEMENT_TIMEOUT_MS) => Effect.scoped(Effect.gen(function* () {
     const failed = (cause: unknown) => new ImplementorError({ attempt: input.attempt, message: "claude execution failed", cause })
@@ -75,7 +91,7 @@ export const implementCommand = (input: ImplementInput, command: ReadonlyArray<s
       }),
       (child) => Effect.gen(function* () {
         signalGroup(child, "SIGTERM", yield* Deferred.isDone(exited))
-        yield* Deferred.await(exited).pipe(Effect.timeoutOrElse({ duration: STOP_GRACE_MS, orElse: () => Effect.void }), Effect.ignore({ log: "Debug", message: "the implementor failed while stopping" }))
+        yield* groupStopped(child)
         signalGroup(child, "SIGKILL", yield* Deferred.isDone(exited))
         yield* Deferred.await(exited).pipe(
           Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.logWarning("the implementor did not acknowledge termination") }),

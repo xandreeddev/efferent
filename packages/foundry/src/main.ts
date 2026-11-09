@@ -1,6 +1,7 @@
 import { Effect, Match, Option } from "effect"
 import { runCheck } from "./cli/check.js"
 import { runDemo } from "./cli/demo.js"
+import { runMain } from "./cli/runMain.js"
 import type { DemoImplementor } from "./cli/demo.js"
 import { describeError } from "./domain/Errors.js"
 import { TsProjectCachedLive } from "./gates/TsProject.port.js"
@@ -63,4 +64,5 @@ const main = program.pipe(
   ),
 )
 
-await Effect.runPromise(main)
+// A signal interrupts the program, so an implementor it started stops with it (`runMain`).
+await runMain(main)

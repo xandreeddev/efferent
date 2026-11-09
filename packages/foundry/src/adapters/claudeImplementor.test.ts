@@ -67,6 +67,37 @@ test("interrupting an implementor stops the processes it started too, after a gr
   })().finally(() => rm(directory, { recursive: true, force: true }))
 }, 15_000)
 
+test.each(["interrupted", "exited"] as const)("a tool process still stopping when its implementor %s gets the grace period before SIGKILL", async (ending) => {
+  const directory = await mkdtemp(join(tmpdir(), "foundry-implementor-"))
+  await (async () => {
+    const input = { spec, feedback: Option.none<string>(), attempt: AttemptNumber.make(1), workspaceDir: WorkspacePath.make(directory) }
+    // The tool process takes a moment to stop on SIGTERM; the implementor itself stops at once (or has already exited).
+    const tool = [
+      'const { writeFileSync } = require("node:fs")',
+      'process.on("SIGTERM", () => setTimeout(() => { writeFileSync("tool-stopped", "yes"); process.exit(0) }, 300))',
+      'writeFileSync("tool.pid", String(process.pid))',
+      "setInterval(() => {}, 1000)",
+    ].join("\n")
+    const program = [
+      'const { spawn } = require("node:child_process")',
+      'const { existsSync } = require("node:fs")',
+      `spawn(process.execPath, ["-e", ${JSON.stringify(tool)}], { stdio: "ignore" })`,
+      ending === "exited"
+        ? 'const ready = setInterval(() => { if (existsSync("tool.pid")) { clearInterval(ready); process.exit(0) } }, 10)'
+        : "setInterval(() => {}, 1000)",
+    ].join("\n")
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const child = yield* Effect.forkScoped(Effect.result(implementCommand(input, [process.execPath, "-e", program])))
+      const wait: Effect.Effect<string, Error> = Effect.tryPromise(() => readFile(join(directory, "tool.pid"), "utf8")).pipe(
+        Effect.catch(() => Effect.sleep("10 millis").pipe(Effect.andThen(Effect.suspend(() => wait)))))
+      yield* wait.pipe(Effect.timeout("5 seconds"))
+      yield* ending === "exited" ? Fiber.join(child).pipe(Effect.asVoid) : Fiber.interrupt(child).pipe(Effect.asVoid)
+    })))
+    const stopped = await readFile(join(directory, "tool-stopped"), "utf8").then((text) => text, () => "killed first")
+    expect(stopped).toBe("yes")
+  })().finally(() => rm(directory, { recursive: true, force: true }))
+}, 15_000)
+
 test("an implementor that exits nonzero fails with its code and what it wrote to stderr", async () => {
   const directory = await mkdtemp(join(tmpdir(), "foundry-implementor-"))
   await (async () => {
