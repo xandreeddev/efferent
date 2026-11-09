@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
@@ -94,6 +94,28 @@ describe("the SQLite file's schema version", () => {
     const error = await Effect.runPromise(Effect.flip(Effect.scoped(openSessionDatabase(path))))
     expect([error._tag, error.code]).toEqual(["SessionLogError", "store.version"])
     expect(await Bun.file(path).bytes()).toEqual(before)
+  })
+
+  test("an unsupported WAL database a stopped writer left is refused without changing its mode, its WAL or its main file", async () => {
+    const path = join(directory, "unsupported-wal.db")
+    mkdirSync(directory, { recursive: true })
+    // A writer killed after its commit: the frames stay in the WAL, never checkpointed into the main file.
+    const writer = Bun.spawnSync([process.execPath, "-e", `
+      import { Database } from "bun:sqlite"
+      const db = new Database(${JSON.stringify(path)}, { create: true, strict: true })
+      db.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;")
+      db.exec("CREATE TABLE kept (value TEXT NOT NULL); INSERT INTO kept VALUES ('preserved'); PRAGMA user_version = 2;")
+      process.kill(process.pid, "SIGKILL")
+    `])
+    expect(writer.signalCode).toBe("SIGKILL")
+    chmodSync(path, 0o644)
+    const before = { mode: statSync(path).mode & 0o777, main: await Bun.file(path).bytes(), wal: statSync(`${path}-wal`).size }
+    expect(before.wal).toBeGreaterThan(0)
+    const error = await Effect.runPromise(Effect.flip(Effect.scoped(openSessionDatabase(path))))
+    expect([error._tag, error.code]).toEqual(["SessionLogError", "store.version"])
+    Bun.gc(true)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect({ mode: statSync(path).mode & 0o777, main: await Bun.file(path).bytes(), wal: existsSync(`${path}-wal`) ? statSync(`${path}-wal`).size : -1 }).toEqual(before)
   })
 })
 

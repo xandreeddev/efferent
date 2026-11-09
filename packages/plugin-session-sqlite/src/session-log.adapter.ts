@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
-import { chmodSync } from "node:fs"
+import { chmodSync, existsSync } from "node:fs"
 import { dirname } from "node:path"
 import { Array as Arr, Cause, Clock, Duration, Effect, Layer, Match, Option, Schedule, Schema } from "effect"
 import type { Scope } from "effect"
@@ -112,30 +112,59 @@ const CURRENT_SCHEMA = `
   CREATE INDEX session_log_events_kind ON session_log_events(session_id, kind, seq);
 `
 
+const userVersionOf = (db: Database): number => db.query<{ readonly user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0
+
+/** The schema a database holds when it is not this release's: none for schema 3, or for an empty, unversioned database (a fresh one). */
+const unsupportedSchema = (db: Database): Option.Option<number> => {
+  const found = userVersionOf(db)
+  if (found === SCHEMA_VERSION) return Option.none()
+  const tables = db.query<{ readonly name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()
+  return found !== 0 || tables.length !== 0 ? Option.some(found) : Option.none()
+}
+
+const refuseSchema = Option.match({
+  onNone: () => Effect.void,
+  onSome: (found: number) => Effect.fail(new SessionLogError({ code: "store.version", message: `the session database is at unsupported schema ${found}; configure a fresh store for schema ${SCHEMA_VERSION}` })),
+})
+
 /** Initialize a fresh database; unsupported schemas are refused without DDL. */
 export const initializeSessionDatabase = (db: Database): Effect.Effect<void, SessionLogError> =>
   operation(() => db.transaction(() => {
-    const found = db.query<{ readonly user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0
-    if (found === SCHEMA_VERSION) return Option.none<number>()
-    const tables = db.query<{ readonly name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()
-    if (found !== 0 || tables.length !== 0) return Option.some(found)
-    db.exec(CURRENT_SCHEMA)
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
-    return Option.none<number>()
-  }).immediate()).pipe(Effect.flatMap(Option.match({
-    onNone: () => Effect.void,
-    onSome: (found) => Effect.fail(new SessionLogError({ code: "store.version", message: `the session database is at unsupported schema ${found}; configure a fresh store for schema ${SCHEMA_VERSION}` })),
-  })))
+    const unsupported = unsupportedSchema(db)
+    if (Option.isNone(unsupported) && userVersionOf(db) !== SCHEMA_VERSION) {
+      db.exec(CURRENT_SCHEMA)
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+    }
+    return unsupported
+  }).immediate()).pipe(Effect.flatMap(refuseSchema))
+
+/**
+ * An existing file's schema, read on a read-only connection before anything
+ * can change the file: an unsupported one fails with `store.version` while
+ * its mode, its WAL and its main file are as they were (a writable
+ * connection would checkpoint the WAL when it closes). A path with no file
+ * yet is fresh.
+ */
+const probeExisting = (path: string): Effect.Effect<void, SessionLogError> => Effect.suspend(() => existsSync(path)
+  ? Effect.acquireUseRelease(
+    Effect.try({ try: () => new Database(path, { readonly: true, strict: true }), catch: failure("store.open") }),
+    (db) => operation(() => unsupportedSchema(db)).pipe(Effect.flatMap(refuseSchema)),
+    (db) => Effect.sync(() => db.close()),
+  )
+  : Effect.void)
 
 /**
  * The session log's SQLite file, opened (and created, readable by its owner
  * only) for the scope: WAL with `synchronous = NORMAL`, foreign keys on, no
  * busy wait on the thread (`busy_timeout = 0`, see `BUSY_WAIT`), and the
- * tables at this release's schema (`migrateSessionDatabase`). One
+ * tables at this release's schema (`initializeSessionDatabase`). An existing
+ * file at another schema is refused (`store.version`) from a read-only
+ * connection, before its mode, its WAL or its main file can change. One
  * `session_log.open` span.
  */
 export const openSessionDatabase = Effect.fn("session_log.open")(function* (path: string): Effect.fn.Return<Database, SessionLogError, Scope.Scope> {
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
+  yield* probeExisting(path)
   const db = yield* Effect.acquireRelease(
     Effect.try({ try: () => new Database(path, { create: true, strict: true }), catch: failure("store.open") }),
     (database) => Effect.sync(() => database.close()),
