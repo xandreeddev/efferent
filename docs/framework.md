@@ -328,7 +328,7 @@ loop's existing pre-content stream-to-settled fallback starts a fresh logical
 budget while reusing the same prepared header, frozen model, prompt and tools.
 It does not reevaluate `policy.model`/`policy.step` or append StepContext.
 OAuth token requests are outside this model-request retry policy. No stored
-shape changes: request headers and stored format 8 retain their contracts.
+shape changes: request headers keep the contract their stored format gives them.
 
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
@@ -1657,8 +1657,9 @@ rows. Sequence numbers belong to each session; globally sorting a fork by `seq`
 loses that order. SDK `RequestSnapshot.requestEvents` carries ordered parts and
 current headers; its existing `requests` stays raw headers only. V1-only custom
 adapters may omit the new field. The shipped `requestHeaderConformance` checks
-resolution and strict prefix behavior. Stored format 10 adds this protocol;
-old session and request formats remain readable.
+resolution and strict prefix behavior. Stored format 10 added this protocol.
+Sessions reads only the current stored format; a session stored in an
+earlier one is refused (see [the stored format](#sessions-one-log-per-session)).
 
 **Render snapshots.** Stored format 12 adds optional `memory.snapshot` records.
 After an acknowledged reducing summary and its requested digests, the summary
@@ -1733,8 +1734,6 @@ optional `context.built`, trace content or usage diagnostics does not affect
 this contract. A host that redacts memory, or exports or streams session
 events, handles `request.part` and historical full headers the same way: they
 hold system text (step context included in `"system"` mode) and tool declarations.
-Earlier logs without a header remain readable but cannot reconstruct this
-additional metadata.
 
 `BuiltContext.stableMessages` is the rendered prefix length before the
 selected run's step-context tail, or the whole message count without that
@@ -1742,8 +1741,8 @@ tail. It is bounded by `messages.length` and is computed from the same render,
 including interrupted-call repair and tool-message merging. New headers
 freeze that count and mark only an outgoing copy; raw durable messages and
 context fingerprints stay unchanged. Reconstruction uses the saved count,
-while earlier headers without it replay without the marker. Stored format 8
-adds this optional header field.
+while a header without it replays without the marker. Stored format 8
+added this optional header field.
 
 A streamed step stores the assistant message a non-streamed one stores: its
 text and reasoning parts keep their provider metadata (Anthropic's thinking
