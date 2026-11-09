@@ -24,7 +24,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `Sessions.changes` follows only the owner's session: its stream fails with
   `SessionMissing` for another owner's address or a missing session, and
   with `SessionLogError` for a store failure.
-  Sessions conformance subjects expose a raw unsupported-format snapshot probe.
+  Sessions conformance subjects expose an unsupported-format probe
+  (`newerFormat`: any format but the current one, refused for reads too)
+  that returns a snapshot of the stored head. `SessionLog.remove` is no
+  longer idempotent: a missing, removed, stale or wrong-owner reference
+  fails with `SessionMissing`.
   The Sessions kit also requires another owner's cancel of an open turn, and
   of a turn sealed on the cancelling instance, to fail with `SessionMissing`
   and change nothing.

@@ -309,10 +309,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     Effect.tap((state) => remember({ id: head.header.id, owner: head.header.owner }, state)),
   )
   /**
-   * A session a newer release wrote (its stored format above this
-   * release's) is refused for writes and turns before anything is planned:
-   * this release cannot tell what that release's records mean, and must not
-   * write its own beside them. Reads are not refused.
+   * A session stored in any format but this release's (`STORED_FORMAT`:
+   * older, newer or missing) is refused for every read, write and turn
+   * before anything is read or planned: this release cannot tell what
+   * another release's records mean, never writes its own beside them, and
+   * migrates nothing. The host configures a fresh store.
    */
   const refuseUnsupported = (head: SessionHead) => storedFormatOf(head).pipe(
     Effect.mapError(storage("session.state")),
@@ -335,11 +336,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * after a conflict, plan again at once, `config.retries` attempts in all
    * before `SessionContended`. The commit is not interrupted half way, and
    * `stored` runs with it: an interruption waits for the store's answer and
-   * for what must follow a stored commit. A session a newer release wrote
-   * is refused before the plan (`session.version`); the plan starts from
-   * the state in this release's stored format, and a commit stores the
-   * state so even when the plan leaves it as it was (once, for a session
-   * an earlier release wrote).
+   * for what must follow a stored commit. A session in another release's
+   * stored format is refused before the plan (`session.version`), so the
+   * plan always starts from a state in this release's format; a commit
+   * stores the state only when the plan changes it.
    */
   const guarded = <A, E>(locator: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => owned(locator).pipe(Effect.flatMap((initial) => {
     const address = sessionRef(initial)
@@ -1047,7 +1047,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       return yield* viewFrom(head)
     }),
     fork: Effect.fn("sessions.fork")(function* (parent, input) {
-      // A fork of a newer release's session would carry its records into a session this release writes.
+      // A fork of a session in another release's format would carry its records into a session this release writes: `owned` refuses it.
       const parentHead = yield* owned(parent)
       const reference = sessionRef(parentHead)
       const endings = input.inherit ? yield* log.read(reference, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) : []

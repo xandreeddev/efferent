@@ -24,15 +24,15 @@ export const stateOf = (head: SessionHead): Effect.Effect<State, Schema.SchemaEr
 const decodeFormat = Schema.decodeUnknownEffect(Schema.Struct({ format: Schema.optionalKey(Schema.Int) }))
 
 /**
- * The stored format the head's state says the session was last written in,
- * read alone, before the rest of the state (a newer release may have
- * changed that): absent, as an earlier release wrote it or before any
- * commit, it is 1, the first.
+ * The stored format the head's state says the session was written in,
+ * read alone, before the rest of the state (another release may have
+ * shaped that differently): absent, it is 0, which no release writes, so a
+ * state without one is unsupported.
  */
 export const storedFormatOf = (head: SessionHead): Effect.Effect<number, Schema.SchemaError> =>
   decodeFormat(head.state.sessions ?? {}).pipe(Effect.map((stored) => stored.format ?? 0))
 
-/** Whether a session stored in `format` was written by a newer release than this one, which reads up to `STORED_FORMAT`. */
+/** Whether a session stored in `format` is not in this release's format (`STORED_FORMAT`): older, newer or missing, it is refused. */
 export const isUnsupportedFormat = (format: number): boolean => format !== STORED_FORMAT
 
 /** The state as the head stores it. */

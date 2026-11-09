@@ -21,6 +21,11 @@ the additional observations are recorded below the matrix.
   supplies the header and initial state atomically. Admitted and committed turn
   callbacks receive that reference. An operation keeps its captured identity
   through retries instead of rebinding to a replacement session.
+- `SessionLog.remove` is no longer idempotent: removing a missing, already
+  removed, stale or wrong-owner reference fails with `SessionMissing` (the
+  log kit requires it). A direct caller that retries a removal, or removes
+  children before their parent, handles `SessionMissing`. `Sessions.remove`
+  is unchanged: it already refused a missing session.
 - Standalone loops and custom tool registries supply a `PreparedToolkit` using
   `prepareToolkit`. Parameter codecs decode once before any handler in a batch
   runs. Raw provider arguments stay detached and immutable; the decoded value
@@ -28,7 +33,8 @@ the additional observations are recorded below the matrix.
   execution hook described in [the framework contract](framework.md#host-planned-initial-tool-batch).
 - Auth/settings conformance subjects open a fresh scoped fixture per check and
   declare writable, refresh and corruption probes. Sessions conformance subjects
-  supply an unsupported-format raw snapshot probe.
+  supply an unsupported-format probe (`newerFormat`) that stamps any format
+  but the current one and returns a snapshot of the stored head.
 - A background handler's publication into its own full queue fails with
   `events.capacity`; other producers, other lanes' handlers included, wait
   interruptibly. Background capacity is a positive safe integer. Provider SSE permits 128 tool

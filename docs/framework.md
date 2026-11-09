@@ -3177,7 +3177,10 @@ background tasks. Two layers split the work:
   the session a new `incarnation`. `SessionRef` contains its id, owner and
   incarnation: `read`, `commit` and `remove` require this reference, and fork
   lineage contains the same identity. Stale and wrong-owner references fail
-  as `SessionMissing` before reaching a replacement generation. Creation takes
+  as `SessionMissing` before reaching a replacement generation. `remove` is
+  not idempotent: removing a missing, already removed, stale or wrong-owner
+  reference fails with `SessionMissing`, so a caller that retries a removal,
+  or removes children before their parent, handles it. Creation takes
   `{ header, state }` atomically. `head(id)` is a trusted bootstrap lookup;
   authorize the returned owner before using `sessionRef(head)`. The storage's
   clock is whatever the backend reads: the memory and SQLite logs read the

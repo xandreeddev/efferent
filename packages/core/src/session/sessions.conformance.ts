@@ -74,11 +74,14 @@ export interface SessionsSubject {
   /** Move the clock the store and the instances read forward by `millis`: `TestClock.adjust`, or a sleep on a live clock. */
   readonly advance: (millis: number) => Effect.Effect<void>
   /**
-   * Stamp a session as a newer release would leave it: its stored format
-   * above `STORED_FORMAT`, everything else as it was. The kit calls it on a
-   * session an instance has written to (a turn begun and ended, an item
-   * delivered). Return a raw-store snapshot effect to prove refusal changes
-   * neither the head nor the journal. Leave it out for a backend that keeps no stored format: the
+   * Stamp a session with a stored format this release does not support:
+   * any other than `STORED_FORMAT` (older, newer or missing), everything
+   * else as it was. The kit calls it on a session an instance has written
+   * to (a turn begun and ended, an item delivered). It returns an effect
+   * that reads a snapshot of the session's stored head as text (its seq and
+   * revision included, its read time left out), which the kit compares
+   * before and after the refused calls to see that nothing was written.
+   * Leave it out for a backend that keeps no stored format: the
    * stored-format check is then not run.
    */
   readonly newerFormat?: (address: SessionAddress) => Effect.Effect<Effect.Effect<string, unknown>, unknown>
@@ -201,11 +204,11 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * the lease from that write; with `processOwned`, a turn whose process
  * stopped reaped, one whose process runs held, and a leased turn held by
  * a process-owned instance within its lease (a turn is judged as it was
- * taken, not by the reader's ownership); with `newerFormat`, a session a
- * newer release stamped refused for every write and turn (`begin`,
- * `deliver`, `drain`, `cancel`, `transact`, `fork`) with a
- * `SessionLogError` of code `session.version`, nothing written, and still
- * read (`get`, `list`, `read`); for an instance with a `TurnShutdown`, a
+ * taken, not by the reader's ownership); with `newerFormat`, a session
+ * stamped with any stored format other than this release's refused for
+ * every read, write and turn (`get`, `list`, `read`, `begin`, `deliver`,
+ * `drain`, `cancel`, `transact`, `fork`) with a `SessionLogError` of code
+ * `session.version`, nothing written; for an instance with a `TurnShutdown`, a
  * begin refused (`TurnRefused`, reason `shutdown`) once it refuses, the
  * turns open before running on and a drain opening nothing, then every
  * turn it holds closed by `interrupt` as interrupted with `turn.shutdown`,
@@ -1532,7 +1535,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
           ]
           yield* expect("stored-format", answers.every((answer) => answer === "SessionLogError(session.version)"),
             `unsupported-format operations gave ${answers.join()}`)
-          yield* expect("stored-format", (yield* snapshot) === before, "refusing an unsupported format changed its raw head or journal")
+          yield* expect("stored-format", (yield* snapshot) === before, "refusing an unsupported format changed its stored head")
         })),
       ],
     }),
