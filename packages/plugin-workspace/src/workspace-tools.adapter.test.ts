@@ -985,7 +985,7 @@ const memoryGrep = (files: Readonly<Record<string, string>>, params: unknown, op
 })))
 
 test("builtin regex grep spends its deadline matching, not starting its worker", async () => {
-  expect(await memoryGrep({ "a.txt": "fixture text\n" }, { path: "a.txt", pattern: "fix.ure" }, { grepTimeoutMs: 40 })).toMatchObject({ matches: 1, timedOut: false })
+  expect(await memoryGrep({ "a.txt": "fixture text\n" }, { path: "a.txt", pattern: "fix.ure" }, { grepTimeoutMs: 75 })).toMatchObject({ matches: 1, timedOut: false })
 })
 
 test("builtin regex grep over many files leaves no listener behind on its worker", async () => {

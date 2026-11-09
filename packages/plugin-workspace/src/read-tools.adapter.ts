@@ -193,6 +193,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
           onSome: (content) => Effect.gen(function* () {
             const cap = Math.min(perFile, limit - state.matches)
             const text = decodeText(content).text
+            if (grepping.deadline <= (yield* Clock.currentTimeMillis)) return next({ ...state, timedOut: true, truncated: true })
             const ready = params.literal ? grepping : yield* worker(grepping)
             const remaining = ready.deadline - (yield* Clock.currentTimeMillis)
             if (remaining <= 0) return { ...ready, searched: { ...state, timedOut: true, truncated: true } }
