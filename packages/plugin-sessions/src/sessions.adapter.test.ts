@@ -1771,6 +1771,16 @@ test("a later remove with the session's reference finishes a removal that stoppe
   expect((yield* Ref.get(asked)).length).toBe(2)
 })))
 
+test("another owner's reference to a live session is SessionMissing, and Sessions never hands it to the log", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(0)), sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const stranger = { id: view.header.id, owner: "another-owner", incarnation: view.incarnation }
+  expect((yield* Effect.flip(sessions!.remove(stranger)))._tag).toBe("SessionMissing")
+  expect(yield* Ref.get(asked)).toEqual([])
+  expect((yield* sessions!.get({ id: view.header.id, owner })).incarnation).toBe(view.incarnation)
+})))
+
 test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it",() => withLog((log) => Effect.gen(function* () {
   const [sessions, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
   const address = yield* created(sessions!)

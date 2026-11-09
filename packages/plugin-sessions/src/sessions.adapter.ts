@@ -1085,9 +1085,18 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     remove: Effect.fn("sessions.remove")(function* (address) {
       // A session already removed is SessionMissing. Given its reference, the log is asked to remove it again first,
       // which finishes a removal that stopped after its tombstone (a crash, an unreachable mount) and changes nothing else.
+      // Only when no session holds the id, or the owner's own session does (the reference is a life of it before):
+      // another owner's reference never reaches the log.
+      const finishable = (reference: SessionRef) => log.head(reference.id).pipe(
+        Effect.map((now) => now.header.owner === reference.owner),
+        Effect.catchTag("SessionMissing", () => Effect.succeed(true)),
+      )
       const head = yield* owned(address).pipe(Effect.catchTag("SessionMissing", (missing) => Option.match(Schema.decodeUnknownOption(SessionRef)(address), {
         onNone: () => Effect.fail(missing),
-        onSome: (reference) => log.remove(reference).pipe(Effect.catchTag("SessionMissing", () => Effect.void), Effect.andThen(Effect.fail(missing))),
+        onSome: (reference) => finishable(reference).pipe(
+          Effect.flatMap((ours) => ours ? log.remove(reference).pipe(Effect.catchTag("SessionMissing", () => Effect.void)) : Effect.void),
+          Effect.andThen(Effect.fail(missing)),
+        ),
       })))
       const reference = sessionRef(head)
       yield* Effect.uninterruptible(Effect.gen(function* () {
