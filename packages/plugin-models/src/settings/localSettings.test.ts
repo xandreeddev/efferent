@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
@@ -237,5 +237,21 @@ describe("LocalSettingsStoreLive", () => {
         expect(Option.getOrThrow(settings.fallbackModel)).toBe("a:b")
       }).pipe(Effect.provide(layer)),
     )
+  })
+  test("a settings write leaves config.json with the default permissions, never private ones", async () => {
+    const { layer, cwd } = setup({})
+    await Effect.runPromise(Effect.flatMap(SettingsStore, (store) => store.set("maxAttempts", Option.some("3"))).pipe(Effect.provide(layer)))
+    expect(statSync(join(cwd, ".efferent", "config.json")).mode & 0o777).toBe(0o666 & ~process.umask())
+  })
+
+  test.skipIf(process.getuid?.() === 0)("a write the file system refuses names its step and code, and keeps the system's error as its cause", async () => {
+    const { layer, cwd } = setup({}, {})
+    chmodSync(join(cwd, ".efferent"), 0o500)
+    const failure = await Effect.runPromise(Effect.flip(Effect.flatMap(SettingsStore, (store) => store.set("maxAttempts", Option.some("3")))).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => chmodSync(join(cwd, ".efferent"), 0o700))),
+    ))
+    expect([failure._tag, failure.code, failure.message]).toEqual(["SettingsError", undefined, "config.json write failed: open failed (EACCES)"])
+    expect(failure.cause).toBeInstanceOf(Error)
   })
 })

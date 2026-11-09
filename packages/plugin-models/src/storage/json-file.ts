@@ -37,8 +37,13 @@ export const readJsonObject = <E>(path: string, unusable: (reason: string, cause
 /**
  * Replace `path` with `value`: written to a temp file of its own beside it
  * (named by the process and a random number, so concurrent writes never
- * share one), given `mode` when there is one, then renamed over. A failed
- * write removes its temp file.
+ * share one), then renamed over. The temp file is created with `mode` when
+ * there is one (a credential file is private from its first byte), else
+ * with the default permissions the umask leaves. A missing directory is
+ * created private (0700): the stores' directories hold credentials. A failed
+ * write removes its temp file and fails with `failed(reason, cause)`, the
+ * reason naming the step and the system's error code (`rename failed
+ * (EACCES)`).
  */
 export const writeJsonObject = <E>(
   path: string,
@@ -48,17 +53,20 @@ export const writeJsonObject = <E>(
 ): Effect.Effect<void, E> =>
   Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER).pipe(Effect.flatMap((suffix) => {
     const tmp = `${path}.tmp-${process.pid}-${suffix.toString(36)}`
-    const io = <A>(run: (signal: AbortSignal) => Promise<A>) => Effect.tryPromise({ try: run, catch: (cause) => failed("the file operation failed", cause) })
+    const io = <A>(step: string, run: (signal: AbortSignal) => Promise<A>) => Effect.tryPromise({
+      try: run,
+      catch: (cause) => failed(`${step} failed (${Option.getOrElse(errorCodeOf(cause), () => "unknown error")})`, cause),
+    })
     return Effect.scoped(Effect.gen(function* () {
-      yield* io(() => mkdir(dirname(path), { recursive: true, mode: 0o700 }))
-      const file = yield* Effect.acquireRelease(io(() => open(tmp, "wx", Option.getOrElse(mode, () => 0o600))), (handle) =>
+      yield* io("mkdir", () => mkdir(dirname(path), { recursive: true, mode: 0o700 }))
+      const file = yield* Effect.acquireRelease(io("open", () => open(tmp, "wx", Option.getOrElse(mode, () => 0o666))), (handle) =>
         Effect.tryPromise({ try: () => handle.close(), catch: (cause) => cause }).pipe(
           Effect.ignore({ log: "Warn", message: "could not close a temporary JSON file" }),
           Effect.andThen(Effect.tryPromise({ try: () => rm(tmp, { force: true }), catch: (cause) => cause }).pipe(Effect.ignore({ log: "Warn", message: "could not remove a temporary JSON file" }))),
         ))
-      yield* io((signal) => file.writeFile(JSON.stringify(value, null, 2), { encoding: "utf8", signal }))
-      yield* io(() => file.sync())
-      yield* io(() => rename(tmp, path))
+      yield* io("write", (signal) => file.writeFile(JSON.stringify(value, null, 2), { encoding: "utf8", signal }))
+      yield* io("sync", () => file.sync())
+      yield* io("rename", () => rename(tmp, path))
     }))
   }))
 

@@ -101,8 +101,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Tool views, compaction and digests decode detached copies of a call's
   stored input and result, so an authored codec that rewrites its input no
   longer changes what later requests send.
-- Create credential files privately, reject corrupt fallback tiers before
-  writes, preserve auth error causes, and validate SSE event names.
+- Create credential files privately (0600 from their first byte; a missing
+  `.efferent` directory is created 0700, while `config.json` keeps the
+  permissions the umask gives), reject corrupt fallback tiers before writes,
+  and validate SSE event names. `AuthError` and `SettingsError` keep the
+  file system's error as their `cause`, and a failed write names its step
+  and the error code (`config.json write failed: open failed (EACCES)`).
 - Remove quadratic replay/history/media/trace batching, exponential graph
   validation (a stage that supersedes the support of an active inference still
   publishes and closes it), lossy progress identities, dead eval helpers and unused assets
