@@ -244,9 +244,12 @@ export class Sessions extends Context.Service<Sessions, {
    * yet taken merge into one. A follower is woken only by its own session's
    * commits, from its first pull on, and holds at most one signal while it
    * does not pull: a signal says "read again", never how many commits came
-   * (followers poll for the commits of other instances).
+   * (followers poll for the commits of other instances). Only the owner
+   * follows: on its first pull, another owner's address or a missing session
+   * fails the stream with `SessionMissing`, and a store failure with
+   * `SessionLogError`.
    */
-  readonly changes: (address: SessionAddress) => Stream.Stream<void>
+  readonly changes: (address: SessionAddress) => Stream.Stream<void, SessionMissing | SessionLogError>
   /** The turn begun with this key, if any. */
   readonly lookup: (address: SessionAddress, key: string) => Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError>
   /**

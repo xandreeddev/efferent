@@ -21,6 +21,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `incarnation`: a `Sessions` call given an address with one is fenced to
   that life of the session (`SessionMissing` once it is removed and created
   again), and a drain keeps the session it resolved first for all its turns.
+  `Sessions.changes` follows only the owner's session: its stream fails with
+  `SessionMissing` for another owner's address or a missing session, and
+  with `SessionLogError` for a store failure.
   Sessions conformance subjects expose a raw unsupported-format snapshot probe.
 - Standalone loops and custom registries use `prepareToolkit` around their
   Effect toolkit. Parameters decode once before any handler runs; immutable

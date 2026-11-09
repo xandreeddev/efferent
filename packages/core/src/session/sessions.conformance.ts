@@ -776,7 +776,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         `of three racing transacts under one key ${won} committed and ${duplicates} were duplicates, and the session holds ${stored} actions`)
     })),
 
-    scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, and a commit to another session does not wake it", "changes", (owner) => Effect.gen(function* () {
+    scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, a commit to another session does not wake it, and another owner's address follows nothing (SessionMissing)", "changes", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const [followed, other] = [yield* created(sessions, owner), yield* created(sessions, owner)]
       const note = (address: SessionAddress) => sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))
@@ -801,6 +801,13 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* note(followed)
       const next = yield* eventually(Ref.get(seen), (count) => count > 2)
       yield* expect("changes", next > 2, "a follower that caught up was not signalled after its session's next commit")
+      // Another owner's address follows nothing: SessionMissing on its first pull, never a signal of the owner's commits.
+      const stranger = yield* Effect.forkScoped(answerOf(sessions.changes({ ...followed, owner: `${owner}-stranger` }).pipe(Stream.take(1), Stream.runDrain)))
+      const answered = (tries: number): Effect.Effect<void, unknown> => stranger.pollUnsafe() !== undefined || tries <= 0 ? Effect.void
+        : note(followed).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => answered(tries - 1))))
+      yield* answered(20)
+      const strangerAnswer = yield* Fiber.join(stranger)
+      yield* expect("changes", strangerAnswer === "SessionMissing", `another owner's follower of the session ${strangerAnswer === "done" ? "was signalled by its commits" : `answered ${strangerAnswer}`}`)
     })),
 
     scoped("waiting broadcasts an initial signal and coalesced local commits to every subscriber across sessions", "waiting", (owner) => Effect.gen(function* () {

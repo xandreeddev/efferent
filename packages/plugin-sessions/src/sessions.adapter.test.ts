@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Stream, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, TurnShutdown, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
@@ -1791,4 +1791,23 @@ test("a begin waiting on a stalled store's first read is interrupted at once, co
     yield* Ref.set(armed, false)
     expect((yield* sessions.get(address)).turns).toBe(0)
   }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+})))
+
+test("a follower is not woken by the commits of a session created again under its id for another owner", () => withLog((log) => Effect.gen(function* () {
+  // Built in the test's scope: its follower hubs live while the test runs.
+  const { sessions } = yield* withActivity(log, sessionsDefaults)
+  const address = yield* created(sessions!)
+  const note = (at: SessionAddress) => sessions.transact(at, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))
+  const seen = yield* Ref.make(0)
+  const follower = yield* Effect.forkScoped(sessions.changes(address).pipe(Stream.runForEach(() => Ref.update(seen, (n) => n + 1)), Effect.result))
+  const signalled = (tries: number): Effect.Effect<number, unknown> => Ref.get(seen).pipe(Effect.flatMap((n) => n > 0 || tries <= 0 ? Effect.succeed(n)
+    : note(address).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => signalled(tries - 1))))))
+  expect(yield* signalled(20)).toBeGreaterThan(0)
+  yield* sessions.remove(address)
+  const taken = { id: address.id, owner: "another-owner" }
+  yield* sessions.create(taken)
+  const before = yield* Ref.get(seen)
+  yield* Effect.forEach([1, 2, 3], () => note(taken).pipe(Effect.andThen(Effect.yieldNow)), { concurrency: 1, discard: true })
+  expect(yield* Ref.get(seen)).toBe(before)
+  yield* Fiber.interrupt(follower)
 })))

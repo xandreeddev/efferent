@@ -236,13 +236,17 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   /** Forget a turn let go of that this instance has now opened, holding its writer: an earlier begin of it did not store its opening. */
   const forgetOpened = (id: string, turn: number, runId: string) => keepReleased(id, (gone) => !isReleased(gone, { turn, runId }))
   /**
-   * Per followed session, one hub of change signals: sliding with room for
-   * one, so a follower that does not pull holds one signal however many
-   * commits it missed, and never loses the last. Held while someone follows
-   * the session (`RcMap` releases it with the last follower), so a commit to
-   * a session nobody follows signals nothing and keeps nothing.
+   * Per followed session (its id and owner: `followerKey`), one hub of
+   * change signals: sliding with room for one, so a follower that does not
+   * pull holds one signal however many commits it missed, and never loses
+   * the last. Held while someone follows the session (`RcMap` releases it
+   * with the last follower), so a commit to a session nobody follows signals
+   * nothing and keeps nothing. Only the owner follows (`changes` checks it),
+   * and a session created again under the id for another owner wakes none
+   * of the first owner's followers.
    */
-  const followers = yield* RcMap.make({ lookup: (_: ConversationId) => Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown) })
+  const followerKey = (address: SessionAddress) => canonicalJson([address.id, address.owner])
+  const followers = yield* RcMap.make({ lookup: (_: string) => Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown) })
   const waitingHub = yield* Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown)
   /**
    * What `WaitingInput` refreshes: every owner-checked session last seen
@@ -292,7 +296,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * the open turn or the inbox (`waitingChanged`), or created or removed a
    * session: a turn's own appends wake no rescan.
    */
-  const wake = (id: ConversationId, waiting: boolean) => RcMap.getOption(followers, id).pipe(
+  const wake = (address: SessionAddress, waiting: boolean) => RcMap.getOption(followers, followerKey(address)).pipe(
     Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (hub) => PubSub.publish(hub, undefined).pipe(Effect.asVoid) })),
     Effect.scoped,
     Effect.andThen(waiting ? PubSub.publish(waitingHub, undefined) : Effect.void),
@@ -365,7 +369,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           yield* Option.match(planned.next, { onNone: () => Effect.void, onSome: (after) => forgetClosed(address.id, after) })
           const after = Option.getOrElse(next, () => current)
           yield* remember(address, after)
-          yield* wake(address.id, waitingChanged(held, after))
+          yield* wake(address, waitingChanged(held, after))
           return { result: planned.result, head, committed: Option.some(outcome.success) }
         }
         const error = outcome.failure
@@ -789,7 +793,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         log, config, instance, header: begun.head.header, incarnation: begun.head.incarnation, admitted: begun.result.admitted, started,
         position: { revision: committed.revision, seq: committed.seq, state: begun.result.next, storageAt: committed.at },
         wake: (before, after) => remember(address, after).pipe(
-          Effect.andThen(wake(address.id, waitingChanged(before, after))),
+          Effect.andThen(wake(address, waitingChanged(before, after))),
           Effect.andThen(Option.exists(after.open, (still) => still.turn === turn && still.runId === runId) ? Effect.void : Deferred.succeed(ended, undefined)),
         ),
       }, scope)
@@ -1037,7 +1041,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       }
       const head = yield* log.create({ header, state: yield* stateJson(initialState({ header })).pipe(Effect.orDie) }).pipe(
         Effect.catchTag("SessionMissing", Effect.die),
-        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
+        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake({ id: created.header.id, owner: created.header.owner }, true)))),
         Effect.uninterruptible,
       )
       return yield* viewFrom(head)
@@ -1058,7 +1062,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         }),
       }
       const head = yield* log.create({ header, state: yield* stateJson(initialState({ header })).pipe(Effect.orDie) }).pipe(
-        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake(created.header.id, true)))),
+        Effect.tap((created) => observe({ id: created.header.id, owner: created.header.owner }).pipe(Effect.andThen(wake({ id: created.header.id, owner: created.header.owner }, true)))),
         Effect.uninterruptible,
       )
       return yield* viewFrom(head)
@@ -1086,7 +1090,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         yield* Ref.update(released, (all) => new Map([...all].filter(([session]) => session !== address.id)))
         yield* forget(address)
         yield* closeLocal(reference, "removed", Option.none())
-        yield* wake(address.id, true)
+        yield* wake(address, true)
       }))
     }, onSession),
     read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap((head) => log.read(sessionRef(head), {
@@ -1094,7 +1098,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       ...(query?.from === undefined ? {} : { from: query.from }),
     }))), onSession),
     waiting: Stream.unwrap(PubSub.subscribe(waitingHub).pipe(Effect.map((subscription) => Stream.concat(Stream.succeed(undefined), Stream.fromSubscription(subscription))))),
-    changes: (address) => Stream.unwrap(RcMap.get(followers, address.id).pipe(Effect.map(Stream.fromPubSub))),
+    // Followed only by its owner: another owner's address, or a session removed (or, for a reference, created again), is SessionMissing.
+    changes: (address) => Stream.unwrap(owned(address).pipe(Effect.andThen(RcMap.get(followers, followerKey(address))), Effect.map(Stream.fromPubSub))),
     lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap((head) => keyed(sessionRef(head), key)), Effect.map(Option.map((found) => found.turn))), onSession),
     transact,
     // A turn nobody holds any more is reaped, as by a begin or a delivery, whichever comes first: it is not open, so the

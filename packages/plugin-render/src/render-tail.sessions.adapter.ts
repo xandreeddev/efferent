@@ -1,5 +1,6 @@
 import { Effect, Layer, Option, Schema, Stream } from "effect"
 import { ConversationId, Sessions } from "@xandreed/core"
+import type { SessionLogError, SessionMissing } from "@xandreed/core"
 import type { FeedScope } from "./domain/feed-frame.entity.js"
 import { RenderError } from "./domain/render-surface.entity.js"
 import { JournalTail } from "./ports/render.port.js"
@@ -11,7 +12,8 @@ const decodeId = Schema.decodeUnknownEffect(ConversationId)
  * its owner (another owner reads nothing); each record carries its turn. Reads never write, so following
  * a session runs nothing. A read with `kinds` is `Sessions.read` with those
  * kinds, so the store loads only them. `changes` wakes the feed after each
- * commit this instance makes; polling covers the others.
+ * commit this instance makes; polling covers the others. Another owner's
+ * feed is refused (`forbidden`) by both.
  */
 export const SessionsJournalTailLive = (options: { readonly page: number } = { page: 500 }): Layer.Layer<JournalTail, never, Sessions> =>
   Layer.effect(JournalTail, Effect.gen(function* () {
@@ -20,18 +22,19 @@ export const SessionsJournalTailLive = (options: { readonly page: number } = { p
       Effect.map((id) => ({ id, owner: feed.principalId })),
       Effect.mapError(() => new RenderError({ code: "invalid", message: `not a session id: ${feed.threadId}` })),
     )
+    const refused = (error: SessionMissing | SessionLogError) => error._tag === "SessionMissing"
+      ? new RenderError({ code: "forbidden", message: "no such session" })
+      : new RenderError({ code: "storage", message: error.message })
     return JournalTail.of({
       read: (feed, after, kinds) => address(feed).pipe(
         Effect.flatMap((session) => sessions.read(session, { after, limit: options.page, ...(kinds === undefined ? {} : { kinds }) }).pipe(
-          Effect.mapError((error) => error._tag === "SessionMissing"
-            ? new RenderError({ code: "forbidden", message: "no such session" })
-            : new RenderError({ code: "storage", message: error.message })),
+          Effect.mapError(refused),
         )),
         Effect.map((events) => events.map((event) => ({ sequence: event.seq, kind: event.kind, data: event.data, turn: Option.getOrNull(event.turn) }))),
       ),
       changes: (feed) => Stream.unwrap(Effect.match(address(feed), {
         onFailure: () => Stream.empty,
-        onSuccess: (session) => sessions.changes(session),
+        onSuccess: (session) => sessions.changes(session).pipe(Stream.mapError(refused)),
       })),
     })
   }))

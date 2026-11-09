@@ -96,6 +96,14 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(startOnlyLog)))).toEqual(["read-latest"])
   })
 
+  test("one whose changes follows a session for any owner fails only the changes check", async () => {
+    const anyOwner = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      changes: (address) => Stream.unwrap(memoryLog.head(address.id).pipe(Effect.map((head) => instance.sessions.changes({ id: address.id, owner: head.header.owner })), Effect.orDie)),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, anyOwner)))).toEqual(["changes"])
+  })
+
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
     const blind = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
