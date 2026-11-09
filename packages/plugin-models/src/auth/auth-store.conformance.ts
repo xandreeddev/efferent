@@ -172,6 +172,8 @@ const corruptCheck = (store: Store, corrupt: Effect.Effect<void, never, Scope.Sc
       yield* corrupted("remove", store.remove(id))
     }))
     yield* expect("corrupt", same(yield* store.get(id), kept), "once the backing data is repaired, the store does not read it again")
+    // Checked before `withProviders` removes it: a refused set must have written nothing.
+    yield* expect("corrupt", Option.isNone(yield* store.get(other!)) && !(yield* store.all).has(other!), "a set refused on damaged data still wrote its credential")
   })))
 
 /** Prove credentials and refreshes with a fresh fixture for each check. @public */

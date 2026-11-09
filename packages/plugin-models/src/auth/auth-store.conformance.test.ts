@@ -62,17 +62,18 @@ const endpoint = (provider: ProviderId) => Effect.gen(function* () {
  * damage. `locked`: one refresh at a time, and a call that finds the token
  * already replaced resolves again. `checked`: a refresh stores its token only
  * over the one it refreshed. `damaged`: what the store does while its data is
- * damaged, fail with `auth.corrupt` or read it as empty.
+ * damaged, fail with `auth.corrupt`, read it as empty, or (`set`) write a
+ * credential first and only then fail.
  */
-const refreshingReference = (behaviour: { readonly locked: boolean; readonly checked: boolean; readonly damaged: "fail" | "empty" }) => Effect.gen(function* () {
+const refreshingReference = (behaviour: { readonly locked: boolean; readonly checked: boolean; readonly damaged: "fail" | "empty" | "write-then-fail" }) => Effect.gen(function* () {
   const state = yield* Ref.make<ReadonlyMap<string, Credential>>(new Map())
   const damaged = yield* Ref.make(false)
   const lock = yield* Semaphore.make(1)
   const { call, probe } = yield* endpoint(ProviderId.make("refreshable"))
   const readable = <A>(effect: Effect.Effect<A, AuthError>, empty: A): Effect.Effect<A, AuthError> => Ref.get(damaged).pipe(Effect.flatMap((isDamaged) =>
     !isDamaged ? effect
-      : behaviour.damaged === "fail" ? Effect.fail(new AuthError({ provider: "*", code: "auth.corrupt", message: "the data is damaged" }))
-      : Effect.succeed(empty)))
+      : behaviour.damaged === "empty" ? Effect.succeed(empty)
+      : Effect.fail(new AuthError({ provider: "*", code: "auth.corrupt", message: "the data is damaged" }))))
   const current = (provider: ProviderId) => Ref.get(state).pipe(Effect.map((all) => Option.fromNullishOr(all.get(provider))))
   const write = (provider: ProviderId, credential: Option.Option<Credential>) => Ref.update(state, (all) => Option.match(credential, {
     onNone: () => new Map([...all].filter(([key]) => key !== provider)),
@@ -107,7 +108,9 @@ const refreshingReference = (behaviour: { readonly locked: boolean; readonly che
     all: readable(Ref.get(state), new Map()),
     get: (provider) => readable(current(provider), Option.none()),
     resolveKey: (provider) => readable(resolveKey(provider), Option.none()),
-    set: (provider, credential) => readable(write(provider, Option.some(credential)), undefined),
+    set: (provider, credential) => behaviour.damaged === "write-then-fail"
+      ? write(provider, Option.some(credential)).pipe(Effect.andThen(readable(Effect.void, undefined)))
+      : readable(write(provider, Option.some(credential)), undefined),
     remove: (provider) => readable(write(provider, Option.none()), undefined),
   })
   const corrupt = Effect.acquireRelease(Ref.set(damaged, true), () => Ref.set(damaged, false))
@@ -172,6 +175,11 @@ describe("the AuthStore kit catches stores that break the contract", () => {
 
   test("a store that reads damaged data as empty fails the corrupt check", async () => {
     const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "empty" }))
+    expect(await failedChecks(store, options)).toEqual(["corrupt"])
+  })
+
+  test("a store that writes a credential and only then fails on its damaged data fails the corrupt check", async () => {
+    const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "write-then-fail" }))
     expect(await failedChecks(store, options)).toEqual(["corrupt"])
   })
 

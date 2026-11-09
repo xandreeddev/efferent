@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Clock, Effect, Fiber, Layer, Option, Redacted, Ref, Schema } from "effect"
@@ -27,16 +27,28 @@ const runKit = (subject: AuthStoreSubject) => authStoreConformance(subject).map(
   expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
 }))
 
-/** A new backing store and endpoint for every check, with corruption in every tier. */
-const localKitSubject = (provider: ProviderId): AuthStoreSubject => ({ refresh: true, corrupt: true, open: () => Effect.gen(function* () {
+/** What one fixture left when its scope closed: its directories, and the temp files found in them just before they were removed. */
+interface FixtureLeftovers { readonly directories: ReadonlyArray<string>; readonly temporaries: ReadonlyArray<string> }
+
+/**
+ * A new backing store and endpoint for every check, with corruption in every
+ * tier the store reads: the runtime and fallback files, global and local.
+ * `closed` hears what each fixture left when its scope closed.
+ */
+const localKitSubject = (provider: ProviderId, closed: (left: FixtureLeftovers) => void = () => {}): AuthStoreSubject => ({ refresh: true, corrupt: true, open: () => Effect.gen(function* () {
   const { home, cwd } = yield* Effect.acquireRelease(Effect.sync(() => ({
     home: mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-")),
     cwd: mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-")),
-  })), ({ home, cwd }) => Effect.sync(() => [home, cwd].forEach((dir) => rmSync(dir, { recursive: true, force: true }))))
+  })), ({ home, cwd }) => Effect.sync(() => {
+    const temporaries = [home, cwd].flatMap((dir) => readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.includes(".tmp-")))
+    ;[home, cwd].forEach((dir) => rmSync(dir, { recursive: true, force: true }))
+    closed({ directories: [home, cwd], temporaries })
+  }))
   const endpoint = kitTokenEndpoint(provider, "kit")
   const transport = Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch }))
   const store = yield* Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(transport))))
-  return { store, refresh: endpoint.probe, corruptions: [damagedFile(join(home, ".efferent", "runtime", "auth.json")), damagedFile(join(home, ".efferent", "auth.json"))] }
+  const tiers = [home, cwd].flatMap((dir) => [join(dir, ".efferent", "runtime", "auth.json"), join(dir, ".efferent", "auth.json")])
+  return { store, refresh: endpoint.probe, corruptions: tiers.map(damagedFile) }
 }) })
 
 describe("MemoryAuthStoreLive conforms to the AuthStore contract", () => {
@@ -224,8 +236,14 @@ describe("MemoryAuthStoreLive and the host's credentials", () => {
 })
 
 describe("the local store keeps its files", () => {
-  test("each kit fixture closes and cleans up independently", async () => {
-    const results = await Effect.runPromise(Effect.forEach(authStoreConformance(localKitSubject(anthropic)), (check) => Effect.result(check.run), { concurrency: 1 }))
-    expect(results.every((result) => result._tag === "Success")).toBe(true)
+  test("each kit check opens its own fixture, which leaves no temp file and removes its directories when the check ends", async () => {
+    const closed: Array<FixtureLeftovers> = []
+    const checks = authStoreConformance(localKitSubject(anthropic, (left) => closed.push(left)))
+    const results = await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect(results.map((result) => result._tag)).toEqual(checks.map(() => "Success"))
+    expect(closed).toHaveLength(checks.length)
+    expect(new Set(closed.flatMap((left) => left.directories)).size).toBe(checks.length * 2)
+    expect(closed.flatMap((left) => left.temporaries)).toEqual([])
+    expect(closed.flatMap((left) => left.directories).filter((dir) => existsSync(dir))).toEqual([])
   })
 })
