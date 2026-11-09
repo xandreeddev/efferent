@@ -736,7 +736,7 @@ test.each([
 })
 
 test("a line packed with many fragments of one call is merged in time linear in their number", async () => {
-  const count = 100_000
+  const count = 150_000
   const fragments = [
     { index: 0, id: "packed", function: { name: "echo", arguments: "{\"a\":\"" } },
     ...Array.from({ length: count }, () => ({ index: 0, function: { arguments: "x" } })),
