@@ -636,26 +636,28 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * scope has closed that turn.
    */
   const openTurn = (locator: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-    const address = sessionRef(yield* owned(locator))
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const meta = input.meta ?? {}
     const initial = askedOf(input)
     // `resumes` is typed only as a number: one that is not a whole number of at least 1 names no turn, refused before the host's admission sees it.
     const unnumbered = Option.filter(initial.resumes, (turn) => !(Number.isSafeInteger(turn) && turn >= 1))
-    if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: unnumbered.value, reason: "missing" }))
+    if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: locator.id, turn: unnumbered.value, reason: "missing" }))
     /** The turn the opening commit stored, until its writer is handed over. */
     const unowned = yield* Ref.make(Option.none<AdmittedTurn>())
     /** The turn the last opening plan would open: let go of when its commit fails, as the store may have stored it all the same. */
     const planned = yield* Ref.make(Option.none<number>())
     yield* SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning + 1 }))
-    yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({
-      onNone: () => Effect.void,
-      onSome: (admitted) => unhanded(address, admitted, exit).pipe(Effect.ensuring(beginSettled)),
-    }))))
     return yield* Effect.gen(function* () {
       // Refused before the host's admission is asked, and again in the plan: a begin past this check while a shutdown starts opens nothing.
-      yield* refuseIfStopping(address)
+      yield* refuseIfStopping(locator)
+      // The session as this begin resolves it, its incarnation included, read interruptibly like every read that may wait:
+      // nothing is held yet, so an interruption here leaves only the count to settle.
+      const address = sessionRef(yield* restore(owned(locator)))
+      yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({
+        onNone: () => Effect.void,
+        onSome: (admitted) => unhanded(address, admitted, exit).pipe(Effect.ensuring(beginSettled)),
+      }))))
       const asked = yield* restore(prepareAsked(address, input, initial))
       const { key, origin, resumes } = asked
       const resuming = Option.match(resumes, { onNone: () => ({}), onSome: (turn) => ({ resumes: turn }) })

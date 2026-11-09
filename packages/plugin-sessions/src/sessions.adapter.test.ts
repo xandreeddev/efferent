@@ -1767,3 +1767,28 @@ test.each(["closed", "open"] as const)("on one instance, the turn of a session r
   expect(ended).toEqual([{ code: "turn.shutdown", message: "the process shut down before the turn ended" }])
   yield* Scope.close(staleScope, Exit.void)
 })))
+
+test("a begin waiting on a stalled store's first read is interrupted at once, counted as beginning until then", () => withLog((raw) => Effect.gen(function* () {
+  const armed = yield* Ref.make(false)
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  const stalled = SessionLog.of({ ...raw, head: (id) => Ref.get(armed).pipe(Effect.flatMap((stall) => stall
+    ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(raw.head(id)))
+    : raw.head(id))) })
+  const { sessions, activity } = yield* withActivity(stalled, sessionsDefaults)
+  const address = yield* created(sessions)
+  yield* Ref.set(armed, true)
+  yield* Effect.gen(function* () {
+    const begin = yield* Effect.forkChild(Effect.scoped(sessions.begin(address, say("stalled"))))
+    yield* Deferred.await(entered)
+    expect((yield* activity.current).beginning).toBe(1)
+    const interrupting = yield* Effect.forkChild(Fiber.interrupt(begin))
+    const settled = (tries: number): Effect.Effect<boolean> => interrupting.pollUnsafe() !== undefined ? Effect.succeed(true)
+      : tries <= 0 ? Effect.succeed(false) : Effect.yieldNow.pipe(Effect.andThen(Effect.suspend(() => settled(tries - 1))))
+    expect(yield* settled(50)).toBe(true)
+    expect(yield* Deferred.isDone(release)).toBe(false)
+    expect(yield* activity.current).toEqual({ open: [], beginning: 0 })
+    yield* Ref.set(armed, false)
+    expect((yield* sessions.get(address)).turns).toBe(0)
+  }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+})))

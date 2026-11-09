@@ -52,7 +52,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the same number: `TurnActivity` lists the live turn, and `TurnShutdown`
   closes it with `turn.shutdown`. `WaitingInput` keeps refreshing an observed
   address after its session is removed and created again elsewhere, so input
-  enqueued into the new one is counted and `idle` waits for it.
+  enqueued into the new one is counted and `idle` waits for it. A begin
+  counts in `TurnActivity` before its first store read again, and that read
+  stays interruptible, so a begin waiting on a stalled store stops when
+  interrupted.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and provider SSE input, and
   cancel scripted hooks, regex workers, workspace temporaries and implementors.
