@@ -12,6 +12,7 @@ const extractUsage
 const foldStreamParts
 const handoffToMessage
 const isVolatileContext
+const jsonTextCopy
 const makeToolResultReceipt
 const markVolatileContext
 const modelRequestHeaderOf
