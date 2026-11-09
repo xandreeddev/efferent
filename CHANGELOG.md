@@ -41,8 +41,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   fails with `config.options` when its toolkit was not prepared.
 - The `capacity` of a background `TurnEvents.subscribe` must be a positive
   safe integer; replace `Infinity` with a finite size. A background handler
-  that publishes into its own subscription's full queue gets
-  `events.capacity` instead of growing the queue.
+  that publishes into its own subscription's full queue while it runs gets
+  `events.capacity` instead of growing the queue. Two background handlers
+  that publish into each other's subscriptions can now wait for each other
+  when both queues are full, until the turn is interrupted (a time limit,
+  a shutdown): give one side a larger `capacity`, make one side an inline
+  subscription, or break the mutual publication.
 - `AuthStoreConformanceOptions` and `SettingsStoreConformanceOptions` are
   replaced by `AuthStoreSubject` and `SettingsStoreSubject`: give the kits a
   subject that opens fresh scoped fixtures for each check, never a host's
@@ -127,8 +131,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   kit's `corrupt` check also requires that a `set` refused on damaged data
   wrote nothing.
 - `@xandreed/core`: a background turn-event handler publishing into its own
-  subscription's full queue fails with `events.capacity`; into another
-  subscription's full queue it waits for room. A background `capacity` must
+  subscription's full queue while it runs (or a task it forked, while it
+  still runs) fails with `events.capacity`; into another subscription's full
+  queue it waits for room, and so does a task it forked once it returned.
+  0.19.2 queued every background handler's publication past capacity, so
+  two background handlers publishing into each other's full queues now wait
+  for each other until the turn is interrupted. A background `capacity` must
   be a positive safe integer: `Infinity` (previously an unbounded lane) and
   other values die with `config.limits` at subscribe.
 - `@xandreed/plugin-models`: provider SSE permits at most 128 tool calls,

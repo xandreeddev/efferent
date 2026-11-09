@@ -1465,9 +1465,12 @@ fiber. `publish` returns once the event is queued, and the handler sees events
 in publication order. When the queue is full (`capacity`, 256 by default),
 `publish` waits for room, interruptibly wherever it runs, a background
 handler publishing into another subscription's queue included; a background
-handler's publications into its own subscription (and what it runs inline)
-never wait: its full queue fails with `events.capacity`, so reentry
-preserves the finite capacity. `capacity` is a positive safe integer; any
+handler's publications into its own subscription while it runs (and those
+of what it runs inline or forks, while it still runs) never wait: its full
+queue fails with `events.capacity`, so reentry preserves the finite
+capacity. A task it forked that publishes once it returned waits for room,
+and two handlers publishing into each other's full queues wait for each
+other until the turn is interrupted. `capacity` is a positive safe integer; any
 other value dies with `config.limits` when the subscription is made. Reaction chains are also bounded by
 `maxEventDepth`. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails

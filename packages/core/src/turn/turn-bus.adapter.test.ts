@@ -272,6 +272,53 @@ describe("the turn event bus", () => {
     expect(result).toBe("events.capacity")
   })
 
+  test("a task a background handler forked, publishing into that lane's full queue once the handler returned, waits for room", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const tasks = yield* makeTurnTasks(yield* Effect.scope)
+      const go = yield* Deferred.make<void>()
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      // The handler of event 0 forks a task and returns; the task publishes later, while the lane is busy with event 1.
+      yield* onEvent("step.started", (event) => Ref.update(seen, (all) => [...all, event.step]).pipe(Effect.andThen(
+        event.step === 0 ? tasks.fork("late", Deferred.await(go).pipe(Effect.andThen(events.publish(started(50)))))
+          : event.step === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void)), { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+      yield* events.publish(started(1))
+      yield* Deferred.await(entered)
+      yield* events.publish(started(2))
+      yield* Deferred.succeed(go, undefined)
+      yield* Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+      yield* Deferred.succeed(release, undefined)
+      const awaited = yield* Effect.result(tasks.await([])).pipe(Effect.timeoutOption("2 seconds"))
+      const drained = yield* Effect.result(events.drain)
+      return {
+        awaited: Option.match(awaited, { onNone: () => "hung", onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "done" }),
+        drained: drained._tag,
+        seen: (yield* Ref.get(seen)).toSorted((left, right) => left - right),
+      }
+    })))
+    expect(result).toEqual({ awaited: "done", drained: "Success", seen: [0, 1, 2, 50] })
+  })
+
+  test("a task a background handler forked and awaits, publishing into that lane's full queue, fails at capacity instead of waiting", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const tasks = yield* makeTurnTasks(yield* Effect.scope)
+      // The handler waits for its own task: its lane cannot make room while the task waits for it.
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? tasks.fork("own", events.publish(started(5)).pipe(Effect.andThen(events.publish(started(6))))).pipe(Effect.andThen(tasks.await(["own"])))
+        : Effect.void, { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      const drained = yield* Effect.result(events.drain).pipe(Effect.timeoutOption("2 seconds"))
+      return Option.match(drained, { onNone: () => "hung", onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "drained" })
+    })))
+    expect(result).toBe("events.capacity")
+  })
+
   test("a background handler publishing into another lane's full queue waits for room, and every event is delivered", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const events = yield* makeTurnEvents({ maxDepth: 4 })

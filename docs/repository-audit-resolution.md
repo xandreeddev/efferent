@@ -41,9 +41,10 @@ the additional observations are recorded below the matrix.
   declare writable, refresh and corruption probes. Sessions conformance subjects
   supply an unsupported-format probe (`newerFormat`) that stamps any format
   but the current one and returns a snapshot of the stored head.
-- A background handler's publication into its own full queue fails with
-  `events.capacity`; other producers, other lanes' handlers included, wait
-  interruptibly. Background capacity is a positive safe integer. Provider SSE permits 128 tool
+- A background handler's publication into its own full queue while it runs
+  (or a task's it forked, while it still runs) fails with
+  `events.capacity`; other producers, other lanes' handlers and tasks whose
+  handler returned included, wait interruptibly. Background capacity is a positive safe integer. Provider SSE permits 128 tool
   calls, 1,048,576 characters of accumulated arguments per call and lines of at
   most 8,388,608 characters; an index that is sent must be a nonnegative safe
   integer, and an absent or `null` one is call 0.
@@ -115,7 +116,7 @@ The changeset records the intended minor release of the fixed package group.
 
 | Observation | Resolution and evidence |
 | --- | --- |
-| FW-7: queue breadth | Finite event queues, interruptible external offers and explicit `events.capacity`; [bus tests](../packages/core/src/turn/turn-bus.adapter.test.ts) cover reentrant overflow, a cross-lane publication that waits for room and is delivered, and the capacity bounds; the turn kit waits for actual delivery. |
+| FW-7: queue breadth | Finite event queues, interruptible external offers and explicit `events.capacity`; [bus tests](../packages/core/src/turn/turn-bus.adapter.test.ts) cover reentrant overflow (a forked task its handler awaits included), a cross-lane publication and a task outliving its handler that wait for room and are delivered, and the capacity bounds; the turn kit waits for actual delivery. |
 | FW-8: hidden native coupling | ProcessLiveness imports node:os/node:process explicitly; the boundary profile declares those dependencies, and the injectable service remains. |
 | FW-9: public helper aliases | Public glob, message mapping and tool-schema implementations live in public role modules and are named root exports. Internal exports remain explicit. |
 | Regex native backtracking | Builtin regex execution uses one scoped worker per grep, opened at its first searched file, one file at a time, with the remaining grep deadline; the worker's start is not charged to it. The worker's program is inline, so bundled hosts keep it, and its `error` and `exit` are heard for its whole life, so a worker that fails to load or dies between files fails the call with `SearchFailed` instead of crashing the host or waiting out the deadline. Cancellation terminates native backtracking. [Workspace regression](../packages/plugin-workspace/src/workspace-tools.adapter.test.ts), [worker lifecycle tests](../packages/plugin-workspace/src/regex-search.adapter.test.ts) and [packed fixture](../scripts/regex-search-consumer.fixture.mjs) cover overlapping alternatives on Bun and Node, a benign search under a budget near the worker's start, many files without listener growth, and load and mid-run failures. Literal searches stay local. |

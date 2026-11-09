@@ -22,10 +22,14 @@ export interface SubscribeOptions {
    * when a background subscription is made. Publishing waits when the queue is
    * full (interruptibly, wherever the publisher runs), a background handler's
    * publications into another subscription's queue included. A handler's
-   * publications into its own subscription's full queue (and those of what it
-   * runs inline or forks) never wait: they fail with `events.capacity`, since
-   * that queue cannot drain while its handler waits. Capacity remains a total
-   * queued-event bound during reentry too.
+   * publications into its own subscription's full queue while it runs (and
+   * those of what it runs inline or forks, while it still runs) never wait:
+   * they fail with `events.capacity`, since that queue cannot drain while its
+   * handler waits. A task the handler forked that publishes after the
+   * handler returned waits for room. Two background handlers that each
+   * publish into the other's full queue wait for each other until
+   * interrupted. Capacity remains a total queued-event bound during reentry
+   * too.
    */
   readonly capacity?: number
 }

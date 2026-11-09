@@ -163,10 +163,13 @@ A handler is part of the turn:
   is made. When a queue is full, `publish` waits: a slow handler slows the
   step loop, and a background handler publishing into another subscription's
   full queue waits too. A background handler's publications into its own
-  subscription's full queue never wait (it could not make room while it
-  waits): they fail with `events.capacity`. Two background handlers that each
+  subscription's full queue while it runs never wait (it could not make room
+  while it waits), nor do those of a task it forked while it still runs:
+  they fail with `events.capacity`. A task it forked that publishes after
+  the handler returned waits for room. Two background handlers that each
   publish into the other's full queue wait for each other until the turn is
-  cancelled. The capacity remains finite during reentry. A publisher waiting
+  cancelled or reaches its time limit: give one side a larger `capacity`,
+  make it an inline subscription, or break the mutual publication. The capacity remains finite during reentry. A publisher waiting
   for room can always be interrupted.
 - On success the turn drains every background subscription before it
   records its reply. A handler that never returns keeps the reply from being
