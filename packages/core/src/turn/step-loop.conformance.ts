@@ -805,6 +805,15 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
     }),
   },
   {
+    name: "a planned call whose params hold an undefined field runs as JSON text would carry it, with no corrective to the model",
+    run: Effect.gen(function* () {
+      const observed = yield* observe(loop, { initial: { calls: [{ name: Probe.name, params: { n: 4, note: undefined } }], skills: [] }, script: [textReply("done")] })
+      const corrected = observed.prompts.some((prompt) => canonicalJson(prompt).includes("parameter-errors"))
+      yield* expect("planned-json", observed.atHandlers.length === 1 && observed.providerCalls.length === 1 && !corrected,
+        `the planned call ran ${observed.atHandlers.length} times over ${observed.providerCalls.length} provider calls${corrected ? ", and the model was told its parameters were invalid" : ""}`)
+    }),
+  },
+  {
     name: "a failed durable request check prevents the provider call",
     run: Effect.gen(function* () {
       const calls = yield* Ref.make(0)

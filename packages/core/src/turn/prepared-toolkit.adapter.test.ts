@@ -31,3 +31,24 @@ test("preparation decodes once on an isolated copy and starts no handlers", asyn
   expect(observed[0]?.encodedResult).toBe("provider:decoded")
   expect(toolkit.tools.once.parametersSchema).toBe(tool.parametersSchema)
 })
+
+test("preparation reads host params as JSON text would: undefined keys are left out and toJSON values take their JSON form", async () => {
+  const handled: unknown[] = []
+  const tool = Tool.make("search", {
+    parameters: Schema.Struct({ q: Schema.String, limit: Schema.optional(Schema.Number), when: Schema.optional(Schema.String) }),
+    success: Schema.String,
+  })
+  const toolkit = prepareToolkit(Toolkit.make(tool))
+  const host = { q: "x", limit: undefined, when: new Date(0) }
+  const prepared = await Effect.runPromise(Effect.gen(function* () {
+    const execution = yield* toolkit.execution
+    const call = yield* execution.prepare("search", host)
+    yield* call.run("c1").pipe(Effect.flatMap(Stream.runDrain))
+    const unencodable = yield* Effect.result(execution.prepare("search", { q: 1n }))
+    return { input: call.input, frozen: Object.isFrozen(call.input), unencodable: unencodable._tag }
+  }).pipe(Effect.provide(toolkit.toLayer({ search: (value) => Effect.sync(() => { handled.push(value); return value.q }) }))))
+  expect(prepared).toEqual({ input: { q: "x", when: "1970-01-01T00:00:00.000Z" }, frozen: true, unencodable: "Failure" })
+  expect(handled).toEqual([{ q: "x", when: "1970-01-01T00:00:00.000Z" }])
+  expect(host.limit).toBeUndefined()
+  expect(host.when).toBeInstanceOf(Date)
+})

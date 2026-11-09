@@ -4,9 +4,14 @@ import type { Tool } from "effect/ai"
 
 import type { PreparedToolkit, PreparedToolHandler, PreparedToolExecution } from "../ports/prepared-toolkit.port.js"
 
-const json = Schema.fromJsonString(Schema.Json)
-const copy = (input: unknown) => Schema.decodeUnknownEffect(Schema.Json)(input).pipe(
-  Effect.flatMap(Schema.encodeEffect(json)), Effect.flatMap(Schema.decodeUnknownEffect(json)),
+/**
+ * A detached JSON copy of `input`, read as JSON text would carry it: keys whose
+ * value is `undefined` are left out and `toJSON` gives a value its JSON form (a
+ * `Date` its ISO string), as when a provider sends the same object. A value JSON
+ * cannot encode (a BigInt, a cycle, `undefined` alone) fails.
+ */
+const copy = (input: unknown) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(input).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))),
 )
 const immutable = (input: Schema.Json): Schema.Json => {
   if (typeof input === "object" && input !== null) {

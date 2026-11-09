@@ -880,7 +880,7 @@ the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget
 
 ## Host-planned initial tool batch
 
-Standalone `runLoop` takes a `PreparedToolkit`: wrap `Toolkit.make(...)` with `prepareToolkit` from core. Authored parameter codecs run once, on isolated copies, before any handler in the response runs. The journal retains raw wire arguments. Custom registries implement this same preparation boundary.
+Standalone `runLoop` takes a `PreparedToolkit`: wrap `Toolkit.make(...)` with `prepareToolkit` from core. Authored parameter codecs run once per call, on isolated copies, before any handler in the response runs. A call's input is read as JSON text would carry it: a key whose value is `undefined` is left out and a `toJSON` value (a `Date`) takes its JSON form, so host-planned params behave as a provider's would; input JSON cannot encode (a `BigInt`, a cycle) is invalid. The journal retains the provider's arguments. Custom registries implement this same preparation boundary.
 
 The default preparation executes handlers by the toolkit's tool IDs. A registry
 that customizes `Toolkit.handle` supplies `prepareToolkit(base, execute)` so its

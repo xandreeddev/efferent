@@ -1802,6 +1802,75 @@ describe("the loop checks a call's parameters as the toolkit decodes them", () =
   })
 })
 
+describe("the loop prepares each call once, keeping the provider's arguments as its evidence", () => {
+  test("a codec that mutates its input decodes once per call; the stored request, tool_start and the provider's object keep the original", async () => {
+    const counter = { decodes: 0 }
+    const handled: unknown[] = []
+    const Mutate = Tool.make("mutate", {
+      description: "A tool whose parameter codec rewrites its input in place.",
+      parameters: Schema.Struct({ payload: Schema.Struct({ n: Schema.String }) }).pipe(Schema.decodeTo(Schema.Struct({ payload: Schema.Struct({ n: Schema.String }) }), {
+        decode: SchemaGetter.transformEffect((value) => Effect.sync(() => { counter.decodes++; Reflect.set(value.payload, "n", "codec-mutated"); return value })),
+        encode: SchemaGetter.transform((value) => value),
+      })),
+      success: Schema.String,
+    })
+    const mutateKit = prepareToolkit(Toolkit.make(Mutate))
+    const provided = { payload: { n: "provider-original" } }
+    const tails: Array<ReadonlyArray<AgentMessage>> = []
+    const { events, onEvent } = collect()
+    await Effect.runPromise(runLoop({
+      system: "sys", messages: [user("go")], toolkit: mutateKit, onEvent,
+      onTail: (tail) => Effect.sync(() => { tails.push(tail); return [] }),
+    }).pipe(
+      Effect.provide(mutateKit.toLayer({ mutate: (value) => Effect.sync(() => { handled.push(value); return value.payload.n }) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call === 0
+        ? [{ type: "tool-call", id: "m1", name: "mutate", params: provided, providerExecuted: false }, finish("tool-calls")]
+        : [{ type: "text", text: "done" }, finish("stop")])),
+    ))
+    const assistant = tails.flat().find((message) => message.role === "assistant")
+    const storedParams = assistant !== undefined && Array.isArray(assistant.content)
+      ? assistant.content.flatMap((part) => part.type === "tool-call" ? [part.input] : []) : []
+    expect(counter.decodes).toBe(1)
+    expect(handled).toEqual([{ payload: { n: "codec-mutated" } }])
+    expect(storedParams).toEqual([{ payload: { n: "provider-original" } }])
+    expect(events.flatMap((event) => event.type === "tool_start" ? [event.args] : [])).toEqual([{ payload: { n: "provider-original" } }])
+    expect(provided).toEqual({ payload: { n: "provider-original" } })
+  })
+
+  test("a host-planned call whose params leave an optional field undefined runs as planned, with no corrective to the model", async () => {
+    const Find = Tool.make("find", {
+      description: "Find something.",
+      parameters: Schema.Struct({ q: Schema.String, limit: Schema.optional(Schema.Number) }),
+      success: Schema.String,
+    })
+    const findKit = prepareToolkit(Toolkit.make(Find))
+    const handled: unknown[] = []
+    const prompts: Array<string> = []
+    const recording = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      return yield* LanguageModel.make({
+        generateText: (options) => Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+          Effect.tap(() => Effect.sync(() => prompts.push(JSON.stringify(options.prompt)))),
+          Effect.map(() => [{ type: "text", text: "done" }, finish("stop")] as never),
+        ),
+        streamText: () => Stream.die("not scripted") as never,
+      })
+    })
+    const { events, onEvent } = collect()
+    const result = await Effect.runPromise(runLoop({
+      system: "sys", messages: [user("find")], toolkit: findKit, maxSteps: 2, onEvent,
+      initialStep: [{ name: "find", params: { q: "x", limit: undefined } }],
+    }).pipe(
+      Effect.provide(findKit.toLayer({ find: (value) => Effect.sync(() => { handled.push(value); return value.q }) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, recording),
+    ))
+    expect(result.outcome).toBe("ok")
+    expect(handled).toEqual([{ q: "x" }])
+    expect(events.filter((event) => event.type === "tool_end")).toHaveLength(1)
+    expect(prompts.some((prompt) => prompt.includes("parameter-errors"))).toBe(false)
+  })
+})
+
 describe("durable tool-call boundaries", () => {
   test("records the response before handlers and each result while another call is still held", async () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
