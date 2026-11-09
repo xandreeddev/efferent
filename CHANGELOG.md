@@ -228,6 +228,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`config.json write failed: open failed (EACCES)`).
 - `@xandreed/plugin-render`: a feed event name holding CR, LF or NUL is
   refused, so it cannot break an SSE frame.
+- `@xandreed/plugin-agent-loop`: the no-progress breaker tells results apart
+  by their whole canonical JSON, `toJSON` applied and a `Map`'s entries or a
+  `Set`'s members kept: a tool whose results differ only past their first
+  300 characters, in a `Date`, or in a map's or set's contents no longer
+  stops the run as `degenerate-loop`.
 - Remove quadratic replay/history/media/trace batching, exponential graph
   validation (a stage that supersedes the support of an active inference still
   publishes and closes it), lossy progress identities, dead eval helpers and

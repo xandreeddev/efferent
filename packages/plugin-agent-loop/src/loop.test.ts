@@ -236,6 +236,29 @@ describe("runLoop", () => {
     expect(result.finalText).toBe("booked")
   })
 
+  test.each(["Map", "Set"] as const)("results that differ only in a %s's contents are progress: the breaker does not stop the run", async (kind) => {
+    const Tally = Tool.make("tally", {
+      description: "The counts so far.",
+      parameters: Schema.Struct({ value: Schema.String }),
+      success: kind === "Map" ? Schema.Struct({ counts: Schema.ReadonlyMap(Schema.String, Schema.Number) }) : Schema.Struct({ counts: Schema.ReadonlySet(Schema.Number) }),
+      failure: Failure,
+      failureMode: "return",
+    })
+    const tallyKit = prepareToolkit(Toolkit.make(Tally))
+    const seen = { count: 0 }
+    const next = (): { readonly counts: ReadonlyMap<string, number> } | { readonly counts: ReadonlySet<number> } => {
+      seen.count += 1
+      return kind === "Map" ? { counts: new Map([["calls", seen.count]]) } : { counts: new Set([seen.count]) }
+    }
+    const result = await Effect.runPromise(runLoop({ system: "sys", messages: [user("go")], toolkit: tallyKit, maxSteps: 9 }).pipe(
+      Effect.provide(tallyKit.toLayer({ tally: () => Effect.sync(next) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call < 7
+        ? [{ type: "tool-call", id: `t${call}`, name: "tally", params: { value: "same" } }, finish("tool-calls")]
+        : [{ type: "text", text: "counted" }, finish("stop")])),
+    ))
+    expect([seen.count, result.reason === "degenerate-loop", result.finalText]).toEqual([7, false, "counted"])
+  })
+
   test("the degenerate-loop breaker nudges once, then force-stops as partial", async () => {
     const nudgedAt: Array<number> = []
     const settled: Array<string> = []

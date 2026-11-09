@@ -403,16 +403,27 @@ const failureText = (failure: unknown): string => typeof failure === "string" ? 
  * progress even when the model churns the arguments. Empty string = the turn
  * must not count (no tool calls, or purely pollable ones).
  */
-const resultText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 const resultJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
 /**
- * A result's identity: its canonical JSON as JSON text carries it (`toJSON`
- * applied, so distinct `Date`s differ), else the canonical form of the value.
+ * What JSON text writes for a value it has no form for: a `Map`'s entries
+ * and a `Set`'s members, each in canonical order, so two of them with other
+ * contents never write the same text (JSON writes both as `{}`).
  */
-const resultIdentity = (result: unknown): string => Option.match(Option.flatMap(resultText(result), resultJson), {
-  onNone: () => canonicalJson(result),
-  onSome: canonicalJson,
-})
+const keepContents = (_key: string, value: unknown): unknown => {
+  const ordered = (items: ReadonlyArray<unknown>) => Arr.sort(items.map((item) => [canonicalJson(item), item] as const), Order.mapInput(Order.String, ([text]: readonly [string, unknown]) => text)).map(([, item]) => item)
+  if (value instanceof Map) return { "@map": ordered([...value.entries()]) }
+  if (value instanceof Set) return { "@set": ordered([...value.values()]) }
+  return value
+}
+/**
+ * A result's identity: its canonical JSON as JSON text carries it (`toJSON`
+ * applied, so distinct `Date`s differ, and a `Map`'s or `Set`'s contents
+ * kept), else the canonical form of the value.
+ */
+const resultIdentity = (result: unknown): string => Option.match(
+  Option.flatMap(Result.getSuccess(Result.try(() => JSON.stringify(result, keepContents))), (text) => text === undefined ? Option.none() : resultJson(text)),
+  { onNone: () => canonicalJson(result), onSome: canonicalJson },
+)
 
 const progressSignature = (
   content: ReadonlyArray<Response.AnyPart>,
