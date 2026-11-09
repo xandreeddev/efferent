@@ -20,16 +20,22 @@ import { nodeFilesIo } from "./files-io.adapter.js"
 import { makeBoundedFilesCall } from "./bounded-call.adapter.js"
 import type { FilesIo } from "./files-io.adapter.js"
 import { FILES_LAYOUT, PublishNonce, sessionFilesDefaults, STAGING_SWEEP_MS } from "./session-files.entity.js"
-import type { CommitEvent, CommitMeta, CommitRecord, FileStoreIo, FileStoreStalled, HeaderRecord } from "./session-files.entity.js"
+import type { CommitEvent, CommitMeta, CommitRecord, FileStoreIo, FileStoreStalled, GenerationClaim, HeaderRecord } from "./session-files.entity.js"
+import type { Generation } from "./session-files.entity.functions.js"
 import {
   CACHE_BOUNDS,
+  claimOfText,
+  claimText,
   decodeCommit,
   encodeCommit,
+  generationName,
+  generationOfName,
   headerOfText,
   headerText,
   inListing,
   isAbandonedStaging,
   isSessionDirectory,
+  isStoredGeneration,
   markerOfText,
   metaOfLine,
   page,
@@ -37,6 +43,7 @@ import {
   revisionOfFile,
   revisionOfTemporary,
   sameBytes,
+  stagedGenerationOf,
   stagingName,
   tailVerdict,
   trimCache,
@@ -115,7 +122,7 @@ const storeError = (code: string, what: string) => (error: Failed): SessionLogEr
 const decodeError = (what: string, detail: string) => new SessionLogError({ code: "store.decode", message: `${what} does not decode: ${detail}` })
 
 /** A session as diagnostics name it: its id and incarnation, never the reference object. */
-const describe = (id: SessionRef): string => `${id.id} (incarnation ${id.incarnation})`
+const describe = (id: Generation): string => `${id.id} (incarnation ${id.incarnation})`
 
 /** A session's incarnation: its header's nonce, which a session created again under its id never shares. */
 const incarnationOf = (header: HeaderRecord): SessionIncarnation => SessionIncarnation.make(header.nonce)
@@ -136,9 +143,21 @@ const cacheWith = (all: ReadonlyMap<string, Known>, id: string, entry: Known): R
  * whose process stopped blocks nobody. A publish whose answer may be wrong
  * (a network file system's retransmitted link) is settled by reading the
  * published file's nonce. A commit's `notAfter` is checked again once its
- * file is written, right before the link. Creating a session publishes its
- * directory by a rename; removing one renames it away first, never emptying
- * it in place; immutable generation tombstones fence removal and ancestry.
+ * file is written, right before the link.
+ *
+ * Each creation of a session is a generation: its payload (header, initial
+ * state, commits) is staged, claimed by an exclusive link of a minimal
+ * claim (`sessions/<id>/claims/<generation>.json`: its id, incarnation and
+ * claim time), then published by a rename to `lives/<id>.<incarnation>/`.
+ * Removing one marks it in `removing/`, writes its permanent tombstone
+ * (`sessions/<id>/removed/<incarnation>`), removes its children, then its
+ * payload and quarantined bytes, and the mark last: only the claim and the
+ * tombstone stay, nothing of the owner, header or state. A removal stopped
+ * part way is finished by removing the reference again or by the next open;
+ * listings and removals read `lives/` only, so their work does not grow with
+ * the sessions removed before. Readers check tombstones and ancestors, and a
+ * reference whose id or incarnation is not a UUID is SessionMissing before
+ * any path is built from it.
  *
  * A commit file holds its trailer's length and CRC-32: one at a session's
  * tail that is not whole (the disk dropped what was flushed) is moved to
@@ -146,7 +165,8 @@ const cacheWith = (all: ReadonlyMap<string, Known>, id: string, entry: Known): R
  * before the tail fails with `store.decode`, nothing moved. A move that took
  * another writer's whole commit (published after another handle set the
  * torn one aside) puts it back. A directory with any unsupported layout fails to open with `store.version`; one without hard links, with
- * `store.open`. An open sweeps recognized abandoned marker publications in `staging/`. Claims and tombstones remain permanent.
+ * `store.open`, at every open. An open sweeps what stopped processes left: abandoned staging (a creation claimed but never published is
+ * removed as a generation) and unfinished removals. Claims and tombstones remain permanent.
  *
  * At most two file system calls are in flight per handle, and each must
  * answer within `stallMs` (default 10 s), or the call fails with
@@ -168,17 +188,28 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   /** The sessions whose temporary files this handle swept, at its first commit to each (forgotten past the cache's bound: swept again then). */
   const swept = yield* Ref.make<ReadonlySet<string>>(new Set())
 
+  // Permanent: `sessions/<id>/claims/<generation>.json` and `sessions/<id>/removed/<incarnation>`. Each generation's payload,
+  // `lives/<id>.<incarnation>/`, goes when it is removed; `removing/<id>.<incarnation>` marks a removal not finished yet.
   const sessionsDir = join(root, "sessions")
+  const livesDir = join(root, "lives")
+  const removingDir = join(root, "removing")
   const stagingDir = join(root, "staging")
-  const keyOf = (id: SessionRef) => JSON.stringify([id.id, id.owner, id.incarnation])
-  const dirOf = (id: SessionRef) => join(sessionsDir, id.id, "lives", id.incarnation)
+  const quarantineDir = join(root, "quarantine")
+  const keyOf = (id: Generation) => generationName(id)
+  const dirOf = (id: Generation) => join(livesDir, generationName(id))
   const claimsDir = (id: ConversationId) => join(sessionsDir, id, "claims")
-  const removedPath = (id: SessionRef) => join(dirOf(id), "removed")
-  const headerPath = (id: SessionRef) => join(dirOf(id), "header.json")
-  const commitsDir = (id: SessionRef) => join(dirOf(id), "commits")
-  const commitPath = (id: SessionRef, revision: number) => join(commitsDir(id), revisionFile(revision))
+  const claimPath = (id: ConversationId, generation: number) => join(claimsDir(id), `${generation}.json`)
+  const tombstonesDir = (id: ConversationId) => join(sessionsDir, id, "removed")
+  const tombstonePath = (id: Generation) => join(tombstonesDir(id.id), id.incarnation)
+  const journalPath = (id: Generation) => join(removingDir, generationName(id))
+  const quarantineOf = (id: Generation) => join(quarantineDir, id.id, id.incarnation)
+  const headerPath = (id: Generation) => join(dirOf(id), "header.json")
+  const commitsDir = (id: Generation) => join(dirOf(id), "commits")
+  const commitPath = (id: Generation, revision: number) => join(commitsDir(id), revisionFile(revision))
   const nonce = () => PublishNonce.make(randomUUID())
   const staged = (prefix: string, now: number) => join(stagingDir, stagingName(prefix, now, randomUUID()))
+  /** How old a staged creation or a claimed generation without its payload must be before it is taken as abandoned: more than any creation takes. */
+  const abandonAfter = Math.max(STAGING_SWEEP_MS, 16 * stallMs)
 
   const call = yield* makeBoundedFilesCall(stallMs)
 
@@ -215,15 +246,15 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       Effect.catchIf((error) => isCode(error, "ENOENT"), () => Effect.succeed<ReadonlyArray<string>>([])),
       Effect.mapError(storeError("store.open", "inspect the new store")),
     )
-    if (contents.some((name) => !["sessions", "staging", "quarantine"].includes(name))) yield* refuseUnmarked
+    if (contents.some((name) => !["sessions", "lives", "removing", "staging", "quarantine"].includes(name))) yield* refuseUnmarked
     else if (contents.length > 0) {
-      const occupied = yield* Effect.forEach(["sessions", "quarantine"], (name) => call("list", join(root, name), () => io.list(join(root, name))).pipe(
+      const occupied = yield* Effect.forEach(["sessions", "lives", "removing", "quarantine"], (name) => call("list", join(root, name), () => io.list(join(root, name))).pipe(
         Effect.catchIf((error) => isCode(error, "ENOENT"), () => Effect.succeed<ReadonlyArray<string>>([])), Effect.mapError(storeError("store.open", "inspect an initializing store")),
       ), { concurrency: 1 })
       if (occupied.some((names) => names.length > 0)) yield* refuseUnmarked
     }
   }
-  yield* Effect.forEach([root, sessionsDir, stagingDir, join(root, "quarantine")], (path) =>
+  yield* Effect.forEach([root, sessionsDir, livesDir, removingDir, stagingDir, quarantineDir], (path) =>
     call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(Effect.mapError(storeError("store.open", "create its folders")))
   /** A link that failed because the directory cannot hold hard links (some SMB and FUSE mounts): the store cannot publish anything there. */
   const linkError = (what: string) => (error: Failed): SessionLogError => isCode(error, "EPERM", "EOPNOTSUPP", "ENOTSUP", "ENOSYS", "EXDEV")
@@ -247,44 +278,66 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     if (marker.layout !== FILES_LAYOUT) return yield* Effect.fail(unsupported(marker.layout))
   }
   const abandoned = yield* call("list", stagingDir, () => io.list(stagingDir)).pipe(Effect.mapError(storeError("store.open", "list staging files")))
-  yield* Effect.forEach(abandoned.filter((name) => isAbandonedStaging(name, openedAt, Math.max(STAGING_SWEEP_MS, 16 * stallMs))), (name) =>
-    bestEffort("remove", join(stagingDir, name), () => io.removeTree(join(stagingDir, name))), { concurrency: 1, discard: true })
 
   /* ── reading a session ── */
 
   const exists = (path: string) => call("stat", path, () => io.exists(path)).pipe(Effect.mapError(storeError("store.io", "look a file up")))
   const referenceOf = (record: HeaderRecord): SessionRef => ({ id: record.header.id, owner: record.header.owner, incarnation: incarnationOf(record) })
-  const decodeHeader = (what: string) => (bytes: Uint8Array) => Result.match(headerOfText(decoder.decode(bytes)), {
+  const decodeClaim = (what: string) => (bytes: Uint8Array) => Result.match(claimOfText(decoder.decode(bytes)), {
     onFailure: (error) => Effect.fail(decodeError(what, error.message)), onSuccess: Effect.succeed,
   })
-  const latestClaim = (id: ConversationId): Effect.Effect<{ readonly generation: number; readonly header: HeaderRecord }, SessionMissing | SessionLogError> => Effect.gen(function* () {
+  /** The newest generation claimed under `id`, and its claim; none claimed (or an id this store cannot hold) is SessionMissing. */
+  const latestClaim = (id: ConversationId): Effect.Effect<{ readonly generation: number; readonly claim: GenerationClaim }, SessionMissing | SessionLogError> => Effect.gen(function* () {
+    if (!isSessionDirectory(id)) return yield* Effect.fail(new SessionMissing({ session: id }))
     const names = yield* call("list", claimsDir(id), () => io.list(claimsDir(id))).pipe(
       Effect.catchIf((error) => isCode(error, "ENOENT", "ENOTDIR"), () => Effect.fail(new SessionMissing({ session: id }))),
       Effect.mapError((error) => error._tag === "SessionMissing" ? error : storeError("store.io", "list session generations")(error)),
     )
     const generation = names.reduce((highest, name) => /^\d+\.json$/.test(name) ? Math.max(highest, Number(name.slice(0, -5))) : highest, 0)
     if (generation === 0) return yield* Effect.fail(new SessionMissing({ session: id }))
-    const path = join(claimsDir(id), `${generation}.json`)
-    const header = yield* call("read", path, () => io.read(path)).pipe(Effect.mapError(storeError("store.io", "read a generation claim")), Effect.flatMap(decodeHeader(`generation ${generation} of session ${id}`)))
-    return { generation, header }
+    const claim = yield* call("read", claimPath(id, generation), () => io.read(claimPath(id, generation))).pipe(
+      Effect.mapError(storeError("store.io", "read a generation claim")), Effect.flatMap(decodeClaim(`generation ${generation} of session ${id}`)))
+    return { generation, claim }
   })
+  /** A generation's header as its bytes: none once its payload is gone (removed, or never published). */
+  const headerBytes = (id: Generation): Effect.Effect<Option.Option<Uint8Array>, SessionLogError> => isStoredGeneration(id)
+    ? call("read", headerPath(id), () => io.read(headerPath(id))).pipe(
+      Effect.map(Option.some),
+      Effect.catchIf((error) => isCode(error, "ENOENT", "ENOTDIR"), () => Effect.succeedNone),
+      Effect.mapError(storeError("store.io", "read a session header")))
+    : Effect.succeedNone
+  /** A generation's header, decoded; a header that does not decode is `store.decode`, naming the session. */
+  const recordOf = (id: Generation): Effect.Effect<HeaderRecord, SessionMissing | SessionLogError> => headerBytes(id).pipe(Effect.flatMap((bytes) => Option.match(bytes, {
+    onNone: (): Effect.Effect<HeaderRecord, SessionMissing | SessionLogError> => Effect.fail(new SessionMissing({ session: id.id })),
+    onSome: (found) => Result.match(headerOfText(decoder.decode(found)), {
+      onFailure: (error): Effect.Effect<HeaderRecord, SessionMissing | SessionLogError> => Effect.fail(decodeError(`the header of session ${describe(id)}`, error.message)),
+      onSuccess: (record) => Effect.succeed(record),
+    }),
+  })))
+  const tombstoned = (id: Generation) => exists(tombstonePath(id))
+  /**
+   * The header of the live generation `id` names, its owner and incarnation
+   * included: a reference this store could not have minted, a tombstoned
+   * generation, another owner's or a removed ancestor is SessionMissing.
+   */
   const headerOf = (id: SessionRef): Effect.Effect<HeaderRecord, SessionMissing | SessionLogError> => Effect.gen(function* () {
     const missing = () => Effect.fail(new SessionMissing({ session: id.id }))
-    if (yield* exists(removedPath(id))) return yield* missing()
-    const record = yield* call("read", headerPath(id), () => io.read(headerPath(id))).pipe(
-      Effect.catchIf((error) => isCode(error, "ENOENT", "ENOTDIR"), missing),
-      Effect.mapError((error) => error._tag === "SessionMissing" ? error : storeError("store.io", "read a session header")(error)), Effect.flatMap(decodeHeader(`the header of session ${describe(id)}`)),
-    )
+    if (!isStoredGeneration(id) || (yield* tombstoned(id))) return yield* missing()
+    const record = yield* recordOf(id)
     if (record.header.id !== id.id || record.header.owner !== id.owner || incarnationOf(record) !== id.incarnation) return yield* missing()
     const parent = record.header.parent
     if (Option.isSome(parent)) yield* Effect.suspend(() => headerOf(parent.value)).pipe(Effect.asVoid)
     return record
   })
-  const resolveRef = (id: ConversationId) => latestClaim(id).pipe(Effect.flatMap(({ header }) => headerOf(referenceOf(header)).pipe(Effect.map(referenceOf))))
+  const resolveRef = (id: ConversationId) => latestClaim(id).pipe(
+    Effect.flatMap(({ claim }) => recordOf(claim)),
+    Effect.flatMap((record) => headerOf(referenceOf(record)).pipe(Effect.map(referenceOf))),
+  )
 
   /**
-   * A missing payload belongs to a removed generation when its immutable
-   * header/tombstone says so. Otherwise retain the IO failure's cause.
+   * A missing payload belongs to a removed generation when its tombstone
+   * (or its header, gone with its payload) says so. Otherwise retain the IO
+   * failure's cause.
    */
   const goneOr = (id: SessionRef, what: string) => (error: Failed): Effect.Effect<never, SessionMissing | SessionLogError> =>
     isCode(error, "ENOENT", "ENOTDIR")
@@ -319,7 +372,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
    * again), it is put back by an exclusive link.
    */
   const quarantine = (id: SessionRef, revision: number, torn: Uint8Array, damage: string): Effect.Effect<SetAside, SessionLogError> => Effect.gen(function* () {
-    const folder = join(root, "quarantine", id.id, id.incarnation)
+    const folder = quarantineOf(id)
     yield* call("mkdir", folder, () => io.mkdir(folder)).pipe(Effect.mapError(storeError("store.io", "create the quarantine")))
     const aside = join(folder, `${revisionFile(revision)}.${randomUUID()}`)
     const moved = yield* call("rename", commitPath(id, revision), () => io.rename(commitPath(id, revision), aside)).pipe(
@@ -465,37 +518,119 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     yield* Effect.forEach(dead, (name) => bestEffort("unlink", join(folder, name), () => io.unlink(join(folder, name))), { concurrency: 1, discard: true })
   })
 
-  /** Tombstone an immutable generation before deleting only its payload folders. */
-  const discard = (id: SessionRef) => Effect.gen(function* () {
-    yield* call("create", removedPath(id), () => io.create(removedPath(id), encoder.encode("removed\n"))).pipe(
-      Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void), Effect.mapError(storeError("store.io", "remove a session generation")),
-    )
-    yield* Ref.update(known, (all) => { const rest = new Map(all); rest.delete(keyOf(id)); return rest })
-    yield* bestEffort("remove", commitsDir(id), () => io.removeTree(commitsDir(id)))
-    yield* bestEffort("remove", join(dirOf(id), "tmp"), () => io.removeTree(join(dirOf(id), "tmp")))
-  })
-  const childrenOf = (parent: SessionRef): Effect.Effect<ReadonlyArray<SessionRef>, SessionLogError> => Effect.gen(function* () {
-    const names = yield* call("list", sessionsDir, () => io.list(sessionsDir)).pipe(Effect.mapError(storeError("store.io", "list the sessions")))
-    const children = yield* Effect.forEach(names.flatMap((name) => Option.toArray(sessionIdOf(name))), (id) => latestClaim(id).pipe(
-      Effect.map(({ header }) => Option.exists(header.header.parent, (lineage) => lineage.id === parent.id && lineage.owner === parent.owner && lineage.incarnation === parent.incarnation) ? [referenceOf(header)] : []),
-      Effect.catchTag("SessionMissing", () => Effect.succeed<ReadonlyArray<SessionRef>>([])),
+  const forget = (id: Generation) => Ref.update(known, (all) => { const rest = new Map(all); rest.delete(keyOf(id)); return rest })
+
+  /**
+   * The generations under `lives/` whose header names `parent` as theirs
+   * (by id and incarnation, which no other generation shares), and the
+   * failures that kept this from telling of some entry whether it is one. A
+   * header that does not decode is not a child (it names no parent this
+   * store can read), and is logged.
+   */
+  const childrenOf = (parent: Generation): Effect.Effect<{ readonly children: ReadonlyArray<Generation>; readonly failures: ReadonlyArray<SessionLogError> }, SessionLogError> => Effect.gen(function* () {
+    const names = yield* call("list", livesDir, () => io.list(livesDir)).pipe(Effect.mapError(storeError("store.io", "list the sessions")))
+    const found = yield* Effect.forEach(names.flatMap((name) => Option.toArray(generationOfName(name))), (entry) => headerBytes(entry).pipe(
+      Effect.flatMap(Option.match({
+        onNone: () => Effect.succeed<ReadonlyArray<Generation>>([]),
+        onSome: (bytes) => Result.match(headerOfText(decoder.decode(bytes)), {
+          onFailure: (error) => Effect.logWarning(`the header of session ${describe(entry)} does not decode (${error.message}); it is not taken as a child of a session removed`).pipe(Effect.as<ReadonlyArray<Generation>>([])),
+          onSuccess: (record) => Effect.succeed<ReadonlyArray<Generation>>(Option.exists(record.header.parent, (lineage) => lineage.id === parent.id && lineage.incarnation === parent.incarnation) ? [entry] : []),
+        }),
+      })),
+      Effect.result,
     ), { concurrency: 2 })
-    return children.flat()
+    return {
+      children: found.flatMap((result) => Result.getOrElse(result, (): ReadonlyArray<Generation> => [])),
+      failures: found.flatMap((result) => Result.isFailure(result) ? [result.failure] : []),
+    }
   })
-  const removeTree = (id: SessionRef): Effect.Effect<void, SessionLogError> => Effect.gen(function* () {
-    yield* discard(id)
-    yield* Effect.forEach(yield* childrenOf(id), removeTree, { concurrency: 1, discard: true })
+
+  /**
+   * Remove a generation, resumably. `removing/<id>.<incarnation>` first, so
+   * a removal stopped anywhere is finished by the next open (or by removing
+   * the reference again); then the permanent tombstone, which fences every
+   * reader and writer at once; then each child, the same way; then, once
+   * every child is gone, the generation's payloads (its header, commits,
+   * temporary files and quarantined bytes); and the mark last. A child that
+   * could not be removed (or an entry that could not be read) keeps the
+   * payloads and the mark, so the tree stays findable for the next attempt,
+   * which this one fails for with the failures it met.
+   */
+  const retire = (id: Generation): Effect.Effect<void, SessionLogError> => Effect.gen(function* () {
+    yield* call("create", journalPath(id), () => io.create(journalPath(id), encoder.encode("removing\n"))).pipe(
+      Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void), Effect.mapError(storeError("store.io", "mark a removal")))
+    yield* call("mkdir", tombstonesDir(id.id), () => io.mkdir(tombstonesDir(id.id))).pipe(Effect.mapError(storeError("store.io", "remove a session generation")))
+    yield* call("create", tombstonePath(id), () => io.create(tombstonePath(id), encoder.encode("removed\n"))).pipe(
+      Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void), Effect.mapError(storeError("store.io", "remove a session generation")))
+    yield* forget(id)
+    const { children, failures } = yield* childrenOf(id)
+    const removed = yield* Effect.forEach(children, (child) => Effect.result(Effect.suspend(() => retire(child))), { concurrency: 1 })
+    const failed = [...failures, ...removed.flatMap((result) => Result.isFailure(result) ? [result.failure] : [])]
+    const [first] = failed
+    if (first !== undefined) {
+      return yield* Effect.fail(new SessionLogError({
+        code: first.code,
+        message: `session ${describe(id)} is removed, but ${failed.length} of what goes with it could not be (it is finished by removing it again, or by the next open): ${failed.map((error) => error.message).join("; ")}`,
+        cause: first,
+      }))
+    }
+    // Tried again: a writer that read the generation before its tombstone may link its last commit while the folder is emptied (it checks the tombstone before linking, so once).
+    yield* Effect.forEach([dirOf(id), quarantineOf(id)], (path) => call("remove", path, () => io.removeTree(path)).pipe(Effect.retry({ times: 2 })), { concurrency: 1, discard: true }).pipe(
+      Effect.mapError(storeError("store.io", "clear a removed session's files")))
+    yield* bestEffort("unlink", journalPath(id), () => io.unlink(journalPath(id)))
   })
+
+  /**
+   * Whether a claimed generation still stands in the way of a new one under
+   * its id: it is live, or its creation is under way (claimed, its payload
+   * not published yet). One tombstoned, whose ancestor was removed, or
+   * claimed longer ago than any creation takes without its payload, does
+   * not; the last two are removed first, so nothing of them is left.
+   */
+  const standing = (claim: GenerationClaim, now: number): Effect.Effect<boolean, SessionLogError> => Effect.gen(function* () {
+    if (yield* tombstoned(claim)) return false
+    const record = yield* recordOf(claim).pipe(Effect.map(Option.some), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
+    if (Option.isSome(record)) {
+      const live = yield* headerOf(referenceOf(record.value)).pipe(Effect.as(true), Effect.catchTag("SessionMissing", () => Effect.succeed(false)))
+      if (!live) yield* retire(claim)
+      return live
+    }
+    if (now - claim.claimedNow <= abandonAfter) return true
+    yield* retire(claim)
+    return false
+  })
+
+  /* ── opening, continued: what stopped processes left ── */
+
+  // A creation staged long ago: published (its claim names it, but its payload never reached `lives/`), its generation is removed; then its files go.
+  const settleStaged = (id: Generation) => Effect.gen(function* () {
+    if (yield* tombstoned(id)) return
+    const latest = yield* latestClaim(id.id).pipe(Effect.map(Option.some), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
+    if (Option.exists(latest, ({ claim }) => claim.incarnation === id.incarnation)) yield* retire(id)
+  })
+  yield* Effect.forEach(abandoned.filter((name) => isAbandonedStaging(name, openedAt, abandonAfter)), (name) => Option.match(stagedGenerationOf(name), {
+    onNone: () => Effect.void,
+    onSome: settleStaged,
+  }).pipe(
+    Effect.andThen(bestEffort("remove", join(stagingDir, name), () => io.removeTree(join(stagingDir, name)))),
+    Effect.ignore({ log: "Warn", message: `the abandoned creation ${name} could not be settled; the next open tries again` }),
+  ), { concurrency: 1, discard: true })
+  // Removals a stopped process left unfinished.
+  const unfinished = yield* call("list", removingDir, () => io.list(removingDir)).pipe(
+    Effect.tapError((error) => Effect.logWarning(`the unfinished removals could not be listed (${error._tag}); the next open tries again`)),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  )
+  yield* Effect.forEach(unfinished.flatMap((name) => Option.toArray(generationOfName(name))), (id) => retire(id).pipe(
+    Effect.ignore({ log: "Warn", message: `the removal of session ${describe(id)} could not be finished; the next open tries again` }),
+  ), { concurrency: 1, discard: true })
 
   return SessionLog.of({
     create: Effect.fn("session_log.create")(function* ({ header, state }: { readonly header: SessionHeader; readonly state: JsonObject }) {
       const meta = yield* storedJson(header.meta).pipe(Effect.mapError((cause) => new SessionLogError({ code: "store.encode", message: "the header is not JSON", cause })))
       const initial = yield* storedJson(state).pipe(Effect.mapError((cause) => new SessionLogError({ code: "store.encode", message: "the initial state is not JSON", cause })))
+      if (!isSessionDirectory(header.id)) return yield* Effect.fail(new SessionLogError({ code: "store.encode", message: `the session id ${header.id} is not a UUID` }))
       const previous = yield* latestClaim(header.id).pipe(Effect.map(Option.some), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
-      if (Option.isSome(previous)) {
-        const active = yield* headerOf(referenceOf(previous.value.header)).pipe(Effect.as(true), Effect.catchTag("SessionMissing", () => Effect.succeed(false)))
-        if (active) return yield* Effect.fail(new SessionExists({ session: header.id }))
-      }
+      if (Option.isSome(previous) && (yield* standing(previous.value.claim, yield* Clock.currentTimeMillis))) return yield* Effect.fail(new SessionExists({ session: header.id }))
       if (Option.isSome(header.parent)) {
         if (header.parent.value.owner !== header.owner) return yield* Effect.fail(new SessionMissing({ session: header.parent.value.id }))
         yield* headerOf(header.parent.value)
@@ -504,20 +639,46 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       const record: HeaderRecord = { header: { ...header, meta }, state: initial, createdNow: now, nonce: nonce() }
       const reference = referenceOf(record)
       const text = yield* Result.match(headerText(record), { onFailure: (cause) => Effect.fail(new SessionLogError({ code: "store.encode", message: "the header does not encode", cause })), onSuccess: Effect.succeed })
-      const directory = dirOf(reference)
-      yield* Effect.forEach([claimsDir(header.id), join(directory, "commits"), join(directory, "tmp")], (path) => call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(Effect.mapError(storeError("store.io", "stage a new generation")))
-      yield* call("create", headerPath(reference), () => io.create(headerPath(reference), encoder.encode(text))).pipe(Effect.mapError(storeError("store.io", "write a new header")))
-      const generation = Option.match(previous, { onNone: () => 1, onSome: (value) => value.generation + 1 })
-      const claim = join(claimsDir(header.id), `${generation}.json`)
-      const published = yield* call("link", claim, () => io.link(headerPath(reference), claim)).pipe(
-        Effect.as(true),
-        Effect.catch((error) => call("read", claim, () => io.read(claim)).pipe(Effect.flatMap(decodeHeader(`generation ${generation} of session ${header.id}`)), Effect.map((found) => found.nonce === record.nonce), Effect.mapError(() => storeError("store.io", "publish the new generation")(error)))),
+      const claimed = yield* Result.match(claimText({ id: header.id, incarnation: reference.incarnation, claimedNow: now }), {
+        onFailure: (cause) => Effect.fail(new SessionLogError({ code: "store.encode", message: "the claim does not encode", cause })), onSuccess: Effect.succeed,
+      })
+      // The payload is staged where an open sweeps it, then claimed, then published under `lives/`; never visible before its claim.
+      const stagedDir = join(stagingDir, stagingName(header.id, now, reference.incarnation))
+      const claimFile = staged("claim", now)
+      yield* Effect.forEach([claimsDir(header.id), join(stagedDir, "commits"), join(stagedDir, "tmp")], (path) => call("mkdir", path, () => io.mkdir(path)), { concurrency: 1, discard: true }).pipe(
+        Effect.andThen(call("create", join(stagedDir, "header.json"), () => io.create(join(stagedDir, "header.json"), encoder.encode(text)))),
+        Effect.andThen(call("create", claimFile, () => io.create(claimFile, encoder.encode(claimed)))),
+        Effect.mapError(storeError("store.io", "stage a new generation")),
       )
-      if (!published) {
-        yield* bestEffort("remove", directory, () => io.removeTree(directory))
-        return yield* Effect.fail(new SessionExists({ session: header.id }))
-      }
-      if (Option.isSome(header.parent)) yield* headerOf(header.parent.value).pipe(Effect.tapError(() => discard(reference)))
+      const generation = Option.match(previous, { onNone: () => 1, onSome: (value) => value.generation + 1 })
+      const claim = claimPath(header.id, generation)
+      // Claimed and published as one: an interrupt waits for the outcome (each call is bounded by `stallMs`).
+      const published = yield* Effect.uninterruptible(Effect.gen(function* () {
+        const won = yield* call("link", claim, () => io.link(claimFile, claim)).pipe(
+          Effect.as(true),
+          // The link's answer may be wrong (a retransmitted link): the claim says whose it is. Unread, the outcome is unknown; the staged files stay for the open that settles them.
+          Effect.catch((error) => call("read", claim, () => io.read(claim)).pipe(
+            Effect.flatMap(decodeClaim(`generation ${generation} of session ${header.id}`)),
+            Effect.map((found) => found.incarnation === reference.incarnation),
+            Effect.mapError(() => storeError("store.io", "publish the new generation")(error)))),
+        )
+        yield* bestEffort("unlink", claimFile, () => io.unlink(claimFile))
+        if (!won) {
+          yield* bestEffort("remove", stagedDir, () => io.removeTree(stagedDir))
+          return false
+        }
+        // Claimed: published once its payload is in place, or removed at once (else by the open that finds it staged).
+        yield* call("rename", dirOf(reference), () => io.rename(stagedDir, dirOf(reference))).pipe(
+          Effect.mapError(storeError("store.io", "publish the new generation")),
+          Effect.tapError(() => retire(reference).pipe(
+            Effect.ignore({ log: "Warn", message: `a claimed generation of session ${header.id} whose payload could not be published was not removed; the next open removes it` }),
+            Effect.andThen(bestEffort("remove", stagedDir, () => io.removeTree(stagedDir))))),
+        )
+        return true
+      }))
+      if (!published) return yield* Effect.fail(new SessionExists({ session: header.id }))
+      // Checked again once published: a parent removed (or this generation taken as abandoned) meanwhile takes it with it.
+      yield* headerOf(reference).pipe(Effect.tapError(() => retire(reference).pipe(Effect.ignore({ log: "Warn", message: `a child of a session removed while it was created was not removed; removing the parent again removes it` }))))
       const tail: Tail = { revision: 0, seq: 0, at: now, state: initial }
       yield* remember(reference, record.nonce, tail, [])
       return headOf(record, tail, now)
@@ -531,11 +692,19 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
 
     list: Effect.fn("session_log.list")(function* (query: SessionListQuery) {
       const now = yield* Clock.currentTimeMillis
-      const names = yield* call("list", sessionsDir, () => io.list(sessionsDir)).pipe(Effect.mapError(storeError("store.io", "list the sessions")))
-      const heads = yield* Effect.forEach(names.flatMap((name) => Option.toArray(sessionIdOf(name))), (name) => resolveRef(name).pipe(Effect.flatMap(headerOf),
-        Effect.flatMap((record) => inListing(record, query)
-          ? current(referenceOf(record)).pipe(Effect.map(({ header, tail }) => Option.some(headOf(header, tail, now))))
-          : Effect.succeedNone),
+      // Only generations not yet removed have a payload under `lives/`: the work does not grow with the sessions removed before.
+      const names = yield* call("list", livesDir, () => io.list(livesDir)).pipe(Effect.mapError(storeError("store.io", "list the sessions")))
+      const heads = yield* Effect.forEach(names.flatMap((name) => Option.toArray(generationOfName(name))), (entry) => headerBytes(entry).pipe(
+        Effect.flatMap(Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (bytes) => Result.match(headerOfText(decoder.decode(bytes)), {
+            // Another session's damage does not fail this listing: its own reads fail with store.decode.
+            onFailure: (error) => Effect.logWarning(`the header of session ${describe(entry)} does not decode (${error.message}); it is left out of a listing`).pipe(Effect.as(Option.none<SessionHead>())),
+            onSuccess: (record) => inListing(record, query) && record.header.id === entry.id && incarnationOf(record) === entry.incarnation
+              ? current(referenceOf(record)).pipe(Effect.map(({ header, tail }) => Option.some(headOf(header, tail, now))))
+              : Effect.succeedNone,
+          }),
+        })),
         // A session removed while it was listed is not in the listing.
         Effect.catchTag("SessionMissing", () => Effect.succeedNone),
       ), { concurrency: 2 })
@@ -655,8 +824,17 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     }, (effect, reference) => onSession(effect, reference.id)),
 
     remove: Effect.fn("session_log.remove")(function* (id: SessionRef) {
-      yield* headerOf(id)
-      yield* removeTree(id)
+      if (!isStoredGeneration(id)) return yield* Effect.fail(new SessionMissing({ session: id.id }))
+      const live = yield* headerOf(id).pipe(Effect.as(true), Effect.catchTag("SessionMissing", () => Effect.succeed(false)))
+      if (live) return yield* retire(id)
+      // Removed (perhaps not all the way), orphaned or never there: what is left of it is removed, and the reference is SessionMissing.
+      const own = yield* recordOf(id).pipe(Effect.map(Option.some), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
+      const ours = Option.match(own, {
+        onNone: () => tombstoned(id),
+        onSome: (record) => Effect.succeed(record.header.id === id.id && record.header.owner === id.owner && incarnationOf(record) === id.incarnation),
+      })
+      if (yield* ours) yield* retire(id)
+      return yield* Effect.fail(new SessionMissing({ session: id.id }))
     }, (effect, reference) => onSession(effect, reference.id)),
   })
 })

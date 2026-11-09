@@ -65,7 +65,7 @@ const whole = (root: string, id: ConversationId) => withLog(root, (log) => Effec
   return head
 }))
 
-const tmpOf = (root: string, id: ConversationId) => { const lives = join(root, "sessions", id, "lives"); const incarnation = readdirSync(lives)[0]!; return readdirSync(join(lives, incarnation, "tmp")) }
+const tmpOf = (root: string, id: ConversationId) => { const life = readdirSync(join(root, "lives")).find((name) => name.startsWith(`${id}.`))!; return readdirSync(join(root, "lives", life, "tmp")) }
 
 describe("a writer process killed while it commits", () => {
   test("leaves whole commits: the log reopens intact and takes the next commit, and the next commit sweeps what it left", () => run(Effect.gen(function* () {

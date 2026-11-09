@@ -3236,7 +3236,21 @@ background tasks. Two layers split the work:
   revision puts it back); damage before the tail fails with `store.decode`.
   A commit's `notAfter` is checked again right before its link, and so is
   the session's header (its nonce is the incarnation): a session removed and
-  created again while a commit wrote its file gets nothing. Removing a session writes a permanent tombstone for its immutable generation, then clears that generation's payloads and children. Reads verify ancestor references and tombstones too, so a crash cannot expose an orphan. Replacement generations use different paths. A removed reference is `SessionMissing`. At most two underlying file system promises are in
+  created again while a commit wrote its file gets nothing. Each creation is
+  a generation: its payload is staged, claimed by an exclusive link of a
+  minimal claim (id, incarnation, claim time), then published under
+  `lives/`. Removing a session writes a permanent tombstone for its
+  generation, removes its children, then deletes its header, commits and
+  quarantined bytes: only the claim and the tombstone stay, nothing of its
+  owner, metadata, state or events. A removal stopped part way is recorded
+  in `removing/` and finished by the next open, or by removing the same
+  reference again, which then fails with `SessionMissing`. Listing and
+  removal read only the sessions not removed, so their work does not grow
+  with the sessions removed before. Reads verify ancestor references and
+  tombstones too, so a crash cannot expose an orphan; a reference whose id
+  or incarnation is not a UUID is `SessionMissing` before any path is built
+  from it. Replacement generations use different paths. A removed reference
+  is `SessionMissing`. At most two underlying file system promises are in
   flight per handle. Queued admission and each native await have separate
   `stallMs` deadlines (10 s): one that does not answer fails with
   `store.stalled`, and so does every call after it until one, let through a
@@ -3252,7 +3266,7 @@ background tasks. Two layers split the work:
   commits' first lines, so the commits before it are not read either. Like the SQLite log it stamps time with the caller's
   `Clock`. Only file layout 2 is supported; any other marker or a nonempty unmarked directory fails to open with
   `store.version`; one without hard links (some SMB mounts), with
-  `store.open`.
+  `store.open`, at every open.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it. `Sessions.read(address, { after,

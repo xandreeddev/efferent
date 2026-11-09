@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, JsonObject, SessionHeader } from "@xandreed/core"
+import { ConversationId, JsonObject, SessionHeader, SessionIncarnation } from "@xandreed/core"
 
 /*
  * The session log as files in a directory: one immutable file per commit,
@@ -35,7 +35,20 @@ export type StoreMarker = typeof StoreMarker.Type
 export const PublishNonce = Schema.String.pipe(Schema.brand("PublishNonce"))
 export type PublishNonce = typeof PublishNonce.Type
 
-/** `header.json`: the header, the storage time it was created at, and its creator's nonce. */
+/**
+ * `sessions/<id>/claims/<generation>.json`: which incarnation that
+ * generation of the session is, and the storage time it was claimed at.
+ * Permanent, so it holds nothing of the session's owner, header or state:
+ * only what fences a stale reference and numbers the next generation.
+ */
+export const GenerationClaim = Schema.Struct({
+  id: ConversationId,
+  incarnation: SessionIncarnation,
+  claimedNow: Schema.Number,
+})
+export type GenerationClaim = typeof GenerationClaim.Type
+
+/** `lives/<id>.<incarnation>/header.json`: the header, the storage time it was created at, and its creator's nonce (the incarnation). Deleted with the generation's payloads when it is removed. */
 export const HeaderRecord = Schema.Struct({
   header: SessionHeader,
   state: JsonObject,

@@ -47,13 +47,18 @@ The format is identical to the combined file plugin:
 
 ```text
 <root>/store.json
-<root>/sessions/<session-id>/header.json
-<root>/sessions/<session-id>/commits/<12-digit-revision>.jsonl
-<root>/sessions/<session-id>/tmp/
+<root>/sessions/<session-id>/claims/<generation>.json
+<root>/sessions/<session-id>/removed/<incarnation>
+<root>/lives/<session-id>.<incarnation>/header.json
+<root>/lives/<session-id>.<incarnation>/commits/<12-digit-revision>.jsonl
+<root>/lives/<session-id>.<incarnation>/tmp/
+<root>/removing/
 <root>/staging/
-<root>/trash/
-<root>/quarantine/<session-id>/
+<root>/quarantine/<session-id>/<incarnation>/
 ```
+
+A removed session keeps only its claim and its tombstone: its header,
+commits and quarantined bytes are deleted.
 
 A commit holds metadata, head state, ordered event rows, and a length/CRC-32
 trailer. The SDK's recorded messages, tool results, requests and lifecycle

@@ -51,10 +51,11 @@ Under the configured root, the backend creates:
 ```text
 store.json
 sessions/<session-id>/claims/<generation>.json
-sessions/<session-id>/lives/<incarnation>/header.json
-sessions/<session-id>/lives/<incarnation>/commits/000000000001.jsonl
-sessions/<session-id>/lives/<incarnation>/tmp/
-sessions/<session-id>/lives/<incarnation>/removed
+sessions/<session-id>/removed/<incarnation>
+lives/<session-id>.<incarnation>/header.json
+lives/<session-id>.<incarnation>/commits/000000000001.jsonl
+lives/<session-id>.<incarnation>/tmp/
+removing/
 staging/
 quarantine/<session-id>/<incarnation>/
 ```
@@ -62,7 +63,17 @@ quarantine/<session-id>/<incarnation>/
 Each immutable commit file contains metadata, the session head's state,
 event rows, and a byte-count/CRC-32 trailer. A commit can hold several events;
 its revision differs from an event's sequence number. The header identifies
-the session, its owner and any parent/fork information.
+the session, its owner, its metadata, its initial state and any parent/fork
+information.
+
+Removing a session deletes its folder under `lives/` (header, commits and
+temporary files) and any bytes set aside in `quarantine/`, and those of its
+children. What stays is a claim (the session id, its incarnation and when it
+was created) and a tombstone file named by the incarnation: enough to refuse
+a stale reference and to number the next session created under the same id,
+nothing of its owner, metadata, state or events. A removal stopped part way
+(a crash, an unreachable mount) is recorded in `removing/` and finished when
+the store is opened again, or when the same reference is removed again.
 
 The SDK records user and assistant messages, structured tool results,
 selected lifecycle events, and request evidence in that journal. Streaming
@@ -79,7 +90,8 @@ See [context, memory and the journal](/docs/concepts/context-journal/).
 The store writes a temporary commit, flushes it, then publishes its revision
 with an exclusive hard link. Concurrent publishers compare revisions; an
 existing final file is not overwritten. A filesystem without hard-link
-support fails to open. Native filesystem calls have bounded waits governed
+support fails to open, including a store copied onto such a filesystem
+after it was created. Native filesystem calls have bounded waits governed
 by `stallMs`; a timed-out publication may need a subsequent read to establish
 whether it landed.
 
@@ -89,7 +101,7 @@ only through the recorded fork boundary, not their later turns.
 
 On reopening, an incomplete or corrupt final commit is set aside in
 `quarantine` and the previous whole commit becomes the head. Damage before
-the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation. Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
+the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation. Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent; listing and removing sessions read only the sessions not removed, so that work does not grow with the sessions removed before. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
 
 ## Admission and lifecycle
 

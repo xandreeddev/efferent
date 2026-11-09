@@ -28,7 +28,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`newerFormat`: any format but the current one, refused for reads too)
   that returns a snapshot of the stored head. `SessionLog.remove` is no
   longer idempotent: a missing, removed, stale or wrong-owner reference
-  fails with `SessionMissing`.
+  fails with `SessionMissing` (the file log first finishes what a removal
+  stopped part way left of a removed reference).
   The Sessions kit also requires another owner's cancel of an open turn, and
   of a turn sealed on the cancelling instance, to fail with `SessionMissing`
   and change nothing.
@@ -57,6 +58,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Fence session operations against replacement owners and incarnations, check
   sealed-turn cancellation ownership, and retain immutable file generations
   and tombstones through removal races and crashes.
+- Removing a session from the file log deletes its header, metadata, initial
+  state, commits and quarantined bytes, and its children's: only a minimal
+  claim (id, incarnation, creation time) and a tombstone stay. A removal
+  that fails or stops after its tombstone is finished by removing the
+  reference again or by the next open, and a creation that stopped after
+  its claim is settled the same way. Listing and removing read only the
+  sessions not removed, so their work no longer grows with every session
+  ever created. Another session's damaged header no longer fails a listing
+  or a removal, a reference whose id or incarnation is not a UUID is
+  `SessionMissing` before any path is built from it, two handles opening a
+  fresh directory at once both open it, and every open checks for hard
+  links again (a store copied onto a mount without them is refused with
+  `store.open`).
 - The in-memory `SessionLog` refuses a fork parent of another owner with
   `SessionMissing`, as the file and SQLite logs do, and its removal follows
   only children that name the removed session whole. The log kit's `lineage`

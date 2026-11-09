@@ -36,6 +36,9 @@ export class SessionLog extends Context.Service<SessionLog, {
   readonly read: (session: SessionRef, query: SessionReadQuery) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
   /** Append events and/or replace the state, atomically, when the revision, the clock and the incarnation allow. */
   readonly commit: (session: SessionRef, commit: SessionCommit) => Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing | SessionLogError>
-  /** Remove a session, its events and its children. A stale or missing reference fails with SessionMissing. */
+  /**
+   * Remove a session, its events and its children. A stale or missing reference fails with SessionMissing, and so does
+   * removing a removed one again: a store whose removal can stop part way (the file log) first finishes what it left.
+   */
   readonly remove: (session: SessionRef) => Effect.Effect<void, SessionMissing | SessionLogError>
 }>()("efferent/SessionLog") {}

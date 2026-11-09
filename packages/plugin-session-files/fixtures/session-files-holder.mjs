@@ -76,7 +76,7 @@ const pausing = (point) => {
     ...nodeFilesIo,
     link: (from, to) => to.endsWith(".jsonl") && point === "after-write" ? paused() : nodeFilesIo.link(from, to),
     // A session's own temporary file (the root itself may sit under the system's /tmp).
-    unlink: (path) => /\/sessions\/[^/]+\/lives\/[^/]+\/tmp\//.test(path) && point === "after-link" ? paused() : nodeFilesIo.unlink(path),
+    unlink: (path) => /\/lives\/[^/]+\/tmp\//.test(path) && point === "after-link" ? paused() : nodeFilesIo.unlink(path),
   }
 }
 
