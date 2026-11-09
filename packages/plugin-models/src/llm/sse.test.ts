@@ -710,3 +710,45 @@ test("a stream cannot accumulate unbounded distinct calls or argument data", asy
   const argumentsFailure = await protocolFailure(wire(JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "echo", arguments: "x".repeat(1_048_577) } }] } }] }), "[DONE]"))
   expect([calls.reason._tag, argumentsFailure.reason._tag]).toEqual(["InvalidResponseError", "InvalidResponseError"])
 })
+
+test("interleaved calls sent out of index order stream in arrival order and are emitted in index order, each with its own arguments", async () => {
+  const fragment = (index: number, fields: object) => JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, ...fields }] } }] })
+  const parts = await collect(wire(
+    fragment(1, { id: "b", function: { name: "echo", arguments: "{\"b\":" } }),
+    fragment(0, { id: "a", function: { name: "echo", arguments: "{\"a\":" } }),
+    fragment(1, { function: { arguments: "2}" } }),
+    fragment(0, { function: { arguments: "1}" } }),
+    JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    "[DONE]",
+  ))
+  expect(parts).toEqual([
+    { type: "tool-params-start", id: "b", name: "echo" },
+    { type: "tool-params-delta", id: "b", delta: "{\"b\":" },
+    { type: "tool-params-start", id: "a", name: "echo" },
+    { type: "tool-params-delta", id: "a", delta: "{\"a\":" },
+    { type: "tool-params-delta", id: "b", delta: "2}" },
+    { type: "tool-params-delta", id: "a", delta: "1}" },
+    { type: "tool-params-end", id: "a" },
+    { type: "tool-call", id: "a", name: "echo", params: { a: 1 } },
+    { type: "tool-params-end", id: "b" },
+    { type: "tool-call", id: "b", name: "echo", params: { b: 2 } },
+    { type: "finish", reason: "tool-calls", usage: zeroUsage },
+  ])
+})
+
+test("a stream at its limits, 128 calls or 1,048,576 argument characters accumulated by one call, is accepted", async () => {
+  const toolCalls = (parts: ReadonlyArray<unknown>) => parts.filter((part): part is { readonly type: "tool-call"; readonly params: unknown } =>
+    typeof part === "object" && part !== null && "type" in part && part.type === "tool-call")
+  const fragments = Array.from({ length: 128 }, (_, index) => ({ index, function: { name: "echo", arguments: "{}" } }))
+  const many = await collect(wire(JSON.stringify({ choices: [{ delta: { tool_calls: fragments }, finish_reason: "tool_calls" }] }), "[DONE]"))
+  // `{"a":"…"}` of exactly 1,048,576 characters, the second fragment reaching the limit.
+  const padding = "x".repeat(1_048_576 - "{\"a\":\"\"}".length)
+  const [head, tail] = [`{"a":"${padding.slice(0, 1000)}`, `${padding.slice(1000)}"}`]
+  expect(head.length + tail.length).toBe(1_048_576)
+  const large = await collect(wire(
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "large", function: { name: "echo", arguments: head } }] } }] }),
+    JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: tail } }] }, finish_reason: "tool_calls" }] }),
+    "[DONE]",
+  ))
+  expect([toolCalls(many).length, toolCalls(large).map(({ params }) => params)]).toEqual([128, [{ a: padding }]])
+})
