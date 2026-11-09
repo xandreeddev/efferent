@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, References, Scope } from "effect"
 import { ConversationId, sessionRef, SessionLog } from "@xandreed/core"
 import { sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { LeaseExpired, RevisionConflict, SessionExists, SessionHeader, SessionLogError, SessionMissing } from "@xandreed/core"
@@ -75,20 +75,26 @@ describe("the directory", () => {
   })
 
   test("a torn tail is set aside with its bytes kept: the commit before it is the head, and the next commit takes its revision", async () => {
+    const logged: Array<Readonly<Record<string, unknown>>> = []
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { root, id, commits } = yield* withSession(3)
       const tail = join(commits, revisionFile(3))
       const whole = readFileSync(tail)
       writeFileSync(tail, whole.subarray(0, whole.length - 20))
       const reopened = yield* makeSessionLogFiles(root)
-      const head = yield* reopened.head(id)
+      const head = yield* reopened.head(id).pipe(Effect.provide(Logger.layer([Logger.make((options) => {
+        logged.push(options.fiber.getRef(References.CurrentLogAnnotations))
+      })])))
       const quarantined = readdirSync(quarantineDirectory(root, id))
       const kept = readFileSync(join(quarantineDirectory(root, id), quarantined[0] ?? ""))
       const next = yield* Effect.gen(function* () { const sessionHead = yield* reopened.head(id); return yield* reopened.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 2, notAfter: Option.none(), events: [note(30)], state: Option.none() }) })
       const events = yield* Effect.gen(function* () { const sessionHead = yield* reopened.head(id); return yield* reopened.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, everything) })
-      return { head: [head.revision, head.seq, head.state], kept: kept.equals(whole.subarray(0, whole.length - 20)), next: next.revision, ns: events.map((event) => event.data["n"]) }
+      return { head: [head.revision, head.seq, head.state], kept: kept.equals(whole.subarray(0, whole.length - 20)), next: next.revision, ns: events.map((event) => event.data["n"]), id, incarnation: head.incarnation }
     })))
-    expect(observed).toEqual({ head: [2, 2, { n: 2 }], kept: true, next: 3, ns: [1, 2, 30] })
+    const { id, incarnation, ...rest } = observed
+    expect(rest).toEqual({ head: [2, 2, { n: 2 }], kept: true, next: 3, ns: [1, 2, 30] })
+    // The warning names the session by its id and incarnation, as strings.
+    expect(logged.map((annotations) => [annotations["efferent.session.id"], annotations["efferent.session.incarnation"]])).toEqual([[id, incarnation]])
   })
 
   test("damage before the tail fails the read with store.decode, and nothing is moved", async () => {
@@ -100,9 +106,10 @@ describe("the directory", () => {
       writeFileSync(middle, bytes)
       const reopened = yield* makeSessionLogFiles(root)
       const read = yield* outcomeOf(Effect.gen(function* () { const sessionHead = yield* reopened.head(id); return yield* reopened.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, everything) }))
-      return { read, head: (yield* reopened.head(id)).revision, files: readdirSync(commits).length }
+      const message = yield* Effect.flip(reopened.read(sessionRef(yield* reopened.head(id)), everything)).pipe(Effect.map((error) => error.message))
+      return { read, head: (yield* reopened.head(id)).revision, files: readdirSync(commits).length, names: message.includes(`commit 2 of session ${id}`) && !message.includes("[object Object]") }
     })))
-    expect(observed).toEqual({ read: "store.decode", head: 3, files: 3 })
+    expect(observed).toEqual({ read: "store.decode", head: 3, files: 3, names: true })
   })
 
   test("a read from the end opens the newest commits only: damage in an older one does not reach it", async () => {

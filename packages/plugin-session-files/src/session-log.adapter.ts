@@ -114,6 +114,9 @@ const storeError = (code: string, what: string) => (error: Failed): SessionLogEr
 
 const decodeError = (what: string, detail: string) => new SessionLogError({ code: "store.decode", message: `${what} does not decode: ${detail}` })
 
+/** A session as diagnostics name it: its id and incarnation, never the reference object. */
+const describe = (id: SessionRef): string => `${id.id} (incarnation ${id.incarnation})`
+
 /** A session's incarnation: its header's nonce, which a session created again under its id never shares. */
 const incarnationOf = (header: HeaderRecord): SessionIncarnation => SessionIncarnation.make(header.nonce)
 
@@ -230,8 +233,8 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
 
   const exists = (path: string) => call("stat", path, () => io.exists(path)).pipe(Effect.mapError(storeError("store.io", "look a file up")))
   const referenceOf = (record: HeaderRecord): SessionRef => ({ id: record.header.id, owner: record.header.owner, incarnation: incarnationOf(record) })
-  const decodeHeader = (bytes: Uint8Array) => Result.match(headerOfText(decoder.decode(bytes)), {
-    onFailure: (error) => Effect.fail(decodeError("a session header", error.message)), onSuccess: Effect.succeed,
+  const decodeHeader = (what: string) => (bytes: Uint8Array) => Result.match(headerOfText(decoder.decode(bytes)), {
+    onFailure: (error) => Effect.fail(decodeError(what, error.message)), onSuccess: Effect.succeed,
   })
   const latestClaim = (id: ConversationId): Effect.Effect<{ readonly generation: number; readonly header: HeaderRecord }, SessionMissing | SessionLogError> => Effect.gen(function* () {
     const names = yield* call("list", claimsDir(id), () => io.list(claimsDir(id))).pipe(
@@ -241,7 +244,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     const generation = names.reduce((highest, name) => /^\d+\.json$/.test(name) ? Math.max(highest, Number(name.slice(0, -5))) : highest, 0)
     if (generation === 0) return yield* Effect.fail(new SessionMissing({ session: id }))
     const path = join(claimsDir(id), `${generation}.json`)
-    const header = yield* call("read", path, () => io.read(path)).pipe(Effect.mapError(storeError("store.io", "read a generation claim")), Effect.flatMap(decodeHeader))
+    const header = yield* call("read", path, () => io.read(path)).pipe(Effect.mapError(storeError("store.io", "read a generation claim")), Effect.flatMap(decodeHeader(`generation ${generation} of session ${id}`)))
     return { generation, header }
   })
   const headerOf = (id: SessionRef): Effect.Effect<HeaderRecord, SessionMissing | SessionLogError> => Effect.gen(function* () {
@@ -249,7 +252,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     if (yield* exists(removedPath(id))) return yield* missing()
     const record = yield* call("read", headerPath(id), () => io.read(headerPath(id))).pipe(
       Effect.catchIf((error) => isCode(error, "ENOENT", "ENOTDIR"), missing),
-      Effect.mapError((error) => error._tag === "SessionMissing" ? error : storeError("store.io", "read a session header")(error)), Effect.flatMap(decodeHeader),
+      Effect.mapError((error) => error._tag === "SessionMissing" ? error : storeError("store.io", "read a session header")(error)), Effect.flatMap(decodeHeader(`the header of session ${describe(id)}`)),
     )
     if (record.header.id !== id.id || record.header.owner !== id.owner || incarnationOf(record) !== id.incarnation) return yield* missing()
     const parent = record.header.parent
@@ -283,7 +286,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   /** A whole commit file, or `store.decode`: damage before the tail is not repaired. */
   const wholeCommit = (id: SessionRef, revision: number): Effect.Effect<CommitRecord, SessionMissing | SessionLogError> =>
     commitBytes(id, revision).pipe(Effect.flatMap((bytes) => Result.match(decodeCommit(bytes), {
-      onFailure: (damage) => Effect.fail(decodeError(`commit ${revision} of session ${id}`, `${damage}; it is not the session's last, so it is not repaired`)),
+      onFailure: (damage) => Effect.fail(decodeError(`commit ${revision} of session ${describe(id)}`, `${damage}; it is not the session's last, so it is not repaired`)),
       onSuccess: Effect.succeed,
     })))
 
@@ -305,7 +308,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
     )
     if (!moved) return "aside"
     const taken = yield* call("read", aside, () => io.read(aside)).pipe(Effect.mapError(storeError("store.io", "read a commit set aside")))
-    const annotated = Effect.annotateLogs({ "efferent.session.id": id })
+    const annotated = Effect.annotateLogs({ "efferent.session.id": id.id, "efferent.session.incarnation": id.incarnation })
     if (sameBytes(taken, torn)) {
       yield* Effect.logWarning(`a torn commit at the tail of the session (revision ${revision}, ${damage}) was moved to ${aside}; the commit before it is the session's head`).pipe(annotated)
       return "aside"
@@ -332,13 +335,13 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       const decoded = decodeCommit(bytes)
       return Match.valueTags(tailVerdict(decoded, !repaired), {
         Intact: () => Result.match(decoded, {
-          onFailure: () => Effect.fail(decodeError(`commit ${revision} of session ${id}`, "unreadable")),
+          onFailure: () => Effect.fail(decodeError(`commit ${revision} of session ${describe(id)}`, "unreadable")),
           onSuccess: (record) => Effect.succeed({ tail: tailOfRecord(record), meta: Option.some(record.meta) }),
         }),
         Quarantine: ({ damage }) => quarantine(id, revision, bytes, damage).pipe(Effect.flatMap((outcome) => outcome === "aside"
           ? tailAt(id, header, revision - 1, true)
           : tailAt(id, header, revision, repaired))),
-        Corrupt: ({ damage }) => Effect.fail(decodeError(`commit ${revision} of session ${id}`, `${damage}, below a torn tail`)),
+        Corrupt: ({ damage }) => Effect.fail(decodeError(`commit ${revision} of session ${describe(id)}`, `${damage}, below a torn tail`)),
       })
     }))
   }
@@ -487,7 +490,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       const claim = join(claimsDir(header.id), `${generation}.json`)
       const published = yield* call("link", claim, () => io.link(headerPath(reference), claim)).pipe(
         Effect.as(true),
-        Effect.catch((error) => call("read", claim, () => io.read(claim)).pipe(Effect.flatMap(decodeHeader), Effect.map((found) => found.nonce === record.nonce), Effect.mapError(() => storeError("store.io", "publish the new generation")(error)))),
+        Effect.catch((error) => call("read", claim, () => io.read(claim)).pipe(Effect.flatMap(decodeHeader(`generation ${generation} of session ${header.id}`)), Effect.map((found) => found.nonce === record.nonce), Effect.mapError(() => storeError("store.io", "publish the new generation")(error)))),
       )
       if (!published) {
         yield* bestEffort("remove", directory, () => io.removeTree(directory))
