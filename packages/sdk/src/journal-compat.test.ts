@@ -91,17 +91,30 @@ test("the golden conversation's tool lifecycle and messages decode typed, record
 
 const currentFixtures = await Effect.runPromise(Effect.forEach(fixtures.filter(({ fixture }) => fixture.storedFormat === STORED_FORMAT), ({ fixture }) => Schema.decodeUnknownEffect(Schema.Struct({ ...Fixture.fields, sessions: Schema.Array(Schema.Struct({ header: SessionHeader, events: Schema.Array(SessionLogEvent) })) }))(Schema.encodeSync(Fixture)(fixture)), { concurrency: 1 }))
 
-fixtures.filter(({ fixture }) => fixture.storedFormat !== STORED_FORMAT).forEach(({ fixture }) => test(`stored format ${fixture.storedFormat ?? 0} from ${fixture.version} is refused without mutation`, async () => {
+/** Every stored event of a session. */
+const everything = { after: 0, limit: Option.none(), kinds: [], from: "start" as const }
+
+fixtures.filter(({ fixture }) => fixture.storedFormat !== STORED_FORMAT).forEach(({ fixture }) => test(`a ${fixture.version} session journal (stored format ${fixture.storedFormat ?? 0}) is refused without mutation`, async () => {
   const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const log = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
-    const id = ConversationId.make("00000000-0000-4000-8000-00000000a019")
-    const original = yield* log.create({ header: { id, owner: "history", origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, state: { sessions: { format: fixture.storedFormat ?? 0 } } })
+    // The fixture's first session as that version stored it: its header, its events and its format stamp.
+    const stored = fixture.sessions[0]!
+    const header = yield* Schema.decodeUnknownEffect(SessionHeader)(stored.header)
+    const created = yield* log.create({ header, state: { sessions: { format: fixture.storedFormat ?? 0 } } })
+    const ref = { id: header.id, owner: header.owner, incarnation: created.incarnation }
+    yield* log.commit(ref, { expect: created.revision, notAfter: Option.none(), events: stored.events.map((event) => ({ kind: event.kind, turn: event.turn, data: event.data })), state: Option.none() })
+    const before = { head: yield* log.head(header.id), events: yield* log.read(ref, everything) }
     const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))), Sessions)
-    const refused = yield* Effect.result(sessions.get({ id, owner: "history" }))
-    return { refused, original, after: yield* log.head(id) }
+    const address = { id: header.id, owner: header.owner }
+    const refused = yield* Effect.result(sessions.get(address)).pipe(Effect.map((outcome) => outcome._tag === "Failure" && outcome.failure._tag === "SessionLogError" ? outcome.failure.code : outcome._tag))
+    // A read, refused or not, changes nothing either.
+    yield* Effect.result(sessions.read(address))
+    const after = { head: yield* log.head(header.id), events: yield* log.read(ref, everything) }
+    return { refused, before, after, count: stored.events.length }
   })))
-  expect(result.refused._tag === "Failure" && result.refused.failure._tag === "SessionLogError" && result.refused.failure.code).toBe("session.version")
-  expect({ ...result.after, now: 0 }).toEqual({ ...result.original, now: 0 })
+  expect(result.refused).toBe("session.version")
+  expect(result.before.events).toHaveLength(result.count)
+  expect({ ...result.after, head: { ...result.after.head, now: 0 } }).toEqual({ ...result.before, head: { ...result.before.head, now: 0 } })
 }))
 
 currentFixtures.forEach((fixture) => describe(`a ${fixture.version} session journal`, () => {

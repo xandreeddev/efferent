@@ -119,11 +119,57 @@ describe("the directory", () => {
     expect(observed).toEqual({ latest: [[2, 2], [3, 3]], fromStart: "store.decode" })
   })
 
-  test("a layout a newer release wrote is refused with store.version, and the directory is left as it was", async () => {
-    const root = mkdtempSync(join(directory, "newer-"))
-    writeFileSync(join(root, "store.json"), `${JSON.stringify({ layout: 3 })}\n`)
+  /** Every name under `root` with its bytes (a directory as `/`), sorted: what an open must leave as it was. */
+  const treeOf = (root: string): ReadonlyArray<readonly [string, string]> => readdirSync(root, { recursive: true, withFileTypes: true })
+    .map((entry): readonly [string, string] => {
+      const path = join(entry.parentPath, entry.name).slice(root.length + 1)
+      return [path, entry.isDirectory() ? "/" : readFileSync(join(root, path), "latin1")]
+    })
+    .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+  /** A tree written as `files` lists it (a name ending in `/` is an empty directory). */
+  const written = (prefix: string, files: Readonly<Record<string, string>>): string => {
+    const root = mkdtempSync(join(directory, prefix))
+    Object.entries(files).forEach(([path, content]) => {
+      if (path.endsWith("/")) return void mkdirSync(join(root, path), { recursive: true })
+      mkdirSync(join(root, path, ".."), { recursive: true })
+      writeFileSync(join(root, path), content)
+    })
+    return root
+  }
+  /** Open `root` once: the outcome, and whether the tree is as it was before. */
+  const opened = async (root: string) => {
+    const before = treeOf(root)
     const outcome = await Effect.runPromise(Effect.scoped(outcomeOf(makeSessionLogFiles(root))))
-    expect([outcome, readFileSync(join(root, "store.json"), "utf8")]).toEqual(["store.version", `${JSON.stringify({ layout: 3 })}\n`])
+    return { outcome, unchanged: JSON.stringify(treeOf(root)) === JSON.stringify(before) }
+  }
+
+  test("an unsupported layout (one a newer release wrote) is refused with store.version, and the whole directory is left as it was", async () => {
+    const root = written("newer-", { "store.json": `${JSON.stringify({ layout: 3 })}\n`, "sessions/": "", [`staging/${stagingName("header", 0, "00000000-0000-4000-8000-000000000001")}`]: "abandoned" })
+    expect(await opened(root)).toEqual({ outcome: "store.version", unchanged: true })
+  })
+
+  test("a store a 0.19.2 release wrote (layout 1, with a session and an abandoned staging entry) is refused with store.version, and nothing in it changes or is swept", async () => {
+    const id = "00000000-0000-4000-8000-0000000019a2"
+    const root = written("layout-1-", {
+      "store.json": `${JSON.stringify({ layout: 1 })}\n`,
+      [`sessions/${id}/header.json`]: `${JSON.stringify({ id, owner: "earlier", origin: "user", createdAt: 1, meta: {}, parent: null })}\n`,
+      [`sessions/${id}/commits/${revisionFile(1)}`]: `${JSON.stringify({ revision: 1, seq: 1 })}\n`,
+      [`staging/${stagingName("commit", 0, "00000000-0000-4000-8000-000000000002")}`]: "abandoned long ago",
+      "trash/": "",
+      "quarantine/": "",
+    })
+    expect(await opened(root)).toEqual({ outcome: "store.version", unchanged: true })
+  })
+
+  test("an unmarked directory is adopted only when it holds nothing but empty sessions/, staging/ and quarantine/ folders; anything else is refused as it was", async () => {
+    const foreign = written("unmarked-foreign-", { "notes.txt": "a host's own file" })
+    const sessions = written("unmarked-sessions-", { "sessions/someone/header.json": "{}" })
+    const quarantine = written("unmarked-quarantine-", { "quarantine/torn": "bytes" })
+    const empty = written("unmarked-empty-", { "sessions/": "", "staging/": "", "quarantine/": "" })
+    const outcomes = await Promise.all([foreign, sessions, quarantine].map(opened))
+    expect(outcomes).toEqual([{ outcome: "store.version", unchanged: true }, { outcome: "store.version", unchanged: true }, { outcome: "store.version", unchanged: true }])
+    expect((await opened(empty)).outcome).toBe("succeeded")
+    expect(readFileSync(join(empty, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2 })}\n`)
   })
 
   test("a directory without hard links is refused with store.open", async () => {

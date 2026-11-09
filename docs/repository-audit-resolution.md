@@ -9,7 +9,12 @@ the additional observations are recorded below the matrix.
 
 - Session stores require file layout 2, SQLite schema 3 and stored format 19.
   Open a fresh location. Older formats and nonempty unmarked stores are rejected
-  without migration, deletion or mutation. Released journal fixtures remain
+  without migration, deletion or mutation: the [files store tests](../packages/plugin-session-files/src/session-log.adapter.test.ts)
+  open a layout 1 store with a session and an abandoned staging entry, and
+  unmarked roots, comparing the whole tree before and after; the
+  [journal tests](../packages/sdk/src/journal-compat.test.ts) store each
+  released fixture's first session with its format stamp and check that
+  Sessions refuses it and leaves its head and events unchanged. Released journal fixtures remain
   historical evidence; only the development fixture is regenerated.
 - `SessionRef` contains `id`, `owner` and `incarnation`. Log reads, commits,
   removals, list-parent filters and fork lineage use the full reference. Creation
