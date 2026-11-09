@@ -403,6 +403,17 @@ const failureText = (failure: unknown): string => typeof failure === "string" ? 
  * progress even when the model churns the arguments. Empty string = the turn
  * must not count (no tool calls, or purely pollable ones).
  */
+const resultText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const resultJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
+/**
+ * A result's identity: its canonical JSON as JSON text carries it (`toJSON`
+ * applied, so distinct `Date`s differ), else the canonical form of the value.
+ */
+const resultIdentity = (result: unknown): string => Option.match(Option.flatMap(resultText(result), resultJson), {
+  onNone: () => canonicalJson(result),
+  onSome: canonicalJson,
+})
+
 const progressSignature = (
   content: ReadonlyArray<Response.AnyPart>,
   pollable: ReadonlySet<string>,
@@ -413,7 +424,7 @@ const progressSignature = (
   return Arr.sort(
     responseToolResults(content)
       .filter((r) => !pollable.has(r.toolName))
-      .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${canonicalJson(r.result ?? null)}`),
+      .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${resultIdentity(r.result ?? null)}`),
     Order.String,
   ).join("|")
 }

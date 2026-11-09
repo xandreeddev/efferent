@@ -215,6 +215,27 @@ describe("runLoop", () => {
     }])
   })
 
+  test("results that differ only in a Date are progress: the breaker does not stop the run", async () => {
+    const Schedule = Tool.make("schedule", {
+      description: "The next free slot.",
+      parameters: Schema.Struct({ value: Schema.String }),
+      success: Schema.Struct({ at: Schema.Date }),
+      failure: Failure,
+      failureMode: "return",
+    })
+    const scheduleKit = prepareToolkit(Toolkit.make(Schedule))
+    const day = { count: 0 }
+    const result = await Effect.runPromise(runLoop({ system: "sys", messages: [user("go")], toolkit: scheduleKit, maxSteps: 9 }).pipe(
+      Effect.provide(scheduleKit.toLayer({ schedule: () => Effect.sync(() => ({ at: new Date(Date.UTC(2026, 0, 1 + day.count++)) })) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call < 7
+        ? [{ type: "tool-call", id: `s${call}`, name: "schedule", params: { value: "same" } }, finish("tool-calls")]
+        : [{ type: "text", text: "booked" }, finish("stop")])),
+    ))
+    expect(day.count).toBe(7)
+    expect(result.reason).not.toBe("degenerate-loop")
+    expect(result.finalText).toBe("booked")
+  })
+
   test("the degenerate-loop breaker nudges once, then force-stops as partial", async () => {
     const nudgedAt: Array<number> = []
     const settled: Array<string> = []
