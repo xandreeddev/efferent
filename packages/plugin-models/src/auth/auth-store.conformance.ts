@@ -57,7 +57,7 @@ export interface AuthStoreSubject {
 type Fixture = Effect.Success<ReturnType<AuthStoreSubject["open"]>>
 type CaseBuilder = (name: string, id: string, body: (fixture: Fixture) => Effect.Effect<void, unknown>) => ConformanceCheck
 
-/** A provider id no real store holds, so the kit can run against a shared store. */
+/** A provider id no other check writes, so a read shows whose write it is. */
 const freshProvider = Effect.map(randomUuid, (id) => ProviderId.make(`conformance-${id}`))
 /** A secret no other check writes, so a read shows whose write it is. */
 const secret = (label: string): Effect.Effect<Redacted.Redacted<string>> => Effect.map(randomUuid, (id) => Redacted.make(`conformance-${label}-${id}`))
@@ -84,7 +84,7 @@ const keyOf = (id: string, resolved: Option.Option<Redacted.Redacted<string>>) =
     onSome: (key) => Redacted.isRedacted(key) ? Effect.succeed(Option.some(Redacted.value(key))) : fail(id, "the resolved key is not Redacted"),
   })
 
-/** Run `body` with `count` fresh providers, removing them afterwards so a shared store keeps nothing of the kit. */
+/** Run `body` with `count` fresh providers, removing them afterwards. */
 const withProviders = (store: Store, count: number, body: (providers: ReadonlyArray<ProviderId>) => Effect.Effect<void, unknown>) =>
   Effect.forEach(Array.from({ length: count }), () => freshProvider, { concurrency: 1 }).pipe(
     Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore({ log: "Warn", message: `the kit could not remove its provider ${provider}` })), { concurrency: 1, discard: true })))),
@@ -176,9 +176,24 @@ const corruptCheck = (store: Store, corrupt: Effect.Effect<void, never, Scope.Sc
     yield* expect("corrupt", Option.isNone(yield* store.get(other!)) && !(yield* store.all).has(other!), "a set refused on damaged data still wrote its credential")
   })))
 
-/** Prove credentials and refreshes with a fresh fixture for each check. @public */
+/**
+ * The subject's fixture for check `id`. One that supplies probes for a
+ * capability the subject does not declare fails the check: those probes
+ * would never run, and the kit would pass without them.
+ */
+const fixtureOf = (subject: AuthStoreSubject, id: string) => subject.open().pipe(Effect.tap((fixture) => Effect.all([
+  expect(id, subject.refresh === true || fixture.refresh === undefined, "the fixture supplies a refresh probe but the subject does not declare refresh: true"),
+  expect(id, subject.corrupt === true || (fixture.corruptions ?? []).length === 0, "the fixture supplies corruption probes but the subject does not declare corrupt: true"),
+], { concurrency: 1, discard: true })))
+
+/**
+ * Prove credentials and refreshes with a fresh fixture for each check. The
+ * fixture owns its store and its cleanup: the checks write credentials and
+ * restore nothing, so never open a store over a host's real credentials.
+ * @public
+ */
 export const authStoreConformance = (subject: AuthStoreSubject): ReadonlyArray<ConformanceCheck> => {
-  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(subject.open().pipe(Effect.flatMap(body))))
+  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(fixtureOf(subject, id).pipe(Effect.flatMap(body))))
   return [
     ...baseChecks(caseOf),
     ...(subject.refresh ? refreshChecks(caseOf) : []),

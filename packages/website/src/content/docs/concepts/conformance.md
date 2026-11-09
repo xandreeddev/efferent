@@ -54,14 +54,15 @@ TaskRunner and ToolRegistry kits build what they check afresh for each
 check. The knowledge store kit opens a fresh scope per check (no two checks
 share owner, namespace and collection together) and may run against a shared
 database; since discovery reads across owners, its discovery checks record
-their jobs under engine ids derived from the whole scope. The AuthStore kit uses fresh
-provider ids (`conformance-<uuid>`) and removes them when a check ends. The
-SettingsStore kit writes the store's own keys, since settings have no ids: it
-puts each key it touches back as it found it, but run it against settings
-nothing else is using. A key holding a value the store must refuse (a
-selection that is not `"<provider>:<modelId>"`, a count below 1, left by an
-older unchecked write) could not be put back, so the check that would touch it
-fails before writing anything. `@xandreed/plugin-models` runs these three kits against
+their jobs under engine ids derived from the whole scope. The AuthStore and
+SettingsStore kits open a fresh fixture through the subject's `open()` for
+every check. The AuthStore kit uses fresh provider ids (`conformance-<uuid>`)
+and removes them when a check ends, but its refresh checks write the probe's
+provider and leave its refreshed token in the fixture. The SettingsStore kit
+writes and clears the store's own keys and roles, since settings have no ids,
+and restores nothing. So neither may open a store over a host's real
+credentials or settings: give each check disposable ones, which the fixture
+removes. `@xandreed/plugin-models` runs these three kits against
 its file and in-memory stores, on Bun and on Node.
 
 The image checks of
@@ -904,8 +905,11 @@ race. Run refresh checks on the live clock with their bounded endpoint wait.
 Either subject may declare `corrupt: true` and return `corruptions`: scoped
 probes for every backing tier, including fallback tiers. While each probe
 holds, reads and writes must fail with `auth.corrupt` or `settings.corrupt`,
-and the repaired store must retain its original values. A declared capability
-without its probes fails conformance. Memory fixtures omit corruption.
+and the repaired store must retain its original values, a refused write having
+written nothing. A declared capability without its probes fails conformance,
+and so does every check of a subject whose fixture supplies probes for a
+capability it does not declare, which would otherwise never run. Memory
+fixtures omit corruption.
 
 The settings checks separately cover writable and read-only stores, typed
 values, invalid values and selections, role/key clearing and stable reads.

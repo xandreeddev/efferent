@@ -42,7 +42,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`prepare-decode-once`, `prepare-raw-input`, `prepare-before-run`); `runLoop`
   fails with `config.options` when its toolkit has no `execution`. Tool and schema objects are unchanged.
 - Auth/settings conformance kits take subjects that open fresh scoped fixtures
-  per check, including probes for every backing tier.
+  per check, including probes for every backing tier; the checks restore
+  nothing, so a fixture must never be a host's real store. A fixture that
+  supplies probes for a capability its subject does not declare (`refresh`,
+  `corrupt`) fails every check, and the AuthStore kit's `corrupt` check also
+  requires that a `set` refused on damaged data wrote nothing.
 - A background turn-event handler publishing into its own subscription's full
   queue fails with `events.capacity`; into another subscription's full queue
   it waits for room. A background `capacity` must be a positive safe integer:

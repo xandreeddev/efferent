@@ -108,6 +108,10 @@ describe("careless settings adapters", () => {
   test("ignoring clear fails both role and clear", async () => {
     expect(await failedChecks(subjectOf((store) => ({ ...store, setRole: (role, value) => Option.isNone(value) ? Effect.void : store.setRole(role, value), set: (key, value) => Option.isNone(value) ? Effect.void : store.set(key, value) })))).toEqual(["clear", "role"])
   })
+  test("a fixture that supplies corruption probes its subject does not declare fails every check, rather than skipping them", async () => {
+    const subject: SettingsStoreSubject = { writable: true, open: () => damageable("defaults", seeded).pipe(Effect.map(({ store, corrupt }) => ({ store, corruptions: [corrupt] }))) }
+    expect(await failedChecks(subject)).toEqual(["bad-role", "bad-values", "clear", "load", "role", "values"])
+  })
   test("silently accepting read-only writes fails read-only", async () => {
     expect(await failedChecks(subjectOf((store) => ({ ...store, setRole: () => Effect.void, set: () => Effect.void }), false))).toEqual(["read-only"])
   })

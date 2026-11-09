@@ -26,7 +26,7 @@ const snapshot = (settings: EngineSettings): string => canonicalJson(Object.from
 /** Every field but `except`, as one comparable string. */
 const others = (settings: EngineSettings, except: Field): string =>
   canonicalJson(Object.fromEntries(FIELDS.filter((field) => field !== except).map((field) => [field, Option.getOrNull(valueOf(settings, field))])))
-/** A selection no real store holds, so the kit can run against a shared store. */
+/** A selection no other check writes, so a read shows whose write it is. */
 const selection = (label: string): Effect.Effect<string> => Effect.map(randomUuid, (id) => `conformance:${label}-${id}`)
 
 /** `write` must fail with a SettingsError and leave every value as it was. */
@@ -84,31 +84,37 @@ const corrupted = (what: string, effect: Effect.Effect<unknown, unknown>) => Eff
 }))
 
 const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<void, never, Scope.Scope>): ConformanceCheck =>
-  check("a store whose backing data cannot be read fails load and every write with a SettingsError of code settings.corrupt, never reads it as defaults", "corrupt", () => {
-    const body = Effect.gen(function* () {
-      const before = snapshot(yield* store.load)
-      yield* Effect.scoped(Effect.gen(function* () {
-        yield* corrupt
-        yield* corrupted("load", store.load)
-        yield* writable ? Effect.all([
-          selection("corrupt").pipe(Effect.flatMap((value) => corrupted("setRole", store.setRole("general", Option.some(value))))),
-          corrupted("set", store.set("maxAttempts", Option.some("3"))),
-        ], { concurrency: 1, discard: true }) : Effect.void
-      }))
-      yield* expect("corrupt", snapshot(yield* store.load) === before, "once the backing data is repaired, the store does not read what it held before")
-    })
-    // A write that ignored the damage is put back like any other.
-    return body
-  })
+  check("a store whose backing data cannot be read fails load and every write with a SettingsError of code settings.corrupt, never reads it as defaults", "corrupt", () => Effect.gen(function* () {
+    const before = snapshot(yield* store.load)
+    yield* Effect.scoped(Effect.gen(function* () {
+      yield* corrupt
+      yield* corrupted("load", store.load)
+      yield* writable ? Effect.all([
+        selection("corrupt").pipe(Effect.flatMap((value) => corrupted("setRole", store.setRole("general", Option.some(value))))),
+        corrupted("set", store.set("maxAttempts", Option.some("3"))),
+      ], { concurrency: 1, discard: true }) : Effect.void
+    }))
+    // A write that ignored the damage shows here: the kit restores nothing.
+    yield* expect("corrupt", snapshot(yield* store.load) === before, "once the backing data is repaired, the store does not read what it held before")
+  }))
+
+/**
+ * The subject's fixture for check `id`. One that supplies corruption probes
+ * the subject does not declare fails the check: they would never run, and
+ * the kit would pass without them.
+ */
+const fixtureOf = (subject: SettingsStoreSubject, id: string) => subject.open().pipe(Effect.tap((fixture) =>
+  expect(id, subject.corrupt === true || (fixture.corruptions ?? []).length === 0, "the fixture supplies corruption probes but the subject does not declare corrupt: true")))
 
 /**
  * Prove reads, writes, clearing, refusal and corruption against a fresh fixture
- * for each check. The fixture owns its stores and cleanup. The kit never tries
- * to restore merged effective settings into a writable tier.
+ * for each check. The fixture owns its stores and cleanup: the checks write
+ * and clear keys and roles and restore nothing, so never open a store over a
+ * host's real settings.
  * @public
  */
 export const settingsStoreConformance = (subject: SettingsStoreSubject): ReadonlyArray<ConformanceCheck> => {
-  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(subject.open().pipe(Effect.flatMap(({ store }) => body(store)))))
+  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(fixtureOf(subject, id).pipe(Effect.flatMap(({ store }) => body(store)))))
   return [
     caseOf("load is stable: two loads with no write between them agree", "load", (store) => Effect.gen(function* () {
       const first = snapshot(yield* store.load)
@@ -116,7 +122,7 @@ export const settingsStoreConformance = (subject: SettingsStoreSubject): Readonl
     })),
     ...(subject.writable ? writableChecks(caseOf) : readOnlyChecks(caseOf)),
     ...(subject.corrupt ? [check("every backing tier refuses corrupt data without changing settings", "corrupt", () => Effect.scoped(Effect.gen(function* () {
-      const fixture = yield* subject.open()
+      const fixture = yield* fixtureOf(subject, "corrupt")
       const probes = fixture.corruptions ?? []
       yield* expect("corrupt", probes.length > 0, "the subject declares corruption checks but supplies no probes")
       yield* Effect.forEach(probes, (probe) => corruptCheck(fixture.store, subject.writable, probe).run, { concurrency: 1, discard: true })

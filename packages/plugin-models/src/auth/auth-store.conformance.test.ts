@@ -178,6 +178,14 @@ describe("the AuthStore kit catches stores that break the contract", () => {
     expect(await failedChecks(store, options)).toEqual(["corrupt"])
   })
 
+  test.each(["refresh", "corrupt"] as const)("a fixture that supplies %s probes its subject does not declare fails every check, rather than skipping them", async (capability) => {
+    const { store, options } = Effect.runSync(refreshingReference({ locked: false, checked: false, damaged: "empty" }))
+    const subject: AuthStoreSubject = { open: () => Effect.succeed({ store, ...(capability === "refresh" ? { refresh: options.refresh } : { corruptions: [options.corrupt] }) }) }
+    const failed = await Effect.runPromise(Effect.forEach(authStoreConformance(subject), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }).pipe(Effect.map((all) => all.flat().toSorted())))
+    expect(failed).toEqual(["absent", "api-key", "isolation", "local", "oauth-expired", "oauth-valid", "overwrite", "redacted", "remove"])
+  })
+
   test("a store that writes a credential and only then fails on its damaged data fails the corrupt check", async () => {
     const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "write-then-fail" }))
     expect(await failedChecks(store, options)).toEqual(["corrupt"])
