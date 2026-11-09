@@ -129,6 +129,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
+- Release confirmation stops at once only on release metadata that names
+  another package, version or commit (or none); a provenance read the
+  registry does not answer (a 404 after the version was found, a refusal
+  status, a network error, an unreadable or invalid body) is asked again until
+  the confirmation deadline, as a presence read is.
 - Reconcile agent guidance and current docs with the implemented contracts;
   retain historical audit and release artifacts as historical evidence.
 

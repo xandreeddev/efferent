@@ -26,3 +26,26 @@ test("confirmation passes the remaining wall deadline to a stalled request", asy
   expect((await confirmOnRegistry(item, "expected", { attempts: 2, intervalMillis: 5 }))._tag).toBe("Missing")
   expect(requested).toBe(1)
 })
+
+test("a provenance read the registry fails for a while is asked again until it verifies", async () => {
+  for (const flap of [
+    async () => new Response(null, { status: 404 }),
+    async () => new Response(null, { status: 503 }),
+    async (): Promise<Response> => { throw new Error("ECONNRESET") },
+    async () => new Response("{", { status: 200 }),
+  ]) {
+    const answers = [async () => Response.json(item), flap, async () => Response.json(item), async () => Response.json({ ...item, gitHead: "expected" })]
+    let requested = 0
+    spyOn(globalThis, "fetch").mockImplementation(Object.assign(() => answers[Math.min(requested++, answers.length - 1)]!(), { preconnect: () => {} }))
+    expect(await confirmOnRegistry(item, "expected", { attempts: 3, intervalMillis: 5 })).toEqual({ _tag: "Published" })
+    expect(requested).toBe(4)
+    mock.restore()
+  }
+})
+
+test("release metadata that names another commit is missing at once, without asking again", async () => {
+  let requested = 0
+  spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => { requested++; return Response.json({ ...item, gitHead: "other" }) }, { preconnect: () => {} }))
+  expect(await confirmOnRegistry(item, "expected", { attempts: 5, intervalMillis: 5 })).toMatchObject({ _tag: "Missing", reason: expect.stringContaining("was published from other") })
+  expect(requested).toBe(2)
+})

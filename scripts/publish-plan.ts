@@ -135,18 +135,36 @@ export const registryAnswer = (item: Versioned, status: number): Result.Result<b
     : Result.fail(`the registry answered ${status} for ${label(item)}`)
 
 const PublishedVersion = Schema.Struct({ name: Schema.String, version: Schema.String, gitHead: Schema.optionalKey(Schema.String) })
+/**
+ * What a provenance read says: the release's source commit is HEAD (`Verified`, or nothing is
+ * published to verify), it is not (`Refused`: metadata naming another package, version or
+ * commit, or none; final), or the registry gave no readable answer this time (`Unanswered`: a
+ * refusal status, a 404 after the version was found, an unreadable or invalid body; asked again
+ * while confirming, since the registry's CDN flaps after a publish).
+ */
+export type Provenance =
+  | { readonly _tag: "Verified" }
+  | { readonly _tag: "Refused"; readonly reason: string }
+  | { readonly _tag: "Unanswered"; readonly reason: string }
+
+/** The provenance of a release whose metadata the registry answered (status 200) with `body`. */
+export const releaseProvenance = (item: Versioned, head: string, body: string): Provenance => {
+  const metadata = Schema.decodeUnknownResult(Schema.fromJsonString(PublishedVersion))(body)
+  if (Result.isFailure(metadata)) return { _tag: "Unanswered", reason: `the registry returned invalid release metadata for ${label(item)}` }
+  if (metadata.success.name !== item.name || metadata.success.version !== item.version) return { _tag: "Refused", reason: `the registry returned metadata for a different package or version than ${label(item)}` }
+  const origin = metadata.success.gitHead
+  if (origin === undefined || origin.length === 0) return { _tag: "Refused", reason: `${label(item)} already exists, but npm records no gitHead; its release commit cannot be verified, so publishing or tagging from this checkout is refused` }
+  return origin === head ? { _tag: "Verified" }
+    : { _tag: "Refused", reason: `${label(item)} was published from ${short(origin)}, not HEAD ${short(head)}; resume from its original commit or prepare a new shared version` }
+}
+
 /** An existing release can be resumed only from the commit npm recorded, never from a later same-version checkout. */
 export const registryProvenance = (item: Versioned, head: string, status: number, body: string): Result.Result<void, string> => {
   const found = registryAnswer(item, status)
   if (Result.isFailure(found)) return Result.fail(found.failure)
   if (!found.success) return Result.succeed(undefined)
-  const metadata = Schema.decodeUnknownResult(Schema.fromJsonString(PublishedVersion))(body)
-  if (Result.isFailure(metadata)) return Result.fail(`the registry returned invalid release metadata for ${label(item)}`)
-  if (metadata.success.name !== item.name || metadata.success.version !== item.version) return Result.fail(`the registry returned metadata for a different package or version than ${label(item)}`)
-  const origin = metadata.success.gitHead
-  if (origin === undefined || origin.length === 0) return Result.fail(`${label(item)} already exists, but npm records no gitHead; its release commit cannot be verified, so publishing or tagging from this checkout is refused`)
-  return origin === head ? Result.succeed(undefined)
-    : Result.fail(`${label(item)} was published from ${short(origin)}, not HEAD ${short(head)}; resume from its original commit or prepare a new shared version`)
+  const provenance = releaseProvenance(item, head, body)
+  return provenance._tag === "Verified" ? Result.succeed(undefined) : Result.fail(provenance.reason)
 }
 
 /**
