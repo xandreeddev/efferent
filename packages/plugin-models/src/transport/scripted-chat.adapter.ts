@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Result, Schema } from "effect"
+import { Cause, Effect, Option, Ref, Result, Schema } from "effect"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import type { ScriptedRequest, ScriptedRequestRecord, ScriptedStep } from "./scripted-chat.entity.js"
 import { completionBody, pickStep, refusalBody, refusalMessage, remainingSteps, streamEvents } from "./scripted-chat.entity.functions.js"
@@ -61,7 +61,8 @@ const streamed = (events: ReadonlyArray<string>, step: ScriptedStep, signal: Abo
         controller.close()
         finish()
       }), { signal: lifetime.signal }).then((exit) => {
-        if (exit._tag === "Failure" && !cursor.closed) { controller.error(exit.cause); finish() }
+        // A hook that dies fails the body with its defect, the way a dropped connection fails fetch's body with an Error.
+        if (exit._tag === "Failure" && !cursor.closed) { controller.error(Cause.squash(exit.cause)); finish() }
       })
       return cursor.pending
     },

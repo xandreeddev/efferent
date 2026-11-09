@@ -3,6 +3,7 @@ import { Tool, Toolkit } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { makeCompatLanguageModel } from "../llm/compat.js"
+import { sseStreamParts } from "../llm/sse.js"
 import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
 import { modelRetryDefaults } from "../llm/model-retry-policy.entity.js"
 import { scriptedChatCompletions } from "./scripted-chat.adapter.js"
@@ -232,17 +233,48 @@ describe("scriptedChatCompletions: under the compat client", () => {
   })
 })
 
-test("aborting a pending chunk hook interrupts and awaits its finalizer", async () => {
+/** A stream whose first chunk hook waits forever, and whose finalizer takes a while: whether it ran, and the request's reader. */
+const pendingHook = async (signal?: AbortSignal) => {
   const started = Effect.runSync(Deferred.make<void>())
   const finalized = Effect.runSync(Deferred.make<void>())
-  const endpoint = scriptedChatCompletions([{ text: "pending", beforeChunk: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Deferred.succeed(finalized, undefined))) }])
-  const abort = new AbortController()
-  const response = await endpoint.fetch(chatUrl, { ...post({ model: "m", stream: true }), signal: abort.signal })
+  const endpoint = scriptedChatCompletions([{
+    text: "pending",
+    beforeChunk: () => Deferred.succeed(started, undefined).pipe(
+      Effect.andThen(Effect.never),
+      Effect.ensuring(Effect.sleep("20 millis").pipe(Effect.andThen(Deferred.succeed(finalized, undefined)))),
+    ),
+  }])
+  const response = await endpoint.fetch(chatUrl, { ...post({ model: "m", stream: true }), ...(signal === undefined ? {} : { signal }) })
   const reader = response.body!.getReader()
-  const reading = reader.read().then((value) => value, () => ({ done: true }))
+  const reading = reader.read().then(() => "read" as const, (reason: unknown) => reason)
   await Effect.runPromise(Deferred.await(started))
-  abort.abort()
-  await reading
-  await reader.cancel().then(() => undefined, () => undefined)
-  expect(Effect.runSync(Deferred.isDone(finalized))).toBe(true)
+  return { reader, reading, finalized: () => Effect.runSync(Deferred.isDone(finalized)), awaitFinalized: () => Effect.runPromise(Deferred.await(finalized).pipe(Effect.timeout("2 seconds"))) }
+}
+
+test("cancelling the reader of a pending chunk hook interrupts the hook and waits for its finalizer", async () => {
+  const { reader, reading, finalized } = await pendingHook()
+  await reader.cancel()
+  expect(finalized()).toBe(true)
+  expect(await reading).toBe("read")
+})
+
+test("aborting a pending chunk hook rejects the read with the signal's reason at once and interrupts the hook", async () => {
+  const abort = new AbortController()
+  const { reading, awaitFinalized } = await pendingHook(abort.signal)
+  const reason = new Error("cancelled while the hook waits")
+  abort.abort(reason)
+  expect(await reading).toBe(reason)
+  await awaitFinalized()
+})
+
+test("a chunk hook that dies fails the body with its defect, as fetch fails it with an Error", async () => {
+  const reset = new Error("reset")
+  const endpoint = scriptedChatCompletions([{ text: ["a", "b"], repeat: true, beforeChunk: (chunk) => chunk === 1 ? Effect.die(reset) : Effect.void }])
+  const response = await endpoint.fetch(chatUrl, post({ model: "m", stream: true }))
+  const reader = response.body!.getReader()
+  await reader.read()
+  expect(await reader.read().then(() => "read", (reason: unknown) => reason)).toBe(reset)
+  const parsed = await endpoint.fetch(chatUrl, post({ model: "m", stream: true }))
+  const error = await Effect.runPromise(Effect.flip(Stream.runDrain(sseStreamParts({ moduleName: "Test", body: parsed.body! }))))
+  expect(error.reason).toMatchObject({ _tag: "UnknownError", description: "the response body stream failed: reset" })
 })
