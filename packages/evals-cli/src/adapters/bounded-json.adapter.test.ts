@@ -25,7 +25,8 @@ test("bounded encoding and parsing match the native codecs across generated JSON
   await fc.assert(fc.asyncProperty(fc.oneof(fc.jsonValue(), utf16), fc.integer({ min: 2, max: 31 }), async (value, size) => {
     const text = JSON.stringify(value, null, 2)
     expect((await encode(value, true, size)).join("")).toBe(text)
-    expect<unknown>(await decode(text, size)).toEqual(value)
+    // JSON text has no negative zero: the native parse of the same text is the reference.
+    expect<unknown>(await decode(text, size)).toEqual(JSON.parse(text))
   }), { numRuns: 150 })
 })
 
