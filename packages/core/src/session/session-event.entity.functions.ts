@@ -441,8 +441,10 @@ const memorySchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unkno
  * The stored schema of each bus event in `TURN_EVENT_KINDS` that is stored
  * whole under its own name (`step.usage` is `StepUsageData`, `tool.completed`
  * and `tool.refused` drop their payload). A bus event left out of
- * `TURN_EVENT_KINDS` has none. Only the current stored format is read, so
- * every key the event stores is as required as it is on the bus.
+ * `TURN_EVENT_KINDS` has none. Each key such an event stores is as required
+ * as it is on the bus (a stored `context.built` needs its `budgetTokens`).
+ * This says nothing of the stored records with schemas of their own, some
+ * of which still read a key older records lack (a token count as 0).
  */
 const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = TurnEvent.members.flatMap((member) => {
   const tag = member.fields._tag.schema.literal

@@ -68,6 +68,10 @@ when they do not. Work through this list instead.
   (files `FILES_LAYOUT`, SQLite `SCHEMA_VERSION`, `store.version`). A release
   that bumps the format alone therefore opens old stores and then refuses
   each session in them, and one such session fails its owner's whole `list`.
+  The remedy (a backend layout bump with every format, or a store-level
+  format marker checked at open) is an open owner decision
+  (`docs/repository-audit-resolution.md`, "Open owner decisions"): raise it
+  in the PR of any format bump until it is made.
   Add a CHANGELOG **Breaking** entry and a **Migration** step (a fresh store;
   read old sessions with the release that wrote them); no update path is
   required. State the new format where `scripts/session-store-docs.test.ts`

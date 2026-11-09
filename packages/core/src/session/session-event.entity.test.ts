@@ -263,7 +263,7 @@ describe("the journal's schemas", () => {
     // A bus event's own name has a schema only when it is a reserved kind.
     expect(tags.filter((tag) => Option.isSome(journalSchemaOf(tag)) && !RESERVED_KINDS.includes(tag))).toEqual([])
   })
-  test("a stored context.built requires its budget: only the current stored format is decoded, no key is optional for an older release", () => {
+  test("a stored context.built requires its budget, as the bus event does", () => {
     const built = { step: 0, turn: 1, run: 0, strategy: "window", strategyVersion: "1", fingerprint: "f", systemFingerprint: "s", estimatedTokens: 10, reservedTokens: 2, budgetTokens: 100, compactions: 0, activeTools: [] }
     const { budgetTokens: _, ...withoutBudget } = built
     expect(decodes("context.built", built)).toBe(true)

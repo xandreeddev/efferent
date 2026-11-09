@@ -28,7 +28,10 @@ the additional observations are recorded below the matrix.
   children before their parent, handles `SessionMissing`. The file log first
   finishes what a removal stopped part way left (children, payloads), and
   keeps of a removed session only its claim and tombstone. `Sessions.remove`
-  is unchanged: it already refused a missing session.
+  already refused a missing session and still does; given the session's
+  `SessionRef`, it first asks the log to remove it again, which finishes a
+  removal that stopped after its tombstone, and a removal that fails once the
+  session is gone still closes that instance's turns of it.
 - Standalone loops and custom tool registries supply a `PreparedToolkit` using
   `prepareToolkit`. Parameter codecs decode once before any handler in a batch
   runs. Raw provider arguments stay detached and immutable; the decoded value
@@ -157,6 +160,27 @@ attempt registration and durable settlement cannot be split by cancellation.
 Every terminal Exit completes the ACK, including defects; external ledger waits
 must obey the port's bounded-operation contract. Making durable settlement broadly
 interruptible would lose accounting facts and is intentionally avoided.
+
+### Open owner decisions
+
+These are recorded, not resolved; each is needed before the release.
+
+- A release that bumps `STORED_FORMAT` alone opens old stores, since the
+  backends check only their own layout (`FILES_LAYOUT`, `SCHEMA_VERSION`),
+  then refuses each session in them, and one such session fails its owner's
+  whole `list`. The guidance states the hazard (skill `change-event`,
+  `CONTRIBUTING.md`); neither remedy is chosen: bumping the backends' layout
+  with every format, enforced by `scripts/stored-format.ts`, or a store-level
+  format marker checked when a store opens.
+- Some stored records still read a key that records written before 0.14.0
+  lack (a token count decodes as 0, in `token-usage.entity.ts`,
+  `model-request.entity.ts` and `message-mapping.entity.functions.ts`), while
+  a stored `context.built` now requires its `budgetTokens`. Whether to drop
+  the remaining fallbacks under the current-format-only rule changes the
+  stored-format fingerprint.
+- Sessions stored in an unsupported (older) format can be neither read nor
+  removed through `Sessions`; whether to add a purge or remove path for them
+  is open.
 
 ## Verification
 

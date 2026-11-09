@@ -1330,8 +1330,10 @@ mints for a provider's tool calls that come without one are
 host-planned batch `call_<turn>_<ordinal>_p<n>` (`plannedCallIdOf`), so
 they differ across the runs and turns of a session. They hold only letters,
 digits and `_` and stay short, so every provider accepts them as pairing
-keys when a session moves to another one; ids stored by earlier releases
-(`<turn>.<ordinal>.<step>:<tool>:<n>`) replay as they were stored.
+keys when a session moves to another one. Releases before 0.15.0 minted
+`<turn>.<ordinal>.<step>:<tool>:<n>`; Sessions reads only the current stored
+format, so a session that holds those ids is refused, not replayed (see
+[the stored format](#sessions-one-log-per-session)).
 
 **Host request hooks.** Provide `ModelRequestHook` from `@xandreed/core` in
 the turn's services to customize a fresh prepared model request. Its
@@ -2971,9 +2973,10 @@ before streaming events to a browser. The skill
 matcher's decision hash adds the images' fingerprints only when there are
 some.
 
-**Compatibility.** Logs written before decode unchanged, a whitespace-only
-message included; a result without images is stored and rendered exactly as
-before. A 0.13 reader of a newer log drops the images it does not know (a
+**Compatibility.** A result without images is stored and rendered exactly as
+one written before images arrived. Sessions reads only the current stored
+format, so a log an earlier release wrote is refused, not decoded (see
+[the stored format](#sessions-one-log-per-session)). A 0.13 reader of a newer log drops the images it does not know (a
 result's `media` slots included), fails on a message without text and on an
 `OmitMedia` compaction, and a replay of a request with images diverges there
 (`request.diverged`).
