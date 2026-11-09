@@ -113,7 +113,9 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
   const subscribe = <E, R>(select: (event: TurnEvent) => Option.Option<E>, handle: (event: E) => Effect.Effect<void, TurnError, R>, subscribeOptions?: SubscribeOptions) =>
     Effect.gen(function* () {
       // Traced where it runs: an inline handler under the publisher's span, with the publisher's trace content.
-      const context = replayableContext(yield* Effect.context<R>())
+      // The bus's own nesting (the lane and the depth a handler runs at) is read where the handler runs, never
+      // captured: a subscription made inside another lane's handler is its own lane, not that one.
+      const context = Context.omit(inLane, depth)(replayableContext(yield* Effect.context<R>())) as Context.Context<R>
       const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1)
       const handled = (selected: E) => handle(selected).pipe(Effect.provide(context))
       const mode = subscribeOptions?.mode ?? "inline"

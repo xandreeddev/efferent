@@ -52,6 +52,18 @@ describe("the turn event bus", () => {
     expect(exit._tag === "Failure" ? failureCode(exit.failure) : "none").toBe("events.depth")
   })
 
+  test("a reaction cycle through a subscription made inside a handler still hits the depth cap", async () => {
+    const exit = await run(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 3 })
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? onEvent("step.started", (inner) => inner.step > 0 ? events.publish(started(inner.step + 1)) : Effect.void)(events)
+        : Effect.void)(events)
+      yield* events.publish(started(0))
+      yield* events.publish(started(1))
+    })).pipe(Effect.timeoutOption("2 seconds")))
+    expect(exit._tag === "Success" && Option.isNone(exit.success) ? "hung" : exit._tag === "Failure" ? failureCode(exit.failure) : "none").toBe("events.depth")
+  })
+
   test("a failing handler fails the publisher, and a subscription ends with its scope", async () => {
     const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const events = yield* makeTurnEvents({ maxDepth: 4 })
@@ -232,6 +244,32 @@ describe("the turn event bus", () => {
     })))
     expect(result._tag).toBe("Failure")
     if (result._tag === "Failure") expect(failureCode(result.failure)).toBe("events.capacity")
+  })
+
+  test("a background subscription made inside another lane's handler is its own lane: its reentrant publication fails at capacity instead of waiting", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      // Lane A subscribes lane B from inside its own handler.
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? onEvent("step.started", (inner) => inner.step === 10 ? Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)), Effect.andThen(events.publish(started(12))),
+        ) : Effect.void, { mode: "background", capacity: 1 })(events)
+        : Effect.void, { mode: "background" })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+      yield* events.publish(started(10))
+      yield* Deferred.await(entered)
+      yield* events.publish(started(11))
+      yield* Deferred.succeed(release, undefined)
+      const drained = yield* Effect.result(events.drain).pipe(Effect.timeoutOption("2 seconds"))
+      return Option.match(drained, {
+        onNone: () => "hung",
+        onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "drained",
+      })
+    })))
+    expect(result).toBe("events.capacity")
   })
 
   test("a background handler publishing into another lane's full queue waits for room, and every event is delivered", async () => {
