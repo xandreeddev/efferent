@@ -97,8 +97,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   carry it: host-planned params may leave optional fields `undefined` (left
   out) and hold `toJSON` values such as a `Date` (their JSON form). Tool and
   schema objects are unchanged. `@xandreed/sdk`: `toolRegistryConformance`
-  calls tools through that boundary and checks it (`prepare-decode-once`,
-  `prepare-raw-input`, `prepare-before-run`). `@xandreed/plugin-agent-loop`:
+  calls tools through that boundary, preparing and running each inside the
+  run's step with a tool call id as the loop does, and checks it
+  (`prepare-decode-once`, `prepare-raw-input`, `prepare-before-run`). `@xandreed/plugin-agent-loop`:
   `runLoop` fails with `config.options` when its toolkit has no
   `execution`.
 - `@xandreed/plugin-models`: `AuthStoreConformanceOptions` and
@@ -190,12 +191,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   call with `SearchFailed` and its own reason (its cause logged) instead of
   crashing the host process or waiting out the deadline, and a search over
   many files no longer adds worker listeners per file.
+- `@xandreed/core`: a turn-event subscription made inside another
+  subscription's handler no longer keeps that handler's reaction depth, so a
+  reaction cycle through it fails with `events.depth` instead of running
+  until interrupted; a background one is its own lane, so its handler
+  publishing into its own full queue fails with `events.capacity`.
 - `@xandreed/core`: the in-memory file system treats a trailing separator as
   the native one does in `stat` without following links, `rename`, `write`
   and `append`; a refused write no longer leaves a directory at its target.
 - `@xandreed/core`: tool views, compaction and digests decode detached copies
   of a call's stored input and result, so an authored codec that rewrites its
-  input no longer changes what later requests send.
+  input no longer changes what later requests send. A tool whose success
+  schema encodes to a value JSON cannot carry unchanged (a `Date`, a
+  `Uint8Array`, an `Option`, a `Redacted`) now gets its raw view, compaction
+  and digest in a live session too, as a session reopened from its journal
+  already did.
 - `@xandreed/plugin-models`: create credential files privately (0600 from
   their first byte; a missing `.efferent` directory is created 0700, while
   `config.json` keeps the permissions the umask gives), reject corrupt

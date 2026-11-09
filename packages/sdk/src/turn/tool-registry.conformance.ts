@@ -258,8 +258,10 @@ interface KitTurn {
   readonly tools: RunTools
   /** Call a tool at `step` as the loop does: prepared through the open toolkit's execution with its handlers, then run. */
   readonly call: (name: string, params: unknown, step?: number, toolCallId?: string, ordinal?: number) => Effect.Effect<CallResult, unknown>
-  /** Prepare a call as the loop does, without running it. */
+  /** Prepare a call as the loop does, inside step 1 of the run, without running it. */
   readonly prepare: (name: string, params: unknown) => Effect.Effect<PreparedToolCall, unknown>
+  /** Run a prepared call to its end as the loop does: inside step 1 of the run, with a tool call id. */
+  readonly runPrepared: (prepared: PreparedToolCall, toolCallId: string) => Effect.Effect<void, unknown>
   /** How many times `kit_decode`'s parameter codec ran. */
   readonly decodes: Effect.Effect<number>
   /** Another open of this same registry, proving per-tool permits are outside open's turn-local state. */
@@ -420,6 +422,7 @@ export const toolRegistryConformance = (
         tools,
         call,
         prepare: (name, params) => prepareWith(tools, name, params).pipe(asCaller(1, 0)),
+        runPrepared: (prepared, toolCallId) => prepared.run(toolCallId).pipe(Effect.flatMap(Stream.runDrain), asCaller(1, 0)),
         decodes: Ref.get(decodes),
         reopenCall,
         published: run.flush.pipe(Effect.orDie, Effect.andThen(Ref.get(published))),
@@ -868,14 +871,14 @@ export const toolRegistryConformance = (
       const frozen = (value: unknown): boolean => !Predicate.isObject(value) || (Object.isFrozen(value) && Object.values(value).every(frozen))
       yield* expect("prepare-raw-input", JSON.stringify(prepared.input) === JSON.stringify({ payload: { n: "provider" } }) && prepared.input !== params, `the prepared input is ${JSON.stringify(prepared.input)}, or the caller's own object`)
       yield* expect("prepare-raw-input", frozen(prepared.input), "the prepared input can still be changed")
-      yield* Stream.runDrain(yield* prepared.run())
+      yield* turn.runPrepared(prepared, "kit:raw-input")
       yield* expect("prepare-raw-input", JSON.stringify(prepared.input) === JSON.stringify({ payload: { n: "provider" } }) && params.payload.n === "provider", "running the call changed its prepared input or the caller's arguments")
     }))),
     check("preparing every call of a batch starts no handler; each runs only when run", "prepare-before-run", () => inTurn({}, (turn) => Effect.gen(function* () {
       const prepared = yield* Effect.forEach([[Ping.name, { n: 1 }], [DECODE, { payload: { n: "batch" } }]] as const, ([name, params]) => turn.prepare(name, params), { concurrency: 1 })
       const before = yield* turn.ran
       yield* expect("prepare-before-run", before.length === 0, `preparing the batch ran ${before.join()}`)
-      yield* Effect.forEach(prepared, (call) => call.run().pipe(Effect.flatMap(Stream.runDrain)), { concurrency: 1, discard: true })
+      yield* Effect.forEach(prepared, (call, index) => turn.runPrepared(call, `kit:batch:${index}`), { concurrency: 1, discard: true })
       const after = yield* turn.ran
       yield* expect("prepare-before-run", after.join() === `${Ping.name},${DECODE}`, `running the prepared batch ran ${after.join() || "nothing"}`)
     }))),

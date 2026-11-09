@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Ref, Stream } from "effect"
+import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import type { Scope } from "effect"
+import { AiError } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Capabilities, prepareToolkit, RunContext, SessionEnvironment, ToolInterceptor, ToolRegistry } from "@xandreed/core"
+import { Capabilities, CurrentAgentRun, prepareToolkit, RunContext, SessionEnvironment, ToolInterceptor, ToolRegistry } from "@xandreed/core"
 import type { Capability, PreparedToolCall, PreparedToolHandler, PreparedToolkit } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { makeRegistry, toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
@@ -65,6 +66,18 @@ describe("the ToolRegistry kit catches careless registries", () => {
   test("one that runs a call's handler while preparing it fails the prepare-before-run check", async () => {
     const eager = preparing((handler) => ({ prepare: (name, input) => handler.prepare(name, input).pipe(Effect.tap((prepared) => prepared.run().pipe(Effect.flatMap(Stream.runDrain)))) }))
     expect(await failedChecks(toolRegistryConformance(eager))).toContain("prepare-before-run")
+  })
+  test("one whose prepared calls read the caller's run when they run, as the loop always gives them, passes every check", async () => {
+    // A per-run limit, say: legitimate on every call the loop makes, since the loop prepares and runs a call inside its step.
+    const runScoped = preparing((handler) => ({
+      prepare: (name, input) => handler.prepare(name, input).pipe(Effect.map((prepared) => ({
+        ...prepared,
+        run: (id?: string) => Effect.service(CurrentAgentRun).pipe(Effect.flatMap((run) => Option.isNone(run)
+          ? Effect.fail(AiError.make({ module: "Registry", method: "run", reason: new AiError.InvalidRequestError({ description: "a prepared call ran outside a run" }) }))
+          : prepared.run(id))),
+      }))),
+    }))
+    expect(await failedChecks(toolRegistryConformance(runScoped))).toEqual([])
   })
   test("one that ignores per-tool host policy fails policy and interception breaker checks", async () => {
     const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => {
