@@ -1,12 +1,12 @@
 {
   "format": 19,
-  "fingerprint": "a347215cd369abc102646be6b1a81c3d03a2f820eaae9ef93d38add15165a1c2",
+  "fingerprint": "6eed8b27a473a78242075435fc478f67b681c99b176fa9480b777078e71132be",
   "shapes": {
     "SessionHeader": "267ff61941a1cca2320f28a96073530411f6813747ed089a60de77025c45a760",
     "SessionLogEvent": "9ea7d25ab7c0ddc808927c38ea5c39a55e225716eb0898faf41120f52a1e4d69",
     "SessionsState": "df6c6a6570a9116a3ca6a41adaf6bd590205a88f722b754dcf9a193c6e8f8bb4",
     "journal completion.evaluated": "857b12c4cdc85cd23ae0b3d9c9eb77e609cbfc161d536bb0b8b56310cf9f035b",
-    "journal context.built": "007fa61b4a0df78b8a691bf16c73d9ff940d0eba6d514160e45440e3a2fffc97",
+    "journal context.built": "5068afefdede0ee54d07a59f9d2148a8acc85836cc1a998845c97668ed0a5480",
     "journal decision.recorded": "9a25db846bc4d96a14c4f0700701ab098f6e9e326aa524d12fd08c444b16993f",
     "journal inbox.dropped": "ad3946c42f9675e5c44679f2b821aba2d96eca23d013aa73524662fd77b384f2",
     "journal inbox.queued": "c5de6151335853e7ddf5541a41ed49c4ef9a67bd7228d1d88395916c7c8ceb06",
@@ -119,7 +119,7 @@
     },
     {
       "format": 19,
-      "fingerprint": "a347215cd369abc102646be6b1a81c3d03a2f820eaae9ef93d38add15165a1c2"
+      "fingerprint": "6eed8b27a473a78242075435fc478f67b681c99b176fa9480b777078e71132be"
     }
   ]
 }

@@ -5716,7 +5716,7 @@
         {
           "name": "budgetTokens",
           "type": "integer",
-          "required": false
+          "required": true
         },
         {
           "name": "compactions",
@@ -5797,6 +5797,7 @@
           "systemFingerprint",
           "estimatedTokens",
           "reservedTokens",
+          "budgetTokens",
           "compactions",
           "activeTools"
         ],
