@@ -255,9 +255,18 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const kept = [...quiet.filter((seen) => seen.id !== address.id), address]
     return kept.slice(Math.max(0, kept.length - config.inbox.recentSessions))
   }
-  const observe = (address: SessionAddress) => Ref.update(known, (now): Known => Option.exists(HashMap.get(now.waiting, address.id), (seen) => seen.address.owner === address.owner)
-    ? now : { ...now, quiet: recent(now.quiet, address) })
-  const remember = (address: SessionAddress, state: SessionsState) => Ref.update(known, (now): Known => {
+  /**
+   * The address alone, never an incarnation a `SessionRef` carries: what
+   * waits is the owner's input under that id, so a session removed and
+   * created again under it (by any instance) is still refreshed.
+   */
+  const addressOf = (address: SessionAddress): SessionAddress => ({ id: address.id, owner: address.owner })
+  const observe = (observed: SessionAddress) => Ref.update(known, (now): Known => {
+    const address = addressOf(observed)
+    return Option.exists(HashMap.get(now.waiting, address.id), (seen) => seen.address.owner === address.owner) ? now : { ...now, quiet: recent(now.quiet, address) }
+  })
+  const remember = (observed: SessionAddress, state: SessionsState) => Ref.update(known, (now): Known => {
+    const address = addressOf(observed)
     const pending = pendingOf(state).filter((slot) => slot.delivery !== undefined).length
     return pending > 0
       ? { waiting: HashMap.set(now.waiting, address.id, { address, pending }), quiet: now.quiet.filter((seen) => seen.id !== address.id) }

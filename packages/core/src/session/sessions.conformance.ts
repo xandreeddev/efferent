@@ -833,7 +833,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting", surviving > next[1]! && (yield* Ref.get(counts[0]!)) === stopped, "cancelling one subscription stopped another or kept delivering to it")
     })),
 
-    scoped("WaitingInput refreshes only owner-observed queued inputs, excludes notices, and sees foreign claims, release, take, completion and removal", "waiting-input", (owner) => Effect.gen(function* () {
+    scoped("WaitingInput refreshes only owner-observed queued inputs, excludes notices, and sees foreign claims, release, take, completion, removal and a session created again under an observed address", "waiting-input", (owner) => Effect.gen(function* () {
       const [observer, producer] = [yield* leased(), yield* leased()]
       if (Option.isNone(observer.waitingInput)) return
       const probe = observer.waitingInput.value
@@ -879,6 +879,18 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting-input", visible.length === 1 && visible[0]!.session === hidden.id && visible[0]!.pending === 1, "a successful owner-checked read did not observe its session")
       yield* producer.sessions.remove(hidden)
       yield* shows(0, "foreign removal")
+      // A session this observer committed to, removed by another instance and created again under its id and owner, is the
+      // same address: input enqueued into the new one is seen, and idle waits for it.
+      const reused = yield* created(observer.sessions, owner)
+      yield* observer.sessions.transact(reused, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))
+      yield* producer.sessions.remove(reused)
+      yield* producer.sessions.create({ owner, id: reused.id })
+      yield* producer.sessions.enqueue(reused, queued("after-recreate"))
+      const recreated = yield* positive
+      yield* expect("waiting-input", recreated.length === 1 && recreated[0]!.session === reused.id && recreated[0]!.pending === 1,
+        `input enqueued into a session created again under an observed address shows [${recreated.map((count) => `${count.session}:${count.pending}`).join()}]`)
+      const unanswered = yield* Effect.forkScoped(probe.idle)
+      yield* expect("waiting-input", !(yield* settles(unanswered)), "idle completed with input waiting in a session created again under an observed address")
     })),
 
     scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {
