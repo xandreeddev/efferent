@@ -18,7 +18,7 @@ for (const [page, engine] of [["plugins/memory.md", "memory"], ["plugins/rag.md"
     const text = (await readFile(join(root, "packages/website/src/content/docs", page), "utf8")).replace(/\s+/g, " ")
     expect(text).toContain(`knowledgeEngineId("${engine}:${KNOWLEDGE_EXTRACTION_VERSION}"`)
     const versions = [...text.matchAll(/version (\d+) since/g)].map((match) => Number(match[1]))
-    expect(versions.toSorted((a, b) => a - b)).toEqual(Array.from({ length: KNOWLEDGE_EXTRACTION_VERSION - 1 }, (_, index) => index + 2))
+    expect(versions.toSorted((a, b) => a - b)).toEqual(Array.from({ length: Number(KNOWLEDGE_EXTRACTION_VERSION) - 1 }, (_, index) => index + 2))
   })
 
   test(`${page} keeps its own prose above the generated reference`, async () => {
