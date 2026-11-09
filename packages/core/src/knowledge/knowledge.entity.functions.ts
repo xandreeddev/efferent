@@ -428,8 +428,10 @@ export const validateKnowledgeStage = (stage: KnowledgeStage, snapshot: Knowledg
   const memoryById = new Map(allMemories.map((memory) => [String(memory.id), memory]))
   const remaining = new Map<string, number>()
   const dependents = new Map<string, Array<string>>()
+  // Only edges inside the validated graph count: a missing or retired support is `unknownSupport`'s
+  // concern for a staged memory, and publication closes a snapshot memory whose support is retired.
   for (const memory of allMemories) {
-    const supports = Match.valueTags(memory.evidence, { Stated: () => [], Inferred: (value) => value.supports })
+    const supports = Match.valueTags(memory.evidence, { Stated: () => [], Inferred: (value) => value.supports }).filter((id) => memoryById.has(id))
     remaining.set(memory.id, supports.length)
     for (const support of supports) {
       const children = dependents.get(support)

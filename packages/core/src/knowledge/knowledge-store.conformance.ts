@@ -75,7 +75,8 @@ const seed = Effect.fnUntraced(function* (fixture: KnowledgeIndexFixture, source
  * Shared memory/document-store guarantees: replay and immutable revisions, lease fencing,
  * durable staging (its notes included), stage notes kept through restaging and publication, failure reasons, CAS atomicity, exact evidence, isolation, hybrid candidates, source and metadata filters,
  * cosine semantic scores and their similarity floor (applied to the semantic arm alone, before the limit), forgetting,
- * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), a memory's mentions (kept, absent on one
+ * supersession links kept on successors (a retired memory readable by id, a link left dangling by forgetting), superseding the support of an
+ * active inference (published, the inference closed with it), a memory's mentions (kept, absent on one
  * stored without them, refused outside its provenance, and its removal when a mentioned source is forgotten), a memory's event time (kept through
  * staging, publication, search and reads, and absent on one stored without it), corroborations (appended without a new record or a
  * retirement, refused when their memory is no longer active, stripped rather than retired by a later revision, and rebuilt from the surviving sources after
@@ -353,6 +354,28 @@ export const knowledgeStoreConformance = (subject: KnowledgeIndexSubject): Reado
       yield* fixture.index.forget(fixture.scope, seeded.source.ref.id, 50)
       yield* expect("knowledge.supersession-links", Option.isNone(yield* fixture.index.memory(fixture.scope, prior)) && sameJson(linksOf(yield* fixture.index.memory(fixture.scope, successor.id)), Option.some(successor.replaces)),
         "forgetting the earlier source kept its memory readable or removed the successor's link")
+    })),
+    indexCheck("knowledge.supersede-support", (fixture) => Effect.gen(function* () {
+      // A stated memory supports an active inference; a later source supersedes the stated memory.
+      const seeded = yield* seed(fixture)
+      const prior = seeded.stage.memories[0]!
+      const derivedSource = sourceOf(fixture.scope, "Alice likes cafes", "derived")
+      const derivedJob = yield* enqueue(fixture, derivedSource, "derived-job")
+      const inferred: KnowledgeMemory = {
+        ...memoryOf(derivedSource, "inferred"), provenance: [...memoryOf(derivedSource).provenance, ...prior.provenance],
+        evidence: { _tag: "Inferred", supports: [prior.id] }, mentions: [derivedSource.ref, seeded.source.ref],
+      }
+      yield* publishJob(fixture, derivedJob, 30, (version) => ({ ...stageOf(derivedSource, version, "inferred"), memories: [inferred] }))
+      const later = sourceOf(fixture.scope, "Alice prefers tea now", "later")
+      const laterJob = yield* enqueue(fixture, later, "later-job")
+      const successor: KnowledgeMemory = { ...memoryOf(later, "successor"), replaces: [{ id: prior.id, supersession: "change" }] }
+      const published = yield* Effect.result(publishJob(fixture, laterJob, 40, (version) => ({ ...stageOf(later, version, "successor"), memories: [successor], retireMemories: [prior.id] })))
+      yield* expect("knowledge.supersede-support", Result.isSuccess(published), "a stage that supersedes the support of an active inferred memory was refused")
+      const ended = (id: KnowledgeMemory["id"]) => Effect.map(fixture.index.memory(fixture.scope, id), (found) => Option.exists(found, (memory) => Option.contains(memory.knownTo, 41)))
+      const active = (yield* fixture.index.snapshot(fixture.scope)).memories.filter((memory) => Option.isNone(memory.knownTo)).map((memory) => String(memory.id))
+      yield* expect("knowledge.supersede-support", (yield* ended(prior.id)) && (yield* ended(inferred.id)) && sameJson(active, [String(successor.id)]) &&
+        Option.exists(yield* fixture.index.status(fixture.scope, laterJob.id), (job) => job.phase._tag === "Complete"),
+        "superseding a supported memory did not retire it and close its inferred dependent at the publication, or left the job incomplete")
     })),
     indexCheck("knowledge.mentions", (fixture) => Effect.gen(function* () {
       // A memory stored without mentions, as before they existed, reads back without the key.

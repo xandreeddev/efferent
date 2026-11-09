@@ -445,6 +445,20 @@ test("a shared inference DAG visits each evidence node once", () => {
   expect(visits.count).toBeLessThanOrEqual(records.length * 3)
 })
 
+test("a stage that retires the support of an active inference is not a cycle: publication closes the dependent", () => {
+  const stated = memory("one")
+  const inferred: KnowledgeMemory = { ...memory("two"), evidence: { _tag: "Inferred", supports: [stated.id] } }
+  const successor = memory("three")
+  const snapshot = { version: 0, memories: [stated, inferred], graph: emptyGraph }
+  const sources = [source("one"), source("two"), source("three")]
+  expect(validateKnowledgeStage({ ...stage(successor), retireMemories: [stated.id] }, snapshot, sources)).toEqual(Option.none())
+  expect(validateKnowledgeStage(stage(successor), snapshot, sources)).toEqual(Option.none())
+  const cycle: ReadonlyArray<KnowledgeMemory> = [
+    { ...memory("one"), evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("two"), KnowledgeMemoryId.make("gone")] } },
+    { ...memory("two"), evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("one")] } },
+  ]
+  expect(Option.isSome(validateKnowledgeStage(stage(successor), { version: 0, memories: cycle, graph: emptyGraph }, sources))).toBe(true)
+})
 test("entity-only provenance cannot satisfy an inferred routine's recurrence", () => {
   const support: KnowledgeMemory = { ...memory("one"), mentions: [source("one").ref], provenance: ["one", "two", "three"].flatMap((name) => memory(name).provenance) }
   const routine: KnowledgeMemory = { ...memory("routine"), kind: "routine", provenance: support.provenance, evidence: { _tag: "Inferred", supports: [support.id] } }

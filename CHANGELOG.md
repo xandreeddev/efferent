@@ -41,7 +41,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Create credential files privately, reject corrupt fallback tiers before
   writes, preserve auth error causes, and validate SSE event names.
 - Remove quadratic replay/history/media/trace batching, exponential graph
-  validation, lossy progress identities, dead eval helpers and unused assets
+  validation (a stage that supersedes the support of an active inference still
+  publishes and closes it), lossy progress identities, dead eval helpers and unused assets
   and dependencies. Correct provenance comparison and CLI command ownership.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
