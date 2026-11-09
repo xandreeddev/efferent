@@ -22,6 +22,8 @@ export interface WorkspaceToolContext {
   readonly protect: ReadonlyArray<ProtectRule>
   readonly locks: RcMap.RcMap<string, Semaphore.Semaphore>
   readonly resizesImages: boolean
+  /** How a regular expression grep opens its worker: `openRegexSearch`, unless a test starts another program. */
+  readonly openSearch?: (pattern: RegExp) => Effect.Effect<RegexSearch, Failure, Scope.Scope>
 }
 
 /** The services every workspace tool reads on each call, and the `workspace.environment` section on each render: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
@@ -140,7 +142,7 @@ interface Grepping {
  * with ripgrep, which cannot know that ahead). A pattern with a line break
  * is refused (`singleLinePattern`) whichever engine runs.
  */
-export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
+export const grepTool = ({ config, path, openSearch = openRegexSearch }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: GrepTool(config),
   requires: config.grepEngine === "ripgrep" ? [...WORKSPACE_SERVICES, Bash] : WORKSPACE_SERVICES,
   handler: (params) => Effect.scoped(Effect.gen(function* () {
@@ -169,7 +171,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     // start moves the deadline, so `grepTimeoutMs` is spent reading and matching only.
     const worker = (state: Grepping): Effect.Effect<Grepping, Failure, Scope.Scope> => Option.match(state.worker, {
       onSome: () => Effect.succeed(state),
-      onNone: () => openRegexSearch(regex).pipe(Effect.timed, Effect.map(([started, search]) => ({ ...state, deadline: state.deadline + Duration.toMillis(started), worker: Option.some(search) }))),
+      onNone: () => openSearch(regex).pipe(Effect.timed, Effect.map(([started, search]) => ({ ...state, deadline: state.deadline + Duration.toMillis(started), worker: Option.some(search) }))),
     })
     const start: Grepping = { searched: { lines: [], matches: 0, files: 0, skipped: 0, truncated: false, unreadable: [], timedOut: false }, deadline: (yield* Clock.currentTimeMillis) + config.grepTimeoutMs, worker: Option.none() }
     const { searched } = yield* Effect.reduce(files, () => start, (grepping, file) => {

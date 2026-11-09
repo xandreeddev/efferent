@@ -11,7 +11,7 @@ import { plausibleHits } from "./text-search.entity.functions.js"
  * file beside the adapter (a bundled or compiled host has none). It posts
  * `ready` once it listens.
  */
-const matcherScript = `
+export const matcherScript = `
 import { parentPort, workerData } from "node:worker_threads"
 const pattern = new RegExp(workerData.source, workerData.flags)
 parentPort.on("message", ({ lines, cap }) => {

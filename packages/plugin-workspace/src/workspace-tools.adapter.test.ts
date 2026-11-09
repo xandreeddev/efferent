@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Path, RcMap, Schema, Semaphore, Stream } from "effect"
 import type { Scope } from "effect"
 import { Bash, BashError, Capabilities, FileSystem, Failure, ImageResizeError, ImageResizer, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
@@ -14,6 +14,8 @@ import { activateGraph, resolveGraph } from "@xandreed/runtime"
 import { BashLive } from "./bash.adapter.js"
 import { localFileSystem } from "./file-system.adapter.js"
 import { localSystemPlugin, workspaceToolsPlugin, WorkspaceToolsPluginLive } from "./plugin.adapter.js"
+import { grepTool } from "./read-tools.adapter.js"
+import { matcherScript, openRegexSearch } from "./regex-search.adapter.js"
 import { workspaceTools } from "./workspace-tools.adapter.js"
 import { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, workspaceToolsDefaults, WriteResult } from "./workspace-tools.entity.js"
 import type { WorkspaceToolsConfig } from "./workspace-tools.entity.js"
@@ -986,6 +988,33 @@ const memoryGrep = (files: Readonly<Record<string, string>>, params: unknown, op
 
 test("builtin regex grep spends its deadline matching, not starting its worker", async () => {
   expect(await memoryGrep({ "a.txt": "fixture text\n" }, { path: "a.txt", pattern: "fix.ure" }, { grepTimeoutMs: 75 })).toMatchObject({ matches: 1, timedOut: false })
+})
+
+test("builtin regex grep moves its deadline by its worker's start, however slow that start is", async () => {
+  // A worker that takes three times the grep's whole budget to start: only the deadline rule, not a fast start, lets it match.
+  const slowStart = matcherScript.replace('parentPort.postMessage("ready")', 'setTimeout(() => parentPort.postMessage("ready"), 300)')
+  expect(slowStart).not.toBe(matcherScript)
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem()
+    yield* fs.mkdir("/workspace", { recursive: true })
+    yield* fs.write("/workspace/a.txt", "fixture text\n")
+    const tool = grepTool({
+      config: { ...workspaceToolsDefaults, grepEngine: "builtin", tools: ["grep"], grepTimeoutMs: 100 },
+      path: yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer)),
+      protect: [],
+      locks: yield* RcMap.make({ lookup: (_: string) => Semaphore.make(1) }),
+      resizesImages: false,
+      openSearch: (pattern) => openRegexSearch(pattern, slowStart),
+    })
+    return yield* tool.handler({ path: "a.txt", pattern: "fix.ure" }).pipe(Effect.provide(Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))))
+  })))
+  expect(result).toMatchObject({ matches: 1, timedOut: false })
+})
+
+test("the regex worker's program imports node:worker_threads only, so a bundled or compiled host can start it", () => {
+  const imports = [...matcherScript.matchAll(/\bimport\b[^"'`]*["'`]([^"'`]+)["'`]/g)].map((found) => found[1])
+  expect(imports).toEqual(["node:worker_threads"])
+  expect(matcherScript).not.toMatch(/\brequire\s*\(|\bimport\s*\(|import\.meta|new URL\(/)
 })
 
 test("builtin regex grep over many files leaves no listener behind on its worker", async () => {
