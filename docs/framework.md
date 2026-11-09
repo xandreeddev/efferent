@@ -2406,7 +2406,9 @@ option it honours `.gitignore`, `.ignore` and other ripgrep ignore rules.
 A timeout returns partial results with `timedOut: true` and a note in grep view
 version 4. Builtin regex `grep` uses one scoped worker, started at the first
 file it searches, and a shared `grepTimeoutMs` deadline that the worker's
-start does not use. Timeout or interruption terminates the worker,
+start does not use. At most four such workers run in the process at once,
+whatever its hosts and sessions; a grep waiting for one does not use its
+deadline for the wait. Timeout or interruption terminates the worker,
 including native backtracking over overlapping alternatives. It returns partial
 results with `timedOut: true`. Literal matching remains local. Nested repetition
 is still refused early; line clipping controls displayed/searched text, not

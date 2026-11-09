@@ -200,7 +200,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   crashing the host process or waiting out the deadline, and a search over
   many files no longer adds worker listeners per file. The grep description
   the model reads says the search stops after `grepTimeoutMs` whichever
-  engine runs (it said so only for ripgrep).
+  engine runs (it said so only for ripgrep). At most four regex workers run
+  in a process at once, however many hosts and sessions grep there; a grep
+  waits for a free one (up to 10 s, then `SearchFailed`) without spending
+  its deadline on the wait.
 - `@xandreed/core`: a turn-event subscription made inside another
   subscription's handler no longer keeps that handler's reaction depth, so a
   reaction cycle through it fails with `events.depth` instead of running

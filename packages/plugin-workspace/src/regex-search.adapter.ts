@@ -1,5 +1,5 @@
 import { Worker } from "node:worker_threads"
-import { Deferred, Duration, Effect, Exit, Result, Schema } from "effect"
+import { Deferred, Duration, Effect, Exit, Result, Schema, Semaphore } from "effect"
 import type { Failure } from "@xandreed/core"
 import { LineHits } from "./text-search.entity.js"
 import { plausibleHits } from "./text-search.entity.functions.js"
@@ -27,6 +27,15 @@ parentPort.on("message", ({ lines, cap }) => {
 parentPort.postMessage("ready")
 `
 
+/** How many regex workers the process runs at once, whatever its hosts and sessions. */
+export const REGEX_WORKERS = 4
+
+/**
+ * The process's regex worker slots, one per worker while it runs. A module's
+ * own, so every grep tool of every host in the process shares the bound.
+ */
+const workerSlots = Semaphore.makeUnsafe(REGEX_WORKERS)
+
 /** How long a worker may take to start before the grep fails; the grep's deadline is not charged for it. */
 const START_MS = 10_000
 
@@ -44,7 +53,10 @@ export type RegexSearch = (lines: ReadonlyArray<string>, cap: number) => Effect.
 
 /**
  * One scoped worker per grep, opened at its first file to search and
- * returned once it has started; one file at a time. Termination interrupts
+ * returned once it has started; one file at a time. At most
+ * `REGEX_WORKERS` run in the process at once: an open waits for a slot (up
+ * to `START_MS`, then fails with `SearchFailed`), and the grep's deadline
+ * is not charged for that wait either. Termination interrupts
  * native regexp backtracking. The worker's `error` and `exit` are heard for
  * its whole life, so a worker that fails or dies (between files too) fails
  * the next search at once with what happened, and never the host process.
@@ -55,6 +67,10 @@ export const openRegexSearch = Effect.fn("workspace.regex.open")(function* (patt
   const ready = yield* Deferred.make<void>()
   const stop = (message: string) => (cause: unknown) => { Deferred.doneUnsafe(stopped, Exit.fail({ failure: searchFailed(message), cause })) }
   const failed = Deferred.await(stopped).pipe(Effect.tapError(logged), Effect.mapError((stopped) => stopped.failure))
+  // A slot for the worker's whole life, released with the scope; a wait interrupted takes none.
+  yield* Effect.uninterruptibleMask((restore) => restore(Semaphore.take(workerSlots, 1).pipe(
+    Effect.timeoutOrElse({ duration: Duration.millis(START_MS), orElse: () => Effect.fail(searchFailed(`no regular expression worker was free within ${START_MS / 1000} s`)) }),
+  )).pipe(Effect.andThen(Effect.addFinalizer(() => Semaphore.release(workerSlots, 1)))))
   const worker = yield* Effect.acquireRelease(
     Effect.try({
       try: () => {

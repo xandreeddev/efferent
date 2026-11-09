@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Deferred, Effect, Fiber, Ref } from "effect"
 import type { Scope } from "effect"
-import { openRegexSearch } from "./regex-search.adapter.js"
+import { openRegexSearch, REGEX_WORKERS } from "./regex-search.adapter.js"
 import { matchingLines } from "./text-search.entity.functions.js"
 
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(effect))
@@ -58,4 +58,27 @@ test("an answer that is not hits for the lines sent is an invalid result", async
     }))
     expect(exit).toEqual(searchFailed("the regular expression worker returned an invalid result"))
   }
+})
+
+test("at most REGEX_WORKERS regex workers run at once in the process: one more opens only once another is closed", async () => {
+  const observed = await run(Effect.gen(function* () {
+    const close = yield* Deferred.make<void>()
+    const opened = yield* Ref.make(0)
+    // Each held open until `close`: every worker the process may run, then one more.
+    const holding = (index: number) => Effect.scoped(openRegexSearch(/a/).pipe(
+      Effect.andThen(Ref.update(opened, (count) => count + 1)),
+      Effect.andThen(index === 0 ? Deferred.await(close) : Effect.never),
+    ))
+    const held = yield* Effect.forEach(Array.from({ length: REGEX_WORKERS }, (_, index) => index), (index) => Effect.forkChild(holding(index)), { concurrency: 1 })
+    yield* Ref.get(opened).pipe(Effect.delay("20 millis"), Effect.repeat({ until: (count) => count === REGEX_WORKERS }))
+    const extra = yield* Effect.forkChild(Effect.scoped(openRegexSearch(/b/).pipe(Effect.andThen(Ref.update(opened, (count) => count + 1)))))
+    yield* Effect.sleep("300 millis")
+    const waiting = yield* Ref.get(opened)
+    yield* Deferred.succeed(close, undefined)
+    yield* Fiber.join(extra)
+    const after = yield* Ref.get(opened)
+    yield* Effect.forEach(held, (fiber) => Fiber.interrupt(fiber), { concurrency: 1, discard: true })
+    return { waiting, after }
+  }))
+  expect(observed).toEqual({ waiting: REGEX_WORKERS, after: REGEX_WORKERS + 1 })
 })

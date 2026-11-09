@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, 
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Path, RcMap, Schema, Semaphore, Stream } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Path, RcMap, Ref, Schema, Semaphore, Stream } from "effect"
 import type { Scope } from "effect"
 import { Bash, BashError, Capabilities, FileSystem, Failure, ImageResizeError, ImageResizer, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
@@ -15,7 +15,7 @@ import { BashLive } from "./bash.adapter.js"
 import { localFileSystem } from "./file-system.adapter.js"
 import { localSystemPlugin, workspaceToolsPlugin, WorkspaceToolsPluginLive } from "./plugin.adapter.js"
 import { grepTool } from "./read-tools.adapter.js"
-import { matcherScript, openRegexSearch } from "./regex-search.adapter.js"
+import { matcherScript, openRegexSearch, REGEX_WORKERS } from "./regex-search.adapter.js"
 import { workspaceTools } from "./workspace-tools.adapter.js"
 import { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, workspaceToolsDefaults, WriteResult } from "./workspace-tools.entity.js"
 import type { WorkspaceToolsConfig } from "./workspace-tools.entity.js"
@@ -1006,6 +1006,25 @@ test("builtin regex grep moves its deadline by its worker's start, however slow 
       resizesImages: false,
       openSearch: (pattern) => openRegexSearch(pattern, slowStart),
     })
+    return yield* tool.handler({ path: "a.txt", pattern: "fix.ure" }).pipe(Effect.provide(Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))))
+  })))
+  expect(result).toMatchObject({ matches: 1, timedOut: false })
+})
+
+test("builtin regex grep waiting for a free worker slot does not spend its deadline on the wait", async () => {
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem()
+    yield* fs.mkdir("/workspace", { recursive: true })
+    yield* fs.write("/workspace/a.txt", "fixture text\n")
+    const release = yield* Deferred.make<void>()
+    const held = yield* Ref.make(0)
+    // Every worker slot of the process is taken for three times the grep's whole budget.
+    yield* Effect.forEach(Array.from({ length: REGEX_WORKERS }), () => Effect.forkChild(Effect.scoped(openRegexSearch(/x/).pipe(
+      Effect.andThen(Ref.update(held, (count) => count + 1)), Effect.andThen(Deferred.await(release))))), { concurrency: 1, discard: true })
+    yield* Ref.get(held).pipe(Effect.delay("20 millis"), Effect.repeat({ until: (count) => count === REGEX_WORKERS }))
+    yield* Effect.forkChild(Effect.sleep("300 millis").pipe(Effect.andThen(Deferred.succeed(release, undefined))))
+    const tools = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", tools: ["grep"], grepTimeoutMs: 100 })
+    const tool = tools.tools.find((entry) => entry.tool.name === "grep")!
     return yield* tool.handler({ path: "a.txt", pattern: "fix.ure" }).pipe(Effect.provide(Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/workspace" }))))
   })))
   expect(result).toMatchObject({ matches: 1, timedOut: false })
