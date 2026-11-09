@@ -904,7 +904,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const meta = options?.meta
     const take = options?.take ?? "all"
     const selected = (slot: SessionsState["inbox"][number]): boolean => take === "all" || (take === "inputs" ? slot.delivery !== undefined : slot.delivery === undefined)
-    const hasWaiting = owned(address).pipe(Effect.flatMap((head) => stateOf(head).pipe(Effect.mapError(storage("session.state")))),
+    // The session the drain resolved first, its incarnation included: every turn it opens, and every candidate it picks, is of that session, never of one created again under its id meanwhile.
+    const reference = sessionRef(yield* owned(address))
+    const hasWaiting = owned(reference).pipe(Effect.flatMap((head) => stateOf(head).pipe(Effect.mapError(storage("session.state")))),
       Effect.map((state) => pendingOf(state).some(selected)))
     /**
      * What an inbox turn is begun with besides its run id and `meta`, written
@@ -920,7 +922,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const once = (first: boolean): Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> => Effect.scoped(Effect.gen(function* () {
       const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
       const begun = begunWith(first)
-      const head = yield* owned(address)
+      const head = yield* owned(reference)
       const state = yield* stateOf(head).pipe(Effect.mapError(storage("session.state")))
       const held = yield* heldTurn(head, state, holder)
       const available = Option.isNone(held) || begun.takeOver === true ? state.inbox : pendingOf(state)
@@ -928,7 +930,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (candidate === undefined) return Option.none<boolean>()
       const input: BeginTurn = candidate.delivery === undefined ? { _tag: "Inbox", runId, ...begun, ...(meta === undefined ? {} : { meta }) }
         : { _tag: "Queued", input: candidate.id, runId, ...begun, ...(meta === undefined ? {} : { meta }) }
-      const open = yield* openTurn(address, input)
+      const open = yield* openTurn(reference, input)
       // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
       // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.

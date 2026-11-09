@@ -424,9 +424,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
 
     scoped("a turn's meta is stored, admitted and shown to the host's admission, {} when none is given, and the inbox's from drain", "meta", (owner) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])
-      const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, canonicalJson(turn.meta)]).pipe(Effect.andThen(open)) })
+      const named = yield* Ref.make<ReadonlyArray<string>>([])
+      const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, canonicalJson(turn.meta)]).pipe(
+        Effect.andThen(Ref.update(named, (all) => [...all, canonicalJson(turn.session)])), Effect.andThen(open)) })
       const { sessions } = yield* leased(LONG, recording)
-      const address = yield* created(sessions, owner)
+      const made = yield* sessions.create({ owner })
+      const address: SessionAddress = { id: made.header.id, owner }
       const shown = yield* Effect.scoped(sessions.begin(address, { ...say("one", "k1"), meta: { tenant: "acme", nested: { n: 1 } } }).pipe(Effect.tap((writer) => writer.end(completed)),
         Effect.map((writer) => [canonicalJson(writer.admitted.meta), canonicalJson(writer.started.data.meta ?? null)])))
       yield* expect("meta", shown.every((json) => json === canonicalJson({ tenant: "acme", nested: { n: 1 } })), `the turn's meta was admitted and stored as ${shown.join(" and ")}`)
@@ -439,6 +442,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("meta", (yield* Ref.get(drained)).join() === [canonicalJson({ source: "drain" }), canonicalJson({ source: "drain" })].join(), `the inbox turn's meta was ${(yield* Ref.get(drained)).join(" and ")}`)
       const admitted = (yield* Ref.get(seen)).join(" ")
       yield* expect("meta", admitted === [canonicalJson({ tenant: "acme", nested: { n: 1 } }), "{}", canonicalJson({ source: "drain" })].join(" "), `the host's admission saw ${admitted}`)
+      // The admission is shown the session as the begin resolved it, with its incarnation: the one its views show.
+      const view = yield* sessions.get(address)
+      const reference = canonicalJson({ id: address.id, owner, incarnation: view.incarnation })
+      const sessionsNamed = yield* Ref.get(named)
+      yield* expect("meta", made.incarnation === view.incarnation && sessionsNamed.length === 3 && sessionsNamed.every((json) => json === reference),
+        `the host's admission was shown ${sessionsNamed.join(" and ")}, the session's views ${canonicalJson([made.incarnation, view.incarnation])}`)
     })),
 
     scoped("only the last user's turn, cancelled or interrupted, is resumed; every other is NotResumable with why, and nothing opens", "resume", (owner) => Effect.gen(function* () {

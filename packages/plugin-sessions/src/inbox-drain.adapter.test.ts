@@ -44,7 +44,7 @@ describe("InboxDrainLive", () => {
     }])
     const view: Effect.Effect<SessionView> = Effect.gen(function* () {
       const events = yield* Ref.get(stored)
-      return { header: { ...address, origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, seq: events.length, updatedAt: 0,
+      return { header: { ...address, origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, incarnation: SessionIncarnation.make("fake"), seq: events.length, updatedAt: 0,
         turns: events.some((event) => event.kind === "turn.started") ? 1 : 0, title: Option.none(), open: yield* Ref.get(open), pending: (yield* Ref.get(pending)) ? 1 : 0 }
     })
     const fake = Sessions.of({

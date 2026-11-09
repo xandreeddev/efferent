@@ -181,6 +181,16 @@ export interface TurnWriter {
  * of a turn it ends to its caller (`TurnResult.pending`), the closer that
  * drains; `drain` ends its own turns and drains what they leave.
  * Reads never write: loading or following a session runs nothing.
+ *
+ * Every call that names a session takes its `SessionAddress` (id and
+ * owner): another owner's address is `SessionMissing`. An address that also
+ * carries an `incarnation` (a `SessionRef`: `SessionView.incarnation` with
+ * the id and owner, `AdmittedTurn.session`, `TurnToAdmit.session`) is fenced
+ * to that life of the session: once it is removed and created again under
+ * its id, the address is `SessionMissing`, so a host that keeps it acts on
+ * the session it read and never on its replacement. An address without one
+ * names whichever session holds the id for that owner at each call; one call
+ * keeps the session it resolved first (a drain all its turns).
  */
 export class Sessions extends Context.Service<Sessions, {
   /**

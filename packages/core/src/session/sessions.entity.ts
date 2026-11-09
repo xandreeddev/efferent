@@ -5,7 +5,7 @@ import { RunId } from "../domain/run.entity.js"
 import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { JsonObject, SessionRef, SessionHeader, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
+import { JsonObject, SessionIncarnation, SessionRef, SessionHeader, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
 import { TaskRef } from "./tasks.entity.js"
 
 /*
@@ -68,6 +68,8 @@ export type OpenTurn = typeof OpenTurn.Type
 /** One session as a host lists or shows it. `open` is none once its lease has run out. */
 export const SessionView = Schema.Struct({
   header: SessionHeader,
+  /** This life of the session: with the header's id and owner, the `SessionRef` that fences later calls to it. */
+  incarnation: SessionIncarnation,
   seq: Schema.Int,
   updatedAt: Schema.Number,
   turns: Schema.Int,

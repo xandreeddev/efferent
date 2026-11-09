@@ -185,6 +185,7 @@ export const closedState = (state: State, reason: TurnEndReason, maxAttempts: nu
 export const viewOf = (head: SessionHead, state: State, holder: Holder): Effect.Effect<SessionView> =>
   heldTurn(head, state, holder).pipe(Effect.map((open) => ({
     header: head.header,
+    incarnation: head.incarnation,
     seq: head.seq,
     updatedAt: head.updatedAt,
     turns: state.turns,

@@ -16,7 +16,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   commits, removals and fork lineage require that reference. Creation takes
   the header and initial state atomically. `head(id)` remains a trusted
   bootstrap lookup; hosts must authorize its returned owner before use.
-  `AdmittedTurn.session` and `CommittedTurn.session` carry the full reference.
+  `AdmittedTurn.session`, `CommittedTurn.session` and `TurnToAdmit.session`
+  carry the full reference, and `SessionView` shows the session's
+  `incarnation`: a `Sessions` call given an address with one is fenced to
+  that life of the session (`SessionMissing` once it is removed and created
+  again), and a drain keeps the session it resolved first for all its turns.
   Sessions conformance subjects expose a raw unsupported-format snapshot probe.
 - Standalone loops and custom registries use `prepareToolkit` around their
   Effect toolkit. Parameters decode once before any handler runs; immutable

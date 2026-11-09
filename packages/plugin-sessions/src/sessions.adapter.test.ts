@@ -1706,3 +1706,42 @@ test.each(["read", "remove"] as const)("a paused %s cannot reach a replacement o
     expect((yield* concurrent!.read(replacement)).map((event) => event.kind)).toEqual(["audit.secret"])
   }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
 })))
+
+test("an address with an incarnation is fenced to that life of the session: once it is removed and created again, every call with it is SessionMissing", () => withLog((log) => Effect.gen(function* () {
+  const [sessions] = yield* instancesOver(log, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const address: SessionAddress = { id: view.header.id, owner }
+  const reference = { ...address, incarnation: view.incarnation }
+  expect((yield* sessions!.get(reference)).incarnation).toBe(view.incarnation)
+  yield* sessions!.remove(reference)
+  const again = yield* sessions!.create({ owner, id: address.id })
+  expect(again.incarnation).not.toBe(view.incarnation)
+  const queued = { id: InboxItemId.make("q1"), userMessage: new UserMessage({ text: "late" }), delivery: "next" as const, source: {} }
+  const refused = [
+    yield* Effect.flip(sessions!.get(reference)),
+    yield* Effect.flip(sessions!.cancel(reference, 1)),
+    yield* Effect.flip(sessions!.enqueue(reference, queued)),
+    yield* Effect.flip(Effect.scoped(sessions!.begin(reference, say("late")))),
+    yield* Effect.flip(sessions!.remove(reference)),
+  ].map((error) => error._tag)
+  expect(refused).toEqual(["SessionMissing", "SessionMissing", "SessionMissing", "SessionMissing", "SessionMissing"])
+  expect((yield* sessions!.get(address)).incarnation).toBe(again.incarnation)
+  expect(yield* all(sessions!, address)).toEqual([])
+})))
+
+test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it", () => withLog((log) => Effect.gen(function* () {
+  const [sessions, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
+  const address = yield* created(sessions!)
+  yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "the first notice" })
+  const runs = yield* Ref.make(0)
+  const drained = yield* Effect.result(sessions!.drain(address, () => Ref.getAndUpdate(runs, (n) => n + 1).pipe(Effect.flatMap((n) => n > 0 ? Effect.void : Effect.gen(function* () {
+    yield* other!.remove(address)
+    yield* other!.create({ owner, id: address.id })
+    yield* other!.deliver(address, { id: InboxItemId.make("i2"), source: {}, content: "a notice for the replacement" })
+  }).pipe(Effect.orDie)))))
+  expect(yield* Ref.get(runs)).toBe(1)
+  expect(drained._tag).toBe("Failure")
+  if (drained._tag === "Failure") expect(drained.failure._tag).toBe("SessionMissing")
+  expect(yield* all(other!, address)).toEqual(["inbox.queued"])
+  expect((yield* other!.get(address)).pending).toBe(1)
+})))
