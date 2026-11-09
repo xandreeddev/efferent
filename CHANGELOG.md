@@ -8,125 +8,214 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- Session stores must be fresh. Point `SessionLogFilesLive`,
+  `SessionLogSqliteLive` and their plugins' `path` at a new empty directory
+  or file: a store an earlier release wrote is refused at open with
+  `store.version`. A custom `SessionLog` backend needs a fresh namespace
+  too: every session stored in format 18 or earlier fails every `Sessions`
+  operation, reads and `list` included, with `session.version`. There is no
+  conversion. Read or export the conversations you need with 0.19.2 before
+  upgrading; old stores are never modified or deleted, so remove them
+  yourself when you no longer need them.
+- A custom `SessionLog` implements the new port: `create({ header, state })`;
+  `read`, `commit` and `remove` take a `SessionRef` (`sessionRef(head)`)
+  instead of a `ConversationId`; a fork's parent and `list({ parent })`
+  name the parent by its `SessionRef`; and `remove` fails with
+  `SessionMissing` for a missing, removed, stale or other owner's reference.
+  It must pass `sessionLogConformance`, `sessionLogRecoveryConformance` and
+  `sessionsConformance` as they now are.
+- Code that calls `SessionLog.remove` itself and relied on removing twice
+  doing nothing handles `SessionMissing`. A file-log removal that stopped
+  after its tombstone (a crash, an unreachable mount) is finished by
+  removing the same reference again, which then reports `SessionMissing`,
+  or by the next open.
+- Code that reads `TurnToAdmit.session`, `AdmittedTurn.session` or
+  `CommittedTurn.session` receives a `SessionRef` (id, owner and
+  incarnation). A stream from `Sessions.changes` can now fail
+  (`SessionMissing`, `SessionLogError`): handle it where it is run.
+- Standalone loops and custom registries wrap their Effect toolkit with
+  `prepareToolkit` (`RunTools.toolkit` is a `PreparedToolkit`); `runLoop`
+  fails with `config.options` when its toolkit was not prepared.
+- The `capacity` of a background `TurnEvents.subscribe` must be a positive
+  safe integer; replace `Infinity` with a finite size. A background handler
+  that publishes into its own subscription's full queue gets
+  `events.capacity` instead of growing the queue.
+- `AuthStoreConformanceOptions` and `SettingsStoreConformanceOptions` are
+  replaced by `AuthStoreSubject` and `SettingsStoreSubject`: give the kits a
+  subject that opens fresh scoped fixtures for each check, never a host's
+  real store.
+- A Sessions kit subject's `newerFormat` probe returns an effect that reads a
+  snapshot of the stored head (it may stamp any format but the current one).
+- A model on the OpenAI-compatible route that streams more than 128 tool
+  calls in one reply, more than 1,048,576 characters of arguments for one
+  call, or a line longer than 8,388,608 characters now fails with
+  `model.invalid-response`; the bounds are not configurable.
+
 ### Breaking
 
-- Session logs require fresh stores: file layout 2, SQLite schema 3 and stored
-  format 19. Older or unmarked nonempty stores are refused without migration
-  or deletion. Session references include owner and incarnation; reads,
-  commits, removals and fork lineage require that reference. Creation takes
-  the header and initial state atomically. `head(id)` remains a trusted
-  bootstrap lookup; hosts must authorize its returned owner before use.
-  `AdmittedTurn.session`, `CommittedTurn.session` and `TurnToAdmit.session`
-  carry the full reference, and `SessionView` shows the session's
-  `incarnation`: a `Sessions` call given an address with one is fenced to
-  that life of the session (`SessionMissing` once it is removed and created
-  again), and a drain keeps the session it resolved first for all its turns.
+- `@xandreed/core`: the `SessionLog` port. `create(header)` becomes
+  `create({ header, state })`, which creates the header and initial state
+  atomically. `read`, `commit` and `remove` take a `SessionRef`
+  (`{ id, owner, incarnation }`); `SessionCommit.incarnation` is removed,
+  the reference carries it. `SessionListQuery.parent` is a `SessionRef`
+  instead of a `ConversationId`, and `SessionLineage` (a header's `parent`)
+  gains `owner` and `incarnation`. `head(id)` remains a trusted bootstrap
+  lookup; hosts must authorize its returned owner before use.
+  `SessionLog.remove` is no longer idempotent: a missing, removed, stale or
+  wrong-owner reference fails with `SessionMissing` (the file log first
+  finishes what a removal stopped part way left of a removed reference).
+- `@xandreed/core`: `AdmittedTurn.session`, `CommittedTurn.session` and
+  `TurnToAdmit.session` carry the full reference (`SessionRef` instead of
+  `SessionAddress`), and `SessionView` shows the session's `incarnation`: a
+  `Sessions` call given an address with one is fenced to that life of the
+  session (`SessionMissing` once it is removed and created again), and a
+  drain keeps the session it resolved first for all its turns.
   `Sessions.changes` follows only the owner's session: its stream fails with
   `SessionMissing` for another owner's address or a missing session, and
   with `SessionLogError` for a store failure.
-  Sessions conformance subjects expose an unsupported-format probe
-  (`newerFormat`: any format but the current one, refused for reads too)
-  that returns a snapshot of the stored head. `SessionLog.remove` is no
-  longer idempotent: a missing, removed, stale or wrong-owner reference
-  fails with `SessionMissing` (the file log first finishes what a removal
-  stopped part way left of a removed reference).
-  The Sessions kit also requires another owner's cancel of an open turn, and
-  of a turn sealed on the cancelling instance, to fail with `SessionMissing`
-  and change nothing.
-- Standalone loops and custom registries use `prepareToolkit` around their
-  Effect toolkit. Parameters decode once before any handler runs; immutable
-  raw input remains the durable evidence. Input is read as JSON text would
+- `@xandreed/plugin-sessions`: sessions are stored in format 19 only
+  (`STORED_FORMAT`). A session in any other format, older, newer or
+  unmarked, is refused for every operation, `get`, `list`, `read` and
+  `remove` included, with `session.version`, and one such session fails its
+  owner's whole `list`.
+- `@xandreed/plugin-session-files` and `@xandreed/plugin-session-sqlite`:
+  only file layout 2 and SQLite schema 3 open. Older or newer stores and
+  unmarked nonempty ones are refused with `store.version` without
+  migration or deletion.
+- `@xandreed/core`: the Sessions kit. Its subjects expose an
+  unsupported-format probe (`newerFormat`: any format but the current one,
+  refused for reads too) that returns a snapshot of the stored head. The kit
+  also requires another owner's cancel of an open turn, and of a turn
+  sealed on the cancelling instance, to fail with `SessionMissing` and
+  change nothing.
+- `@xandreed/core`: `RunTools.toolkit` is a `PreparedToolkit`: standalone
+  loops and custom registries use `prepareToolkit` around their Effect
+  toolkit. Parameters decode once before any handler runs; immutable raw
+  input remains the durable evidence. Input is read as JSON text would
   carry it: host-planned params may leave optional fields `undefined` (left
-  out) and hold `toJSON` values such as a `Date` (their JSON form).
-  `toolRegistryConformance` calls tools through that boundary and checks it
-  (`prepare-decode-once`, `prepare-raw-input`, `prepare-before-run`); `runLoop`
-  fails with `config.options` when its toolkit has no `execution`. Tool and schema objects are unchanged.
-- Auth/settings conformance kits take subjects that open fresh scoped fixtures
-  per check, including probes for every backing tier; the checks restore
-  nothing, so a fixture must never be a host's real store. A fixture that
-  supplies probes for a capability its subject does not declare (`refresh`,
-  `corrupt`) fails every check, and the AuthStore kit's `corrupt` check also
-  requires that a `set` refused on damaged data wrote nothing.
-- A background turn-event handler publishing into its own subscription's full
-  queue fails with `events.capacity`; into another subscription's full queue
-  it waits for room. A background `capacity` must be a positive safe integer:
-  `Infinity` (previously an unbounded lane) and other values die with
-  `config.limits` at subscribe. Provider SSE permits at most 128 tool calls,
+  out) and hold `toJSON` values such as a `Date` (their JSON form). Tool and
+  schema objects are unchanged. `@xandreed/sdk`: `toolRegistryConformance`
+  calls tools through that boundary and checks it (`prepare-decode-once`,
+  `prepare-raw-input`, `prepare-before-run`). `@xandreed/plugin-agent-loop`:
+  `runLoop` fails with `config.options` when its toolkit has no
+  `execution`.
+- `@xandreed/plugin-models`: `AuthStoreConformanceOptions` and
+  `SettingsStoreConformanceOptions` are replaced by `AuthStoreSubject` and
+  `SettingsStoreSubject`. The auth/settings kits take subjects that open
+  fresh scoped fixtures per check, including probes for every backing tier;
+  the checks restore nothing, so a fixture must never be a host's real
+  store. A fixture that supplies probes for a capability its subject does
+  not declare (`refresh`, `corrupt`) fails every check, and the AuthStore
+  kit's `corrupt` check also requires that a `set` refused on damaged data
+  wrote nothing.
+- `@xandreed/core`: a background turn-event handler publishing into its own
+  subscription's full queue fails with `events.capacity`; into another
+  subscription's full queue it waits for room. A background `capacity` must
+  be a positive safe integer: `Infinity` (previously an unbounded lane) and
+  other values die with `config.limits` at subscribe.
+- `@xandreed/plugin-models`: provider SSE permits at most 128 tool calls,
   1,048,576 characters (UTF-16 code units) of accumulated arguments per call
   and lines of at most 8,388,608 characters; a longer line fails the stream
   with `InvalidResponseError` before it is decoded. A tool-call index the
   stream sends must be a nonnegative safe integer; one it leaves out or sends
   as `null` is call 0, as before.
-- Blanket `no-let` and `no-loop-statements` gates are removed. Confined builders
-  are allowed; resource ownership, typed errors and architectural boundaries
-  remain enforced. No service keys are renamed.
+- `@xandreed/core`: `journalSchemaOf("context.built")` requires
+  `budgetTokens`; a record without it (written before 0.14.0) no longer
+  decodes, since only the current stored format is read.
+
+### Added
+
+- `@xandreed/core`: `SessionRef`, `sessionRef` (the reference of a head)
+  and `sameSession`; `prepareToolkit` with `PreparedToolkit`,
+  `PreparedToolCall`, `PreparedToolHandler` and `PreparedToolExecution`;
+  the `events.capacity` harness code; `SessionView.incarnation`.
+- `@xandreed/core`: the knowledge kit's `knowledge.supersede-support`
+  check: a stage that supersedes the support of an active inferred memory
+  publishes and closes that memory.
 
 ### Fixed
 
 - Fence session operations against replacement owners and incarnations, check
   sealed-turn cancellation ownership, and retain immutable file generations
   and tombstones through removal races and crashes.
-- Removing a session from the file log deletes its header, metadata, initial
-  state, commits and quarantined bytes, and its children's: only a minimal
-  claim (id, incarnation, creation time) and a tombstone stay. A removal
-  that fails or stops after its tombstone is finished by removing the
-  reference again or by the next open, and a creation that stopped after
-  its claim is settled the same way. Listing and removing read only the
-  sessions not removed, so their work no longer grows with every session
-  ever created. Another session's damaged header no longer fails a listing
-  or a removal, and a reference whose id or incarnation is not a UUID is
-  `SessionMissing` before any path is built from it. As in 0.19.2, two
-  handles may open a fresh directory at once, and every open checks for
-  hard links (a store copied onto a mount without them is refused with
-  `store.open`).
-- The in-memory `SessionLog` refuses a fork parent of another owner with
-  `SessionMissing`, as the file and SQLite logs do, and its removal follows
-  only children that name the removed session whole. The log kit's `lineage`
-  check requires that refusal and reads, commits to and removes the captured
-  references of removed sessions and their children directly, so a store
-  that still serves them fails it.
-- The SQLite log reads an existing file's schema on a read-only connection
-  before it opens it for writing: an unsupported database is refused with
-  `store.version` and keeps its mode, its WAL and its main file.
-- On one `Sessions` instance, a turn still held in a session that was removed
-  and created again under its id no longer hides the new session's turn of
-  the same number: `TurnActivity` lists the live turn, and `TurnShutdown`
-  closes it with `turn.shutdown`. `WaitingInput` keeps refreshing an observed
-  address after its session is removed and created again elsewhere, so input
-  enqueued into the new one is counted and `idle` waits for it. A begin
-  counts in `TurnActivity` before its first store read again, and that read
-  stays interruptible, so a begin waiting on a stalled store stops when
-  interrupted. The SessionLog recovery kit's `interrupted-commit` check
-  interrupts the commit itself again, never a head read before it.
+- `@xandreed/plugin-session-files`: removing a session deletes its header,
+  metadata, initial state, commits and quarantined bytes, and its
+  children's: only a minimal claim (id, incarnation, creation time) and a
+  tombstone stay. A removal that fails or stops after its tombstone is
+  finished by removing the reference again or by the next open, and a
+  creation that stopped after its claim is settled the same way. Listing and
+  removing read only the sessions not removed, so their work no longer grows
+  with every session ever created. Another session's damaged header no
+  longer fails a listing or a removal, and a reference whose id or
+  incarnation is not a UUID is `SessionMissing` before any path is built
+  from it. As in 0.19.2, two handles may open a fresh directory at once, and
+  every open checks for hard links (a store copied onto a mount without them
+  is refused with `store.open`). A read after a position finds its first
+  commit by a binary search over the commits' first lines, so the commits
+  before it are not read.
+- `@xandreed/core`: the in-memory `SessionLog` refuses a fork parent of
+  another owner with `SessionMissing`, as the file and SQLite logs do, and
+  its removal follows only children that name the removed session whole.
+  The log kit's `lineage` check requires that refusal and reads, commits to
+  and removes the captured references of removed sessions and their children
+  directly, so a store that still serves them fails it.
+- `@xandreed/plugin-session-sqlite`: the log reads an existing file's schema
+  on a read-only connection before it opens it for writing: an unsupported
+  database is refused with `store.version` and keeps its mode, its WAL and
+  its main file.
+- `@xandreed/plugin-sessions`: on one `Sessions` instance, a turn still held
+  in a session that was removed and created again under its id no longer
+  hides the new session's turn of the same number: `TurnActivity` lists the
+  live turn, and `TurnShutdown` closes it with `turn.shutdown`.
+  `WaitingInput` keeps refreshing an observed address after its session is
+  removed and created again elsewhere, so input enqueued into the new one is
+  counted and `idle` waits for it. A begin counts in `TurnActivity` before
+  its first store read again, and that read stays interruptible, so a begin
+  waiting on a stalled store stops when interrupted. `@xandreed/core`: the
+  SessionLog recovery kit's `interrupted-commit` check interrupts the commit
+  itself again, never a head read before it.
 - Settle model-attempt acknowledgements on ledger defects, close resources
   outside registry admission, bound event reentry and a provider stream's
   line length, tool-call count and per-call arguments (a chunk packed with
   fragments of one call is merged in linear time), and cancel scripted hooks,
   regex workers, workspace temporaries and implementors.
-- Builtin regex `grep` runs an inline worker program (no module file beside
-  the adapter, so bundled and compiled hosts keep it), started at the first
-  file it searches. `grepTimeoutMs` bounds the builtin engine as well as
+- `@xandreed/plugin-workspace`: builtin regex `grep` runs an inline worker
+  program (no module file beside the adapter, so bundled and compiled hosts
+  keep it), started at the first file it searches, and none once the
+  deadline has passed. `grepTimeoutMs` bounds the builtin engine as well as
   ripgrep, with partial results and `timedOut`, and does not count the
   worker's start. A worker that fails to load or dies between files fails the
   call with `SearchFailed` and its own reason (its cause logged) instead of
   crashing the host process or waiting out the deadline, and a search over
   many files no longer adds worker listeners per file.
-- The in-memory file system treats a trailing separator as the native one
-  does in `stat` without following links, `rename`, `write` and `append`; a
-  refused write no longer leaves a directory at its target.
-- Tool views, compaction and digests decode detached copies of a call's
-  stored input and result, so an authored codec that rewrites its input no
-  longer changes what later requests send.
-- Create credential files privately (0600 from their first byte; a missing
-  `.efferent` directory is created 0700, while `config.json` keeps the
-  permissions the umask gives), reject corrupt fallback tiers before writes,
-  and validate SSE event names. `AuthError` and `SettingsError` keep the
-  file system's error as their `cause`, and a failed write names its step
-  and the error code (`config.json write failed: open failed (EACCES)`).
+- `@xandreed/core`: the in-memory file system treats a trailing separator as
+  the native one does in `stat` without following links, `rename`, `write`
+  and `append`; a refused write no longer leaves a directory at its target.
+- `@xandreed/core`: tool views, compaction and digests decode detached copies
+  of a call's stored input and result, so an authored codec that rewrites its
+  input no longer changes what later requests send.
+- `@xandreed/plugin-models`: create credential files privately (0600 from
+  their first byte; a missing `.efferent` directory is created 0700, while
+  `config.json` keeps the permissions the umask gives), reject corrupt
+  fallback tiers before writes. `AuthError`
+  and `SettingsError` keep the file system's error as their `cause`, and a
+  failed write names its step and the error code
+  (`config.json write failed: open failed (EACCES)`).
+- `@xandreed/plugin-render`: a feed event name holding CR, LF or NUL is
+  refused, so it cannot break an SSE frame.
 - Remove quadratic replay/history/media/trace batching, exponential graph
   validation (a stage that supersedes the support of an active inference still
-  publishes and closes it), lossy progress identities, dead eval helpers and unused assets
-  and dependencies. Correct provenance comparison and CLI command ownership.
+  publishes and closes it), lossy progress identities, dead eval helpers and
+  unused assets and dependencies. Correct provenance comparison and CLI
+  command ownership.
+
+### Repository
+
+- Blanket `no-let` and `no-loop-statements` gates are removed. Confined
+  builders are allowed; resource ownership, typed errors and architectural
+  boundaries remain enforced. No service keys are renamed.
 - Fail gates closed on construction/rule/baseline IO errors; strengthen tests,
   schema fingerprints, immutable fixture recording and release confirmation.
 - Each package's model-text inventory cites the tests that pin a row by
@@ -151,8 +240,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   status, a network error, an unreadable or invalid body) is asked again until
   the confirmation deadline, as a presence read is.
 - Reconcile agent guidance and current docs with the implemented contracts;
-  retain historical audit and release artifacts as historical evidence.
-
+  retain historical audit and release artifacts as historical evidence. Docs
+  tests tie the stored format, file layout, SQLite schema and provider stream
+  bounds the guides state to the constants the code enforces, the memory and
+  rag pages' extraction-version history to `KNOWLEDGE_EXTRACTION_VERSION`,
+  and the rules and spans guidance names to the ones that exist.
 
 ## 0.19.2 — 2026-11-08
 
