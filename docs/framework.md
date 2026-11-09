@@ -3247,7 +3247,9 @@ background tasks. Two layers split the work:
   cannot accumulate further pending work, and healthy calls queue for the
   slot left rather than fail. A handle caches a bounded number of sessions and
   commit first lines. A read from the end opens commits newest first and
-  stops once it holds its `limit`, so older commits are not read. Like the SQLite log it stamps time with the caller's
+  stops once it holds its `limit`, so older commits are not read; a read
+  after a position finds its first commit by a binary search over the
+  commits' first lines, so the commits before it are not read either. Like the SQLite log it stamps time with the caller's
   `Clock`. Only file layout 2 is supported; any other marker or a nonempty unmarked directory fails to open with
   `store.version`; one without hard links (some SMB mounts), with
   `store.open`.

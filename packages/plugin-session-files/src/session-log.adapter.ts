@@ -533,14 +533,27 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
         onSome: (entry) => entry.metas,
       })
       const fresh = new Map<number, CommitMeta>()
-      const metaAt = (revision: number) => Option.match(Option.fromNullishOr(cached.get(revision)), {
+      const metaAt = (revision: number) => Option.match(Option.fromNullishOr(cached.get(revision) ?? fresh.get(revision)), {
         onSome: (meta) => Effect.succeed(meta),
         onNone: () => metaOfFile(id, revision).pipe(Effect.tap((meta) => Effect.sync(() => fresh.set(revision, meta)))),
       })
+      // A commit's `last` never decreases with its revision (a commit without events keeps the one before), so the first
+      // revision holding an event after `after` is found by a binary search over the first lines, not by reading them all.
+      let start = 1
+      if (!latest && query.after > 0 && tail.seq > query.after) {
+        let high = tail.revision + 1
+        while (start < high) {
+          const middle = Math.floor((start + high) / 2)
+          if ((yield* metaAt(middle)).last > query.after) high = middle
+          else start = middle + 1
+        }
+      }
       const chunks: Array<ReadonlyArray<SessionLogEvent>> = []
       let count = 0
-      for (let revision = latest ? tail.revision : 1; revision >= 1 && revision <= tail.revision && count < limit; revision += latest ? -1 : 1) {
+      for (let revision = latest ? tail.revision : start; tail.seq > query.after && revision >= 1 && revision <= tail.revision && count < limit; revision += latest ? -1 : 1) {
         const meta = yield* metaAt(revision)
+        // Past the wanted events: forward, a commit that starts above the ceiling (and every later one); from the end, one at or below `after`.
+        if (latest ? meta.last <= query.after : query.through !== undefined && meta.first > query.through) break
         if (meta.last <= query.after || (query.through !== undefined && meta.first > query.through) || meta.first > meta.last || !meta.kinds.some(wanted)) continue
         const record = yield* wholeCommit(id, revision)
         const matched = record.events.filter((event) => event.seq > query.after && (query.through === undefined || event.seq <= query.through) && wanted(event.kind)).map(eventOf(id.id, record.meta.at))

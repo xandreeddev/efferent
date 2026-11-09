@@ -126,6 +126,40 @@ describe("the directory", () => {
     expect(observed).toEqual({ latest: [[2, 2], [3, 3]], fromStart: "store.decode" })
   })
 
+  test("a read on a cold handle opens the commits it needs, not every commit before them", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { root, id } = yield* withSession(32)
+      /** The commit files a fresh handle opens for one read, its head lookup included. */
+      const opened = (query: Parameters<SessionLog["Service"]["read"]>[1]) => Effect.gen(function* () {
+        const counted = { files: 0 }
+        const counting: FilesIo = {
+          ...nodeFilesIo,
+          read: (path) => { if (path.includes("/commits/")) counted.files += 1; return nodeFilesIo.read(path) },
+          readStart: (path, length) => { if (path.includes("/commits/")) counted.files += 1; return nodeFilesIo.readStart(path, length) },
+        }
+        const cold = yield* makeSessionLogFiles(root, { io: counting })
+        const events = yield* cold.read(sessionRef(yield* cold.head(id)), query)
+        return { files: counted.files, ns: events.map((event) => event.data["n"]) }
+      })
+      return {
+        point: yield* opened({ after: 29, through: 30, limit: Option.some(1), kinds: [] }),
+        latest: yield* opened({ after: 0, limit: Option.some(1), kinds: [], from: "end" }),
+        after: yield* opened({ after: 28, limit: Option.none(), kinds: [] }),
+        nothingNewer: yield* opened({ after: 32, limit: Option.none(), kinds: [] }),
+      }
+    })))
+    expect(observed.point.ns).toEqual([30])
+    expect(observed.latest.ns).toEqual([32])
+    expect(observed.after.ns).toEqual([29, 30, 31, 32])
+    expect(observed.nothingNewer.ns).toEqual([])
+    // The tail read by the head lookup, a binary search over 32 revisions (at most 6 first lines), then the commits that hold
+    // the events, each its first line and its whole: never the commits before the first wanted one.
+    expect(observed.point.files).toBeLessThanOrEqual(1 + 6 + 2)
+    expect(observed.latest.files).toBeLessThanOrEqual(2)
+    expect(observed.after.files).toBeLessThanOrEqual(1 + 6 + 2 * 4)
+    expect(observed.nothingNewer.files).toBeLessThanOrEqual(1)
+  })
+
   /** Every name under `root` with its bytes (a directory as `/`), sorted: what an open must leave as it was. */
   const treeOf = (root: string): ReadonlyArray<readonly [string, string]> => readdirSync(root, { recursive: true, withFileTypes: true })
     .map((entry): readonly [string, string] => {
