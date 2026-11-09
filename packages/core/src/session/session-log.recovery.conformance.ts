@@ -6,7 +6,7 @@ import type { ConversationId } from "../domain/message.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { SessionLog } from "../ports/session-log.port.js"
 import type { JsonObject, SessionDraft, SessionLogError } from "./session-log.entity.js"
-import { isRevisionConflict } from "./session-log.entity.functions.js"
+import { isRevisionConflict, sessionRef } from "./session-log.entity.functions.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
 
@@ -34,12 +34,14 @@ const draft = (kind: string, data: JsonObject, turn: Option.Option<number> = Opt
 const noState = { notAfter: Option.none<number>(), state: Option.none<JsonObject>() }
 const everything = { after: 0, limit: Option.none<number>(), kinds: [] }
 const range = (length: number) => Array.from({ length }, (_, n) => n)
+/** The session as `log` holds it now: its id, owner and incarnation, the reference a read, commit or removal names. */
+const current = (log: Log, id: ConversationId) => log.head(id).pipe(Effect.map(sessionRef))
 
 /** A value that must come back equal whatever key order the store keeps. */
 const rich: JsonObject = { zeta: 1, alpha: { b: [true, false, { y: "ü", x: 0.5 }], a: "text ✓" }, empty: {}, list: [] }
 
 /** A session as one handle reads it, and as text without the read time: what every handle must agree on. */
-const seen = (log: Log, id: ConversationId) => Effect.all([log.head(id), Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, everything) })], { concurrency: 1 }).pipe(Effect.map(([head, events]) => ({
+const seen = (log: Log, id: ConversationId) => log.head(id).pipe(Effect.flatMap((head) => log.read(sessionRef(head), everything).pipe(Effect.map((events) => [head, events] as const))), Effect.map(([head, events]) => ({
   seq: head.seq,
   revision: head.revision,
   state: head.state,
@@ -69,9 +71,9 @@ const increment = (log: Log, id: ConversationId, by: string, n: number): Effect.
   const head = yield* log.head(id)
   yield* Effect.yieldNow
   const count = typeof head.state.count === "number" ? head.state.count : 0
-  const committed = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
+  const committed = yield* log.commit(sessionRef(head), {
     expect: head.revision, notAfter: Option.none(), events: [draft("increment", { by, n })], state: Option.some({ count: count + 1 }),
-  }) })
+  })
   return committed.revision
 }).pipe(Effect.retry({ times: 100, while: isRevisionConflict }))
 
@@ -107,9 +109,9 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
         const log = yield* subject.open
         yield* log.create({ header: headerOf(id, owner), state: {} })
         yield* log.create({ header: headerOf(other, owner), state: {} })
-        yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 }, Option.some(1)), draft("b", rich, Option.some(1))], state: Option.some({ open: { turn: 1 } }) }) })
-        yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, ...noState, events: [draft("c", { n: 3 })] }) })
-        yield* Effect.gen(function* () { const sessionHead = yield* log.head(other); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [], state: Option.some({ title: "other" }) }) })
+        yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 }, Option.some(1)), draft("b", rich, Option.some(1))], state: Option.some({ open: { turn: 1 } }) })))
+        yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 1, ...noState, events: [draft("c", { n: 3 })] })))
+        yield* current(log, other).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 0, notAfter: Option.none(), events: [], state: Option.some({ title: "other" }) })))
         return { session: yield* seen(log, id), listing: yield* listed(log, owner) }
       }))
       yield* expect("reopen", before.session.seq === 3 && before.session.revision === 2, `the writing handle read seq ${before.session.seq}, revision ${before.session.revision}`)
@@ -122,14 +124,14 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       const written = yield* Effect.scoped(Effect.gen(function* () {
         const log = yield* subject.open
         yield* log.create({ header: headerOf(id, owner), state: {} })
-        yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 })], state: Option.some({ n: 1 }) }) })
+        yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 })], state: Option.some({ n: 1 }) })))
         return yield* seen(log, id)
       }))
       const first = yield* reading(id)
       const second = yield* reading(id)
       yield* expect("reopen-twice", first.text === written.text && second.text === written.text, "opening the store again changed what it holds")
       const log = yield* subject.open
-      const next = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, ...noState, events: [draft("b", { n: 2 })] }) })
+      const next = yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 1, ...noState, events: [draft("b", { n: 2 })] })))
       yield* expect("reopen-twice", next.revision === 2 && next.seq === 2 && next.events[0]?.seq === 2, `the next commit stored revision ${next.revision}, seq ${next.seq}`)
     })),
     recovery("two open handles see each other's commits at once, and a stale revision through either is refused", "cross-handle", (owner) => Effect.gen(function* () {
@@ -137,14 +139,14 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       const [a, b] = [yield* subject.open, yield* subject.open]
       yield* a.create({ header: headerOf(id, owner), state: {} })
       yield* expect("cross-handle", (yield* b.head(id)).revision === 0, "the other handle reads a revision for a new session")
-      yield* Effect.gen(function* () { const sessionHead = yield* a.head(id); return yield* a.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, ...noState, events: [draft("a", { by: "a" })] }) })
+      yield* current(a, id).pipe(Effect.flatMap((reference) => a.commit(reference, { expect: 0, ...noState, events: [draft("a", { by: "a" })] })))
       const fromB = yield* seen(b, id)
       yield* expect("cross-handle", fromB.revision === 1 && fromB.events.map((event) => event.kind).join() === "a", `the other handle reads revision ${fromB.revision}`)
-      yield* Effect.gen(function* () { const sessionHead = yield* b.head(id); return yield* b.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, notAfter: Option.none(), events: [draft("b", { by: "b" })], state: Option.some({ by: "b" }) }) })
+      yield* current(b, id).pipe(Effect.flatMap((reference) => b.commit(reference, { expect: 1, notAfter: Option.none(), events: [draft("b", { by: "b" })], state: Option.some({ by: "b" }) })))
       const fromA = yield* seen(a, id)
       yield* expect("cross-handle", fromA.revision === 2 && fromA.events.map((event) => event.kind).join() === "a,b" && fromA.state.by === "b", `the first handle reads revision ${fromA.revision}`)
       yield* expect("cross-handle", fromA.text === (yield* seen(b, id)).text, "the two handles read the session differently")
-      const stale = yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* a.head(id); return yield* a.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, ...noState, events: [draft("stale", {})] }) }))
+      const stale = yield* Effect.flip(current(a, id).pipe(Effect.flatMap((reference) => a.commit(reference, { expect: 1, ...noState, events: [draft("stale", {})] }))))
       yield* expect("cross-handle", stale._tag === "RevisionConflict" && stale.actual === 2, `a stale commit gave ${stale._tag}`)
       const listing = yield* b.list({ owner, limit: 10, before: Option.none(), parent: Option.none() })
       yield* expect("cross-handle", listing.length === 1 && listing[0]?.revision === 2, "the other handle does not list the session as it is")
@@ -156,21 +158,21 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       const reopened = yield* Effect.scoped(subject.open.pipe(Effect.flatMap((log) => log.head(id))))
       yield* expect("cross-handle-incarnation", (yield* b.head(id)).incarnation === created.incarnation && reopened.incarnation === created.incarnation,
         "another handle or a reopened store reads another incarnation of the same session")
-      yield* Effect.gen(function* () { const sessionHead = yield* b.head(id); return yield* b.remove({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }) })
+      yield* current(b, id).pipe(Effect.flatMap((reference) => b.remove(reference)))
       const again = yield* b.create({ header: headerOf(id, owner), state: {} })
-      const stale = yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* a.head(id); return yield* a.commit({ ...{ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, incarnation: created.incarnation }, { expect: 0, ...noState, events: [draft("stale", {})] }) }))
+      const stale = yield* Effect.flip(a.commit({ id, owner, incarnation: created.incarnation }, { expect: 0, ...noState, events: [draft("stale", {})] }))
       yield* expect("cross-handle-incarnation", stale._tag === "SessionMissing" && again.incarnation !== created.incarnation,
         `a commit naming the removed incarnation, through the first handle, gave ${stale._tag}`)
-      const landed = yield* Effect.gen(function* () { const sessionHead = yield* a.head(id); return yield* a.commit({ ...{ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, incarnation: again.incarnation }, { expect: 0, ...noState, events: [draft("fresh", {})] }) })
+      const landed = yield* a.commit({ id, owner, incarnation: again.incarnation }, { expect: 0, ...noState, events: [draft("fresh", {})] })
       yield* expect("cross-handle-incarnation", landed.revision === 1 && (yield* seen(b, id)).events.map((event) => event.kind).join() === "fresh", "a commit naming the new incarnation did not land alone")
     })),
     recovery("of compare-and-swap commits racing through two handles, exactly one wins each revision, and none is lost or stored twice", "cross-handle-race", (owner) => Effect.gen(function* () {
       const id = yield* freshId
       const handles = [yield* subject.open, yield* subject.open]
       yield* handles[0]!.create({ header: headerOf(id, owner), state: {} })
-      const attempts = yield* Effect.forEach(range(8), (n) => Effect.result(Effect.gen(function* () { const sessionHead = yield* handles[n % 2]!.head(id); return yield* handles[n % 2]!.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
+      const attempts = yield* Effect.forEach(range(8), (n) => Effect.result(current(handles[n % 2]!, id).pipe(Effect.flatMap((reference) => handles[n % 2]!.commit(reference, {
         expect: 0, notAfter: Option.none(), events: [draft("attempt", { n })], state: Option.some({ winner: n }),
-      }) })), { concurrency: "unbounded" })
+      })))), { concurrency: "unbounded" })
       const won = attempts.filter((attempt) => attempt._tag === "Success")
       const refused = attempts.filter((attempt) => attempt._tag === "Failure" && attempt.failure._tag === "RevisionConflict")
       yield* expect("cross-handle-race", won.length === 1 && refused.length === 7, `of eight commits against one revision, ${won.length} won and ${refused.length} were refused`)
@@ -195,9 +197,10 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
         // Interrupted at once, after one yield and after a few: wherever the backend is when it lands.
         yield* Effect.forEach([0, 1, 4], (yields, batch) => Effect.gen(function* () {
           const head = yield* log.head(id)
-          const fiber = yield* Effect.forkChild(Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
+          // Only the commit is forked, against the head read above: the interruptions below land in it, never in another read first.
+          const fiber = yield* Effect.forkChild(log.commit(sessionRef(head), {
             expect: head.revision, notAfter: Option.none(), events: range(parts).map((n) => draft("part", { batch, n })), state: Option.some({ batch }),
-          }) }))
+          }))
           yield* Effect.forEach(range(yields), () => Effect.yieldNow, { concurrency: 1, discard: true })
           yield* Fiber.interrupt(fiber)
           const after = yield* seen(log, id)
@@ -212,7 +215,7 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       const log = yield* subject.open
       const reopened = yield* seen(log, id)
       yield* expect("interrupted-commit", reopened.text === before.text, "after reopening the session differs from what the interrupted handle read")
-      const next = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: reopened.revision, ...noState, events: [draft("next", {})] }) })
+      const next = yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: reopened.revision, ...noState, events: [draft("next", {})] })))
       yield* expect("interrupted-commit", next.revision === reopened.revision + 1 && next.seq === reopened.seq + 1, "the commit after the interrupted ones was not stored next")
     })),
     recovery("a handle whose scope never closed blocks nothing: a new handle reads all it committed and commits after it", "unclosed-handle", (owner) => Effect.gen(function* () {
@@ -222,12 +225,12 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       yield* Effect.addFinalizer(() => Scope.close(abandoned, Exit.void))
       const left = yield* subject.open.pipe(Scope.provide(abandoned))
       yield* left.create({ header: headerOf(id, owner), state: {} })
-      yield* Effect.gen(function* () { const sessionHead = yield* left.head(id); return yield* left.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 }), draft("b", { n: 2 })], state: Option.some({ by: "abandoned" }) }) })
+      yield* current(left, id).pipe(Effect.flatMap((reference) => left.commit(reference, { expect: 0, notAfter: Option.none(), events: [draft("a", { n: 1 }), draft("b", { n: 2 })], state: Option.some({ by: "abandoned" }) })))
       const wrote = yield* seen(left, id)
       const continued = yield* Effect.scoped(Effect.gen(function* () {
         const log = yield* subject.open
         yield* expect("unclosed-handle", (yield* seen(log, id)).text === wrote.text, "a new handle does not read what the unclosed one committed")
-        yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, ...noState, events: [draft("c", { n: 3 })] }) })
+        yield* current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 1, ...noState, events: [draft("c", { n: 3 })] })))
         return yield* seen(log, id)
       }))
       const again = yield* reading(id)
@@ -239,9 +242,9 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
         const log = yield* subject.open
         const created = yield* log.create({ header: headerOf(id, owner), state: {} })
         const deadline = created.now + 60_000
-        const onTime = yield* atTime(deadline)(Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.some(deadline), events: [draft("on-time", {})], state: Option.none() }) }))
+        const onTime = yield* atTime(deadline)(current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 0, notAfter: Option.some(deadline), events: [draft("on-time", {})], state: Option.none() }))))
         yield* expect("expiry-boundary", onTime.at === deadline && onTime.events.every((event) => event.at === deadline), `a commit at its notAfter was stored at ${onTime.at}, not ${deadline}`)
-        const late = yield* Effect.flip(atTime(deadline + 1)(Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, notAfter: Option.some(deadline), events: [draft("late", {})], state: Option.some({ late: true }) }) })))
+        const late = yield* Effect.flip(atTime(deadline + 1)(current(log, id).pipe(Effect.flatMap((reference) => log.commit(reference, { expect: 1, notAfter: Option.some(deadline), events: [draft("late", {})], state: Option.some({ late: true }) })))))
         yield* expect("expiry-boundary", late._tag === "LeaseExpired" && late.notAfter === deadline && late.now === deadline + 1, `a commit a millisecond late gave ${JSON.stringify(late)}`)
         const head = yield* atTime(deadline + 1)(log.head(id))
         yield* expect("expiry-boundary", head.revision === 1 && head.seq === 1 && head.updatedAt === deadline && canonicalJson(head.state) === "{}", "the late commit wrote something")

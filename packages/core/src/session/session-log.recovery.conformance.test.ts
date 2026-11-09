@@ -90,6 +90,13 @@ describe("the recovery kit catches backends that lose or hide writes", () => {
     expect(exit._tag === "Failure" ? exit.failure.message : "passed").toMatch(/^an interrupted commit left ([1-9]|[1-3][0-9]) of its 40 events/)
   })
 
+  test("a backend whose head reads take a while and whose commit writes row by row still fails the interrupted commit", async () => {
+    const rows = rowByRow(Effect.runSync(memoryLog), Effect.runSync(Ref.make<ReadonlyArray<SessionLogEvent>>([])))
+    // Reading the head yields more often than the kit waits before it interrupts: only the commit itself may be interrupted.
+    const slowHead = SessionLog.of({ ...rows, head: (id) => Effect.forEach(Array.from({ length: 8 }), () => Effect.yieldNow, { discard: true }).pipe(Effect.andThen(rows.head(id))) })
+    expect(await failedChecks({ open: Effect.succeed(slowHead), callerClock: true })).toEqual(["interrupted-commit"])
+  })
+
   test("a store per open (a new SessionLogMemoryLive each time) fails every check that opens the store again", async () => {
     expect(await failedChecks({ open: memoryLog, callerClock: true }))
       .toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "interrupted-commit", "reopen", "reopen-twice", "unclosed-handle"])
