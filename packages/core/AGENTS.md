@@ -352,6 +352,18 @@ integrity and fallback for unlike facts, every option family, render
 verification and safe full-history fallback; its self-tests exercise careless
 implementations.
 
+`recall_context`, the tool that reads a shortened result back, is core's
+(`src/memory/recall.entity.functions.ts`): a plugin may not import another,
+so the tool lives where each memory plugin reaches it. `recallCapabilityOf(id)`
+builds its capability under the contributing plugin's id (the window
+plugin's `recallCapability` is `@xandreed/plugin-memory-window/recall`),
+`spillPreview` writes the notice a shortened result ends with, and
+`RECALL_TOOL` is the tool's name, by which a strategy tells a recalled page
+and never shortens it. `RECALL_PAGE_CHARS` and `recallPage` are not
+exported: nothing outside core reads them. The capability's skill,
+`memory.recall`, is always-on, so its summary never reaches the model:
+guidance goes in the tool's and its parameters' descriptions.
+
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
 sessions in `@xandreed/plugin-sessions`, and the composable agent
@@ -591,5 +603,10 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:638-641` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
 | A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-634` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
 | Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:504`, `:518`, `:579-593` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
+| `recall_context` description | `src/memory/recall.entity.functions.ts:21` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:23-24` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`) | `src/memory/recall.entity.functions.ts:18` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from` |
+| `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`recallPage`) | `src/memory/recall.entity.functions.ts:36` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
+| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:49`, `:51` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

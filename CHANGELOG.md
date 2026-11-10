@@ -8,6 +8,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Changed
+
+- `@xandreed/core`: `recall_context`, its paging and the spill preview now
+  live in core, where every memory plugin can reach them.
+  `recallCapabilityOf(id)` builds the recall capability under the id of the
+  plugin that contributes it, `spillPreview` writes the notice a spilled
+  result ends with, and `RECALL_TOOL` is the tool's name.
+  `@xandreed/plugin-memory-window`'s `recallCapability` is that capability
+  under its unchanged id, `@xandreed/plugin-memory-window/recall`. Every text
+  the model reads is unchanged: the tool's and its parameters' descriptions,
+  the spill preview, the page continuation and the `UnknownLocator` and
+  `OffsetOutOfRange` failures. Nothing changes for a host.
+
 ### Repository
 
 - Git worktrees of the repository go under `.worktrees/`, which git now

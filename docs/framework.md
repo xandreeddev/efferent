@@ -1514,7 +1514,7 @@ a new strategy rebuilds from the full-fidelity entries.
   through each tool's compact view. Under budget pressure it spills the
   current turn's largest results to a preview plus a locator, then replaces
   the oldest turns with a ledger. `recall_context` reads a spilled result
-  back a page (`RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
+  back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
   page is never spilled again. It fails
   with `context.budget` only when the current turn alone does not fit the

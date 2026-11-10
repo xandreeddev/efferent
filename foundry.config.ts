@@ -458,7 +458,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-agent-loop", path: src("plugin-agent-loop"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
       ...testLayer("plugin-memory-window", ["plugin-memory-window", "core", "core/internal"], ["effect", "bun:test"]),
-      { name: "plugin-memory-window", path: src("plugin-memory-window"), canImport: ["core"], externals: ["effect", "effect/ai"] },
+      { name: "plugin-memory-window", path: src("plugin-memory-window"), canImport: ["core"], externals: ["effect"] },
       ...testLayer("plugin-memory-summary", ["plugin-memory-summary", "core"], ["effect", "effect/testing", "bun:test"]),
       { name: "plugin-memory-summary", path: src("plugin-memory-summary"), canImport: ["core"], externals: ["effect"] },
       ...testLayer("plugin-memory-digest", ["plugin-memory-digest", "core"], ["effect", "effect/testing", "bun:test"]),
