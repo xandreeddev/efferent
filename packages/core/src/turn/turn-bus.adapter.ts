@@ -1,4 +1,4 @@
-import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref, Semaphore } from "effect"
+import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
@@ -15,9 +15,9 @@ interface Subscriber {
   readonly drain: Effect.Effect<void, TurnError>
 }
 
-/** One queued delivery (`roomed`: it took a place of the lane's capacity), or a marker the drain waits on. */
+/** One queued delivery or a marker the drain waits on. */
 type Queued<E> =
-  | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean; readonly roomed: boolean }
+  | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean }
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, TurnError> }
 
 /**
@@ -44,11 +44,15 @@ const defaultCapacity = 256
  * (depth-first) up to `maxDepth`, which catches reaction cycles. Background
  * subscribers get the event on their own queue and handle it in order on
  * their own fiber; `drain` waits for them. A publisher waits while a
- * background queue is full, except a background handler of this bus (of any
- * subscription, and what it runs inline): its publications are queued past
- * the capacity, since the queue it would wait on may be its own, or one
- * whose handler waits on it, and only that lane's fiber takes from it; its
- * reaction chains stay bounded by `maxDepth`. A publisher waiting for room
+ * background queue is full, except a background handler publishing into its
+ * own lane while it runs (and what it runs inline, or forks, in that
+ * handler's context, while that handler still runs): that lane's full queue
+ * fails immediately with events.capacity, since the lane cannot make room
+ * while its handler waits. A task forked by a handler that has returned
+ * waits for room like any other publisher, and so does a handler publishing
+ * into another lane's full queue; two lanes that each wait for the other's
+ * room wait until interrupted. Queues stay
+ * finite. Reaction depth is also bounded by maxDepth. A publisher waiting for room
  * can always be interrupted. `activity` counts background deliveries so
  * far, so a caller can tell whether a drain left new work.
  */
@@ -58,8 +62,13 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
   // Each bus counts its own nesting, and knows its own lanes: references keyed by this bus alone.
   const busId = yield* randomUuid
   const depth = Context.Reference<number>(`@xandreed/core/TurnEvents/depth/${busId}`, { defaultValue: () => 0 })
-  /** Whether this runs in a background handler of this bus, on its lane's fiber. */
-  const inLane = Context.Reference<boolean>(`@xandreed/core/TurnEvents/lane/${busId}`, { defaultValue: () => false })
+  /**
+   * The background lane of this bus whose handler this runs in (its
+   * subscription id) and that handler's delivery (its number in the lane),
+   * or -1 outside every lane. A fiber the handler forks inherits it, and
+   * keeps it after the handler returned.
+   */
+  const inLane = Context.Reference<{ readonly lane: number; readonly delivery: number }>(`@xandreed/core/TurnEvents/lane/${busId}`, { defaultValue: () => ({ lane: -1, delivery: -1 }) })
   /** Background deliveries so far: the drain repeats until a pass queues nothing new. */
   const queued = yield* Ref.make(0)
   const publish = (event: TurnEvent): Effect.Effect<void, TurnError> => Effect.gen(function* () {
@@ -71,30 +80,29 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
     yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { concurrency: 1, discard: true }).pipe(Effect.provideService(depth, current + 1))
   })
 
-  /**
-   * A queue and a fiber: handled in order, off the publisher's path; its
-   * depth and trace content switch travel with each event. `room` holds
-   * the capacity: a publisher takes a place before it queues an event, and
-   * the lane gives it back as it takes the event. A background handler
-   * queues without a place (it never waits), markers too.
-   */
-  const background = <E>(handle: (event: E) => Effect.Effect<void, TurnError>, capacity: number) => Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<Queued<E>>()
-    const room = yield* Semaphore.make(capacity)
+  /** A finite queue and a scoped consumer. Publication from this lane's own handler, while
+   * it runs, never waits: its full queue fails with events.capacity, preserving the memory bound. */
+  const background = <E>(lane: number, handle: (event: E) => Effect.Effect<void, TurnError>, capacity: number) => Effect.gen(function* () {
+    const queue = yield* Queue.bounded<Queued<E>>(capacity)
     const failed = yield* Ref.make(Option.none<Cause.Cause<TurnError>>())
+    /** The delivery this lane's handler runs now (none: -1), and the number of the next. */
+    const running = yield* Ref.make(-1)
+    const deliveries = yield* Ref.make(0)
     const take: Effect.Effect<void> = Queue.take(queue).pipe(Effect.flatMap((item) => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
       if (item._tag === "Marker") {
         yield* Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (cause) => Deferred.failCause(item.done, cause) })
         return
       }
-      if (item.roomed) yield* room.release(1)
       if (Option.isSome(failure)) return
+      const delivery = yield* Ref.getAndUpdate(deliveries, (next) => next + 1)
+      yield* Ref.set(running, delivery)
       yield* handle(item.event).pipe(
         Effect.provideService(depth, item.depth),
         Effect.provideService(CurrentTraceContent, item.traceContent),
-        Effect.provideService(inLane, true),
+        Effect.provideService(inLane, { lane, delivery }),
         Effect.catchCause((cause) => Ref.set(failed, Option.some(failureOf(cause)))),
+        Effect.ensuring(Ref.set(running, -1)),
       )
     })))
     yield* Effect.forkScoped(Effect.forever(take))
@@ -103,11 +111,14 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
       if (Option.isSome(failure)) return yield* Effect.failCause(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
       const item = { _tag: "Event" as const, event, depth: yield* Effect.service(depth), traceContent: yield* Effect.service(CurrentTraceContent) }
-      // A background handler of this bus never waits for room: it may be what would make room.
-      if (yield* Effect.service(inLane)) return yield* Queue.offer(queue, { ...item, roomed: false }).pipe(Effect.asVoid)
-      // The wait for room can be interrupted even where the publisher is not (a failed turn recording its reply);
-      // a place taken is always used.
-      yield* Effect.uninterruptible(Effect.interruptible(room.take(1)).pipe(Effect.andThen(Queue.offer(queue, { ...item, roomed: true }))))
+      // Only from within the delivery this lane runs now (its handler, or what that handler runs or forks and may wait for).
+      const publisher = yield* Effect.service(inLane)
+      if (publisher.lane === lane && publisher.delivery === (yield* Ref.get(running))) {
+        const accepted = yield* Effect.sync(() => Queue.offerUnsafe(queue, item))
+        if (!accepted) return yield* Effect.fail(new HarnessError({ code: "events.capacity", message: "a background handler published into its own full event queue" }))
+        return
+      }
+      yield* Effect.interruptible(Queue.offer(queue, item))
     })
     const drain = Deferred.make<void, TurnError>().pipe(Effect.flatMap((done) =>
       Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
@@ -117,12 +128,16 @@ export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly m
   const subscribe = <E, R>(select: (event: TurnEvent) => Option.Option<E>, handle: (event: E) => Effect.Effect<void, TurnError, R>, subscribeOptions?: SubscribeOptions) =>
     Effect.gen(function* () {
       // Traced where it runs: an inline handler under the publisher's span, with the publisher's trace content.
-      const context = replayableContext(yield* Effect.context<R>())
+      // The bus's own nesting (the lane and the depth a handler runs at) is read where the handler runs, never
+      // captured: a subscription made inside another lane's handler is its own lane, not that one.
+      const context = Context.omit(inLane, depth)(replayableContext(yield* Effect.context<R>())) as Context.Context<R>
       const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1)
       const handled = (selected: E) => handle(selected).pipe(Effect.provide(context))
       const mode = subscribeOptions?.mode ?? "inline"
+      const capacity = subscribeOptions?.capacity ?? defaultCapacity
+      if (mode === "background" && (!Number.isSafeInteger(capacity) || capacity < 1)) return yield* Effect.die(new HarnessError({ code: "config.limits", message: "a background event queue needs a positive finite integer capacity" }))
       const lane = mode === "background"
-        ? yield* background(handled, subscribeOptions?.capacity ?? defaultCapacity)
+        ? yield* background(id, handled, capacity)
         : { deliver: handled, drain: Effect.void }
       const deliver = (event: TurnEvent): Effect.Effect<void, TurnError> => Option.match(select(event), {
         onNone: () => Effect.void,

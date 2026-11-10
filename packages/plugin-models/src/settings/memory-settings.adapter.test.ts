@@ -1,39 +1,39 @@
-import { afterAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
 import { EngineSettings, SettingsStore } from "../ports/settings-store.port.js"
 import { settingsStoreConformance } from "./settings-store.conformance.js"
-import type { SettingsStoreConformanceOptions } from "./settings-store.conformance.js"
+import type { SettingsStoreSubject } from "./settings-store.conformance.js"
 import { damagedFile } from "../testing.js"
 import { LocalSettingsStoreLive } from "./localSettings.js"
 import { MemorySettingsStoreLive } from "./memory-settings.adapter.js"
 
-const runKit = (store: typeof SettingsStore.Service, options: Partial<SettingsStoreConformanceOptions> = {}) => settingsStoreConformance(store, { writable: true, ...options }).map((check) => test(check.name, async () => {
+const runKit = (subject: SettingsStoreSubject) => settingsStoreConformance(subject).map((check) => test(check.name, async () => {
   const exit = await Effect.runPromise(Effect.result(check.run))
   expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
 }))
 
 describe("MemorySettingsStoreLive conforms to the SettingsStore contract", () => {
-  runKit(Effect.runSync(Effect.service(SettingsStore).pipe(Effect.provide(MemorySettingsStoreLive(new EngineSettings({ model: Option.some("opencode:glm-5.1"), maxAttempts: Option.some(2) }))))))
+  runKit({ writable: true, open: () => Effect.service(SettingsStore).pipe(
+    Effect.provide(MemorySettingsStoreLive(new EngineSettings({ model: Option.some("opencode:glm-5.1"), maxAttempts: Option.some(2) }))),
+    Effect.map((store) => ({ store })),
+  ) })
 })
 
 describe("LocalSettingsStoreLive conforms to the SettingsStore contract", () => {
-  const home = mkdtempSync(join(tmpdir(), "efferent-settings-kit-home-"))
-  const cwd = mkdtempSync(join(tmpdir(), "efferent-settings-kit-cwd-"))
-  afterAll(() => [home, cwd].map((dir) => rmSync(dir, { recursive: true, force: true })))
-  mkdirSync(join(home, ".efferent"), { recursive: true })
-  // A global value under a local tier the kit writes: clearing the local key falls back to it.
-  writeFileSync(join(home, ".efferent", "config.json"), JSON.stringify({ model: "opencode:glm-5.1", budgetMillis: 30000 }))
-  // The local file is the one the store writes: a write that ignored the damage would replace it.
-  runKit(Effect.runSync(Effect.service(SettingsStore).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home)))), { corrupt: damagedFile(join(cwd, ".efferent", "config.json")) })
-
-  test("the kit puts every key back as it found it", () => {
-    const local = JSON.parse(readFileSync(join(cwd, ".efferent", "config.json"), "utf8")) as Record<string, unknown>
-    expect(local).toEqual({})
-    expect(JSON.parse(readFileSync(join(home, ".efferent", "config.json"), "utf8"))).toEqual({ model: "opencode:glm-5.1", budgetMillis: 30000 })
-  })
+  runKit({ writable: true, corrupt: true, open: () => Effect.gen(function* () {
+    const directories = yield* Effect.acquireRelease(Effect.sync(() => ({
+      home: mkdtempSync(join(tmpdir(), "efferent-settings-kit-home-")),
+      cwd: mkdtempSync(join(tmpdir(), "efferent-settings-kit-cwd-")),
+    })), ({ home, cwd }) => Effect.sync(() => [home, cwd].forEach((dir) => rmSync(dir, { recursive: true, force: true }))))
+    const { home, cwd } = directories
+    mkdirSync(join(home, ".efferent"), { recursive: true })
+    writeFileSync(join(home, ".efferent", "config.json"), JSON.stringify({ model: "opencode:glm-5.1", budgetMillis: 30000 }))
+    const store = yield* Effect.service(SettingsStore).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home)))
+    return { store, corruptions: [damagedFile(join(cwd, ".efferent", "config.json")), damagedFile(join(home, ".efferent", "config.json"))] }
+  }) })
 })
 
 describe("MemorySettingsStoreLive", () => {

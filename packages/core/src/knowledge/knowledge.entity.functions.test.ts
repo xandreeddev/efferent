@@ -432,3 +432,35 @@ test("a stored memory decodes with or without an event time, and an event that e
   expect(Schema.decodeUnknownSync(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 5 } }).eventAt).toEqual({ start: 5 })
   expect(Schema.decodeUnknownExit(KnowledgeMemoryCodec)({ ...encoded, eventAt: { start: 9, end: 5 } })._tag).toBe("Failure")
 })
+
+test("a shared inference DAG visits each evidence node once", () => {
+  const records: Array<KnowledgeMemory> = []
+  const visits = { count: 0 }
+  for (let index = 0; index < 80; index++) {
+    const supports = records.slice(-2).map((record) => record.id)
+    const evidence: KnowledgeMemory["evidence"] = supports.length === 0 ? { _tag: "Stated" } : { _tag: "Inferred", get supports() { visits.count++; return supports } }
+    records.push({ ...memory("one"), id: KnowledgeMemoryId.make(`dag-${index}`), evidence })
+  }
+  expect(Option.isNone(validateKnowledgeStage({ ...stage(records[0]!), memories: records }, { version: 0, memories: [], graph: emptyGraph }, [source("one")]))).toBe(true)
+  expect(visits.count).toBeLessThanOrEqual(records.length * 3)
+})
+
+test("a stage that retires the support of an active inference is not a cycle: publication closes the dependent", () => {
+  const stated = memory("one")
+  const inferred: KnowledgeMemory = { ...memory("two"), evidence: { _tag: "Inferred", supports: [stated.id] } }
+  const successor = memory("three")
+  const snapshot = { version: 0, memories: [stated, inferred], graph: emptyGraph }
+  const sources = [source("one"), source("two"), source("three")]
+  expect(validateKnowledgeStage({ ...stage(successor), retireMemories: [stated.id] }, snapshot, sources)).toEqual(Option.none())
+  expect(validateKnowledgeStage(stage(successor), snapshot, sources)).toEqual(Option.none())
+  const cycle: ReadonlyArray<KnowledgeMemory> = [
+    { ...memory("one"), evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("two"), KnowledgeMemoryId.make("gone")] } },
+    { ...memory("two"), evidence: { _tag: "Inferred", supports: [KnowledgeMemoryId.make("one")] } },
+  ]
+  expect(Option.isSome(validateKnowledgeStage(stage(successor), { version: 0, memories: cycle, graph: emptyGraph }, sources))).toBe(true)
+})
+test("entity-only provenance cannot satisfy an inferred routine's recurrence", () => {
+  const support: KnowledgeMemory = { ...memory("one"), mentions: [source("one").ref], provenance: ["one", "two", "three"].flatMap((name) => memory(name).provenance) }
+  const routine: KnowledgeMemory = { ...memory("routine"), kind: "routine", provenance: support.provenance, evidence: { _tag: "Inferred", supports: [support.id] } }
+  expect(Option.isSome(validateKnowledgeStage(stage(routine), { version: 0, memories: [support], graph: emptyGraph }, [source("one"), source("two"), source("three")]))).toBe(true)
+})

@@ -17,10 +17,19 @@ import type { TurnEvent } from "../turn/turn-event.entity.js"
 export interface SubscribeOptions {
   readonly mode?: "inline" | "background"
   /**
-   * Background queue size; publishing waits when it is full (interruptibly,
-   * wherever the publisher runs). A background handler's own publications,
-   * to its own subscription or another's, never wait: they are queued past
-   * the size, so a handler that publishes what it takes cannot deadlock.
+   * Background queue size: a positive safe integer, 256 by default. Any other
+   * value (`Infinity`, 0, a fraction, a negative) is a defect (`config.limits`)
+   * when a background subscription is made. Publishing waits when the queue is
+   * full (interruptibly, wherever the publisher runs), a background handler's
+   * publications into another subscription's queue included. A handler's
+   * publications into its own subscription's full queue while it runs (and
+   * those of what it runs inline or forks, while it still runs) never wait:
+   * they fail with `events.capacity`, since that queue cannot drain while its
+   * handler waits. A task the handler forked that publishes after the
+   * handler returned waits for room. Two background handlers that each
+   * publish into the other's full queue wait for each other until
+   * interrupted. Capacity remains a total queued-event bound during reentry
+   * too.
    */
   readonly capacity?: number
 }

@@ -5,7 +5,6 @@ import { Array as Arr, Effect, Layer, Option, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationRun,
-  EvalId,
   runEvaluation,
   calibrateGrader,
   gradeEvaluation,
@@ -251,7 +250,7 @@ const appCommand = Effect.fn("eval.cli")(
     options: CliOptions,
     output: (value: unknown) => void
   ): Effect.fn.Return<number, EvaluationError> {
-    const extension = app.commands[line.command]
+    const extension = Object.hasOwn(app.commands, line.command) ? app.commands[line.command] : undefined
     if (extension) {
       const result = yield* extension(line.args)
       output(result)

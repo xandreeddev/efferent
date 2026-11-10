@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { Effect, ManagedRuntime, Option, Schema } from "effect"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { LayerConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
@@ -25,6 +27,21 @@ const layers = Schema.decodeUnknownSync(LayerConfig)({
 })
 
 describe("boundaries gate", () => {
+  test("an unreadable manifest crashes the gate instead of removing the package boundary", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "foundry-manifest-"))
+    await (async () => {
+      await mkdir(path.join(directory, "src"))
+      await writeFile(path.join(directory, "src/main.ts"), "export const value = 1\n")
+      await writeFile(path.join(directory, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }))
+      // A directory at the manifest path produces an IO error even as root.
+      await mkdir(path.join(directory, "package.json"))
+      const exit = await Effect.runPromiseExit(makeBoundariesGate(layers, "tsconfig.json")
+        .run({ rootDir: directory, files: [] }).pipe(Effect.provide(TsProjectCachedLive)))
+      expect(exit._tag).toBe("Failure")
+      expect(String(exit)).toContain("cannot read package.json")
+    })().finally(() => rm(directory, { recursive: true, force: true }))
+  })
+
   test("finds exactly the one illegal domain→adapters import; legal imports pass", async () => {
     const findings = await Effect.runPromise(
       makeBoundariesGate(layers, "tsconfig.json")

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Redacted, Ref, Schema, Stream } from "effect"
-import { CurrentModelCallRecorder, ModelId, harnessCodeOf, harnessError, isHarnessError, isTurnError, parseModelSelection } from "@xandreed/core"
+import { CurrentModelCallRecorder, ModelSpend, ModelSpendMemoryLive, ModelId, harnessCodeOf, harnessError, isHarnessError, isTurnError, parseModelSelection } from "@xandreed/core"
 import { FetchHttpClient } from "effect/http"
 import { buildProvider } from "./providers.js"
 import type { ModelCallData } from "@xandreed/core"
@@ -160,4 +160,22 @@ describe("model completion capability", () => {
     expect(writes).toHaveLength(1)
     expect(writes[0]?.outcome).toEqual({ _tag: "Completed" })
   })
+})
+
+test("a ledger defect settles the terminal ACK and remains sticky for every terminal owner", async () => {
+  const expected = new Error("fixture ledger defect")
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const ledger = yield* ModelSpend
+    const hold = yield* ledger.reserve({ amount: 1, caps: {} })
+    const call = yield* makeCompletionCall()
+    const attempt = yield* beginModelAttempt(call, 1, "compat", Option.some({ ledger: { ...ledger, release: () => Effect.die(expected) }, hold, price: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }))
+    const first = yield* Effect.exit(completeModelAttempt(attempt, { _tag: "Completed" }))
+    const second = yield* Effect.exit(completeModelAttempt(attempt, { _tag: "Interrupted" }))
+    const cleanup = yield* Effect.exit(completePendingAttempts(call, Exit.void))
+    return { exits: [first, second, cleanup], phase: yield* Ref.get(attempt.phase), done: yield* Deferred.isDone(attempt.ack) }
+  }).pipe(Effect.provide(ModelSpendMemoryLive)))
+  expect(result.done).toBe(true)
+  expect(result.phase._tag).toBe("RecordFailed")
+  expect(result.exits.every(Exit.isFailure)).toBe(true)
+  for (const exit of result.exits) if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(expected)
 })

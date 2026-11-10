@@ -63,7 +63,7 @@ const visible = (log, address, through = Infinity) => Effect.gen(function* () {
     onNone: () => Effect.succeed([]),
     onSome: (lineage) => lineage.through === 0 ? Effect.succeed([]) : visible(log, { id: lineage.id, owner }, lineage.through),
   })
-  const own = yield* log.read(address.id, query)
+  const own = yield* Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
   return [...inherited, ...own.filter((event) => event.seq <= through)]
 })
 const ownParts = (events, address) => events.filter((event) => event.session === address.id && event.kind === "request.part")

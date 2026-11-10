@@ -68,8 +68,11 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  * - `grepEngine`: auto probes for rg once over this machine's pair
  *   (`localSystemPlugin`'s FileSystem and Bash), falling back to builtin,
  *   and selects builtin over any other pair; ripgrep requires rg over
- *   whatever pair the host gives. `grepTimeoutMs` bounds rg commands; the synchronous builtin
- *   engine is not time-bounded. `grepIgnoreFiles` honours ignore files in rg
+ *   whatever pair the host gives. `grepTimeoutMs` bounds both engines: rg
+ *   commands, and builtin searches, whose regular expressions run in a
+ *   worker terminated at the deadline (its start is not counted) while
+ *   literal text is matched in process and the deadline is checked between
+ *   files; a timeout returns partial results with `timedOut`. `grepIgnoreFiles` honours ignore files in rg
  *   only (false searches ignored files too).
  * - `maxFileBytes`: the largest file `read`, `edit` and `grep` load, and
  *   the most of a command's output `bash` saves.

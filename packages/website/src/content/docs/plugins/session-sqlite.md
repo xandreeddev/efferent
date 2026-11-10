@@ -58,9 +58,7 @@ failure or a bounded retry; SQLite's synchronous API is not configured to
 block the runtime waiting on a busy connection.
 
 The database uses WAL with `synchronous = NORMAL`. Committed transactions
-survive a process crash; a power loss can lose recent commits. Opening runs
-the supported schema migrations and refuses a database written with a newer
-unsupported schema version. Session removal also removes its stored events
+survive a process crash; a power loss can lose recent commits. Opening accepts schema 3 and initializes an empty unversioned database directly. Other versions and nonempty unversioned databases are refused before schema changes. Configure a fresh store; there is no migration. Session removal also removes its stored events
 and child sessions through foreign-key relationships.
 
 ## Composition and lifecycle

@@ -365,7 +365,7 @@ const makeAgent = <Services>(config: AgentConfig<Services>): Effect.Effect<Agent
   const withHost = hosted.length > 0
   // The host's capabilities are the graph's first contributor: the model sees the host's tools,
   // skills and sections before any plugin's, whatever round each plugin resolves in.
-  const plugins = [...(withHost ? [host] : []), ...entries.map((entry) => entry.plugin)]
+  const plugins = [...new Set([...(withHost ? [host] : []), ...entries.map((entry) => entry.plugin)])]
   const harness: HarnessConfig = {
     version: 1,
     plugins: [

@@ -1,12 +1,12 @@
-import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, rmSync } from "node:fs"
+import { describe, expect, test } from "bun:test"
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Clock, Effect, Fiber, Layer, Option, Redacted, Ref, Schema } from "effect"
 import { ProviderId } from "@xandreed/core"
 import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
-import type { AuthStoreConformanceOptions } from "./auth-store.conformance.js"
+import type { AuthStoreSubject } from "./auth-store.conformance.js"
 import { HostCredentials } from "../ports/host-credentials.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { damagedFile, tokenEndpoint as kitTokenEndpoint } from "../testing.js"
@@ -22,30 +22,44 @@ const HOUR = 3_600_000
 const plain = Schema.encodeSync(Credential)
 const plainAll = (all: ReadonlyMap<string, Credential>) => Object.fromEntries([...all].map(([provider, credential]) => [provider, plain(credential)]))
 
-const runKit = (store: typeof AuthStore.Service, options: AuthStoreConformanceOptions = {}) => authStoreConformance(store, options).map((check) => test(check.name, async () => {
+const runKit = (subject: AuthStoreSubject) => authStoreConformance(subject).map((check) => test(check.name, async () => {
   const exit = await Effect.runPromise(Effect.result(check.run))
   expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
 }))
 
-/** The local store over a token endpoint, as the kit runs it: the store, the endpoint's probe and the damaged login file. */
-const localKitSubject = (cwd: string, home: string, provider: ProviderId) => {
+/** What one fixture left when its scope closed: its directories, and the temp files found in them just before they were removed. */
+interface FixtureLeftovers { readonly directories: ReadonlyArray<string>; readonly temporaries: ReadonlyArray<string> }
+
+/**
+ * A new backing store and endpoint for every check, with corruption in every
+ * tier the store reads: the runtime and fallback files, global and local.
+ * `closed` hears what each fixture left when its scope closed.
+ */
+const localKitSubject = (provider: ProviderId, closed: (left: FixtureLeftovers) => void = () => {}): AuthStoreSubject => ({ refresh: true, corrupt: true, open: () => Effect.gen(function* () {
+  const { home, cwd } = yield* Effect.acquireRelease(Effect.sync(() => ({
+    home: mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-")),
+    cwd: mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-")),
+  })), ({ home, cwd }) => Effect.sync(() => {
+    const temporaries = [home, cwd].flatMap((dir) => readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.includes(".tmp-")))
+    ;[home, cwd].forEach((dir) => rmSync(dir, { recursive: true, force: true }))
+    closed({ directories: [home, cwd], temporaries })
+  }))
   const endpoint = kitTokenEndpoint(provider, "kit")
   const transport = Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch }))
-  const store = Effect.runSync(Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(transport)))))
-  return { store, options: { refresh: endpoint.probe, corrupt: damagedFile(join(home, ".efferent", "runtime", "auth.json")) } }
-}
+  const store = yield* Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(transport))))
+  const tiers = [home, cwd].flatMap((dir) => [join(dir, ".efferent", "runtime", "auth.json"), join(dir, ".efferent", "auth.json")])
+  return { store, refresh: endpoint.probe, corruptions: tiers.map(damagedFile) }
+}) })
 
 describe("MemoryAuthStoreLive conforms to the AuthStore contract", () => {
-  const endpoint = kitTokenEndpoint(anthropic, "kit")
-  runKit(Effect.runSync(Effect.service(AuthStore).pipe(Effect.provide(MemoryAuthStoreLive(new Map(), { fetch: endpoint.fetch })))), { refresh: endpoint.probe })
+  runKit({ refresh: true, open: () => Effect.suspend(() => {
+    const endpoint = kitTokenEndpoint(anthropic, "kit")
+    return Effect.service(AuthStore).pipe(Effect.provide(MemoryAuthStoreLive(new Map(), { fetch: endpoint.fetch })), Effect.map((store) => ({ store, refresh: endpoint.probe })))
+  }) })
 })
 
 describe("LocalAuthStoreLive conforms to the AuthStore contract", () => {
-  const home = mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-"))
-  const cwd = mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-"))
-  afterAll(() => [home, cwd].map((dir) => rmSync(dir, { recursive: true, force: true })))
-  const subject = localKitSubject(cwd, home, ProviderId.make("openai-codex"))
-  runKit(subject.store, subject.options)
+  runKit(localKitSubject(ProviderId.make("openai-codex")))
 })
 
 /** A token endpoint: records each request, and answers once `release` resolves (at once by default). */
@@ -222,15 +236,14 @@ describe("MemoryAuthStoreLive and the host's credentials", () => {
 })
 
 describe("the local store keeps its files", () => {
-  test("the kit run leaves no credential and no temp file behind", async () => {
-    const home = mkdtempSync(join(tmpdir(), "efferent-auth-kit-home-"))
-    const cwd = mkdtempSync(join(tmpdir(), "efferent-auth-kit-cwd-"))
-    const { store, options } = localKitSubject(cwd, home, anthropic)
-    const left = await Effect.runPromise(Effect.forEach(authStoreConformance(store, options), (check) => Effect.result(check.run)).pipe(
-      Effect.andThen(store.all),
-      Effect.map((all) => ({ credentials: all.size, files: readdirSync(cwd), runtime: readdirSync(join(home, ".efferent", "runtime")) })),
-      Effect.ensuring(Effect.sync(() => [home, cwd].map((dir) => rmSync(dir, { recursive: true, force: true })))),
-    ))
-    expect(left).toEqual({ credentials: 0, files: [], runtime: ["auth.json"] })
+  test("each kit check opens its own fixture, which leaves no temp file and removes its directories when the check ends", async () => {
+    const closed: Array<FixtureLeftovers> = []
+    const checks = authStoreConformance(localKitSubject(anthropic, (left) => closed.push(left)))
+    const results = await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect(results.map((result) => result._tag)).toEqual(checks.map(() => "Success"))
+    expect(closed).toHaveLength(checks.length)
+    expect(new Set(closed.flatMap((left) => left.directories)).size).toBe(checks.length * 2)
+    expect(closed.flatMap((left) => left.temporaries)).toEqual([])
+    expect(closed.flatMap((left) => left.directories).filter((dir) => existsSync(dir))).toEqual([])
   })
 })

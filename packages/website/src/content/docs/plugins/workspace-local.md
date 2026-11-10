@@ -68,8 +68,9 @@ the earlier tool result. Use host isolation or version control when needed.
 
 File-tool confinement is a guardrail against mistakes, not a sandbox:
 `bash` is unconfined, and a path may change between checking and use. The
-workspace tools' builtin `grep` is not time-bounded; ripgrep uses Bash with
-a configured deadline.
+workspace tools' `grep` stops at `grepTimeoutMs` with either engine: ripgrep
+uses Bash with that deadline, and the builtin engine runs regular
+expressions in a worker it terminates there.
 
 ## Related guides
 

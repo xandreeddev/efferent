@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Match, Option, Predicate, PubSub, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TransactDuplicate, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
+import { canonicalJson, frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionIncarnation, SessionLog, SessionLogMemoryLive, sessionRef, Sessions, STORED_FORMAT, TransactDuplicate, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { BeginTurn, JsonObject, SessionAddress, SessionContended, SessionLogError, SessionMissing, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
@@ -21,13 +21,13 @@ const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) => Promise.all(ch
 
 /** A session's head state as the next release would leave it: its stored format one above this release's, the rest as it was. */
 const stampNewer = (log: Log) => (address: SessionAddress) => log.head(address.id).pipe(
-  Effect.flatMap((head) => log.commit(address.id, {
+  Effect.flatMap((head) => Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
     expect: head.revision,
     notAfter: Option.none(),
     events: [],
     state: Option.some({ ...head.state, sessions: { ...(head.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
-  })),
-  Effect.asVoid,
+  }) })),
+  Effect.as(log.head(address.id).pipe(Effect.map((head) => JSON.stringify({ ...head, now: 0 })))),
 )
 
 /**
@@ -82,7 +82,7 @@ describe("the Sessions kit catches careless backends", () => {
   })
 
   test("one over a log that ignores a commit's incarnation fails only the recreate check: a removed session's writer writes into the one created again", async () => {
-    const careless = SessionLog.of({ ...memoryLog, commit: (id, { incarnation: _incarnation, ...commit }) => memoryLog.commit(id, commit) })
+    const careless = SessionLog.of({ ...memoryLog, commit: (id, commit) => memoryLog.head(id.id).pipe(Effect.flatMap((head) => memoryLog.commit({ ...id, incarnation: head.incarnation }, commit))) })
     expect(await failedChecks(sessionsConformance(subjectOver(careless)))).toEqual(["recreate"])
   })
 
@@ -94,6 +94,82 @@ describe("the Sessions kit catches careless backends", () => {
     const startOnlyLog = SessionLog.of({ ...memoryLog, read: (id, { from: _from, ...query }) => memoryLog.read(id, query) })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, fromStart)))).toEqual(["read-latest"])
     expect(await failedChecks(sessionsConformance(subjectOver(startOnlyLog)))).toEqual(["read-latest"])
+  })
+
+  test("one that ends a turn it sealed here before checking the canceller's owner fails only the sealed check", async () => {
+    const sealedHere = new Set<string>()
+    const shortcut = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => Option.match(Option.fromNullishOr(writer.seal), {
+        onNone: () => writer,
+        onSome: (seal) => ({ ...writer, seal: seal.pipe(Effect.tap((sealed) => Effect.sync(() => {
+          if (Option.isSome(sealed)) sealedHere.add(canonicalJson([address.id, writer.admitted.turn]))
+        }))) }),
+      }))),
+      cancel: (address, turn) => sealedHere.has(canonicalJson([address.id, turn]))
+        ? memoryLog.head(address.id).pipe(Effect.flatMap((head) => instance.sessions.cancel({ id: address.id, owner: head.header.owner }, turn)))
+        : instance.sessions.cancel(address, turn),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, shortcut)))).toEqual(["sealed"])
+  })
+
+  test("one whose cancel ignores the owner fails the checks that cancel as another owner", async () => {
+    const anyOwner = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      cancel: (address, turn) => memoryLog.head(address.id).pipe(Effect.flatMap((head) => instance.sessions.cancel({ id: address.id, owner: head.header.owner }, turn))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, anyOwner)))).toEqual(["cancel", "create", "sealed"])
+  })
+
+  test("one whose views show another incarnation than the one its admission is shown fails only the meta check", async () => {
+    const constant = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      get: (address) => instance.sessions.get(address).pipe(Effect.map((view) => ({ ...view, incarnation: SessionIncarnation.make("constant") }))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, constant)))).toEqual(["meta"])
+  })
+
+  test("one whose WaitingInput keeps the incarnation it saw a session committed to fails only the waiting-input check", async () => {
+    const committed = new Map<string, string>()
+    const stale = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        transact: ((address: SessionAddress, decide: Parameters<typeof instance.sessions.transact>[1], options?: Parameters<typeof instance.sessions.transact>[2]) =>
+          memoryLog.head(address.id).pipe(Effect.tap((head) => Effect.sync(() => { if (!committed.has(address.id)) committed.set(address.id, head.incarnation) })),
+            Effect.andThen(instance.sessions.transact(address, decide, options)))) as typeof instance.sessions.transact,
+      }),
+      waitingInput: Option.map(instance.waitingInput, (probe) => WaitingInput.of({
+        ...probe,
+        current: probe.current.pipe(Effect.flatMap((counts) => Effect.filter(counts, (count) => Option.match(Option.fromNullishOr(committed.get(count.session)), {
+          onNone: () => Effect.succeed(true),
+          onSome: (incarnation) => memoryLog.head(count.session).pipe(Effect.map((head) => head.incarnation === incarnation), Effect.orElseSucceed(() => false)),
+        }), { concurrency: 1 }))),
+      })),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, stale)))).toEqual(["waiting-input"])
+  })
+
+  test("one whose changes follows a session for any owner fails only the changes check", async () => {
+    const anyOwner = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      changes: (address) => Stream.unwrap(memoryLog.head(address.id).pipe(Effect.map((head) => instance.sessions.changes({ id: address.id, owner: head.header.owner })), Effect.orDie)),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, anyOwner)))).toEqual(["changes"])
+  })
+
+  test("one whose changes keys followers by id and owner and skips the owner check fails only the changes check, without hanging", async () => {
+    // Another owner's follower listens where nobody publishes: it neither fails nor ends.
+    const silentStranger = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      changes: (address) => Stream.unwrap(memoryLog.head(address.id).pipe(
+        Effect.map((head) => head.header.owner === address.owner ? instance.sessions.changes(address) : Stream.never),
+        Effect.orDie,
+      )),
+    }) })
+    const changes = sessionsConformance(subjectOver(memoryLog, silentStranger)).filter((check) => check.name.includes("a follower is signalled"))
+    const outcome = await Promise.race([failedChecks(changes), Bun.sleep(3_000).then(() => ["hung"])])
+    expect(outcome).toEqual(["changes"])
   })
 
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
@@ -493,8 +569,18 @@ describe("the Sessions kit catches careless backends", () => {
   })
 
   test("one that never reads the stored format (the stamp does not reach it) fails only the stored-format check", async () => {
-    const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.void }
+    const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.succeed(Effect.succeed("unchanged")) }
     expect(await failedChecks(sessionsConformance(unread))).toEqual(["stored-format"])
+  })
+
+  test("one whose remove deletes a session in another stored format, instead of refusing it, fails only the stored-format check", async () => {
+    const purging = subjectOver(memoryLog, (instance) => ({ ...instance, sessions: Sessions.of({ ...instance.sessions,
+      remove: (address) => instance.sessions.remove(address).pipe(Effect.catchIf(
+        (error) => error._tag === "SessionLogError" && error.code === "session.version",
+        () => memoryLog.head(address.id).pipe(Effect.flatMap((head) => memoryLog.remove(sessionRef(head)))),
+      )),
+    }) }))
+    expect(await failedChecks(sessionsConformance(purging))).toEqual(["stored-format"])
   })
 
   test("the stored-format check runs only for a backend that keeps a stored format", () => {

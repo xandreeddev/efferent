@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "effect/ai"
-import { Effect, Option, Schema, SchemaGetter } from "effect"
-import { FinishReason } from "@xandreed/core"
+import { Tool, Toolkit } from "effect/ai"
+import { Array as Arr, Effect, Option, Schema, SchemaGetter } from "effect"
+import { FinishReason, prepareToolkit } from "@xandreed/core"
 import type { ResponseVerdict } from "./response-gate.entity.js"
-import { callRejections, isRejectedCall, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { checkCalls, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 
 describe("verdictOf: whether a response may run its tool calls", () => {
   /** Each reason's verdict for a response that holds calls the loop would run, and for one that holds none. */
@@ -30,64 +30,86 @@ describe("verdictOf: whether a response may run its tool calls", () => {
   })
 })
 
-describe("malformedCall: the first call of a whole response the loop will not run", () => {
-  /** The check run: it is an Effect, decoding as the toolkit decodes. */
-  const checked = (...args: Parameters<typeof malformedCall>) => Effect.runPromise(malformedCall(...args))
-  const Echo = Tool.make("echo", { parameters: Schema.Struct({ value: Schema.String }) })
+describe("checkCalls: the calls of a whole response the loop will not run, through the prepared toolkit the loop uses", () => {
+  const Echo = Tool.make("echo", { parameters: Schema.Struct({ value: Schema.String }), success: Schema.String })
   // A tool whose parameters are a JSON Schema the toolkit passes through: it checks its own.
   const External = Tool.dynamic("external", {
     parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    success: Schema.String,
   })
-  const tools = { echo: Echo, external: External }
+  // A tool whose parameters decode in an Effect (asynchronously), as effect/ai's toolkit allows.
+  const Later = Tool.make("later", {
+    parameters: Schema.Struct({
+      value: Schema.String.pipe(Schema.decodeTo(Schema.String, {
+        decode: SchemaGetter.transformEffect((text: string) => Effect.succeed(text).pipe(Effect.delay("1 millis"))),
+        encode: SchemaGetter.transform((text: string) => text),
+      })),
+    }),
+    success: Schema.String,
+  })
+  const kit = prepareToolkit(Toolkit.make(Echo, External, Later))
+  const handled: Array<string> = []
+  const layer = kit.toLayer({
+    echo: ({ value }) => Effect.sync(() => { handled.push("echo"); return value }),
+    external: () => Effect.sync(() => { handled.push("external"); return "found" }),
+    later: ({ value }) => Effect.sync(() => { handled.push("later"); return value }),
+  })
+  const tools = { echo: Echo, external: External, later: Later }
+  type Calls = Parameters<typeof checkCalls>[0]
+  /** Each call's rejection, as the loop gets them from the prepared toolkit. */
+  const rejections = (calls: Calls, step: Readonly<Record<string, unknown>> = tools) => Effect.runPromise(Effect.gen(function* () {
+    const execution = yield* kit.execution
+    return (yield* checkCalls(calls, step, execution)).map((checked) => checked.rejection)
+  }).pipe(Effect.provide(layer)))
+  /** The first call the loop will not run, under the default policy. */
+  const checked = (calls: Calls, step?: Readonly<Record<string, unknown>>) => rejections(calls, step).then((all) => Arr.findFirst(all, (found) => found))
 
-  test("a tool the step does not have", async () => {
-    expect(await checked([{ name: "not_a_tool", params: {} }], tools)).toEqual(Option.some({ _tag: "NotFound", toolName: "not_a_tool" }))
+  test("a tool the step does not have, though the toolkit has it", async () => {
+    expect(await checked([{ name: "not_a_tool", params: {} }])).toEqual(Option.some({ _tag: "NotFound", toolName: "not_a_tool" }))
+    expect(await checked([{ name: "later", params: { value: "x" } }], { echo: Echo })).toEqual(Option.some({ _tag: "NotFound", toolName: "later" }))
   })
 
   test.each(["constructor", "toString", "__proto__", "hasOwnProperty"])("a name the tools' object inherits, %s, is a tool the step does not have", async (name) => {
-    expect(await checked([{ name, params: {} }], tools)).toEqual(Option.some({ _tag: "NotFound", toolName: name }))
+    expect(await checked([{ name, params: {} }])).toEqual(Option.some({ _tag: "NotFound", toolName: name }))
   })
 
   test("parameters its tool's schema does not decode, with the decoder's report", async () => {
-    expect(await checked([{ name: "echo", params: { value: 7 } }], tools)).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }))
-    expect(await checked([{ name: "echo", params: {} }], tools)).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Missing key\n  at [\"value\"]" }))
+    expect(await checked([{ name: "echo", params: { value: 7 } }])).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }))
+    expect(await checked([{ name: "echo", params: {} }])).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Missing key\n  at [\"value\"]" }))
+  })
+
+  test("parameters JSON cannot carry are invalid", async () => {
+    expect(await rejections([{ name: "echo", params: { value: 1n } }]).then((all) => all.map((found) => Option.map(found, (rejection) => rejection._tag)))).toEqual([Option.some("Invalid")])
   })
 
   test("a tool whose parameters are a JSON Schema passes: the loop does not check them", async () => {
-    expect(await checked([{ name: "external", params: { query: 7 } }], tools)).toEqual(Option.none())
+    expect(await checked([{ name: "external", params: { query: 7 } }])).toEqual(Option.none())
   })
 
   test("the first failing call is the one reported", async () => {
     const good = { name: "echo", params: { value: "ok" } }
-    expect(await checked([good, { name: "missing", params: {} }, { name: "echo", params: { value: 7 } }], tools)).toEqual(Option.some({ _tag: "NotFound", toolName: "missing" }))
-    expect(await checked([good, { name: "echo", params: { value: 7 } }, { name: "missing", params: {} }], tools)).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }))
+    expect(await checked([good, { name: "missing", params: {} }, { name: "echo", params: { value: 7 } }])).toEqual(Option.some({ _tag: "NotFound", toolName: "missing" }))
+    expect(await checked([good, { name: "echo", params: { value: 7 } }, { name: "missing", params: {} }])).toEqual(Option.some({ _tag: "Invalid", toolName: "echo", description: "Expected string\n  at [\"value\"]" }))
   })
 
-  test("parameters that decode in an Effect (asynchronously, as the toolkit allows) are checked like any other", async () => {
-    const Later = Tool.make("later", {
-      parameters: Schema.Struct({
-        value: Schema.String.pipe(Schema.decodeTo(Schema.String, {
-          decode: SchemaGetter.transformEffect((text: string) => Effect.succeed(text).pipe(Effect.delay("1 millis"))),
-          encode: SchemaGetter.transform((text: string) => text),
-        })),
-      }),
-    })
-    expect(await checked([{ name: "later", params: { value: "x" } }], { later: Later })).toEqual(Option.none())
-    expect(await checked([{ name: "later", params: { value: 7 } }], { later: Later })).toEqual(Option.some({ _tag: "Invalid", toolName: "later", description: "Expected string\n  at [\"value\"]" }))
+  test("parameters that decode in an Effect (asynchronously, as the toolkit allows) are checked like any other, failing or not", async () => {
+    expect(await checked([{ name: "later", params: { value: "x" } }])).toEqual(Option.none())
+    expect(await checked([{ name: "later", params: { value: 7 } }])).toEqual(Option.some({ _tag: "Invalid", toolName: "later", description: "Expected string\n  at [\"value\"]" }))
   })
 
-  test("every call good, or none at all: nothing to report", async () => {
-    expect(await checked([{ name: "echo", params: { value: "a" } }, { name: "external", params: { query: "b" } }], tools)).toEqual(Option.none())
-    expect(await checked([], tools)).toEqual(Option.none())
+  test("every call good, or none at all: nothing to report, and checking runs no handler", async () => {
+    expect(await checked([{ name: "echo", params: { value: "a" } }, { name: "external", params: { query: "b" } }])).toEqual(Option.none())
+    expect(await checked([])).toEqual(Option.none())
+    expect(handled).toEqual([])
   })
 
-  test("callRejections checks every call, in call order; a repeated id is one the loop cannot answer alone", async () => {
-    const checks = await Effect.runPromise(callRejections([
+  test("every call is checked, in call order; a repeated id is one the loop cannot answer alone", async () => {
+    const checks = await rejections([
       { id: "a", name: "echo", params: { value: "ok" } },
       { id: "b", name: "missing", params: {} },
       { id: "c", name: "echo", params: { value: 7 } },
       { id: "a", name: "echo", params: { value: "again" } },
-    ], tools))
+    ])
     expect(checks).toEqual([
       Option.none(),
       Option.some({ _tag: "NotFound", toolName: "missing" }),

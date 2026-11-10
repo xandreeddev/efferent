@@ -117,9 +117,12 @@ its default syntax (no lookaround or backreferences), gets patterns on stdin,
 ignores ripgrep config files and stops after `grepTimeoutMs` (30 000 ms).
 `grepIgnoreFiles: true` honours `.gitignore`, `.ignore` and other ignore files;
 otherwise they are bypassed. Timeouts return partial results with `timedOut`
-and a note in grep view version 4. Builtin grep is not time-bounded: a turn
-cannot interrupt its synchronous expression. It refuses nested repetition but
-other backtracking patterns can still hold the process on a hostile line.
+and a note in grep view version 4. Builtin grep has the same deadline: it
+runs a regular expression in a worker of its own, started at the first file
+it searches (the start is not counted), and terminates the worker at the
+deadline or on interruption, which stops backtracking patterns such as
+`(a|a)*$` on a hostile line too. Literal text is matched in process, the
+deadline checked between files. Both return partial results with `timedOut`.
 To run untrusted work, give the agent a
 `FileSystem` and `Bash` that live in a container or a VM; the
 [conformance kits](/docs/concepts/conformance) check such adapters.
@@ -248,7 +251,7 @@ The options are flat; every one has a default
 | `lsEntries`, `findResults`, `grepMatches` | 500, 1000, 100 | caps on `ls`, `find` and `grep` |
 | `grepLineChars` | 500 | displayed width; builtin also cuts before matching |
 | `grepEngine` | `"auto"` | rg over `localSystemPlugin`'s pair when it is installed (probed once), else builtin; `"ripgrep"` requires it, `"builtin"` selects JavaScript |
-| `grepTimeoutMs` | 30000 | ripgrep search timeout |
+| `grepTimeoutMs` | 30000 | grep search timeout (both engines) |
 | `grepIgnoreFiles` | `false` | honour ignore files when using ripgrep |
 | `maxFileBytes` | 32 MB | the largest file `read`, `edit` and `grep` load (an image too), and the most of an output `bash` saves |
 | `readImages` | `true` | `read` returns PNG, JPEG, GIF and WebP files as images |

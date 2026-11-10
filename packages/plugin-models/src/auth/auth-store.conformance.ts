@@ -31,7 +31,7 @@ export interface AuthStoreRefreshProbe {
   /**
    * A provider whose expired OAuth token the store refreshes through this
    * endpoint (`anthropic`, `openai-codex`). The refresh checks write and
-   * remove its credential, then put it back as they found it.
+   * remove its credential in their own fixture.
    */
   readonly provider: ProviderId
   /** The token requests the endpoint has received so far. */
@@ -43,23 +43,21 @@ export interface AuthStoreRefreshProbe {
   readonly hold: Effect.Effect<Effect.Effect<void>>
 }
 
-/**
- * What the kit can do to a store beyond calling it; each option turns on its checks.
- *
- * @public
- */
-export interface AuthStoreConformanceOptions {
-  /** The endpoint the store refreshes through: the refresh-once and refresh-remove checks. */
-  readonly refresh?: AuthStoreRefreshProbe
-  /**
-   * Damage the store's backing data (a file that is not JSON) for the
-   * scope's lifetime, and repair it when the scope closes: the corrupt check.
-   * A store with nothing to damage, such as one in memory, leaves it out.
-   */
-  readonly corrupt?: Effect.Effect<void, never, Scope.Scope>
+/** A fresh, scoped auth fixture per check. @public */
+export interface AuthStoreSubject {
+  readonly refresh?: boolean
+  readonly corrupt?: boolean
+  readonly open: () => Effect.Effect<{
+    readonly store: Store
+    readonly refresh?: AuthStoreRefreshProbe
+    readonly corruptions?: ReadonlyArray<Effect.Effect<void, never, Scope.Scope>>
+  }, unknown, Scope.Scope>
 }
 
-/** A provider id no real store holds, so the kit can run against a shared store. */
+type Fixture = Effect.Success<ReturnType<AuthStoreSubject["open"]>>
+type CaseBuilder = (name: string, id: string, body: (fixture: Fixture) => Effect.Effect<void, unknown>) => ConformanceCheck
+
+/** A provider id no other check writes, so a read shows whose write it is. */
 const freshProvider = Effect.map(randomUuid, (id) => ProviderId.make(`conformance-${id}`))
 /** A secret no other check writes, so a read shows whose write it is. */
 const secret = (label: string): Effect.Effect<Redacted.Redacted<string>> => Effect.map(randomUuid, (id) => Redacted.make(`conformance-${label}-${id}`))
@@ -86,18 +84,11 @@ const keyOf = (id: string, resolved: Option.Option<Redacted.Redacted<string>>) =
     onSome: (key) => Redacted.isRedacted(key) ? Effect.succeed(Option.some(Redacted.value(key))) : fail(id, "the resolved key is not Redacted"),
   })
 
-/** Run `body` with `count` fresh providers, removing them afterwards so a shared store keeps nothing of the kit. */
+/** Run `body` with `count` fresh providers, removing them afterwards. */
 const withProviders = (store: Store, count: number, body: (providers: ReadonlyArray<ProviderId>) => Effect.Effect<void, unknown>) =>
   Effect.forEach(Array.from({ length: count }), () => freshProvider, { concurrency: 1 }).pipe(
     Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore({ log: "Warn", message: `the kit could not remove its provider ${provider}` })), { concurrency: 1, discard: true })))),
   )
-
-/** Run `body` on the probe's provider, then put back the credential it held before (or none). */
-const withProbeProvider = (store: Store, probe: AuthStoreRefreshProbe, body: (provider: ProviderId) => Effect.Effect<void, unknown>) =>
-  store.get(probe.provider).pipe(Effect.flatMap((before) => body(probe.provider).pipe(Effect.ensuring(Option.match(before, {
-    onNone: () => store.remove(probe.provider),
-    onSome: (credential) => store.set(probe.provider, credential),
-  }).pipe(Effect.ignore({ log: "Warn", message: `the kit could not put back the credential of ${probe.provider}` }))))))
 
 /** An OAuth credential that expired an hour ago, so any read of it needs a refresh. */
 const expiredToken = Effect.gen(function* () {
@@ -121,8 +112,10 @@ const corrupted = (what: string, effect: Effect.Effect<unknown, unknown>) => Eff
   return expect("corrupt", tag === "AuthError" && code === "auth.corrupt", `${what} failed with ${tag} (${code}), not an AuthError of code auth.corrupt`)
 }))
 
-const refreshChecks = (store: Store, probe: AuthStoreRefreshProbe): ReadonlyArray<ConformanceCheck> => [
-  check(`${CALLERS} concurrent calls on one expired OAuth token send one refresh request and all get its new token`, "refresh-once", () => withProbeProvider(store, probe, (provider) => Effect.gen(function* () {
+const refreshChecks = (caseOf: CaseBuilder): ReadonlyArray<ConformanceCheck> => [
+  caseOf(`${CALLERS} concurrent calls on one expired OAuth token send one refresh request and all get its new token`, "refresh-once", ({ store, refresh: probe }) => Effect.gen(function* () {
+    if (!probe) return yield* fail("refresh", "the subject declares refresh checks but supplies no probe")
+    const provider = probe.provider
     const stale = yield* expiredToken
     yield* store.set(provider, stale)
     const before = yield* probe.requests
@@ -142,8 +135,10 @@ const refreshChecks = (store: Store, probe: AuthStoreRefreshProbe): ReadonlyArra
     yield* expect("refresh-once", values.every((value) => Option.getOrUndefined(value) === first), "the concurrent calls got different keys")
     const stored = yield* store.get(provider)
     yield* expect("refresh-once", Option.exists(stored, (credential) => credential.type === "oauth" && redactedThroughout(credential) && Redacted.value(credential.access) === first), "the store does not hold the refreshed token")
-  }))),
-  check("a remove made while a refresh is in flight stays a remove: the refreshed token is not stored", "refresh-remove", () => withProbeProvider(store, probe, (provider) => Effect.gen(function* () {
+  })),
+  caseOf("a remove made while a refresh is in flight stays a remove: the refreshed token is not stored", "refresh-remove", ({ store, refresh: probe }) => Effect.gen(function* () {
+    if (!probe) return yield* fail("refresh", "the subject declares refresh checks but supplies no probe")
+    const provider = probe.provider
     yield* store.set(provider, yield* expiredToken)
     const before = yield* probe.requests
     yield* Effect.acquireUseRelease(probe.hold, (release) => Effect.gen(function* () {
@@ -160,7 +155,7 @@ const refreshChecks = (store: Store, probe: AuthStoreRefreshProbe): ReadonlyArra
     yield* expect("refresh-remove", Option.isNone(yield* store.get(provider)), "get finds a credential after the remove")
     yield* expect("refresh-remove", !(yield* store.all).has(provider), "all lists the provider after the remove")
     yield* expect("refresh-remove", Option.isNone(yield* store.resolveKey(provider)), "resolveKey finds a key after the remove")
-  }))),
+  })),
 ]
 
 const corruptCheck = (store: Store, corrupt: Effect.Effect<void, never, Scope.Scope>): ConformanceCheck =>
@@ -177,34 +172,46 @@ const corruptCheck = (store: Store, corrupt: Effect.Effect<void, never, Scope.Sc
       yield* corrupted("remove", store.remove(id))
     }))
     yield* expect("corrupt", same(yield* store.get(id), kept), "once the backing data is repaired, the store does not read it again")
+    // Checked before `withProviders` removes it: a refused set must have written nothing.
+    yield* expect("corrupt", Option.isNone(yield* store.get(other!)) && !(yield* store.all).has(other!), "a set refused on damaged data still wrote its credential")
   })))
 
 /**
- * The AuthStore contract, as checks any store must pass: what `get`, `all`
- * and `resolveKey` say about each kind of credential (every secret
- * `Redacted`, holding the value that was set), what `set` and `remove`
- * change, and that providers do not share state. Every check uses
- * fresh provider ids (`conformance-<uuid>`, which no store can refresh) and
- * removes them when it ends, so the kit can run against a shared store.
- *
- * With `options.refresh`, two checks refresh the probe's provider through
- * the endpoint the test controls: concurrent calls on one expired token send
- * one token request, and a `remove` made while it is in flight sticks. They
- * wait for the store's requests on the live clock (up to two seconds), so
- * run them without a `TestClock`. With
- * `options.corrupt`, a store whose backing data cannot be read fails every
- * call with an `AuthError` of code `auth.corrupt` instead of reading empty.
- *
+ * The subject's fixture for check `id`. One that supplies probes for a
+ * capability the subject does not declare fails the check: those probes
+ * would never run, and the kit would pass without them.
+ */
+const fixtureOf = (subject: AuthStoreSubject, id: string) => subject.open().pipe(Effect.tap((fixture) => Effect.all([
+  expect(id, subject.refresh === true || fixture.refresh === undefined, "the fixture supplies a refresh probe but the subject does not declare refresh: true"),
+  expect(id, subject.corrupt === true || (fixture.corruptions ?? []).length === 0, "the fixture supplies corruption probes but the subject does not declare corrupt: true"),
+], { concurrency: 1, discard: true })))
+
+/**
+ * Prove credentials and refreshes with a fresh fixture for each check. The
+ * fixture owns its store and its cleanup: the checks write credentials and
+ * restore nothing, so never open a store over a host's real credentials.
  * @public
  */
-export const authStoreConformance = (store: Store, options: AuthStoreConformanceOptions = {}): ReadonlyArray<ConformanceCheck> => [
-  check("an absent provider has no credential, no key and no entry", "absent", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+export const authStoreConformance = (subject: AuthStoreSubject): ReadonlyArray<ConformanceCheck> => {
+  const caseOf: CaseBuilder = (name, id, body) => check(name, id, () => Effect.scoped(fixtureOf(subject, id).pipe(Effect.flatMap(body))))
+  return [
+    ...baseChecks(caseOf),
+    ...(subject.refresh ? refreshChecks(caseOf) : []),
+    ...(subject.corrupt ? [caseOf("every backing tier rejects corrupt data without changing credentials", "corrupt", ({ store, corruptions = [] }) => Effect.gen(function* () {
+      yield* expect("corrupt", corruptions.length > 0, "the subject declares corruption checks but supplies no probes")
+      yield* Effect.forEach(corruptions, (probe) => corruptCheck(store, probe).run, { concurrency: 1, discard: true })
+    }))] : []),
+  ]
+}
+
+const baseChecks = (caseOf: CaseBuilder): ReadonlyArray<ConformanceCheck> => [
+  caseOf("an absent provider has no credential, no key and no entry", "absent", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     yield* expect("absent", Option.isNone(yield* store.get(id)), "get found a credential")
     yield* expect("absent", Option.isNone(yield* store.resolveKey(id)), "resolveKey found a key")
     yield* expect("absent", !(yield* store.all).has(id), "all lists the provider")
   }))),
-  check("an api_key credential reads back, is listed, and resolves to its key as Redacted", "api-key", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+  caseOf("an api_key credential reads back, is listed, and resolves to its key as Redacted", "api-key", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     const credential: Credential = { type: "api_key", key: yield* secret("key") }
     yield* store.set(id, credential)
@@ -213,14 +220,14 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     const key = yield* keyOf("api-key", yield* store.resolveKey(id))
     yield* expect("api-key", Option.getOrUndefined(key) === Redacted.value(credential.key), "resolveKey did not return the stored key")
   }))),
-  check("a local credential reads back and resolves to no key", "local", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+  caseOf("a local credential reads back and resolves to no key", "local", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     const credential: Credential = { type: "local", baseUrl: "http://127.0.0.1:1/v1" }
     yield* store.set(id, credential)
     yield* expect("local", same(yield* store.get(id), credential), "get returned a different credential")
     yield* expect("local", Option.isNone(yield* store.resolveKey(id)), "resolveKey returned a key for a local credential")
   }))),
-  check("an OAuth token that has not expired resolves to its access token", "oauth-valid", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+  caseOf("an OAuth token that has not expired resolves to its access token", "oauth-valid", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     const now = yield* Clock.currentTimeMillis
     const credential: Credential = { type: "oauth", access: yield* secret("access"), refresh: yield* secret("refresh"), expires: now + HOUR }
@@ -229,7 +236,7 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     const key = yield* keyOf("oauth-valid", yield* store.resolveKey(id))
     yield* expect("oauth-valid", Option.getOrUndefined(key) === Redacted.value(credential.access), "resolveKey did not return the access token")
   }))),
-  check("get and all hand out every secret Redacted", "redacted", () => withProviders(store, 2, ([first, second]) => Effect.gen(function* () {
+  caseOf("get and all hand out every secret Redacted", "redacted", ({ store }) => withProviders(store, 2, ([first, second]) => Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
     const written: ReadonlyArray<readonly [ProviderId, Credential]> = [
       [first!, { type: "api_key", key: yield* secret("key") }],
@@ -242,7 +249,7 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
       yield* expect("redacted", Option.exists(Option.fromNullishOr(all.get(id)), redactedThroughout), `all lists no ${credential.type} credential, or one whose secrets are not all Redacted`)
     }), { concurrency: 1, discard: true })
   }))),
-  check("an expired OAuth token the store cannot refresh fails with an AuthError naming the provider, never the stale token", "oauth-expired", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+  caseOf("an expired OAuth token the store cannot refresh fails with an AuthError naming the provider, never the stale token", "oauth-expired", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     const now = yield* Clock.currentTimeMillis
     yield* store.set(id, { type: "oauth", access: yield* secret("stale"), refresh: yield* secret("refresh"), expires: now - HOUR })
@@ -250,7 +257,7 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     if (resolved._tag === "Success") return yield* fail("oauth-expired", Option.isSome(resolved.success) ? "resolveKey returned the expired token" : "resolveKey found no key instead of failing")
     yield* expect("oauth-expired", resolved.failure._tag === "AuthError" && resolved.failure.provider === id, `failed with ${resolved.failure._tag} for ${resolved.failure.provider}`)
   }))),
-  check("a second set replaces the first", "overwrite", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
+  caseOf("a second set replaces the first", "overwrite", ({ store }) => withProviders(store, 1, ([provider]) => Effect.gen(function* () {
     const id = provider!
     const second: Credential = { type: "api_key", key: yield* secret("second") }
     yield* store.set(id, { type: "api_key", key: yield* secret("first") })
@@ -259,7 +266,7 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     const key = yield* keyOf("overwrite", yield* store.resolveKey(id))
     yield* expect("overwrite", Option.getOrUndefined(key) === Redacted.value(second.key), "resolveKey still returns the first key")
   }))),
-  check("remove deletes a credential wherever it is read, and removing an absent provider succeeds", "remove", () => withProviders(store, 2, ([provider, unknown]) => Effect.gen(function* () {
+  caseOf("remove deletes a credential wherever it is read, and removing an absent provider succeeds", "remove", ({ store }) => withProviders(store, 2, ([provider, unknown]) => Effect.gen(function* () {
     const id = provider!
     yield* store.set(id, { type: "api_key", key: yield* secret("removed") })
     yield* store.remove(id)
@@ -269,7 +276,7 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     yield* store.remove(id)
     yield* store.remove(unknown!)
   }))),
-  check("providers are isolated: writing or removing one leaves another as it was", "isolation", () => withProviders(store, 2, ([first, second]) => Effect.gen(function* () {
+  caseOf("providers are isolated: writing or removing one leaves another as it was", "isolation", ({ store }) => withProviders(store, 2, ([first, second]) => Effect.gen(function* () {
     const a = first!
     const b = second!
     const kept: Credential = { type: "api_key", key: yield* secret("kept") }
@@ -281,6 +288,4 @@ export const authStoreConformance = (store: Store, options: AuthStoreConformance
     const key = yield* keyOf("isolation", yield* store.resolveKey(b))
     yield* expect("isolation", Option.getOrUndefined(key) === Redacted.value(kept.key), "another provider's key changed")
   }))),
-  ...Option.match(Option.fromNullishOr(options.refresh), { onNone: () => [], onSome: (probe) => refreshChecks(store, probe) }),
-  ...Option.match(Option.fromNullishOr(options.corrupt), { onNone: () => [], onSome: (corrupt) => [corruptCheck(store, corrupt)] }),
 ]

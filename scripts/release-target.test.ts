@@ -133,9 +133,9 @@ test("the CLI reads the historical release blobs and emits safe outputs without 
     await writeFile(eventPath, JSON.stringify({ ...dispatch().event, ref: "main" }))
     const output = join(directory, "outputs")
     const child = Bun.spawn(["bun", join(import.meta.dir, "release-target.ts"), "--event", eventPath, "--event-name", "workflow_dispatch", "--root", directory, "--repo", repository.full_name], {
-      cwd: directory, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GITHUB_OUTPUT: output }, stdout: "pipe", stderr: "pipe",
+      cwd: directory, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GITHUB_OUTPUT: output }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
     })
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]).finally(() => child.kill())
     expect(stderr).toBe("")
     expect(code).toBe(0)
     expect(JSON.parse(stdout)).toEqual({ eligible: true, version: "0.16.0", sha: released, tag: "v0.16.0" })

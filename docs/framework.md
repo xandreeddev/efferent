@@ -328,7 +328,7 @@ loop's existing pre-content stream-to-settled fallback starts a fresh logical
 budget while reusing the same prepared header, frozen model, prompt and tools.
 It does not reevaluate `policy.model`/`policy.step` or append StepContext.
 OAuth token requests are outside this model-request retry policy. No stored
-shape changes: request headers and stored format 8 retain their contracts.
+shape changes: request headers keep the contract their stored format gives them.
 
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
@@ -797,11 +797,14 @@ import { Context, Effect, Layer } from "effect"
 import { ModelSpend, ModelSpendMemoryLive, modelSpendExceededOf } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { modelsPlugin } from "@xandreed/plugin-models"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 
 const program = Effect.gen(function* () {
   const ledger = Context.get(yield* Layer.build(ModelSpendMemoryLive), ModelSpend)
   const agent = yield* Agent.define({
-    plugins: [{ plugin: modelsPlugin, options: {
+    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: modelsPlugin, options: {
       model: "anthropic:claude-sonnet-4-5",
       spend: {
         prices: { "anthropic:claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
@@ -876,6 +879,14 @@ refused under it, and records each trial's and the run's settled spend in
 the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget)).
 
 ## Host-planned initial tool batch
+
+Standalone `runLoop` takes a `PreparedToolkit`: wrap `Toolkit.make(...)` with `prepareToolkit` from core. Authored parameter codecs run once per call, on isolated copies, before any handler in the response runs. A call's input is read as JSON text would carry it: a key whose value is `undefined` is left out and a `toJSON` value (a `Date`) takes its JSON form, so host-planned params behave as a provider's would; input JSON cannot encode (a `BigInt`, a cycle) is invalid. The journal retains the provider's arguments. A tool's view, compaction and digest decode the stored input and result again, each time on a detached JSON copy, so a codec never changes the stored evidence. A tool whose success schema encodes to a value JSON cannot carry unchanged (a `Date`, a `Uint8Array`, an `Option`, a `Redacted`) gets its raw view, compaction and digest, in a live session as in one reopened from its journal. Custom registries implement this same preparation boundary; `toolRegistryConformance` calls every tool through it (`prepare`, then `run`) and checks it. `runLoop` fails with `config.options` when its toolkit has no `execution`.
+
+The default preparation executes handlers by the toolkit's tool IDs. A registry
+that customizes `Toolkit.handle` supplies `prepareToolkit(base, execute)` so its
+policy and receipt handling surround the prepared call. The execution hook receives
+the identity-parameter toolkit, immutable raw input and the private decoded value;
+it executes the decoded value and keeps the raw input for evidence.
 
 `runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify
 from a finite plan set or construct a structured plan, validate the whole batch
@@ -1319,8 +1330,10 @@ mints for a provider's tool calls that come without one are
 host-planned batch `call_<turn>_<ordinal>_p<n>` (`plannedCallIdOf`), so
 they differ across the runs and turns of a session. They hold only letters,
 digits and `_` and stay short, so every provider accepts them as pairing
-keys when a session moves to another one; ids stored by earlier releases
-(`<turn>.<ordinal>.<step>:<tool>:<n>`) replay as they were stored.
+keys when a session moves to another one. Releases before 0.15.0 minted
+`<turn>.<ordinal>.<step>:<tool>:<n>`; Sessions reads only the current stored
+format, so a session that holds those ids is refused, not replayed (see
+[the stored format](#sessions-one-log-per-session)).
 
 **Host request hooks.** Provide `ModelRequestHook` from `@xandreed/core` in
 the turn's services to customize a fresh prepared model request. Its
@@ -1450,10 +1463,15 @@ A subscription can instead run in the background:
 `onEvent`, `onTool` and a host event's `on`. It gets its own bounded queue and
 fiber. `publish` returns once the event is queued, and the handler sees events
 in publication order. When the queue is full (`capacity`, 256 by default),
-`publish` waits for room, interruptibly wherever it runs; a background
-handler's own publications (to its own subscription or another's, and what
-it runs inline) never wait but are queued past the capacity, so a handler
-that publishes what it takes cannot deadlock, its reaction chains bounded by
+`publish` waits for room, interruptibly wherever it runs, a background
+handler publishing into another subscription's queue included; a background
+handler's publications into its own subscription while it runs (and those
+of what it runs inline or forks, while it still runs) never wait: its full
+queue fails with `events.capacity`, so reentry preserves the finite
+capacity. A task it forked that publishes once it returned waits for room,
+and two handlers publishing into each other's full queues wait for each
+other until the turn is interrupted. `capacity` is a positive safe integer; any
+other value dies with `config.limits` when the subscription is made. Reaction chains are also bounded by
 `maxEventDepth`. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need,
@@ -1644,8 +1662,9 @@ rows. Sequence numbers belong to each session; globally sorting a fork by `seq`
 loses that order. SDK `RequestSnapshot.requestEvents` carries ordered parts and
 current headers; its existing `requests` stays raw headers only. V1-only custom
 adapters may omit the new field. The shipped `requestHeaderConformance` checks
-resolution and strict prefix behavior. Stored format 10 adds this protocol;
-old session and request formats remain readable.
+resolution and strict prefix behavior. Stored format 10 added this protocol.
+Sessions reads only the current stored format; a session stored in an
+earlier one is refused (see [the stored format](#sessions-one-log-per-session)).
 
 **Render snapshots.** Stored format 12 adds optional `memory.snapshot` records.
 After an acknowledged reducing summary and its requested digests, the summary
@@ -1720,8 +1739,6 @@ optional `context.built`, trace content or usage diagnostics does not affect
 this contract. A host that redacts memory, or exports or streams session
 events, handles `request.part` and historical full headers the same way: they
 hold system text (step context included in `"system"` mode) and tool declarations.
-Earlier logs without a header remain readable but cannot reconstruct this
-additional metadata.
 
 `BuiltContext.stableMessages` is the rendered prefix length before the
 selected run's step-context tail, or the whole message count without that
@@ -1729,8 +1746,8 @@ tail. It is bounded by `messages.length` and is computed from the same render,
 including interrupted-call repair and tool-message merging. New headers
 freeze that count and mark only an outgoing copy; raw durable messages and
 context fingerprints stay unchanged. Reconstruction uses the saved count,
-while earlier headers without it replay without the marker. Stored format 8
-adds this optional header field.
+while a header without it replays without the marker. Stored format 8
+added this optional header field.
 
 A streamed step stores the assistant message a non-streamed one stores: its
 text and reasoning parts keep their provider metadata (Anthropic's thinking
@@ -1843,8 +1860,8 @@ provider decode error from the model's ordinary malformed output.
 `taskRunnerConformance(make, { interruptsOnClose? })`,
 `tasksConformance(make)`, `toolRegistryConformance(make)`,
 `fileSystemConformance(subject)`,
-`bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
-`settingsStoreConformance(store, { writable, corrupt? })` and
+`bashConformance(subject)`, `authStoreConformance(subject)`,
+`settingsStoreConformance(subject)` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core/conformance`;
 the credential and settings store kits from `@xandreed/plugin-models/conformance`, and
 `toolRegistryConformance`, which runs its turns over the sdk's `TurnLive`,
@@ -1874,7 +1891,7 @@ and `load_skill`'s, under a PascalCase name, never a host's code.
 `@xandreed/plugin-sessions`
 (over the memory log), `@xandreed/plugin-session-sqlite` (over SQLite),
 `@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` run them, and
-`verify:packages` runs all four on Node.
+`verify:packages` runs the sessions, tasks and registry kits on Node and Bun; the SQLite adapter is verified on Bun only.
 
 **Files and commands.** Agent tools reach the machine through two core ports,
 `FileSystem` and `Bash`. Core ships the ports, the in-memory
@@ -2378,7 +2395,7 @@ FileSystem, a container's Bash, a wrapper around either) auto selects the
 builtin engine without probing. `grepEngine: "ripgrep"` runs `rg` over
 whatever pair the host supplies, which must see the same tree (a container
 whose FileSystem and Bash both run inside it), and refuses activation if the
-probe fails; `"builtin"` selects the synchronous JavaScript engine. Both
+probe fails; `"builtin"` selects the JavaScript engine in a scoped worker. Both
 engines refuse a pattern with a line break (`InvalidPattern`): grep matches
 one line at a time, and ripgrep would read each line of it as a pattern.
 Ripgrep uses its default regular-expression syntax (no lookaround or
@@ -2387,10 +2404,15 @@ backreferences), receives patterns on stdin and runs with `grepTimeoutMs`
 `grepIgnoreFiles: true`, searches files hidden by ignore files too. With that
 option it honours `.gitignore`, `.ignore` and other ripgrep ignore rules.
 A timeout returns partial results with `timedOut: true` and a note in grep view
-version 4. Builtin `grep` is not time-bounded: its expression runs in the host
-process and cannot be interrupted. It cuts lines before matching and refuses
-nested repetition (`(a+)+`), but overlapping alternatives such as `(a|a)*` can
-still hold the process on a hostile line.
+version 4. Builtin regex `grep` uses one scoped worker, started at the first
+file it searches, and a shared `grepTimeoutMs` deadline that the worker's
+start does not use. At most four such workers run in the process at once,
+whatever its hosts and sessions; a grep waiting for one does not use its
+deadline for the wait. Timeout or interruption terminates the worker,
+including native backtracking over overlapping alternatives. It returns partial
+results with `timedOut: true`. Literal matching remains local. Nested repetition
+is still refused early; line clipping controls displayed/searched text, not
+regexp execution time. File size and result caps apply to both paths.
 
 Commands get the configured `bashEnv` over an
 allowlist of the host's variables (`bashEnvAllow`, the same names as
@@ -2956,9 +2978,10 @@ before streaming events to a browser. The skill
 matcher's decision hash adds the images' fingerprints only when there are
 some.
 
-**Compatibility.** Logs written before decode unchanged, a whitespace-only
-message included; a result without images is stored and rendered exactly as
-before. A 0.13 reader of a newer log drops the images it does not know (a
+**Compatibility.** A result without images is stored and rendered exactly as
+one written before images arrived. Sessions reads only the current stored
+format, so a log an earlier release wrote is refused, not decoded (see
+[the stored format](#sessions-one-log-per-session)). A 0.13 reader of a newer log drops the images it does not know (a
 result's `media` slots included), fails on a message without text and on an
 `OmitMedia` compaction, and a replay of a request with images diverges there
 (`request.diverged`).
@@ -3049,9 +3072,7 @@ open turn per session, durable input and recovery rules. `Agent.turn` or another
 `TurnRunner` executes admitted turns. Share those same Sessions and, when used,
 Tasks across the agent, task executor and inbox drainer. The
 [session contracts](#sessions-one-log-per-session) describe storage choices,
-format compatibility and ownership. The stored-format gate allows reading and
-listing newer payload formats while refusing writes and replay; backend layouts
-have separate version checks.
+format compatibility and ownership. Sessions accepts only stored format 19 for reads and writes. Backends independently require their current physical layout; configure fresh locations for unsupported stores, leaving old data intact.
 
 Use `Sessions.enqueue(address, { id, userMessage, source, delivery })` to save
 input while a turn runs. An input ID names one immutable normalized message,
@@ -3161,19 +3182,21 @@ background tasks. Two layers split the work:
   isRevisionConflict })`) and, with `notAfter`, only while the
   storage's clock has not passed it; events get dense `seq`s and the
   storage's time; a commit may carry state and no events. Each create gives
-  the session a new `incarnation` (a session removed and created again under
-  its id has another), and a commit naming one (`incarnation`, as the
-  sessions plugin's every commit does) is `SessionMissing` to a session
-  created again since, nothing written, whatever its revision: a turn's
-  writer on another instance never writes into a session that replaced its
-  own (its next write fails `TurnClosed`, `removed`). The storage's
+  the session a new `incarnation`. `SessionRef` contains its id, owner and
+  incarnation: `read`, `commit` and `remove` require this reference, and fork
+  lineage contains the same identity. Stale and wrong-owner references fail
+  as `SessionMissing` before reaching a replacement generation. `remove` is
+  not idempotent: removing a missing, already removed, stale or wrong-owner
+  reference fails with `SessionMissing`, so a caller that retries a removal,
+  or removes children before their parent, handles it. Creation takes
+  `{ header, state }` atomically. `head(id)` is a trusted bootstrap lookup;
+  authorize the returned owner before using `sessionRef(head)`. The storage's
   clock is whatever the backend reads: the memory and SQLite logs read the
   committing process's Effect `Clock` (SQLite once it holds the write lock),
   so instances sharing them need clocks in step; a host's own store may read
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins, that a commit naming a removed incarnation lands
-  nowhere, that a read from the end returns the newest matches of its kinds
+  concurrent commits wins, that stale or wrong-owner reads, commits, removals and fork parents are refused, that a read from the end returns the newest matches of its kinds
   below its ceiling, across commits, in ascending order and every match
   without a limit (`read-latest`), that data with an `undefined` field commits and
   reads back without it, and that an event as large as a message's images
@@ -3205,11 +3228,10 @@ background tasks. Two layers split the work:
   the last commits, never tear one), and a row that does not decode fails
   with code `store.decode`. A read from the end walks the session's rows
   newest first along its indexes and stops at its `limit`. The file records its schema version
-  (`PRAGMA user_version`): opening it applies the migrations it lacks, under
-  the write lock, and a file a newer release wrote fails to open with code
-  `store.version`, neither read nor written; a 0.14.0 file, without a
-  version, opens as it was. Schema 2 gives each session its incarnation,
-  the sessions already there one each.
+  (`PRAGMA user_version`): only schema 3 is supported. An empty unversioned
+  database initializes directly; every other schema version or nonempty
+  unversioned database fails with `store.version` before schema or WAL changes.
+  There is no migration. Parent foreign keys include owner and incarnation.
   `@xandreed/plugin-session-files` ships `SessionLogFilesLive(path)` and
   `makeSessionLogFiles(path)`, the log as files in a directory, on Node 24 and
   Bun, local or on a network mount (NFS): one immutable file per commit,
@@ -3222,10 +3244,27 @@ background tasks. Two layers split the work:
   revision puts it back); damage before the tail fails with `store.decode`.
   A commit's `notAfter` is checked again right before its link, and so is
   the session's header (its nonce is the incarnation): a session removed and
-  created again while a commit wrote its file gets nothing. Removing a
-  session moves it away first, then its children, so a child created
-  meanwhile never outlives it; a session removed while it is read is
-  `SessionMissing`. At most two underlying file system promises are in
+  created again while a commit wrote its file gets nothing. Each creation is
+  a generation: its payload is staged, claimed by an exclusive link of a
+  minimal claim (id, incarnation, claim time), then published under
+  `lives/`. Removing a session writes a permanent tombstone for its
+  generation, removes its children, then deletes its header, commits and
+  quarantined bytes: only the claim and the tombstone stay, nothing of its
+  owner, metadata, state or events. A removal stopped part way is recorded
+  in `removing/` and finished by the next open, or by removing the same
+  reference again (`SessionLog.remove`, or `Sessions.remove` given the
+  session's `SessionRef`), which then fails with `SessionMissing`; once
+  finished, removing it again does nothing more; a
+  `Sessions.remove` that fails once its session is gone still closes that
+  instance's turns of it before it reports the failure. Listing and
+  removal read only the sessions not removed, so their work does not grow
+  with the sessions removed before. Reads verify ancestor references and
+  tombstones too, so a crash cannot expose an orphan, and an open removes a
+  child its creator published under a parent removed meanwhile, then stopped
+  before checking; a reference whose id
+  or incarnation is not a UUID is `SessionMissing` before any path is built
+  from it. Replacement generations use different paths. A removed reference
+  is `SessionMissing`. At most two underlying file system promises are in
   flight per handle. Queued admission and each native await have separate
   `stallMs` deadlines (10 s): one that does not answer fails with
   `store.stalled`, and so does every call after it until one, let through a
@@ -3234,13 +3273,15 @@ background tasks. Two layers split the work:
   go, and the next begin reaps it if it landed). A timed-out operation
   retains its slot until its original promise settles, so cooldown probes
   cannot accumulate further pending work, and healthy calls queue for the
-  slot left rather than fail. An open sweeps what stopped creates and probes
-  left in `staging/`, and a handle caches a bounded number of sessions and
+  slot left rather than fail. A handle caches a bounded number of sessions and
   commit first lines. A read from the end opens commits newest first and
-  stops once it holds its `limit`, so older commits are not read. Like the SQLite log it stamps time with the caller's
-  `Clock`. A directory whose layout a newer release wrote fails to open with
-  `store.version`; one without hard links (some SMB mounts), with
-  `store.open`.
+  stops once it holds its `limit`, so older commits are not read; a read
+  after a position finds its first commit by a binary search over the
+  commits' first lines, so the commits before it are not read either. Like the SQLite log it stamps time with the caller's
+  `Clock`. Only file layout 2 is supported; any other marker or a nonempty unmarked directory fails to open with
+  `store.version` (its `staging/` may hold names the store writes, staged by
+  another handle opening it at once); one without hard links (some SMB mounts), with
+  `store.open`, at every open.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it. `Sessions.read(address, { after,
@@ -3256,18 +3297,15 @@ one with each change to one of them that a reader can tell (a key, a type,
 an optionality, a check; a description is not one), and `bun run
 docs:generate` fails on a change that does not bump it: it fingerprints the
 shapes into `docs/stored-format.json`, which keeps every format's
-fingerprint. Every commit the sessions plugin makes stamps the session with
-its release's format, raised from a lower one (or none: an earlier release
-wrote none). A session a newer release stamped is refused before anything is
-planned, with a `SessionLogError` of code `session.version`, by `begin`,
-`deliver`, `drain`, `cancel`, `transact` and `fork`: this release cannot tell
-what that release's records mean, and writes nothing beside them. `get`,
-`list` and `read` still read it. A backend keeps its own marker for its own
-layout: the SQLite file's `user_version` (`store.version`).
+fingerprint. Creation stamps stored format 19. Sessions rejects every other
+format on reads and writes with `SessionLogError` code `session.version`.
+Existing data is left untouched; use a fresh store. Physical backends require
+file layout 2 or SQLite schema 3 independently, with `store.version` on mismatch.
 
 ```ts
-const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
+const view = yield* sessions.create({ owner })                 // SessionView: header, incarnation, turns, title, open, pending
 const address = { id: view.header.id, owner }                  // another owner's address finds nothing
+// `{ ...address, incarnation: view.incarnation }` is fenced to this life of the session: SessionMissing once it is removed and created again
 yield* Effect.scoped(Effect.gen(function* () {
   const writer = yield* sessions.begin(address, { _tag: "User", userMessage, runId, key, command: {} })
   yield* agent.turn({ turn: writer, services }, use)              // the agent runs it; the host ends it
@@ -3471,8 +3509,12 @@ makes a child session (a background task's): with `inherit` its history is
 the parent's up to its last closed turn, and its turns count on from there.
 `changes(address)` signals the session's followers at least once after each
 commit this instance makes, the signals a follower has not taken merged into
-one (a feed polls for the others' commits), and `lookup(address, key)` finds
-a key's turn.
+one (a feed polls for the others' commits). It checks the address once, on
+its first pull (another owner's address or a missing session is
+`SessionMissing`); a follower is then woken by every commit under that id
+and owner, a session created again under the id included, and reads with
+its address to see which session changed. `lookup(address, key)` finds a
+key's turn.
 
 **Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
 that opens every turn (a direct or queued user's, the inbox's, a task's),
@@ -3916,7 +3958,8 @@ accepted, the ordinary inbox drainer's explicit startup takeover handles it.
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
-after a cursor, then follows `changes` and polls. A host that also
+after a cursor, then follows `changes` (the owner's only: another owner's
+address is `SessionMissing`, and the feed `forbidden`) and polls. A host that also
 streams what the journal never stores (a reply as it is written, a
 preview) passes it to `RenderFeed.frames` as `live`, in the options after
 the projection: those payloads go out as transient frames after the ready

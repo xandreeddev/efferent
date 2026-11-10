@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync } from "node:fs"
+import { existsSync, rmSync } from "node:fs"
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
@@ -22,9 +22,9 @@ const packages = join(root, ".artifacts/packages")
  * `--allow-dirty` accepts a build of uncommitted changes, to check them before committing.
  */
 const args = process.argv.slice(2)
-const unknownArgs = args.filter((arg) => arg !== "--allow-dirty")
+const unknownArgs = args.filter((arg) => arg !== "--allow-dirty" && arg !== "--keep-consumer")
 if (unknownArgs.length > 0) {
-  console.error(`Unknown argument: ${unknownArgs.join(" ")}\nUsage: bun run verify:packages [--allow-dirty]`)
+  console.error(`Unknown argument: ${unknownArgs.join(" ")}\nUsage: bun run verify:packages [--allow-dirty] [--keep-consumer]`)
   process.exit(2)
 }
 const stampFile = Bun.file(join(packages, "build.json"))
@@ -77,6 +77,27 @@ const artifacts = await Promise.all(manifests.map(async (file) => {
   return { manifest, file: tarballPath, shasum }
 }))
 const consumer = await mkdtemp(join(tmpdir(), "efferent-consumer-"))
+if (!args.includes("--keep-consumer")) process.once("exit", () => rmSync(consumer, { recursive: true, force: true }))
+/** Each fixture owns its scenario assertions; the launcher owns its process and deadline. */
+interface PackedFixture {
+  readonly file: string
+  readonly marker: string
+  readonly required: ReadonlyArray<string>
+  readonly timeoutMs?: number
+}
+const runPackedFixture = async (fixture: PackedFixture) => {
+  const file = fixture.file.replace(".fixture.mjs", ".mjs")
+  await writeFile(join(consumer, file), await readFile(join(root, "scripts", fixture.file), "utf8"))
+  for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+    const child = Bun.spawn([binary, file], { cwd: consumer, stdout: "pipe", stderr: "inherit", timeout: fixture.timeoutMs ?? 120_000 })
+    const [report, code] = await Promise.all([new Response(child.stdout).text(), child.exited]).finally(() => child.kill())
+    if (code !== 0 || !report.includes(`${fixture.marker} {"runtime":"${runtime}`) || fixture.required.some((name) => !report.includes(`"${name}":true`))) {
+      console.error(`the packed ${runtime} ${fixture.marker} fixture failed its required evidence`)
+      process.exit(1)
+    }
+    console.log(report.trim())
+  }
+}
 const registry: Bun.Server<undefined> = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request): Response {
   const path = decodeURIComponent(new URL(request.url).pathname).slice(1)
   const artifact = artifacts.find((entry) => entry.manifest.name === path || `${entry.manifest.name}/artifact.tgz` === path)
@@ -610,13 +631,23 @@ const damagedFile = (path) => Effect.acquireRelease(Effect.sync(() => {
   writeFileSync(path, "{ not json")
   return before
 }), (before) => Effect.sync(() => Option.match(before, { onNone: () => rmSync(path, { force: true }), onSome: (bytes) => writeFileSync(path, bytes) })))
-const memoryEndpoint = tokenEndpoint("anthropic")
-const localEndpoint = tokenEndpoint("openai-codex")
-const localAuth = LocalAuthStoreLive(kitCwd, kitHome, ".efferent/runtime").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: localEndpoint.fetch }))))
-const stores = await runKit("AuthStore (memory)", authStoreConformance(await serviceOf(AuthStore, MemoryAuthStoreLive(new Map(), { fetch: memoryEndpoint.fetch })), { refresh: memoryEndpoint.probe }))
-  + await runKit("AuthStore (local)", authStoreConformance(await serviceOf(AuthStore, localAuth), { refresh: localEndpoint.probe, corrupt: damagedFile(join(kitHome, ".efferent", "runtime", "auth.json")) }))
-  + await runKit("SettingsStore (memory)", settingsStoreConformance(await serviceOf(SettingsStore, MemorySettingsStoreLive()), { writable: true }))
-  + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true, corrupt: damagedFile(join(kitCwd, ".efferent", "config.json")) }))
+const localFixture = (auth) => Effect.gen(function* () {
+  const home = yield* Effect.acquireRelease(Effect.sync(() => mkdtempSync(join(kitHome, "fixture-"))), (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true })))
+  const cwd = join(home, "workspace")
+  mkdirSync(cwd)
+  const endpoint = tokenEndpoint("openai-codex")
+  const store = auth ? yield* Effect.service(AuthStore).pipe(Effect.provide(LocalAuthStoreLive(cwd, home, ".efferent/runtime", ".efferent").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch }))))))
+    : yield* Effect.service(SettingsStore).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home)))
+  const files = auth ? [join(home, ".efferent/runtime/auth.json"), join(cwd, ".efferent/runtime/auth.json"), join(home, ".efferent/auth.json"), join(cwd, ".efferent/auth.json")] : [join(home, ".efferent/config.json"), join(cwd, ".efferent/config.json")]
+  return { store, refresh: endpoint.probe, corruptions: files.map(damagedFile) }
+})
+const stores = await runKit("AuthStore (memory)", authStoreConformance({ refresh: true, open: () => Effect.suspend(() => {
+  const endpoint = tokenEndpoint("anthropic")
+  return Effect.service(AuthStore).pipe(Effect.provide(MemoryAuthStoreLive(new Map(), { fetch: endpoint.fetch })), Effect.map((store) => ({ store, refresh: endpoint.probe })))
+}) }))
+  + await runKit("AuthStore (local)", authStoreConformance({ refresh: true, corrupt: true, open: () => localFixture(true) }))
+  + await runKit("SettingsStore (memory)", settingsStoreConformance({ writable: true, open: () => Effect.service(SettingsStore).pipe(Effect.provide(MemorySettingsStoreLive()), Effect.map((store) => ({ store }))) }))
+  + await runKit("SettingsStore (local)", settingsStoreConformance({ writable: true, corrupt: true, open: () => localFixture(false) }))
   + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: Redacted.make("k") }]]))))), { includes: ["opencode:glm-5.2"] }))
 const messagesCatalog = await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([
   ["anthropic", { type: "api_key", key: Redacted.make("catalog-fixture") }],
@@ -692,7 +723,7 @@ import { ConversationId } from "@xandreed/core"
 import { makeSessionLogFiles } from "@xandreed/plugin-session-files"
 const root = await mkdtemp(join(tmpdir(), "efferent-node-crash-"))
 const withLog = (body) => Effect.runPromise(Effect.scoped(makeSessionLogFiles(root).pipe(Effect.flatMap(body))))
-const fresh = async () => { const id = ConversationId.make(crypto.randomUUID()); await withLog((log) => log.create({ id, owner: "node", origin: "user", createdAt: 0, meta: {}, parent: Option.none() })); return id }
+const fresh = async () => { const id = ConversationId.make(crypto.randomUUID()); await withLog((log) => log.create({ header: { id, owner: "node", origin: "user", createdAt: 0, meta: {}, parent: Option.none() }, state: {} })); return id }
 const holder = (...args) => new Promise((resolve, reject) => {
   const child = spawn("node", ["session-files-holder.mjs", ...args], { stdio: ["pipe", "pipe", "inherit"] })
   const said = []
@@ -707,12 +738,18 @@ await new Promise((resolve) => setTimeout(resolve, 300))
 writer.child.kill("SIGKILL")
 await exited(writer.child)
 const head = await withLog((log) => log.head(crashed))
-const events = await withLog((log) => log.read(crashed, { after: 0, limit: Option.none(), kinds: [] }))
+const events = await withLog((log) => log.read({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation }, { after: 0, limit: Option.none(), kinds: [] }))
 const wholeCommits = head.revision >= 1 && events.length === head.revision * 5 && events.every((event, index) => event.seq === index + 1 && event.data.commit === Math.floor(index / 5) + 1) && head.state.commit === head.revision
 if (!wholeCommits) { console.error("a node writer killed mid-commit left " + events.length + " events at revision " + head.revision); process.exit(1) }
 const raced = await fresh()
 const racers = await Promise.all([holder("cas-increments", root, raced, "100", "a"), holder("cas-increments", root, raced, "100", "b")])
 racers.forEach(({ child }) => child.stdin.write("go\\n"))
+await Promise.all(racers.map(({ child, said }) => new Promise((resolve) => {
+  if (said.includes("read")) return resolve()
+  const read = () => { if (said.includes("read")) { child.stdout.off("data", read); resolve() } }
+  child.stdout.on("data", read)
+})))
+racers.forEach(({ child }) => child.stdin.write("commit\\n"))
 await Promise.all(racers.map(({ child }) => exited(child)))
 const count = (await withLog((log) => log.head(raced))).state.count
 if (count !== 200) { console.error("two node processes racing by compare-and-swap counted " + count + ", not 200"); process.exit(1) }
@@ -942,49 +979,23 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(hookReport.trim())
 }
-// Interception keeps one effective result durable while held siblings remain interrupted after restart.
-await writeFile(join(consumer, "tool-interceptor-consumer.mjs"), await readFile(join(root, "scripts/tool-interceptor-consumer.fixture.mjs"), "utf8"))
-for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
-  const interceptorChild = Bun.spawn([binary, "tool-interceptor-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-  const interceptorReport = await new Response(interceptorChild.stdout).text()
-  const required = ["oneEffectiveAck", "actualOnToolPreserved", "rewriteRecorded", "encodedEvidenceVerified", "rawBeforeView", "incrementalSiblingAck", "returnedBeforeCancel", "cancelledAfterInterruptible", "noHeldRawResult", "coldReplayVerified", "readOnlyReopenVerified", "interruptedRepairVerified", "noAutomaticReplay", "coldViewsVerified", "sigkillRecoveryVerified", "journalCodecVerified", "presentationNoDuplicate"]
-  if (await interceptorChild.exited !== 0 || !interceptorReport.includes(`tool-interceptor {"runtime":"${runtime}"`) || required.some((name) => !interceptorReport.includes(`"${name}":true`))) {
-    console.error(`the packed ${runtime} tool interceptor lost effective result durability, typed views or restart evidence`); process.exit(1)
-  }
-  console.log(interceptorReport.trim())
-}
-// A helper yields durably, then executes its exact queued answer on a borrowed writer after restart.
-await writeFile(join(consumer, "helper-executor-consumer.mjs"), await readFile(join(root, "scripts/helper-executor-consumer.fixture.mjs"), "utf8"))
-for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
-  const helperChild = Bun.spawn([binary, "helper-executor-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-  const helperReport = await new Response(helperChild.stdout).text()
-  const required = ["durableWitness", "liveHolderPreserved", "bookkeepingWithoutExecutor", "repeatedKillRepair", "uniqueRecoveryKeys", "abandonedTurnKeysVerified", "exactOutboxRepaired", "answerOnce", "borrowedTaskRoute", "lostEndAckRecovered", "terminalResultOnce", "sigkillRecoveryVerified"]
-  if (await helperChild.exited !== 0 || !helperReport.includes(`helper-executor {"runtime":"${runtime}"`) || required.some((name) => !helperReport.includes(`"${name}":true`))) {
-    console.error(`the packed ${runtime} helper executor lost durable questions, exact answers or restart recovery`); process.exit(1)
-  }
-  console.log(helperReport.trim())
-}
+const protocolFixtures: ReadonlyArray<PackedFixture> = [
+  { file: "tool-interceptor-consumer.fixture.mjs", marker: "tool-interceptor", required: ["oneEffectiveAck", "actualOnToolPreserved", "rewriteRecorded", "encodedEvidenceVerified", "rawBeforeView", "incrementalSiblingAck", "returnedBeforeCancel", "cancelledAfterInterruptible", "noHeldRawResult", "coldReplayVerified", "readOnlyReopenVerified", "interruptedRepairVerified", "noAutomaticReplay", "coldViewsVerified", "sigkillRecoveryVerified", "journalCodecVerified", "presentationNoDuplicate"] },
+  { file: "helper-executor-consumer.fixture.mjs", marker: "helper-executor", required: ["durableWitness", "liveHolderPreserved", "bookkeepingWithoutExecutor", "repeatedKillRepair", "uniqueRecoveryKeys", "abandonedTurnKeysVerified", "exactOutboxRepaired", "answerOnce", "borrowedTaskRoute", "lostEndAckRecovered", "terminalResultOnce", "sigkillRecoveryVerified"] },
+  { file: "process-host-consumer.fixture.mjs", marker: "process-host", required: ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "steerReachesRunningTurn", "closedStdoutExitDocumented", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"] },
+  { file: "regex-search-consumer.fixture.mjs", marker: "regex-search", required: ["bounded", "literal", "ordinary"], timeoutMs: 15_000 },
+]
+for (const fixture of protocolFixtures) await runPackedFixture(fixture)
 // Native memory, RAG and temporal graph conformance through the packed public API.
 await writeFile(join(consumer, "knowledge-consumer.mjs"), await readFile(join(root, "scripts/knowledge-consumer.fixture.mjs"), "utf8"))
 for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
-  const knowledgeChild = Bun.spawn([binary, "knowledge-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-  const knowledgeReport = await new Response(knowledgeChild.stdout).text()
+  const knowledgeChild = Bun.spawn([binary, "knowledge-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit", timeout: 120_000 })
+  const [knowledgeReport, code] = await Promise.all([new Response(knowledgeChild.stdout).text(), knowledgeChild.exited]).finally(() => knowledgeChild.kill())
   const required = ["nativeMemory", "nativeRag", "sourceEvidence", "referenceMemory", "referenceKnowledge", "temporalGraph"]
-  if (await knowledgeChild.exited !== 0 || required.some((name) => !knowledgeReport.includes(`"${name}":true`)) || (process.env.EFFERENT_TEST_POSTGRES_URL && !knowledgeReport.includes('"postgres":true'))) {
+  if (code !== 0 || required.some((name) => !knowledgeReport.includes(`"${name}":true`)) || (process.env.EFFERENT_TEST_POSTGRES_URL && !knowledgeReport.includes('"postgres":true'))) {
     console.error(`the packed ${runtime} native knowledge engines lost source evidence, temporal graph or store conformance`); process.exit(1)
   }
   console.log(`${runtime} knowledge ${knowledgeReport.trim()}`)
-}
-// The process host's real parent/child protocol, peer kit, signals and durable restart on both runtimes.
-await writeFile(join(consumer, "process-host-consumer.mjs"), await readFile(join(root, "scripts/process-host-consumer.fixture.mjs"), "utf8"))
-for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
-  const processChild = Bun.spawn([binary, "process-host-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-  const processReport = await new Response(processChild.stdout).text()
-  const required = ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "steerReachesRunningTurn", "closedStdoutExitDocumented", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"]
-  if (await processChild.exited !== 0 || !processReport.includes(`process-host {"runtime":"${runtime} `) || required.some((name) => !processReport.includes(`"${name}":true`))) {
-    console.error(`the packed ${runtime} process host lost protocol responsiveness, peer conformance, bounded shutdown or durable restart evidence`); process.exit(1)
-  }
-  console.log(processReport.trim())
 }
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
@@ -1007,4 +1018,4 @@ const evalBin = Bun.spawn([join(consumer, "node_modules/.bin/efferent-eval"), "-
 const evalHelp = await new Response(evalBin.stdout).text()
 if (await evalBin.exited !== 0 || !evalHelp.startsWith("efferent-eval ")) { console.error("The efferent-eval bin did not run as a command"); process.exit(1) }
 console.log("The efferent-eval bin runs as a command")
-console.log(`Packed consumer verified at ${consumer}`)
+console.log(args.includes("--keep-consumer") ? `Packed consumer verified at ${consumer}` : "Packed consumer verified; temporary installation removed on exit")

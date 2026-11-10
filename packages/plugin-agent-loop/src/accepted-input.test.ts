@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
@@ -23,7 +24,7 @@ test("stream fallback supplies only the accepted settled finish-only response's 
       }))))),
     })
     const result = yield* runLoop({
-      system: "fixture", messages: [{ role: "user", content: "go" }], toolkit: Toolkit.make(), streaming: true,
+      system: "fixture", messages: [{ role: "user", content: "go" }], toolkit: prepareToolkit(Toolkit.make()), streaming: true,
       onTail: (tail, _step, accepted) => Ref.update(records, (all) => [...all, { tail, accepted: Option.fromNullishOr(accepted) }]).pipe(Effect.as([])),
     }).pipe(Effect.provideService(LanguageModel.LanguageModel, model))
     return { records: yield* Ref.get(records), calls: yield* Ref.get(calls), result }
@@ -35,7 +36,7 @@ test("stream fallback supplies only the accepted settled finish-only response's 
 
 test("planned calls, results, nudges and nondurable steers omit evidence while an unusable accepted empty reply supplies it", async () => {
   const Probe = Tool.make("probe", { description: "Return a number.", parameters: Schema.Struct({ n: Schema.Number }), success: Schema.Number })
-  const toolkit = Toolkit.make(Probe)
+  const toolkit = prepareToolkit(Toolkit.make(Probe))
   const observed = await Effect.runPromise(Effect.gen(function* () {
     const calls = yield* Ref.make(0)
     const steered = yield* Ref.make(false)

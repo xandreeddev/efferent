@@ -579,14 +579,17 @@ describe("streaming a turn to a client", () => {
   test("a client that stops reading never holds the turn: one write times out, the stream is aborted, the turn completes", () => run(Effect.gen(function* () {
     const host = yield* hostWith(yield* scripted([calls("c1", "lookup", { query: "alpha" }), says("Found five.")]))
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>() // nobody reads it
-    const push = yield* clientPush(writable.getWriter(), "200 millis")
-    const started = Date.now()
+    const writer = writable.getWriter()
+    const writes: Array<Uint8Array | undefined> = []
+    const write = writer.write.bind(writer)
+    writer.write = (chunk) => { writes.push(chunk); return write(chunk) }
+    const push = yield* clientPush(writer, "200 millis")
     const result = yield* host.agent.turn({ ...ask("find alpha"), services: Context.make(LanguageModel.LanguageModel, host.model) }, streamTo(push))
     expect(result.outcome).toBe("completed")
-    // Ten frames: if each waited out the timeout the turn would take 2 s; only the first does.
-    expect(Date.now() - started).toBeLessThan(1_000)
+    // Later frames are dropped after the first stalled write.
+    expect(writes).toHaveLength(1)
     expect(yield* Effect.promise(() => readable.getReader().read().then(() => "open", () => "aborted"))).toBe("aborted")
-  })))
+  }).pipe(Effect.timeout("5 seconds"))), 10_000)
 })
 
 describe("which subscription sees what", () => {
@@ -882,13 +885,15 @@ describe("serving turns over HTTP", () => {
   test("a journal follower that stops reading is dropped: its first write times out, the stream is aborted, the feed stops", () => run(Effect.gen(function* () {
     const host = yield* hostWith(yield* scripted([]))
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>() // nobody reads it
-    const started = Date.now()
+    const writer = writable.getWriter()
+    const writes: Array<Uint8Array | undefined> = []
+    const write = writer.write.bind(writer)
+    writer.write = (chunk) => { writes.push(chunk); return write(chunk) }
     const frames = host.feed.frames({ threadId: ThreadId.make(sessionId), principalId: PrincipalId.make(owner) }, 0, clientProjection)
-    yield* SseTransport.serve(frames, webSsePeer(writable.getWriter(), new AbortController().signal, "50 millis"))
-    // Unbounded, the first write would wait as long as the client stays connected: the feed checks maxDurationMs only between polls.
-    expect(Date.now() - started).toBeLessThan(1_000)
+    yield* SseTransport.serve(frames, webSsePeer(writer, new AbortController().signal, "50 millis"))
+    expect(writes).toHaveLength(1)
     expect(yield* Effect.promise(() => readable.getReader().read().then(() => "open", () => "aborted"))).toBe("aborted")
-  })))
+  }).pipe(Effect.timeout("5 seconds"))), 10_000)
 })
 
 describe("the guide's begin codes", () => {

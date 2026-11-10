@@ -1,7 +1,7 @@
 import { Deferred, Effect, Exit, Fiber, Match, Option, Ref, Schema, Scope, Stream } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, eventually, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
+import { check, eventually, expect, fail, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
@@ -74,13 +74,17 @@ export interface SessionsSubject {
   /** Move the clock the store and the instances read forward by `millis`: `TestClock.adjust`, or a sleep on a live clock. */
   readonly advance: (millis: number) => Effect.Effect<void>
   /**
-   * Stamp a session as a newer release would leave it: its stored format
-   * above `STORED_FORMAT`, everything else as it was. The kit calls it on a
-   * session an instance has written to (a turn begun and ended, an item
-   * delivered). Leave it out for a backend that keeps no stored format: the
+   * Stamp a session with a stored format this release does not support:
+   * any other than `STORED_FORMAT` (older, newer or missing), everything
+   * else as it was. The kit calls it on a session an instance has written
+   * to (a turn begun and ended, an item delivered). It returns an effect
+   * that reads a snapshot of the session's stored head as text (its seq and
+   * revision included, its read time left out), which the kit compares
+   * before and after the refused calls to see that nothing was written.
+   * Leave it out for a backend that keeps no stored format: the
    * stored-format check is then not run.
    */
-  readonly newerFormat?: (address: SessionAddress) => Effect.Effect<void, unknown>
+  readonly newerFormat?: (address: SessionAddress) => Effect.Effect<Effect.Effect<string, unknown>, unknown>
 }
 
 /** Admits every turn. */
@@ -200,11 +204,11 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * the lease from that write; with `processOwned`, a turn whose process
  * stopped reaped, one whose process runs held, and a leased turn held by
  * a process-owned instance within its lease (a turn is judged as it was
- * taken, not by the reader's ownership); with `newerFormat`, a session a
- * newer release stamped refused for every write and turn (`begin`,
- * `deliver`, `drain`, `cancel`, `transact`, `fork`) with a
- * `SessionLogError` of code `session.version`, nothing written, and still
- * read (`get`, `list`, `read`); for an instance with a `TurnShutdown`, a
+ * taken, not by the reader's ownership); with `newerFormat`, a session
+ * stamped with any stored format other than this release's refused for
+ * every read, write and turn (`get`, `list`, `read`, `begin`, `deliver`,
+ * `drain`, `cancel`, `transact`, `fork`) with a `SessionLogError` of code
+ * `session.version`, nothing written; for an instance with a `TurnShutdown`, a
  * begin refused (`TurnRefused`, reason `shutdown`) once it refuses, the
  * turns open before running on and a drain opening nothing, then every
  * turn it holds closed by `interrupt` as interrupted with `turn.shutdown`,
@@ -423,9 +427,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
 
     scoped("a turn's meta is stored, admitted and shown to the host's admission, {} when none is given, and the inbox's from drain", "meta", (owner) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])
-      const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, canonicalJson(turn.meta)]).pipe(Effect.andThen(open)) })
+      const named = yield* Ref.make<ReadonlyArray<string>>([])
+      const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, canonicalJson(turn.meta)]).pipe(
+        Effect.andThen(Ref.update(named, (all) => [...all, canonicalJson(turn.session)])), Effect.andThen(open)) })
       const { sessions } = yield* leased(LONG, recording)
-      const address = yield* created(sessions, owner)
+      const made = yield* sessions.create({ owner })
+      const address: SessionAddress = { id: made.header.id, owner }
       const shown = yield* Effect.scoped(sessions.begin(address, { ...say("one", "k1"), meta: { tenant: "acme", nested: { n: 1 } } }).pipe(Effect.tap((writer) => writer.end(completed)),
         Effect.map((writer) => [canonicalJson(writer.admitted.meta), canonicalJson(writer.started.data.meta ?? null)])))
       yield* expect("meta", shown.every((json) => json === canonicalJson({ tenant: "acme", nested: { n: 1 } })), `the turn's meta was admitted and stored as ${shown.join(" and ")}`)
@@ -438,6 +445,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("meta", (yield* Ref.get(drained)).join() === [canonicalJson({ source: "drain" }), canonicalJson({ source: "drain" })].join(), `the inbox turn's meta was ${(yield* Ref.get(drained)).join(" and ")}`)
       const admitted = (yield* Ref.get(seen)).join(" ")
       yield* expect("meta", admitted === [canonicalJson({ tenant: "acme", nested: { n: 1 } }), "{}", canonicalJson({ source: "drain" })].join(" "), `the host's admission saw ${admitted}`)
+      // The admission is shown the session as the begin resolved it, with its incarnation: the one its views show.
+      const view = yield* sessions.get(address)
+      const reference = canonicalJson({ id: address.id, owner, incarnation: view.incarnation })
+      const sessionsNamed = yield* Ref.get(named)
+      yield* expect("meta", made.incarnation === view.incarnation && sessionsNamed.length === 3 && sessionsNamed.every((json) => json === reference),
+        `the host's admission was shown ${sessionsNamed.join(" and ")}, the session's views ${canonicalJson([made.incarnation, view.incarnation])}`)
     })),
 
     scoped("only the last user's turn, cancelled or interrupted, is resumed; every other is NotResumable with why, and nothing opens", "resume", (owner) => Effect.gen(function* () {
@@ -602,7 +615,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         `a cancelled turn stored ${fourth}, and a hold after the cancel gave ${cancelled}`)
     })),
 
-    scoped("a turn sealed by its final reply ends as it sealed, with that reply, whoever closes it: a cancel and its time limit here, its own end with any ending, a reap once its holder is gone; one with no final reply is not sealed", "sealed", (owner) => Effect.gen(function* () {
+    scoped("a turn sealed by its final reply ends as it sealed, with that reply, whoever closes it: a cancel and its time limit here, its own end with any ending, a reap once its holder is gone; one with no final reply is not sealed; another owner cannot cancel it", "sealed", (owner) => Effect.gen(function* () {
       const [steady, holder, other] = [yield* leased(), yield* leased(SHORT), yield* leased(SHORT)]
       const sealOf = (writer: TurnWriter) => Option.match(Option.fromNullishOr(writer.seal), { onNone: () => Effect.succeedNone, onSome: (seal) => seal })
       const probe = yield* created(steady.sessions, owner)
@@ -624,12 +637,18 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const cancelled = yield* created(steady.sessions, owner)
       const viaCancel = yield* Effect.scoped(Effect.gen(function* () {
         const { writer, waiter } = yield* sealedWriter(steady.sessions, cancelled, say("cancel me"))
+        // Another owner's cancel of the sealed turn this instance holds is SessionMissing, and leaves it open, as it is.
+        const before = yield* steady.sessions.get(cancelled)
+        const foreign = yield* answerOf(steady.sessions.cancel({ ...cancelled, owner: `${owner}-stranger` }, 1))
+        const untouched = yield* steady.sessions.get(cancelled)
         const answer = yield* steady.sessions.cancel(cancelled, 1)
         const told = yield* Option.match(waiter, { onNone: () => Effect.succeed(false), onSome: (wait) => Effect.forkChild(wait).pipe(Effect.flatMap((fiber) => settles(fiber, 2_000))) })
         const ended = yield* answerOf(writer.end({ reason: "failed", failure: Option.some({ code: "conformance.late", message: "too late" }) }))
-        return { sealed: Option.isSome(waiter), cancelled: answer.cancelled, told, ended }
+        return { sealed: Option.isSome(waiter), foreign, kept: untouched.seq === before.seq && Option.exists(untouched.open, (open) => open.turn === 1), cancelled: answer.cancelled, told, ended }
       }))
       const cancelEnd = yield* storedOf(steady.sessions, cancelled)
+      yield* expect("sealed", viaCancel.foreign === "SessionMissing" && viaCancel.kept,
+        `another owner's cancel of a sealed turn answered ${viaCancel.foreign}${viaCancel.kept ? "" : " and changed the session"}`)
       yield* expect("sealed", viaCancel.sealed && viaCancel.cancelled && viaCancel.told && viaCancel.ended === "done" && cancelEnd === "1:completed:none | 1",
         `a cancel of a sealed turn answered ${canonicalJson(viaCancel)} and stored ${cancelEnd}`)
       // Its own end with another ending: still the sealed one.
@@ -766,7 +785,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         `of three racing transacts under one key ${won} committed and ${duplicates} were duplicates, and the session holds ${stored} actions`)
     })),
 
-    scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, and a commit to another session does not wake it", "changes", (owner) => Effect.gen(function* () {
+    scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, a commit to another session does not wake it, and another owner's address follows nothing (SessionMissing)", "changes", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const [followed, other] = [yield* created(sessions, owner), yield* created(sessions, owner)]
       const note = (address: SessionAddress) => sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))
@@ -791,6 +810,18 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* note(followed)
       const next = yield* eventually(Ref.get(seen), (count) => count > 2)
       yield* expect("changes", next > 2, "a follower that caught up was not signalled after its session's next commit")
+      // Another owner's address follows nothing: SessionMissing on its first pull, never a signal of the owner's commits.
+      const stranger = yield* Effect.forkScoped(answerOf(sessions.changes({ ...followed, owner: `${owner}-stranger` }).pipe(Stream.take(1), Stream.runDrain)))
+      const answered = (tries: number): Effect.Effect<void, unknown> => stranger.pollUnsafe() !== undefined || tries <= 0 ? Effect.void
+        : note(followed).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => answered(tries - 1))))
+      yield* answered(20)
+      // A follower that neither failed nor ended after 20 commits never will: report it rather than wait for it.
+      if (stranger.pollUnsafe() === undefined) {
+        yield* Fiber.interrupt(stranger)
+        return yield* fail("changes", "another owner's follower of the session neither failed with SessionMissing nor ended after 20 commits")
+      }
+      const strangerAnswer = yield* Fiber.join(stranger)
+      yield* expect("changes", strangerAnswer === "SessionMissing", `another owner's follower of the session ${strangerAnswer === "done" ? "was signalled by its commits" : `answered ${strangerAnswer}`}`)
     })),
 
     scoped("waiting broadcasts an initial signal and coalesced local commits to every subscriber across sessions", "waiting", (owner) => Effect.gen(function* () {
@@ -823,7 +854,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting", surviving > next[1]! && (yield* Ref.get(counts[0]!)) === stopped, "cancelling one subscription stopped another or kept delivering to it")
     })),
 
-    scoped("WaitingInput refreshes only owner-observed queued inputs, excludes notices, and sees foreign claims, release, take, completion and removal", "waiting-input", (owner) => Effect.gen(function* () {
+    scoped("WaitingInput refreshes only owner-observed queued inputs, excludes notices, and sees foreign claims, release, take, completion, removal and a session created again under an observed address", "waiting-input", (owner) => Effect.gen(function* () {
       const [observer, producer] = [yield* leased(), yield* leased()]
       if (Option.isNone(observer.waitingInput)) return
       const probe = observer.waitingInput.value
@@ -869,12 +900,31 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("waiting-input", visible.length === 1 && visible[0]!.session === hidden.id && visible[0]!.pending === 1, "a successful owner-checked read did not observe its session")
       yield* producer.sessions.remove(hidden)
       yield* shows(0, "foreign removal")
+      // A session this observer committed to, removed by another instance and created again under its id and owner, is the
+      // same address: input enqueued into the new one is seen, and idle waits for it.
+      const reused = yield* created(observer.sessions, owner)
+      yield* observer.sessions.transact(reused, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))
+      yield* producer.sessions.remove(reused)
+      yield* producer.sessions.create({ owner, id: reused.id })
+      yield* producer.sessions.enqueue(reused, queued("after-recreate"))
+      const recreated = yield* positive
+      yield* expect("waiting-input", recreated.length === 1 && recreated[0]!.session === reused.id && recreated[0]!.pending === 1,
+        `input enqueued into a session created again under an observed address shows [${recreated.map((count) => `${count.session}:${count.pending}`).join()}]`)
+      const unanswered = yield* Effect.forkScoped(probe.idle)
+      yield* expect("waiting-input", !(yield* settles(unanswered)), "idle completed with input waiting in a session created again under an observed address")
     })),
 
-    scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {
+    scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write; another owner's cancel is SessionMissing", "cancel", (owner) => Effect.gen(function* () {
       const [holder, other] = [yield* leased(), yield* leased()]
       const address = yield* created(holder.sessions, owner)
       const local = yield* holder.sessions.begin(address, say("stop me"))
+      // Another owner's cancel of the open turn, on its holder's instance or another, is SessionMissing and changes nothing.
+      const stranger: SessionAddress = { ...address, owner: `${owner}-stranger` }
+      const seq = (yield* holder.sessions.get(address)).seq
+      const foreign = [yield* answerOf(holder.sessions.cancel(stranger, 1)), yield* answerOf(other.sessions.cancel(stranger, 1))]
+      const kept = yield* holder.sessions.get(address)
+      yield* expect("cancel", foreign.every((answer) => answer === "SessionMissing") && kept.seq === seq && Option.exists(kept.open, (open) => open.turn === 1),
+        `another owner's cancel of the open turn answered ${foreign.join()} and left seq ${kept.seq} (was ${seq})`)
       const cancelled = yield* holder.sessions.cancel(address, 1)
       yield* expect("cancel", cancelled.cancelled && cancelled.pending === 0, `cancelling the open turn answered ${canonicalJson(cancelled)}`)
       const closed = yield* local.closed
@@ -1469,14 +1519,13 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     ...Option.match(Option.fromNullishOr(subject.newerFormat), {
       onNone: () => [],
       onSome: (newerFormat) => [
-        scoped("a session a newer release stamped (its stored format above STORED_FORMAT) refuses every write and turn with session.version, writing nothing, and is still read", "stored-format", (owner) => Effect.gen(function* () {
+        scoped("an unsupported session format refuses reads, writes, turns and its removal without changing stored data", "stored-format", (owner) => Effect.gen(function* () {
           const { sessions } = yield* leased()
           const address = yield* created(sessions, owner)
           yield* Effect.scoped(sessions.begin(address, say("before the upgrade")).pipe(Effect.flatMap((writer) => writer.end(completed))))
           yield* sessions.deliver(address, item("waiting"))
-          yield* newerFormat(address)
-          const before = yield* sessions.get(address)
-          const stored = kindsOf(yield* sessions.read(address))
+          const snapshot = yield* newerFormat(address)
+          const before = yield* snapshot
           const answers = [
             yield* answerOf(Effect.scoped(sessions.begin(address, say("after the upgrade")))),
             yield* answerOf(sessions.deliver(address, item("late"))),
@@ -1484,18 +1533,16 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
             yield* answerOf(sessions.cancel(address, 1)),
             yield* answerOf(sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))),
             yield* answerOf(sessions.fork(address, { origin: "conformance", inherit: true })),
+            yield* answerOf(sessions.get(address)),
+            yield* answerOf(sessions.read(address)),
+            yield* answerOf(sessions.list({ owner })),
+            yield* answerOf(sessions.list({ owner, parent: address.id })),
+            // Last: a backend that removes it anyway leaves nothing for the others.
+            yield* answerOf(sessions.remove(address)),
           ]
           yield* expect("stored-format", answers.every((answer) => answer === "SessionLogError(session.version)"),
-            `begin, deliver, drain, cancel, transact and fork of a newer release's session gave ${answers.join()}`)
-          const after = yield* sessions.get(address)
-          yield* expect("stored-format", after.seq === before.seq && after.updatedAt === before.updatedAt && after.turns === 1 && after.pending === 1 && Option.isNone(after.open),
-            `the refused calls wrote to the session: ${after.turns} turns, ${after.pending} waiting, seq ${before.seq} then ${after.seq}`)
-          const read = kindsOf(yield* sessions.read(address))
-          yield* expect("stored-format", read === stored, `the session was read as ${read}, not ${stored}`)
-          const listed = (yield* sessions.list({ owner })).sessions.map((view) => view.header.id)
-          const children = (yield* sessions.list({ owner, parent: address.id })).sessions.length
-          yield* expect("stored-format", listed.includes(address.id) && children === 0,
-            `the owner's sessions listed ${listed.includes(address.id) ? "it" : "without it"}, and ${children} children under it`)
+            `unsupported-format operations gave ${answers.join()}`)
+          yield* expect("stored-format", (yield* snapshot) === before, "refusing an unsupported format changed its stored head")
         })),
       ],
     }),

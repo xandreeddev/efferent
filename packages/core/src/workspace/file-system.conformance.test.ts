@@ -42,14 +42,14 @@ describe("the FileSystem kit catches careless backends", () => {
     expect(await failedChecks(careless)).toEqual(["list", "remove", "remove-paths", "rename", "stat"])
   })
 
-  test("a rename that follows a link, moving its target, fails the rename check", async () => {
+  test("a rename that follows a link, moving its target, fails the rename check and the trailing-separator rename of a link", async () => {
     const careless = memorySubject((fs) => ({ ...fs, rename: (from, to) => fs.realPath(from).pipe(Effect.flatMap((real) => fs.rename(real, to))) }))
-    expect(await failedChecks(careless)).toEqual(["rename"])
+    expect(await failedChecks(careless)).toEqual(["dot-paths", "rename"])
   })
 
-  test("a rename that blames the source for every failure fails the rename check", async () => {
+  test("a rename that blames the source for every failure fails the rename check and the trailing-separator rename to new/", async () => {
     const careless = memorySubject((fs) => ({ ...fs, rename: (from, to) => fs.rename(from, to).pipe(Effect.mapError((error) => new FsError({ path: from, reason: error.reason, message: error.message }))) }))
-    expect(await failedChecks(careless)).toEqual(["rename"])
+    expect(await failedChecks(careless)).toEqual(["dot-paths", "rename"])
   })
 
   test("a remove that resolves the whole path first, as the kernel resolves a trailing slash or a last .., fails the remove checks", async () => {

@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema } from "effect"
@@ -12,9 +12,20 @@ import { makePrivateTextGate } from "./privateTextGate.js"
 const posixHome = (root: "home" | "Users", name: string) => ["", root, name, "project"].join("/")
 const windowsHome = (name: string, separator: string) => ["C:", "Users", name, "project"].join(separator)
 
+const directories = new Set<string>()
+const temporaryDirectory = () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "foundry-private-"))
+  directories.add(dir)
+  return dir
+}
+afterEach(() => {
+  directories.forEach((dir) => rmSync(dir, { recursive: true, force: true }))
+  directories.clear()
+})
+
 /** A git work tree holding `files` (path → text), with `ignore` as its .gitignore. */
 const repo = (files: Readonly<Record<string, string>>, ignore: ReadonlyArray<string> = []): string => {
-  const dir = mkdtempSync(path.join(tmpdir(), "foundry-private-"))
+  const dir = temporaryDirectory()
   execFileSync("git", ["init", "-q"], { cwd: dir })
   writeFileSync(path.join(dir, ".gitignore"), ignore.map((line) => `${line}\n`).join(""))
   Object.entries(files).forEach(([file, text]) => {
@@ -76,7 +87,9 @@ describe("the private-text gate", () => {
   })
 
   test("outside a git work tree the gate cannot list the files, and fails closed", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "foundry-private-"))
+    const dir = temporaryDirectory()
+    // Stop ancestor discovery even when TMPDIR is inside the repository.
+    writeFileSync(path.join(dir, ".git"), "gitdir: missing\n")
     const exit = await Effect.runPromiseExit(makePrivateTextGate(configOf()).run({ rootDir: dir, files: [] }))
     expect(exit._tag).toBe("Failure")
     expect(String(exit)).toContain("is not a git work tree")

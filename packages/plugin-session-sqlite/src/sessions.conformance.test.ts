@@ -30,13 +30,13 @@ const instance = (config: SessionsConfig, admission: Context.Service.Shape<typeo
 
 /** A session's head state as the next release would leave it: its stored format one above this release's. */
 const newerFormat = (address: SessionAddress) => log.head(address.id).pipe(
-  Effect.flatMap((head) => log.commit(address.id, {
+  Effect.flatMap((head) => Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
     expect: head.revision,
     notAfter: Option.none(),
     events: [],
     state: Option.some({ ...head.state, sessions: { ...(head.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
-  })),
-  Effect.asVoid,
+  }) })),
+  Effect.as(log.head(address.id).pipe(Effect.map((head) => JSON.stringify({ ...head, now: 0 })))),
 )
 
 const subject: SessionsSubject = {

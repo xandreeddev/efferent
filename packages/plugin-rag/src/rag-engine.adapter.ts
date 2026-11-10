@@ -15,6 +15,8 @@ import { RagGraphFailed } from "./rag.entity.js"
 import type { RagConfig } from "./rag.entity.js"
 import { chunkDocument } from "./rag.entity.functions.js"
 
+type AttemptDecision = { readonly _tag: "Empty" } | { readonly _tag: "Complete" } | { readonly _tag: "Retry"; readonly job: KnowledgeJob }
+
 const unavailable = (message: string, cause?: unknown) => new KnowledgeError({ reason: "Unavailable", message, ...(cause === undefined ? {} : { cause }) })
 const knowledgeFailure = (failure: KnowledgeError | RagGraphFailed): KnowledgeError => Predicate.isTagged(failure, "RagGraphFailed") ? failure.failure : failure
 /** Where and how an extraction failed, without its content, on the span that processed the job. */
@@ -110,27 +112,27 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
   const attempt = (scope: KnowledgeScope, requested?: KnowledgeJob): Effect.Effect<number, KnowledgeError> => Effect.gen(function* () {
     const token = KnowledgeLeaseToken.make(yield* Effect.sync(() => crypto.randomUUID()))
     const currentFiber = yield* Effect.fiber
-    const decision: Option.Option<Option.Option<KnowledgeJob>> = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+    const decision: AttemptDecision = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
       const admitted = yield* admission.withPermits(1)(Effect.gen(function* () {
         if (!(yield* Ref.get(accepting))) return false
         yield* Ref.update(active, (fibers) => [...fibers, currentFiber])
         yield* SubscriptionRef.update(running, (count) => count + 1)
         return true
       }))
-      if (!admitted) return Option.none<Option.Option<KnowledgeJob>>()
+      if (!admitted) return { _tag: "Empty" } as const
       return yield* Effect.gen(function* () {
         // Count uncertain claims before storage I/O; stop never waits on that I/O while holding admission.
         const claimed = yield* store.claim({ scope, engine, worker: name, token, now: yield* Clock.currentTimeMillis, leaseMs: config.leaseMs, ...(requested === undefined ? {} : { jobId: requested.id }) })
-        if (Option.isNone(claimed)) return Option.none<Option.Option<KnowledgeJob>>()
+        if (Option.isNone(claimed)) return { _tag: "Empty" } as const
         const job = claimed.value
         const heartbeat = Effect.forever(Effect.sleep(Math.max(1, Math.floor(config.leaseMs / 3))).pipe(Effect.andThen(Effect.suspend(() => lease(job, token).pipe(Effect.flatMap((current) => store.renew(current, config.leaseMs)))))))
         const outcome = yield* Effect.exit(restore(Effect.raceFirst(work(job, token), heartbeat)))
         return yield* Exit.match(outcome, {
-          onSuccess: () => Effect.succeed(Option.some(Option.none<KnowledgeJob>())),
+          onSuccess: () => Effect.succeed<AttemptDecision>({ _tag: "Complete" }),
           onFailure: (cause) => Effect.gen(function* () {
             const interrupted = Cause.hasInterrupts(cause)
             const status = yield* store.status(scope, job.id).pipe(Effect.result)
-            if (!interrupted && Result.isSuccess(status) && Option.exists(status.success, (current) => current.phase._tag === "Complete")) return Option.some(Option.none<KnowledgeJob>())
+            if (!interrupted && Result.isSuccess(status) && Option.exists(status.success, (current) => current.phase._tag === "Complete")) return { _tag: "Complete" } as const
             const found = Cause.findErrorOption(cause)
             const graphFailed = Option.exists(found, Predicate.isTagged("RagGraphFailed"))
             const error = Option.match(found, {
@@ -147,16 +149,15 @@ export const RagLive = (config: RagConfig) => Layer.effectContext(Effect.gen(fun
             }
             if (Result.isSuccess(recorded) && job.attempt < config.maxAttempts && isRetryableKnowledgeFailure(failure)) {
               yield* store.retry(scope, job.id)
-              return Option.some(Option.some(job))
+              return { _tag: "Retry", job } as const
             }
             return yield* Effect.fail(error)
           }),
         })
       }).pipe(Effect.ensuring(Ref.update(active, (fibers) => fibers.filter((fiber) => fiber.id !== currentFiber.id)).pipe(Effect.andThen(SubscriptionRef.update(running, (count) => count - 1)))))
     }))
-    return yield* Option.match(decision, {
-      onNone: () => Effect.succeed(0),
-      onSome: (retry) => Option.match(retry, { onNone: () => Effect.succeed(1), onSome: (job) => attempt(scope, job) }),
+    return yield* Match.valueTags(decision, {
+      Empty: () => Effect.succeed(0), Complete: () => Effect.succeed(1), Retry: ({ job }) => attempt(scope, job),
     })
   })
   const processOne = (scope: KnowledgeScope, requested?: KnowledgeJob) => execution.withPermits(1)(attempt(scope, requested))

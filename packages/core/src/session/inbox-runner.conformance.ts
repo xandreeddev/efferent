@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "./session-log.entity.js"
 import { Effect, Option, Ref, Schema } from "effect"
 import type { Context, Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
@@ -26,7 +27,7 @@ export interface InboxRunnerSubject {
 }
 
 const fixture = (owner: string) => Effect.gen(function* () {
-  const session = { id: yield* freshId, owner }
+  const session = { id: yield* freshId, owner, incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }
   const runId = RunId.make(`runner-${session.id}`)
   const image = yield* mediaFromBase64(pixelPng, { name: "queued.png", alt: "queued attachment" })
   const userMessage = new UserMessage({ text: "answer the queued user", attachments: [image] })

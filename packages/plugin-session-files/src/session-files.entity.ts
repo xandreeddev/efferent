@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, JsonObject, SessionHeader } from "@xandreed/core"
+import { ConversationId, JsonObject, SessionHeader, SessionIncarnation } from "@xandreed/core"
 
 /*
  * The session log as files in a directory: one immutable file per commit,
@@ -7,18 +7,22 @@ import { ConversationId, JsonObject, SessionHeader } from "@xandreed/core"
  * the only fencing and no writer ever waits on a lock. Layout under the
  * root (directories 0700, files 0600):
  *
- *   store.json                              the layout's version (`StoreMarker`)
- *   sessions/<id>/header.json               the header, as created (`HeaderRecord`)
- *   sessions/<id>/commits/<revision>.jsonl  the commit that made that revision (`CommitMeta`,
- *                                           `CommitState`, one `CommitEvent` per event, `CommitTrailer`)
- *   sessions/<id>/tmp/                      commits being written, before their link
- *   staging/, trash/                        sessions being created or removed
- *                                           (a name in staging/ carries the time it was staged)
- *   quarantine/<id>/                        torn tails, kept as they were found
+ *   store.json                                layout marker
+ *   sessions/<id>/claims/<generation>.json     permanent creation claim (id, incarnation, claim time)
+ *   sessions/<id>/removed/<incarnation>        permanent generation tombstone
+ *   lives/<id>.<incarnation>/header.json       the header and initial state
+ *   lives/<id>.<incarnation>/commits/<revision>.jsonl
+ *   lives/<id>.<incarnation>/tmp/
+ *   removing/<id>.<incarnation>                a removal under way, finished by the next open
+ *   staging/                                   bounded abandoned marker staging
+ *   quarantine/<id>.<incarnation>/             damaged tails retained as evidence
+ *
+ * Removing a generation deletes its `lives/` payload and its quarantine;
+ * only its claim and its tombstone stay.
  */
 
-/** The version of the directory's layout; a later one is refused (`store.version`). Shipped: change it only with a migration. */
-export const FILES_LAYOUT = 1
+/** The version of the directory's layout; any other version is refused (`store.version`). Fresh stores only; no migration. */
+export const FILES_LAYOUT = 2
 
 /**
  * How long something stays in `staging/` before an open sweeps it as left
@@ -35,9 +39,23 @@ export type StoreMarker = typeof StoreMarker.Type
 export const PublishNonce = Schema.String.pipe(Schema.brand("PublishNonce"))
 export type PublishNonce = typeof PublishNonce.Type
 
-/** `header.json`: the header, the storage time it was created at, and its creator's nonce. */
+/**
+ * `sessions/<id>/claims/<generation>.json`: which incarnation that
+ * generation of the session is, and the storage time it was claimed at.
+ * Permanent, so it holds nothing of the session's owner, header or state:
+ * only what fences a stale reference and numbers the next generation.
+ */
+export const GenerationClaim = Schema.Struct({
+  id: ConversationId,
+  incarnation: SessionIncarnation,
+  claimedNow: Schema.Number,
+})
+export type GenerationClaim = typeof GenerationClaim.Type
+
+/** `lives/<id>.<incarnation>/header.json`: the header, the storage time it was created at, and its creator's nonce (the incarnation). Deleted with the generation's payloads when it is removed. */
 export const HeaderRecord = Schema.Struct({
   header: SessionHeader,
+  state: JsonObject,
   createdNow: Schema.Number,
   nonce: PublishNonce,
 })

@@ -1,5 +1,10 @@
 # Branded Types — Phased Roadmap
 
+> Historical design record. Some APIs, package names and gates below have been
+> retired. Current contracts are [framework.md](framework.md), the root
+> [AGENTS.md](../AGENTS.md) and package instructions.
+
+
 Execution roadmap for extending Effect `Schema` branded types across
 `@xandreed/sdk-core`, so domain primitives (ids, model refs, paths, tokens, secrets)
 stop being interchangeable bare `string`/`number`.
@@ -8,8 +13,8 @@ stop being interchangeable bare `string`/`number`.
 `7ff61bc`). Phases 2–4 are unstarted — pick up here if/when it's worth it.
 
 This is the *execution* view. The original field-by-field inventory (a more maximalist plan) is archived and no longer maintained.
-**This doc is authoritative** — it reconciles that plan against a construction/decode audit
-(see "Deltas" below), and where the two disagree this doc wins.
+**This doc records its historical scope** — it reconciled that plan against a construction/decode audit
+(see "Deltas" below), and does not override current contracts.
 
 ## Why brand at all
 

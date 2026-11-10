@@ -25,8 +25,8 @@ import { fixture } from "@xandreed/evals/testing/fixture.testing"
  * the evals package's, with the run as `execution.json` holds it and as
  * `report.json` holds it once graded. It refuses to replace an existing
  * fixture: a fixture is what a released version wrote, so record it once,
- * from that release's code. `--force` rewrites it, only for re-recording the
- * current, unreleased version.
+ * from that release's code. `--unreleased` targets run-unreleased.json;
+ * only `--unreleased --force` may replace that development fixture.
  *
  * Coverage: two candidates, one completed with a transcript and an observed
  * outcome, one failed after its first event; a code grader (boolean) and a
@@ -36,9 +36,12 @@ import { fixture } from "@xandreed/evals/testing/fixture.testing"
 
 const root = join(import.meta.dir, "..")
 const version = (JSON.parse(await readFile(join(root, "packages/evals/package.json"), "utf8")) as { readonly version: string }).version
-const target = join(root, "packages/evals/fixtures", `run-${version}.json`)
-if (existsSync(target) && !process.argv.includes("--force")) {
-  console.error(`${relative(root, target)} exists: a fixture records what a release wrote. Pass --force to record it again.`)
+const unreleased = process.argv.includes("--unreleased")
+const force = process.argv.includes("--force")
+if (force && !unreleased) { console.error("--force is allowed only with --unreleased; released fixtures are immutable"); process.exit(1) }
+const target = join(root, "packages/evals/fixtures", `run-${unreleased ? "unreleased" : version}.json`)
+if (existsSync(target) && !force) {
+  console.error(`${relative(root, target)} exists: a fixture records what a release wrote. Use --unreleased --force for a development recording.`)
   process.exit(1)
 }
 
@@ -112,7 +115,7 @@ const record = Effect.gen(function* () {
 const [execution, report] = await Effect.runPromise(record)
 const fixtureFile = {
   format: 1,
-  version,
+  version: unreleased ? "unreleased" : version,
   description: "Evaluation runs as this version stores them, recorded by scripts/record-run-fixture.ts. Later versions must read them.",
   /** The run as `execution.json` holds it. */
   execution: Schema.encodeSync(EvaluationRun)(execution!),
@@ -125,5 +128,5 @@ if (/\/home\/|\/Users\/|[A-Z]:\\\\/.test(text)) {
   process.exit(1)
 }
 await mkdir(join(target, ".."), { recursive: true })
-await writeFile(target, text)
+await writeFile(target, text, { flag: unreleased && force ? "w" : "wx" })
 console.log(`Recorded ${report!.trials.length} trials, ${report!.trials.reduce((sum, trial) => sum + trial.transcript.length, 0)} transcript events and ${report!.gates.length} gate findings to ${relative(root, target)}`)

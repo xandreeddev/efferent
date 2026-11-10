@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as ts from "typescript"
 import { GateName, RuleId } from "../domain/Brands.js"
-import { GateCrash } from "../domain/Errors.js"
+import { errorCodeOf, GateCrash } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import type { LayerConfig, LayerSpec } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
@@ -153,10 +153,9 @@ const packageDirOf = (index: PackageIndex, dir: string): string =>
 
 const readPackage = (rootDir: string, dir: string): Effect.Effect<Option.Option<WorkspacePackage>, GateCrash> => {
   const manifest = path.posix.join(dir, "package.json")
-  return Effect.tryPromise({ try: () => fs.readFile(path.join(rootDir, manifest), "utf8"), catch: () => "absent" as const }).pipe(
+  return Effect.tryPromise({ try: () => fs.readFile(path.join(rootDir, manifest), "utf8"), catch: (cause) => new GateCrash({ gate: BOUNDARIES_GATE, message: `cannot read ${manifest}`, cause }) }).pipe(
     Effect.map(Option.some),
-    Effect.tapError(() => Effect.logDebug(`${manifest} is absent or unreadable`)),
-    Effect.orElseSucceed(() => Option.none<string>()),
+    Effect.catchIf((error) => Option.contains(errorCodeOf(error.cause), "ENOENT"), () => Effect.succeed(Option.none<string>())),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed(Option.none<WorkspacePackage>()),

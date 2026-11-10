@@ -175,7 +175,7 @@ predictions against boolean references. `summarizeCalibration` applies the same
 `compareMetric` rule with no tolerance and reports measured coverage, confusion
 counts, precision/recall, false-pass/false-fail rates, scalar absolute error and
 ten probability reliability bins; empty bins stay unavailable.
-`assessBothOrders` preserves both blinded pairwise judgments and flags order
+A host can preserve both blinded pairwise judgments and flag order
 sensitivity instead of converting it to a tie.
 
 Evaluator failure, unavailable evidence and skipped execution contain no metrics.

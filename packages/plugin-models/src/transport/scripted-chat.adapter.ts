@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Result, Schema } from "effect"
+import { Cause, Effect, Option, Ref, Result, Schema } from "effect"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import type { ScriptedRequest, ScriptedRequestRecord, ScriptedStep } from "./scripted-chat.entity.js"
 import { completionBody, pickStep, refusalBody, refusalMessage, remainingSteps, streamEvents } from "./scripted-chat.entity.functions.js"
@@ -34,26 +34,39 @@ const bodyText = (body: RequestInit["body"]) => Effect.tryPromise({
 
 /** A streamed reply: one SSE event per chunk, each sent after its step's `beforeChunk`, until the reader stops or the request is aborted. */
 const streamed = (events: ReadonlyArray<string>, step: ScriptedStep, signal: AbortSignal | undefined): Response => {
-  const cursor = { next: 0, closed: false }
-  const aborted = () => cursor.closed || signal?.aborted === true
+  const lifetime = new AbortController()
+  const cursor = { next: 0, closed: false, pending: Promise.resolve(), controller: Option.none<ReadableStreamDefaultController<Uint8Array>>() }
+  const finish = () => {
+    cursor.closed = true
+    lifetime.abort()
+    signal?.removeEventListener("abort", abort)
+  }
+  const abort = () => {
+    if (!cursor.closed) Option.match(cursor.controller, { onNone: () => undefined, onSome: (controller) => controller.error(signal?.reason) })
+    finish()
+  }
+  signal?.addEventListener("abort", abort, { once: true })
+  if (signal?.aborted) finish()
   return new Response(new ReadableStream<Uint8Array>({
-    start: (controller) => signal?.addEventListener("abort", () => {
-      if (!cursor.closed) controller.error(signal.reason)
-      cursor.closed = true
-    }, { once: true }),
-    pull: (controller) => Effect.runPromise(Effect.gen(function* () {
-      const at = cursor.next
-      yield* step.beforeChunk === undefined ? Effect.void : step.beforeChunk(at)
-      if (aborted()) return
-      cursor.next = at + 1
-      controller.enqueue(encoder.encode(events[at] ?? ""))
-      if (cursor.next < events.length) return
-      cursor.closed = true
-      controller.close()
-    })),
-    cancel: () => {
-      cursor.closed = true
+    start: (controller) => { cursor.controller = Option.some(controller); if (signal?.aborted) controller.error(signal.reason) },
+    pull: (controller) => {
+      if (cursor.closed) { controller.close(); return }
+      cursor.pending = Effect.runPromiseExit(Effect.gen(function* () {
+        const at = cursor.next
+        yield* step.beforeChunk === undefined ? Effect.void : step.beforeChunk(at)
+        if (cursor.closed) return
+        cursor.next = at + 1
+        controller.enqueue(encoder.encode(events[at] ?? ""))
+        if (cursor.next < events.length) return
+        controller.close()
+        finish()
+      }), { signal: lifetime.signal }).then((exit) => {
+        // A hook that dies fails the body with its defect, the way a dropped connection fails fetch's body with an Error.
+        if (exit._tag === "Failure" && !cursor.closed) { controller.error(Cause.squash(exit.cause)); finish() }
+      })
+      return cursor.pending
     },
+    cancel: () => { finish(); return cursor.pending },
   }), { status: 200, headers: { "content-type": "text/event-stream" } })
 }
 

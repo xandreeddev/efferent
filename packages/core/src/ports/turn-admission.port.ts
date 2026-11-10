@@ -2,8 +2,8 @@ import { Context } from "effect"
 import type { Effect } from "effect"
 import type { RunId } from "../domain/run.entity.js"
 import type { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
-import type { JsonObject } from "../session/session-log.entity.js"
-import type { InboxItemId, SessionAddress, TurnRefused } from "../session/sessions.entity.js"
+import type { JsonObject, SessionRef } from "../session/session-log.entity.js"
+import type { InboxItemId, TurnRefused } from "../session/sessions.entity.js"
 import type { TaskRef } from "../session/tasks.entity.js"
 
 /**
@@ -12,7 +12,8 @@ import type { TaskRef } from "../session/tasks.entity.js"
  * @public
  */
 export interface TurnToAdmit {
-  readonly session: SessionAddress
+  /** The session the turn opens in, as the begin resolved it: its id, owner and incarnation (as on `AdmittedTurn`). */
+  readonly session: SessionRef
   readonly origin: TurnOrigin
   readonly runId: RunId
   readonly key: string

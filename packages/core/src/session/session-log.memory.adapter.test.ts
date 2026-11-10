@@ -3,6 +3,9 @@ import { Cause, Effect, Option, Tracer } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
 import { sessionLogConformance } from "./session-log.conformance.js"
+import { SessionMissing } from "./session-log.entity.js"
+import type { SessionLogError, SessionRef } from "./session-log.entity.js"
+import { sessionRef } from "./session-log.entity.functions.js"
 import { SessionLogMemoryLive } from "./session-log.memory.adapter.js"
 
 describe("the in-memory session log conforms to the SessionLog contract", () => {
@@ -18,7 +21,7 @@ describe("the kit catches a backend that breaks the contract", () => {
   /** Last write wins: every commit is applied at the head's current revision. */
   const careless = SessionLog.of({
     ...log,
-    commit: (id, commit) => log.head(id).pipe(Effect.flatMap((head) => log.commit(id, { ...commit, expect: head.revision }))),
+    commit: (id, commit) => log.head(id.id).pipe(Effect.flatMap((head) => log.commit(id, { ...commit, expect: head.revision }))),
   })
   test("a commit that ignores the revision fails the conflict and race checks", async () => {
     const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
@@ -28,7 +31,7 @@ describe("the kit catches a backend that breaks the contract", () => {
   test("a backend that ignores the commit's incarnation fails only the incarnation check", async () => {
     const careless = SessionLog.of({
       ...log,
-      commit: (id, { incarnation: _incarnation, ...commit }) => log.commit(id, commit),
+      commit: (id, commit) => log.head(id.id).pipe(Effect.flatMap((head) => log.commit({ ...id, incarnation: head.incarnation }, commit))),
     })
     const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
@@ -71,6 +74,37 @@ describe("the kit catches a backend that breaks the contract", () => {
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
     expect(failed.flat()).toEqual(["read-latest"])
   })
+  /**
+   * A store that tombstones instead of deleting: `head`, `list`, `commit` and
+   * `remove` hide a removed session and its descendants, but `read` (or, with
+   * `removeAgain`, a second `remove`) still answers for a removed reference.
+   */
+  const tombstoning = (variant: "read" | "removeAgain") => {
+    const inner = Effect.runSync(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
+    const hidden = new Set<string>()
+    const missing = (id: ConversationId) => Effect.fail(new SessionMissing({ session: id }))
+    const hide = (reference: SessionRef): Effect.Effect<void, SessionLogError> => Effect.sync(() => hidden.add(reference.id)).pipe(
+      Effect.andThen(inner.list({ owner: reference.owner, limit: 1_000, before: Option.none(), parent: Option.some(reference) })),
+      Effect.flatMap((children) => Effect.forEach(children, (child) => hide(sessionRef(child)), { concurrency: 1, discard: true })),
+    )
+    return SessionLog.of({
+      ...inner,
+      create: (input) => (hidden.has(input.header.id)
+        ? inner.head(input.header.id).pipe(Effect.flatMap((head) => inner.remove(sessionRef(head))), Effect.tap(() => Effect.sync(() => hidden.delete(input.header.id))), Effect.ignore)
+        : Effect.void).pipe(Effect.andThen(inner.create(input))),
+      head: (id) => hidden.has(id) ? missing(id) : inner.head(id),
+      list: (query) => inner.list(query).pipe(Effect.map((heads) => heads.filter((head) => !hidden.has(head.header.id)))),
+      commit: (reference, commit) => hidden.has(reference.id) ? missing(reference.id) : inner.commit(reference, commit),
+      remove: (reference) => hidden.has(reference.id)
+        ? (variant === "removeAgain" ? Effect.void : missing(reference.id))
+        : inner.read(reference, { after: 0, limit: Option.some(0), kinds: [] }).pipe(Effect.andThen(hide(reference))),
+    })
+  }
+  test.each(["read", "removeAgain"] as const)("a backend that still answers %s for a removed session fails only the lineage check", async (variant) => {
+    const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(tombstoning(variant)), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
+    expect(failed.flat()).toEqual(["lineage"])
+  })
   test("a backend that treats a key-only read as a filter fails its own conformance check", async () => {
     const careless = SessionLog.of({
       ...log,
@@ -90,10 +124,10 @@ describe("what the in-memory log keeps is JSON, as a store on disk keeps it", ()
     const id = ConversationId.make("00000000-0000-4000-8000-000000000001")
     const data = { kept: 1, dropped: undefined, nested: { list: [1, 2] } }
     const result = await Effect.runPromise(Effect.gen(function* () {
-      yield* log.create(header(id))
-      const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: data as never }], state: Option.none() })
+      yield* log.create({ header: header(id), state: {} })
+      const committed = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: data as never }], state: Option.none() }) })
       data.nested.list.push(3)
-      const read = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      const read = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: 0, limit: Option.none(), kinds: [] }) })
       return { committed: committed.events.map((event) => event.data), read: read.map((event) => event.data) }
     }))
     expect(result.committed).toEqual([{ kept: 1, nested: { list: [1, 2] } }])
@@ -104,8 +138,8 @@ describe("what the in-memory log keeps is JSON, as a store on disk keeps it", ()
   test("data JSON cannot hold fails the commit with store.encode instead of dying", async () => {
     const id = ConversationId.make("00000000-0000-4000-8000-000000000002")
     const exit = await Effect.runPromiseExit(Effect.gen(function* () {
-      yield* log.create(header(id))
-      return yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } as never }], state: Option.none() })
+      yield* log.create({ header: header(id), state: {} })
+      return yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } as never }], state: Option.none() }) })
     }))
     expect(exit._tag === "Failure" && exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error._tag === "SessionLogError" && reason.error.code === "store.encode")).toBe(true)
   })
@@ -124,12 +158,13 @@ describe("the in-memory log traces each operation", () => {
     const id = ConversationId.make("00000000-0000-4000-8000-000000000003")
     await Effect.runPromise(Effect.gen(function* () {
       const log = yield* SessionLog
-      yield* log.create({ id, owner: "test", origin: "test", createdAt: 0, meta: {}, parent: Option.none() })
+      const created = yield* log.create({ header: { id, owner: "test", origin: "test", createdAt: 0, meta: {}, parent: Option.none() }, state: {} })
+      const reference = { id, owner: created.header.owner, incarnation: created.incarnation }
       yield* log.head(id)
       yield* log.list({ owner: "test", limit: 10, before: Option.none(), parent: Option.none() })
-      yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: {} }], state: Option.none() })
-      yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
-      yield* log.remove(id)
+      yield* log.commit(reference, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: {} }], state: Option.none() })
+      yield* log.read(reference, { after: 0, limit: Option.none(), kinds: [] })
+      yield* log.remove(reference)
       yield* Effect.exit(log.head(id))
     }).pipe(Effect.provide(SessionLogMemoryLive), Effect.withTracer(tracer)))
     expect(spans.map((span) => [span.name, span.attributes.get("efferent.session.id"), span.status._tag === "Ended" && span.status.exit._tag])).toEqual([

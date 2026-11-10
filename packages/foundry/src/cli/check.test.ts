@@ -3,12 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema, Tracer } from "effect"
-import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
+import { BaselineFile, baselineRefusal, fingerprint } from "../domain/baseline.js"
+import { RuleId } from "../domain/Brands.js"
+import { Finding } from "../domain/Finding.js"
 import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
-import { effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
+import { effectArchitecturePack, effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
 import { makePrivateTextGate } from "../gates/privateTextGate.js"
 import { makeRegistrationGate } from "../gates/registrationGate.js"
 import { TsProjectCachedLive } from "../gates/TsProject.port.js"
@@ -28,6 +30,32 @@ const TSCONFIG = JSON.stringify({
   },
   include: ["src/**/*.ts"],
 })
+
+/** A workspace whose core files break every rule of the effect-architecture
+ *  pack, runners called, passed as values and imported by name included. */
+const seedArchitectureViolations = (dir: string): void => {
+  writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
+  mkdirSync(path.join(dir, "src"), { recursive: true })
+  writeFileSync(
+    path.join(dir, "src", "core.usecase.functions.ts"),
+    [
+      'import { Effect, Layer } from "effect"',
+      'import { runCallback } from "effect/Effect"',
+      'import { readFile } from "node:fs/promises"',
+      "export const started = Effect.runFork(Effect.void)",
+      "export const passed = [Effect.void].map(Effect.runFork)",
+      "export const read = async () => await readFile(\"x\")",
+      "export const layer = Layer.empty",
+      "export const callback = runCallback",
+      "",
+    ].join("\n"),
+  )
+  writeFileSync(path.join(dir, "src", "core.entity.ts"), ["export const close = () => true", ""].join("\n"))
+  writeFileSync(
+    path.join(dir, "src", "store.service.ts"),
+    ['import { Context } from "effect"', 'export class Store extends Context.Service<Store, {}>()("Store") {}', ""].join("\n"),
+  )
+}
 
 /** A workspace whose src violates several effect rules — the shared golden
  *  fixture for library-vs-vendored parity. `errors.ts` declares the error
@@ -167,7 +195,7 @@ describe("loadConfig — the plug-in registry", () => {
     ])
   })
 
-  test("a plugged rule that CRASHES reports itself as a finding — fail-closed, not a defect", async () => {
+  test("a crashed advisory rule fails the gate regardless of its configured severity", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "foundry-plug-"))
     seedViolations(dir)
     const configPath = writeConfig(
@@ -176,7 +204,7 @@ describe("loadConfig — the plug-in registry", () => {
         "export const customRules = [",
         "  {",
         '    id: "local/explodes",',
-        '    defaultSeverity: "error",',
+        '    defaultSeverity: "warning",',
         '    description: "always crashes",',
         '    fixHint: "n/a",',
         '    check: () => { throw new Error("boom") },',
@@ -192,12 +220,12 @@ describe("loadConfig — the plug-in registry", () => {
     )
     const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
     const idiomGate = gatesFromConfig(config, registry)[0]!
-    const findings = await Effect.runPromise(
-      idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
-    )
-    expect(findings.length).toBeGreaterThan(0)
-    expect(findings.every((f) => f.message.includes("crashed"))).toBe(true)
-    expect(findings.every((f) => f.message.includes("boom"))).toBe(true)
+    const exit = await Effect.runPromiseExit(idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)))
+    expect(exit._tag).toBe("Failure")
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toContain("crashed")
+      expect(String(exit.cause)).toContain("boom")
+    }
   })
 
   test("bad meta / non-function check / duplicate ids are ConfigErrors that NAME the entry", async () => {
@@ -322,6 +350,51 @@ describe("vendored packs — plain twins of the library", () => {
     expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
   })
 
+  test("GOLDEN: the vendored effect-architecture pack produces byte-identical findings to the library pack", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "foundry-vendor-architecture-"))
+    seedArchitectureViolations(dir)
+    symlinkSync(REPO_NODE_MODULES, path.join(dir, "node_modules"), "dir")
+    const files = await Effect.runPromise(vendoredPackFiles("effect-architecture"))
+    expect(files.length).toBeGreaterThan(0)
+    files.forEach((file) => {
+      const target = path.join(dir, ".efferent", "gates", file.path)
+      mkdirSync(path.dirname(target), { recursive: true })
+      writeFileSync(target, file.content)
+    })
+    const ruleIds = effectArchitecturePack.rules.map((rule) => String(rule.id))
+    const configPath = writeConfig(
+      dir,
+      [
+        'import { rules } from "./.efferent/gates/effect-architecture/rules.js"',
+        "export const customRules = rules",
+        "export default {",
+        '  tsconfig: "tsconfig.json",',
+        `  rules: [${ruleIds.map((id) => `{ rule: "${id}", include: ["src/**"] }`).join(", ")}],`,
+        "  typecheck: false,",
+        "}",
+        "",
+      ].join("\n"),
+    )
+    const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
+    expect(registry.length).toBe(effectArchitecturePack.rules.length)
+    const vendoredFindings = await Effect.runPromise(
+      gatesFromConfig(config, registry)[0]!.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    const libraryFindings = await Effect.runPromise(
+      makeIdiomGate(effectArchitecturePack.rules, ruleIds.map((id) => Schema.decodeUnknownSync(RuleConfig)({ rule: id, include: ["src/**"] })), "tsconfig.json")
+        .run({ rootDir: dir, files: [] })
+        .pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    // Every rule of the pack fires on the seeded files, so drift in any one shows.
+    expect(new Set(libraryFindings.map((f) => String(f.rule)))).toEqual(new Set(ruleIds))
+    expect(normalized(libraryFindings).filter((f) => f.message.endsWith("belongs at a runtime edge")).map((f) => f.message)).toEqual([
+      "Effect.runCallback belongs at a runtime edge",
+      "Effect.runFork belongs at a runtime edge",
+      "Effect.runFork belongs at a runtime edge",
+    ])
+    expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
+  })
+
   test("an unknown pack name is a ConfigError naming the known packs", async () => {
     const exit = await Effect.runPromiseExit(vendoredPackFiles("no-such-pack"))
     expect(exit._tag).toBe("Failure")
@@ -331,7 +404,7 @@ describe("vendored packs — plain twins of the library", () => {
 
 /** A one-rule workspace (`local/no-fixme`) for the baseline flows; `fixme`
  *  seeds the one finding. */
-const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty"; readonly fixme: boolean }): string => {
+const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty"; readonly fixme: boolean; readonly crash?: boolean }): string => {
   const dir = mkdtempSync(path.join(tmpdir(), "foundry-baseline-"))
   writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
   mkdirSync(path.join(dir, "src"), { recursive: true })
@@ -342,10 +415,13 @@ const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty";
       "export const customRules = [{",
       '  id: "local/no-fixme", defaultSeverity: "error", description: "no FIXME", fixHint: "fix it",',
       '  check: (ctx) => ctx.sourceFile.text.includes("FIXME") ? [{ node: ctx.sourceFile, message: "FIXME marker" }] : [],',
+      "}, {",
+      '  id: "local/explodes", defaultSeverity: "warning", description: "always crashes", fixHint: "n/a",',
+      '  check: () => { throw new Error("boom") },',
       "}]",
       "export default {",
       '  tsconfig: "tsconfig.json",',
-      '  rules: [{ rule: "local/no-fixme", include: ["src/**"] }],',
+      `  rules: [{ rule: "local/no-fixme", include: ["src/**"] }${options.crash === true ? ', { rule: "local/explodes", include: ["src/**"] }' : ""}],`,
       "  typecheck: false,",
       ...(options.policy === undefined ? [] : [`  baseline: "${options.policy}",`]),
       "}",
@@ -441,6 +517,29 @@ describe("the baseline policy", () => {
       allowGrow: true,
     })
     expect(ratchet.output).toContain("WARNING: --allow-grow grandfathered 1 NEW finding")
+  })
+})
+
+describe("a crashed gate and the baseline", () => {
+  const crashFingerprint = fingerprint(
+    new Finding({ rule: RuleId.make("foundry/gate-crashed"), severity: "error", message: "any", location: Option.none(), fixHint: Option.none() }),
+    Option.none(),
+  )
+
+  test("a crash fails the check even when the baseline holds the crash's fingerprint", async () => {
+    const dir = seedBaselineWorkspace({ fixme: false, crash: true })
+    const result = await check(dir, { baseline: writeBaseline(dir, [crashFingerprint]) })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("[foundry/gate-crashed]")
+  })
+
+  test("--update-baseline --allow-grow refuses to write while a gate crashed, and never stores its fingerprint", async () => {
+    const dir = seedBaselineWorkspace({ fixme: true, crash: true })
+    const baseline = writeBaseline(dir, [])
+    const result = await check(dir, { baseline, update: true, allowGrow: true })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("REFUSING to update while a gate crashed")
+    expect(storedFingerprints(baseline)).toEqual([])
   })
 })
 

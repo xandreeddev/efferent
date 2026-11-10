@@ -62,13 +62,13 @@ const bufferedUntilClose = (store: Ref.Ref<ReadonlyArray<Write>>): SessionLogSub
 const rowByRow = (log: Log, rows: Ref.Ref<ReadonlyArray<SessionLogEvent>>): Log => SessionLog.of({
   ...log,
   read: (id, query) => Effect.all([log.read(id, { ...query, limit: Option.none() }), Ref.get(rows)]).pipe(Effect.map(([stored, written]) => {
-    const events = [...stored, ...written.filter((event) => event.session === id && event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))]
+    const events = [...stored, ...written.filter((event) => event.session === id.id && event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))]
     return Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, limit) })
   })),
   commit: (id, commit) => Effect.gen(function* () {
-    const head = yield* log.head(id)
+    const head = yield* log.head(id.id)
     const at = yield* Clock.currentTimeMillis
-    const events = commit.events.map((draft, index): SessionLogEvent => ({ session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: draft.data }))
+    const events = commit.events.map((draft, index): SessionLogEvent => ({ session: id.id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: draft.data }))
     yield* Effect.forEach(events, (event) => Ref.update(rows, (all) => [...all, event]).pipe(Effect.andThen(Effect.yieldNow)), { discard: true })
     // The head moves and covers the rows; rows still listed after this belong to a commit interrupted before it.
     return yield* log.commit(id, commit).pipe(Effect.ensuring(Ref.update(rows, (all) => all.filter((event) => !events.includes(event)))))
@@ -76,9 +76,9 @@ const rowByRow = (log: Log, rows: Ref.Ref<ReadonlyArray<SessionLogEvent>>): Log 
 })
 
 describe("the recovery kit catches backends that lose or hide writes", () => {
-  test("a backend that buffers writes until close fails the checks with two handles open and the unclosed handle", async () => {
+  test("a replay-on-close backend loses live writes and incarnation identity", async () => {
     const store = Effect.runSync(Ref.make<ReadonlyArray<Write>>([]))
-    expect(await failedChecks({ open: bufferedUntilClose(store), callerClock: true })).toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "unclosed-handle"])
+    expect(await failedChecks({ open: bufferedUntilClose(store), callerClock: true })).toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "interrupted-commit", "reopen", "reopen-twice", "unclosed-handle"])
   })
 
   test("a backend that writes a commit row by row fails only the interrupted commit, with part of a commit stored", async () => {
@@ -90,6 +90,13 @@ describe("the recovery kit catches backends that lose or hide writes", () => {
     expect(exit._tag === "Failure" ? exit.failure.message : "passed").toMatch(/^an interrupted commit left ([1-9]|[1-3][0-9]) of its 40 events/)
   })
 
+  test("a backend whose head reads take a while and whose commit writes row by row still fails the interrupted commit", async () => {
+    const rows = rowByRow(Effect.runSync(memoryLog), Effect.runSync(Ref.make<ReadonlyArray<SessionLogEvent>>([])))
+    // Reading the head yields more often than the kit waits before it interrupts: only the commit itself may be interrupted.
+    const slowHead = SessionLog.of({ ...rows, head: (id) => Effect.forEach(Array.from({ length: 8 }), () => Effect.yieldNow, { discard: true }).pipe(Effect.andThen(rows.head(id))) })
+    expect(await failedChecks({ open: Effect.succeed(slowHead), callerClock: true })).toEqual(["interrupted-commit"])
+  })
+
   test("a store per open (a new SessionLogMemoryLive each time) fails every check that opens the store again", async () => {
     expect(await failedChecks({ open: memoryLog, callerClock: true }))
       .toEqual(["cross-handle", "cross-handle-incarnation", "cross-handle-race", "interrupted-commit", "reopen", "reopen-twice", "unclosed-handle"])
@@ -97,7 +104,7 @@ describe("the recovery kit catches backends that lose or hide writes", () => {
 
   test("a backend that ignores a commit's incarnation fails only the cross-handle incarnation check", async () => {
     const log = Effect.runSync(memoryLog)
-    const careless = SessionLog.of({ ...log, commit: (id, { incarnation: _incarnation, ...commit }) => log.commit(id, commit) })
+    const careless = SessionLog.of({ ...log, commit: (id, commit) => log.head(id.id).pipe(Effect.flatMap((head) => log.commit({ ...id, incarnation: head.incarnation }, commit))) })
     expect(await failedChecks({ open: Effect.succeed(careless), callerClock: true })).toEqual(["cross-handle-incarnation"])
   })
 
@@ -116,7 +123,7 @@ describe("the recovery kit's own compare-and-swap", () => {
       ...memory,
       // The first increment of the first handle always loses to another writer; every other commit is stored.
       commit: (id, commit) => commit.events.some((event) => event.kind === "increment" && event.data.by === "handle-0" && event.data.n === 0)
-        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))))
+        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 }))))
         : memory.commit(id, commit),
     })
     const race = sessionLogRecoveryConformance({ open: Effect.succeed(log) }).find((check) => check.name.startsWith("of compare-and-swap commits racing"))

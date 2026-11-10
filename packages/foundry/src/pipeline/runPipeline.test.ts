@@ -181,3 +181,10 @@ describe("runPipeline — other policies", () => {
     expect(report.verdicts.map((v) => v._tag)).toEqual(["fail", "pass"])
   })
 })
+
+test("a synchronous gate construction defect becomes a failed report", async () => {
+  const gate: Gate<never> = { name: GateName.make("construction"), kind: "static", deterministic: true, run: () => { return JSON.parse("construction failed") } }
+  const report = await Effect.runPromise(runPipeline(pipelineOf([gate]), ws))
+  expect(report.ok).toBe(false)
+  expect(report.verdicts[0]?._tag).toBe("fail")
+})

@@ -132,23 +132,28 @@ describe("renderLessons", () => {
       }),
     ])
     const text = renderLessons(lessons)
-    expect(text).toContain("## Lessons from past forge runs")
-    expect(text).toContain("[test/rule-r] failed 2 attempt(s) across 1 run(s)")
-    expect(text).toContain("m2")
+    expect(text).toBe([
+      "## Lessons from past forge runs in this workspace",
+      "The deterministic gates have REPEATEDLY rejected work here for these reasons — get them right the FIRST time:",
+      "- [test/rule-r] failed 2 attempt(s) across 1 run(s) — e.g. m2",
+    ].join("\n"))
     expect(renderLessons(lessons)).toBe(text)
     // Not an accept check → no promotion hint.
     expect(text).not.toContain("promoting it to a standing check")
   })
 
   test("a spec check recurring across RUNS carries the promotion hint", () => {
-    const failing = [{ rule: "test/accept-lint-clean", message: "eslint exited 1" }]
+    const failing = [{ rule: "test/accept-lint-clean", message: "eslint exited 1", fixHint: "run the linter" }]
     const lessons = deriveLessons([
       run({ id: uuid(6), endedAt: 100, attempts: [failing, []], accepted: true }),
       run({ id: uuid(7), endedAt: 200, attempts: [failing, []], accepted: true }),
     ])
     const text = renderLessons(lessons)
-    expect(text).toContain("[test/accept-lint-clean]")
-    expect(text).toContain("consider promoting it to a standing check in foundry.config.ts")
+    expect(text).toBe([
+      "## Lessons from past forge runs in this workspace",
+      "The deterministic gates have REPEATEDLY rejected work here for these reasons — get them right the FIRST time:",
+      "- [test/accept-lint-clean] failed 2 attempt(s) across 2 run(s) — e.g. eslint exited 1 Fix: run the linter (recurring spec check — consider promoting it to a standing check in foundry.config.ts)",
+    ].join("\n"))
     // Same rule but seen in ONE run only: recurring within a spec, not across
     // specs — no promotion hint.
     const oneRun = deriveLessons([

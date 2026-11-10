@@ -1,6 +1,6 @@
 ---
 name: change-event
-description: Add or change a TurnEvent, a journal kind or a stored payload in efferent — the union and its name lists, transient vs journaled vs recorded elsewhere, storedPayload and laterKeys, RESERVED_KINDS and frameworkDraft, the hand-kept tables of the event reference, journal fixtures and goldens, docs:generate. Read before touching turn-event.entity.ts, session-event.entity.ts or session-event.entity.functions.ts.
+description: Add or change a TurnEvent, a journal kind or a stored payload in efferent — the union and its name lists, transient vs journaled vs recorded elsewhere, storedPayload, current-format-only stored shapes, RESERVED_KINDS and frameworkDraft, the hand-kept tables of the event reference, journal fixtures and goldens, docs:generate. Read before touching turn-event.entity.ts, session-event.entity.ts or session-event.entity.functions.ts.
 ---
 
 # Add or change an event
@@ -52,21 +52,30 @@ when they do not. Work through this list instead.
 
 ## 4. Changing a stored payload
 
-- What a release stored must keep decoding: every
-  `packages/sdk/fixtures/journal-<version>.json` is read by
-  `packages/sdk/src/journal-compat.test.ts`.
-- Add keys only. A key older records lack is optional in the stored schema:
-  `Schema.optionalKey` on a session schema (`TurnStartedData.meta`), or a
-  `laterKeys` entry for a bus event stored whole (`context.built.budgetTokens`).
+- Target the current stored format only. Breaking schema changes are permitted;
+  flag them in the CHANGELOG and reject unsupported stores without modifying
+  their bytes. Do not add migrations or compatibility decoding.
 - Any change a reader can tell (a key, a type, an optionality, a check)
   bumps `STORED_FORMAT` (`packages/core/src/session/stored-format.entity.ts`)
   by one: `bun run docs:generate` fails on an unbumped change and names the
   shape, then appends the new format's row to `docs/stored-format.json`.
   Name the new format in the CHANGELOG entry. A description alone is not a
   change.
-- Removing, renaming or retyping a stored key breaks every session that
-  release wrote: do not, unless the step is a CHANGELOG **Breaking** entry
-  with a migration.
+- Every `STORED_FORMAT` bump needs a fresh store, an added optional key
+  included: Sessions refuses every session of another format, reads and
+  `list` included (`session.version`). The format is checked per session,
+  inside Sessions; the backends check only their own layout when they open
+  (files `FILES_LAYOUT`, SQLite `SCHEMA_VERSION`, `store.version`). A release
+  that bumps the format alone therefore opens old stores and then refuses
+  each session in them, and one such session fails its owner's whole `list`.
+  The remedy (a backend layout bump with every format, or a store-level
+  format marker checked at open) is an open owner decision
+  (`docs/repository-audit-resolution.md`, "Open owner decisions"): raise it
+  in the PR of any format bump until it is made.
+  Add a CHANGELOG **Breaking** entry and a **Migration** step (a fresh store;
+  read old sessions with the release that wrote them); no update path is
+  required. State the new format where `scripts/session-store-docs.test.ts`
+  requires it.
 - Never re-record a released version's fixture. `bun scripts/record-journal-fixture.ts`
   records the current version's at release time (skill `release`) and refuses
   to overwrite it. During development, `--unreleased --force` refreshes only
@@ -107,7 +116,7 @@ the diff. The events guide (`docs/events.md`) quotes regions of
 - [ ] Host event, plugin record or framework event: decided
 - [ ] Member, description, union, `TURN_EVENT_NAMES`, member-list test
 - [ ] Transient / stored / `storedPayload` / `RECORDED_ELSEWHERE` chosen; kinds appended, none removed
-- [ ] Stored keys only added, older records decode (`laterKeys` or `optionalKey`)
+- [ ] Current stored schemas are explicit; unsupported stores fail without mutation
 - [ ] `STORED_FORMAT` bumped for a stored-shape change, `docs/stored-format.json` regenerated, the format named in the CHANGELOG
 - [ ] `JOURNAL`, `RECORDED_AS`, error-code tables updated; docs:generate output in the diff
 - [ ] Recorder scenario writes any new journal kind

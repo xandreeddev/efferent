@@ -1,6 +1,6 @@
 import { Match, Option } from "effect"
 import { canonicalJson, hostNote, resumeRefusal, UserMessage } from "@xandreed/core"
-import type { OpenTurn, SessionAddress } from "@xandreed/core"
+import type { InboxItemId, OpenTurn, SessionAddress } from "@xandreed/core"
 import { DrainEvent, DrainTarget } from "./inbox-drain.entity.js"
 import type { DrainHistory, DrainJob, DrainPolicy, DrainScheduler, DrainTakeover, InboxDrainConfig } from "./inbox-drain.entity.js"
 
@@ -17,22 +17,44 @@ export const resumeMessageOf = (policy: Extract<InboxDrainConfig["resume"], { re
   policy.userMessage ?? new UserMessage({ text: hostNote("The previous turn stopped before it finished. Continue it.") })
 
 /** Queue facts, including claims, rather than head sequence numbers determine what still needs a turn. */
-export const drainHistoryOf = (events: ReadonlyArray<DrainEvent>): DrainHistory => events.reduce((history: DrainHistory, event): DrainHistory => DrainEvent.match(event, {
-  Enqueued: (value) => history.slots.some((slot) => slot.id === value.id) ? history
-    : { ...history, slots: [...history.slots, { id: value.id, delivery: value.delivery, claimedBy: Option.none() }] },
-  Started: (value) => ({
-    turns: [...history.turns, { turn: value.turn, runId: value.runId, origin: value.origin, resumes: value.resumes, input: value.input, ended: Option.none(), code: Option.none(), endedAt: Option.none() }],
-    slots: history.slots.map((slot) => Option.isNone(slot.claimedBy) && (value.claimed.includes(slot.id) || Option.contains(value.input, slot.id))
-      ? { ...slot, claimedBy: Option.some(value.turn) } : slot),
-  }),
-  Ended: (value) => ({
-    turns: history.turns.map((turn) => turn.turn === value.turn ? { ...turn, ended: Option.some(value.reason), code: value.code, endedAt: Option.some(value.seq) } : turn),
-    slots: history.slots.flatMap((slot) => !Option.contains(slot.claimedBy, value.turn) ? [slot]
-      : value.reason === "completed" || value.reason === "cancelled" || value.reason === "waiting" || (Option.isNone(slot.delivery) && value.reason === "partial") ? []
-        : [{ ...slot, claimedBy: Option.none() }]),
-  }),
-  Removed: (value) => ({ ...history, slots: history.slots.filter((slot) => slot.id !== value.id) }),
-}), { slots: [], turns: [] })
+export const drainHistoryOf = (events: ReadonlyArray<DrainEvent>): DrainHistory => {
+  const slots = new Map<InboxItemId, DrainHistory["slots"][number]>()
+  const turns = new Map<number, DrainHistory["turns"][number]>()
+  const claims = new Map<number, Set<InboxItemId>>()
+  for (const event of events) DrainEvent.match(event, {
+    Enqueued: (value) => {
+      if (!slots.has(value.id)) slots.set(value.id, { id: value.id, delivery: value.delivery, claimedBy: Option.none() })
+    },
+    Started: (value) => {
+      turns.set(value.turn, { turn: value.turn, runId: value.runId, origin: value.origin, resumes: value.resumes, input: value.input, ended: Option.none(), code: Option.none(), endedAt: Option.none() })
+      for (const id of [...value.claimed, ...Option.toArray(value.input)]) {
+        const slot = slots.get(id)
+        if (slot === undefined || Option.isSome(slot.claimedBy)) continue
+        slots.set(id, { ...slot, claimedBy: Option.some(value.turn) })
+        const held = claims.get(value.turn)
+        if (held) held.add(id)
+        else claims.set(value.turn, new Set([id]))
+      }
+    },
+    Ended: (value) => {
+      const turn = turns.get(value.turn)
+      if (turn) turns.set(value.turn, { ...turn, ended: Option.some(value.reason), code: value.code, endedAt: Option.some(value.seq) })
+      for (const id of claims.get(value.turn) ?? []) {
+        const slot = slots.get(id)
+        if (slot === undefined || !Option.contains(slot.claimedBy, value.turn)) continue
+        if (value.reason === "completed" || value.reason === "cancelled" || value.reason === "waiting" || (Option.isNone(slot.delivery) && value.reason === "partial")) slots.delete(id)
+        else slots.set(id, { ...slot, claimedBy: Option.none() })
+      }
+      claims.delete(value.turn)
+    },
+    Removed: (value) => {
+      const slot = slots.get(value.id)
+      if (slot) Option.match(slot.claimedBy, { onNone: () => undefined, onSome: (turn) => claims.get(turn)?.delete(value.id) })
+      slots.delete(value.id)
+    },
+  })
+  return { slots: [...slots.values()], turns: [...turns.values()] }
+}
 
 /** Closes that say the turn's holder was gone (its lease ran out, it was taken over, its process shut down): never the work's fault. */
 const HOLDER_GONE: ReadonlyArray<string> = ["turn.lease", "turn.takeover", "turn.shutdown"]

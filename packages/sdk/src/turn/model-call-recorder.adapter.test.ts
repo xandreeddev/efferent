@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope } from "effect"
 import {
   ConversationId, ConversationMemory, CurrentModelCallRecorder, frameworkDraft, harnessCodeOf, HarnessError,
-  ModelCallData, ModelCallId, openLogSession, RunId, RunOrdinal, StepUsageData, storedJson, ToolCallId, ToolRegistry,
+  ModelCallData, ModelCallId, openLogSession, RunId, StepUsageData, storedJson, ToolCallId, ToolRegistry,
 } from "@xandreed/core"
 import type { MemoryPolicy, ModelCallRecorder, SessionLogEvent, TurnError } from "@xandreed/core"
 import { modelCallRecorderConformance } from "@xandreed/core/conformance"
@@ -156,6 +156,7 @@ describe("TurnLive model-call recorder", () => {
       return { first, second, stored: yield* Ref.get(stored.stored).pipe(Effect.flatMap(decode)) }
     })))
     expect(Option.isSome(observed.first)).toBe(true)
+    expect(Option.isSome(observed.first) && Exit.isFailure(observed.first.value)).toBe(true)
     if (Option.isSome(observed.first) && Exit.isFailure(observed.first.value)) {
       const original = Cause.squash(observed.first.value.cause)
       expect(harnessCodeOf(original)).toEqual(Option.some("events.depth"))

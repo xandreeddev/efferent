@@ -944,7 +944,7 @@
     },
     {
       "name": "context.built",
-      "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`.",
+      "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -1092,7 +1092,7 @@
           "activeTools"
         ],
         "additionalProperties": true,
-        "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`."
+        "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`."
       }
     },
     {
@@ -5716,7 +5716,7 @@
         {
           "name": "budgetTokens",
           "type": "integer",
-          "required": false
+          "required": true
         },
         {
           "name": "compactions",
@@ -5797,6 +5797,7 @@
           "systemFingerprint",
           "estimatedTokens",
           "reservedTokens",
+          "budgetTokens",
           "compactions",
           "activeTools"
         ],
@@ -9491,6 +9492,11 @@
       "meaning": "The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`)."
     },
     {
+      "code": "events.capacity",
+      "where": "a background event reaction",
+      "meaning": "A background handler published into its own full queue; the turn fails instead of overflowing or deadlocking."
+    },
+    {
       "code": "events.depth",
       "where": "publishing an event",
       "meaning": "Reactions nested deeper than `maxEventDepth` (8 by default)."
@@ -9807,8 +9813,8 @@
     },
     {
       "code": "session.version",
-      "where": "plugin-sessions' `Sessions` (a `SessionLogError`), before it plans a write",
-      "meaning": "A newer release wrote the session: the stored format in its head (`STORED_FORMAT`) is above this release's. Nothing was written: `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` refuse it, while `get`, `list` and `read` still read it. Use that release or a later one."
+      "where": "plugin-sessions' `Sessions` and its turn writer (a `SessionLogError`), before anything is read or planned",
+      "meaning": "The stored format in the session's head is not this release's `STORED_FORMAT`: older, newer or absent (a session stored before formats were stamped). Every operation on the session refuses it, `get`, `list`, `read`, `remove`, `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` alike, and one such session fails a whole `list` page of its owner. Nothing was written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
     },
     {
       "code": "session.defect",
@@ -9863,7 +9869,7 @@
     {
       "code": "store.version",
       "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`), opening the store",
-      "meaning": "A newer release wrote the store: the SQLite file's schema version (`PRAGMA user_version`), or the directory's layout (`store.json`), is above the last one this release knows. Nothing was read or written; open it with that release or a later one. A SQLite file without a version, as 0.14.0 wrote it, still opens."
+      "meaning": "The store is not at the one physical version this release opens, older or newer: for SQLite, a schema version (`PRAGMA user_version`) other than the release's, or an unversioned database that is nonempty (read from a read-only connection, before its mode, WAL or main file can change); for the file store, a `store.json` layout other than the release's, or a nonempty directory without one. Only an empty database or directory is initialized (a directory's `staging/` may hold what another handle opening it at once staged there, names the store writes; anything else in it counts as content). Nothing was read or written and nothing is migrated: configure a fresh store, and read the old one with the release that wrote it."
     },
     {
       "code": "tasks.encode",

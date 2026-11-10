@@ -36,8 +36,9 @@ const decodeLegacyKey = Schema.decodeUnknownOption(Schema.String)
 const decodeCredential = (raw: Schema.Json): Option.Option<Credential> =>
   Option.orElse(decodeStored(raw), () => Option.flatMap(decodeLegacyKey(raw), (key) => decodeStored({ type: "api_key", key })))
 
-const corrupt = (path: string) => (reason: string) => new AuthError({
+const corrupt = (path: string) => (reason: string, cause?: unknown) => new AuthError({
   provider: "*",
+  ...(cause === undefined ? {} : { cause }),
   code: "auth.corrupt",
   message: `${path} ${reason}: fix or remove it; nothing was read from it or written to it`,
 })
@@ -70,7 +71,7 @@ const writeAuthFile = (file: AuthFile, provider: string, credential: Option.Opti
     Effect.flatMap((encoded) => {
       // Typed as JSON, so a decoded credential (its secrets `Redacted`) cannot be written by mistake.
       const record: Schema.JsonObject = Object.fromEntries([...others(file.unread), ...encoded])
-      return writeJsonObject(file.path, record, Option.some(0o600), (reason) => new AuthError({ provider: "*", message: `auth.json write failed: ${reason}` }))
+      return writeJsonObject(file.path, record, Option.some(0o600), (reason, cause) => new AuthError({ provider: "*", message: `auth.json write failed: ${reason}`, ...(cause === undefined ? {} : { cause }) }))
     }),
   )
 }
@@ -132,7 +133,7 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
       get: (provider: ProviderId) => slotOf(provider).current,
       resolveKey: (provider: ProviderId) => resolveSlotKey(provider, slotOf(provider), tokens),
       set: (provider: ProviderId, credential: Credential) =>
-        withFileLock(loginPath)(readAuthFile(loginPath).pipe(Effect.flatMap((file) => writeAuthFile(file, provider, Option.some(credential))))),
+        withFileLock(loginPath)(readAll.pipe(Effect.andThen(readAuthFile(loginPath)), Effect.flatMap((file) => writeAuthFile(file, provider, Option.some(credential))))),
       // Every file is read first, so a corrupt one fails the logout before any file changes.
       remove: (provider: ProviderId) => readAll.pipe(
         Effect.andThen(Effect.forEach(paths, (path) => withFileLock(path)(readAuthFile(path).pipe(Effect.flatMap((file) =>

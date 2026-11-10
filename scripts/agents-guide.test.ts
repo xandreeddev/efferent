@@ -27,21 +27,12 @@ test("the gate table lists every rule the repo profile runs, and only those", ()
 test("effect/branded-id-fields judges the entity files of every package the profile checks", () => {
   const includeOf = (rule: string): ReadonlyArray<string> => config.rules.find((entry) => entry.rule === rule)?.include ?? []
   const judged = includeOf("effect/branded-id-fields")
-  expect(includeOf("effect/no-let").filter((checked) => !judged.includes(`${checked}/*.entity.ts`))).toEqual([])
+  expect(includeOf("effect/no-try-catch").filter((checked) => !judged.includes(`${checked}/*.entity.ts`))).toEqual([])
 })
 
 test("the definition of done runs every command of the CI workflow", async () => {
-  const lines = (await readFile(join(root, ".github/workflows/ci.yml"), "utf8")).split("\n")
-  const commands = lines.flatMap((line, index) => {
-    const run = /^(\s*)- run: (.*)$/.exec(line)
-    if (run === null) return []
-    if (run[2] !== "|") return [run[2] ?? ""]
-    // A block scalar: the lines indented deeper than its `- run:`.
-    const indent = (run[1] ?? "").length
-    const rest = lines.slice(index + 1)
-    const end = rest.findIndex((next) => next.trim() !== "" && next.search(/\S/) <= indent + 2)
-    return rest.slice(0, end === -1 ? undefined : end).map((next) => next.trim()).filter((next) => next !== "")
-  })
+  const workflow = Bun.YAML.parse(await readFile(join(root, ".github/workflows/ci.yml"), "utf8")) as { jobs: Record<string, { steps: ReadonlyArray<{ run?: string }> }> }
+  const commands = Object.values(workflow.jobs).flatMap((job) => job.steps.flatMap((step) => (step.run ?? "").split("\n").map((line) => line.trim()).filter(Boolean)))
   expect(commands.length).toBeGreaterThan(5)
   const done = section("Definition of done")
   expect(commands.filter((command) => !done.includes(command))).toEqual([])

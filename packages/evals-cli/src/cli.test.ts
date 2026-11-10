@@ -1,8 +1,8 @@
 import { EvalId, EvalPath, EvaluationExport, EvaluationError, EvaluationRunStore, TranscriptEvent, Trial, TrialRecorder, comparisonIssues, positiveAmount, positiveInt, type EvaluationApp } from "@xandreed/evals"
 import { ModelSpend } from "@xandreed/core"
 import { spanRecorder } from "@xandreed/evals/testing/fixture.testing"
-import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { afterEach, expect, test } from "bun:test"
+import { mkdir, mkdtemp as nativeMkdtemp, rm, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Array as Arr, Deferred, Effect, Fiber, Layer, Option, Order, Schema, Tracer } from "effect"
@@ -195,6 +195,11 @@ test("comparisons require the same grading policy and all bound grades", async (
       }
     })
   ).toContain("Grader definitions or projection policy differs")
+  for (const key of ["fixture:extra", "protocol:extra"]) {
+    const changed = { ...saved, fingerprints: { ...saved.fingerprints, [key]: "candidate-only" } }
+    expect(comparisonIssues(saved, changed)).toContain("Fixture or protocol provenance differs")
+    expect(comparisonIssues(changed, saved)).toContain("Fixture or protocol provenance differs")
+  }
   expect(
     comparisonIssues(saved, {
       ...saved,
@@ -509,4 +514,13 @@ test("calibrate --budget-usd caps the calibration's run as run's", async () => {
   const report = await Effect.runPromise(readRun(join(directory, "report.json")))
   expect(report.trials.map((trial) => trial.status)).toEqual(["completed", "completed", "skipped", "skipped"])
   expect(report.spend).toEqual({ budget: Option.some(2), settled: 1.5 })
+})
+
+const temporaryDirectories = new Set<string>()
+const mkdtemp = async (prefix: string) => { const directory = await nativeMkdtemp(prefix); temporaryDirectories.add(directory); return directory }
+afterEach(async () => { await Promise.all([...temporaryDirectories].map((directory) => rm(directory, { recursive: true, force: true }))); temporaryDirectories.clear() })
+
+test.each(["constructor", "toString", "__proto__"])("inherited command %s is rejected as an unknown command", async (command) => {
+  const failure = await Effect.runPromise(Effect.flip(evaluationCli([command], { config: app, output })))
+  expect(failure).toMatchObject({ _tag: "EvaluationError", code: "invalid", message: `Unknown command ${command}` })
 })

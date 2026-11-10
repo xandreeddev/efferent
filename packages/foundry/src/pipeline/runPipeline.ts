@@ -25,6 +25,12 @@ export interface Pipeline<R> {
 const GATE_CRASHED = RuleId.make("foundry/gate-crashed")
 const VERIFIER_UNAVAILABLE = RuleId.make("foundry/verifier-unavailable")
 
+/** Whether a finding reports a gate that could not run (`crashVerdict`), not
+ *  something the gate found: such a finding is never grandfathered by a
+ *  baseline, since the crashed gate's own findings are missing behind it. */
+export const isInfrastructureFinding = (finding: Finding): boolean =>
+  finding.rule === GATE_CRASHED || finding.rule === VERIFIER_UNAVAILABLE
+
 /** A gate that could not RUN folds to a `fail` verdict — fail-closed, never
  *  a silent pass (the Verifier's discipline). This is why `runPipeline`'s
  *  error channel is `never`.
@@ -62,7 +68,7 @@ const crashVerdict = (
   })
 
 const runGate = <R>(gate: Gate<R>, workspace: Workspace): Effect.Effect<GateVerdict, never, R> =>
-  gate.run(workspace).pipe(
+  Effect.suspend(() => gate.run(workspace)).pipe(
     Effect.timed,
     Effect.map(([elapsed, findings]) =>
       toVerdict(gate.name, Duration.toMillis(elapsed), findings),

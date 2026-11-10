@@ -77,13 +77,18 @@ separate. Model quality still determines whether an extracted claim is useful.
 `review` says when the review pass runs: `"always"` (the default) reviews
 every extraction, a second helper call per window; `"off"` never reviews;
 `"on-failure"` stages the unreviewed extraction and reviews it, window by
-window, only when staging refuses it as a whole (a repeated entity key, or no
+window, when decoding fails or staging refuses it as a whole (a repeated entity key, or no
 record that survives its checks). A record dropped on its own with a
 `RecordDropped` note starts no review. With `"on-failure"` a clean turn costs
 one extraction call; a refused one is reviewed once and its reviewed
 extraction staged, and a review reply that does not decode fails at stage
 `review`. `true` and `false` still decode from plugin options, as `"always"`
-and `"off"`; a `MemoryConfig` written in TypeScript takes only the words.
+and `"off"`; a `MemoryConfig` written in TypeScript takes only the words. A first reply that is malformed JSON
+or does not match the output schema uses the window's one review to repair
+it, unless review is `"off"`: the reviewer receives the extraction task, the
+original evidence and the raw proposal, clipped and framed as untrusted text,
+and the reviewed reply passes the same schema and source checks. Provider
+failures and cancellation start no repair.
 
 One extraction call reads at most `maxExtractionChars` of a source (48,000 by
 default, the same as `maxSourceChars`, so a default source is one call). A
@@ -258,7 +263,10 @@ Shutdown stops new claims and bounds active work.
 
 Captured jobs are recorded under an engine id derived from the extraction
 version and the embedding options
-(`knowledgeEngineId("memory:8", { model, version, dimensions })`, version 8
+(`knowledgeEngineId("memory:10", { model, version, dimensions })`, version 10
+since the review repairs malformed JSON or an invalid output shape, version 9
+since durable user statements are kept independently of an unrelated reply
+and the review restores supported statements the proposal left out, version 8
 since the prompt says how to refer to the conversation's user, version 7
 since a `supersession` is asked for only from a record that supersedes, version 6
 since the review's wire-form proposal, version 5 since event times, version 4 since restatements, version 3 since memory supersessions and successor links,

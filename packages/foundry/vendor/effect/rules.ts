@@ -42,31 +42,6 @@ const isEffectExport = (checker: ts.TypeChecker, access: ts.PropertyAccessExpres
     /[\\/]node_modules[\\/]effect[\\/]/.test(declaration.getSourceFile().fileName))
 }
 
-const BLOCK_SCOPED =
-  ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing
-
-export const noLet = {
-  id: "effect/no-let",
-  defaultSeverity: "error",
-  description: "`let` and `var` are banned",
-  fixHint:
-    "model evolving state as an immutable fold (Effect.reduce / a recursive Effect step / Array combinators) or a Ref",
-  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
-    const matches: Array<VendoredMatch> = []
-    walk(sourceFile, (node) => {
-      if (ts.isVariableDeclarationList(node)) {
-        if ((node.flags & ts.NodeFlags.Let) !== 0) {
-          matches.push({ node, message: "`let` is banned" })
-        }
-        if ((node.flags & BLOCK_SCOPED) === 0) {
-          matches.push({ node, message: "`var` is banned" })
-        }
-      }
-    })
-    return matches
-  },
-}
-
 export const noTryCatch = {
   id: "effect/no-try-catch",
   defaultSeverity: "error",
@@ -89,40 +64,6 @@ export const noTryCatch = {
         !isEffectExport(checker, node.expression)
       ) {
         matches.push({ node, message: ".catch() is banned" })
-      }
-    })
-    return matches
-  },
-}
-
-const loopLabel = (node: ts.Node): string =>
-  ts.isForOfStatement(node)
-    ? "for…of"
-    : ts.isForInStatement(node)
-      ? "for…in"
-      : ts.isForStatement(node)
-        ? "for"
-        : ts.isWhileStatement(node)
-          ? "while"
-          : "do…while"
-
-export const noLoopStatements = {
-  id: "effect/no-loop-statements",
-  defaultSeverity: "error",
-  description: "loop statements are banned; iteration is a fold",
-  fixHint:
-    "a recursive Effect step or Effect.repeat for effectful loops; Effect.forEach for effectful iteration; Array combinators (map/filter/reduce/flatMap) for pure iteration",
-  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
-    const matches: Array<VendoredMatch> = []
-    walk(sourceFile, (node) => {
-      if (
-        ts.isForStatement(node) ||
-        ts.isForOfStatement(node) ||
-        ts.isForInStatement(node) ||
-        ts.isWhileStatement(node) ||
-        ts.isDoStatement(node)
-      ) {
-        matches.push({ node, message: `\`${loopLabel(node)}\` loop — fold instead` })
       }
     })
     return matches
@@ -1202,8 +1143,6 @@ export const noOptionUnwrap = {
 /** The whole pack — plug in via `export const customRules = rules` (or a subset). */
 export const rules = [
   noTryCatch,
-  noLet,
-  noLoopStatements,
   noNullableReturn,
   matchOverTagSwitch,
   noAsAny,

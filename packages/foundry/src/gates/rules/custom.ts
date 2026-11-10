@@ -41,7 +41,7 @@ const failClosed = (
       Result.try(() => check(ctx)),
       {
         onFailure: (error) => [
-          { node: ctx.sourceFile, message: `rule ${id} crashed: ${String(error)}` },
+          { node: ctx.sourceFile, message: `rule ${id} crashed: ${String(error)}`, infrastructureFailure: true },
         ],
         onSuccess: (result) =>
           Array.isArray(result)
@@ -50,6 +50,7 @@ const failClosed = (
                 {
                   node: ctx.sourceFile,
                   message: `rule ${id} returned ${typeof result} — expected an array of matches`,
+                  infrastructureFailure: true,
                 },
               ],
       },

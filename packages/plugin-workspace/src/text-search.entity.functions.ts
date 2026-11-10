@@ -1,6 +1,6 @@
 import { Result } from "effect"
 import type { Failure } from "@xandreed/core"
-import type { FileSearch, SearchLine } from "./text-search.entity.js"
+import type { FileSearch, LineHits, SearchLine } from "./text-search.entity.js"
 import { clipChars, splitLines } from "./text-window.entity.functions.js"
 
 const failure = (error: string, message: string): Failure => ({ error, message })
@@ -60,9 +60,8 @@ export const singleLinePattern = (pattern: string): Result.Result<string, Failur
  * The expression `grep` matches with: the pattern as a JavaScript regular
  * expression, or, with `literal`, as plain text; `ignoreCase` ignores
  * case. Fails with `InvalidPattern` when the pattern does not compile, or
- * when it repeats a repeating group (`repeatsRepetition`): matching runs
- * in the host's process and cannot be interrupted, and such a pattern can
- * take exponential time on one line.
+ * when it repeats a repeating group (`repeatsRepetition`): known nested repetition is refused early. The grep adapter runs other
+ * regular expressions in a scoped worker with a deadline.
  */
 export const compilePattern = (pattern: string, options: { readonly literal: boolean; readonly ignoreCase: boolean }): Result.Result<RegExp, Failure> => {
   const source = options.literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern
@@ -79,22 +78,44 @@ export const compilePattern = (pattern: string, options: { readonly literal: boo
  * Search a file's text line by line. Each line is cut to `lineChars`
  * characters first and only the cut line is matched (a match past the cut
  * is not found), so how long a line may take is bounded by the cut, not by
- * the line. That bound holds for patterns that match in linear time: the
- * expression runs synchronously in the host's process, and a backtracking
- * one can still take long on a cut line. `compilePattern` refuses nested
+ * the line. That bound holds for patterns that match in linear time: this pure
+ * matcher runs synchronously in its caller, and a backtracking
+ * one can still take long on a cut line, which is why `grep` runs only
+ * literal patterns through it and regular expressions through the same
+ * loop in a worker it can terminate. `compilePattern` refuses nested
  * repetition, the usual exponential form, but not every slow pattern
  * (overlapping alternatives such as `(a|a)*`). At most `cap` matching lines
  * are taken, each with up to `context` lines before and after it;
  * overlapping context is shown once, in line order.
  */
 export const searchText = (text: string, pattern: RegExp, options: { readonly lineChars: number; readonly context: number; readonly cap: number }): FileSearch => {
-  const lines = splitLines(text).map((line) => clipChars(line, options.lineChars).text)
-  const hits = lines.reduce<{ readonly found: ReadonlyArray<number>; readonly capped: boolean }>((state, line, at) =>
+  const lines = cutLines(text, options.lineChars)
+  return withContext(lines, matchingLines(lines, (line) => pattern.test(line), options.cap), options.context)
+}
+
+/** A text's lines, each cut to `lineChars` characters: what `searchText` matches. */
+export const cutLines = (text: string, lineChars: number): ReadonlyArray<string> =>
+  splitLines(text).map((line) => clipChars(line, lineChars).text)
+
+/**
+ * The indices of the first `cap` lines that `matches` accepts, and whether
+ * another line matched past them. The regular expression worker runs the
+ * same loop (`regex-search.adapter.ts`), so both engines count alike.
+ */
+export const matchingLines = (lines: ReadonlyArray<string>, matches: (line: string) => boolean, cap: number): LineHits =>
+  lines.reduce<LineHits>((state, line, at) =>
     state.capped ? state
-      : !pattern.test(line) ? state
-      : state.found.length >= options.cap ? { found: state.found, capped: true }
+      : !matches(line) ? state
+      : state.found.length >= cap ? { found: state.found, capped: true }
       : { found: [...state.found, at], capped: false }, { found: [], capped: false })
-  const shown = new Set(hits.found.flatMap((at) => Array.from({ length: options.context * 2 + 1 }, (_, offset) => at - options.context + offset)
+
+/** Whether hits answered for `lineCount` lines under `cap` could have come from `matchingLines`: increasing indices inside the text, at most `cap`. */
+export const plausibleHits = (hits: LineHits, lineCount: number, cap: number): boolean =>
+  hits.found.length <= cap && hits.found.every((at, index) => at < lineCount && at > (hits.found[index - 1] ?? -1))
+
+/** The lines to show for `hits`: each matching line with up to `context` lines before and after it, overlapping context once, in line order. */
+export const withContext = (lines: ReadonlyArray<string>, hits: LineHits, context: number): FileSearch => {
+  const shown = new Set(hits.found.flatMap((at) => Array.from({ length: context * 2 + 1 }, (_, offset) => at - context + offset)
     .filter((line) => line >= 0 && line < lines.length)))
   const matched = new Set(hits.found)
   return {

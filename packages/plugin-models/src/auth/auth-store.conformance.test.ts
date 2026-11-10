@@ -3,7 +3,7 @@ import { Clock, Deferred, Effect, Match, Option, Redacted, Ref, Schema, Semaphor
 import { ProviderId } from "@xandreed/core"
 import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
-import type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./auth-store.conformance.js"
+import type { AuthStoreSubject, AuthStoreRefreshProbe } from "./auth-store.conformance.js"
 
 type Store = typeof AuthStore.Service
 
@@ -34,7 +34,9 @@ const reference = Effect.gen(function* () {
   })
 })
 
-const failedChecks = (store: Store, options: AuthStoreConformanceOptions = {}) => Effect.runPromise(Effect.forEach(authStoreConformance(store, options), (check) =>
+type Options = { readonly refresh?: AuthStoreRefreshProbe; readonly corrupt?: Effect.Effect<void, never, import("effect").Scope.Scope> }
+const subjectOf = (store: Store, options: Options = {}): AuthStoreSubject => ({ refresh: !!options.refresh, corrupt: !!options.corrupt, open: () => Effect.succeed({ store, ...(options.refresh ? { refresh: options.refresh } : {}), corruptions: options.corrupt ? [options.corrupt] : [] }) })
+const failedChecks = (store: Store, options: Options = {}) => Effect.runPromise(Effect.forEach(authStoreConformance(subjectOf(store, options)), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))).pipe(Effect.map((failed) => failed.flat().toSorted())))
 
 /** A token endpoint in Effect: it counts requests and, while held, keeps each one waiting. */
@@ -60,17 +62,18 @@ const endpoint = (provider: ProviderId) => Effect.gen(function* () {
  * damage. `locked`: one refresh at a time, and a call that finds the token
  * already replaced resolves again. `checked`: a refresh stores its token only
  * over the one it refreshed. `damaged`: what the store does while its data is
- * damaged, fail with `auth.corrupt` or read it as empty.
+ * damaged, fail with `auth.corrupt`, read it as empty, or (`set`) write a
+ * credential first and only then fail.
  */
-const refreshingReference = (behaviour: { readonly locked: boolean; readonly checked: boolean; readonly damaged: "fail" | "empty" }) => Effect.gen(function* () {
+const refreshingReference = (behaviour: { readonly locked: boolean; readonly checked: boolean; readonly damaged: "fail" | "empty" | "write-then-fail" }) => Effect.gen(function* () {
   const state = yield* Ref.make<ReadonlyMap<string, Credential>>(new Map())
   const damaged = yield* Ref.make(false)
   const lock = yield* Semaphore.make(1)
   const { call, probe } = yield* endpoint(ProviderId.make("refreshable"))
   const readable = <A>(effect: Effect.Effect<A, AuthError>, empty: A): Effect.Effect<A, AuthError> => Ref.get(damaged).pipe(Effect.flatMap((isDamaged) =>
     !isDamaged ? effect
-      : behaviour.damaged === "fail" ? Effect.fail(new AuthError({ provider: "*", code: "auth.corrupt", message: "the data is damaged" }))
-      : Effect.succeed(empty)))
+      : behaviour.damaged === "empty" ? Effect.succeed(empty)
+      : Effect.fail(new AuthError({ provider: "*", code: "auth.corrupt", message: "the data is damaged" }))))
   const current = (provider: ProviderId) => Ref.get(state).pipe(Effect.map((all) => Option.fromNullishOr(all.get(provider))))
   const write = (provider: ProviderId, credential: Option.Option<Credential>) => Ref.update(state, (all) => Option.match(credential, {
     onNone: () => new Map([...all].filter(([key]) => key !== provider)),
@@ -105,40 +108,38 @@ const refreshingReference = (behaviour: { readonly locked: boolean; readonly che
     all: readable(Ref.get(state), new Map()),
     get: (provider) => readable(current(provider), Option.none()),
     resolveKey: (provider) => readable(resolveKey(provider), Option.none()),
-    set: (provider, credential) => readable(write(provider, Option.some(credential)), undefined),
+    set: (provider, credential) => behaviour.damaged === "write-then-fail"
+      ? write(provider, Option.some(credential)).pipe(Effect.andThen(readable(Effect.void, undefined)))
+      : readable(write(provider, Option.some(credential)), undefined),
     remove: (provider) => readable(write(provider, Option.none()), undefined),
   })
   const corrupt = Effect.acquireRelease(Ref.set(damaged, true), () => Ref.set(damaged, false))
-  return { store, options: { refresh: probe, corrupt } satisfies AuthStoreConformanceOptions }
+  return { store, options: { refresh: probe, corrupt } satisfies Options }
 })
 
 describe("the AuthStore kit", () => {
-  const store = Effect.runSync(reference)
-  authStoreConformance(store).map((check) => test(check.name, async () => {
+  const subject: AuthStoreSubject = { open: () => reference.pipe(Effect.map((store) => ({ store }))) }
+  authStoreConformance(subject).map((check) => test(check.name, async () => {
     const exit = await Effect.runPromise(Effect.result(check.run))
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
 
-  test("leaves a shared store as it found it", async () => {
-    await failedChecks(store)
-    expect((await Effect.runPromise(store.all)).size).toBe(0)
+  test("checks pass in either order with fresh fixtures", async () => {
+    const checks = authStoreConformance(subject)
+    const run = (ordered: typeof checks) => Effect.runPromise(Effect.forEach(ordered, (check) => Effect.result(check.run), { concurrency: 1 }))
+    expect((await run(checks)).every((result) => result._tag === "Success")).toBe(true)
+    expect((await run(checks.toReversed())).every((result) => result._tag === "Success")).toBe(true)
   })
 })
 
 describe("the AuthStore kit over a store with a refresh flow and backing data", () => {
-  const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "fail" }))
-  authStoreConformance(store, options).map((check) => test(check.name, async () => {
+  const subject: AuthStoreSubject = { refresh: true, corrupt: true, open: () => refreshingReference({ locked: true, checked: true, damaged: "fail" }).pipe(
+    Effect.map(({ store, options }) => ({ store, ...(options.refresh ? { refresh: options.refresh } : {}), corruptions: [options.corrupt] })),
+  ) }
+  authStoreConformance(subject).map((check) => test(check.name, async () => {
     const exit = await Effect.runPromise(Effect.result(check.run))
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
-
-  test("puts back the probe's provider as it found it, and sends one request per refresh check", async () => {
-    await Effect.runPromise(store.set(options.refresh.provider, { type: "api_key", key: Redacted.make("the host's own") }))
-    const sent = await Effect.runPromise(options.refresh.requests)
-    expect(await failedChecks(store, options)).toEqual([])
-    expect(plain(Option.getOrThrow(await Effect.runPromise(store.get(options.refresh.provider))))).toEqual({ type: "api_key", key: "the host's own" })
-    expect(await Effect.runPromise(options.refresh.requests)).toBe(sent + 2)
-  })
 })
 
 describe("the AuthStore kit catches stores that break the contract", () => {
@@ -174,6 +175,19 @@ describe("the AuthStore kit catches stores that break the contract", () => {
 
   test("a store that reads damaged data as empty fails the corrupt check", async () => {
     const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "empty" }))
+    expect(await failedChecks(store, options)).toEqual(["corrupt"])
+  })
+
+  test.each(["refresh", "corrupt"] as const)("a fixture that supplies %s probes its subject does not declare fails every check, rather than skipping them", async (capability) => {
+    const { store, options } = Effect.runSync(refreshingReference({ locked: false, checked: false, damaged: "empty" }))
+    const subject: AuthStoreSubject = { open: () => Effect.succeed({ store, ...(capability === "refresh" ? { refresh: options.refresh } : { corruptions: [options.corrupt] }) }) }
+    const failed = await Effect.runPromise(Effect.forEach(authStoreConformance(subject), (check) =>
+      Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }).pipe(Effect.map((all) => all.flat().toSorted())))
+    expect(failed).toEqual(["absent", "api-key", "isolation", "local", "oauth-expired", "oauth-valid", "overwrite", "redacted", "remove"])
+  })
+
+  test("a store that writes a credential and only then fails on its damaged data fails the corrupt check", async () => {
+    const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "write-then-fail" }))
     expect(await failedChecks(store, options)).toEqual(["corrupt"])
   })
 

@@ -1,6 +1,6 @@
 import { GraderAssessment } from "../../index.js"
 import { expect, test } from "bun:test"
-import { Effect, Schema, Ref } from "effect"
+import { Effect, Ref } from "effect"
 import {
   EvalId,
   gradingContext,
@@ -39,7 +39,7 @@ const candidate = {
   fingerprints: {}
 }
 test("semantic retrieval validates statement coverage and keeps precision order", async () => {
-  const graders = semanticRetrievalGraders((measure, projected) =>
+  const graders = semanticRetrievalGraders((measure, _projected) =>
     Effect.succeed({
       verdicts: (measure === "contextual-relevancy"
         ? ["a/statement:0", "a/statement:1", "b/statement:0"]

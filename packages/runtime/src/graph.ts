@@ -71,6 +71,8 @@ export const resolveGraph: (
   const contributors = (key: string, except: PluginNode): ReadonlyArray<PluginNode> =>
     nodes.filter((node) => node !== except && contributes(node).includes(key))
   const contributed = new Set(nodes.flatMap(contributes))
+  const collision = keys.find((key) => contributed.has(key))
+  if (collision !== undefined) return yield* invalid(`${collision} is both provided and contributed`)
   yield* Effect.forEach(nodes, (node) => Effect.forEach([...node.plugin.requires, ...optional(node)], (key) => {
     const provider = nodes.find((candidate) => candidate.entry.id === providers[key])
     const isCapability = contributed.has(key)

@@ -39,11 +39,11 @@ test("framework media stores physical manifest refs and hydrates exact logical d
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner)
-    yield* wrapped.create(header)
+    yield* wrapped.create({ header: header, state: {} })
     const data = yield* partData
-    const echoed = yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }]))
-    const raw = yield* inner.read(id, query)
-    const hydrated = yield* wrapped.read(id, query)
+    const echoed = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) })
+    const raw = yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
+    const hydrated = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     const decoded = yield* Schema.decodeUnknownEffect(RequestPartData)(hydrated[0]!.data)
     const checked = yield* encodeRequestPart(decoded.part)
     return { data, echoed, raw, hydrated, checked }
@@ -62,8 +62,8 @@ test("failed media put prevents the journal commit", async () => {
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore({ ...inner, commit: (id, input) => { calls.push(1); return inner.commit(id, input) } })
-    yield* wrapped.create(header)
-    return yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])).pipe(Effect.result)
+    yield* wrapped.create({ header: header, state: {} })
+    return yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])) }).pipe(Effect.result)
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, { put: () => Effect.fail(new MediaStoreError({ reason: "Unavailable", message: "blob put failed" })), get: () => Effect.succeed(Option.none()) })))
   expect(result._tag).toBe("Failure")
   expect(calls).toHaveLength(0)
@@ -78,13 +78,13 @@ test("cached blob ownership does not depend on a subclass slice implementation",
     const shared = new AliasingBytes(bytes)
     const service: MediaStore["Service"] = { put: (bytes) => Effect.succeed(mediaHashOf(bytes)), get: () => Effect.sync(() => { gets.push(1); return Option.some(shared) }) }
     const writer = yield* withMediaStore(inner, { cacheEntries: 0 }).pipe(Effect.provideService(MediaStore, service))
-    yield* writer.create(header)
+    yield* writer.create({ header: header, state: {} })
     const data = yield* partData
-    yield* writer.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }]))
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) })
     const reader = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, service))
-    yield* reader.read(id, query)
+    yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     shared.fill(0)
-    return { data, events: yield* reader.read(id, query) }
+    return { data, events: yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.events[0]!.data).toEqual(result.data)
   expect(gets).toHaveLength(1)
@@ -99,11 +99,11 @@ test("exact envelope recognition does not strip logical extras or hydrate unlist
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner)
     const opaque = { ...literal, image: yield* mediaFromBase64(png) }
-    yield* wrapped.create({ ...header, meta: opaque })
+    yield* wrapped.create({ header: { ...header, meta: opaque }, state: {} })
     const copiedHead = yield* wrapped.head(id)
-    yield* wrapped.commit(id, { ...commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: hybrid }, { kind: "custom.media", turn: Option.none(), data: opaque }]), state: Option.some(opaque) })
-    const before = yield* wrapped.read(id, query)
-    const rejected = yield* wrapped.commit(id, commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: literal }], 1)).pipe(Effect.result)
+    yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: hybrid }, { kind: "custom.media", turn: Option.none(), data: opaque }]), state: Option.some(opaque) }) })
+    const before = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
+    const rejected = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: literal }], 1)) }).pipe(Effect.result)
     return { before, rejected, copiedHead, head: yield* wrapped.head(id), opaque }
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, store(gets, puts))))
   expect(result.before.map((event) => event.data)).toEqual([hybrid, result.opaque])
@@ -123,9 +123,9 @@ test("noncanonical or inconsistent media-looking JSON stays inline", async () =>
     const data = yield* encodeRequestPart({ _tag: "Tool", tool: { name: "test", description: "test", parameters, provider: Option.none() } }).pipe(Effect.flatMap(storedJson))
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner)
-    yield* wrapped.create(header)
-    yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }]))
-    return { data, raw: yield* inner.read(id, query), hydrated: yield* wrapped.read(id, query) }
+    yield* wrapped.create({ header: header, state: {} })
+    yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) })
+    return { data, raw: yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }), hydrated: yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }) }
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, store(gets, puts))))
   expect(result.raw[0]!.data).toEqual(result.data)
   expect(result.hydrated[0]!.data).toEqual(result.data)
@@ -141,10 +141,10 @@ test("whole commit siblings are detached before the first put can suspend", asyn
     const service = { ...base, put: (bytes: Uint8Array) => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(base.put(bytes))) }
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, service))
-    yield* wrapped.create(header)
+    yield* wrapped.create({ header: header, state: {} })
     const sibling = { value: "original" }
     const input = commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }, { kind: "custom", turn: Option.none(), data: sibling }])
-    const work = yield* wrapped.commit(id, input).pipe(Effect.forkChild)
+    const work = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, input) }).pipe(Effect.forkChild)
     yield* Deferred.await(entered)
     sibling.value = "mutated"
     yield* Deferred.succeed(release, undefined)
@@ -158,9 +158,9 @@ test("commit echo needs no get after ACK even with disabled cache", async () => 
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner, { cacheEntries: 0 })
-    yield* wrapped.create(header)
+    yield* wrapped.create({ header: header, state: {} })
     const data = yield* partData
-    return { data, echo: yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) }
+    return { data, echo: yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) }) }
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, { put: (bytes) => Effect.succeed(mediaHashOf(bytes)), get: () => Effect.sync(() => { gets.push(1); return Option.none() }) })))
   expect(result.echo.events[0]!.data).toEqual(result.data)
   expect(gets).toHaveLength(0)
@@ -170,11 +170,11 @@ test("inner commit failures retain exact identity; altered physical ACK echoes f
   const failure = new SessionLogError({ code: "store.io", message: "original uncertain ACK" })
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
-    yield* inner.create(header)
+    yield* inner.create({ header: header, state: {} })
     const bad = yield* withMediaStore({ ...inner, commit: () => Effect.fail(failure) })
-    const first = yield* bad.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])).pipe(Effect.result)
+    const first = yield* Effect.gen(function* () { const sessionHead = yield* bad.head(id); return yield* bad.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])) }).pipe(Effect.result)
     const altered = yield* withMediaStore({ ...inner, commit: (id, input) => inner.commit(id, input).pipe(Effect.map((result) => ({ ...result, events: result.events.map((event) => ({ ...event, data: {} })) }))) })
-    const second = yield* altered.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])).pipe(Effect.result)
+    const second = yield* Effect.gen(function* () { const sessionHead = yield* altered.head(id); return yield* altered.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])) }).pipe(Effect.result)
     return { first, second }
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, store([], []))))
   expect(result.first._tag === "Failure" && result.first.failure).toBe(failure)
@@ -189,8 +189,8 @@ test("an inner backend cannot mutate the expected physical echo before verificat
       if (Schema.is(Schema.JsonObject)(envelope)) Object.assign(envelope, { version: 2 })
       return inner.commit(id, input)
     } })
-    yield* wrapped.create(header)
-    return yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])).pipe(Effect.result)
+    yield* wrapped.create({ header: header, state: {} })
+    return yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])) }).pipe(Effect.result)
   }).pipe(Effect.provide(SessionLogMemoryLive), Effect.provideService(MediaStore, store([], []))))
   expect(result._tag === "Failure" && result.failure._tag === "SessionLogError" && result.failure.code).toBe("store.decode")
 })
@@ -216,11 +216,11 @@ test.each(["missing", "corrupt", "wrong-bytes", "invalid-metadata", "unavailable
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const writer = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, store([], [])))
-    yield* writer.create(header)
+    yield* writer.create({ header: header, state: {} })
     const data = yield* partData
-    yield* writer.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }, { kind: "inbox.taken", turn: Option.some(1), data: { id: "input", entry: "turn:0" } }]))
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }, { kind: "inbox.taken", turn: Option.some(1), data: { id: "input", entry: "turn:0" } }])) })
     const bytes = yield* Schema.decodeUnknownEffect(Schema.Uint8ArrayFromBase64)(png)
-    const raw = yield* inner.read(id, query)
+    const raw = yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     const envelope = yield* Schema.decodeUnknownEffect(MediaEnvelope)(raw[0]!.data)
     const payload = envelope["$efferent.media"]
     const value = Option.getOrThrow(replaceJsonAt(payload.value, ["part", "tool", "parameters", "image", "fingerprint"], "0".repeat(18)))
@@ -232,7 +232,7 @@ test.each(["missing", "corrupt", "wrong-bytes", "invalid-metadata", "unavailable
         : scenario === "corrupt" ? Effect.fail(new MediaStoreError({ reason: "Corrupt", message: "damaged" }))
           : Effect.succeed(scenario === "missing" ? Option.none() : Option.some(scenario === "wrong-bytes" ? new Uint8Array([1, 2, 3]) : bytes)),
     }))
-    return { data, read: yield* reader.read(id, query).pipe(Effect.result) }
+    return { data, read: yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }).pipe(Effect.result) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   if (scenario === "unavailable") {
     expect(result.read._tag === "Failure" && result.read.failure._tag === "SessionLogError" && result.read.failure.code).toBe("store.io")
@@ -254,9 +254,9 @@ test.each(["duplicate", "ancestor", "missing", "array-string", "reference-extra"
     const inner = yield* SessionLog
     const base = store(gets, [])
     const writer = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, base))
-    yield* writer.create(header)
-    yield* writer.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }]))
-    const raw = yield* inner.read(id, query)
+    yield* writer.create({ header: header, state: {} })
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data: yield* partData }])) })
+    const raw = yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     const envelope = yield* Schema.decodeUnknownEffect(MediaEnvelope)(raw[0]!.data)
     const payload = envelope["$efferent.media"]
     const path = payload.paths[0]!
@@ -266,7 +266,7 @@ test.each(["duplicate", "ancestor", "missing", "array-string", "reference-extra"
       : scenario === "reference-extra" ? Option.getOrThrow(replaceJsonAt(payload.value, path, { type: "media-reference", version: 1, hash: "f".repeat(64), extra: true })) : payload.value
     const data = { "$efferent.media": { ...payload, value, paths } }
     const reader = yield* withMediaStore({ ...inner, read: () => Effect.succeed([{ ...raw[0]!, data }]) }).pipe(Effect.provideService(MediaStore, base))
-    return yield* reader.read(id, query).pipe(Effect.result)
+    return yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }).pipe(Effect.result)
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result._tag === "Failure" && result.failure._tag === "SessionLogError" && result.failure.code).toBe("store.decode")
   expect(gets).toHaveLength(0)
@@ -278,15 +278,15 @@ test("a cache hit still checks every occurrence's metadata against the bytes", a
     const inner = yield* SessionLog
     const base = store(gets, [])
     const writer = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, base))
-    yield* writer.create(header)
+    yield* writer.create({ header: header, state: {} })
     const data = yield* partData
-    yield* writer.commit(id, commitOf([1, 2].map(() => ({ kind: "request.part", turn: Option.some(1), data }))))
-    const raw = yield* inner.read(id, query)
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([1, 2].map(() => ({ kind: "request.part", turn: Option.some(1), data })))) })
+    const raw = yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     const envelope = yield* Schema.decodeUnknownEffect(MediaEnvelope)(raw[1]!.data)
     const payload = envelope["$efferent.media"]
     const value = Option.getOrThrow(replaceJsonAt(payload.value, ["part", "tool", "parameters", "image", "bytes"], 1))
     const reader = yield* withMediaStore({ ...inner, read: () => Effect.succeed([raw[0]!, { ...raw[1]!, data: { "$efferent.media": { ...payload, value } } }]) }).pipe(Effect.provideService(MediaStore, base))
-    return { data, rows: yield* reader.read(id, query) }
+    return { data, rows: yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.rows[0]!.data).toEqual(result.data)
   expect(imageAt(result.rows[1]!.data).data).toBe(UNAVAILABLE_MEDIA_DATA)
@@ -299,13 +299,13 @@ test("the read upper bound excludes a future missing blob even if the backend ig
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const writer = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, store([], [])))
-    yield* writer.create(header)
-    yield* writer.commit(id, commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: { id: "input", entry: "turn:0" } }, { kind: "request.part", turn: Option.some(1), data: yield* partData }]))
+    yield* writer.create({ header: header, state: {} })
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "inbox.taken", turn: Option.some(1), data: { id: "input", entry: "turn:0" } }, { kind: "request.part", turn: Option.some(1), data: yield* partData }])) })
     const reader = yield* withMediaStore({ ...inner, read: (id, { through: _through, ...query }) => inner.read(id, query) }).pipe(Effect.provideService(MediaStore, {
       put: (bytes) => Effect.succeed(mediaHashOf(bytes)), get: (hash) => Effect.sync(() => { gets.push(hash); return Option.none() }),
     }))
-    const prefix = yield* reader.read(id, { ...query, through: 1 })
-    const full = yield* reader.read(id, query)
+    const prefix = yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, through: 1 }) })
+    const full = yield* Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     return { prefix, full }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.prefix.map((row) => row.kind)).toEqual(["inbox.taken"])
@@ -324,13 +324,13 @@ test.each([
     const inner = yield* SessionLog
     const base = store(gets, [])
     const writer = yield* withMediaStore(inner, { cacheEntries: 0 }).pipe(Effect.provideService(MediaStore, base))
-    yield* writer.create(header)
+    yield* writer.create({ header: header, state: {} })
     // Two independent 1x1 GIF palettes plus the PNG, all recognized by Media.
     const gifs = [0, 255].map((color) => Base64.encode(new Uint8Array([71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, color, color, color, 255, 255, 255, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59])))
     const events = yield* Effect.forEach([png, ...gifs], (data) => mediaFromBase64(data).pipe(Effect.flatMap((image) => encodeRequestPart({ _tag: "Tool", tool: { name: "image", description: "test", parameters: { image }, provider: Option.none() } })), Effect.flatMap(storedJson), Effect.map((data) => ({ kind: "request.part", turn: Option.some(1), data }))))
-    yield* writer.commit(id, commitOf(events))
+    yield* Effect.gen(function* () { const sessionHead = yield* writer.head(id); return yield* writer.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf(events)) })
     const reader = yield* withMediaStore(inner, options).pipe(Effect.provideService(MediaStore, base))
-    return yield* Effect.forEach(order, (seq) => reader.read(id, { ...query, after: seq - 1, limit: Option.some(1) }))
+    return yield* Effect.forEach(order, (seq) => Effect.gen(function* () { const sessionHead = yield* reader.head(id); return yield* reader.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, after: seq - 1, limit: Option.some(1) }) }))
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.every((rows) => rows.length === 1)).toBe(true)
   expect(gets).toHaveLength(expected)
@@ -341,14 +341,14 @@ test("rows without an envelope pass through untouched, even ones this release ca
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner).pipe(Effect.provideService(MediaStore, store(gets, [])))
-    yield* inner.create(header)
+    yield* inner.create({ header: header, state: {} })
     // A newer release's header version, and an unreferenced damaged part body, written inline.
     const rows = [
       { kind: "request.prepared", turn: Option.some(1), data: { version: 3, runId: "r", run: 0, step: 0 } },
       { kind: "request.part", turn: Option.some(1), data: { hash: "a".repeat(64), part: { _tag: "Future" } } },
     ]
-    yield* inner.commit(id, commitOf(rows))
-    return { rows, all: yield* wrapped.read(id, query), parts: yield* wrapped.read(id, { ...query, kinds: ["request.part"] }) }
+    yield* Effect.gen(function* () { const sessionHead = yield* inner.head(id); return yield* inner.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf(rows)) })
+    return { rows, all: yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }), parts: yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, kinds: ["request.part"] }) }) }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(result.all.map((row) => row.data)).toEqual(result.rows.map((row) => row.data))
   expect(result.parts.map((row) => row.data)).toEqual([result.rows[1]!.data])
@@ -360,11 +360,11 @@ test("a key-only read returns logical values with their references in place and 
   const result = await Effect.runPromise(Effect.gen(function* () {
     const inner = yield* SessionLog
     const wrapped = yield* withMediaStore(inner, { cacheEntries: 0 }).pipe(Effect.provideService(MediaStore, store(gets, [])))
-    yield* wrapped.create(header)
+    yield* wrapped.create({ header: header, state: {} })
     const data = yield* partData
-    yield* wrapped.commit(id, commitOf([{ kind: "request.part", turn: Option.some(1), data }]))
-    const keyed = yield* wrapped.read(id, { ...query, media: "references" })
-    const hydrated = yield* wrapped.read(id, query)
+    yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, commitOf([{ kind: "request.part", turn: Option.some(1), data }])) })
+    const keyed = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, media: "references" }) })
+    const hydrated = yield* Effect.gen(function* () { const sessionHead = yield* wrapped.head(id); return yield* wrapped.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })
     return { data, keyed, hydrated }
   }).pipe(Effect.provide(SessionLogMemoryLive)))
   expect(imageAt(result.keyed[0]!.data).data).toMatchObject({ type: "media-reference", version: 1 })

@@ -88,7 +88,7 @@ for RAG. Source ingestion is a separate retrieval operation.
 
 The capability is built once per agent; paths and turn services are resolved
 per call. Per-file locks serialize its writes across sessions sharing it.
-Builtin `grep` runs synchronous regular expressions and is not time-bounded.
+Builtin regex `grep` runs in a scoped worker under `grepTimeoutMs`, started at the first file it searches (its start is not counted); at most four such workers run in a process at once, and a grep waiting for one does not count the wait; the worker is terminated on timeout or interruption, and a worker that fails or dies fails the call with `SearchFailed`. Literal search runs locally.
 `grepEngine: "auto"` probes ripgrep once on the local filesystem/shell pair;
 explicit ripgrep needs `rg` and uses `grepTimeoutMs`. Both engines bound
 returned matches and refuse multiline patterns.

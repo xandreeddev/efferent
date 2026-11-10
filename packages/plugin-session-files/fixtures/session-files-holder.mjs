@@ -34,7 +34,7 @@ const say = (line) => Effect.sync(() => { process.stdout.write(`${line}\n`) })
 const commitOnce = (log, session, size) => Effect.gen(function* () {
   const head = yield* log.head(session)
   const commit = head.revision + 1
-  yield* log.commit(session, {
+  yield* log.commit({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation }, {
     expect: head.revision,
     notAfter: Option.none(),
     events: range(size).map((index) => ({ kind: "part", turn: Option.none(), data: { commit, index, of: size, pad: "x".repeat(512) } })),
@@ -54,8 +54,9 @@ const casIncrements = (session, count, label, go) => Effect.scoped(Effect.gen(fu
   const conflicts = yield* Ref.make(0)
   const increment = (n) => Effect.gen(function* () {
     const head = yield* log.head(session)
+    if (n === 0 && !firstRead.used) { firstRead.used = true; yield* say("read"); yield* Deferred.await(proceed) }
     const current = typeof head.state.count === "number" ? head.state.count : 0
-    yield* log.commit(session, {
+    yield* log.commit({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation }, {
       expect: head.revision, notAfter: Option.none(), events: [{ kind: "increment", turn: Option.none(), data: { by: label, n } }], state: Option.some({ count: current + 1 }),
     })
   }).pipe(
@@ -75,7 +76,7 @@ const pausing = (point) => {
     ...nodeFilesIo,
     link: (from, to) => to.endsWith(".jsonl") && point === "after-write" ? paused() : nodeFilesIo.link(from, to),
     // A session's own temporary file (the root itself may sit under the system's /tmp).
-    unlink: (path) => /\/sessions\/[^/]+\/tmp\//.test(path) && point === "after-link" ? paused() : nodeFilesIo.unlink(path),
+    unlink: (path) => /\/lives\/[^/]+\/tmp\//.test(path) && point === "after-link" ? paused() : nodeFilesIo.unlink(path),
   }
 }
 
@@ -97,9 +98,11 @@ if (run === undefined) {
   process.exit(1)
 }
 // The test process's lines: `go` releases cas-increments; the end of stdin (the test process is gone) stops this one.
+const firstRead = { used: false }
+const proceed = Effect.runSync(Deferred.make())
 const go = Effect.runSync(Deferred.make())
 process.stdin.setEncoding("utf8")
-process.stdin.on("data", (chunk) => { if (String(chunk).split("\n").includes("go")) Effect.runFork(Deferred.succeed(go, undefined)) })
+process.stdin.on("data", (chunk) => { const lines = String(chunk).split("\n"); if (lines.includes("go")) Effect.runFork(Deferred.succeed(go, undefined)); if (lines.includes("commit")) Effect.runFork(Deferred.succeed(proceed, undefined)) })
 process.stdin.on("end", () => process.exit(1))
 setTimeout(() => process.exit(1), 120_000).unref()
 Effect.runPromiseExit(run(go)).then((exit) => {

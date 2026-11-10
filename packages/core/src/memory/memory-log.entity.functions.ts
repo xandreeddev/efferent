@@ -1,10 +1,10 @@
-import { Array as Arr, Effect, Match, Option, Order, Predicate, Schema } from "effect"
+import { Array as Arr, Match, Option, Order, Predicate} from "effect"
 import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaAvailable, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolCallPart, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
-import { handoffToMessage } from "../internal/mapping.entity.functions.js"
+import { handoffToMessage } from "../domain/message-mapping.entity.functions.js"
 import { clippedMarker, clipTo, framed, hostNote } from "../turn/model-text.js"
 import { attachmentsOf, userMessageOf, userMessageText } from "../turn/user-message.entity.functions.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
@@ -26,7 +26,8 @@ const sortKeys = (value: unknown): unknown =>
 
 /** FNV-1a (32 bit) plus length — pure, stable across processes and runtimes. */
 export const fingerprintOf = (text: string): string => {
-  const hash = Array.from(text).reduce((h, ch) => Math.imul((h ^ ch.charCodeAt(0)) >>> 0, 16777619) >>> 0, 2166136261)
+  let hash = 2166136261
+  for (const ch of text) hash = Math.imul((hash ^ ch.charCodeAt(0)) >>> 0, 16777619) >>> 0
   return `${hash.toString(16).padStart(8, "0")}${text.length.toString(16)}`
 }
 
@@ -313,9 +314,18 @@ const mediaPlan = (plan: RenderPlan, options: RenderOptions): MediaPlan => {
   const current = entries.filter((entry) => entry.turn === options.currentTurn)
   const attachments = current.flatMap((entry) => Option.isSome(userMessageIn(entry)) ? imagesOf(entry).map((image) => [image]) : [])
   const results = current.flatMap((entry) => entry.body._tag === "ToolResult" ? [imagesOf(entry)] : []).filter((group) => group.length > 0).reverse()
-  const older = options.media.mode === "none" ? [] : entries.flatMap((entry) => entry.turn < options.currentTurn ? imagesOf(entry).map((image) => ({ turn: entry.turn, image })) : [])
-  const earlier = [...new Set(older.map((item) => item.turn))].sort((left, right) => right - left)
-    .map((turn) => older.filter((item) => item.turn === turn).map((item) => item.image))
+  const older = new Map<number, Array<LogImage>>()
+  if (options.media.mode !== "none") {
+    for (const entry of entries) {
+      if (entry.turn >= options.currentTurn) continue
+      const images = imagesOf(entry)
+      if (images.length === 0) continue
+      const group = older.get(entry.turn)
+      if (group) group.push(...images)
+      else older.set(entry.turn, [...images])
+    }
+  }
+  const earlier = [...older.keys()].sort((left, right) => right - left).map((turn) => older.get(turn)!)
   const inline = [...attachments, ...results, ...earlier].reduce(take, noneChosen).chosen
   return { applied, digests, kept, imagesOf, inline }
 }
@@ -387,7 +397,7 @@ const visiblePlanOf = (stored: ReadonlyArray<LogEntry>, options: RenderOptions):
  * THE rebuild: a pure fold of the log into the messages the model sees.
  * Every strategy renders through this, differing only by the compaction
  * entries it recorded, so in-run and replayed requests are byte-identical.
- * Each pass over the log is linear: a long session's render grows with its length, never its square.
+ * Entries are grouped in linear passes; ordering distinct image-bearing turns adds O(T log T), never a scan of all images for each turn.
  */
 const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages" | "compactions"> => {
   const plan = visiblePlanOf(stored, options)

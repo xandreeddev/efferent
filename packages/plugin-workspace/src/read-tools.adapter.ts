@@ -1,10 +1,12 @@
 import { Tool } from "effect/ai"
-import { Effect, Option, Result } from "effect"
-import type { Path, RcMap, Semaphore } from "effect"
+import { Clock, Duration, Effect, Option, Result } from "effect"
+import type { Path, RcMap, Scope, Semaphore } from "effect"
 import { Bash, defineTool, Failure, FileSystem, ImageResizer, SessionEnvironment, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
+import { openRegexSearch } from "./regex-search.adapter.js"
+import type { RegexSearch } from "./regex-search.adapter.js"
 import { searchRipgrep } from "./ripgrep.adapter.js"
-import { compilePattern, searchText, singleLinePattern } from "./text-search.entity.functions.js"
+import { compilePattern, cutLines, searchText, singleLinePattern, withContext } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, withinAnyRoot } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
@@ -20,6 +22,8 @@ export interface WorkspaceToolContext {
   readonly protect: ReadonlyArray<ProtectRule>
   readonly locks: RcMap.RcMap<string, Semaphore.Semaphore>
   readonly resizesImages: boolean
+  /** How a regular expression grep opens its worker: `openRegexSearch`, unless a test starts another program. */
+  readonly openSearch?: (pattern: RegExp) => Effect.Effect<RegexSearch, Failure, Scope.Scope>
 }
 
 /** The services every workspace tool reads on each call, and the `workspace.environment` section on each render: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
@@ -116,6 +120,14 @@ interface Searched {
   readonly skipped: number
   readonly truncated: boolean
   readonly unreadable: ReadonlyArray<GrepUnreadable>
+  readonly timedOut: boolean
+}
+
+/** A grep under way: what it found so far, its deadline, and its regular expression worker once one has started. */
+interface Grepping {
+  readonly searched: Searched
+  readonly deadline: number
+  readonly worker: Option.Option<RegexSearch>
 }
 
 /**
@@ -130,10 +142,10 @@ interface Searched {
  * with ripgrep, which cannot know that ahead). A pattern with a line break
  * is refused (`singleLinePattern`) whichever engine runs.
  */
-export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
+export const grepTool = ({ config, path, openSearch = openRegexSearch }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: GrepTool(config),
   requires: config.grepEngine === "ripgrep" ? [...WORKSPACE_SERVICES, Bash] : WORKSPACE_SERVICES,
-  handler: (params) => Effect.gen(function* () {
+  handler: (params) => Effect.scoped(Effect.gen(function* () {
     const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
     yield* Effect.fromResult(singleLinePattern(params.pattern))
@@ -150,12 +162,22 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
           return { path: absolute, display: displayOf(access, absolute) }
         })),
         Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `glob ${params.glob ?? glob}: ${error.message}`) : fsFailure(target.display)(error)))
+    const regex = Option.getOrThrow(pattern)
     const limit = params.limit ?? config.grepMatches
     const perFile = info.kind === "directory" ? Math.max(1, Math.ceil(limit / 4)) : limit
     const context = params.context ?? 0
     const skip = (state: Searched): Searched => ({ ...state, skipped: state.skipped + 1 })
-    const searched = yield* Effect.reduce(files, (): Searched => ({ lines: [], matches: 0, files: 0, skipped: 0, truncated: false, unreadable: [] }), (state, file) => {
-      if (state.matches >= limit) return Effect.succeed({ ...state, truncated: true })
+    // A regular expression's worker opens at the first file it searches; the time it takes to
+    // start moves the deadline, so `grepTimeoutMs` is spent reading and matching only.
+    const worker = (state: Grepping): Effect.Effect<Grepping, Failure, Scope.Scope> => Option.match(state.worker, {
+      onSome: () => Effect.succeed(state),
+      onNone: () => openSearch(regex).pipe(Effect.timed, Effect.map(([started, search]) => ({ ...state, deadline: state.deadline + Duration.toMillis(started), worker: Option.some(search) }))),
+    })
+    const start: Grepping = { searched: { lines: [], matches: 0, files: 0, skipped: 0, truncated: false, unreadable: [], timedOut: false }, deadline: (yield* Clock.currentTimeMillis) + config.grepTimeoutMs, worker: Option.none() }
+    const { searched } = yield* Effect.reduce(files, () => start, (grepping, file) => {
+      const state = grepping.searched
+      const next = (searched: Searched): Grepping => ({ ...grepping, searched })
+      if (state.timedOut || state.matches >= limit) return Effect.succeed(next({ ...state, truncated: true }))
       const read = Effect.gen(function* () {
         const real = yield* access.fs.realPath(file.path)
         if (config.confine && !withinAnyRoot(access, real)) return Option.none<Uint8Array>()
@@ -165,24 +187,43 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
         return looksBinary(bytes) ? Option.none<Uint8Array>() : Option.some(bytes)
       })
       return read.pipe(
-        Effect.map(Option.match({
-          onNone: () => skip(state),
-          onSome: (content): Searched => {
-            const found = searchText(decodeText(content).text, Option.getOrThrow(pattern), { lineChars: config.grepLineChars, context, cap: Math.min(perFile, limit - state.matches) })
+        Effect.catch((error) => Effect.succeed({ _tag: "Unreadable" as const, error })),
+        Effect.flatMap((read) => {
+          if (read._tag === "Unreadable") return Effect.succeed(next({ ...state, unreadable: [...state.unreadable, { path: file.display, reason: read.error.reason }] }))
+          return Option.match(read, {
+          onNone: () => Effect.succeed(next(skip(state))),
+          onSome: (content) => Effect.gen(function* () {
+            const cap = Math.min(perFile, limit - state.matches)
+            const text = decodeText(content).text
+            if (grepping.deadline <= (yield* Clock.currentTimeMillis)) return next({ ...state, timedOut: true, truncated: true })
+            const ready = params.literal ? grepping : yield* worker(grepping)
+            const remaining = ready.deadline - (yield* Clock.currentTimeMillis)
+            if (remaining <= 0) return { ...ready, searched: { ...state, timedOut: true, truncated: true } }
+            const searched = yield* Option.match(ready.worker, {
+              onNone: () => Effect.succeed(Option.some(searchText(text, regex, { lineChars: config.grepLineChars, context, cap }))),
+              onSome: (search) => {
+                const lines = cutLines(text, config.grepLineChars)
+                return search(lines, cap).pipe(Effect.timeoutOption(remaining), Effect.map(Option.map((hits) => withContext(lines, hits, context))))
+              },
+            })
+            if (Option.isNone(searched)) return { ...ready, searched: { ...state, timedOut: true, truncated: true } }
+            const found = searched.value
             return {
-              ...state,
-              lines: [...state.lines, ...found.lines.map((line) => ({ path: file.display, ...line }))],
-              matches: state.matches + found.matches,
-              files: state.files + (found.matches > 0 ? 1 : 0),
-              truncated: state.truncated || found.capped,
+              ...ready,
+              searched: {
+                ...state,
+                lines: [...state.lines, ...found.lines.map((line) => ({ path: file.display, ...line }))],
+                matches: state.matches + found.matches,
+                files: state.files + (found.matches > 0 ? 1 : 0),
+                truncated: state.truncated || found.capped,
+              },
             }
-          },
-        })),
-        Effect.catch((error) => Effect.succeed({ ...state, unreadable: [...state.unreadable, { path: file.display, reason: error.reason }] })),
+          }),
+        })}),
       )
     })
-    return { pattern: params.pattern, path: target.display, ...searched, timedOut: false }
-  }),
+    return { pattern: params.pattern, path: target.display, ...searched }
+  })),
   view: { version: "4", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
   annotations: { readOnly: true },
 })

@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
-import type { Tool, Toolkit } from "effect/ai"
+import type { Tool } from "effect/ai"
+import type { PreparedToolkit } from "./prepared-toolkit.port.js"
 import type { DecisionRecord } from "../decision-record.entity.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
@@ -37,7 +38,7 @@ export type ToolHandlers = Tool.HandlersFor<Record<string, Tool.Any>>
 
 /** The tools of one run: the full set is fixed at run start; the active set only grows. */
 export interface RunTools {
-  readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>
+  readonly toolkit: PreparedToolkit<Record<string, Tool.Any>>
   readonly handlers: Context.Context<ToolHandlers>
   /** Active tool names in activation order. */
   readonly active: Effect.Effect<ReadonlyArray<string>>

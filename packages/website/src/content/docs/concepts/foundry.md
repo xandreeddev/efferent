@@ -43,9 +43,8 @@ code that fails the AST rules. A gate that cannot *run* folds to a failure
 carrying a `gate-crashed` finding: **fail-closed, never a silent pass**.
 
 The deterministic ranks are pure static checks over one shared `ts.Program`
-(the Effect idioms: no `try`/`catch`, no `let`/loops, no nullable returns, no
-tag switches, no `as any`; plus the boundaries rule that pins the package
-graph) and command gates — a shell command whose exit code is the verdict.
+(the Effect idioms: no `try`/`catch`, no nullable returns, no tag switches,
+no `as any`; plus the boundaries rule that pins the package graph) and command gates — a shell command whose exit code is the verdict.
 
 Rank 4 is the **judge**: an LLM gate that runs last, judges only what
 determinism cannot (intent fulfillment, honesty of the implementation), and
@@ -74,5 +73,5 @@ build fails naming the list a package is missing from.
 
 Accepted and rejected runs feed forward: the factory extracts per-rule
 failure statistics from `FactoryRun` history and injects them into the next
-refine session's context ("`effect/no-let` failed 2 attempts across 2 runs"),
+refine session's context ("`effect/no-nullable-return` failed 2 attempts across 2 runs"),
 so the spec and the brief get sharper without any model-side memory.

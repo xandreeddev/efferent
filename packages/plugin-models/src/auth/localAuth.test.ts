@@ -374,6 +374,17 @@ describe("LocalAuthStore — a file it cannot use", () => {
     expect(readFileSync(path, "utf-8")).toBe("{ \"anthropic\": ")
   })
 
+  test("a corrupt local override fails a login written to the global file, which stays as it was", async () => {
+    const { layer, home, cwd } = setupWithPaths({ opencode: { type: "api_key", key: "sk-kept" } }, {})
+    const global = join(home, ".efferent", "auth.json")
+    const before = readFileSync(global, "utf-8")
+    writeFileSync(join(cwd, ".efferent", "auth.json"), "{ not json")
+    const failure = await Effect.runPromise(Effect.flip(Effect.flatMap(Effect.service(AuthStore), (store) => store.set(ProviderId.make("openai"), { type: "api_key", key: Redacted.make("sk-new") }))).pipe(Effect.provide(layer)))
+    expect([failure._tag, failure.code]).toEqual(["AuthError", "auth.corrupt"])
+    expect(readFileSync(global, "utf-8")).toBe(before)
+    expect(readdirSync(join(home, ".efferent"))).toEqual(["auth.json"])
+  })
+
   test("a file that cannot be read, or holds no JSON object, is corrupt too; a missing one is empty", async () => {
     const home = mkdtempSync(join(tmpdir(), "engine-auth-home-"))
     const cwd = mkdtempSync(join(tmpdir(), "engine-auth-cwd-"))

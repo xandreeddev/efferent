@@ -58,20 +58,20 @@ const size = 5
 /** The log as a new process reads it: only whole commits, dense sequence numbers, the head agreeing with the last. */
 const whole = (root: string, id: ConversationId) => withLog(root, (log) => Effect.gen(function* () {
   const head = yield* log.head(id)
-  const events = yield* log.read(id, all)
+  const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) })
   expect(head.revision).toBe(events.length / size)
   expect(head.state).toEqual(events.length === 0 ? {} : { commit: head.revision })
   expect(events.every((event, index) => event.seq === index + 1 && event.data["commit"] === Math.floor(index / size) + 1 && event.data["index"] === index % size)).toBe(true)
   return head
 }))
 
-const tmpOf = (root: string, id: ConversationId) => readdirSync(join(root, "sessions", id, "tmp"))
+const tmpOf = (root: string, id: ConversationId) => { const life = readdirSync(join(root, "lives")).find((name) => name.startsWith(`${id}.`))!; return readdirSync(join(root, "lives", life, "tmp")) }
 
 describe("a writer process killed while it commits", () => {
   test("leaves whole commits: the log reopens intact and takes the next commit, and the next commit sweeps what it left", () => run(Effect.gen(function* () {
     const root = freshRoot()
     const id = freshId()
-    yield* withLog(root, (log) => log.create(header(id)))
+    yield* withLog(root, (log) => log.create({ header: header(id), state: {} }))
     const heads = yield* Effect.forEach([100, 250, 400], (ms) => Effect.scoped(Effect.gen(function* () {
       const writer = yield* holderSaying("ready", "commit-loop", root, id, String(size))
       yield* Effect.sleep(ms)
@@ -80,9 +80,9 @@ describe("a writer process killed while it commits", () => {
     })), { concurrency: 1 })
     expect(heads.every((head, index) => head.revision >= index + 1)).toBe(true)
     const last = heads[heads.length - 1]!
-    const next = yield* withLog(root, (log) => log.commit(id, {
+    const next = yield* withLog(root, (log) => Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
       expect: last.revision, notAfter: Option.none(), events: range(size).map((index) => ({ kind: "part", turn: Option.none(), data: { commit: last.revision + 1, index, of: size } })), state: Option.some({ commit: last.revision + 1 }),
-    }))
+    }) }))
     expect([next.revision, next.seq]).toEqual([last.revision + 1, last.seq + size])
     yield* whole(root, id)
     // A temporary file the killed writers left is for a revision taken since: the first commit of a new handle removed it.
@@ -92,14 +92,14 @@ describe("a writer process killed while it commits", () => {
   test("killed after writing its file and before linking it, it committed nothing: the head is as before, and the next commit takes the revision", () => run(Effect.gen(function* () {
     const root = freshRoot()
     const id = freshId()
-    yield* withLog(root, (log) => log.create(header(id)))
+    yield* withLog(root, (log) => log.create({ header: header(id), state: {} }))
     const writer = yield* holderSaying("paused", "pause", root, id, "after-write")
     expect(yield* killed(writer)).toBe("SIGKILL")
     expect(tmpOf(root, id).length).toBe(1)
     const after = yield* withLog(root, (log) => Effect.gen(function* () {
       const head = yield* log.head(id)
-      const next = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "part", turn: Option.none(), data: { commit: 1, index: 0, of: 1 } }], state: Option.some({ commit: 1 }) })
-      return { revision: head.revision, next: next.revision, events: (yield* log.read(id, all)).length }
+      const next = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [{ kind: "part", turn: Option.none(), data: { commit: 1, index: 0, of: 1 } }], state: Option.some({ commit: 1 }) }) })
+      return { revision: head.revision, next: next.revision, events: (yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) })).length }
     }))
     expect(after).toEqual({ revision: 0, next: 1, events: 1 })
     expect(tmpOf(root, id)).toEqual([])
@@ -108,14 +108,14 @@ describe("a writer process killed while it commits", () => {
   test("killed after linking its file and before cleaning up, it committed: the commit is the head, whole, and its leftover is swept", () => run(Effect.gen(function* () {
     const root = freshRoot()
     const id = freshId()
-    yield* withLog(root, (log) => log.create(header(id)))
+    yield* withLog(root, (log) => log.create({ header: header(id), state: {} }))
     const writer = yield* holderSaying("paused", "pause", root, id, "after-link")
     expect(yield* killed(writer)).toBe("SIGKILL")
     expect(tmpOf(root, id).length).toBe(1)
     const after = yield* withLog(root, (log) => Effect.gen(function* () {
       const head = yield* log.head(id)
-      const events = yield* log.read(id, all)
-      const next = yield* log.commit(id, { expect: 1, notAfter: Option.none(), events: [], state: Option.some({ commit: 2 }) })
+      const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) })
+      const next = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 1, notAfter: Option.none(), events: [], state: Option.some({ commit: 2 }) }) })
       return { revision: head.revision, events: events.map((event) => event.data["index"]), next: next.revision }
     }))
     expect(after).toEqual({ revision: 1, events: [0, 1, 2], next: 2 })
@@ -127,16 +127,18 @@ describe("two processes racing by compare-and-swap on one directory", () => {
   test("200 increments each end at 400: they conflict, and no update is lost or stored twice", () => run(Effect.gen(function* () {
     const root = freshRoot()
     const id = freshId()
-    yield* withLog(root, (log) => log.create(header(id)))
+    yield* withLog(root, (log) => log.create({ header: header(id), state: {} }))
     const writers = [yield* holderSaying("ready", "cas-increments", root, id, "200", "a"), yield* holderSaying("ready", "cas-increments", root, id, "200", "b")]
     yield* Effect.forEach(writers, go, { concurrency: 1, discard: true })
+    yield* Effect.forEach(writers, (child) => Stream.runHead(Stream.filter(lines(child), (line) => line === "read")), { concurrency: 2 })
+    yield* Effect.forEach(writers, (child) => Effect.sync(() => { child.stdin.write("commit\n"); child.stdin.flush() }), { concurrency: 1 })
     const outcomes = yield* Effect.forEach(writers, (child) => Effect.all({ code: exited(child), lines: Stream.runCollect(lines(child)) }, { concurrency: 2 }), { concurrency: 2 })
     expect(outcomes.map((outcome) => outcome.code)).toEqual([0, 0])
     const conflicts = outcomes.map((outcome) => Array.from(outcome.lines).flatMap((line) => line.startsWith("done ") ? [Number(line.slice("done ".length))] : []))
     expect(conflicts.map((done) => done.length)).toEqual([1, 1])
     // Both ran at once: some commits lost the race and were retried, which is the compare-and-swap under test.
     expect(conflicts.flat().reduce((total, count) => total + count, 0)).toBeGreaterThan(0)
-    const { head, events } = yield* withLog(root, (log) => Effect.all({ head: log.head(id), events: log.read(id, all) }, { concurrency: 1 }))
+    const { head, events } = yield* withLog(root, (log) => Effect.all({ head: log.head(id), events: Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) }) }, { concurrency: 1 }))
     expect([head.revision, head.seq, head.state["count"]]).toEqual([400, 400, 400])
     expect(["a", "b"].map((label) => events.filter((event) => event.data["by"] === label).map((event) => event.data["n"]))).toEqual([range(200), range(200)])
   })), 90_000)
@@ -149,15 +151,17 @@ describe.skipIf(mount === undefined)("on the mount EFFERENT_SESSION_FILES_MOUNT 
   test("a writer killed while it commits leaves whole commits, and two processes racing lose no update", () => run(Effect.gen(function* () {
     const root = mkdtempSync(join(mount ?? directory, "efferent-mount-"))
     const id = freshId()
-    yield* withLog(root, (log) => log.create(header(id)))
+    yield* withLog(root, (log) => log.create({ header: header(id), state: {} }))
     const writer = yield* holderSaying("ready", "commit-loop", root, id, String(size))
     yield* Effect.sleep(300)
     yield* killed(writer)
     yield* whole(root, id)
     const raced = freshId()
-    yield* withLog(root, (log) => log.create(header(raced)))
+    yield* withLog(root, (log) => log.create({ header: header(raced), state: {} }))
     const writers = [yield* holderSaying("ready", "cas-increments", root, raced, "50", "a"), yield* holderSaying("ready", "cas-increments", root, raced, "50", "b")]
     yield* Effect.forEach(writers, go, { concurrency: 1, discard: true })
+    yield* Effect.forEach(writers, (child) => Stream.runHead(Stream.filter(lines(child), (line) => line === "read")), { concurrency: 2 })
+    yield* Effect.forEach(writers, (child) => Effect.sync(() => { child.stdin.write("commit\n"); child.stdin.flush() }), { concurrency: 1 })
     yield* Effect.forEach(writers, exited, { concurrency: 2 })
     const head = yield* withLog(root, (log) => log.head(raced))
     expect(head.state["count"]).toBe(100)

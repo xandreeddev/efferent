@@ -1,7 +1,7 @@
 const authStoreConformance
 const modelRequestConformance
 const settingsStoreConformance
-interface AuthStoreConformanceOptions
 interface AuthStoreRefreshProbe
+interface AuthStoreSubject
 interface ModelRequestSubject
-interface SettingsStoreConformanceOptions
+interface SettingsStoreSubject

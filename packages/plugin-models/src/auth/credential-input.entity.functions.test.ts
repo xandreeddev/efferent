@@ -6,12 +6,6 @@ import type { CredentialInput } from "./credential-input.entity.js"
 import { credentialsOf, encodeCredential, toCredentialInput } from "./credential-input.entity.functions.js"
 
 describe("a credential a host hands over is the credential the store keeps", () => {
-  test("a handed-over credential is stored as it is", () => {
-    const stored = (input: CredentialInput): Credential => input
-    const input: CredentialInput = { type: "api_key", key: Redacted.make("sk-handed") }
-    expect(stored(input)).toBe(input)
-  })
-
   test("toCredentialInput hands back the same Redacted secrets, the OAuth ids branded", () => {
     const access = Redacted.make("at")
     const refresh = Redacted.make("rt")

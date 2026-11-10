@@ -21,7 +21,7 @@ yarn.lock
 .vscode/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
-# Local Postgres data dir from docker-compose.yml
+# Host-managed local PostgreSQL data
 pg-data/
 # Playwright MCP scratch dir (snapshots, console logs)
 .playwright-mcp/

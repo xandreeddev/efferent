@@ -47,18 +47,19 @@ const notForNewFiles = 0o7111
 const save = (access: WorkspaceAccess, target: WorkspaceTarget, content: string, before: Option.Option<FileInfo>): Effect.Effect<void, Failure> => {
   const mode = Option.flatMap(before, (info) => info.mode)
   const inPlace = access.fs.write(target.path, content)
-  const replaced = Effect.gen(function* () {
+  const replaced = Effect.scoped(Effect.gen(function* () {
     const suffix = (yield* Random.nextIntBetween(0, 2_147_483_647)).toString(36)
     const temporary = access.path.join(access.path.dirname(target.path), `.${access.path.basename(target.path)}.${suffix}.efferent-tmp`)
-    const discard = access.fs.remove(temporary).pipe(Effect.ignore({ log: "Warn", message: `the temporary file ${temporary} was not removed` }))
+    const discard = access.fs.remove(temporary).pipe(Effect.catchIf((error) => error.reason === "NotFound", () => Effect.void), Effect.ignore({ log: "Warn", message: `the temporary file ${temporary} was not removed` }))
+    yield* Effect.addFinalizer(() => discard)
     yield* access.fs.write(temporary, content, { createParents: true })
     const same = yield* Option.match(mode, {
       onNone: () => Effect.succeed(true),
-      onSome: (kept) => access.fs.stat(temporary).pipe(Effect.map((fresh) => Option.contains(fresh.mode, kept)), Effect.tapError(() => discard)),
+      onSome: (kept) => access.fs.stat(temporary).pipe(Effect.map((fresh) => Option.contains(fresh.mode, kept))),
     })
     if (!same) return yield* discard.pipe(Effect.andThen(inPlace))
-    yield* access.fs.rename(temporary, target.path).pipe(Effect.tapError(() => discard))
-  })
+    yield* access.fs.rename(temporary, target.path)
+  }))
   const written = Option.exists(mode, (bits) => (bits & notForNewFiles) !== 0) ? inPlace : replaced
   return written.pipe(Effect.mapError(fsFailure(target.display)))
 }

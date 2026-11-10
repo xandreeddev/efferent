@@ -317,5 +317,30 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* expect("remove-paths", show(links) === show(["NotFound", "NotFound"]) && show(left) === show([false, "kept", "symlink"]),
         `after removing link/ and recursive-link/ they are ${show(links)}; after removing via/sub, dir/sub exists ${show(left[0])}, dir/other/kept.txt reads ${show(left[1])} and via is a ${show(left[2])}`)
     })),
+    fsCheck("dot segments and trailing separators still require traversal through directories, for every operation", "dot-paths", ({ fs, symlink }, at) => Effect.gen(function* () {
+      yield* fs.write(at("file"), "content")
+      yield* symlink(at("file"), at("link"))
+      yield* fs.mkdir(at("dir"))
+      yield* symlink(at("dir"), at("dir-link"))
+      yield* Effect.forEach(["file/.", "file/..", "file/", "link/.", "link/..", "link/"], (path) => refuses("dot-paths", `reading ${path}`, fs.read(at(path)), "NotDirectory", at(path)), { concurrency: 1, discard: true })
+      yield* refuses("dot-paths", "reading a missing path followed by dot", fs.read(at("missing/.")), "NotFound", at("missing/."))
+      // A trailing separator names a directory even where the last link is not followed: lstat and rename.
+      yield* Effect.forEach(["file/", "link/"], (path) => refuses("dot-paths", `stat of ${path} without following links`, fs.stat(at(path), { followSymlinks: false }), "NotDirectory", at(path)), { concurrency: 1, discard: true })
+      const throughLink = (yield* fs.stat(at("dir-link/"), { followSymlinks: false })).kind
+      yield* expect("dot-paths", throughLink === "directory", `stat of dir-link/ without following links is a ${throughLink}, not the directory it leads to`)
+      yield* refuses("dot-paths", "renaming file/", fs.rename(at("file/"), at("moved")), "NotDirectory", at("file/"))
+      // The kernel's refusal names neither side: only the reason is checked.
+      yield* refuses("dot-paths", "renaming dir-link/", fs.rename(at("dir-link/"), at("moved")), "NotDirectory")
+      yield* refuses("dot-paths", "renaming a file to new/", fs.rename(at("file"), at("new/")), "NotDirectory", at("new/"))
+      yield* fs.rename(at("dir"), at("dir-moved/"))
+      // Writing to a path with a trailing separator is refused and creates nothing there, its parents aside.
+      yield* refuses("dot-paths", "writing missing/", fs.write(at("missing/"), "c"), "IsDirectory", at("missing/"))
+      yield* refuses("dot-paths", "appending to missing/", fs.append(at("missing/"), "c"), "IsDirectory", at("missing/"))
+      yield* refuses("dot-paths", "writing parent/missing/ with its parents", fs.write(at("parent/missing/"), "c", { createParents: true }), "IsDirectory", at("parent/missing/"))
+      yield* fs.mkdir(at("new-dir/"))
+      const left = yield* Effect.forEach(["file", "moved", "new", "dir-moved", "missing", "parent", "parent/missing", "new-dir"], (path) => fs.exists(at(path)), { concurrency: 1 })
+      yield* expect("dot-paths", show(left) === show([true, false, false, true, false, true, false, true]),
+        `after the refused renames and writes, file, moved, new, dir-moved, missing, parent, parent/missing and new-dir exist: ${show(left)}`)
+    })),
   ]
 }

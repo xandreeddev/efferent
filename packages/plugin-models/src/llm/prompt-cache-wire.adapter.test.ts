@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Schema, Stream } from "effect"
+import { Context, Effect, Schema, Stream } from "effect"
 import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { ENGINE_KEY, parseModelSelection } from "@xandreed/core"

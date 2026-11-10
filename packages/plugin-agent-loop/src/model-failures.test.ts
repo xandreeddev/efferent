@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
@@ -8,7 +9,7 @@ import type { LoopEvent } from "./loop-event.entity.js"
 import { runLoop } from "./loop.js"
 
 const Probe = Tool.make("failure_probe", { description: "Return a number.", parameters: Schema.Struct({ n: Schema.Number }), success: Schema.Number })
-const kit = Toolkit.make(Probe)
+const kit = prepareToolkit(Toolkit.make(Probe))
 const finish = { type: "finish" as const, reason: "stop" as const, usage: { inputTokens: { total: 4 }, outputTokens: { total: 1 } } }
 const done: ReadonlyArray<Response.PartEncoded> = [{ type: "text", text: "done" }, finish]
 const streamedDone: ReadonlyArray<Response.StreamPartEncoded> = [
@@ -74,7 +75,7 @@ describe("semantic model failures before the response gate", () => {
       })
       const result = yield* Effect.result(harnessDefectsAsFailures(runLoop({
         system: "fixture", messages: [{ role: "user", content: "go" }],
-        toolkit: Toolkit.make(), maxSteps: 2, streaming: true,
+        toolkit: prepareToolkit(Toolkit.make()), maxSteps: 2, streaming: true,
         onEvent: (event) => Ref.update(events, (all) => [...all, event]),
       }).pipe(Effect.provideService(LanguageModel.LanguageModel, model))))
       return { result, settled: yield* Ref.get(settled), events: yield* Ref.get(events) }

@@ -238,7 +238,7 @@ describe("a drain that times out: stop the requests, then close the services", (
     // The host's requests first (its HTTP server's shutdown), then the services: the runner closes before the log.
     yield* Fiber.interrupt(request)
     yield* Scope.close(scope, Exit.void)
-    const stored = (id: ConversationId) => store.read(id, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }).pipe(
+    const stored = (id: ConversationId) => Effect.gen(function* () { const sessionHead = yield* store.head(id); return yield* store.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) }).pipe(
       Effect.flatMap((events) => Effect.forEach(events, turnEndedOf)),
       Effect.map((ended) => ended.map((end) => [end.reason, Option.getOrNull(Option.map(end.failure, (failure) => failure.code))])))
     expect(yield* stored(session.id)).toEqual([["interrupted", "turn.interrupted"]])
@@ -256,7 +256,7 @@ const closingLog = (store: Context.Service.Shape<typeof SessionLog>) => Layer.ef
 }))
 
 /** Each `turn.ended` of a session, as `[reason, code]`. */
-const storedEndings = (store: Context.Service.Shape<typeof SessionLog>, id: ConversationId) => store.read(id, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }).pipe(
+const storedEndings = (store: Context.Service.Shape<typeof SessionLog>, id: ConversationId) => Effect.gen(function* () { const sessionHead = yield* store.head(id); return yield* store.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) }).pipe(
   Effect.flatMap((events) => Effect.forEach(events, turnEndedOf)),
   Effect.map((ended) => ended.map((end) => [end.reason, Option.getOrNull(Option.map(end.failure, (failure) => failure.code))])))
 

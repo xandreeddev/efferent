@@ -33,11 +33,6 @@ const at = (findings: Awaited<ReturnType<typeof findingsFor>>) =>
     .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule))
 
 describe("effect-idioms gate over fixtures", () => {
-  test("effect/no-let finds the let, and nothing in clean.ts", async () => {
-    const findings = await findingsFor(["effect/no-let"], ["**/*.ts"])
-    expect(at(findings)).toEqual([{ rule: "effect/no-let", file: "noLet.ts", line: 2 }])
-  })
-
   test("effect/no-try-catch finds try, throw, and .catch()", async () => {
     const findings = await findingsFor(["effect/no-try-catch"], ["tryCatch.ts"])
     expect(at(findings)).toEqual([
@@ -79,14 +74,6 @@ describe("effect-idioms gate over fixtures", () => {
     expect(at(findings)).toEqual(
       [4, 5, 16, 17, 18, 19, 20, 21, 22, 23, 24].map((line) => ({ rule: "effect/branded-id-fields", file: "unbrandedId.ts", line })),
     )
-  })
-
-  test("effect/no-loop-statements flags every loop kind", async () => {
-    const findings = await findingsFor(["effect/no-loop-statements"], ["loops.ts"])
-    expect(at(findings)).toEqual([
-      { rule: "effect/no-loop-statements", file: "loops.ts", line: 3 },
-      { rule: "effect/no-loop-statements", file: "loops.ts", line: 6 },
-    ])
   })
 
   test("effect/no-parallel-interface flags the Schema-shadowing interface only", async () => {
@@ -409,15 +396,15 @@ describe("effect-idioms gate over fixtures", () => {
       Effect.runPromise(
         makeIdiomGate(
           allBuiltinRules,
-          [Schema.decodeUnknownSync(RuleConfig)({ rule: "effect/no-let", include: ["noLet.ts", "clean.ts"], allow })],
+          [Schema.decodeUnknownSync(RuleConfig)({ rule: "effect/no-as-any", include: ["asAny.ts", "clean.ts"], allow })],
           "tsconfig.json",
         ).run(ws).pipe(Effect.provide(TsProjectCachedLive)),
       )
-    expect(await run(["noLet.ts"])).toEqual([])
-    const stale = await run(["noLet.ts", "clean.ts", "gone.ts"])
+    expect(await run(["asAny.ts"])).toEqual([])
+    const stale = await run(["asAny.ts", "clean.ts", "gone.ts"])
     expect(stale.map((f) => [String(f.rule), f.message, Option.isNone(f.location)])).toEqual([
-      ["effect/no-let", 'the allow list entry "clean.ts" passes this rule now', true],
-      ["effect/no-let", 'the allow list entry "gone.ts" names no file this rule checks (renamed, deleted or outside its include)', true],
+      ["effect/no-as-any", 'the allow list entry "clean.ts" passes this rule now', true],
+      ["effect/no-as-any", 'the allow list entry "gone.ts" names no file this rule checks (renamed, deleted or outside its include)', true],
     ])
   })
 
@@ -440,9 +427,9 @@ describe("effect-idioms gate over fixtures", () => {
   test("include/exclude globs scope rules per path", async () => {
     const config = [
       Schema.decodeUnknownSync(RuleConfig)({
-        rule: "effect/no-let",
-        include: ["**/*.ts"],
-        exclude: ["noLet.ts"],
+        rule: "effect/no-as-any",
+        include: ["asAny.ts", "clean.ts"],
+        exclude: ["asAny.ts"],
       }),
     ]
     const findings = await Effect.runPromise(

@@ -3,10 +3,11 @@ import type { SchemaAST } from "effect"
 import { Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import {
+  prepareToolkit,
   AfterToolDecision, BeforeToolDecision, CurrentAgentRun, CurrentAgentStep,
   ToolCallId, ToolInterceptAfterInput, ToolInterceptBeforeInput,
 } from "@xandreed/core"
-import type { ToolHandlers, ToolInterceptor, TurnError } from "@xandreed/core"
+import type { PreparedToolkit, ToolHandlers, ToolInterceptor, TurnError } from "@xandreed/core"
 import { CurrentToolResultReceipt, toolInterceptError, toolResultReceiptGuardOf, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import type { ToolResultReceiptContext, ToolResultReceiptOwner } from "@xandreed/core/internal"
 type Json = typeof Schema.Json.Type
@@ -65,7 +66,7 @@ export const interceptedToolkit = (
   base: Toolkit.Toolkit<Record<string, Tool.Any>>,
   services: Context.Context<never>,
   handlers: (name: string, capture: ToolInterceptCapture) => Effect.Effect<Context.Context<ToolHandlers>>,
-): Toolkit.Toolkit<Record<string, Tool.Any>> => Object.assign(class {}, base, Effectable.Prototype<Toolkit.Toolkit<Record<string, Tool.Any>>>({
+): PreparedToolkit<Record<string, Tool.Any>> => prepareToolkit(Object.assign(class {}, base, Effectable.Prototype<Toolkit.Toolkit<Record<string, Tool.Any>>>({
   label: "toolkit.intercepted",
   evaluate() {
     return Effect.map(base, (original) => ({
@@ -90,4 +91,14 @@ export const interceptedToolkit = (
       }),
     } satisfies Toolkit.WithHandler<Record<string, Tool.Any>>))
   },
+})), (identity, call) => Effect.gen(function* () {
+  const current = yield* CurrentToolResultReceipt
+  const owner = Option.isSome(current) && current.value._tag === "Offer" && call.id !== undefined
+    ? yield* current.value.offer.enter({ tool: call.name, toolCallId: ToolCallId.make(call.id), run: yield* CurrentAgentRun, step: Option.getOrElse(yield* CurrentAgentStep, () => 0) })
+    : Option.none<ToolResultReceiptOwner>()
+  const guard = Option.map(current, (value): ToolResultReceiptContext => ({ _tag: "Guard", guard: toolResultReceiptGuardOf(value) }))
+  const privateHandlers = yield* handlers(call.name, { input: call.input, owner })
+  const ready = yield* identity.pipe(Effect.provide(privateHandlers))
+  const output = yield* (ready.handle(call.name, call.decoded, call.id) as ReturnType<import("@xandreed/core").PreparedToolCall["run"]>).pipe(Effect.provide(services), Effect.provideService(CurrentToolResultReceipt, guard))
+  return output.pipe(Stream.provideContext(services), Stream.provideService(CurrentToolResultReceipt, guard))
 }))

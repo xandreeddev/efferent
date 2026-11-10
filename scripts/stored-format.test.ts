@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { STORED_FORMAT } from "@xandreed/core"
-import { canonicalShape, fingerprintOf, formatProblems, nextRecord, storedShapes, StoredFormatRecord } from "./stored-format.js"
+import { canonicalSchema, canonicalShape, fingerprintOf, formatProblems, nextRecord, storedShapes, StoredFormatRecord } from "./stored-format.js"
 
 const Before = Schema.Struct({ turn: Schema.Int, text: Schema.String })
 const Reworded = Schema.Struct({ turn: Schema.Int.annotate({ description: "the turn it belongs to" }), text: Schema.String }).annotate({ description: "a note" })
@@ -15,6 +15,13 @@ const shapesWith = (note: Schema.Top) => fingerprintOf([{ name: "journal note.re
 describe("canonicalShape", () => {
   test("a description or a title changes nothing a reader can tell", () => {
     expect(canonicalShape(Reworded)).toBe(canonicalShape(Before))
+  })
+
+  test("annotation-shaped property and definition names remain structural", () => {
+    for (const key of ["title", "description", "examples", "$comment"]) {
+      expect(canonicalShape(Schema.Struct({ [key]: Schema.String }))).not.toBe(canonicalShape(Schema.Struct({ [key]: Schema.Number })))
+    }
+    expect(canonicalSchema({ default: { title: "one" } })).not.toBe(canonicalSchema({ default: { title: "two" } }))
   })
 
   test("a new optional key and a tightened check each change the shape", () => {
@@ -35,7 +42,7 @@ describe("formatProblems", () => {
 
   test("a changed shape without a bump is a problem that names it and the format to raise to", () => {
     expect(formatProblems(recorded, shapesWith(Added), 1)).toEqual([
-      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 2 and name the change in CHANGELOG.md",
+      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 2, name the change in CHANGELOG.md and state the new format where scripts/session-store-docs.test.ts requires it",
     ])
   })
 
@@ -47,7 +54,7 @@ describe("formatProblems", () => {
     expect(bumped.history[0]?.fingerprint).toBe(original.fingerprint)
     expect(formatProblems(Option.some(bumped), added, 2)).toEqual([])
     expect(formatProblems(Option.some(bumped), shapesWith(Tightened), 2)).toEqual([
-      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 3 and name the change in CHANGELOG.md",
+      "A stored shape changed (journal note.recorded) without a bump: raise STORED_FORMAT in packages/core/src/session/stored-format.entity.ts to 3, name the change in CHANGELOG.md and state the new format where scripts/session-store-docs.test.ts requires it",
     ])
   })
 

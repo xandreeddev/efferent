@@ -25,7 +25,9 @@ The tests expect no proxy in the environment: Bun's fetch sends even the
 loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
 those unset (the proxy tests that would go direct skip when one is set).
 
-## The gates are the review
+## Gates and semantic review
+
+Gates check declared syntax and dependency contracts. Review must also assess ownership, races, bounded work, algorithmic cost, meaningful assertions and current documentation. Confined local builders are allowed when mutation does not escape. Passing a gate does not establish these semantic properties.
 
 The definition of done is the root `AGENTS.md` "Definition of done": the
 commands `.github/workflows/ci.yml` runs, in order. Its "Gate rules" table
@@ -110,10 +112,19 @@ release previews use the maintainer-owned PR handoff below.
   differs from the build. A package's root entry may not export a name
   declared in a package's `src/internal/` folder: those modules are
   published through an entry of their own, outside semver.
-- Every release's journal fixture stays readable
-  (`packages/sdk/src/journal-compat.test.ts` reads each
-  `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a
-  release wrote: record one per release with
+- A change to a stored shape bumps `STORED_FORMAT` (skill `change-event`),
+  and every bump needs a fresh store: Sessions refuses a session of any
+  other format for every operation, reads included, with `session.version`,
+  and nothing migrates it. The backends refuse an old store at open only
+  when their own layout or schema changed too. Say so under **Migration**.
+- Every release's journal fixture is kept, byte-identical to its tag, as
+  historical evidence of what that release wrote
+  (`packages/sdk/fixtures/journal-<version>.json`).
+  `packages/sdk/src/journal-compat.test.ts` replays the fixtures at the
+  current `STORED_FORMAT` with this release's schemas, and checks that
+  Sessions refuses every other with `session.version` and leaves its bytes
+  unchanged: there is no migration or compatibility decoding. Record one per
+  release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing release fixture. During development, record
   `journal-unreleased.json` with `bun scripts/record-journal-fixture.ts --unreleased`;

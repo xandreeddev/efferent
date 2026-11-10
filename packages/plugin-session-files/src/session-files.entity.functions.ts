@@ -1,6 +1,7 @@
 import { Option, Order, Result, Schema } from "effect"
+import { ConversationId, SessionIncarnation } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
-import { CommitEvent, CommitMeta, CommitState, CommitTrailer, HeaderRecord, StoreMarker } from "./session-files.entity.js"
+import { CommitEvent, CommitMeta, CommitState, CommitTrailer, GenerationClaim, HeaderRecord, StoreMarker } from "./session-files.entity.js"
 import type { CommitDamage, CommitRecord, StoreHealth, TailVerdict } from "./session-files.entity.js"
 
 /* ── CRC-32 (IEEE 802.3), over bytes ── */
@@ -35,6 +36,31 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Whether a name under `sessions/` is a session's directory: its id. Anything else (an editor's file, a network file system's `.nfs…`) is not read. */
 export const isSessionDirectory = (name: string): boolean => UUID.test(name)
+
+/** One generation of a session: its id and its incarnation, which no other generation of any session shares. */
+export interface Generation {
+  readonly id: ConversationId
+  readonly incarnation: SessionIncarnation
+}
+
+const UUID_TEXT = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+const GENERATION_NAME = new RegExp(`^(${UUID_TEXT})\\.(${UUID_TEXT})$`, "i")
+const STAGED_GENERATION_NAME = new RegExp(`^(${UUID_TEXT})\\.\\d+\\.(${UUID_TEXT})$`, "i")
+
+/** Whether a reference names a generation this store could have minted: its id and incarnation both UUIDs, so its paths stay inside the store. */
+export const isStoredGeneration = (generation: Generation): boolean => UUID.test(generation.id) && UUID.test(generation.incarnation)
+
+/** A generation's name under `lives/` and `removing/`: `<id>.<incarnation>`. */
+export const generationName = (generation: Generation): string => `${generation.id}.${generation.incarnation}`
+
+const generationOf = (match: RegExpExecArray | null): Option.Option<Generation> =>
+  match === null ? Option.none() : Option.some({ id: ConversationId.make(match[1] ?? ""), incarnation: SessionIncarnation.make(match[2] ?? "") })
+
+/** The generation a name under `lives/` or `removing/` names; none for any other name. */
+export const generationOfName = (name: string): Option.Option<Generation> => generationOf(GENERATION_NAME.exec(name))
+
+/** The generation a creation staged in `staging/` (`<id>.<now>.<incarnation>`, see `stagingName`); none for anything else staged there. */
+export const stagedGenerationOf = (name: string): Option.Option<Generation> => generationOf(STAGED_GENERATION_NAME.exec(name))
 
 /** A name in `staging/` for what `prefix` names, staged at storage time `now` (`<prefix>.<now>.<unique>`), so a later open can tell its age. */
 export const stagingName = (prefix: string, now: number, unique: string): string => `${prefix}.${now}.${unique}`
@@ -144,6 +170,15 @@ export const tailVerdict = (decoded: Result.Result<CommitRecord, CommitDamage>, 
     onFailure: (damage): TailVerdict => isTail ? { _tag: "Quarantine", damage } : { _tag: "Corrupt", damage },
   })
 
+const encodeClaim = Schema.encodeUnknownResult(Schema.fromJsonString(GenerationClaim))
+const decodeClaimText = Schema.decodeUnknownResult(Schema.fromJsonString(GenerationClaim))
+
+/** A generation claim as text. */
+export const claimText = (claim: GenerationClaim): Result.Result<string, Schema.SchemaError> => encodeClaim(claim)
+
+/** A generation claim's text as its record. */
+export const claimOfText = (text: string): Result.Result<GenerationClaim, Schema.SchemaError> => decodeClaimText(text)
+
 const encodeHeader = Schema.encodeUnknownResult(Schema.fromJsonString(HeaderRecord))
 const decodeHeaderText = Schema.decodeUnknownResult(Schema.fromJsonString(HeaderRecord))
 const decodeMarkerText = Schema.decodeUnknownResult(Schema.fromJsonString(StoreMarker))
@@ -169,7 +204,7 @@ export const newestFirst: Order.Order<SessionHead> = Order.combine(
 export const inListing = (record: HeaderRecord, query: SessionListQuery): boolean =>
   record.header.owner === query.owner && Option.match(query.parent, {
     onNone: () => Option.isNone(record.header.parent),
-    onSome: (parent) => Option.exists(record.header.parent, (lineage) => lineage.id === parent),
+    onSome: (parent) => Option.exists(record.header.parent, (lineage) => lineage.id === parent.id && lineage.owner === parent.owner && lineage.incarnation === parent.incarnation),
   })
 
 /** The heads strictly older than the listing's cursor, in order, at most its limit. */
@@ -190,7 +225,7 @@ export const admitCall = (health: StoreHealth, now: number, stallMs: number): re
       : [false, health]
 
 /** A call's outcome on the store's health: one that answered heals it; one that stalled marks it stalled from now. */
-export const afterCall = (health: StoreHealth, answered: boolean, now: number): StoreHealth =>
+export const afterCall = (_health: StoreHealth, answered: boolean, now: number): StoreHealth =>
   answered ? { _tag: "Healthy" } : { _tag: "Stalled", since: now, probing: false }
 
 /** Cancellation abandons a probe without turning an answered healthy mount into a stalled one. */

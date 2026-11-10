@@ -17,7 +17,7 @@ const careless: ReadonlyArray<{ readonly name: string; readonly check: string; r
   { name: "dropping the hidden assistant request", check: "selection", subject: { ...actual, prepare: (...args) => prepareMemorySnapshot(...args).pipe(Effect.map(Option.map((candidate) => ({ ...candidate, entries: candidate.entries.filter((entry) => entry.id !== "r1:3") })))) } },
   { name: "flattening result presentations", check: "selection", subject: { ...actual, prepare: (...args) => prepareMemorySnapshot(...args).pipe(Effect.map(Option.map((candidate) => ({ ...candidate, entries: candidate.entries.map((entry) => entry.id === "r1:6" && entry.body._tag === "ToolResult" ? { ...entry, body: { ...entry.body, pinned: true, view: "presented a" } } : entry) })))) } },
   { name: "projecting a cut run's step context", check: "options", subject: { ...actual, project: (entries, phase, options) => projectMemorySnapshot(entries, phase, { ...options, currentRun: RunId.make("r2") }) } },
-  { name: "accepting retained facts unlike the archive's", check: "integrity", subject: { ...actual, validate: (entries, candidate, strategy) => Effect.succeed({
+  { name: "accepting retained facts unlike the archive's", check: "integrity", subject: { ...actual, validate: (entries, candidate, _strategy) => Effect.succeed({
     _tag: "Projected" as const, candidate, anchorIndex: Math.max(0, entries.findIndex((entry) => entry.id === candidate.anchor)), throughIndex: entries.findIndex((entry) => entry.id === candidate.through),
     cutTurn: 1, checkedThrough: entries.findIndex((entry) => entry.id === candidate.through), verified: [],
   }) } },

@@ -1,20 +1,21 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
+import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Predicate, Ref, Result, Schema, Stream } from "effect"
 import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
 import { CurrentToolResultReceipt, foldStreamParts, makeToolResultReceipt, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, InvalidCallPolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, ModelOverflowEvidence, StepStatus } from "@xandreed/core"
-import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
+import type { PreparedToolkit, PreparedToolCall, AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, ModelOverflowEvidence, StepStatus } from "@xandreed/core"
+import { addUsage, canonicalJson, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf, responseModelOf, ToolCallId } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
-import { callRejections, DUPLICATE_CALL_IDS, duplicateCallCorrective, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { checkCalls, DUPLICATE_CALL_IDS, duplicateCallCorrective, isRejectedCall, lengthCorrective, MAX_CUT_CORRECTIVES, QUOTE_CHARS, rejectedCallFailure, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 import type { CutReason, MalformedCall, RejectedCall } from "./response-gate.entity.js"
+import type { CheckedCall } from "./response-gate.entity.functions.js"
 import { claimRecovery, initialAttempt, settledAttempt, visibleAttempt } from "./request-attempt.entity.functions.js"
 
 /**
@@ -113,7 +114,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * `CurrentTraceContent` where the run starts: off unless provided. */
   readonly captureTraceContent?: boolean
   readonly messages: ReadonlyArray<AgentMessage>
-  readonly toolkit: Toolkit.Toolkit<Tools>
+  readonly toolkit: PreparedToolkit<Tools>
   /** Host completion condition for `step`, checked after the step settled
    * (`onStepSettled`), never after a malformed or a truncated one. A query: it ends no step.
    * Avoids a paid final prose call when a tool already delivered the
@@ -402,6 +403,28 @@ const failureText = (failure: unknown): string => typeof failure === "string" ? 
  * progress even when the model churns the arguments. Empty string = the turn
  * must not count (no tool calls, or purely pollable ones).
  */
+const resultJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
+/**
+ * What JSON text writes for a value it has no form for: a `Map`'s entries
+ * and a `Set`'s members, each in canonical order, so two of them with other
+ * contents never write the same text (JSON writes both as `{}`).
+ */
+const keepContents = (_key: string, value: unknown): unknown => {
+  const ordered = (items: ReadonlyArray<unknown>) => Arr.sort(items.map((item) => [canonicalJson(item), item] as const), Order.mapInput(Order.String, ([text]: readonly [string, unknown]) => text)).map(([, item]) => item)
+  if (value instanceof Map) return { "@map": ordered([...value.entries()]) }
+  if (value instanceof Set) return { "@set": ordered([...value.values()]) }
+  return value
+}
+/**
+ * A result's identity: its canonical JSON as JSON text carries it (`toJSON`
+ * applied, so distinct `Date`s differ, and a `Map`'s or `Set`'s contents
+ * kept), else the canonical form of the value.
+ */
+const resultIdentity = (result: unknown): string => Option.match(
+  Option.flatMap(Result.getSuccess(Result.try(() => JSON.stringify(result, keepContents))), (text) => text === undefined ? Option.none() : resultJson(text)),
+  { onNone: () => canonicalJson(result), onSome: canonicalJson },
+)
+
 const progressSignature = (
   content: ReadonlyArray<Response.AnyPart>,
   pollable: ReadonlySet<string>,
@@ -412,7 +435,7 @@ const progressSignature = (
   return Arr.sort(
     responseToolResults(content)
       .filter((r) => !pollable.has(r.toolName))
-      .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${clip(JSON.stringify(r.result ?? null), 300)}`),
+      .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${resultIdentity(r.result ?? null)}`),
     Order.String,
   ).join("|")
 }
@@ -530,9 +553,9 @@ const tracedJson = (value: unknown): string => JSON.stringify(value, (_key, fiel
  * call's own span, so no call's overwrites another's, and the step's span
  * carries content only with `captureTraceContent`.
  */
-const runCall = <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.WithHandler<Tools>, call: Response.ToolCallPart<string, unknown>): Effect.Effect<Response.AnyPart, AiError.AiError> =>
+const runCall = <E, R>(execute: (id?: string) => Effect.Effect<Stream.Stream<Tool.HandlerResult<Tool.Any>, E, R>, E, R>, call: Response.ToolCallPart<string, unknown>): Effect.Effect<Response.AnyPart, E, R> =>
   // Erased as the model call is: handlers carry their own context, and fail as the provider's errors do.
-  (toolkit.handle(call.name as never, call.params as never, call.id) as Effect.Effect<Stream.Stream<Tool.HandlerResult<Tool.Any>, AiError.AiError>, AiError.AiError>).pipe(
+  execute(call.id).pipe(
     Effect.flatMap((results) => Stream.runLast(Stream.filter(results, (result) => !result.preliminary))),
     Effect.flatMap(Option.match({
       onNone: () => Effect.die(new Error(`the tool ${call.name} ended without a result`)),
@@ -567,7 +590,7 @@ const rejectedResult = (call: Response.ToolCallPart<string, unknown>, rejection:
 
 /** A whole response's call: run by the loop, or answered without running (`rejectedResult`). */
 type CallPlan =
-  | { readonly _tag: "Run"; readonly call: Response.ToolCallPart<string, unknown> }
+  | { readonly _tag: "Run"; readonly call: Response.ToolCallPart<string, unknown>; readonly prepared: PreparedToolCall }
   | { readonly _tag: "Answer"; readonly part: Response.AnyPart }
 
 /** @public */
@@ -587,7 +610,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const eventContext = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentToolResultReceipt)(replayableContext(yield* Effect.context<R>()))
     const onEvent = (event: LoopEvent) => withToolResultReceiptGuard(Effect.suspend(() => options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext)))
     // Resolve the toolkit's handlers once — they're stable across turns.
+    // A toolkit from JavaScript, or one cast from `Toolkit.make`, may lack the preparation boundary.
+    if (!Predicate.hasProperty(options.toolkit, "execution") || !Effect.isEffect(options.toolkit.execution)) {
+      return yield* Effect.fail(harnessError("config.options", "The loop's toolkit is not a PreparedToolkit: wrap it with prepareToolkit"))
+    }
     const toolkit = yield* options.toolkit
+    const execution = yield* options.toolkit.execution
 
     /**
      * A step's execution: its call, its tools and its tail, recorded under
@@ -640,13 +668,11 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // between its tool_start and tool_end events, which carry the call's id: the one its
         // assistant_message and the tail pair it by (a call handled without one gets an execution id).
         const toolSequence = yield* Ref.make(0)
-        const instrumented: Toolkit.WithHandler<Tools> = {
-          tools: selectedTools,
-          handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
+        const instrumentCall = (name: string, params: unknown, providerCallId: string | undefined, execute: () => ReturnType<PreparedToolCall["run"]>) => Effect.gen(function* () {
             const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
             const toolCallId = providerCallId ?? `execution:${state.turnIndex}:${sequence}`
             yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
-            const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
+            const results = yield* execute()
             return results.pipe(
               // Parameters the toolkit does not decode (the loop decoded them first: a toolkit's own parse
               // options may still refuse them) fail the step whatever the tool's failure mode.
@@ -658,8 +684,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
                 ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
               })),
             )
-          }) as never,
-        }
+          })
+        const instrumented: Toolkit.WithHandler<Tools> = { tools: selectedTools, handle: (name, params, id, parseOptions) => instrumentCall(String(name), params, id, () => toolkit.handle(name, params, id, parseOptions) as ReturnType<PreparedToolCall["run"]>) as never }
         const attempt = Effect.gen(function* () {
           yield* Ref.set(partSeen, false)
           const visible = options.render === undefined ? state.messages : yield* guardedCallback(options.render(stepView).pipe(Effect.provide(eventContext)))
@@ -845,7 +871,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // parameters decode: one that does not is a malformed response, and none of them ran. Under
         // `invalidCalls: "answer"` only a repeated id is: a call the loop can answer alone is answered
         // with a failure result, and the others run.
-        const rejections = verdict._tag === "Whole" ? yield* callRejections(calls, selectedTools) : calls.map(() => Option.none<MalformedCall>())
+        const checked: ReadonlyArray<CheckedCall> = verdict._tag === "Whole" ? yield* checkCalls(calls, selectedTools, execution)
+          : calls.map(() => ({ rejection: Option.none<MalformedCall>(), prepared: Option.none<PreparedToolCall>() }))
+        const rejections = checked.map((call) => call.rejection)
         const malformed = Arr.findFirst(rejections, (rejection) => policy.invalidCalls === "answer"
           ? Option.filter(rejection, (found) => !isRejectedCall(found))
           : rejection)
@@ -862,9 +890,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // A cut response's calls never run, nor do a whole one's the loop answers instead: their
         // answers are stored with it, in the same record, so no reopened log shows such a call without
         // its result.
-        const plans = Arr.zip(calls, rejections).map(([call, rejection]): CallPlan =>
+        const plans = Arr.zip(calls, checked).map(([call, { rejection, prepared }]): CallPlan =>
           Option.match(Option.filter(rejection, isRejectedCall), {
-            onNone: () => ({ _tag: "Run", call }),
+            onNone: () => ({ _tag: "Run", call, prepared: Option.getOrElse(prepared, () => ({ input: null, run: () => Effect.die("a cut call cannot execute") })) }),
             onSome: (rejected) => ({ _tag: "Answer", part: rejectedResult(call, rejected, toolNames) }),
           }))
         const answered = Match.valueTags(verdict, {
@@ -891,9 +919,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // The returned array keeps call order for the standalone loop's buffer and decisions.
         const recordResult = (part: Response.AnyPart) =>
           (options.onTail?.(responseToAgentMessages([part]), state.turnIndex) ?? Effect.succeed([])).pipe(Effect.as(part))
-        const invoke = (call: Response.ToolCallPart<string, unknown>) => Effect.gen(function* () {
+        const invoke = ({ call, prepared }: Extract<CallPlan, { readonly _tag: "Run" }>) => Effect.gen(function* () {
           const receipt = yield* makeToolResultReceipt({ tool: call.name, toolCallId: ToolCallId.make(call.id), run: yield* CurrentAgentRun, step: state.turnIndex })
-          return yield* runCall(instrumented, call).pipe(
+          return yield* runCall((id) => instrumentCall(call.name, prepared.input, id, () => prepared.run(id)), call).pipe(
             Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Offer", offer: receipt.offer })),
             Effect.flatMap((part) => recordResult(part).pipe(Effect.provideService(CurrentToolResultReceipt, Option.some({ _tag: "Record", recording: receipt.recording })))),
             Effect.ensuring(receipt.close),
@@ -901,7 +929,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         })
         const results = yield* Match.valueTags(verdict, {
           Whole: () => Effect.forEach(plans, (plan) => Match.valueTags(plan, {
-            Run: (run) => invoke(run.call),
+            Run: invoke,
             Answer: (answer) => Effect.succeed(answer.part),
           }), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
           Cut: () => Effect.succeed(answered),

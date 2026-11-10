@@ -196,9 +196,9 @@ test("the CLI emits JSON, a step summary and failing status without registry aut
       return new Response(JSON.stringify({name,version:"0.16.0",gitHead:${JSON.stringify(sha)},dist:{integrity:${JSON.stringify(integrity)}}}));
     };`)
     const child = Bun.spawn([process.execPath, "--preload", preload, join(import.meta.dir, "release-status.ts"), "--version", version, "--sha", sha, "--require-provenance"], {
-      cwd: root, env: { ...process.env, GITHUB_STEP_SUMMARY: summary }, stdout: "pipe", stderr: "pipe",
+      cwd: root, env: { ...process.env, GITHUB_STEP_SUMMARY: summary }, stdout: "pipe", stderr: "pipe", timeout: 10_000,
     })
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]).finally(() => child.kill())
     expect(code).toBe(1)
     expect(stderr).toBe("")
     const report = JSON.parse(stdout)

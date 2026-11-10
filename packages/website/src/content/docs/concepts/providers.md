@@ -286,11 +286,11 @@ declare const vault: {
 const services = Context.make(HostCredentials, HostCredentials.of({
   load: Effect.tryPromise({
     try: () => vault.read(),
-    catch: (error) => new AuthError({ provider: "*", message: `the vault could not be read: ${String(error)}` }),
+    catch: (error) => new AuthError({ provider: "*", message: "the vault could not be read", cause: error }),
   }),
   save: (provider, credential) => Effect.tryPromise({
     try: () => vault.write(provider, credential),
-    catch: (error) => new AuthError({ provider, message: `the vault did not save: ${String(error)}` }),
+    catch: (error) => new AuthError({ provider, message: "the vault did not save", cause: error }),
   }),
 }))
 ```
@@ -651,6 +651,15 @@ OpenAI-compatible endpoint's call opens once the wire names its tool, under
 the provider's call id, or `call-<index>` when the provider sends none (the
 loop mints the call's own id); each non-empty arguments fragment is one
 delta, and the deltas end just before the completed call.
+
+An OpenAI-compatible stream is bounded. It may carry at most 128 tool calls,
+each call's accumulated arguments may hold at most 1,048,576 characters
+(UTF-16 code units), and each SSE line at most 8,388,608 characters, a longer
+line refused before it is decoded. A tool-call index the stream sends must be
+a nonnegative safe integer; one it leaves out or sends as `null` is call 0.
+A stream past any bound fails as `InvalidResponse`
+(`model.invalid-response`), final at the transport boundary like any SSE
+error after the response handoff.
 
 The loop's existing fallback from a nonpermanent stream failure before its
 first part to `generateText` is a fresh logical budget. It reuses the same

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Prompt } from "effect/ai"
-import { ConversationId, SessionLog, entriesOfEvents } from "@xandreed/core"
+import { ConversationId, SessionLog, sessionRef, entriesOfEvents } from "@xandreed/core"
 import { SessionLogFilesLive } from "@xandreed/plugin-session-files"
 import { ReadResult } from "@xandreed/plugin-workspace"
 import { runMemoryWalkthrough } from "./memory-walkthrough.js"
@@ -89,8 +89,8 @@ test("the walkthrough persists real edits and journal evidence while compacting 
 
     const journal = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const service = Context.get(yield* Layer.build(SessionLogFilesLive(join(root, "journal"))), SessionLog)
-      const a = yield* service.read(ConversationId.make("00000000-0000-4000-8000-0000000000a1"), { after: 0, kinds: [], limit: Option.none() })
-      const b = yield* service.read(ConversationId.make("00000000-0000-4000-8000-0000000000b1"), { after: 0, kinds: [], limit: Option.none() })
+      const a = yield* service.read(sessionRef(yield* service.head(ConversationId.make("00000000-0000-4000-8000-0000000000a1"))), { after: 0, kinds: [], limit: Option.none() })
+      const b = yield* service.read(sessionRef(yield* service.head(ConversationId.make("00000000-0000-4000-8000-0000000000b1"))), { after: 0, kinds: [], limit: Option.none() })
       const entries = yield* entriesOfEvents(a)
       const reads = yield* Effect.forEach(entries.filter((entry) => entry.body._tag === "ToolResult" && entry.body.toolName === "read"), (entry) =>
         entry.body._tag === "ToolResult" ? Schema.decodeUnknownEffect(ReadResult)(entry.body.encoded) : Effect.die("Expected a recorded read result"), { concurrency: 1 })

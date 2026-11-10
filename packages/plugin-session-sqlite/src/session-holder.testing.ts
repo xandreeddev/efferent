@@ -36,12 +36,12 @@ const range = (length: number) => Array.from({ length }, (_, n) => n)
 const say = (line: string) => Effect.sync(() => { process.stdout.write(`${line}\n`) })
 
 /** The write lock, held by a connection of this process for `ms`. */
-const holdLock = (ms: number) => Effect.acquireUseRelease(
+const holdLock = (ms: number, release: Deferred.Deferred<void>) => Effect.acquireUseRelease(
   Effect.sync(() => new Database(path, { strict: true })),
   (db) => Effect.gen(function* () {
     yield* Effect.sync(() => db.exec("BEGIN IMMEDIATE"))
     yield* say("ready")
-    yield* Effect.sleep(ms)
+    yield* ms === 0 ? Deferred.await(release) : Effect.sleep(ms)
     yield* Effect.sync(() => db.exec("COMMIT"))
   }),
   (db) => Effect.sync(() => db.close()),
@@ -51,12 +51,12 @@ const holdLock = (ms: number) => Effect.acquireUseRelease(
 const commitOnce = (log: SessionLog["Service"], session: ConversationId, size: number) => Effect.gen(function* () {
   const head = yield* log.head(session)
   const commit = head.revision + 1
-  yield* log.commit(session, {
+  yield* Effect.gen(function* () { const sessionHead = yield* log.head(session); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
     expect: head.revision,
     notAfter: Option.none(),
     events: range(size).map((index) => ({ kind: "part", turn: Option.none(), data: { commit, index, of: size, pad: "x".repeat(512) } })),
     state: Option.some({ commit }),
-  })
+  }) })
 })
 
 const commitLoop = (session: ConversationId, size: number) => Effect.scoped(Effect.gen(function* () {
@@ -69,10 +69,11 @@ const commitLoop = (session: ConversationId, size: number) => Effect.scoped(Effe
 /** Add one to `count`: read the head, commit against its revision, and read again after a conflict, counted in `conflicts`. */
 const increment = (log: SessionLog["Service"], session: ConversationId, label: string, n: number, conflicts: Ref.Ref<number>) => Effect.gen(function* () {
   const head = yield* log.head(session)
+  if (n === 0 && !firstRead.used) { firstRead.used = true; yield* say("read"); yield* Deferred.await(proceed) }
   const count = typeof head.state.count === "number" ? head.state.count : 0
-  yield* log.commit(session, {
+  yield* Effect.gen(function* () { const sessionHead = yield* log.head(session); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
     expect: head.revision, notAfter: Option.none(), events: [{ kind: "increment", turn: Option.none(), data: { by: label, n } }], state: Option.some({ count: count + 1 }),
-  })
+  }) })
 }).pipe(
   Effect.tapError((error) => Ref.update(conflicts, (total) => error._tag === "RevisionConflict" ? total + 1 : total)),
   Effect.retry({ while: (error) => error._tag === "RevisionConflict" }),
@@ -107,13 +108,15 @@ const holdTurn = (session: ConversationId, owner: string, ownership: string, clo
 
 const modes: Record<string, (go: Deferred.Deferred<void>) => Effect.Effect<unknown, unknown>> = {
   "open": (go) => say("ready").pipe(Effect.andThen(Deferred.await(go)), Effect.andThen(Effect.scoped(makeSessionLogSqlite(path))), Effect.andThen(say("opened"))),
-  "hold-lock": () => holdLock(Number(argument(0))),
+  "hold-lock": (go) => holdLock(Number(argument(0)), go),
   "commit-loop": () => commitLoop(ConversationId.make(argument(0)), Number(argument(1))),
   "cas-increments": (go) => casIncrements(ConversationId.make(argument(0)), Number(argument(1)), argument(2), go),
   "hold-turn": () => holdTurn(ConversationId.make(argument(0)), argument(1), argument(2), argument(3) === "closing"),
 }
 
 /** The lines the test process writes; the stream ends when it closes stdin or dies. */
+const firstRead = { used: false }
+const proceed = Effect.runSync(Deferred.make<void>())
 const stdin = Stream.fromReadableStream({ evaluate: () => Bun.stdin.stream(), onError: (error) => new Error(String(error)) }).pipe(Stream.decodeText, Stream.splitLines)
 
 /** The mode, until it ends, stdin closes or two minutes pass; a `go` on stdin releases `open` and `cas-increments`. */
@@ -121,7 +124,7 @@ const program = Option.match(Option.fromNullishOr(modes[mode]), {
   onNone: () => Effect.fail(`unknown mode "${mode}"`),
   onSome: (run) => Effect.gen(function* () {
     const go = yield* Deferred.make<void>()
-    const listen = stdin.pipe(Stream.filter((line) => line === "go"), Stream.runForEach(() => Deferred.succeed(go, undefined)))
+    const listen = stdin.pipe(Stream.runForEach((line) => line === "go" ? Deferred.succeed(go, undefined) : line === "commit" ? Deferred.succeed(proceed, undefined) : Effect.void))
     return yield* Effect.raceFirst(run(go), listen.pipe(Effect.andThen(Effect.fail("stdin closed: the test process is gone"))))
   }).pipe(Effect.timeout("2 minutes")),
 })

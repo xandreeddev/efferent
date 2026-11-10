@@ -2,13 +2,13 @@ import { Array as Arr, Effect, Option, Schema } from "effect"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
-import { ConfigError, WorkspaceError } from "../domain/Errors.js"
+import { errorCodeOf, ConfigError, WorkspaceError } from "../domain/Errors.js"
 import type { Finding } from "../domain/Finding.js"
 import { GateSuiteConfig } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
 import { BaselineFile, baselineRefusal, diffAgainstBaseline, fingerprint } from "../domain/baseline.js"
 import type { FingerprintedFinding } from "../domain/baseline.js"
-import { runPipeline } from "../pipeline/runPipeline.js"
+import { isInfrastructureFinding, runPipeline } from "../pipeline/runPipeline.js"
 import { makeBoundariesGate } from "../gates/boundariesGate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
 import { makePrivateTextGate } from "../gates/privateTextGate.js"
@@ -124,7 +124,7 @@ export const fingerprintFindings = (
 const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, ConfigError> =>
   Effect.tryPromise({
     try: () => fs.readFile(baselinePath, "utf8"),
-    catch: () => new ConfigError({ path: baselinePath, message: "unreadable" }),
+    catch: (cause) => new ConfigError({ path: baselinePath, message: "cannot read the baseline", cause }),
   }).pipe(
     Effect.flatMap((text) =>
       Schema.decodeUnknownEffect(Schema.fromJsonString(BaselineFile))(text).pipe(
@@ -135,7 +135,7 @@ const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, 
     ),
     Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
     // An absent baseline means "nothing grandfathered", not an error.
-    Effect.catch(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
+    Effect.catchIf((error) => Option.contains(errorCodeOf(error.cause), "ENOENT"), () => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
   )
 
 const writeBaseline = (
@@ -196,13 +196,26 @@ export const runCheck = Effect.fn("foundry.check")(
       onNone: () => Effect.succeed(report.ok ? 0 : 1),
       onSome: (baselinePath) =>
         Effect.gen(function* () {
-          const errors = report.failures.flatMap((v) => v.findings)
+          // A gate that crashed found nothing, so its crash is never compared
+          // with the baseline or written to it: it fails the check as it is.
+          const findings = report.failures.flatMap((v) => v.findings)
+          const crashes = findings.filter(isInfrastructureFinding)
+          const errors = findings.filter((finding) => !isInfrastructureFinding(finding))
           const entries = yield* fingerprintFindings(errors, rootDir)
           const baseline = yield* readBaseline(baselinePath)
           // An empty-baseline profile grandfathers nothing, whatever the file holds.
           const grandfathered = config.baseline === "empty" ? new Set<string>() : baseline
           const diff = diffAgainstBaseline(entries, grandfathered)
           if (args.updateBaseline) {
+            if (crashes.length > 0) {
+              yield* Effect.sync(() => {
+                console.log(
+                  `baseline: REFUSING to update while a gate crashed — its findings are missing, and a crash is never grandfathered (fix the gate first):`,
+                )
+                crashes.forEach((finding) => console.log(`  ${renderFindingLine(finding)}`))
+              })
+              return 1
+            }
             if (diff.fresh.length > 0 && args.allowGrow !== true) {
               yield* Effect.sync(() => {
                 console.log(
@@ -225,12 +238,13 @@ export const runCheck = Effect.fn("foundry.check")(
               `baseline: ${grandfathered.size} grandfathered · ${diff.fresh.length} NEW finding${diff.fresh.length === 1 ? "" : "s"}`,
             )
             diff.fresh.forEach((entry) => console.log(`  ${renderFindingLine(entry.finding)}`))
+            crashes.forEach((finding) => console.log(`  ${renderFindingLine(finding)}`))
             Option.toArray(refusal).forEach((finding) => {
               console.log(`  ${renderFindingLine(finding)}`)
               Option.toArray(finding.fixHint).forEach((hint) => console.log(`    fix: ${hint}`))
             })
           })
-          return diff.fresh.length > 0 || Option.isSome(refusal) ? 1 : 0
+          return diff.fresh.length > 0 || crashes.length > 0 || Option.isSome(refusal) ? 1 : 0
         }),
     })
   },

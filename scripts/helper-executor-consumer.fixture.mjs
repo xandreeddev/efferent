@@ -31,7 +31,7 @@ const done = (value) => say(`result ${JSON.stringify(value)}`)
 const logLayer = (root) => SessionLogFilesLive(join(root, "sessions"))
 const openLog = (root) => Layer.build(logLayer(root)).pipe(Effect.map(Context.get(SessionLog)))
 const audit = (raw) => Effect.gen(function* () {
-  const events = yield* raw.read(taskId, query)
+  const events = yield* Effect.gen(function* () { const head = yield* raw.head(taskId); return yield* raw.read({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation }, query) })
   const questions = yield* Effect.forEach(events.filter((row) => row.kind === "task.questioned"), (row) => Schema.decodeUnknownEffect(TaskQuestioned)(row.data), { concurrency: 1 })
   const answers = yield* Effect.forEach(events.filter((row) => row.kind === "task.answered"), (row) => Schema.decodeUnknownEffect(TaskAnswered)(row.data), { concurrency: 1 })
   const queues = events.filter((row) => row.kind === "inbox.queued")
@@ -40,7 +40,7 @@ const audit = (raw) => Effect.gen(function* () {
   return { events, questions, answers, queues, ends, starts, head: yield* raw.head(taskId) }
 })
 
-const phaseMatches = (phase, id, commit) => id === taskId && commit.events.some((row) =>
+const phaseMatches = (phase, id, commit) => id.id === taskId && commit.events.some((row) =>
   phase === "question" ? row.kind === "task.questioned"
     : phase === "answer" ? row.kind === "task.answered"
       : phase === "enqueue" ? row.kind === "inbox.queued" && row.data.input?.delivery === "next"

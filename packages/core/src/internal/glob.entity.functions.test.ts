@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { compileGlob } from "./glob.entity.functions.js"
-import type { GlobMatcher, GlobMatchOptions } from "./glob.entity.functions.js"
+import { compileGlob } from "../workspace/glob.entity.functions.js"
+import type { GlobMatcher, GlobMatchOptions } from "../workspace/glob.entity.functions.js"
 
 /** The compiled pattern; a refused one fails the test. */
 const compiled = (pattern: string, options?: GlobMatchOptions): GlobMatcher => {

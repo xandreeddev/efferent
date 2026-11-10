@@ -106,7 +106,7 @@ describe("process host lifecycle and command dispatch", () => {
     yield* env.sessions.drain(address, env.inbox.run, { take: "inputs" })
     yield* env.tasks.start(address, { taskId: childId, mode: "spawn", instructions: "A child task." })
     yield* env.idle
-    const rows = [...yield* env.raw.read(address.id, query), ...yield* env.raw.read(childId, query)].filter((row) => row.kind === "turn.ended")
+    const rows = [...yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(address.id); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }), ...yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(childId); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })].filter((row) => row.kind === "turn.ended")
     const frames = yield* h.frames
     const endings = frames.filter((e) => e._tag === "turn.ended")
     expect(rows).toHaveLength(4)
@@ -130,7 +130,7 @@ describe("process host lifecycle and command dispatch", () => {
     const env = yield* host.ready
     yield* h.command(begin())
     yield* Deferred.await(stored)
-    expect((yield* env.raw.read(address.id, query)).filter((row) => row.kind === "turn.ended")).toHaveLength(1)
+    expect((yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(address.id); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })).filter((row) => row.kind === "turn.ended")).toHaveLength(1)
     expect((yield* h.frames).filter((e) => e._tag === "turn.ended")).toHaveLength(0)
     yield* h.command({ _tag: "ping", requestId: request("during-ack") })
     yield* h.wait((e) => e._tag === "pong")
@@ -148,7 +148,7 @@ describe("process host lifecycle and command dispatch", () => {
     const env = yield* host.ready
     yield* h.command(begin())
     expect(Exit.isFailure(yield* Fiber.join(host.running))).toBe(true)
-    expect((yield* env.raw.read(address.id, query)).filter((row) => row.kind === "turn.ended")).toHaveLength(1)
+    expect((yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(address.id); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })).filter((row) => row.kind === "turn.ended")).toHaveLength(1)
     expect((yield* h.frames).filter((e) => e._tag === "turn.ended")).toHaveLength(0)
     expect(yield* env.calls).toBe(1)
   })).pipe(Effect.timeout("10 seconds"))))
@@ -162,7 +162,7 @@ describe("process host lifecycle and command dispatch", () => {
     yield* h.command(begin())
     expect(Exit.isFailure(yield* Fiber.join(host.running))).toBe(true)
     expect(Option.isSome(yield* Ref.get(receipt))).toBe(true)
-    expect((yield* env.raw.read(address.id, query)).filter((row) => row.kind === "turn.ended").map((row) => row.data.reason)).toEqual(["completed"])
+    expect((yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(address.id); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })).filter((row) => row.kind === "turn.ended").map((row) => row.data.reason)).toEqual(["completed"])
     const result = (yield* h.frames).find((e) => e._tag === "begin.result")
     expect(result?._tag === "begin.result" ? result.result.outcome : "missing").toBe("completed")
     expect(yield* env.calls).toBe(1)
@@ -194,7 +194,7 @@ describe("process host lifecycle and command dispatch", () => {
     yield* h.command({ _tag: "cancel", requestId: request("cancel"), session: address, turn: 1 })
     yield* h.wait((e) => e._tag === "cancelled")
     expect((yield* env.sessions.get(address)).pending).toBe(2)
-    expect((yield* env.raw.read(address.id, query)).filter((row) => row.kind === "turn.started")).toHaveLength(1)
+    expect((yield* Effect.gen(function* () { const sessionHead = yield* env.raw.head(address.id); return yield* env.raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) })).filter((row) => row.kind === "turn.started")).toHaveLength(1)
     yield* h.command(shutdown)
     expect(Exit.isSuccess(yield* Fiber.join(host.running))).toBe(true)
   })).pipe(Effect.timeout("10 seconds"))))

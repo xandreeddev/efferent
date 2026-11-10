@@ -9,6 +9,8 @@ import type {
   SessionExists,
   SessionHead,
   SessionHeader,
+  JsonObject,
+  SessionRef,
   SessionListQuery,
   SessionLogError,
   SessionLogEvent,
@@ -27,13 +29,16 @@ import type {
  * (the kit checks one).
  */
 export class SessionLog extends Context.Service<SessionLog, {
-  /** Create an empty session (seq 0, revision 0), as a new incarnation. A child's parent must exist. */
-  readonly create: (header: SessionHeader) => Effect.Effect<SessionHead, SessionExists | SessionMissing | SessionLogError>
+  /** Create an empty session (seq 0, revision 0), as a new incarnation. A child's parent must exist, named by its full reference, and belong to the child's owner; otherwise SessionMissing, and nothing is created. */
+  readonly create: (input: { readonly header: SessionHeader; readonly state: JsonObject }) => Effect.Effect<SessionHead, SessionExists | SessionMissing | SessionLogError>
   readonly head: (id: ConversationId) => Effect.Effect<SessionHead, SessionMissing | SessionLogError>
   readonly list: (query: SessionListQuery) => Effect.Effect<ReadonlyArray<SessionHead>, SessionLogError>
-  readonly read: (id: ConversationId, query: SessionReadQuery) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
+  readonly read: (session: SessionRef, query: SessionReadQuery) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
   /** Append events and/or replace the state, atomically, when the revision, the clock and the incarnation allow. */
-  readonly commit: (id: ConversationId, commit: SessionCommit) => Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing | SessionLogError>
-  /** Remove a session, its events and its children. Removing a missing session does nothing. */
-  readonly remove: (id: ConversationId) => Effect.Effect<void, SessionLogError>
+  readonly commit: (session: SessionRef, commit: SessionCommit) => Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing | SessionLogError>
+  /**
+   * Remove a session, its events and its children. A stale or missing reference fails with SessionMissing, and so does
+   * removing a removed one again: a store whose removal can stop part way (the file log) first finishes what it left.
+   */
+  readonly remove: (session: SessionRef) => Effect.Effect<void, SessionMissing | SessionLogError>
 }>()("efferent/SessionLog") {}

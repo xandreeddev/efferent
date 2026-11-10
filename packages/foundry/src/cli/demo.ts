@@ -40,16 +40,16 @@ const DEMO_TSCONFIG = `${JSON.stringify(
 )}\n`
 
 const spec = new Spec({
-  goal: "Implement a stringStats module at src/stringStats.ts: `longest(words): Option<string>` (the longest word, None for an empty list) and `histogram(words): ReadonlyMap<number, number>` (word-length counts). Effect idioms: no let, no nullable returns — absence is Option.",
+  goal: "Implement a stringStats module at src/stringStats.ts: `longest(words): Option<string>` (the longest word, None for an empty list) and `histogram(words): ReadonlyMap<number, number>` (word-length counts). Use Option for absence and a confined indexed builder for the histogram.",
   acceptance: [
     "longest returns Option<string>, never `string | undefined`",
-    "no `let` bindings; state is folded",
+    "the histogram visits each word once",
     "the module typechecks strict",
   ],
   limits: new ForgeLimits({ maxAttempts: 4, budgetMillis: 15 * 60 * 1000 }),
 })
 
-/** Attempt 1: idiom violations (a `let`, a nullable return) → rank 0 fails.
+/** Attempt 1: a nullable return → rank 0 fails.
  *  Attempt 2: idioms clean but a TS2322 → rank 0 passes, rank 1 fails.
  *  Attempt 3: clean → accepted. Three attempts, one per pipeline stage. */
 const SCRIPT = [
@@ -93,10 +93,11 @@ const SCRIPT = [
         `  Option.fromNullishOr([...words].sort((a, b) => b.length - a.length)[0])`,
         ``,
         `export const histogram = (words: ReadonlyArray<string>): ReadonlyMap<number, number> =>`,
-        `  words.reduce(`,
-        `    (acc, word) => new Map(acc).set(word.length, (acc.get(word.length) ?? 0) + 1),`,
-        `    new Map<number, number>(),`,
-        `  )`,
+        `  {`,
+        `    const counts = new Map<number, number>()`,
+        `    for (const word of words) counts.set(word.length, (counts.get(word.length) ?? 0) + 1)`,
+        `    return counts`,
+        `  }`,
         ``,
       ].join("\n"),
     },
@@ -104,7 +105,6 @@ const SCRIPT = [
 ]
 
 const demoRules = [
-  "effect/no-let",
   "effect/no-nullable-return",
   "effect/no-try-catch",
   "effect/no-as-any",

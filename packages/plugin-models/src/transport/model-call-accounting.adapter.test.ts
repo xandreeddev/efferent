@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Option, Ref } from "effect"
+import { Deferred, Effect, Exit, Fiber, Option} from "effect"
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { CurrentModelCallRecorder, harnessError } from "@xandreed/core"
 import type { ModelCallData } from "@xandreed/core"

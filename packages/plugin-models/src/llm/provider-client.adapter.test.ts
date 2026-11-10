@@ -34,6 +34,7 @@ describe("native Responses failure interception", () => {
   test.each([false, true])("settled object=%s catches a decoded error before normal SDK response handling", async (object) => {
     const { result, requests } = await call(response(context), false, object)
     expect(result._tag).toBe("Failure")
+    expect(result._tag === "Failure" && AiError.isAiError(result.failure)).toBe(true)
     if (result._tag !== "Failure" || !AiError.isAiError(result.failure)) return
     const error = result.failure
     expect(modelFailureOf(error)).toEqual(Option.some("ContextOverflow"))
@@ -41,6 +42,7 @@ describe("native Responses failure interception", () => {
     expect(error.cause).toBe(error.reason)
     expect(requests).toEqual([{ url: "https://api.openai.com/v1/responses", authorization: "Bearer private-test-key" }])
     expect(JSON.stringify(error)).not.toContain("private-test-key")
+    expect("http" in error.reason).toBe(true)
     if (!("http" in error.reason)) return
     expect(error.reason.http?.request.headers).toEqual({})
     expect(JSON.parse(error.reason.http?.body ?? "{}")).toEqual(response(context))
@@ -55,6 +57,7 @@ describe("native Responses failure interception", () => {
   ])("streamed $type retains an explicit context error instead of completing or becoming empty", async (event) => {
     const { result, requests } = await call(event, true)
     expect(result._tag).toBe("Failure")
+    expect(result._tag === "Failure" && AiError.isAiError(result.failure)).toBe(true)
     if (result._tag !== "Failure" || !AiError.isAiError(result.failure)) return
     expect(modelFailureOf(result.failure)).toEqual(Option.some("ContextOverflow"))
     expect(requests).toHaveLength(1)
@@ -65,9 +68,11 @@ describe("native Responses failure interception", () => {
   test.each([[401, "Authentication"], [429, "RateLimit"], [504, "Timeout"]] as const)("embedded SSE status %s is semantic evidence while actual HTTP status stays 200", async (status, kind) => {
     const { result, requests } = await call({ type: "error", code: null, message: "Opaque fixture refusal.", param: null, status }, true)
     expect(result._tag).toBe("Failure")
+    expect(result._tag === "Failure" && AiError.isAiError(result.failure)).toBe(true)
     if (result._tag !== "Failure" || !AiError.isAiError(result.failure)) return
     expect(modelFailureOf(result.failure)).toEqual(Option.some(kind))
     expect(requests).toHaveLength(1)
+    expect("http" in result.failure.reason).toBe(true)
     if (!("http" in result.failure.reason)) return
     expect(result.failure.reason.http?.response?.status).toBe(200)
   })
@@ -79,8 +84,10 @@ describe("native Responses failure interception", () => {
       { type: "error", code: "context_length_exceeded", message: "Fixture context rejected.", param: null, status: 400 },
     ], true)
     expect(result._tag).toBe("Failure")
+    expect(result._tag === "Failure" && AiError.isAiError(result.failure)).toBe(true)
     if (result._tag !== "Failure" || !AiError.isAiError(result.failure)) return
     expect(modelFailureOf(result.failure)).toEqual(Option.some("ContextOverflow"))
+    expect("http" in result.failure.reason).toBe(true)
     if (!("http" in result.failure.reason)) return
     const raw = JSON.parse(result.failure.reason.http?.body ?? "{}")
     expect(raw.usage).toEqual(known)

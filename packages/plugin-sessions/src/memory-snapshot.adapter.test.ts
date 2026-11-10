@@ -84,7 +84,7 @@ test("lease, inbox, take, end, cancellation, takeover and format transitions pre
   yield* retained()
   const current = yield* base.head(address.id)
   const state = yield* stateOf(current)
-  yield* base.commit(address.id, { expect: current.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...current.state.sessions as JsonObject, format: 1 } }) })
+
   expect(state.turns).toBe(2)
   const held = yield* begin(sessions, address, "held")
   yield* retained()
@@ -95,14 +95,18 @@ test("lease, inbox, take, end, cancellation, takeover and format transitions pre
   yield* takeover.end(completed)
   yield* retained()
   expect(held.admitted.turn).toBe(3)
+  const latest = yield* base.head(address.id)
+  yield* base.commit({ id: latest.header.id, owner: latest.header.owner, incarnation: latest.incarnation }, { expect: latest.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...latest.state.sessions as JsonObject, format: 1 } }) })
+  expect(yield* Effect.flip(begin(sessions, address, "unsupported"))).toMatchObject({ _tag: "SessionLogError", code: "session.version" })
+  yield* retained()
 })))
 
 test("a selected ancestor uses exact bounded lookup and a latest post-fork pointer causes no future hydration", () => withLog((base) => Effect.gen(function* () {
   const reads = yield* Ref.make<ReadonlyArray<{ readonly session: string; readonly after: number; readonly through?: number }>>([])
   const missingFuture = yield* Ref.make(0)
   const log = SessionLog.of({ ...base, read: (id, query) => Effect.gen(function* () {
-    if (query.kinds.includes("memory.snapshot")) yield* Ref.update(reads, (all) => [...all, { session: id, after: query.after, ...(query.through === undefined ? {} : { through: query.through }) }])
-    if ((yield* Ref.get(missingFuture)) > 0 && id === address.id && query.kinds.includes("memory.snapshot") && (query.through === undefined || query.through >= (yield* Ref.get(missingFuture)))) {
+    if (query.kinds.includes("memory.snapshot")) yield* Ref.update(reads, (all) => [...all, { session: id.id, after: query.after, ...(query.through === undefined ? {} : { through: query.through }) }])
+    if ((yield* Ref.get(missingFuture)) > 0 && id.id === address.id && query.kinds.includes("memory.snapshot") && (query.through === undefined || query.through >= (yield* Ref.get(missingFuture)))) {
       return yield* Effect.fail(new SessionLogError({ code: "store.decode", message: "the future snapshot's media is missing" }))
     }
     return yield* base.read(id, query)
@@ -135,7 +139,7 @@ test.each(["missing", "version", "identity", "frontier"] as const)("a selected %
   const tamper = yield* Ref.make(false)
   const log = SessionLog.of({ ...base, read: (id, query) => base.read(id, query).pipe(Effect.flatMap((events) => Ref.get(tamper).pipe(Effect.map((armed) => !armed || !query.kinds.includes("memory.snapshot") ? events
     : mode === "missing" ? [] : events.map((event) => mode === "version" ? { ...event, data: { ...event.data, version: 99 } }
-      : mode === "frontier" ? { ...event, data: { ...event.data, through: { session: id, seq: event.seq } } } : { ...event, session: other }))))) })
+      : mode === "frontier" ? { ...event, data: { ...event.data, through: { session: id.id, seq: event.seq } } } : { ...event, session: other }))))) })
   const sessions = yield* instance(log)
   yield* sessions.create(address)
   const first = yield* begin(sessions)
@@ -156,14 +160,14 @@ test("a cross-session own pointer fails before lookup, while an ineligible futur
   const first = yield* begin(sessions)
   yield* first.end(completed)
   const head = yield* base.head(address.id)
-  yield* base.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...head.state.sessions as JsonObject, memorySnapshot: { session: other, seq: 1 } } }) })
+  yield* Effect.gen(function* () { const sessionHead = yield* base.head(address.id); return yield* base.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...head.state.sessions as JsonObject, memorySnapshot: { session: other, seq: 1 } } }) }) })
   const invalid = yield* begin(sessions, address, "invalid-cursor")
   yield* Ref.set(reads, 0)
   expect(yield* Effect.flip(load(invalid))).toMatchObject({ _tag: "SessionLogError", code: "session.decode" })
   expect(yield* Ref.get(reads)).toBe(0)
   yield* invalid.end(completed)
   const current = yield* base.head(address.id)
-  yield* base.commit(address.id, { expect: current.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...current.state.sessions as JsonObject, memorySnapshot: { session: address.id, seq: current.seq + 10 } } }) })
+  yield* Effect.gen(function* () { const sessionHead = yield* base.head(address.id); return yield* base.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: current.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...current.state.sessions as JsonObject, memorySnapshot: { session: address.id, seq: current.seq + 10 } } }) }) })
   const future = yield* begin(sessions, address, "future-cursor")
   expect(yield* load(future)).toEqual(Option.none())
   expect(yield* Ref.get(reads)).toBe(0)
@@ -230,8 +234,9 @@ test("interrupting an ACK waiter cannot separate a durable snapshot row from its
   const writer = yield* begin(sessions)
   yield* writer.append([frameworkDraft("memory.snapshot", payload(writer))])
   const waiting = yield* Effect.forkChild(writer.flush)
+  yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
   yield* Deferred.await(stored)
-  const saved = (yield* base.read(address.id, { after: 0, limit: Option.none(), kinds: ["memory.snapshot"] }))[0]!
+  const saved = (yield* Effect.gen(function* () { const sessionHead = yield* base.head(address.id); return yield* base.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: 0, limit: Option.none(), kinds: ["memory.snapshot"] }) }))[0]!
   expect(yield* pointer(base)).toMatchObject({ memorySnapshot: { session: address.id, seq: saved.seq } })
   yield* Fiber.interrupt(waiting)
   yield* Deferred.succeed(release, undefined)
@@ -270,7 +275,7 @@ test("a malformed own head retains session.state while a selected malformed ance
   yield* first.end(completed)
   const child = yield* sessions.fork(address, { origin: "test", inherit: true })
   const head = yield* base.head(address.id)
-  yield* base.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...head.state.sessions as JsonObject, memorySnapshot: { session: address.id, seq: 0 } } }) })
+  yield* Effect.gen(function* () { const sessionHead = yield* base.head(address.id); return yield* base.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ sessions: { ...head.state.sessions as JsonObject, memorySnapshot: { session: address.id, seq: 0 } } }) }) })
   expect(yield* Effect.flip(begin(sessions, address, "malformed-own"))).toMatchObject({ _tag: "SessionLogError", code: "session.state" })
   const nested = yield* begin(sessions, { owner: address.owner, id: child.header.id }, "malformed-ancestor")
   expect(yield* Effect.flip(load(nested))).toMatchObject({ _tag: "SessionLogError", code: "session.decode" })

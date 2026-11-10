@@ -1,5 +1,10 @@
 # Foundry — the factory loop + gate pipeline
 
+> Historical design record. Some APIs, package names and gates below have been
+> retired. Current contracts are [framework.md](framework.md), the root
+> [AGENTS.md](../AGENTS.md) and package instructions.
+
+
 `@xandreed/foundry` (`packages/foundry`) is the **factory model** from
 Google's "The New SDLC With Vibe Coding" (Osmani/Saboo/Kartakis, May 2026),
 built Effect-native: the developer's real output is not code but **the

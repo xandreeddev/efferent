@@ -65,38 +65,63 @@ export const toolCallStatesOf = Effect.fnUntraced(function* (events: ReadonlyArr
   }), { concurrency: 1 })
   const boundaries: ReadonlyArray<RunBoundary> = [...stepBoundaries, ...memory.flatMap(({ event, entry }): ReadonlyArray<RunBoundary> => entry.body._tag === "StepContext" ? [{ event, run: entry.body.run }] : [])]
     .sort((left, right) => left.event.seq - right.event.seq)
-  const runAt = (event: SessionLogEvent): RunOrdinal => boundaries.reduce((run, boundary) => boundary.event.session === event.session
-    && Option.getOrElse(boundary.event.turn, () => 0) === Option.getOrElse(event.turn, () => 0) && boundary.event.seq <= event.seq ? boundary.run : run, RunOrdinal.make(0))
+  const boundaryGroups = new Map<string, RunBoundary[]>()
+  for (const boundary of boundaries) { const key = JSON.stringify([boundary.event.session, Option.getOrElse(boundary.event.turn, () => 0)]); const group = boundaryGroups.get(key); if (group) group.push(boundary); else boundaryGroups.set(key, [boundary]) }
+  const runAt = (event: SessionLogEvent): RunOrdinal => {
+    const own = boundaryGroups.get(JSON.stringify([event.session, Option.getOrElse(event.turn, () => 0)])) ?? []
+    let low = 0, high = own.length
+    while (low < high) { const mid = (low + high) >>> 1; if (own[mid]!.event.seq <= event.seq) low = mid + 1; else high = mid }
+    return own[low - 1]?.run ?? RunOrdinal.make(0)
+  }
   const requests: ReadonlyArray<Request> = memory.flatMap(({ event, entry }) => entry.body._tag === "Message" && entry.body.message.role === "assistant"
     ? entry.body.message.content.flatMap((part): ReadonlyArray<Request> => part.type === "tool-call" && part.providerExecuted !== true ? [{
       _tag: "Requested", session: event.session, turn: entry.turn, runId: entry.runId, run: entry.body._tag === "Message" ? entry.body.run ?? runAt(event) : runAt(event), step: entry.step,
       toolCallId: part.toolCallId, tool: part.toolName, input: part.input, request: entry.id, requestedSeq: event.seq,
     }] : []) : [])
-  const sameIdentity = (request: Request, other: Request): boolean => other.session === request.session && other.turn === request.turn
-    && other.step === request.step && other.toolCallId === request.toolCallId && other.tool === request.tool
+  const identity = (session: string, turn: number, step: number, id: string | undefined, tool: string): string => JSON.stringify([session, turn, step, id, tool])
+  const requestKey = (request: Request) => identity(request.session, request.turn, request.step, request.toolCallId, request.tool)
+  const factKey = (fact: { readonly event: SessionLogEvent; readonly data: { readonly step: number; readonly toolCallId?: ToolCallId; readonly tool: string } }) => identity(fact.event.session, Option.getOrElse(fact.event.turn, () => 0), fact.data.step, fact.data.toolCallId, fact.data.tool)
+  const group = <A>(values: ReadonlyArray<A>, key: (value: A) => string): Map<string, A[]> => {
+    const groups = new Map<string, A[]>()
+    for (const value of values) { const id = key(value); const held = groups.get(id); if (held) held.push(value); else groups.set(id, [value]) }
+    return groups
+  }
+  const requestsByIdentity = group(requests, requestKey)
+  const lifecycleByIdentity = group(lifecycle, factKey)
+  const auditsByIdentity = group(interceptions, factKey)
+  const memoryByIdentity = group(memory.filter(({ entry }) => entry.body._tag === "ToolResult"), ({ event, entry }) => entry.body._tag === "ToolResult" ? identity(event.session, entry.turn, entry.step, entry.body.toolCallId, entry.body.toolName) : "")
+  const identityRequests = (request: Request) => requestsByIdentity.get(requestKey(request)) ?? []
+  const sameIdentity = (request: Request, other: Request): boolean => requestKey(request) === requestKey(other)
+  const resultCache = new Map<Request, ReadonlyArray<ToolCallResult>>()
   const explicit = new Set(memory.flatMap(({ entry }) => entry.body._tag === "Message" && entry.body.run !== undefined ? [entry.id] : []))
   const resultFactsOf = (request: Request): ReadonlyArray<ToolCallResult> => {
-    const next = requests.find((other) => sameIdentity(request, other) && other.run === request.run && other.requestedSeq > request.requestedSeq)
-    return memory.flatMap(({ event, entry }): ReadonlyArray<ToolCallResult> => entry.body._tag === "ToolResult"
+    const cached = resultCache.get(request)
+    if (cached !== undefined) return cached
+    const next = identityRequests(request).find((other) => sameIdentity(request, other) && other.run === request.run && other.requestedSeq > request.requestedSeq)
+    const results = (memoryByIdentity.get(requestKey(request)) ?? []).flatMap(({ event, entry }): ReadonlyArray<ToolCallResult> => entry.body._tag === "ToolResult"
       && event.session === request.session && entry.turn === request.turn && entry.runId === request.runId && entry.step === request.step && (entry.body.run ?? runAt(event)) === request.run
       && entry.body.toolCallId === request.toolCallId && entry.body.toolName === request.tool
       && event.seq > request.requestedSeq && (next === undefined || event.seq < next.requestedSeq)
       ? [{ entry: entry.id, seq: event.seq, encoded: entry.body.encoded, isError: entry.body.isError, ...(entry.body.interception === undefined ? {} : { interception: entry.body.interception }) }] : [])
+    resultCache.set(request, results)
+    return results
   }
+  const settledByInvocation = new Map<string, Request[]>()
+  for (const request of requests) for (const result of resultFactsOf(request)) if (result.interception) { const id = result.interception.invocationId; const owners = settledByInvocation.get(id) ?? []; if (!owners.includes(request)) owners.push(request); settledByInvocation.set(id, owners) }
   return requests.map((request): ToolCallState => {
-    const ownRequests = requests.filter((other) => sameIdentity(request, other) && other.run === request.run)
+    const ownRequests = identityRequests(request).filter((other) => sameIdentity(request, other) && other.run === request.run)
     const next = ownRequests.find((other) => other.requestedSeq > request.requestedSeq)
     const first = ownRequests[0]?.request === request.request
-    const ownLifecycle = lifecycle.filter((fact) => {
+    const ownLifecycle = (lifecycleByIdentity.get(requestKey(request)) ?? []).filter((fact) => {
       if (!scopeOf(request, fact.event, fact.data)) return false
       // Exact result receipts and pre-handler audits disambiguate overlapping
       // runs without making provider keys globally unique or inventing starts.
-      const settledOwners = requests.filter((other) => resultFactsOf(other).some((result) => result.interception?.invocationId === fact.data.invocationId))
+      const settledOwners = settledByInvocation.get(fact.data.invocationId) ?? []
       if (settledOwners.length > 0) return settledOwners.length === 1 && settledOwners[0]?.request === request.request
-      const owners = interceptions.filter((audit) => audit.data.source === "loop" && audit.data.phase._tag === "Before"
+      const owners = (auditsByIdentity.get(requestKey(request)) ?? []).filter((audit) => audit.data.source === "loop" && audit.data.phase._tag === "Before"
         && scopeOf(request, audit.event, audit.data) && audit.event.seq >= request.requestedSeq
         && (next === undefined || audit.event.seq < next.requestedSeq) && Option.match(audit.data.run, {
-          onNone: () => requests.filter((other) => sameIdentity(request, other) && other.requestedSeq <= audit.event.seq
+          onNone: () => identityRequests(request).filter((other) => sameIdentity(request, other) && other.requestedSeq <= audit.event.seq
             && !resultFactsOf(other).some((result) => result.seq < audit.event.seq)).length === 1,
           onSome: (run) => run.id === request.runId && run.turn === request.turn && run.ordinal === request.run,
         }))
@@ -104,12 +129,12 @@ export const toolCallStatesOf = Effect.fnUntraced(function* (events: ReadonlyArr
         && owners.every((audit) => audit.data.invocationId === fact.data.invocationId && audit.event.seq <= fact.event.seq)
       // Direct or unqualified audits describe an invocation, not ownership of
       // this root request, even when all public pairing fields are reused.
-      if (interceptions.some((audit) => audit.data.invocationId === fact.data.invocationId && scopeOf(request, audit.event, audit.data))) return false
+      if ((auditsByIdentity.get(requestKey(request)) ?? []).some((audit) => audit.data.invocationId === fact.data.invocationId && scopeOf(request, audit.event, audit.data))) return false
       if (ownRequests.length > 1) return false
       if (explicit.has(request.request)) {
         // Tool events have no run ordinal. A pairing key shared by overlapping runs proves
         // no particular call started: correlate only while exactly one request is live.
-        const live = requests.filter((other) => sameIdentity(request, other) && other.requestedSeq <= fact.event.seq
+        const live = identityRequests(request).filter((other) => sameIdentity(request, other) && other.requestedSeq <= fact.event.seq
           && !resultFactsOf(other).some((result) => result.seq < fact.event.seq))
         return live.length === 1 && live[0] === request
       }

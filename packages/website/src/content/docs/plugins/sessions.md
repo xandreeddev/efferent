@@ -80,9 +80,12 @@ limit: 1, from: "end" }` is the last turn's ending, however long the
 session. The query reaches the storage, which serves it without scanning
 from the first event.
 
-Forks retain a sequence boundary into their ancestors. Reading a child
-includes eligible ancestor history through that boundary and its own new
-records. Later parent activity does not appear in the fork.
+Forks retain a sequence boundary into their ancestors. A turn's
+`TurnWriter.history` includes eligible ancestor history through that boundary
+and its own new records. `Sessions.read` returns only the child's own events;
+a host assembling a transcript follows the header's lineage and reads each
+ancestor only through its recorded boundary. Later parent activity does not
+appear in the fork.
 The journal remains distinct from the bounded context rendered for a model;
 see [context, memory and the journal](/docs/concepts/context-journal/).
 

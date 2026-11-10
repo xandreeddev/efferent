@@ -15,7 +15,7 @@ describe("knowledge index reference conformance", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "knowledge.source-replay", "knowledge.lease-fencing", "knowledge.stage-retry", "knowledge.stage-notes", "knowledge.failure-reason",
       "knowledge.atomic-cas", "knowledge.exact-provenance", "knowledge.scope-isolation",
-      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.similarity-floor", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.mentions", "knowledge.event-time",
+      "knowledge.hybrid-candidates", "knowledge.source-filter", "knowledge.metadata-filter", "knowledge.similarity-floor", "knowledge.forget-tombstone", "knowledge.supersession-links", "knowledge.supersede-support", "knowledge.mentions", "knowledge.event-time",
       "knowledge.corroboration", "knowledge.corroboration-conflict", "knowledge.corroboration-revision", "knowledge.corroboration-reach", "knowledge.corroboration-superseded", "knowledge.source-revision",
       "knowledge.immutable-chunk-identity", "knowledge.entity-forget-rebuild", "knowledge.forgotten-stage-privacy", "knowledge.unpublished-stage-privacy", "knowledge.pending-discovery",
       "knowledge.engine-isolation", "knowledge.failed-listing", "knowledge.requeue", "knowledge.source-info", "knowledge.bitemporal-change", "knowledge.bitemporal-traversal",

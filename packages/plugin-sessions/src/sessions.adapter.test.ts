@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Stream, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, TurnShutdown, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { SessionsLive } from "./sessions.adapter.js"
+import { makeSessions, SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
 import type { HolderProcess, SessionsConfig } from "./sessions-state.entity.js"
 
@@ -187,6 +187,7 @@ describe("one turn at a time", () => {
     const first = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
     yield* Deferred.await(entered)
     const second = yield* Effect.forkChild(writer.end({ reason: "failed", failure: Option.none() }))
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
     // Its own end under way: the writer's own `TurnClosed`, `ended`.
     expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "late", data: {} }])))).toBe("TurnClosed:ended")
     expect(refusalOf(yield* Effect.flip(writer.write(Ref.set(changed, true))))).toBe("TurnClosed:ended")
@@ -380,31 +381,22 @@ describe("one turn at a time", () => {
 })
 
 describe("the stored format", () => {
-  /** The format the head's state names, or none (as a release before it wrote it). */
-  const formatIn = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.map((head) => (head.state["sessions"] as JsonObject | undefined)?.["format"]))
-  /** The head's state as a release before the stored format wrote it: no format key. */
-  const asEarlier = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) => {
-    const { format: _, ...earlier } = head.state["sessions"] as JsonObject
-    return log.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ ...head.state, sessions: earlier }) })
-  }))
-
-  test("a session is written in this release's format, and one an earlier release wrote is raised to it by the next commit, a turn's included", () => withLog((log) => Effect.gen(function* () {
+  test.each([0, STORED_FORMAT - 1, STORED_FORMAT + 1])("unsupported format %s is refused without changing stored data", (format) => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
-    yield* sessions!.deliver(address, { id: InboxItemId.make("first"), content: "first", source: {} })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
-    yield* asEarlier(log, address)
-    expect(yield* formatIn(log, address)).toBeUndefined()
-    // A read does not write: the format stays as the earlier release left it.
-    expect((yield* sessions!.get(address)).pending).toBe(1)
-    expect(yield* formatIn(log, address)).toBeUndefined()
-    yield* sessions!.deliver(address, { id: InboxItemId.make("second"), content: "second", source: {} })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
-    // A turn's writer raises it too, when an earlier release wrote the state since the begin.
-    const writer = yield* sessions!.begin(address, say("go"))
-    yield* asEarlier(log, address)
-    yield* writer.end({ reason: "completed", failure: Option.none() })
-    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
+    const head = yield* log.head(address.id)
+    expect((head.state.sessions as JsonObject).format).toBe(STORED_FORMAT)
+    const stored = { ...head.state, sessions: { ...(head.state.sessions as JsonObject), format } }
+    yield* log.commit({ id: address.id, owner: address.owner, incarnation: head.incarnation }, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some(stored) })
+    const before = yield* log.head(address.id)
+    const outcomes = [
+      yield* Effect.flip(sessions!.get(address)), yield* Effect.flip(sessions!.read(address)),
+      yield* Effect.flip(sessions!.deliver(address, { id: InboxItemId.make("refused"), source: {}, content: "refused" })),
+      yield* Effect.flip(Effect.scoped(sessions!.begin(address, say("refused")))),
+    ]
+    expect(outcomes.map((error) => error._tag === "SessionLogError" ? error.code : error._tag)).toEqual(outcomes.map(() => "session.version"))
+    const after = yield* log.head(address.id)
+    expect([after.revision, after.state]).toEqual([before.revision, before.state])
   })))
 })
 
@@ -926,7 +918,7 @@ describe("check, then append", () => {
       ...inner,
       read: (id, query) => Effect.gen(function* () {
         if (query.after > 0 && !(yield* Ref.modify(injected, (seen) => [seen, true]))) {
-          const head = yield* inner.head(id)
+          const head = yield* inner.head(id.id)
           yield* inner.commit(id, { expect: head.revision, notAfter: Option.none(), state: Option.none(), events: [{ kind: "canvas.updated", turn: Option.none(), data: {} }] }).pipe(Effect.orDie)
         }
         return yield* inner.read(id, query)
@@ -1003,7 +995,7 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
-        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))))
+        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 }))))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
@@ -1037,7 +1029,7 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
-        ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))
+        ? Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 }))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
@@ -1065,7 +1057,7 @@ describe("contention and a broken log", () => {
       // The next `losing` commits lose to another writer: refused, nothing stored.
       commit: (id, commit) => Ref.update(commits, (n) => n + 1).pipe(
         Effect.andThen(Ref.modify(losing, (left) => [left > 0, Math.max(0, left - 1)])),
-        Effect.flatMap((loses) => loses ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 })) : inner.commit(id, commit))),
+        Effect.flatMap((loses) => loses ? Effect.fail(new RevisionConflict({ session: id.id, expected: commit.expect, actual: commit.expect + 1 })) : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
     const address = yield* created(sessions!)
@@ -1125,12 +1117,12 @@ describe("contention and a broken log", () => {
     const log = SessionLog.of({
       ...inner,
       // A session created without a parent reported missing.
-      create: (header) => Ref.get(broken).pipe(Effect.flatMap((on) => on ? Effect.fail(new SessionMissing({ session: header.id })) : inner.create(header))),
+      create: (header) => Ref.get(broken).pipe(Effect.flatMap((on) => on ? Effect.fail(new SessionMissing({ session: header.header.id })) : inner.create(header))),
       commit: (id, commit) => Ref.get(broken).pipe(Effect.flatMap((on) => !on ? inner.commit(id, commit)
         // A turn's opening commit stored, and answered without its events.
         : commit.events.some((event) => event.kind === "turn.started") ? inner.commit(id, commit).pipe(Effect.map((committed) => ({ ...committed, events: [] })))
         // A commit without `notAfter` refused as expired.
-        : commit.events.some((event) => event.kind === "note") ? Effect.fail(new LeaseExpired({ session: id, notAfter: 0, now: 1 }))
+        : commit.events.some((event) => event.kind === "note") ? Effect.fail(new LeaseExpired({ session: id.id, notAfter: 0, now: 1 }))
         : inner.commit(id, commit))),
     })
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
@@ -1676,3 +1668,250 @@ describe("traces and logs", () => {
     }).pipe(Effect.provide(capturingLogger(lines))))
   })
 })
+
+test("a wrong owner cannot cancel a locally sealed turn", () => withLog((log) => Effect.gen(function* () {
+  const [sessions] = yield* instancesOver(log, sessionsDefaults)
+  const address = yield* created(sessions!)
+  const writer = yield* sessions!.begin(address, say("sealed"))
+  yield* writer.closing([frameworkDraft("turn.reply", { entry: "sealed:reply", runId: writer.admitted.runId, step: 0, at: 0, body: { outcome: "completed", reply: "answer" } })])
+  // Sealed here, so a cancel could take this instance's sealed shortcut: the owner is checked before it.
+  expect(Option.isSome(yield* writer.seal!)).toBe(true)
+  const seq = (yield* sessions!.get(address)).seq
+  const result = yield* Effect.result(sessions!.cancel({ ...address, owner: "another-owner" }, writer.admitted.turn))
+  expect(result._tag).toBe("Failure")
+  if (result._tag === "Failure") expect(result.failure._tag).toBe("SessionMissing")
+  const after = yield* sessions!.get(address)
+  expect([after.seq, Option.map(after.open, (open) => open.turn)]).toEqual([seq, Option.some(1)])
+  expect(yield* sessions!.read(address, { kinds: ["turn.ended"] })).toEqual([])
+  // The owner's cancel ends it once, as it sealed, with its reply.
+  expect((yield* sessions!.cancel(address, writer.admitted.turn)).cancelled).toBe(true)
+  const ended = yield* sessions!.read(address, { kinds: ["turn.ended"] })
+  expect(ended.map((event) => [event.turn, event.data["reason"]])).toEqual([[Option.some(1), "completed"]])
+  expect((yield* sessions!.read(address, { kinds: ["turn.reply"] })).map((event) => event.data["body"])).toEqual([{ outcome: "completed", reply: "answer" }])
+})))
+
+test.each(["read", "remove"] as const)("a paused %s cannot reach a replacement owner's session", (operation) => withLog((raw) => Effect.gen(function* () {
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  const hold = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+  const wrapped = SessionLog.of({ ...raw,
+    read: (reference, query) => operation === "read" ? hold.pipe(Effect.andThen(raw.read(reference, query))) : raw.read(reference, query),
+    remove: (reference) => operation === "remove" ? hold.pipe(Effect.andThen(raw.remove(reference))) : raw.remove(reference),
+  })
+  const [original] = yield* instancesOver(wrapped, sessionsDefaults)
+  const [concurrent] = yield* instancesOver(raw, sessionsDefaults)
+  const address = yield* created(original!)
+  const pending = yield* Effect.forkChild(Effect.result(operation === "read" ? original!.read(address).pipe(Effect.asVoid) : original!.remove(address)))
+  yield* Effect.gen(function* () {
+    yield* Deferred.await(entered)
+    yield* concurrent!.remove(address)
+    const replacement = { ...address, owner: "replacement-owner" }
+    yield* concurrent!.create(replacement)
+    yield* concurrent!.transact(replacement, () => Effect.succeed({ drafts: [{ kind: "audit.secret", data: { value: "replacement" } }], result: undefined }))
+    yield* Deferred.succeed(release, undefined)
+    const result = yield* Fiber.join(pending)
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure") expect(result.failure._tag).toBe("SessionMissing")
+    expect((yield* concurrent!.read(replacement)).map((event) => event.kind)).toEqual(["audit.secret"])
+  }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+})))
+
+test("an address with an incarnation is fenced to that life of the session: once it is removed and created again, every call with it is SessionMissing", () => withLog((log) => Effect.gen(function* () {
+  const [sessions] = yield* instancesOver(log, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const address: SessionAddress = { id: view.header.id, owner }
+  const reference = { ...address, incarnation: view.incarnation }
+  expect((yield* sessions!.get(reference)).incarnation).toBe(view.incarnation)
+  yield* sessions!.remove(reference)
+  const again = yield* sessions!.create({ owner, id: address.id })
+  expect(again.incarnation).not.toBe(view.incarnation)
+  const queued = { id: InboxItemId.make("q1"), userMessage: new UserMessage({ text: "late" }), delivery: "next" as const, source: {} }
+  const refused = [
+    yield* Effect.flip(sessions!.get(reference)),
+    yield* Effect.flip(sessions!.cancel(reference, 1)),
+    yield* Effect.flip(sessions!.enqueue(reference, queued)),
+    yield* Effect.flip(Effect.scoped(sessions!.begin(reference, say("late")))),
+    yield* Effect.flip(sessions!.remove(reference)),
+  ].map((error) => error._tag)
+  expect(refused).toEqual(["SessionMissing", "SessionMissing", "SessionMissing", "SessionMissing", "SessionMissing"])
+  expect((yield* sessions!.get(address)).incarnation).toBe(again.incarnation)
+  expect(yield* all(sessions!, address)).toEqual([])
+})))
+
+/** A log whose removal removes the session, then fails as a file log does when it stopped after its tombstone; it records each removal asked of it. */
+const stoppingAfterTombstone = (raw: Log, asked: Ref.Ref<ReadonlyArray<string>>, stops: Ref.Ref<number>): Log => SessionLog.of({ ...raw,
+  remove: (reference) => Ref.update(asked, (all) => [...all, `${reference.id}:${reference.incarnation}`]).pipe(
+    Effect.andThen(raw.remove(reference)),
+    Effect.andThen(Ref.getAndUpdate(stops, (left) => left - 1)),
+    Effect.flatMap((left) => left > 0 ? Effect.fail(new SessionLogError({ code: "store.io", message: "the session is removed, but what goes with it could not be" })) : Effect.void),
+  ),
+})
+
+test("a removal that fails once its session is gone still closes the instance's turn, then reports the failure", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(1)), sessionsDefaults)
+  const address = yield* created(sessions!)
+  const writer = yield* sessions!.begin(address, say("open"))
+  const failed = yield* Effect.flip(sessions!.remove(address))
+  expect(failed._tag).toBe("SessionLogError")
+  const closed = yield* writer.closed.pipe(Effect.timeoutOption("1 second"))
+  expect(Option.map(closed, (by) => by.reason)).toEqual(Option.some("removed"))
+})))
+
+test("a later remove with the session's reference finishes a removal that stopped after its tombstone, and reports the session missing", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(1)), sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionLogError")
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+  expect(yield* Ref.get(asked)).toEqual([`${view.header.id}:${view.incarnation}`, `${view.header.id}:${view.incarnation}`])
+  // An address without an incarnation names no life to finish: it is missing, and the log is asked nothing.
+  expect((yield* Effect.flip(sessions!.remove({ id: view.header.id, owner })))._tag).toBe("SessionMissing")
+  expect((yield* Ref.get(asked)).length).toBe(2)
+})))
+
+test("another owner's reference to a live session is SessionMissing, and Sessions never hands it to the log", () => withLog((raw) => Effect.gen(function* () {
+  const asked = yield* Ref.make<ReadonlyArray<string>>([])
+  const [sessions] = yield* instancesOver(stoppingAfterTombstone(raw, asked, yield* Ref.make(0)), sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const stranger = { id: view.header.id, owner: "another-owner", incarnation: view.incarnation }
+  expect((yield* Effect.flip(sessions!.remove(stranger)))._tag).toBe("SessionMissing")
+  expect(yield* Ref.get(asked)).toEqual([])
+  expect((yield* sessions!.get({ id: view.header.id, owner })).incarnation).toBe(view.incarnation)
+})))
+
+/** How a writer stands right now: the reason it was closed with, or `open` when it has not been closed yet. */
+const closedNow = (writer: TurnWriter) => Effect.raceFirst(
+  writer.closed.pipe(Effect.map((by): string => by.reason)),
+  Effect.yieldNow.pipe(Effect.repeat({ times: 20 }), Effect.as("open")),
+)
+
+test("a removal interrupted while the store removes it returns at once, and closes the instance's turn of the session all the same", () => withLog((raw) => Effect.gen(function* () {
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  // The log removes the session, then takes long to finish what goes with it (a slow mount, many children).
+  const slow = SessionLog.of({ ...raw, remove: (reference) => raw.remove(reference).pipe(Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Deferred.await(release))) })
+  const [sessions] = yield* instancesOver(slow, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  const writer = yield* sessions!.begin(reference, say("open"))
+  const removing = yield* Effect.forkChild(sessions!.remove(reference))
+  yield* Deferred.await(entered)
+  const stopping = yield* Effect.forkChild(Fiber.interrupt(removing))
+  const interrupted = yield* Effect.raceFirst(Fiber.join(stopping).pipe(Effect.as("returned")), Effect.yieldNow.pipe(Effect.repeat({ times: 50 }), Effect.as("waiting")))
+  yield* Deferred.succeed(release, undefined)
+  yield* Fiber.join(stopping)
+  expect([interrupted, yield* closedNow(writer)]).toEqual(["returned", "removed"])
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+})))
+
+test("a removal whose failure and head both fail, finished by a later remove with the reference, closes the instance's turn of the session", () => withLog((raw) => Effect.gen(function* () {
+  const stalled = yield* Ref.make(false)
+  const stall = new SessionLogError({ code: "store.stalled", message: "the store did not answer" })
+  // The store stalls right after the session's tombstone: the removal fails, and so does the head read after it.
+  const stalling = SessionLog.of({ ...raw,
+    remove: (reference) => raw.remove(reference).pipe(Effect.andThen(Ref.getAndSet(stalled, true)), Effect.flatMap((was) => was ? Effect.void : Effect.fail(stall))),
+    head: (id) => Ref.get(stalled).pipe(Effect.flatMap((now) => now ? Effect.fail(stall) : raw.head(id))),
+  })
+  const [sessions] = yield* instancesOver(stalling, sessionsDefaults)
+  const view = yield* sessions!.create({ owner })
+  const reference = { id: view.header.id, owner, incarnation: view.incarnation }
+  const writer = yield* sessions!.begin(reference, say("open"))
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionLogError")
+  const unknown = yield* closedNow(writer)
+  yield* Ref.set(stalled, false)
+  expect((yield* Effect.flip(sessions!.remove(reference)))._tag).toBe("SessionMissing")
+  expect([unknown, yield* closedNow(writer)]).toEqual(["open", "removed"])
+})))
+
+test("a session removed while its turn is open here leaves nothing of that turn held once the turn's scope closes", () => withLog((log) => Effect.gen(function* () {
+  const made = yield* makeSessions(sessionsDefaults).pipe(Effect.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))
+  const sessions = Context.get(made.context, Sessions)
+  const address = yield* created(sessions)
+  yield* Effect.scoped(sessions.begin(address, say("open")).pipe(Effect.andThen(sessions.remove(address))))
+  expect([...(yield* made.released).keys()]).toEqual([])
+})))
+
+test("a drain keeps the session it resolved first: one removed and created again under its id during the drain gets no turn from it",() => withLog((log) => Effect.gen(function* () {
+  const [sessions, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
+  const address = yield* created(sessions!)
+  yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "the first notice" })
+  const runs = yield* Ref.make(0)
+  const drained = yield* Effect.result(sessions!.drain(address, () => Ref.getAndUpdate(runs, (n) => n + 1).pipe(Effect.flatMap((n) => n > 0 ? Effect.void : Effect.gen(function* () {
+    yield* other!.remove(address)
+    yield* other!.create({ owner, id: address.id })
+    yield* other!.deliver(address, { id: InboxItemId.make("i2"), source: {}, content: "a notice for the replacement" })
+  }).pipe(Effect.orDie)))))
+  expect(yield* Ref.get(runs)).toBe(1)
+  expect(drained._tag).toBe("Failure")
+  if (drained._tag === "Failure") expect(drained.failure._tag).toBe("SessionMissing")
+  expect(yield* all(other!, address)).toEqual(["inbox.queued"])
+  expect((yield* other!.get(address)).pending).toBe(1)
+})))
+
+test.each(["closed", "open"] as const)("on one instance, the turn of a session removed and created again stays apart from the new session's turn of the same number, its stale scope %s: activity lists and a shutdown closes the live one", (stale) => withLog((log) => Effect.gen(function* () {
+  const context = yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))
+  const [sessions, activity, shutdown] = [Context.get(context, Sessions), Context.get(context, TurnActivity), Context.get(context, TurnShutdown)]
+  const address = yield* created(sessions)
+  const staleScope = yield* Scope.make()
+  const before = yield* sessions.begin(address, say("before")).pipe(Scope.provide(staleScope))
+  yield* sessions.remove(address)
+  expect((yield* before.closed).reason).toBe("removed")
+  yield* sessions.create({ owner, id: address.id })
+  const live = yield* sessions.begin(address, say("after"))
+  expect(live.admitted.turn).toBe(1)
+  if (stale === "closed") {
+    yield* Scope.close(staleScope, Exit.void)
+    expect((yield* activity.current).open.map((open) => [open.session, open.turn])).toEqual([[address.id, 1]])
+  }
+  yield* shutdown.interrupt
+  expect((yield* live.closed).reason).toBe("interrupted")
+  const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => event.data["failure"])
+  expect(ended).toEqual([{ code: "turn.shutdown", message: "the process shut down before the turn ended" }])
+  yield* Scope.close(staleScope, Exit.void)
+})))
+
+test("a begin waiting on a stalled store's first read is interrupted at once, counted as beginning until then", () => withLog((raw) => Effect.gen(function* () {
+  const armed = yield* Ref.make(false)
+  const entered = yield* Deferred.make<void>()
+  const release = yield* Deferred.make<void>()
+  const stalled = SessionLog.of({ ...raw, head: (id) => Ref.get(armed).pipe(Effect.flatMap((stall) => stall
+    ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(raw.head(id)))
+    : raw.head(id))) })
+  const { sessions, activity } = yield* withActivity(stalled, sessionsDefaults)
+  const address = yield* created(sessions)
+  yield* Ref.set(armed, true)
+  yield* Effect.gen(function* () {
+    const begin = yield* Effect.forkChild(Effect.scoped(sessions.begin(address, say("stalled"))))
+    yield* Deferred.await(entered)
+    expect((yield* activity.current).beginning).toBe(1)
+    const interrupting = yield* Effect.forkChild(Fiber.interrupt(begin))
+    const settled = (tries: number): Effect.Effect<boolean> => interrupting.pollUnsafe() !== undefined ? Effect.succeed(true)
+      : tries <= 0 ? Effect.succeed(false) : Effect.yieldNow.pipe(Effect.andThen(Effect.suspend(() => settled(tries - 1))))
+    expect(yield* settled(50)).toBe(true)
+    expect(yield* Deferred.isDone(release)).toBe(false)
+    expect(yield* activity.current).toEqual({ open: [], beginning: 0 })
+    yield* Ref.set(armed, false)
+    expect((yield* sessions.get(address)).turns).toBe(0)
+  }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+})))
+
+test("a follower is not woken by the commits of a session created again under its id for another owner", () => withLog((log) => Effect.gen(function* () {
+  // Built in the test's scope: its follower hubs live while the test runs.
+  const { sessions } = yield* withActivity(log, sessionsDefaults)
+  const address = yield* created(sessions!)
+  const note = (at: SessionAddress) => sessions.transact(at, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))
+  const seen = yield* Ref.make(0)
+  const follower = yield* Effect.forkScoped(sessions.changes(address).pipe(Stream.runForEach(() => Ref.update(seen, (n) => n + 1)), Effect.result))
+  const signalled = (tries: number): Effect.Effect<number, unknown> => Ref.get(seen).pipe(Effect.flatMap((n) => n > 0 || tries <= 0 ? Effect.succeed(n)
+    : note(address).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => signalled(tries - 1))))))
+  expect(yield* signalled(20)).toBeGreaterThan(0)
+  yield* sessions.remove(address)
+  const taken = { id: address.id, owner: "another-owner" }
+  yield* sessions.create(taken)
+  const before = yield* Ref.get(seen)
+  yield* Effect.forEach([1, 2, 3], () => note(taken).pipe(Effect.andThen(Effect.yieldNow)), { concurrency: 1, discard: true })
+  expect(yield* Ref.get(seen)).toBe(before)
+  yield* Fiber.interrupt(follower)
+})))

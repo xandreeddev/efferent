@@ -53,7 +53,8 @@ import { Agent } from "@xandreed/sdk"
 /*
  * Records one session journal as the current code writes it, for the
  * journal compatibility test (`packages/sdk/src/journal-compat.test.ts`):
- * later releases must still read what this release stored. The recording is
+ * historical evidence of what this release stored, which later releases of
+ * the same stored format replay and others refuse unchanged. The recording is
  * deterministic: a scripted model, a fixed clock, and ids minted from a
  * counter (`crypto.randomUUID` is replaced for this process), so it holds no
  * time, path or machine of the recording.

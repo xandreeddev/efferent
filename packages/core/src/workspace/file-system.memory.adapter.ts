@@ -39,7 +39,7 @@ const decoder = new TextDecoder()
 const maxHops = 40
 
 const failure = (path: string, reason: FsReason, message: string) => new FsError({ path, reason, message })
-const segmentsOf = (path: string): ReadonlyArray<string> => path.split("/").filter((segment) => segment.length > 0 && segment !== ".")
+const segmentsOf = (path: string, trailing = true): ReadonlyArray<string> => [...path.split("/").filter((segment) => segment.length > 0), ...(trailing && path.length > 1 && path.endsWith("/") ? ["."] : [])]
 const parentOf = (path: string): string => {
   const at = path.lastIndexOf("/")
   return at <= 0 ? "/" : path.slice(0, at)
@@ -54,8 +54,10 @@ const endsInDots = (path: string): boolean => {
   const last = path.split("/").filter((segment) => segment.length > 0).at(-1)
   return last === "." || last === ".."
 }
-/** The parent as written (not resolved): what `createParents` creates. */
-const writtenParent = (path: string): string => parentOf(`/${segmentsOf(path).join("/")}`)
+/** The parent as written (not resolved), as `dirname` reads it (`/a/b/` is in `/a`): what `createParents` creates. */
+const writtenParent = (path: string): string => parentOf(`/${segmentsOf(path, false).join("/")}`)
+/** Whether a path other than the root ends in a separator: it then names a directory, its last link followed. */
+const namesDirectory = (path: string): boolean => path.length > 1 && path.endsWith("/")
 /** A copy, so neither the caller's later writes nor ours reach the other. */
 const bytesOf = (content: string | Uint8Array): Uint8Array => typeof content === "string" ? encoder.encode(content) : Uint8Array.from(content)
 const concat = (left: Uint8Array, right: Uint8Array): Uint8Array => {
@@ -82,6 +84,7 @@ const resolveIn = (tree: Tree, asked: string, followLast: boolean): Result.Resul
   const step = (current: string, rest: ReadonlyArray<string>, hops: number): Result.Result<string, FsError> => {
     const [name, ...tail] = rest
     if (name === undefined) return Result.succeed(current)
+    if (name === ".") return step(current, tail, hops)
     if (name === "..") return step(parentOf(current), tail, hops)
     const next = join(current, name)
     const node = tree.get(next)
@@ -93,7 +96,7 @@ const resolveIn = (tree: Tree, asked: string, followLast: boolean): Result.Resul
     if (tail.length > 0 && node._tag === "File") return Result.fail(failure(asked, "NotDirectory", `not a directory: ${next}`))
     return step(next, tail, hops)
   }
-  return step("/", segmentsOf(asked), 0)
+  return step("/", segmentsOf(asked, followLast), 0)
 }
 
 /** Apply a change atomically: what it returns, and the tree after it. */
@@ -143,9 +146,11 @@ export const makeMemoryFileSystem = Effect.fnUntraced(function* (initial: Readon
   })).pipe(Effect.flatMap((outcome) => outcome === "done" ? Effect.void : makeDirectories(writtenParent(asked)).pipe(Effect.andThen(makeDirectories(asked, true)))))
 
   const put = (asked: string, content: string | Uint8Array, options: WriteOptions | undefined, append: boolean) =>
-    (options?.createParents === true ? makeDirectories(writtenParent(asked)) : Effect.void).pipe(Effect.andThen(change<void>((all, now) => Result.match(resolveIn(all, asked, true), {
+    (options?.createParents === true ? makeDirectories(writtenParent(asked)) : Effect.void).pipe(Effect.andThen(change<void>((all, now) => Result.match(resolveIn(all, asked, !namesDirectory(asked)), {
       onFailure: (error) => refused(all, error),
       onSuccess: (real) => {
+        // A file is never written through a name that asks for a directory (`EISDIR`), whatever is there.
+        if (namesDirectory(asked)) return refused(all, failure(asked, "IsDirectory", `is a directory: ${asked}`))
         const existing = all.get(real)
         if (existing?._tag === "Directory") return refused(all, failure(asked, "IsDirectory", `is a directory: ${asked}`))
         const before = append && existing?._tag === "File" ? existing.bytes : new Uint8Array()
@@ -173,6 +178,9 @@ export const makeMemoryFileSystem = Effect.fnUntraced(function* (initial: Readon
     if (Result.isFailure(source)) return refused(all, source.failure)
     if (Result.isFailure(target)) return refused(all, target.failure)
     const { real, node } = source.success
+    // A name with a trailing separator asks for a directory, on either side; a link is none (`rename` does not follow it).
+    if (namesDirectory(from) && node._tag !== "Directory") return refused(all, failure(from, "NotDirectory", `not a directory: ${from}`))
+    if (namesDirectory(to) && node._tag !== "Directory") return refused(all, failure(to, "NotDirectory", `not a directory: ${to}`))
     const destination = target.success
     if (real === "/" || destination === "/") return refused(all, failure(real === "/" ? from : to, "Invalid", "the root cannot be moved or replaced"))
     if (destination === real) return [Result.succeed(undefined), all]
@@ -187,7 +195,8 @@ export const makeMemoryFileSystem = Effect.fnUntraced(function* (initial: Readon
     return [Result.succeed(undefined), new Map([...kept, ...placed])]
   })
 
-  const stat = (asked: string, options?: StatOptions) => look((all) => Result.map(nodeAt(all, asked, options?.followSymlinks !== false), ({ node }): FileInfo => ({
+  // A trailing separator follows the last link even without `followSymlinks` (as `lstat` does), and requires a directory.
+  const stat = (asked: string, options?: StatOptions) => look((all) => Result.map(nodeAt(all, asked, options?.followSymlinks !== false || namesDirectory(asked)), ({ node }): FileInfo => ({
     path: asked, kind: kinds[node._tag], size: sizeOf(node), mtimeMs: node.mtimeMs, mode: Option.none(),
   })))
 

@@ -35,6 +35,8 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
 /** @public */
 export class SettingsError extends Schema.TaggedError<SettingsError>()("SettingsError", {
   message: Schema.String,
+  /** The failure behind it, when one was caught (a file system's error), kept as a value. */
+  cause: Schema.optionalKey(Schema.Defect()),
   /**
    * `settings.corrupt`: the store's backing data could not be read or
    * decoded. Nothing was read as defaults and nothing was written over it.

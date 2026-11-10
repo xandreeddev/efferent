@@ -37,6 +37,9 @@ import { classifyAiError } from "./provider-failure.entity.functions.js"
  * Each chunk is decoded (`chat-wire.entity.ts`): a `data:` line that is no
  * chunk (not JSON, `null`, a field of the wrong type) fails the stream with
  * the provider's `InvalidResponseError`, never the model's invalid output.
+ * So does a stream over its bounds: a line longer than `MAX_SSE_LINE_CHARS`
+ * (refused before it is decoded), more than `MAX_TOOL_CALLS` calls, or a
+ * call's arguments over `MAX_TOOL_ARGUMENT_CHARS`.
  */
 
 /** How a compat endpoint's usage is read. */
@@ -153,7 +156,7 @@ interface SseState {
   /** Fragments merged by wire index — id/name land on the first fragment,
    *  arguments concatenate across the rest. Streamed as they arrive, and
    *  emitted whole at flush. */
-  readonly toolCalls: ReadonlyArray<ToolCallAccum>
+  readonly toolCalls: ReadonlyMap<number, ToolCallAccum>
   readonly finishReason: Option.Option<string>
   readonly usage: Option.Option<CompletionUsage>
   readonly flushed: boolean
@@ -164,7 +167,7 @@ const initialState: SseState = {
   reasoningOpen: Option.none(),
   textSeq: 0,
   reasoningSeq: 0,
-  toolCalls: [],
+  toolCalls: new Map(),
   finishReason: Option.none(),
   usage: Option.none(),
   flushed: false,
@@ -234,24 +237,31 @@ const emptyAccum: ToolCallAccum = { id: "", name: "", args: "", streamed: Option
 /** The id a call's argument stream is grouped by: the provider's, else its wire index's. */
 const streamIdOf = (call: ToolCallAccum, index: number): string => call.id.length > 0 ? call.id : `call-${index}`
 
+export const MAX_TOOL_CALLS = 128
+export const MAX_TOOL_ARGUMENT_CHARS = 1_048_576
+
+/** The calls of a stream by wire index, and the parts merging a chunk's fragments emitted. */
+type ToolMerge = readonly [ReadonlyMap<number, ToolCallAccum>, ReadonlyArray<Part>]
+
 /**
  * One wire fragment merged into its call by index — id/name land on the
  * first fragment that carries them, arguments concatenate — with the parts
  * that stream it: the call's `tool-params-start` once it has a name (and the
  * arguments that arrived before it, as one delta), then a delta per
- * non-empty arguments fragment.
+ * non-empty arguments fragment. A fragment over the stream's limits fails.
  */
 const mergeToolFragment = (
-  [calls, parts]: readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>],
+  moduleName: string,
+  calls: ReadonlyMap<number, ToolCallAccum>,
   fragment: StreamToolCall,
-): readonly [ReadonlyArray<ToolCallAccum>, ReadonlyArray<Part>] => {
+): Result.Result<readonly [number, ToolCallAccum, ReadonlyArray<Part>], AiError.AiError> => {
+  // A gateway that leaves the index out sends one call at a time: it is call 0.
   const index = fragment.index ?? 0
-  const padded =
-    calls.length > index
-      ? calls
-      : [...calls, ...Array.from({ length: index + 1 - calls.length }, () => emptyAccum)]
-  const call = padded[index] ?? emptyAccum
+  const call = calls.get(index) ?? emptyAccum
   const piece = fragment.function?.arguments ?? ""
+  if ((!calls.has(index) && calls.size >= MAX_TOOL_CALLS) || call.args.length + piece.length > MAX_TOOL_ARGUMENT_CHARS) {
+    return Result.fail(AiError.make({ module: moduleName, method: "streamText", reason: new AiError.InvalidResponseError({ description: "the stream exceeded its tool-call or argument size limit" }) }))
+  }
   const merged: ToolCallAccum = {
     id: call.id.length > 0 ? call.id : (fragment.id ?? ""),
     name: call.name.length > 0 ? call.name : (fragment.function?.name ?? ""),
@@ -264,17 +274,38 @@ const mergeToolFragment = (
     onNone: (): readonly [ToolCallAccum, ReadonlyArray<Part>] => {
       if (merged.name.length === 0) return [merged, []]
       const id = streamIdOf(merged, index)
-      return [
-        { ...merged, streamed: Option.some(id) },
-        [
-          { type: "tool-params-start", id, name: merged.name },
-          ...(merged.args.length > 0 ? [{ type: "tool-params-delta" as const, id, delta: merged.args }] : []),
-        ],
-      ]
+      return [{ ...merged, streamed: Option.some(id) }, [
+        { type: "tool-params-start", id, name: merged.name },
+        ...(merged.args.length > 0 ? [{ type: "tool-params-delta" as const, id, delta: merged.args }] : []),
+      ]]
     },
   })
-  return [padded.map((other, at) => at === index ? next : other), [...parts, ...emitted]]
+  return Result.succeed([index, next, emitted])
 }
+
+/**
+ * A chunk's fragments merged in order into the stream's calls, after the
+ * chunk's `parts`. One map and one list are built for the whole chunk, so a
+ * chunk packed with fragments costs time linear in their number.
+ */
+const mergeToolFragments = (
+  moduleName: string,
+  calls: ReadonlyMap<number, ToolCallAccum>,
+  parts: ReadonlyArray<Part>,
+  fragments: ReadonlyArray<StreamToolCall>,
+): Effect.Effect<ToolMerge, AiError.AiError> => Effect.suspend(() => {
+  // Confined to this chunk: nothing else sees them until they are returned.
+  const merged = new Map(calls)
+  const emitted: Array<Part> = [...parts]
+  for (const fragment of fragments) {
+    const result = mergeToolFragment(moduleName, merged, fragment)
+    if (Result.isFailure(result)) return Effect.fail(result.failure)
+    const [index, call, pieces] = result.success
+    merged.set(index, call)
+    emitted.push(...pieces)
+  }
+  return Effect.succeed([merged, emitted])
+})
 
 const malformed = (moduleName: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method: "streamText", reason: new AiError.InvalidOutputError({ description }) })
@@ -311,15 +342,13 @@ const applyChunk = (
     typeof content === "string" && content.length > 0 ? emitText(s, content) : [s, []],
   )
   const [folded, parts] = afterText
-  const [toolCalls, toolParts] = (delta?.tool_calls ?? []).reduce(mergeToolFragment, [folded.toolCalls, parts] as const)
-  const next: SseState = {
-    ...folded,
-    toolCalls,
-    // The last reason that names something: a blank one on a later chunk keeps it.
-    finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
-    usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
-  }
-  return Effect.succeed([next, toolParts])
+  return mergeToolFragments(moduleName, folded.toolCalls, parts, delta?.tool_calls ?? []).pipe(
+    Effect.map(([toolCalls, toolParts]): Emit => [{
+      ...folded, toolCalls,
+      finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
+      usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
+    }, toolParts]),
+  )
 }
 
 /** The end-of-stream flush: close open chunks, decide the finish reason,
@@ -335,8 +364,8 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState, end: 
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
         const reason: WireFinishReason = end === "eof" && Option.isNone(closed.finishReason) ? "unknown"
-          : finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
-        const toolParts = yield* Effect.forEach(closed.toolCalls, (call) =>
+          : finishReasonFromWire(closed.finishReason, closed.toolCalls.size > 0)
+        const toolParts = yield* Effect.forEach([...closed.toolCalls.entries()].toSorted(([a], [b]) => a - b).map(([, call]) => call), (call) =>
           toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
             malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
           ).pipe(
@@ -395,6 +424,32 @@ const step = (
   })
 }
 
+/**
+ * The longest line, in characters (UTF-16 code units), a stream may send. A
+ * line is held whole until it ends, so a longer one fails the stream before
+ * it is decoded: room for one call's largest arguments fragment
+ * (`MAX_TOOL_ARGUMENT_CHARS`) even with every character escaped.
+ */
+export const MAX_SSE_LINE_CHARS = 8_388_608
+
+/**
+ * The length of the line still open once `text` follows an open line of
+ * `open` characters, or none when a line it ends or holds, or the one it
+ * leaves open, is longer than `MAX_SSE_LINE_CHARS`.
+ */
+const openLineAfter = (open: number, text: string): Option.Option<number> => {
+  // Confined to this scan: where the current line starts, and what of it came before `text`.
+  let start = 0
+  let carried = open
+  for (const lineBreak of text.matchAll(/[\r\n]/g)) {
+    if (carried + lineBreak.index - start > MAX_SSE_LINE_CHARS) return Option.none()
+    carried = 0
+    start = lineBreak.index + 1
+  }
+  const rest = carried + text.length - start
+  return rest > MAX_SSE_LINE_CHARS ? Option.none() : Option.some(rest)
+}
+
 /** Parse a streaming chat-completions body into encoded stream parts. */
 export const sseStreamParts = (options: {
   readonly moduleName: string
@@ -415,6 +470,10 @@ export const sseStreamParts = (options: {
       }),
   }).pipe(
     Stream.decodeText(),
+    Stream.mapAccumEffect(() => 0, (open: number, text: string) => Option.match(openLineAfter(open, text), {
+      onNone: () => Effect.fail(AiError.make({ module: options.moduleName, method: "streamText", reason: new AiError.InvalidResponseError({ description: `the stream sent a line longer than ${MAX_SSE_LINE_CHARS} characters` }) })),
+      onSome: (rest) => Effect.succeed([rest, [text]] as const),
+    })),
     Stream.splitLines,
     Stream.filterMap((line: string) => {
       const trimmed = line.trim()

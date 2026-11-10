@@ -1,6 +1,6 @@
 import { Effect, Predicate, Schema } from "effect"
 import { JsonObject } from "./session-log.entity.js"
-import type { RevisionConflict, SessionLogError } from "./session-log.entity.js"
+import type { RevisionConflict, SessionHead, SessionRef, SessionLogError } from "./session-log.entity.js"
 
 /** Any value written out as JSON text: `undefined` fields are dropped, as a store drops them. */
 const toText = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
@@ -28,3 +28,8 @@ export const isStoreBusy = (error: SessionLogError): boolean => error.code === "
  * compare-and-swap reads the head again and retries at once.
  */
 export const isRevisionConflict = (error: unknown): error is RevisionConflict => Predicate.isTagged(error, "RevisionConflict")
+
+/** Capture a head's exact owner and incarnation for data operations. @public */
+export const sessionRef = (head: SessionHead): SessionRef => ({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation })
+/** Whether a captured reference still identifies this head. @public */
+export const sameSession = (reference: SessionRef, head: SessionHead): boolean => reference.id === head.header.id && reference.owner === head.header.owner && reference.incarnation === head.incarnation

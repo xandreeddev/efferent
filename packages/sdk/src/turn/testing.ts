@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "@xandreed/core"
 import { Effect, Option, Ref } from "effect"
 import { ConversationId, EntryId, turnStartedDraft, UserMessage } from "@xandreed/core"
 import type { RunId, SessionLogEvent, TurnDraft, TurnWriter } from "@xandreed/core"
@@ -30,7 +31,7 @@ export const recordingTurnWriter = (input: {
   }))])
   const held = yield* Ref.make<ReadonlyArray<TurnDraft>>([])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "test" }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
+    admitted: { session: { id: session, owner: "test", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: (kinds) => Effect.succeed(history.filter((event) => kinds.length === 0 || kinds.includes(event.kind))),
     snapshot: (kinds, after) => Ref.get(stored).pipe(Effect.map((events) => (after === undefined ? events : events.slice(history.length).filter((event) => event.seq > after))

@@ -50,8 +50,13 @@ export const ChatCompletion = Schema.Struct({
 })
 export type ChatCompletion = typeof ChatCompletion.Type
 
-/** A streamed tool-call fragment: fragments of one call share its `index`. */
-export const StreamToolCall = Schema.Struct({ index: Count, id: WireToolCallId, function: ToolCallFunction })
+/**
+ * A streamed tool-call fragment: fragments of one call share its `index`.
+ * An index that is sent must be a nonnegative safe integer; an absent or
+ * `null` one (some gateways leave it out) is call 0.
+ */
+const ToolIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
+export const StreamToolCall = Schema.Struct({ index: Schema.optionalKey(Schema.NullOr(ToolIndex)), id: WireToolCallId, function: ToolCallFunction })
 export type StreamToolCall = typeof StreamToolCall.Type
 
 /** One `data:` chunk of a streaming chat completion. */

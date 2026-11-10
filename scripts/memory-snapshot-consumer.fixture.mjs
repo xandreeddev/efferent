@@ -52,7 +52,7 @@ const build = (root, options = {}) => Effect.gen(function* () {
 const visible = (log, address, through) => Effect.gen(function* () {
   const head = yield* log.head(address.id)
   const inherited = yield* Option.match(head.header.parent, { onNone: () => Effect.succeed([]), onSome: (lineage) => visible(log, { id: lineage.id, owner }, lineage.through) })
-  return [...inherited, ...yield* log.read(address.id, { ...query, ...(through === undefined ? {} : { through }) })]
+  return [...inherited, ...yield* Effect.gen(function* () { const sessionHead = yield* log.head(address.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { ...query, ...(through === undefined ? {} : { through }) }) })]
 })
 const capture = (root, call) => Effect.tryPromise(async () => {
   const path = join(root, "calls.json")
@@ -187,7 +187,7 @@ const seed = (root) => Effect.scoped(Effect.gen(function* () {
   yield* sessions.create(parent)
   const first = yield* runTurn(root, sessions, parent, "snapshot-first", { verbose: true, input: 400 })
   assert.equal(first.helpers, 0)
-  assert.equal((yield* readStored("memory.snapshot", yield* log.read(parent.id, query))).length, 0)
+  assert.equal((yield* readStored("memory.snapshot", yield* Effect.gen(function* () { const sessionHead = yield* log.head(parent.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }))).length, 0)
   return { calls: first.calls, handlers: first.handlers, seedVerified: true }
 }))
 const summarize = (root) => Effect.scoped(Effect.gen(function* () {
@@ -203,7 +203,7 @@ const summarize = (root) => Effect.scoped(Effect.gen(function* () {
   const plain = state.entries.find((entry) => entry.body._tag === "ToolResult" && entry.body.toolName === Plain.name)
   assert.ok(snapshot.data.entries.some((entry) => entry.body._tag === "ToolResult" && entry.body.toolName === Pinned.name))
   assert.ok(!snapshot.data.entries.some((entry) => entry.id === plain.id))
-  const physical = yield* raw.read(parent.id, { after: snapshot.event.seq - 1, through: snapshot.event.seq, limit: Option.some(1), kinds: ["memory.snapshot"] })
+  const physical = yield* Effect.gen(function* () { const sessionHead = yield* raw.head(parent.id); return yield* raw.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { after: snapshot.event.seq - 1, through: snapshot.event.seq, limit: Option.some(1), kinds: ["memory.snapshot"] }) })
   assert.ok(Object.hasOwn(physical[0].data, "$efferent.media"), "snapshot copied Media was not physically offloaded")
   assert.ok(!JSON.stringify(physical[0].data).includes(png))
   return { snapshots: 1, retained: snapshot.data.entries.length, archive: state.entries.length, snapshotPublishedVerified: true, pointerAtomicVerified: true, mediaSnapshotVerified: true, replayVerified: true }
@@ -223,7 +223,7 @@ const forks = (root) => Effect.scoped(Effect.gen(function* () {
   const { sessions, log, media } = yield* build(root)
   yield* sessions.fork(parent, { id: child.id, origin: "snapshot-fixture", inherit: true })
   const lineage = (yield* log.head(child.id)).header.parent.value
-  const old = (yield* readStored("memory.snapshot", yield* log.read(parent.id, query))).at(-1)
+  const old = (yield* readStored("memory.snapshot", yield* Effect.gen(function* () { const sessionHead = yield* log.head(parent.id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, query) }))).at(-1)
   const writer = yield* sessions.begin(parent, { _tag: "User", runId: RunId.make("snapshot-future-publication"), key: "snapshot-future-publication", userMessage: new UserMessage({ text: "Synthetic delayed snapshot publication.", attachments: [imageB] }), command: {} })
   yield* writer.append([frameworkDraft("memory.snapshot", yield* Schema.encodeEffect(MemorySnapshotData)(old.data))])
   yield* writer.flush
@@ -233,7 +233,7 @@ const forks = (root) => Effect.scoped(Effect.gen(function* () {
   yield* Effect.tryPromise(() => unlink(join(root, "media", "blobs", `${mediaHashOf(bytesB)}.bin`)))
   const forbidden = []
   const cold = yield* build(root, { decorate: (inner) => SessionLog.of({ ...inner, read: (id, input) => {
-    if (id === parent.id && (input.kinds.length === 0 || input.kinds.includes("memory.snapshot")) && (input.through === undefined || input.through > lineage.through)) {
+    if (id.id === parent.id && (input.kinds.length === 0 || input.kinds.includes("memory.snapshot")) && (input.through === undefined || input.through > lineage.through)) {
       forbidden.push(input)
       return Effect.die("child attempted to hydrate an invisible future snapshot")
     }
@@ -250,7 +250,7 @@ const holder = (root) => Effect.scoped(Effect.gen(function* () {
   const { sessions } = yield* build(root, { decorate: (inner) => SessionLog.of({ ...inner, commit: (id, input) => inner.commit(id, input).pipe(Effect.tap((committed) => input.events.some((event) => event.kind === "memory.snapshot") ? Effect.gen(function* () {
     const snapshot = committed.events.find((event) => event.kind === "memory.snapshot")
     const pointer = input.state.value.sessions.memorySnapshot
-    assert.deepEqual(pointer, { session: id, seq: snapshot.seq }, "snapshot and pointer were not in the same submitted commit")
+    assert.deepEqual(pointer, { session: id.id, seq: snapshot.seq }, "snapshot and pointer were not in the same submitted commit")
     yield* say(`ack ${JSON.stringify({ revision: committed.revision, seq: committed.seq, snapshot: snapshot.seq })}`)
     yield* say("snapshot-ack-held")
     yield* Effect.never

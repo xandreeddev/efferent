@@ -181,6 +181,17 @@ export interface TurnWriter {
  * of a turn it ends to its caller (`TurnResult.pending`), the closer that
  * drains; `drain` ends its own turns and drains what they leave.
  * Reads never write: loading or following a session runs nothing.
+ *
+ * Every call that names a session takes its `SessionAddress` (id and
+ * owner): another owner's address is `SessionMissing`. An address that also
+ * carries an `incarnation` (a `SessionRef`: `SessionView.incarnation` with
+ * the id and owner, `AdmittedTurn.session`, `TurnToAdmit.session`) is fenced
+ * to that life of the session: once it is removed and created again under
+ * its id, the address is `SessionMissing`, so a host that keeps it acts on
+ * the session it read and never on its replacement. An address without one
+ * names whichever session holds the id for that owner at each call; one call
+ * keeps the session it resolved first (a drain all its turns). `changes` is
+ * the exception: it checks the address once, on its first pull (see there).
  */
 export class Sessions extends Context.Service<Sessions, {
   /**
@@ -215,7 +226,17 @@ export class Sessions extends Context.Service<Sessions, {
     readonly before?: SessionListCursor
     readonly parent?: ConversationId
   }) => Effect.Effect<SessionPage, SessionLogError>
-  /** Remove a session and its children; an open turn on this instance is closed. */
+  /**
+   * Remove a session and its children; an open turn on this instance is
+   * closed. A session already removed is `SessionMissing`; given its
+   * `SessionRef`, the store is first asked to remove it again, which
+   * finishes a removal that stopped part way (the file log), and this
+   * instance's turns of that life are closed too. A removal that fails, or is
+   * interrupted while the store removes it, once the session is gone still
+   * closes this instance's turns of it, then fails (or is interrupted) as the
+   * store's removal was; the store's removal can be interrupted, what this
+   * instance does once the session is gone cannot.
+   */
   readonly remove: (address: SessionAddress) => Effect.Effect<void, SessionMissing | SessionLogError>
   /**
    * The session's own events after `after` (0), of `kinds` (all), ascending.
@@ -234,9 +255,16 @@ export class Sessions extends Context.Service<Sessions, {
    * yet taken merge into one. A follower is woken only by its own session's
    * commits, from its first pull on, and holds at most one signal while it
    * does not pull: a signal says "read again", never how many commits came
-   * (followers poll for the commits of other instances).
+   * (followers poll for the commits of other instances). Only the owner
+   * follows: on its first pull, another owner's address or a missing session
+   * fails the stream with `SessionMissing`, and a store failure with
+   * `SessionLogError`. That check runs once: a follower is then woken by
+   * every commit under the id and owner, its session's removal and a session
+   * created again under the id for that owner included, so it reads with
+   * its address to learn which session changed (with a `SessionRef`, a read
+   * after the removal fails with `SessionMissing`).
    */
-  readonly changes: (address: SessionAddress) => Stream.Stream<void>
+  readonly changes: (address: SessionAddress) => Stream.Stream<void, SessionMissing | SessionLogError>
   /** The turn begun with this key, if any. */
   readonly lookup: (address: SessionAddress, key: string) => Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError>
   /**

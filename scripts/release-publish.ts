@@ -120,7 +120,7 @@ const stamp = stampRead.success
 const version = stamp.version
 if (version === null) refuse("tag", ["build.json records no shared version; rebuild"])
 console.log(`\nAsking the registry for the ${stamp.packages.length} package(s) at ${version} before tagging.`)
-const settled = await Promise.all(stamp.packages.map((entry) => confirmOnRegistry(entry, [], tagConfirmSchedule)))
+const settled = await Promise.all(stamp.packages.map((entry) => confirmOnRegistry(entry, head.stdout, tagConfirmSchedule)))
 const missing = settled.flatMap((verdict) => verdict._tag === "Missing" ? [verdict.reason] : [])
 if (missing.length > 0) refuse("tag", missing)
 

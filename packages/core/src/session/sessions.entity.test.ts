@@ -1,3 +1,4 @@
+import { SessionIncarnation } from "./session-log.entity.js"
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
@@ -141,7 +142,7 @@ describe("resumeRefusal", () => {
 describe("turnAttributes and sessionAttributes", () => {
   const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
   const admitted: AdmittedTurn = {
-    session: { id: session, owner: "test" }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
+    session: { id: session, owner: "test", incarnation: SessionIncarnation.make("00000000-0000-4000-8000-000000000001") }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
     userMessage: new UserMessage({ text: "hello" }), command: {}, claimed: [], meta: {},
   }
 

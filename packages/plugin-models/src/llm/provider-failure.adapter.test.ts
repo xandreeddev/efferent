@@ -27,6 +27,7 @@ describe("provider failures survive existing adapter boundaries", () => {
     expect(calls).toEqual(["text", "object", "stream"])
     results.forEach((error) => {
       expect(modelFailureOf(error)).toEqual(Option.some("ContextOverflow"))
+      expect("http" in error.reason).toBe(true)
       if (!("http" in error.reason)) return
       expect(error.reason.http?.response?.status).toBe(400)
       expect(error.reason.http?.body).toBe(JSON.stringify(encodedError))
@@ -60,6 +61,7 @@ describe("provider failures survive existing adapter boundaries", () => {
       const classified = mapOpenAiCodexError("fixture", original)
       expect(modelFailureOf(classified)).toEqual(Option.some("ContextOverflow"))
       expect(classified.reason._tag).toBe("UnknownError")
+      expect("http" in classified.reason && "http" in original.reason).toBe(true)
       if (!("http" in classified.reason) || !("http" in original.reason)) return
       expect(classified.reason.http).toEqual(original.reason.http)
     })

@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Logger, Option, Ref, References, Schema, Scope, Stream } from "effect"
@@ -744,8 +745,8 @@ describe("Agent.turn", () => {
             // The loop provides the request's cache key and call policy to its calls: others are not what the header recorded.
             ...(changed === "cacheKey" ? { cacheKey: Option.some("unrecorded:key") } : {}),
             ...(changed === "callPolicy" ? { callPolicy: Option.some({ effort: "high" as const }) } : {}),
-            ...(changed === "tools" ? { tools: { ...request.tools, toolkit: Toolkit.make(...Object.values(request.tools.toolkit.tools).map((tool) =>
-              tool.name === "lookup" ? tool.setParameters(Schema.Struct({ query: Schema.Int })) : tool)) } } : {}),
+            ...(changed === "tools" ? { tools: { ...request.tools, toolkit: prepareToolkit(Toolkit.make(...Object.values(request.tools.toolkit.tools).map((tool) =>
+              tool.name === "lookup" ? tool.setParameters(Schema.Struct({ query: Schema.Int })) : tool))) } } : {}),
             plan: (info) => request.plan(info).pipe(Effect.map((plan) => ({
               ...plan,
               ...(changed === "messages" ? { messages: [{ role: "user" as const, content: "unrecorded input" }] } : {}),
@@ -1610,4 +1611,10 @@ describe("the inbox after Agent.turn", () => {
     expect(after).toHaveLength(1)
     expect(after[0]).toContain("found: look it up")
   })
+})
+
+test("two named instances of one plugin share a definition without a duplicate-definition refusal", async () => {
+  const plugin = definePlugin({ id: "fixture/multiple", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [], layer: () => Layer.empty })
+  const result = await Effect.runPromise(Effect.scoped(Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin, id: "a" }, { plugin, id: "b" }] }).pipe(Effect.result)))
+  expect(result._tag).toBe("Success")
 })

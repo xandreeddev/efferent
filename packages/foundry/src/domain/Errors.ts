@@ -62,3 +62,7 @@ export const describeError = (error: { readonly message: string; readonly cause?
     onNone: () => error.message,
     onSome: (wrapped) => `${error.message}: ${wrapped}`,
   })
+
+/** A foreign error code, decoded without relying on a runtime error class. */
+export const errorCodeOf = (value: unknown): Option.Option<string> =>
+  Option.map(Schema.decodeUnknownOption(Schema.Struct({ code: Schema.String }))(value), (error) => error.code)

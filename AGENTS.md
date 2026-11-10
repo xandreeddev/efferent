@@ -68,8 +68,6 @@ nothing fails.
 | Rule | Bans | Fix |
 |---|---|---|
 | `effect/no-try-catch` | `try`/`catch`, `throw`, a non-Effect `.catch()` | `Effect.fail`/`Effect.die`, `Effect.catch`/`Effect.catchTag`; foreign promises via `Effect.tryPromise` |
-| `effect/no-let` | `let`, `var` | a fold: `Effect.reduce`, a recursive Effect step, Array combinators, or a `Ref` |
-| `effect/no-loop-statements` | `for`, `for…of`, `for…in`, `while`, `do` | `Effect.forEach`, `Effect.repeat({ while })`, `Effect.whileLoop`, Array combinators (`Effect.iterate` does not exist) |
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
 | `effect/match-over-tag-switch` | a `switch`, an else-if ladder, an if-return ladder (adjacent `if (x._tag === …) return …`) or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match`; `Match.orElse` for a deliberate default |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
@@ -102,7 +100,7 @@ nothing fails.
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
 | `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |
 | `quality/exports-have-consumers` | every published entry (`CURATED_ENTRIES` lists each file, and the registration gate requires each package's root entry there): an export of a package entry that no other package, script or doc code block imports and that has no `@public` tag; `export *` in an entry; a `@deprecated` export that first-party code still imports | import it where it is used, tag documented host API `@public`, or stop exporting it; name each export; move a deprecated export's importers to its replacement |
-| `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` in entity and use-case files | Effect values; promises belong in an adapter |
+| `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` (called, passed as a value or imported by name from `effect/Effect`) in entity and use-case files | Effect values; promises belong in an adapter |
 | `architecture/no-runtime-imports-core` | `node:`, `bun` and host imports in entity and use-case files | a port, implemented in a `.adapter.ts` |
 | `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
@@ -113,6 +111,11 @@ nothing fails.
 | `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
 | `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
 | `quality/no-private-text` | in any file git tracks: a home path (`/home/<name>/`, `/Users/<name>/`, `C:\Users\<name>\`) but a placeholder one, or a term of the git-ignored local denylist `.foundry/private-terms.txt` | a relative path or a placeholder home (`/home/user/`); remove the term |
+
+Confined local mutation and loops are allowed in pure builders when inputs are
+not mutated and no mutable state escapes. Use `Ref` for shared evolving state.
+Gates check syntax and dependencies; semantic review must also check complexity,
+cancellation, isolation and whether tests can reject incorrect behavior.
 
 ## File roles
 
@@ -169,10 +172,16 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 Text the model reads is a contract and part of cached prompt prefixes: frame
 it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), pin
 it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
-Each package's `AGENTS.md` lists its texts in a "Model-facing text" table
-whose "Pinned by" column cites the exact test or golden;
-`scripts/model-text-pins.test.ts` fails on a row pinned in part or not at
-all, and on a cited test file or line that does not exist.
+Each package's `AGENTS.md` inventories its model-facing text and cites the
+tests that pin each row by title (`path.test.ts#<part of a test's title>`).
+The tests run actual rendered-text or golden comparisons.
+`scripts/model-text-pins.test.ts` checks that each citation names exactly one
+`test`, `it` or `describe` of its file and that that block holds an exact
+expectation (in its body or a helper of the file), with negative controls for
+a missing title, a shared title and a deleted pin. This is inventory
+validation: deleting one expectation among several of a cited test still
+passes it, so give a row's pin a test of its own, and semantic review must
+still verify complete coverage of each row; a citation alone proves none.
 
 ## Definition of done
 

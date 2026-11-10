@@ -12,6 +12,7 @@ import { Option, Result } from "effect"
  * crosses such names without `dot`. A pattern whose braces stand for more
  * than 1024 patterns is refused, never cut short.
  */
+/** @public */
 export interface GlobMatcher {
   /** Whether this relative path matches the pattern. */
   readonly matches: (path: string) => boolean
@@ -19,6 +20,7 @@ export interface GlobMatcher {
   readonly descends: (dir: string) => boolean
 }
 
+/** @public */
 export interface GlobMatchOptions {
   readonly dot?: boolean
 }
@@ -41,10 +43,12 @@ interface Brace {
 }
 
 /** For each character, whether a `\` before it makes it literal. */
-const escapedFlags = (chars: ReadonlyArray<string>): ReadonlyArray<boolean> => chars.reduce<{ readonly flags: ReadonlyArray<boolean>; readonly pending: boolean }>(
-  (state, char) => ({ flags: [...state.flags, state.pending], pending: !state.pending && char === "\\" }),
-  { flags: [], pending: false },
-).flags
+const escapedFlags = (chars: ReadonlyArray<string>): ReadonlyArray<boolean> => {
+  const flags: boolean[] = []
+  let pending = false
+  for (const char of chars) { flags.push(pending); pending = !pending && char === "\\" }
+  return flags
+}
 
 interface BraceScan {
   readonly depth: number

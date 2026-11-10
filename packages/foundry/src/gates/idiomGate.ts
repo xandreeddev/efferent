@@ -29,6 +29,8 @@ export interface RuleContext {
 }
 
 export interface RuleMatch {
+  /** Infrastructure failures cannot be downgraded, suppressed or baselined. */
+  readonly infrastructureFailure?: boolean
   readonly node: ts.Node
   readonly message: string
   /** Dropped in the files the rule's config declares a `boundary`, where
@@ -125,6 +127,8 @@ export const makeIdiomGate = (
           .filter((a) => includedBy(a.include, a.exclude, rel))
           .map((a): Checked => ({ active: a, sourceFile, rel, matches: a.rule.check({ sourceFile, checker: project.checker, workspace: around }) }))
       })
+      const infrastructure = checked.flatMap((entry) => entry.matches.filter((match) => match.infrastructureFailure))
+      if (infrastructure.length > 0) return yield* Effect.fail(new GateCrash({ gate: IDIOM_GATE, message: infrastructure.map((match) => match.message).join("; ") }))
       const findings = checked
         .filter((c) => !c.active.allow.includes(c.rel))
         .flatMap((c) =>

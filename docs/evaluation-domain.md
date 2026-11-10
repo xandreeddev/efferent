@@ -212,7 +212,7 @@ eval.calibrate         calibrateGrader: eval.calibration.id, eval.run.id
          └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess, eval.evaluator)
 ```
 
-Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. An evaluator behind a grader opens `eval.evaluator` under its grade, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`, and `eval.pairwise` over both orders. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
+Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. An evaluator behind a grader opens `eval.evaluator` under its grade, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
 
 The command line traces through the app. An app's `observability` layer (a `Layer.Layer<never>`, such as `Layer.orDie(OtlpTelemetryFromEnv())` from `@xandreed/plugin-telemetry`) is provided around each command that loads the app, and that command is one `eval.cli` span carrying `eval.command`, over the spans above and the exports' `eval.export`. The layer closes with the command, so its spans are flushed when the command ends and when Ctrl-C or SIGTERM interrupts it. It has no error type: observability never fails an eval. `inspect`, `compare` and `help` load no app and open no span.
 

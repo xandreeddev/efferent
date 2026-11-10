@@ -26,25 +26,28 @@ const configPaths = (cwd: string, home: string): ReadonlyArray<string> => [
 ]
 
 const readConfig = (path: string): Effect.Effect<Record<string, unknown>, SettingsError> =>
-  readJsonObject(path, (reason) => new SettingsError({
+  readJsonObject(path, (reason, cause) => new SettingsError({
     code: "settings.corrupt",
     message: `${path} ${reason}: fix or remove it; nothing was read from it or written to it`,
+    ...(cause === undefined ? {} : { cause }),
   })).pipe(Effect.map(Option.getOrElse(() => ({}))))
 
 /** Write (or drop) one key in the LOCAL config, every other key preserved. */
 const writeKey = (
   cwd: string,
+  home: string,
   key: string,
   value: Option.Option<unknown>,
 ): Effect.Effect<void, SettingsError> => {
   const path = join(cwd, ".efferent", "config.json")
   return withFileLock(path)(Effect.gen(function* () {
+    yield* Effect.forEach(configPaths(cwd, home), readConfig, { concurrency: 1, discard: true })
     const current = yield* readConfig(path)
     const next = Option.match(value, {
       onNone: () => Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
       onSome: (v) => ({ ...current, [key]: v }),
     })
-    yield* writeJsonObject(path, next, Option.none(), (reason) => new SettingsError({ message: `config.json write failed: ${reason}` }))
+    yield* writeJsonObject(path, next, Option.none(), (reason, cause) => new SettingsError({ message: `config.json write failed: ${reason}`, ...(cause === undefined ? {} : { cause }) }))
   }))
 }
 
@@ -55,13 +58,13 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
       Effect.map((configs) => settingsFromRecord(configs.reduce((acc, c) => ({ ...acc, ...c }), {}))),
     ),
     setRole: (role: ModelRole, selection: Option.Option<string>) =>
-      roleSelection(role, selection).pipe(Effect.flatMap((checked) => writeKey(cwd, ROLE_FIELDS[role], checked))),
+      roleSelection(role, selection).pipe(Effect.flatMap((checked) => writeKey(cwd, home, ROLE_FIELDS[role], checked))),
     set: (key: SettingsKey, value: Option.Option<string>) =>
       Option.match(value, {
-        onNone: () => writeKey(cwd, key, Option.none()),
+        onNone: () => writeKey(cwd, home, key, Option.none()),
         onSome: (raw) =>
           coerceSettingValue(key, raw).pipe(
-            Effect.flatMap((coerced) => writeKey(cwd, key, Option.some(coerced))),
+            Effect.flatMap((coerced) => writeKey(cwd, home, key, Option.some(coerced))),
           ),
       }),
   })

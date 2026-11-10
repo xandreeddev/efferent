@@ -1,6 +1,7 @@
 import { Tool, Toolkit } from "effect/ai"
 import { Cause, Clock, Context, Effect, Exit, Match, Option, Ref, Result, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
+  prepareToolkit,
   ActionPolicy,
   activationsOf,
   attachmentsOf,
@@ -32,7 +33,7 @@ import {
   ToolInterceptor,
   ToolInterceptOutcome,
 } from "@xandreed/core"
-import { CurrentToolResultReceipt, toolInterceptError, withToolResultReceiptGuard } from "@xandreed/core/internal"
+import { CurrentToolResultReceipt, jsonTextCopy, toolInterceptError, withToolResultReceiptGuard } from "@xandreed/core/internal"
 import { afterToolIntercept, beforeToolIntercept, interceptedToolkit, toolInterceptBoundary, toolInterceptMutableJson, toolInterceptSnapshot } from "./tool-interceptor.adapter.js"
 import type { ToolInterceptCapture } from "./tool-interceptor.adapter.js"
 import { ToolPolicy } from "./tool-policy.entity.js"
@@ -217,8 +218,9 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       Option.match(Option.fromNullishOr(byName.get(name)), {
         onNone: () => Effect.succeed(Option.none()),
         onSome: (entry) => Effect.gen(function* () {
-          const input = yield* Schema.isSchema(entry.tool.parametersSchema) ? Schema.decodeUnknownEffect(contextFree(entry.tool.parametersSchema))(params) : Effect.succeed(params)
-          const result = yield* Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded)
+          // Authored codecs decode detached copies: the stored input and result stay the evidence the journal holds.
+          const input = yield* Schema.isSchema(entry.tool.parametersSchema) ? jsonTextCopy(params).pipe(Effect.flatMap(Schema.decodeUnknownEffect(contextFree(entry.tool.parametersSchema)))) : Effect.succeed(params)
+          const result = yield* jsonTextCopy(encoded).pipe(Effect.flatMap(Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))))
           return Option.some({ entry, result, params: input })
         }).pipe(
           Effect.provide(services),
@@ -564,7 +566,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))]))).pipe(
       Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),
     )
-    const providedToolkit = Option.isNone(interceptor) ? toolkit : interceptedToolkit(toolkit, runServices, (name, capture) => {
+    const providedToolkit = Option.isNone(interceptor) ? prepareToolkit(toolkit) : interceptedToolkit(toolkit, runServices, (name, capture) => {
       const entry = byName.get(name)
       return toolkit.toHandlers(entry === undefined ? {} : { [name]: wrap(entry, handlerOf(entry), Option.some(capture)) }).pipe(
         Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentToolResultReceipt, HoldingToolGates)(context)),

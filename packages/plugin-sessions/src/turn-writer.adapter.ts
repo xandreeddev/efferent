@@ -2,7 +2,7 @@ import { Cause, Clock, Deferred, Effect, Exit, HashSet, Match, Option, Queue, Re
 import {
   canonicalJson, draftsOfEntries, entriesOfEvents, harnessError, InboxTakenData,
   isRevisionConflict, LogEntry, MEMORY_KINDS, readStored, reasonOf, replyEndingOf,
-  ReservedKind, SessionContended, SessionLogError, STORED_FORMAT, turnAttributes,
+  ReservedKind, SessionMissing, SessionRef, sameSession, SessionContended, SessionLogError, STORED_FORMAT, turnAttributes,
   turnEndedDraft, TurnClosed, unmarkedReservedDraft, userRoleMessageOf,
 } from "@xandreed/core"
 import type {
@@ -15,7 +15,7 @@ import type {
   SessionIncarnation,
   SessionLog,
   SessionLogEvent,
-  SessionMissing,
+
   QueuedInput,
   TurnDraft,
   TurnEnding,
@@ -23,7 +23,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import type { Context } from "effect"
-import { closedState, droppedData, isNewerFormat, pendingOf, stateJson, stateOf, storedFormatOf, withFormat } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, isUnsupportedFormat, pendingOf, stateJson, stateOf, storedFormatOf } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, sealable, sealedEnding, sealWith, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
 import { EndStep, WriterPhase } from "./turn-writer.entity.js"
@@ -115,6 +115,8 @@ export interface OpenWriter {
   readonly writer: TurnWriter
   readonly close: (reason: ClosedBy) => Effect.Effect<void>
   readonly ended: Effect.Effect<boolean>
+  /** Whether it was closed because its session was removed. */
+  readonly removed: Effect.Effect<boolean>
   /** Count the inbox items the turn took as tried, though it wrote nothing (a drain `run` that interrupted itself). */
   readonly markTried: Effect.Effect<void>
   /** A held reply's outcome, before the closing commit; a drain preserves a partial reply. */
@@ -153,6 +155,7 @@ export interface OpenWriter {
 export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInput, scope: Scope.Scope): Effect.fn.Return<OpenWriter> {
   const { log, config, admitted } = input
   const id = admitted.session.id
+  const reference: SessionRef = { id, owner: input.header.owner, incarnation: input.incarnation }
   const ids = turnAttributes(admitted)
   const ownership = config.ownership
   const queue = yield* Queue.bounded<Item>(config.writer.capacity)
@@ -245,9 +248,9 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     // A session created again under its id is not this turn's: its own was removed.
     if (head.incarnation !== input.incarnation) return yield* removed()
     const format = yield* storedFormatOf(head).pipe(Effect.mapError((error) => new SessionLogError({ code: "session.state", message: error.message, cause: error })))
-    if (isNewerFormat(format)) return yield* Effect.fail(new SessionLogError({ code: "session.version", message: `the session holds stored format ${format}, written by a newer release; this release reads up to ${STORED_FORMAT}` }))
+    if (isUnsupportedFormat(format)) return yield* Effect.fail(new SessionLogError({ code: "session.version", message: `the session uses unsupported stored format ${format}; configure a fresh store for format ${STORED_FORMAT}` }))
     const state = yield* stateOf(head).pipe(Effect.mapError((error) => harnessError("session.state", error.message, error)))
-    const since = log.read(id, { after: seen.seq, through: head.seq, limit: Option.none(), kinds: [] }).pipe(
+    const since = log.read(reference, { after: seen.seq, through: head.seq, limit: Option.none(), kinds: [] }).pipe(
       Effect.catchTag("SessionMissing", removed),
       Effect.map((events) => events.filter((event) => event.seq <= head.seq)),
     )
@@ -277,11 +280,11 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       const now = yield* storageNow
       // In this release's stored format: raised once when another instance, of an earlier release, wrote the state since.
       const drafts = stamped(decided.drafts)
-      const next = withFormat(yield* snapshotState(log, input.header, at.seq, options.renew ? renewed(decided.next, now, false) : decided.next, drafts).pipe(Effect.catchTag("SessionMissing", removed)))
+      const next = yield* snapshotState(log, input.header, at.seq, options.renew ? renewed(decided.next, now, false) : decided.next, drafts).pipe(Effect.catchTag("SessionMissing", removed))
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
       const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error))))
       const store = Effect.gen(function* () {
-        const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: drafts, state, incarnation: input.incarnation })
+        const committed = yield* log.commit(reference, { expect: at.revision, notAfter, events: drafts, state })
         const localAt = yield* Clock.currentTimeMillis
         yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
         if (options.tried === true) yield* Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) }))
@@ -477,7 +480,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   const waitingSteers = (at: Position): Effect.Effect<ReadonlyArray<QueuedInput>, TurnError> => Effect.gen(function* () {
     const slots = pendingOf(at.state).filter((slot) => slot.delivery === "steer")
     if (slots.length === 0) return []
-    const events = yield* log.read(id, { after: 0, through: at.seq, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(Effect.catchTag("SessionMissing", removed))
+    const events = yield* log.read(reference, { after: 0, through: at.seq, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(Effect.catchTag("SessionMissing", removed))
     const queued = yield* readStored("inbox.queued", events.filter((event) => event.seq <= at.seq)).pipe(
       Effect.mapError((error) => new SessionLogError({ code: "session.decode", message: error.message, cause: error })),
     )
@@ -520,7 +523,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       if (selected.some(({ id, message }) => !queued.some((input) => input.id === id && canonicalJson(message) === canonicalJson(userRoleMessageOf(input.userMessage))))) {
         return yield* Effect.fail(invalidTake("a steering message must exactly match its immutable queued input"))
       }
-      const previous = yield* log.read(id, { after: Math.max(0, input.started.seq - 1), through: at.seq, limit: Option.none(), kinds: MEMORY_KINDS }).pipe(Effect.catchTag("SessionMissing", removed))
+      const previous = yield* log.read(reference, { after: Math.max(0, input.started.seq - 1), through: at.seq, limit: Option.none(), kinds: MEMORY_KINDS }).pipe(Effect.catchTag("SessionMissing", removed))
       const stored = yield* entriesOfEvents(previous.filter((event) => event.seq <= at.seq)).pipe(
         Effect.mapError((error) => new SessionLogError({ code: "session.decode", message: error.message, cause: error })),
       )
@@ -561,11 +564,11 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   const writer: TurnWriter = {
     admitted,
     started: input.started,
-    memorySnapshot: readMemorySnapshot(log, input.header, input.started, input.position.state).pipe(Effect.catchTag("SessionMissing", removed)),
-    history: (kinds) => historyOf(log, input.header, input.started, kinds).pipe(Effect.catchTag("SessionMissing", removed)),
+    memorySnapshot: readMemorySnapshot(log, input.header, reference, input.started, input.position.state).pipe(Effect.catchTag("SessionMissing", removed)),
+    history: (kinds) => historyOf(log, input.header, reference, input.started, kinds).pipe(Effect.catchTag("SessionMissing", removed)),
     snapshot: (kinds, after) => flush.pipe(Effect.andThen(after === undefined
-      ? historyOf(log, input.header, input.started, kinds, true)
-      : log.read(id, { after, limit: Option.none(), kinds })), Effect.catchTag("SessionMissing", removed)),
+      ? historyOf(log, input.header, reference, input.started, kinds, true)
+      : log.read(reference, { after, limit: Option.none(), kinds })), Effect.catchTag("SessionMissing", removed)),
     steers: inOrder(refreshed.pipe(Effect.flatMap(waitingSteers)), false),
     take,
     append: (drafts) => refuseIfReserved(drafts).pipe(Effect.andThen(admission.withPermits(1)(
@@ -596,6 +599,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     writer,
     close: closeBy,
     ended: phaseNow.pipe(Effect.map(WriterPhase.guards.Ended)),
+    removed: phaseNow.pipe(Effect.map((current) => WriterPhase.guards.Closed(current) && current.reason === "removed")),
     markTried: Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) })),
     replyEnding: phaseNow.pipe(Effect.map((current) => WriterPhase.match(current, {
       Open: (open) => replyEndingOf(open.closing), Ending: (ending) => Option.some(ending.ending),
@@ -610,19 +614,20 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
  * point) first. `SessionMissing` when the session, or a parent it inherits
  * from, is gone: removing a session removes its children.
  */
-const historyOf = (log: Log, header: SessionHeader, started: SessionLogEvent, kinds: ReadonlyArray<string>, includeCurrent = false): Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError> => {
+const historyOf = (log: Log, header: SessionHeader, reference: SessionRef, started: SessionLogEvent, kinds: ReadonlyArray<string>, includeCurrent = false): Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError> => {
   const ancestors = (lineage: SessionHeader["parent"]): Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError> => Option.match(lineage, {
     onNone: () => Effect.succeed([]),
     onSome: (parent) => parent.through <= 0 ? Effect.succeed([]) : Effect.gen(function* () {
       const head = yield* log.head(parent.id)
+      if (!sameSession(parent, head)) return yield* Effect.fail(new SessionMissing({ session: parent.id }))
       const earlier = yield* ancestors(head.header.parent)
-      const events = yield* log.read(parent.id, { after: 0, through: parent.through, limit: Option.none(), kinds })
+      const events = yield* log.read(parent, { after: 0, through: parent.through, limit: Option.none(), kinds })
       return [...earlier, ...events.filter((event) => event.seq <= parent.through)]
     }),
   })
   return Effect.gen(function* () {
     const inherited = yield* ancestors(header.parent)
-    const own = yield* log.read(header.id, { after: 0, ...(includeCurrent ? {} : { through: started.seq - 1 }), limit: Option.none(), kinds })
+    const own = yield* log.read(reference, { after: 0, ...(includeCurrent ? {} : { through: started.seq - 1 }), limit: Option.none(), kinds })
     return [...inherited, ...own.filter((event) => includeCurrent || event.seq < started.seq)]
   })
 }

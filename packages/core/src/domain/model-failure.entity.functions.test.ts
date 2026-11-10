@@ -5,7 +5,7 @@ import { stampResponseModel } from "./engine-stamp.entity.functions.js"
 import { ENGINE_KEY } from "./engine-stamp.entity.js"
 import { modelFailureCodeOf, modelFailureOf, stampAiErrorFailure, stampPartFailure, stampResponseFailure } from "./model-failure.entity.functions.js"
 import { ModelFailureKind, ModelFailureStamp } from "./model-failure.entity.js"
-import { toPromptMessages, withUsageOnAssistant } from "../internal/mapping.entity.functions.js"
+import { toPromptMessages, withUsageOnAssistant } from "./message-mapping.entity.functions.js"
 import { tokenUsage } from "./token-usage.entity.functions.js"
 
 const http: typeof AiError.HttpContext.Type = {

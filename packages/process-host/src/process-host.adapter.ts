@@ -94,10 +94,9 @@ export const serveProcess = Effect.fn("process.serve")(function* <E>(options: Pr
       read: (id, query) => inner.read(id, query),
       remove: (id) => inner.remove(id),
       commit: (id, commit) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-        const header = (yield* restore(inner.head(id))).header
         const receipt = yield* restore(inner.commit(id, commit))
-        if (!config.owners.includes(header.owner)) return receipt
-        const address: SessionAddress = { id, owner: header.owner }
+        if (!config.owners.includes(id.owner)) return receipt
+        const address: SessionAddress = { id: id.id, owner: id.owner }
         yield* Effect.forEach(receipt.events, (row) => processLifecycleOf(address, row).pipe(Effect.flatMap(Option.match({
           onNone: () => Effect.void,
           onSome: (event) => Match.value(event).pipe(

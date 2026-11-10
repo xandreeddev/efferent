@@ -28,9 +28,9 @@ All of it goes to the digester (the utility model); the task's own `instructions
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Select: data rule and reply format | `src/plugin.adapter.ts:36`, `:39` | exact, `src/plugin.adapter.test.ts:27` |
-| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:43`, `:44`, `:47` | exact, `src/plugin.adapter.test.ts:38` |
-| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:32`, `:38`, `:46` | exact, `src/plugin.adapter.test.ts:27`, `:38`; clip sizes `:50` |
+| Select: data rule and reply format | `src/plugin.adapter.ts:36`, `:39` | exact tests `src/plugin.adapter.test.ts#select: the instructions, the data rule, the request and the items framed, then the reply format` |
+| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:43`, `:44`, `:47` | exact tests `src/plugin.adapter.test.ts#summarize: the identifiers the summary must keep come before the data` |
+| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:32`, `:38`, `:46` | exact tests `src/plugin.adapter.test.ts#select: the instructions, the data rule, the request and the items framed, then the reply format`; `src/plugin.adapter.test.ts#summarize: the identifiers the summary must keep come before the data` |
 
 ## Erasure files
 

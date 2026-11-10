@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId, errorCodeOf, isStoreBusy, RunId, SessionLogEvent, Sessions, TurnAdmissionOpen, turnEndedOf, UserMessage } from "@xandreed/core"
@@ -38,6 +38,8 @@ const holder = (...args: ReadonlyArray<string>): Effect.Effect<Holder, Error, Sc
   Stream.runHead,
   Effect.flatMap(Option.match({ onNone: () => Effect.fail(new Error(`the holder (${args.join(" ")}) stopped before it was ready`)), onSome: () => Effect.void })),
 )))
+
+const outputLines = (child: Holder) => Stream.fromReadableStream({ evaluate: () => child.stdout, onError: (error) => new Error(String(error)), releaseLockOnEnd: true }).pipe(Stream.decodeText, Stream.splitLines)
 
 /** What the holder printed after `ready`, read to the end of its output. */
 const printed = (child: Holder) => Stream.fromReadableStream({ evaluate: () => child.stdout, onError: (error) => new Error(String(error)) }).pipe(
@@ -77,11 +79,11 @@ describe("a commit waiting for another process's write lock", () => {
     const path = databasePath()
     const id = freshId()
     const log = yield* makeSessionLogSqlite(path)
-    yield* log.create(header(id))
+    yield* log.create({ header: header(id), state: {} })
 
     const first = yield* holder("hold-lock", path, "1200")
     const notAfter = Date.now() + 300
-    const refused = yield* Effect.flip(log.commit(id, { expect: 0, notAfter: Option.some(notAfter), events: [{ kind: "late", turn: Option.none(), data: {} }], state: Option.none() }))
+    const refused = yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.some(notAfter), events: [{ kind: "late", turn: Option.none(), data: {} }], state: Option.none() }) }))
     expect(refused._tag).toBe("LeaseExpired")
     expect(refused._tag === "LeaseExpired" && refused.now > notAfter).toBe(true)
     expect(yield* exited(first)).toBe(0)
@@ -90,7 +92,7 @@ describe("a commit waiting for another process's write lock", () => {
 
     const second = yield* holder("hold-lock", path, "1200")
     const before = Date.now()
-    const committed = yield* log.commit(id, { expect: 0, notAfter: Option.some(before + 30_000), events: [{ kind: "waited", turn: Option.none(), data: {} }], state: Option.none() })
+    const committed = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.some(before + 30_000), events: [{ kind: "waited", turn: Option.none(), data: {} }], state: Option.none() }) })
     expect(committed.at - before).toBeGreaterThanOrEqual(600)
     expect(committed.events.map((event) => event.at)).toEqual([committed.at])
     expect((yield* log.head(id)).updatedAt).toBe(committed.at)
@@ -101,30 +103,30 @@ describe("a commit waiting for another process's write lock", () => {
     const path = databasePath()
     const id = freshId()
     const log = yield* makeSessionLogSqlite(path)
-    yield* log.create(header(id))
-    const ticks = yield* Ref.make(0)
-    yield* holder("hold-lock", path, "1000")
-    const ticker = yield* Effect.forkScoped(Effect.forever(Effect.sleep("10 millis").pipe(Effect.andThen(Ref.update(ticks, (n) => n + 1)))))
-    const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "waited", turn: Option.none(), data: {} }], state: Option.none() })
-    const counted = yield* Ref.get(ticks)
-    yield* Fiber.interrupt(ticker)
+    yield* log.create({ header: header(id), state: {} })
+    const blocker = yield* holder("hold-lock", path, "0")
+    const head = yield* log.head(id)
+    const committing = yield* Effect.forkScoped(log.commit({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation }, { expect: 0, notAfter: Option.none(), events: [{ kind: "waited", turn: Option.none(), data: {} }], state: Option.none() }))
+    // The holder releases only after this fiber gets CPU while the commit waits.
+    yield* Effect.sleep("10 millis")
+    expect(yield* Effect.sync(() => committing.pollUnsafe())).toBeUndefined()
+    yield* go(blocker)
+    const committed = yield* Fiber.join(committing)
     expect(committed.revision).toBe(1)
-    // About a hundred ticks while the lock is held; a wait that blocked the thread would let none through.
-    expect(counted).toBeGreaterThan(20)
   })), 30_000)
 
   test("fails with store.busy, SQLite's error its cause, when the lock is held past the busy timeout, and goes on once the holder is gone", () => run(Effect.gen(function* () {
     const path = databasePath()
     const id = freshId()
     const log = yield* makeSessionLogSqlite(path)
-    yield* log.create(header(id))
+    yield* log.create({ header: header(id), state: {} })
     const locked = yield* holder("hold-lock", path, "6000")
-    const busy = yield* Effect.flip(log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "blocked", turn: Option.none(), data: {} }], state: Option.none() }))
+    const busy = yield* Effect.flip(Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [{ kind: "blocked", turn: Option.none(), data: {} }], state: Option.none() }) }))
     expect(busy._tag === "SessionLogError" ? [busy.code, isStoreBusy(busy), Option.exists(errorCodeOf(busy.cause), (code) => code.startsWith("SQLITE_BUSY"))] : busy._tag)
       .toEqual(["store.busy", true, true])
     // A holder that dies inside its transaction takes the lock with it.
     expect(yield* killed(locked)).toBe("SIGKILL")
-    expect((yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [], state: Option.none() })).revision).toBe(1)
+    expect((yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, { expect: 0, notAfter: Option.none(), events: [], state: Option.none() }) })).revision).toBe(1)
   })), 30_000)
 })
 
@@ -133,7 +135,7 @@ describe("a process killed while it commits", () => {
   /** Whole commits only: every event belongs to a commit with all of its events, in order, and the head agrees. */
   const whole = (path: string, id: ConversationId) => withLog(path, (log) => Effect.gen(function* () {
     const head = yield* log.head(id)
-    const events = yield* log.read(id, all)
+    const events = yield* Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) })
     expect(events.every((event) => Schema.is(SessionLogEvent)(event))).toBe(true)
     expect(events.length).toBe(head.seq)
     expect(events.length % size).toBe(0)
@@ -147,7 +149,7 @@ describe("a process killed while it commits", () => {
   test("leaves whole commits: the log reopens intact, decodes, and takes the next commit", () => run(Effect.gen(function* () {
     const path = databasePath()
     const id = freshId()
-    yield* withLog(path, (log) => log.create(header(id)))
+    yield* withLog(path, (log) => log.create({ header: header(id), state: {} }))
     const heads = yield* Effect.forEach([100, 250, 400], (ms) => Effect.scoped(Effect.gen(function* () {
       const writer = yield* holder("commit-loop", path, id, String(size))
       yield* Effect.sleep(ms)
@@ -159,9 +161,9 @@ describe("a process killed while it commits", () => {
     expect(integrity.query<{ readonly integrity_check: string }, []>("PRAGMA integrity_check").get()?.integrity_check).toBe("ok")
     integrity.close()
     const last = heads[heads.length - 1]!
-    const next = yield* withLog(path, (log) => log.commit(id, {
+    const next = yield* withLog(path, (log) => Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
       expect: last.revision, notAfter: Option.none(), events: range(size).map((index) => ({ kind: "part", turn: Option.none(), data: { commit: last.revision + 1, index, of: size } })), state: Option.some({ commit: last.revision + 1 }),
-    }))
+    }) }))
     expect([next.revision, next.seq]).toEqual([last.revision + 1, last.seq + size])
     yield* whole(path, id)
   })), 30_000)
@@ -171,16 +173,18 @@ describe("two processes racing by compare-and-swap", () => {
   test("200 increments each end at 400: they conflict, and no update is lost or stored twice", () => run(Effect.gen(function* () {
     const path = databasePath()
     const id = freshId()
-    yield* withLog(path, (log) => log.create(header(id)))
+    yield* withLog(path, (log) => log.create({ header: header(id), state: {} }))
     const writers = [yield* holder("cas-increments", path, id, "200", "a"), yield* holder("cas-increments", path, id, "200", "b")]
     yield* Effect.forEach(writers, go, { discard: true })
+    yield* Effect.forEach(writers, (child) => Stream.runHead(Stream.filter(outputLines(child), (line) => line === "read")), { concurrency: 2 })
+    yield* Effect.forEach(writers, (child) => Effect.sync(() => { child.stdin.write("commit\n"); child.stdin.flush() }), { concurrency: 1 })
     const outcomes = yield* Effect.forEach(writers, (child) => Effect.all({ code: exited(child), lines: printed(child) }), { concurrency: "unbounded" })
     expect(outcomes.map((outcome) => outcome.code)).toEqual([0, 0])
     const conflicts = outcomes.map((outcome) => outcome.lines.flatMap((line) => line.startsWith("done ") ? [Number(line.slice("done ".length))] : []))
     expect(conflicts.map((done) => done.length)).toEqual([1, 1])
     // Both ran at once: some commits lost the race and were retried, which is the compare-and-swap under test.
     expect(conflicts.flat().reduce((total, count) => total + count, 0)).toBeGreaterThan(0)
-    const { head, events } = yield* withLog(path, (log) => Effect.all({ head: log.head(id), events: log.read(id, all) }))
+    const { head, events } = yield* withLog(path, (log) => Effect.all({ head: log.head(id), events: Effect.gen(function* () { const sessionHead = yield* log.head(id); return yield* log.read({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, all) }) }))
     expect([head.revision, head.seq, head.state.count]).toEqual([400, 400, 400])
     expect(["a", "b"].map((label) => events.filter((event) => event.data.by === label).map((event) => event.data.n))).toEqual([range(200), range(200)])
   })), 60_000)

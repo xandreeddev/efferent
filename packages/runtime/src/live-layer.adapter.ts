@@ -43,8 +43,8 @@ export const makeLiveLayer = Effect.fnUntraced(function* <A, E, R>(initial: Laye
   yield* Effect.addFinalizer(() => gate.withPermits(1)(Effect.gen(function* () {
     yield* Ref.set(closed, true)
     const remaining = yield* Ref.getAndSet(generations, new Map())
-    yield* Effect.forEach(remaining.values(), (generation) => Scope.close(generation.scope, Exit.void), { concurrency: 1 })
-  })))
+    return [...remaining.values()]
+  })).pipe(Effect.flatMap((remaining) => Effect.forEach(remaining, (generation) => Scope.close(generation.scope, Exit.void), { concurrency: 1, discard: true }))))
   const acquire = gate.withPermits(1)(Effect.gen(function* () {
     if (yield* Ref.get(closed)) return yield* Effect.fail(unavailable())
     const id = yield* Ref.get(current)

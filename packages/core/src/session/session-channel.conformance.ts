@@ -54,7 +54,7 @@ const awaitFirst = (channel: Channel, address: SessionAddress, first: Fiber.Fibe
  * kept for the follower's first read).
  */
 const follow = (id: string, channel: Channel, address: SessionAddress) => Effect.gen(function* () {
-  const scope = yield* Scope.make()
+  const scope = yield* Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
   const close = Scope.close(scope, Exit.void)
   const next = yield* Scope.provide(Stream.toPull(channel.subscribe(address)), scope)
   const pull: Effect.Effect<ReadonlyArray<SessionChannelPayload>, SessionChannelError> = next.pipe(

@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
+import { Context, Deferred, Effect, Option, Ref, Schema, Semaphore } from "effect"
 import {
   canonicalJson, frameworkDraft, HarnessError, ModelCallData, ModelCallLegacyUsage, readStored, replayableContext,
   storedJson, turnModelCallsOf,

@@ -12,7 +12,7 @@ import { Schema } from "effect"
 export const Score = Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 })), Schema.brand("Score"))
 export type Score = typeof Score.Type
 
-/** `<namespace>/<name>` — e.g. `effect/no-let`, `ts/2322`, `evals/nonempty-scorers`. */
+/** `<namespace>/<name>` — e.g. `effect/no-try-catch`, `ts/2322`, `evals/nonempty-scorers`. */
 export const RuleId = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/)),
   Schema.brand("RuleId"),

@@ -152,7 +152,7 @@ const publish = async (pending: ReadonlyArray<Built>, done: ReadonlyArray<string
   if (await child.exited !== 0) {
     if (!live) return stop(next, done, "")
     console.error(`\nnpm publish exited non-zero for ${label(next.manifest)}; asking the registry whether the upload went through (up to about three minutes).`)
-    const verdict = await confirmOnRegistry(next.manifest)
+    const verdict = await confirmOnRegistry(next.manifest, head.stdout)
     if (verdict._tag === "Missing") return stop(next, done, `: ${verdict.reason}`)
     console.log(`npm reported a failure for ${label(next.manifest)}, but the registry has it: the upload went through. Counted as published.`)
   }

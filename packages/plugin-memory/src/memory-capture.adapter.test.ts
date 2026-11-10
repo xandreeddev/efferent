@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
 import {
-  ConversationId, InboxItemId, InvocationId, KnowledgeError, KnowledgeSourceId, RunId, RunOrdinal, SectionId, SessionLogError, Sessions, ToolCallId, frameworkDraft,
+  ConversationId, InboxItemId, InvocationId, KnowledgeError, RunId, RunOrdinal, SectionId, SessionLogError, Sessions, ToolCallId, frameworkDraft,
 } from "@xandreed/core"
 import { capturedTurnText, splitCapturedEvidence } from "./memory-capture.adapter.js"
 import { admissionLog, admittingWith, appendCapturedEntries, captureAddress, capturedEntry, captureRun, closeCaptureTurn, makeCaptureFixture, openCaptureTurn } from "./memory-capture.testing.js"

@@ -56,7 +56,7 @@ export const eventually = <A>(value: Effect.Effect<A>, holds: (a: A) => boolean,
 /** A fresh id per session, so a kit can run against a shared store. */
 export const freshId = Effect.map(randomUuid, (id) => ConversationId.make(id))
 
-export const headerOf = (id: ConversationId, owner: string, parent: Option.Option<{ readonly id: ConversationId; readonly through: number; readonly turnAtFork: number }> = Option.none()): SessionHeader => ({
+export const headerOf = (id: ConversationId, owner: string, parent: SessionHeader["parent"] = Option.none()): SessionHeader => ({
   id, owner, origin: "user", createdAt: 1_767_225_600_000, meta: { title: "conformance", nested: { list: [1, "two", null] } }, parent,
 })
 

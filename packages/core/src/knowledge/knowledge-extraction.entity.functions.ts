@@ -481,7 +481,7 @@ export const stageKnowledgeExtraction = Effect.fnUntraced(function* (
     () => problemIf(Option.exists(Option.fromNullishOr(memory.eventAt), (event) => event.end !== undefined && event.end !== null && event.end < event.start), DROPPED.event),
     () => problemIf(supportOf(memory).some((id) => !activeMemories.some((existing) => existing.id === id)), DROPPED.support),
     // Staging knows only this source's metadata: other revisions count by source here, and by episode at publication.
-    () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && knowledgeEpisodeCount(supportEvidence(memory).map((span) => span.source), [source]) < 3, DROPPED.routine),
+    () => problemIf(memory.kind === "routine" && memory.evidence._tag === "Inferred" && knowledgeEpisodeCount(supports(memory).flatMap(knowledgeMemoryMentions), [source]) < 3, DROPPED.routine),
   ]) }))
   /** The memories this stage retires: no memory of it may restate them, as publication refuses a corroboration of a memory the stage retires. */
   const retiring = new Set(ownChecks.filter(({ problem }) => Option.isNone(problem)).flatMap(({ memory }) => memory.supersedes))

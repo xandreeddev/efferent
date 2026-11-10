@@ -70,7 +70,8 @@ export const observeModelAttempt = (attempt: ModelAttempt, value: unknown, final
 export const completeModelAttempt = Effect.fn("models.record_attempt")(function* (attempt: ModelAttempt, outcome: ModelCallOutcome): Effect.fn.Return<void, TurnError> {
   return yield* Effect.uninterruptible(Effect.gen(function* () {
     const claimed = yield* Ref.modify(attempt.phase, claimModelCompletion)
-    if (!claimed) return yield* Deferred.await(attempt.ack)
+    if (!claimed) return yield* Effect.interruptible(Deferred.await(attempt.ack))
+    const result = yield* Effect.exit(Effect.gen(function* () {
     const usage = modelCallUsageOf(attempt.protocol, yield* Ref.get(attempt.usage))
     const data: ModelCallData = {
       callId: attempt.callId, attempt: attempt.ordinal, purpose: attempt.purpose, method: attempt.method, model: attempt.model,
@@ -79,7 +80,8 @@ export const completeModelAttempt = Effect.fn("models.record_attempt")(function*
     }
     // The ledger settles before the fact is recorded: it holds what the attempt cost by the time `model.called` is published.
     yield* settleSend(attempt.spend, usage, yield* Ref.get(attempt.reach))
-    const result = yield* Effect.exit(recordCompletion(data).pipe(Effect.provideService(CurrentModelCallRecorder, attempt.recorder)))
+    yield* recordCompletion(data).pipe(Effect.provideService(CurrentModelCallRecorder, attempt.recorder))
+    }))
     const phase: ModelCompletionState = Exit.isSuccess(result) ? { _tag: "Recorded" } : { _tag: "RecordFailed" }
     yield* Ref.set(attempt.phase, phase)
     yield* Deferred.done(attempt.ack, result)
@@ -94,7 +96,7 @@ export const modelOutcomeOfExit = <A, E>(exit: Exit.Exit<A, E>): ModelCallOutcom
 
 /** Provider/SDK cleanup settles only attempts that no raw boundary has already claimed. */
 export const completePendingAttempts = Effect.fnUntraced(function* <A, E>(call: ModelCompletionCall, exit: Exit.Exit<A, E>): Effect.fn.Return<void, TurnError> {
-  yield* Effect.forEach(yield* Ref.get(call.attempts), (attempt) => Effect.flatMap(Ref.get(attempt.phase), (state) => ModelCompletionState.match(state, { Open: () => completeModelAttempt(attempt, modelOutcomeOfExit(exit)), Recorded: () => Effect.void, Recording: () => Deferred.await(attempt.ack), RecordFailed: () => Deferred.await(attempt.ack) })), { concurrency: 1, discard: true })
+  yield* Effect.forEach(yield* Ref.get(call.attempts), (attempt) => Effect.flatMap(Ref.get(attempt.phase), (state) => ModelCompletionState.match(state, { Open: () => completeModelAttempt(attempt, modelOutcomeOfExit(exit)), Recorded: () => Effect.void, Recording: () => Effect.interruptible(Deferred.await(attempt.ack)), RecordFailed: () => Effect.interruptible(Deferred.await(attempt.ack)) })), { concurrency: 1, discard: true })
 })
 
 export const observeResponseUsage = (response: object, value: unknown, final: boolean, reasoning = true): Effect.Effect<void> => Option.match(modelAttemptOf(response), {

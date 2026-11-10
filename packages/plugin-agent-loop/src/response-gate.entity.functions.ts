@@ -1,7 +1,6 @@
-import type { Tool } from "effect/ai"
-import { Array as Arr, Effect, Match, Option, Schema } from "effect"
+import { Effect, Match, Option, Predicate, Schema } from "effect"
 import { clipTo, framed, hostNote } from "@xandreed/core"
-import type { Failure, FinishReason } from "@xandreed/core"
+import type { Failure, FinishReason, PreparedToolCall, PreparedToolHandler } from "@xandreed/core"
 import { WholeReason } from "./response-gate.entity.js"
 import type { CutReason, MalformedCall, RejectedCall, ResponseVerdict } from "./response-gate.entity.js"
 
@@ -21,6 +20,37 @@ export const duplicateCallCorrective = (tools: ReadonlyArray<string>): string =>
  */
 export const verdictOf = (reason: FinishReason, callsToRun: boolean): ResponseVerdict =>
   isWhole(reason) || (reason === "unknown" && !callsToRun) ? { _tag: "Whole" } : { _tag: "Cut", reason }
+
+/** A whole response's call as the gate checked it: why the loop will not run it, or the call prepared to run. */
+export interface CheckedCall {
+  readonly rejection: Option.Option<MalformedCall>
+  readonly prepared: Option.Option<PreparedToolCall>
+}
+
+/**
+ * Each of a whole response's tool calls checked and prepared, in call order:
+ * a call whose id an earlier call of the response has is a `DuplicateId`; one
+ * naming no tool the step has (`tools`' own keys only, so `constructor` or
+ * `toString` names none) is `NotFound`; otherwise `execution` prepares it,
+ * decoding its parameters once (a JSON Schema tool's pass through), and one
+ * that does not prepare is `Invalid` with the decoder's report. Preparation
+ * starts no handler, so every call is checked before any runs.
+ */
+export const checkCalls = (
+  calls: ReadonlyArray<{ readonly id?: string | undefined; readonly name: string; readonly params: unknown }>,
+  tools: Readonly<Record<string, unknown>>,
+  execution: PreparedToolHandler,
+): Effect.Effect<ReadonlyArray<CheckedCall>> => Effect.forEach(calls, (call, index): Effect.Effect<CheckedCall> => {
+  if (call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)) return Effect.succeed({ rejection: Option.some({ _tag: "DuplicateId", toolName: call.name }), prepared: Option.none() })
+  if (!Object.hasOwn(tools, call.name)) return Effect.succeed({ rejection: Option.some({ _tag: "NotFound", toolName: call.name }), prepared: Option.none() })
+  return execution.prepare(call.name, call.params).pipe(Effect.match({
+    onSuccess: (prepared): CheckedCall => ({ rejection: Option.none(), prepared: Option.some(prepared) }),
+    onFailure: (error): CheckedCall => ({
+      rejection: Option.some({ _tag: "Invalid", toolName: call.name, description: Predicate.hasProperty(error.reason, "description") && typeof error.reason.description === "string" ? error.reason.description : error.message }),
+      prepared: Option.none(),
+    }),
+  }))
+}, { concurrency: 1 })
 
 /** How a cut reply ended, in words: the model reads them in each of its calls' results, the host in the run's failure. */
 const cutWords: Readonly<Record<CutReason, string>> = {
@@ -53,47 +83,6 @@ export const lengthCorrective = (callsToRun: boolean): string => hostNote(callsT
 export const truncatedMessage = (reason: CutReason, step: number, cutsInARow: number): string => reason === "length"
   ? `the model's replies reached the output limit ${cutsInARow} times in a row, the last at step ${step}, after ${MAX_CUT_CORRECTIVES} correctives`
   : `the model's reply at step ${step} ${cutWords[reason]}`
-
-/** The step's tool of that name, its own key only: `constructor` or `toString` names no tool. */
-const toolNamed = (tools: Readonly<Record<string, Tool.Any>>, name: string): Option.Option<Tool.Any> =>
-  Object.hasOwn(tools, name) ? Option.fromNullishOr(tools[name]) : Option.none()
-
-/**
- * Each of a whole response's tool calls checked, in call order: None for
- * one the loop may run, else why it will not run it: a tool the step does
- * not have, parameters its tool's schema does not decode, or an id an
- * earlier call of the response has. A tool whose parameters are not a
- * Schema (a JSON Schema the toolkit passes through) checks its own. The
- * parameters decode as the toolkit decodes them, in an Effect with the
- * caller's services: a schema that decodes asynchronously, or through a
- * service, is checked like any other.
- */
-export const callRejections = (
-  calls: ReadonlyArray<{ readonly id?: string; readonly name: string; readonly params: unknown }>,
-  tools: Readonly<Record<string, Tool.Any>>,
-): Effect.Effect<ReadonlyArray<Option.Option<MalformedCall>>> => Effect.forEach(calls, (call, index): Effect.Effect<Option.Option<MalformedCall>> => call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)
-  ? Effect.succeed(Option.some({ _tag: "DuplicateId", toolName: call.name }))
-  : Option.match(toolNamed(tools, call.name), {
-  onNone: () => Effect.succeed(Option.some({ _tag: "NotFound", toolName: call.name })),
-  onSome: (tool) => Option.match(Option.liftPredicate(tool.parametersSchema, Schema.isSchema), {
-    onNone: () => Effect.succeedNone,
-    onSome: (parameters) => Schema.decodeUnknownEffect(parameters as Schema.Decoder<unknown>)(call.params).pipe(Effect.match({
-      onSuccess: () => Option.none(),
-      onFailure: (error) => Option.some({ _tag: "Invalid", toolName: call.name, description: error.message }),
-    })),
-  }),
-}), { concurrency: 1 })
-
-/**
- * The first of a whole response's tool calls the loop will not run
- * (`callRejections`). Under the default policy none of the calls runs until
- * every one passes (the loop answers the first that does not as a malformed
- * response).
- */
-export const malformedCall = (
-  calls: ReadonlyArray<{ readonly id?: string; readonly name: string; readonly params: unknown }>,
-  tools: Readonly<Record<string, Tool.Any>>,
-): Effect.Effect<Option.Option<MalformedCall>> => callRejections(calls, tools).pipe(Effect.map((checked) => Arr.findFirst(checked, (found) => found)))
 
 /** Whether the loop can answer a call alone (`RejectedCall`), not only by answering its whole response as malformed. */
 export const isRejectedCall = (call: MalformedCall): call is RejectedCall => call._tag !== "DuplicateId"

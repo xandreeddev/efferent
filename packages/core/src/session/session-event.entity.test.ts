@@ -3,7 +3,7 @@ import { Effect, Match, Option, Schema } from "effect"
 import fc from "fast-check"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
-import { toPromptMessages } from "../internal/mapping.entity.functions.js"
+import { toPromptMessages } from "../domain/message-mapping.entity.functions.js"
 import { canonicalJson, renderLog } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
@@ -262,6 +262,12 @@ describe("the journal's schemas", () => {
     expect(kinds.filter((kind) => !RESERVED_KINDS.includes(kind) || Option.isNone(journalSchemaOf(kind)))).toEqual([])
     // A bus event's own name has a schema only when it is a reserved kind.
     expect(tags.filter((tag) => Option.isSome(journalSchemaOf(tag)) && !RESERVED_KINDS.includes(tag))).toEqual([])
+  })
+  test("a stored context.built requires its budget, as the bus event does", () => {
+    const built = { step: 0, turn: 1, run: 0, strategy: "window", strategyVersion: "1", fingerprint: "f", systemFingerprint: "s", estimatedTokens: 10, reservedTokens: 2, budgetTokens: 100, compactions: 0, activeTools: [] }
+    const { budgetTokens: _, ...withoutBudget } = built
+    expect(decodes("context.built", built)).toBe(true)
+    expect(decodes("context.built", withoutBudget)).toBe(false)
   })
   test("what the bus stores decodes with its kind's schema, and nothing it omits is required", () => {
     const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }

@@ -117,6 +117,8 @@ validated GitHub Actions context; local use retains interactive authentication.
 
 Run the definition of done from root AGENTS.md. Release script and workflow
 policy tests run within `bun test`; the package verification exercises the
-packed artifacts on Node and Bun. New release fixtures stay compatible with
-all recorded prior releases. Provider-backed quality claims require their
+packed artifacts on Node and Bun. The new release's journal fixture replays
+under the release's schemas; fixtures of older stored formats are refused
+with `session.version` and left unchanged, never decoded by compatibility
+code. Provider-backed quality claims require their
 own configured models, credentials and evidence.

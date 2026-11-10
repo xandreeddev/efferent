@@ -10,7 +10,7 @@ import { ModelRequestHeader } from "../turn/model-request.entity.js"
 import { MemorySnapshotData } from "../memory/memory-snapshot.entity.js"
 import { StoredModelRequestHeader } from "../turn/model-request-header.entity.js"
 import { RequestPartData } from "../turn/request-part.entity.js"
-import { ContextBuiltEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
   InboxDroppedData,
@@ -438,24 +438,18 @@ const memorySchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unkno
   "fields" in member ? [[MemoryKindOf[member.fields._tag.schema.literal], StoredMemoryData(storedBody(member.fields))] as const] : [])
 
 /**
- * Stored bus events whose later keys older records lack: `context.built`
- * has `budgetTokens` from 0.14.0, so a record written before reads without it.
- */
-const laterKeys: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([
-  ["context.built", Schema.Struct(Struct.evolve(Struct.omit(ContextBuiltEvent.fields, ["_tag"]), { budgetTokens: (field) => Schema.optionalKey(field) }))],
-])
-
-/**
  * The stored schema of each bus event in `TURN_EVENT_KINDS` that is stored
  * whole under its own name (`step.usage` is `StepUsageData`, `tool.completed`
  * and `tool.refused` drop their payload). A bus event left out of
- * `TURN_EVENT_KINDS` has none. A key an older release did not store is
- * optional (`laterKeys`).
+ * `TURN_EVENT_KINDS` has none. Each key such an event stores is as required
+ * as it is on the bus (a stored `context.built` needs its `budgetTokens`).
+ * This says nothing of the stored records with schemas of their own, some
+ * of which still read a key older records lack (a token count as 0).
  */
 const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = TurnEvent.members.flatMap((member) => {
   const tag = member.fields._tag.schema.literal
   if (storedPayload.has(tag) || !TURN_EVENT_KINDS.includes(tag)) return []
-  return [[tag, laterKeys.get(tag) ?? Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
+  return [[tag, Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
 })
 
 /** Every journal kind's schema; a kind read back by its fields takes its `StoredData` schema, the one `readStored` decodes. */

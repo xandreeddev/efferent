@@ -1,3 +1,4 @@
+import { prepareToolkit } from "@xandreed/core"
 import { expect, test } from "bun:test"
 import { Effect, Exit, Option, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Tool, Toolkit } from "effect/ai"
@@ -6,7 +7,7 @@ import { CurrentToolResultReceipt, makeToolResultReceipt } from "@xandreed/core/
 import { runLoop } from "./loop.js"
 
 const Probe = Tool.make("receipt_probe", { description: "Exercise invocation ownership.", parameters: Tool.EmptyParams, success: Schema.String, failure: Failure, failureMode: "return" })
-const toolkit = Toolkit.make(Probe)
+const toolkit = prepareToolkit(Toolkit.make(Probe))
 const run = { id: RunId.make("receipt-loop"), turn: 1, ordinal: RunOrdinal.make(2) }
 const noModel = LanguageModel.make({ generateText: () => Effect.die("the planned batch must not call a model"), streamText: () => Stream.die("the planned batch must not stream") })
 type ReceiptGuard = Effect.Success<ReturnType<typeof makeToolResultReceipt>>["guard"]

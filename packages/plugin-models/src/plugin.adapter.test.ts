@@ -225,8 +225,8 @@ describe("models plugin storage: memory", () => {
     const failures = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const services = yield* build(".", { storage: "memory", model: "opencode:glm-5.1", credentials: { opencode: { type: "api_key", key: Redacted.make("k") } } })
       return [
-        ...yield* failuresOf(authStoreConformance(Context.getUnsafe(services, AuthStore))),
-        ...yield* failuresOf(settingsStoreConformance(Context.getUnsafe(services, SettingsStore), { writable: true })),
+        ...yield* failuresOf(authStoreConformance({ open: () => build(".", { storage: "memory", credentials: { opencode: { type: "api_key", key: Redacted.make("k") } } }).pipe(Effect.map((services) => ({ store: Context.getUnsafe(services, AuthStore) }))) })),
+        ...yield* failuresOf(settingsStoreConformance({ writable: true, open: () => build(".", { storage: "memory", model: "opencode:glm-5.1" }).pipe(Effect.map((services) => ({ store: Context.getUnsafe(services, SettingsStore) }))) })),
         ...yield* failuresOf(modelCatalogConformance(Context.getUnsafe(services, ModelCatalog), { includes: ["opencode:glm-5.2"] })),
       ]
     })))
@@ -238,8 +238,7 @@ describe("models plugin storage: local", () => {
   test("its SettingsStore is read-only and conforms as such", async () => {
     const workspace = tempDir("efferent-local-kit-")
     const failures = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const services = yield* build(workspace, { inheritPrevious: false, model: "opencode:glm-5.1" })
-      return yield* failuresOf(settingsStoreConformance(Context.getUnsafe(services, SettingsStore), { writable: false }))
+      return yield* failuresOf(settingsStoreConformance({ writable: false, open: () => build(workspace, { inheritPrevious: false, model: "opencode:glm-5.1" }).pipe(Effect.map((services) => ({ store: Context.getUnsafe(services, SettingsStore) }))) }))
     })))
     expect(failures).toEqual([])
   })

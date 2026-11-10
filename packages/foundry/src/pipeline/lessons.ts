@@ -37,7 +37,7 @@ const MESSAGE_CAP = 200
 
 interface Tally {
   readonly failedAttempts: number
-  readonly runIds: ReadonlySet<string>
+  readonly runIds: Set<string>
   readonly lastMessage: string
   readonly lastFixHint: Option.Option<string>
 }
@@ -63,32 +63,18 @@ export const deriveLessons = (
     runs,
     Order.mapInput(Order.Number, (run: FactoryRun) => run.endedAt),
   )
-  const tallies = ordered.reduce((acc: ReadonlyMap<string, Tally>, run) => {
-    const perAttempt = run.attempts.flatMap((attempt) => {
-      const rules = new Set(
-        attempt.report.failures.flatMap((failure) =>
-          failure.findings.map((finding) => String(finding.rule)),
-        ),
-      )
-      return [...rules].map((rule) => {
-        // The most recent error finding for this rule in this attempt.
-        const latest = attempt.report.failures
-          .flatMap((failure) => failure.findings)
-          .findLast((finding) => String(finding.rule) === rule)
-        return { rule, latest }
-      })
-    })
-    return perAttempt.reduce((inner: ReadonlyMap<string, Tally>, hit) => {
-      const previous = inner.get(hit.rule)
-      const next: Tally = {
-        failedAttempts: (previous?.failedAttempts ?? 0) + 1,
-        runIds: new Set([...(previous?.runIds ?? []), String(run.id)]),
-        lastMessage: hit.latest?.message.slice(0, MESSAGE_CAP) ?? previous?.lastMessage ?? "",
-        lastFixHint: hit.latest?.fixHint ?? previous?.lastFixHint ?? Option.none(),
-      }
-      return new Map([...inner, [hit.rule, next]])
-    }, acc)
-  }, new Map<string, Tally>())
+  const tallies = new Map<string, Tally>()
+  for (const run of ordered) for (const attempt of run.attempts) {
+    const latestByRule = new Map<string, import("../domain/Finding.js").Finding>()
+    for (const verdict of attempt.report.failures) for (const finding of verdict.findings) latestByRule.set(String(finding.rule), finding)
+    for (const [rule, latest] of latestByRule) {
+      const previous = tallies.get(rule)
+      const runIds = previous?.runIds ?? new Set<string>()
+      runIds.add(String(run.id))
+      tallies.set(rule, { failedAttempts: (previous?.failedAttempts ?? 0) + 1, runIds,
+        lastMessage: latest.message.slice(0, MESSAGE_CAP), lastFixHint: latest.fixHint })
+    }
+  }
 
   const lessons = [...tallies]
     .map(

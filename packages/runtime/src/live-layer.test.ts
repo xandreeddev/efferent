@@ -65,3 +65,21 @@ test("a registry closed while a replacement builds closes the staged generation,
   expect(result).toMatchObject({ code: "module.closed" })
   expect(disposed).toEqual([2])
 })
+
+test("shutdown releases admission before running a held finalizer", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const layer = Layer.effect(Version, Effect.acquireRelease(Effect.succeed({ value: 1 }), () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))))
+    const registry = yield* makeLiveLayer(layer).pipe(Scope.provide(scope))
+    const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void))
+    yield* Effect.gen(function* () {
+      yield* Deferred.await(entered)
+      const result = yield* registry.use(Effect.void).pipe(Effect.result, Effect.timeoutOption("1 second"))
+      expect(Option.isSome(result)).toBe(true)
+      if (Option.isSome(result)) expect(result.value._tag === "Failure" && result.value.failure.code).toBe("module.closed")
+    }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+    yield* Fiber.join(closing)
+  })))
+})

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import type { Scope } from "effect"
+import { AiError } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Capabilities, RunContext, SessionEnvironment, ToolInterceptor, ToolRegistry } from "@xandreed/core"
-import type { Capability } from "@xandreed/core"
+import { Capabilities, CurrentAgentRun, prepareToolkit, RunContext, SessionEnvironment, ToolInterceptor, ToolRegistry } from "@xandreed/core"
+import type { Capability, PreparedToolCall, PreparedToolHandler, PreparedToolkit } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { makeRegistry, toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
 import { toolRegistryConformance } from "./turn/tool-registry.conformance.js"
@@ -33,6 +34,50 @@ describe("the ToolRegistry kit catches careless registries", () => {
     expect(await failedChecks(toolRegistryConformance(careless))).toEqual([
       "interceptor-after", "interceptor-deny", "interceptor-durable", "interceptor-errors", "interceptor-order", "interceptor-policy", "interceptor-respond", "interceptor-rewrite", "interceptor-scope",
     ])
+  })
+  test("one that keeps its interception in a customised handle and wraps it with a plain prepareToolkit fails the interception checks", async () => {
+    // The plugin's toolkit (its interception lives in its own handle and execution hook), wrapped again without the hook:
+    // the loop's prepared path then runs the identity toolkit, and only a direct handle call would still be intercepted.
+    const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => registry.open(session).pipe(Effect.map((tools) => ({ ...tools, toolkit: prepareToolkit(tools.toolkit) }))),
+    })))
+    expect(await failedChecks(toolRegistryConformance(careless))).toEqual([
+      "interceptor-after", "interceptor-deny", "interceptor-durable", "interceptor-errors", "interceptor-order", "interceptor-policy", "interceptor-respond", "interceptor-rewrite", "interceptor-scope",
+    ])
+  })
+  /** The plugin's registry with its toolkit's preparation changed by `change`. */
+  const preparing = (change: (handler: PreparedToolHandler) => PreparedToolHandler) => (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) =>
+    plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => registry.open(session).pipe(Effect.map((tools) => ({
+        ...tools,
+        toolkit: Object.assign(Object.create(tools.toolkit) as PreparedToolkit<Record<string, Tool.Any>>, { execution: Effect.map(tools.toolkit.execution, change) }),
+      }))),
+    })))
+  test("one that decodes a call's parameters twice fails only the decode-once check", async () => {
+    const twice = preparing((handler) => ({ prepare: (name, input) => handler.prepare(name, input).pipe(Effect.andThen(handler.prepare(name, input))) }))
+    expect(await failedChecks(toolRegistryConformance(twice))).toEqual(["prepare-decode-once"])
+  })
+  test("one whose prepared input is the caller's own object fails only the raw-input check", async () => {
+    const shared = preparing((handler) => ({ prepare: (name, input) => handler.prepare(name, input).pipe(Effect.map((prepared) => ({ ...prepared, input: input as PreparedToolCall["input"] }))) }))
+    expect(await failedChecks(toolRegistryConformance(shared))).toEqual(["prepare-raw-input"])
+  })
+  test("one that runs a call's handler while preparing it fails the prepare-before-run check", async () => {
+    const eager = preparing((handler) => ({ prepare: (name, input) => handler.prepare(name, input).pipe(Effect.tap((prepared) => prepared.run().pipe(Effect.flatMap(Stream.runDrain)))) }))
+    expect(await failedChecks(toolRegistryConformance(eager))).toContain("prepare-before-run")
+  })
+  test("one whose prepared calls read the caller's run when they run, as the loop always gives them, passes every check", async () => {
+    // A per-run limit, say: legitimate on every call the loop makes, since the loop prepares and runs a call inside its step.
+    const runScoped = preparing((handler) => ({
+      prepare: (name, input) => handler.prepare(name, input).pipe(Effect.map((prepared) => ({
+        ...prepared,
+        run: (id?: string) => Effect.service(CurrentAgentRun).pipe(Effect.flatMap((run) => Option.isNone(run)
+          ? Effect.fail(AiError.make({ module: "Registry", method: "run", reason: new AiError.InvalidRequestError({ description: "a prepared call ran outside a run" }) }))
+          : prepared.run(id))),
+      }))),
+    }))
+    expect(await failedChecks(toolRegistryConformance(runScoped))).toEqual([])
   })
   test("one that ignores per-tool host policy fails policy and interception breaker checks", async () => {
     const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => {

@@ -2,21 +2,15 @@ import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { readFile, readdir } from "node:fs/promises"
 import { join } from "node:path"
-import { Effect, Option, Schema } from "effect"
-import { ConversationId, entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData, storedRecordOf } from "@xandreed/core"
+import { Context, Effect, Layer, Option, Schema } from "effect"
+import { ConversationId, entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, SessionLog, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, STORED_FORMAT, StoredData, storedRecordOf } from "@xandreed/core"
+import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { StoredKind } from "@xandreed/core"
 import { TASK_ANSWERED, TASK_QUESTIONED, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskQuestioned, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
-/*
- * What a release stored must stay readable. Each `fixtures/journal-<version>.json`
- * holds session journals recorded from that release's code by
- * `scripts/record-journal-fixture.ts`: every kind the framework reserved
- * then (listed in the fixture) and stores, the tasks plugin's records, the
- * inbox and a host event. This code decodes every event of every fixture with its kind's
- * schema, rebuilds the memory log from them, and rebuilds every model
- * request from its stored header. A change that breaks one of these breaks
- * every session that release wrote.
- */
+/* Released fixtures are immutable historical evidence. Only the current
+ * development fixture promises replay with this release's schemas. Older
+ * formats are refused at the Sessions boundary without touching their data. */
 
 const Fixture = Schema.Struct({
   format: Schema.Literal(1),
@@ -25,7 +19,7 @@ const Fixture = Schema.Struct({
   storedFormat: Schema.optionalKey(Schema.Int),
   /** The kinds `RESERVED_KINDS` held in that version. */
   reserved: Schema.Array(Schema.String),
-  sessions: Schema.Array(Schema.Struct({ header: SessionHeader, events: Schema.Array(SessionLogEvent) })),
+  sessions: Schema.Array(Schema.Struct({ header: Schema.JsonObject, events: Schema.Array(SessionLogEvent) })),
 })
 
 /** The tasks plugin's own records: not the framework's, decoded with the plugin's schemas. */
@@ -48,15 +42,15 @@ const recordedFormats = await Effect.runPromise(Effect.tryPromise(() => Bun.file
   Effect.map((record) => record.history.map((row) => row.format)),
 ))
 
-test("a fixture's stored format, when it names one, is one this release reads and docs/stored-format.json records", () => {
+test("historical format stamps are recorded and the current format has a record", () => {
   expect(recordedFormats).toContain(STORED_FORMAT)
-  expect(fixtures.flatMap(({ file, fixture }) => fixture.storedFormat === undefined || (fixture.storedFormat <= STORED_FORMAT && recordedFormats.includes(fixture.storedFormat)) ? [] : [`${file}: stored format ${fixture.storedFormat}`])).toEqual([])
+  expect(fixtures.flatMap(({ file, fixture }) => fixture.storedFormat === undefined || (recordedFormats.includes(fixture.storedFormat)) ? [] : [`${file}: stored format ${fixture.storedFormat}`])).toEqual([])
 })
 
 test("the journals of every release since 0.13.0 are kept", () => {
   expect(files).toContain("journal-0.13.0.json")
   expect(files).toContain("journal-0.14.0.json")
-  expect(fixtures.filter(({ file, fixture }) => file !== `journal-${fixture.version}.json`).map(({ file }) => file)).toEqual([])
+  expect(fixtures.filter(({ file, fixture }) => file !== "journal-unreleased.json" && file !== `journal-${fixture.version}.json`).map(({ file }) => file)).toEqual([])
 })
 
 test("the 0.14.0 fixture keeps the exact bytes published with its release tag", async () => {
@@ -95,7 +89,35 @@ test("the golden conversation's tool lifecycle and messages decode typed, record
   expect(new Set(messages)).toEqual(new Set(["assistant"]))
 })
 
-fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal`, () => {
+const currentFixtures = await Effect.runPromise(Effect.forEach(fixtures.filter(({ fixture }) => fixture.storedFormat === STORED_FORMAT), ({ fixture }) => Schema.decodeUnknownEffect(Schema.Struct({ ...Fixture.fields, sessions: Schema.Array(Schema.Struct({ header: SessionHeader, events: Schema.Array(SessionLogEvent) })) }))(Schema.encodeSync(Fixture)(fixture)), { concurrency: 1 }))
+
+/** Every stored event of a session. */
+const everything = { after: 0, limit: Option.none(), kinds: [], from: "start" as const }
+
+fixtures.filter(({ fixture }) => fixture.storedFormat !== STORED_FORMAT).forEach(({ fixture }) => test(`a ${fixture.version} session journal (stored format ${fixture.storedFormat ?? 0}) is refused without mutation`, async () => {
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const log = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
+    // The fixture's first session as that version stored it: its header, its events and its format stamp.
+    const stored = fixture.sessions[0]!
+    const header = yield* Schema.decodeUnknownEffect(SessionHeader)(stored.header)
+    const created = yield* log.create({ header, state: { sessions: { format: fixture.storedFormat ?? 0 } } })
+    const ref = { id: header.id, owner: header.owner, incarnation: created.incarnation }
+    yield* log.commit(ref, { expect: created.revision, notAfter: Option.none(), events: stored.events.map((event) => ({ kind: event.kind, turn: event.turn, data: event.data })), state: Option.none() })
+    const before = { head: yield* log.head(header.id), events: yield* log.read(ref, everything) }
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))), Sessions)
+    const address = { id: header.id, owner: header.owner }
+    const refused = yield* Effect.result(sessions.get(address)).pipe(Effect.map((outcome) => outcome._tag === "Failure" && outcome.failure._tag === "SessionLogError" ? outcome.failure.code : outcome._tag))
+    // A read, refused or not, changes nothing either.
+    yield* Effect.result(sessions.read(address))
+    const after = { head: yield* log.head(header.id), events: yield* log.read(ref, everything) }
+    return { refused, before, after, count: stored.events.length }
+  })))
+  expect(result.refused).toBe("session.version")
+  expect(result.before.events).toHaveLength(result.count)
+  expect({ ...result.after, head: { ...result.after.head, now: 0 } }).toEqual({ ...result.before, head: { ...result.before.head, now: 0 } })
+}))
+
+currentFixtures.forEach((fixture) => describe(`a ${fixture.version} session journal`, () => {
   const events = fixture.sessions.flatMap((session) => session.events)
   const kinds = new Set(events.map((event) => event.kind))
 

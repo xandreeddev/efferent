@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
 import { Cause, Clock, Effect, Exit, Fiber, Option, Queue, Ref, Stream, Tracer } from "effect"
-import type { Context } from "effect"
+import type { Context, Scope } from "effect"
 import { Bash, BashError } from "@xandreed/core"
 import { bashConformance } from "@xandreed/core/conformance"
 import type { BashEvent } from "@xandreed/core"
@@ -27,7 +27,7 @@ const subject: BashSubject = {
 type BashShape = Context.Service.Shape<typeof Bash>
 
 /** Run `body` with a Bash built from `options` and an empty directory. */
-const withBash = <A>(options: BashLiveOptions, body: (bash: BashShape, root: string) => Effect.Effect<A, unknown>) =>
+const withBash = <A>(options: BashLiveOptions, body: (bash: BashShape, root: string) => Effect.Effect<A, unknown, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(Effect.all({ root: temporary, bash: makeBash(options) }).pipe(Effect.flatMap(({ bash, root }) => body(bash, root)))))
 
 /** `alive` or `gone` for the process whose id is in `file` (a zombie is gone). */
@@ -64,6 +64,7 @@ describe("the local Bash", () => {
       // The child keeps stdout open: the stream ends exitGraceMs after the shell exits, not when the child does.
       const started = yield* Clock.currentTimeMillis
       const result = yield* bash.exec("sleep 30 & echo $! > child.pid; printf started", { cwd: root })
+      yield* Effect.addFinalizer(() => bash.exec('kill -9 "$(cat child.pid)" 2>/dev/null; true', { cwd: root }).pipe(Effect.ignore({ log: "Warn", message: "fixture child cleanup failed" })))
       const waited = (yield* Clock.currentTimeMillis) - started
       const child = yield* statusOf(bash, root)
       yield* bash.exec("kill -9 \"$(cat child.pid)\"", { cwd: root })
@@ -76,6 +77,7 @@ describe("the local Bash", () => {
     const outcome = await withBash({ killBackground: false, exitGraceMs: 100 }, (bash, root) => Effect.gen(function* () {
       const writer = "sleep 0.4; while :; do echo late; sleep 0.1; done"
       yield* bash.exec(`sh -c '${writer}' & echo $! > noisy.pid; sh -c '${writer}' > quiet.log 2>&1 & echo $! > quiet.pid`, { cwd: root })
+      yield* Effect.addFinalizer(() => bash.exec('kill -9 "$(cat noisy.pid)" "$(cat quiet.pid)" 2>/dev/null; true', { cwd: root }).pipe(Effect.ignore({ log: "Warn", message: "fixture child cleanup failed" })))
       yield* Effect.sleep("1200 millis")
       const status = { noisy: yield* statusOf(bash, root, "noisy.pid"), quiet: yield* statusOf(bash, root, "quiet.pid") }
       yield* bash.exec("kill -9 \"$(cat noisy.pid)\" \"$(cat quiet.pid)\" 2>/dev/null; true", { cwd: root })

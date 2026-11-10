@@ -276,8 +276,10 @@ local crash tests do not certify every NFS or SMB configuration.
 
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
 them in a SQLite file on Bun, which records its schema version: opening it
-upgrades an older file, and a file a newer release wrote fails to open with
-`store.version`. Any other store can implement the `SessionLog` port.
+initializes an empty file, and a file at any other schema version, older or
+newer, fails to open with `store.version`, unchanged. Neither backend
+migrates a store: an unsupported one is replaced by a fresh location. Any
+other store can implement the `SessionLog` port.
 
 ## Plugins
 

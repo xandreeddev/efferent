@@ -85,10 +85,11 @@ const exportService = (options: LangfuseExportOptions) => ({
           comment: score.comment
         }
       }))
+      const events = [...traces, ...scores]
       const batches = Array.from(
-        { length: Math.ceil((traces.length + scores.length) / 50) },
+        { length: Math.ceil(events.length / 50) },
         (_, index) =>
-          [...traces, ...scores].slice(index * 50, (index + 1) * 50)
+          events.slice(index * 50, (index + 1) * 50)
       )
       const responses = yield* Effect.forEach(
         batches,

@@ -37,16 +37,16 @@ describe("journey: a session a newer release wrote", () => {
 
       const first = yield* agent.turn({ turn: { session, userMessage: new UserMessage({ text: "hi" }), runId: RunId.make("run-1") }, services }, oneRun)
       const stamped = yield* log.head(session.id)
-      yield* log.commit(session.id, {
+      yield* Effect.gen(function* () { const sessionHead = yield* log.head(session.id); return yield* log.commit({ id: sessionHead.header.id, owner: sessionHead.header.owner, incarnation: sessionHead.incarnation }, {
         expect: stamped.revision,
         notAfter: Option.none(),
         events: [],
         state: Option.some({ ...stamped.state, sessions: { ...(stamped.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
-      })
+      }) })
       const before = yield* log.head(session.id)
       const refused = yield* Effect.flip(agent.turn({ turn: { session, userMessage: new UserMessage({ text: "again" }), runId: RunId.make("run-2") }, services }, oneRun))
       const after = yield* log.head(session.id)
-      return { first: first.outcome, refused, asked: yield* Ref.get(asked), before, after, view: yield* sessions.get(session) }
+      return { first: first.outcome, refused, asked: yield* Ref.get(asked), before, after, read: yield* Effect.result(sessions.get(session)) }
     })))
 
     expect(observed.first).toBe("completed")
@@ -55,7 +55,7 @@ describe("journey: a session a newer release wrote", () => {
       .toEqual(["SessionLogError", "session.log", "session.version"])
     expect(observed.asked).toBe(1)
     expect([observed.after.revision, observed.after.seq]).toEqual([observed.before.revision, observed.before.seq])
-    // The session is still read: one turn, ended.
-    expect([observed.view.turns, Option.isNone(observed.view.open)]).toEqual([1, true])
+    // Reads also reject an unsupported format before exposing its state.
+    expect(observed.read._tag).toBe("Failure")
   })
 })

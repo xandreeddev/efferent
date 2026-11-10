@@ -6,6 +6,7 @@ import { Failure } from "../domain/failure.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunOrdinal } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { SessionLogError } from "../session/session-log.entity.js"
 import { turnEndingOf } from "../session/sessions.entity.functions.js"
@@ -49,6 +50,18 @@ describe("the turn event bus", () => {
       yield* events.publish(started(0))
     })))
     expect(exit._tag === "Failure" ? failureCode(exit.failure) : "none").toBe("events.depth")
+  })
+
+  test("a reaction cycle through a subscription made inside a handler still hits the depth cap", async () => {
+    const exit = await run(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 3 })
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? onEvent("step.started", (inner) => inner.step > 0 ? events.publish(started(inner.step + 1)) : Effect.void)(events)
+        : Effect.void)(events)
+      yield* events.publish(started(0))
+      yield* events.publish(started(1))
+    })).pipe(Effect.timeoutOption("2 seconds")))
+    expect(exit._tag === "Success" && Option.isNone(exit.success) ? "hung" : exit._tag === "Failure" ? failureCode(exit.failure) : "none").toBe("events.depth")
   })
 
   test("a failing handler fails the publisher, and a subscription ends with its scope", async () => {
@@ -215,18 +228,136 @@ describe("the turn event bus", () => {
     ])
   })
 
-  test("a background handler that publishes what it takes, past its queue's size, neither deadlocks nor drops or reorders it", async () => {
-    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("a reentrant publication fails at capacity without overflowing or deadlocking", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const events = yield* makeTurnEvents({ maxDepth: 4 })
-      const seen = yield* Ref.make<ReadonlyArray<number>>([])
-      yield* onEvent("step.started", (event) => Ref.update(seen, (all) => [...all, event.step]).pipe(
-        Effect.andThen(event.step === 0 ? Effect.forEach([1, 2, 3], (step) => events.publish(started(step)), { discard: true }) : Effect.void),
-      ), { mode: "background", capacity: 1 })(events)
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      yield* onEvent("step.started", (event) => event.step === 0 ? Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)), Effect.andThen(events.publish(started(2))),
+      ) : Effect.void, { mode: "background", capacity: 1 })(events)
       yield* events.publish(started(0))
-      const drained = yield* events.drain.pipe(Effect.timeoutOption("2 seconds"))
-      return { drained: Option.isSome(drained), seen: yield* Ref.get(seen) }
+      yield* Deferred.await(entered)
+      yield* events.publish(started(1))
+      yield* Deferred.succeed(release, undefined)
+      return yield* Effect.result(events.drain)
     })))
-    expect(outcome).toEqual({ drained: true, seen: [0, 1, 2, 3] })
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure") expect(failureCode(result.failure)).toBe("events.capacity")
+  })
+
+  test("a background subscription made inside another lane's handler is its own lane: its reentrant publication fails at capacity instead of waiting", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      // Lane A subscribes lane B from inside its own handler.
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? onEvent("step.started", (inner) => inner.step === 10 ? Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)), Effect.andThen(events.publish(started(12))),
+        ) : Effect.void, { mode: "background", capacity: 1 })(events)
+        : Effect.void, { mode: "background" })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+      yield* events.publish(started(10))
+      yield* Deferred.await(entered)
+      yield* events.publish(started(11))
+      yield* Deferred.succeed(release, undefined)
+      const drained = yield* Effect.result(events.drain).pipe(Effect.timeoutOption("2 seconds"))
+      return Option.match(drained, {
+        onNone: () => "hung",
+        onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "drained",
+      })
+    })))
+    expect(result).toBe("events.capacity")
+  })
+
+  test("a task a background handler forked, publishing into that lane's full queue once the handler returned, waits for room", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const tasks = yield* makeTurnTasks(yield* Effect.scope)
+      const go = yield* Deferred.make<void>()
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      // The handler of event 0 forks a task and returns; the task publishes later, while the lane is busy with event 1.
+      yield* onEvent("step.started", (event) => Ref.update(seen, (all) => [...all, event.step]).pipe(Effect.andThen(
+        event.step === 0 ? tasks.fork("late", Deferred.await(go).pipe(Effect.andThen(events.publish(started(50)))))
+          : event.step === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void)), { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+      yield* events.publish(started(1))
+      yield* Deferred.await(entered)
+      yield* events.publish(started(2))
+      yield* Deferred.succeed(go, undefined)
+      yield* Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+      yield* Deferred.succeed(release, undefined)
+      const awaited = yield* Effect.result(tasks.await([])).pipe(Effect.timeoutOption("2 seconds"))
+      const drained = yield* Effect.result(events.drain)
+      return {
+        awaited: Option.match(awaited, { onNone: () => "hung", onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "done" }),
+        drained: drained._tag,
+        seen: (yield* Ref.get(seen)).toSorted((left, right) => left - right),
+      }
+    })))
+    expect(result).toEqual({ awaited: "done", drained: "Success", seen: [0, 1, 2, 50] })
+  })
+
+  test("a task a background handler forked and awaits, publishing into that lane's full queue, fails at capacity instead of waiting", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const tasks = yield* makeTurnTasks(yield* Effect.scope)
+      // The handler waits for its own task: its lane cannot make room while the task waits for it.
+      yield* onEvent("step.started", (event) => event.step === 0
+        ? tasks.fork("own", events.publish(started(5)).pipe(Effect.andThen(events.publish(started(6))))).pipe(Effect.andThen(tasks.await(["own"])))
+        : Effect.void, { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      const drained = yield* Effect.result(events.drain).pipe(Effect.timeoutOption("2 seconds"))
+      return Option.match(drained, { onNone: () => "hung", onSome: (outcome) => outcome._tag === "Failure" ? failureCode(outcome.failure) : "drained" })
+    })))
+    expect(result).toBe("events.capacity")
+  })
+
+  test("a background handler publishing into another lane's full queue waits for room, and every event is delivered", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const forwarded = yield* Ref.make<ReadonlyArray<number>>([])
+      const entered = yield* Deferred.make<void>()
+      const reacting = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      // A reaction on its own lane republishes a trigger; the forwarder below selects what it publishes.
+      yield* onEvent("step.started", (event) => event.step === 100
+        ? Deferred.succeed(reacting, undefined).pipe(Effect.andThen(events.publish(started(200))))
+        : Effect.void, { mode: "background" })(events)
+      // A slow forwarder: held on its first event while the turn fills its queue.
+      yield* onEvent("step.started", (event) => Ref.update(forwarded, (all) => [...all, event.step]).pipe(
+        Effect.andThen(event.step === 0 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void),
+      ), { mode: "background", capacity: 4 })(events)
+      yield* events.publish(started(0))
+      yield* Deferred.await(entered)
+      yield* Effect.forEach([1, 2, 3, 4], (step) => events.publish(started(step)), { concurrency: 1, discard: true })
+      // The trigger reaches the reaction first; the turn then waits for the forwarder's room, as documented.
+      const trigger = yield* Effect.forkChild(events.publish(started(100)))
+      yield* Deferred.await(reacting)
+      yield* Effect.forEach(Array.from({ length: 50 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(trigger)
+      const drained = yield* Effect.result(events.drain)
+      return { drained: drained._tag, forwarded: (yield* Ref.get(forwarded)).toSorted((left, right) => left - right) }
+    })))
+    expect(result).toEqual({ drained: "Success", forwarded: [0, 1, 2, 3, 4, 100, 200] })
+  })
+
+  test("a background subscription's capacity is a positive safe integer: any other dies with config.limits when it subscribes", async () => {
+    const outcomes = await Promise.all([Infinity, 0, -1, 1.5, Number.NaN, 1].map((capacity) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const exit = yield* Effect.exit(onEvent("step.started", () => Effect.void, { mode: "background", capacity })(events))
+      if (Exit.isSuccess(exit)) return "subscribed"
+      const defect = Cause.squash(exit.cause)
+      return Exit.hasDies(exit) && isHarnessError(defect) ? defect.code : "other"
+    })))))
+    expect(outcomes).toEqual(["config.limits", "config.limits", "config.limits", "config.limits", "config.limits", "subscribed"])
   })
 
   test("a publisher waiting for room in a full background queue can be interrupted, even where it is uninterruptible", async () => {
