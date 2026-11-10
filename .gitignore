@@ -27,6 +27,8 @@ pg-data/
 .playwright-mcp/
 # Serena MCP project cache (onboarding cache, memories, local config)
 .serena/
+# Git worktrees of this repository (`git worktree add .worktrees/<name> …`)
+.worktrees/
 # Local debug screenshots
 *.png
 # tracked brand asset (the GitHub avatar) — exception to the *.png ignore above

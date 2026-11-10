@@ -21,6 +21,19 @@ bun install
 in a standard checkout) that runs the repo gate profile before each commit.
 Keep it; never commit with `--no-verify`.
 
+A second working copy is a git worktree under `.worktrees/`, which git
+ignores, not a folder beside the checkout:
+
+```bash
+git worktree add .worktrees/<name> -b <name> --no-track origin/main
+cd .worktrees/<name> && bun install --frozen-lockfile
+```
+
+Install inside it before anything else: a worktree without its own
+`node_modules` resolves packages from the checkout that holds it.
+`--no-track` keeps the new branch from taking `main` as its upstream, which
+a `push.default` of `tracking` or `upstream` would push to.
+
 The tests expect no proxy in the environment: Bun's fetch sends even the
 loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
 those unset (the proxy tests that would go direct skip when one is set).
