@@ -1536,8 +1536,9 @@ a new strategy rebuilds from the full-fidelity entries.
   `recall_context` reads a shortened result
   back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
-  page is never shortened. Within the turn that wrote a result it returns no
-  text the request still shows (see "Reading a shortened result on" below).
+  page is never shortened. Within the turn that wrote a result it refuses a
+  call for text the request still shows (see "Reading a shortened result on"
+  below).
   It fails
   with `context.budget` only when the current turn alone does not fit the
   budget it is given: the whole budget at the turn's start, and what the
@@ -1734,43 +1735,64 @@ on write, after that digest returns.
 shortened result's notice shows and an `offset` (0 by default), and returns
 at most 8,000 characters of the stored view from there; while more remains,
 the page ends with the offset to pass next. Within the turn that wrote a
-result it returns no text the request already shows. Such a call would put
-up to 8,000 characters into the context a second time and cost a step, and
-a model can repeat it until the step limit. Two cases are refused, each as
-a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
+result it refuses a call for text the request already shows. Such a call
+would put up to 8,000 characters into the context a second time and cost a
+step, and a model can repeat it until the step limit. Two cases are refused,
+each as a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
 
 - `ResultShown`: the offset is inside the text the result still shows. For
   a result shown through a bound's or a spill's preview, that text is its
-  head, and the reply names its length, which is the offset the notice
-  printed: `The first 16000 characters of this result are shown above. To
-  read on, pass offset 16000.` (One less than the bound where the cut fell
-  before a surrogate pair.) For a result shown whole: `This result is shown
-  in full above; nothing of it was left out.`
-- `AlreadyRecalled`: a call of this turn already returned the page from
-  that offset, and that page is still shown. The reply names where the page
-  ended (`You already read this page in this turn and it is shown above. To
-  read on, pass offset 24000.`), or ends `It ends the result.` when it was
-  the last one.
+  head: `That offset was inside the text this result showed when you asked,
+  so nothing was returned. To read on, pass the offset its shortened form
+  shows now, or offset 0 if it shows none.` For a result shown whole: `This
+  result was shown in full when you asked: nothing of it was left out. If it
+  is shown shortened now, pass the offset its shortened form shows, or
+  offset 0 if it shows none.`
+- `AlreadyRecalled`: the offset is inside a page of the result that a call
+  of this turn already returned, its start included, and that page is still
+  shown whole. The reply names where that page ended (`The text from that
+  offset is in a page you already read in this turn, shown above. To read
+  on, pass offset 24000.`), or ends `That page ends the result.` when it was
+  the last one. Of several pages that hold the offset, it names the end of
+  the one that ends last.
 
-A new offset past the shown text is a page, never a repeat, also when it
-overlaps a page already read. The guard follows what is shown now: once the
-window strategy spills a result under pressure, the text the spill took out
-of the request is served again.
+An offset past the shown text and outside every page already read is a page.
+The guard follows what is shown now: once the window strategy spills a
+result under pressure, the text the spill took out of the request is served
+again.
+
+A refusal is the result of its call, so it stays in the conversation, and
+the model reads it again in every later request, also after memory has
+shortened the result it is about: the window strategy spills a bounded
+result again under pressure, and gives an earlier turn's result its tool's
+compact view at a turn's start or under pressure. That is why a
+`ResultShown` reply says what the result showed when the call was made and
+holds no offset of its own. It sends the model to the offset the result's
+shortened form shows when the reply is read: after a second spill that is
+the new notice's (600, not 16,000), and after a compact view, which shows
+none, it is 0, the result's start. Either way the model reads on from the
+first text its request lacks. An `AlreadyRecalled` reply names its page's
+end because a recalled page is never shortened by either memory strategy,
+and it leaves a request only with its whole turn.
 
 What a result shows is derived from the run's memory alone
 (`RunContext.memory`). A result of the current turn shows its whole view
 while nothing rewrote or digested it, and its head before the notice after
 a bound or a spill. Anything else counts as showing nothing and is served
 as before: a compact view, a digest, and a custom strategy's preview that
-is not the one core writes (`spillPreview`). The guard stores nothing of its
-own: a refusal is the result of its call, a failed one, and the stored
-format, the journal kinds and the events are unchanged.
+is not the one core writes (`spillPreview`). A page counts as read only for
+the run that read it (`CurrentAgentRun`, which the step loop sets around
+each call): a request leaves out another run's exchange of the same turn
+while one of its calls has no result, so a page that run read may not be in
+the request the call was made from. The guard stores nothing of its own: a
+refusal is the result of its call, a failed one, and the stored format, the
+journal kinds and the events are unchanged.
 
 A refusal holds nothing of the request, so every offset inside one shown
-head gets the same reply, and so does a page asked for again. The step loop
-signs a step's progress by its results: a model that keeps asking repeats
-one signature, and the loop's breaker nudges it after three repeats and
-stops the run after five (`partial`, `degenerate-loop`), long before the
+head gets the same reply, and so does every offset inside one page. The step
+loop signs a step's progress by its results: a model that keeps asking
+repeats one signature, and the loop's breaker nudges it after three repeats
+and stops the run after five (`partial`, `degenerate-loop`), long before the
 step limit.
 
 The limits.
@@ -1779,11 +1801,27 @@ The limits.
   from any offset and as often as asked, whatever the request still shows
   of it: the memory a tool reads names no strategy, so it cannot say what a
   later turn's render shows of an earlier result.
+- The guard refuses only what it can tell is shown, so a call it serves can
+  still return shown text. A page another run of the same turn read is
+  served again, also once that run's exchange is complete and the request
+  shows it. A result with a recorded digest is served from its start under
+  a policy that shows no digests (`digests: false`), which shows the result
+  whole. The tool's description therefore says that a call for shown text
+  can return no text, not that it does.
 - Two calls for the same page made together in one response are both
   served when they run at once: neither has a result when the other is
   checked. A turn runs a response's calls one after another by default
   (`limits.toolConcurrency: 1`), and the second call is then refused; the
   limit applies with `toolConcurrency` above 1.
+- The breaker stops a model only when its steps repeat. It counts steps in
+  a row whose results it has all seen before, and a step's signature is
+  every result of that step: a step that pairs a refused call with a call
+  whose result is new, or that makes more refused calls than any step
+  before it, counts as progress, and such a run ends at the step limit.
+  That is the breaker's own rule (`limits.degenerate`), unchanged here.
+- A custom strategy that shortens a recalled page makes an earlier
+  `AlreadyRecalled` reply untrue of later requests: the page it calls shown
+  no longer is. The memory plugins never shorten one.
 
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. Version 2 headers reference reusable system

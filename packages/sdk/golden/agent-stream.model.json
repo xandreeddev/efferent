@@ -64,7 +64,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -203,7 +203,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -352,7 +352,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {

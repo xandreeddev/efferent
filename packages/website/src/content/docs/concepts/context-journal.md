@@ -189,40 +189,66 @@ write).
 default) and returns at most 8,000 characters of the stored view from there.
 While more remains, the page ends with the offset to pass next.
 
-Within the turn that wrote a result, the tool returns no text the request
-already shows. Such a call would put up to 8,000 characters into the context a
-second time and cost a step. It is refused with a failure the model reads as
-the call's result:
+Within the turn that wrote a result, the tool refuses a call for text the
+request already shows. Such a call would put up to 8,000 characters into the
+context a second time and cost a step. It is refused with a failure the model
+reads as the call's result:
 
 - `ResultShown` when the offset is inside the text the result still shows.
-  For a bounded or spilled result the reply names where to read on from:
-  `The first 16000 characters of this result are shown above. To read on,
-  pass offset 16000.` For a result shown whole it says `This result is shown
-  in full above; nothing of it was left out.`
-- `AlreadyRecalled` when a call of this turn already returned the page from
-  that offset and the page is still shown: `You already read this page in
-  this turn and it is shown above. To read on, pass offset 24000.`, or
-  `It ends the result.` after the last page.
+  For a bounded or spilled result: `That offset was inside the text this
+  result showed when you asked, so nothing was returned. To read on, pass the
+  offset its shortened form shows now, or offset 0 if it shows none.` For a
+  result shown whole: `This result was shown in full when you asked: nothing
+  of it was left out. If it is shown shortened now, pass the offset its
+  shortened form shows, or offset 0 if it shows none.`
+- `AlreadyRecalled` when the offset is inside a page a call of this turn
+  already returned, its start included, and that page is still shown: `The
+  text from that offset is in a page you already read in this turn, shown
+  above. To read on, pass offset 24000.`, or `That page ends the result.`
+  after the last page.
 
-A new offset past the shown text is always a page. When window memory spills a
-result under pressure, the text that left the request is served again.
+An offset past the shown text and outside every page already read is a page.
+When window memory spills a result under pressure, the text that left the
+request is served again.
 
-Every offset inside the same shown text gets the same reply. The step loop
-tells a step that repeats an earlier one by its results, so a model that keeps
-asking is nudged after three repeats and its run is stopped after five
-(`partial`, `degenerate-loop`), long before the step limit.
+A refusal stays in the conversation as its call's result, and the model reads
+it again in later requests, also after memory has shortened the result it is
+about: window memory spills a bounded result again under pressure, and gives
+an earlier turn's result its tool's compact view. A `ResultShown` reply
+therefore holds no offset of its own. It sends the model to the offset the
+result's shortened form shows when the reply is read: the new notice's after
+a second spill, and 0 after a compact view, which shows none. Either way the
+model reads on from the first text its request lacks.
+
+Every offset inside the same shown text gets the same reply, and so does
+every offset inside the same page. The step loop tells a step that repeats an
+earlier one by its results, so a model that keeps asking is nudged after
+three repeats and its run is stopped after five (`partial`,
+`degenerate-loop`), long before the step limit.
 
 These limits apply:
 
 - The guard covers the current turn only. A result of an earlier turn is
   served from any offset, as often as asked, whatever the request still shows
   of it.
+- The guard refuses only what it can tell is shown, so a call it serves can
+  still return shown text: a page another run of the same turn read, and a
+  result with a recorded digest under a policy that shows no digests. The
+  tool's description says a call for shown text can return no text, not that
+  it does.
 - Two calls for the same page made together in one response are both served
   when they run at once (`limits.toolConcurrency` above 1): neither has a
   result when the other is checked. A turn runs them one after another by
   default, and the second is then refused.
 - A result shown through a compact view, a digest or a custom policy's own
   preview is served from its start, as before.
+- The breaker stops a model only when its steps repeat. A step that pairs a
+  refused call with a call whose result is new, or that makes more refused
+  calls than any step before it, counts as progress, and such a run ends at
+  the step limit.
+- A custom policy that shortens a recalled page makes an earlier
+  `AlreadyRecalled` reply untrue of later requests. The memory plugins never
+  shorten one.
 
 Nothing is stored for the guard: a refusal is the failed result of its call.
 

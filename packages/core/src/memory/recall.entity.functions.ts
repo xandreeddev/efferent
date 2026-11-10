@@ -1,13 +1,16 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Schema } from "effect"
 import { Failure } from "../domain/failure.entity.js"
+import type { RunRef } from "../domain/run.entity.js"
 import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
+import { CurrentAgentRun } from "../loop/stepContext.js"
 import type { Capability } from "../ports/capability.port.js"
 import { RunContext } from "../ports/run-context.port.js"
-import { presentedEntries, shownViewsOf, toolInputOf } from "./memory-log.entity.functions.js"
+import { presentedEntries, shownViewsOf, toolInputsByResult } from "./memory-log.entity.functions.js"
 import { CompactionAction, EntryId } from "./memory-log.entity.js"
 import type { LogBody, LogEntry } from "./memory-log.entity.js"
 import { RecallRefusal } from "./recall.entity.js"
+import type { ShownPart } from "./recall.entity.js"
 
 /** The name of the tool that reads a shortened result back; a memory strategy never shortens one of its results. */
 export const RECALL_TOOL = "recall_context"
@@ -57,7 +60,7 @@ const RecallParameters = Schema.Struct({
 })
 
 const RecallContext = Tool.make(RECALL_TOOL, {
-  description: `Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most ${RECALL_PAGE_CHARS} characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.`,
+  description: `Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most ${RECALL_PAGE_CHARS} characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.`,
   parameters: RecallParameters,
   success: Schema.String,
   failure: Failure,
@@ -121,49 +124,89 @@ const shownChars = (entries: ReadonlyArray<LogEntry>, result: LogEntry, body: To
 const decodeRecallInput = Schema.decodeUnknownOption(RecallParameters)
 
 /**
+ * Whether a recorded result is the asking run's: the run of the step loop
+ * the call is made in, by its id and its ordinal. A call made outside a loop
+ * names no run, and then only a result recorded with no run is its own.
+ */
+const ofRun = (asking: Option.Option<RunRef>, entry: LogEntry, body: ToolResultBody): boolean => Option.match(asking, {
+  onNone: () => body.run === undefined,
+  onSome: (run) => entry.runId === run.id && body.run === run.ordinal,
+})
+
+/**
  * Why a page of `target` from `offset` is not served, if it is not: the
  * guard of the turn being run, decided from the run's memory alone. A result
  * of an earlier turn is always served.
  *
  * - `ResultShown`: the page would start inside the text the result still
  *   shows (`shownChars`).
- * - `AlreadyRecalled`: a `recall_context` call of this turn returned the page
- *   that starts there, and that page is still shown whole. Only a recorded
- *   page counts: a refused call returned none, and the call being answered
- *   has no result yet.
+ * - `AlreadyRecalled`: the page would start inside a page of `target` that a
+ *   `recall_context` call of this turn returned to the asking run, and that
+ *   page is still shown whole. `next` is where that page ended; of several
+ *   such pages, the one that ends last. Only a recorded page counts: a
+ *   refused call returned none, and the call being answered has no result
+ *   yet. Only the asking run's pages count (`ofRun`): a build leaves out
+ *   another run's exchange while one of its calls has no result, so a page
+ *   that run read may not be in the request this call was made from.
  *
- * A new offset is a page, never a repeat. Two calls for one page that a
- * response makes together and the loop runs at once are both served:
- * neither has a result when the other is checked.
+ * An offset past the shown text and outside every such page is a page. Two
+ * calls for one page that a response makes together and the loop runs at
+ * once are both served: neither has a result when the other is checked.
  */
-const recallRefusalOf = (stored: ReadonlyArray<LogEntry>, turn: number, target: LogEntry, offset: number): Option.Option<RecallRefusal> => {
+const recallRefusalOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, offset: number): Option.Option<RecallRefusal> => {
   const body = target.body
   if (body._tag !== "ToolResult" || target.turn !== turn) return Option.none()
   const entries = presentedEntries(stored)
   const view = body.view
-  const { start, end } = pageBounds(view, offset)
+  const { start } = pageBounds(view, offset)
   const shown = shownChars(entries, target, body)
-  if (start < shown) return Option.some({ _tag: "ResultShown", next: shown < view.length ? Option.some(shown) : Option.none() })
-  const read = entries.some((entry) => entry.turn === turn && entry.body._tag === "ToolResult" && entry.body.toolName === RECALL_TOOL && !entry.body.isError
-    && Option.exists(decodeRecallInput(toolInputOf(entries, entry)), (input) => input.locator === target.id && pageBounds(view, input.offset ?? 0).start === start)
-    && shownChars(entries, entry, entry.body) >= entry.body.view.length)
-  return read ? Option.some({ _tag: "AlreadyRecalled", next: end < view.length ? Option.some(end) : Option.none() }) : Option.none()
+  if (start < shown) return Option.some({ _tag: "ResultShown", shown: shown < view.length ? "head" : "whole" })
+  const pages = entries.flatMap((entry) => entry.turn === turn && entry.body._tag === "ToolResult" && entry.body.toolName === RECALL_TOOL && !entry.body.isError && ofRun(asking, entry, entry.body)
+    ? [{ entry, page: entry.body }] : [])
+  // The inputs of every result are read in one pass over the log, and only when the turn holds a page at all.
+  const inputs = pages.length === 0 ? new Map<EntryId, unknown>() : toolInputsByResult(entries)
+  // Where each page that holds the offset ended: one that starts there (an empty page holds nothing else), or one the offset falls inside.
+  const ends = pages.flatMap(({ entry, page }) => Option.match(Option.filter(decodeRecallInput(inputs.get(entry.id)), (input) => input.locator === target.id), {
+    onNone: () => [],
+    onSome: (input) => {
+      const read = pageBounds(view, input.offset ?? 0)
+      return (read.start === start || (read.start < start && start < read.end)) && shownChars(entries, entry, page) >= page.view.length ? [read.end] : []
+    },
+  }))
+  return ends.length === 0 ? Option.none() : Option.some({ _tag: "AlreadyRecalled", next: Option.filter(Option.some(Math.max(...ends)), (end) => end < view.length) })
 }
 
-/** The failure `recall_context` returns for a refusal: what the request already shows, and the offset to pass to read on. */
+/**
+ * What a `ResultShown` failure says, by how much of the result was shown. A
+ * failure is the call's recorded result, read again in every later request,
+ * and memory may shorten the result it is about in between: a spill under
+ * pressure leaves a shorter head and a new notice, a compact view leaves no
+ * notice. So each text says what the result showed when the call was made,
+ * holds no offset of its own, and sends the model to the offset the result's
+ * shortened form shows when it reads the reply (the tool's description names
+ * a shortened result that way): with a notice, that is where the text the
+ * request lacks starts; with none, the result's start. A result still shown
+ * whole is not shown shortened, so its text sends the model to no call that
+ * would be refused again.
+ */
+const resultShownMessage: Record<ShownPart, string> = {
+  head: "That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none.",
+  whole: "This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none.",
+}
+
+/**
+ * The failure `recall_context` returns for a refusal: what the request held
+ * of the text asked for, and how to read on. It holds nothing of the call
+ * (no offset asked for, no locator), so every offset inside one shown head,
+ * and every offset inside one page, gets the same failure.
+ */
 const recallRefusalFailure = (refusal: RecallRefusal): Failure => RecallRefusal.match(refusal, {
-  ResultShown: ({ next }) => ({
-    error: "ResultShown",
-    message: Option.match(next, {
-      onNone: () => "This result is shown in full above; nothing of it was left out.",
-      onSome: (shown) => `The first ${shown} characters of this result are shown above. To read on, pass offset ${shown}.`,
-    }),
-  }),
+  ResultShown: ({ shown }) => ({ error: "ResultShown", message: resultShownMessage[shown] }),
   AlreadyRecalled: ({ next }) => ({
     error: "AlreadyRecalled",
     message: Option.match(next, {
-      onNone: () => "You already read this page in this turn and it is shown above. It ends the result.",
-      onSome: (ended) => `You already read this page in this turn and it is shown above. To read on, pass offset ${ended}.`,
+      onNone: () => "The text from that offset is in a page you already read in this turn, shown above. That page ends the result.",
+      onSome: (ended) => `The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset ${ended}.`,
     }),
   }),
 })
@@ -180,7 +223,8 @@ const recallTool = defineTool({
     const { found, view } = target.value
     const from = offset ?? 0
     if (from > 0 && from >= view.length) return yield* Effect.fail({ error: "OffsetOutOfRange", message: `The result has ${view.length} characters; pass an offset below ${view.length}` })
-    const refusal = recallRefusalOf(yield* run.memory.entries, yield* run.memory.turn, found, from)
+    // The loop's run where the loop makes the call; none for a call made outside one.
+    const refusal = recallRefusalOf(yield* run.memory.entries, yield* run.memory.turn, yield* CurrentAgentRun, found, from)
     return yield* Option.match(refusal, {
       onNone: () => Effect.succeed(recallPage(locator, view, from)),
       onSome: (refused) => Effect.fail(recallRefusalFailure(refused)),
