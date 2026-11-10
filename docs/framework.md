@@ -1536,7 +1536,9 @@ a new strategy rebuilds from the full-fidelity entries.
   `recall_context` reads a shortened result
   back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
-  page is never shortened. It fails
+  page is never shortened. Within the turn that wrote a result it returns no
+  text the request still shows (see "Reading a shortened result on" below).
+  It fails
   with `context.budget` only when the current turn alone does not fit the
   budget it is given: the whole budget at the turn's start, and what the
   system prompt and tool schemas leave of it at each step. With
@@ -1727,6 +1729,61 @@ on write, after that digest returns.
   compactions.
 - A graph that holds both memory plugins registers `recall_context` twice
   and fails with `tools.duplicate`: list only the one the graph binds.
+
+**Reading a shortened result on.** `recall_context` takes the locator a
+shortened result's notice shows and an `offset` (0 by default), and returns
+at most 8,000 characters of the stored view from there; while more remains,
+the page ends with the offset to pass next. Within the turn that wrote a
+result it returns no text the request already shows. Such a call would put
+up to 8,000 characters into the context a second time and cost a step, and
+a model can repeat it until the step limit. Two cases are refused, each as
+a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
+
+- `ResultShown`: the offset is inside the text the result still shows. For
+  a result shown through a bound's or a spill's preview, that text is its
+  head, and the reply names its length, which is the offset the notice
+  printed: `The first 16000 characters of this result are shown above. To
+  read on, pass offset 16000.` (One less than the bound where the cut fell
+  before a surrogate pair.) For a result shown whole: `This result is shown
+  in full above; nothing of it was left out.`
+- `AlreadyRecalled`: a call of this turn already returned the page from
+  that offset, and that page is still shown. The reply names where the page
+  ended (`You already read this page in this turn and it is shown above. To
+  read on, pass offset 24000.`), or ends `It ends the result.` when it was
+  the last one.
+
+A new offset past the shown text is a page, never a repeat, also when it
+overlaps a page already read. The guard follows what is shown now: once the
+window strategy spills a result under pressure, the text the spill took out
+of the request is served again.
+
+What a result shows is derived from the run's memory alone
+(`RunContext.memory`). A result of the current turn shows its whole view
+while nothing rewrote or digested it, and its head before the notice after
+a bound or a spill. Anything else counts as showing nothing and is served
+as before: a compact view, a digest, and a custom strategy's preview that
+is not the one core writes (`spillPreview`). The guard stores nothing of its
+own: a refusal is the result of its call, a failed one, and the stored
+format, the journal kinds and the events are unchanged.
+
+A refusal holds nothing of the request, so every offset inside one shown
+head gets the same reply, and so does a page asked for again. The step loop
+signs a step's progress by its results: a model that keeps asking repeats
+one signature, and the loop's breaker nudges it after three repeats and
+stops the run after five (`partial`, `degenerate-loop`), long before the
+step limit.
+
+The limits.
+
+- The guard is the current turn's. A result of an earlier turn is served
+  from any offset and as often as asked, whatever the request still shows
+  of it: the memory a tool reads names no strategy, so it cannot say what a
+  later turn's render shows of an earlier result.
+- Two calls for the same page made together in one response are both
+  served when they run at once: neither has a result when the other is
+  checked. A turn runs a response's calls one after another by default
+  (`limits.toolConcurrency: 1`), and the second call is then refused; the
+  limit applies with `toolConcurrency` above 1.
 
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. Version 2 headers reference reusable system

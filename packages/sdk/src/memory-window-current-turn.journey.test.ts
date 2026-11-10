@@ -77,7 +77,8 @@ const runConversation = (currentTurnFirst: boolean) => Effect.scoped(Effect.gen(
     turnServices: [LanguageModel.LanguageModel],
     limits: { streaming: false, maxSteps: 4 },
     system: "Answer from the records.",
-    budgetTokens: 1_500,
+    // The 1,500 tokens the scenario was written for, plus the 29 the schema of `recall_context` has reserved since its description grew: the messages get what they had.
+    budgetTokens: 1_529,
   })
   const requests = yield* Ref.make<ReadonlyArray<{ readonly runId: string; readonly text: string }>>([])
   const outcomes = yield* Effect.forEach(turns, (scriptedTurn, index) => Effect.gen(function* () {

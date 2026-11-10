@@ -60,6 +60,15 @@ archive, up to 8,000 characters per call. Its continuation offset reads the next
 page. A recalled page is never shortened. Recall cannot reconstruct content
 the original tool clipped before returning it.
 
+Within the turn that wrote a result, `recall_context` returns no text the
+request still shows: the start of a bounded or spilled result, or a page read
+a step ago. The call is answered with a failure that names the offset to read
+on from (`ResultShown`, `AlreadyRecalled`), and a model that keeps asking is
+stopped by the step loop's breaker. Once a spill under pressure takes text out
+of the request, that text is served again. See
+[reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on)
+for the replies and the limits.
+
 Compaction actions are recorded before they apply. They change later model
 requests, leaving the original tool result and messages in the journal. A new
 memory strategy can rebuild from those original entries.

@@ -64,7 +64,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -203,7 +203,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -352,7 +352,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {

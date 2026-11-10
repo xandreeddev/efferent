@@ -57,7 +57,7 @@
           "fingerprint": "9c48f5e0cc",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 68,
-          "reservedTokens": 397,
+          "reservedTokens": 426,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -76,7 +76,7 @@
           "fingerprint": "c07c91772d8",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 242,
-          "reservedTokens": 397,
+          "reservedTokens": 426,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -95,7 +95,7 @@
           "fingerprint": "9464a1884d4",
           "systemFingerprint": "3f61f4eeed",
           "estimatedTokens": 412,
-          "reservedTokens": 441,
+          "reservedTokens": 470,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -200,7 +200,7 @@
           "fingerprint": "677ca670b09",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 941,
-          "reservedTokens": 481,
+          "reservedTokens": 510,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -221,7 +221,7 @@
           "fingerprint": "4f529971c9e",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1076,
-          "reservedTokens": 481,
+          "reservedTokens": 510,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -310,7 +310,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -444,7 +444,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -611,7 +611,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -900,7 +900,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -1238,7 +1238,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
           "parameters": {
             "type": "object",
             "properties": {
