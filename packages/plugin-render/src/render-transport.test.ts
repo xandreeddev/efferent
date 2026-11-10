@@ -588,6 +588,8 @@ test("a compressed SSE frame reaches the client before the next one is written",
  * What a compressing peer's compressor had given its response when each write
  * of `chunks` completed, decoded: read at the server, where the compressor is
  * piped into the response, so no client, socket or deadline decides it. The
+ * response takes every byte here; one that takes none leaves the compressed
+ * frame on the compressor's output side, and the write completes all the same. The
  * request only opens the response, and the server is closed once the texts
  * are settled, so a socket that fails as it closes changes nothing.
  */
@@ -608,7 +610,7 @@ const givenByEachWrite = (encoding: "br" | "gzip", chunks: ReadonlyArray<string>
     server.listen(0, "127.0.0.1", () => { overSocket(server, "/", encoding, { body: () => {} }).on("error", reject) })
   })
 
-test("a compressed SSE write completes only once its frame has left the compressor for the response", async () => {
+test("when a compressed SSE write completes, a response that takes bytes already has its frame", async () => {
   const frames = [1, 2].map((sequence) => encodeSse(FeedRecord.make({ sequence, event: "message.updated", data: { text: `frame ${sequence}` } })))
   const chunks = [ssePreamble, ...frames]
   // Everything written so far, at each write: a frame still in the compressor is missing from the text of its own write.

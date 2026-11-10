@@ -35,8 +35,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   seconds`, only the preamble decoded, and the test of a response that ends
   ran into the test runner's 5 s timeout. Both now read the response off a
   `node:net` socket, and a new test checks at the server, with no client or
-  deadline, that each write of a compressing `sseNodePeer` completes only
-  once its compressor has given the response the frame. Test change only:
+  deadline, that when a write of a compressing `sseNodePeer` completes, a
+  response that takes bytes already has the frame. Test change only:
   `sseNodePeer` flushed every frame all along.
 
 ## 0.20.1 — 2026-11-10
