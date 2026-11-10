@@ -8,6 +8,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- Git worktrees of the repository go under `.worktrees/`, which git now
+  ignores. `AGENTS.md` and `CONTRIBUTING.md` say how to create one and that
+  each needs its own `bun install`.
+
 ## 0.20.1 — 2026-11-10
 
 ### Changed

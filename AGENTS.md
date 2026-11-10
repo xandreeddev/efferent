@@ -216,6 +216,14 @@ keep candidate, prompt, schema and protocol versions in their evidence.
 - Keep personal details, local paths and other projects' names out of every
   file, commit, comment and screenshot; never copy code from another project.
 - Every PR adds an entry under "Unreleased" in `CHANGELOG.md`.
+- A worktree of this repository goes under `.worktrees/`, which git ignores,
+  never beside the checkout:
+  `git worktree add .worktrees/<name> -b <name> --no-track origin/main`, then
+  `bun install --frozen-lockfile` inside it before anything else. Without
+  its own `node_modules` it resolves packages from the checkout that holds
+  it. `--no-track` keeps the branch from taking `main` as its upstream, which
+  a `push.default` of `tracking` or `upstream` would push to; push with an
+  explicit refspec (`git push origin HEAD:refs/heads/<name>`).
 - Publishing to npm and pushing a `v*` tag (it deploys the docs site) happen
   only on explicit sign-off. Merging a generated `release <version>` PR
   signs off on CI publication after its main CI passes; an explicit
