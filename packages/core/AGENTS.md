@@ -529,13 +529,26 @@ the journal:
   spill of a result no request has shown yet also precedes the first header
   that includes it: that header rule decides only when no `step.ended` names
   the result.
+- A turn's `compacts` counts results: one for each entry a `CompactViews`
+  recorded during it names, whether a turn's start or a request over its
+  budget decided it. `bounds`, `spills` and `digests` count results too;
+  `drops` and `summaries` count compactions. A turn lists each result at the
+  largest size one of its requests showed it, labelled as that request
+  showed it, so a result compacted after a request of the same turn had
+  shown it whole stays `whole` in that turn's list, and `compacts` is what
+  says so. Never relabel a listed result from a compaction: the label is the
+  named request's.
 
 Its unit tests build journals by hand (`src/session/context-report.entity.functions.test.ts`):
-a resend, a dropped turn, a summary, a digest, a compact view and a journal
+a resend, a dropped turn, a summary, a digest, a compact view at a turn's
+start, compact views under pressure (two compactions naming three results,
+one before the turn's first request and one after it) and a journal
 without its `step.ended` are records a short scripted turn does not write.
 The sdk's `context-report.journey.test.ts` holds it against what real turns'
-requests carried, one result bounded as it was written and one spilled under
-pressure before any request had shown it.
+requests carried, one result bounded as it was written, one spilled under
+pressure before any request had shown it, and two compacted under pressure:
+one after a request of its turn had shown it whole, one before its turn's
+first request.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,

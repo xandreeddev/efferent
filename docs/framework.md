@@ -2021,20 +2021,30 @@ resolves its header, so it holds:
   a row of its own; the refused one has no usage.
 
 A turn's summary counts its `steps` and its `requests` separately (a
-host-planned step prepares no request), counts the `bounds`, `spills`, `drops`,
-`summaries` and `digests` memory recorded during it, and lists the `largest`
-tool results its requests showed: each once, at the largest size a request of
-the turn showed it, with its tool, its characters, the run, step and resend
-of that request, how it was `shown` (`whole`, `compact`, `digest`, `bounded`
-or `spilled`) and its `view` (`tool` when the tool's own view wrote the text,
+host-planned step prepares no request), counts the `bounds`, `spills`,
+`compacts`, `drops`, `summaries` and `digests` memory recorded during it, and
+lists the `largest` tool results its requests showed: each once, at the
+largest size a request of the turn showed it, with its tool, its characters,
+the run, step and resend of that request, how it was `shown` (`whole`,
+`compact`, `digest`, `bounded` or `spilled`) and its `view` (`tool` when the
+tool's own view wrote the text,
 `raw` when it is the result's canonical JSON, whole or cut to a preview). A
 `bounded` result's preview was recorded before the `step.ended` of the step
 that returned it, as `recordTail` does when it bounds a result as it is
 written; a `spilled` one was shortened later, under pressure. When the
 journal holds no such `step.ended`, a preview recorded before the first
-request that included the result counts as `bounded`. The results are read
-through `shownResults`, the function the render folds each result with, so
-the report says what the request carried.
+request that included the result counts as `bounded`. `compacts` counts the
+results given their tool's compact view during the turn, one for each result
+a `CompactViews` compaction names, whether the turn's start or a request
+over its budget decided it; `bounds`, `spills` and `digests` count results
+too, `drops` and `summaries` the times earlier turns were replaced. A result
+is listed at its largest showing, so one that a request of the turn showed
+whole and a later request of the same turn showed through its compact view
+is listed `whole`, by the request that showed it so: `compacts` is what says
+a compact view was recorded. It is listed `compact` in a turn whose requests
+never showed it larger. The results are read through `shownResults`, the
+function the render folds each result with, so the report says what the
+request carried.
 
 It fails as its readers do: a record that does not decode with its
 `SchemaError`, and a header that does not resolve, or whose cut is not among

@@ -171,6 +171,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     default, and `@xandreed/plugin-rag` with `recall: true`, or a host's
     `turn.context`) leaves the next turn's requests, and the shared prefix
     ends at that message. With `turnContext: "all"` it stays.
+- `@xandreed/core`: the turn summaries of `contextReportOf` count the
+  compact views memory recorded during the turn, as `compacts`: one for each
+  result a `CompactViews` compaction names, at the turn's start or once a
+  request passed its budget. Since 0.21.0 a request over its budget gives
+  earlier turns' results their compact views, and a turn's summary had no
+  count for them: a turn whose first request showed a result whole and whose
+  later request showed it compact listed the result `whole` with every count
+  at 0. `ContextReportTurn` gains the field. The list of a turn's largest
+  results is unchanged: each result is listed at the largest size a request
+  of the turn showed it, labelled as that request showed it, so such a
+  result is still listed `whole` in that turn, now with `compacts` at 1, and
+  `compact` in a turn whose requests never showed it larger.
 
 ## 0.21.0 — 2026-11-10
 

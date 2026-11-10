@@ -19,9 +19,10 @@ import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.en
 
 /*
  * Journals written by hand, record by record, in the order a turn stores
- * them: a resend, a dropped turn, a summary, a digest, a compact view and a
- * journal that lost its `step.ended` are records a short scripted turn does
- * not write. The sdk's journey holds the report against real turns.
+ * them: a resend, a dropped turn, a summary, a digest, a compact view at a
+ * turn's start, compact views under pressure and a journal that lost its
+ * `step.ended` are records a short scripted turn does not write. The sdk's
+ * journey holds the report against real turns.
  */
 
 const session = ConversationId.make("00000000-0000-4000-8000-00000000c0de")
@@ -209,8 +210,9 @@ describe("the tool results a turn's requests showed", () => {
   test("a turn counts its bounds separately from its spills, and its steps separately from its requests", async () => {
     const { turns } = await report(shownTurns(true))
     expect(turns.map(({ results: _results, ...counted }) => counted)).toEqual([
-      { session, turn: 1, steps: 3, requests: 3, bounds: 1, spills: 2, drops: 0, summaries: 0, digests: 1 },
-      { session, turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, drops: 0, summaries: 0, digests: 0 },
+      { session, turn: 1, steps: 3, requests: 3, bounds: 1, spills: 2, compacts: 0, drops: 0, summaries: 0, digests: 1 },
+      // The second turn's start gave e its compact view.
+      { session, turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, compacts: 1, drops: 0, summaries: 0, digests: 0 },
     ])
   })
 
@@ -241,8 +243,75 @@ describe("the tool results a turn's requests showed", () => {
       stepStarted(2, 0), ...prepared(2, headerOf(2, 0, id(2, 3))),
     ])
     expect(turns.map(({ results: _results, session: _session, ...counted }) => counted)).toEqual([
-      { turn: 1, steps: 0, requests: 0, bounds: 0, spills: 0, drops: 0, summaries: 0, digests: 0 },
-      { turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, drops: 1, summaries: 1, digests: 0 },
+      { turn: 1, steps: 0, requests: 0, bounds: 0, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 },
+      { turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, compacts: 0, drops: 1, summaries: 1, digests: 0 },
+    ])
+  })
+})
+
+/*
+ * A later turn gives three results of the first one their compact views under
+ * budget pressure, in two compactions:
+ *   w and y  before its first request: the turn was over its budget from its start;
+ *   x        at its second step, after its first request had shown x whole.
+ */
+const x = "X".repeat(2_870), w = "W".repeat(600), y = "Y".repeat(500), z = "Z".repeat(1_000)
+const xCompact = "the north report: 2,870 characters, twelve months", wCompact = "the west report: 600 characters", yCompact = "the south report: 500 chars"
+const pressedTurns: ReadonlyArray<SessionDraft> = [
+  started(1, "read the reports"), stepStarted(1, 0),
+  built(1, 0, { estimatedTokens: 10, reservedTokens: 70, budgetTokens: 1_500, compactions: 0 }),
+  ...prepared(1, headerOf(1, 0, id(1, 0))),
+  ...calls(1, 1, 0, [["x", "read"], ["w", "read"], ["y", "read"]]),
+  ...result(1, 2, 0, "x", "read", "raw north"), ...presented(1, 3, 0, id(1, 2), x),
+  ...result(1, 4, 0, "w", "read", "raw west"), ...presented(1, 5, 0, id(1, 4), w),
+  ...result(1, 6, 0, "y", "read", "raw south"), ...presented(1, 7, 0, id(1, 6), y),
+  stepEnded(1, 0, [id(1, 2), id(1, 4), id(1, 6)]),
+  stepStarted(1, 1),
+  built(1, 1, { estimatedTokens: 1_350, reservedTokens: 70, budgetTokens: 1_500, compactions: 0 }),
+  ...prepared(1, headerOf(1, 1, id(1, 7))),
+  ...memory(1, 8, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("read") }),
+  started(2, "and how do they compare with the east report?"),
+  // One compaction names two results.
+  ...compaction(2, 1, 0, { _tag: "CompactViews", entries: [id(1, 4), id(1, 6)], texts: [wCompact, yCompact] }),
+  stepStarted(2, 0),
+  built(2, 0, { estimatedTokens: 1_040, reservedTokens: 70, budgetTokens: 1_500, compactions: 1 }),
+  ...prepared(2, headerOf(2, 0, id(2, 1))),
+  ...calls(2, 2, 0, [["z", "fetch"]]),
+  ...result(2, 3, 0, "z", "fetch", z),
+  stepEnded(2, 0, [id(2, 3)]),
+  stepStarted(2, 1),
+  ...compaction(2, 4, 0, { _tag: "CompactViews", entries: [id(1, 2)], texts: [xCompact] }),
+  built(2, 1, { estimatedTokens: 430, reservedTokens: 70, budgetTokens: 1_500, compactions: 2 }),
+  ...prepared(2, headerOf(2, 1, id(2, 4))),
+]
+
+describe("compact views recorded under budget pressure", () => {
+  test("a turn counts the results given a compact view during it, whichever compaction named them", async () => {
+    const { turns } = await report(pressedTurns)
+    expect(turns.map(({ results: _results, session: _session, ...counted }) => counted)).toEqual([
+      { turn: 1, steps: 2, requests: 2, bounds: 0, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 },
+      // Two compactions, three results: the count is of results, as the bounds, the spills and the digests are.
+      { turn: 2, steps: 2, requests: 2, bounds: 0, spills: 0, compacts: 3, drops: 0, summaries: 0, digests: 0 },
+    ])
+  })
+
+  test("a result is listed compact by a turn whose requests never showed it larger, and whole by the request that showed it whole", async () => {
+    const { rows, turns } = await report(pressedTurns)
+    expect([xCompact.length, wCompact.length, yCompact.length]).toEqual([49, 31, 27])
+    // Each request carried what its row counts: the second turn's first request x whole, its second x compact.
+    expect(rows.map((row) => [row.turn, row.step, row.results])).toEqual([
+      [1, 0, { count: 0, characters: 0 }],
+      [1, 1, { count: 3, characters: 2_870 + 600 + 500 }],
+      [2, 0, { count: 3, characters: 2_870 + 31 + 27 }],
+      [2, 1, { count: 4, characters: 49 + 31 + 27 + 1_000 }],
+    ])
+    // w and y took their compact views before the turn's first request: no request of the turn showed them larger.
+    // x is listed at the 2,870 characters the first request showed, so it is whole there: the count above is what says it was compacted.
+    expect(shownIn(turns[1])).toEqual([
+      ["run-1:2", "read", 2_870, "whole", "tool", 0],
+      ["run-2:3", "fetch", 1_000, "whole", "raw", 1],
+      ["run-1:4", "read", 31, "compact", "tool", 0],
+      ["run-1:6", "read", 27, "compact", "tool", 0],
     ])
   })
 })
