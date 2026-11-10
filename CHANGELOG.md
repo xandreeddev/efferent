@@ -79,8 +79,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   or stored field is added, and the stored format stays 19.
 - `@xandreed/core`: `shownViewsOf(entries, { strategy, digests })`, the text
   each result shows in place of its view when a strategy renders (a compact
-  view, a spill's or a bound's preview, a digest) and what wrote it, in the
+  view, a spill's or a bound's preview, a digest) and what wrote it (`by`,
+  and `source`, the compaction or digest entry that holds the text), in the
   render's own precedence. It replaces `rewrittenBy`.
+- `@xandreed/core`: `contextReportOf(events, { largest })`, a report of what
+  filled each model request of a session, read from its journal alone (the
+  events `Sessions.read` returns), with no model call and no service. It
+  gives a row per `request.prepared` (`ContextReportRow`), a request prepared
+  again in the same step included (`resend`): the characters and tokens of
+  the system text and of the tool declarations with the largest declarations
+  by tool, counted as the turn reserves them so they sum to the
+  `reservedTokens` of the request's `context.built`; that record's estimate,
+  reserve, budget and compactions; the tool results the request showed and
+  their characters; a request hook's note and the step policy's step context
+  in separate fields, each none when the request showed none of it (0 is an
+  empty text); and the usage of the `Loop` call that completed for it
+  (`model.called`), else of the response its step accepted (`step.usage`).
+  It also gives a summary per turn (`ContextReportTurn`): its steps and its
+  requests as two counts, the bounds, spills, drops, summaries and digests
+  recorded in it, and the largest tool results its requests showed
+  (`ContextReportResult`), each with its tool, its characters, how it was
+  shown (`whole`, `compact`, `digest`, `bounded` or `spilled`) and whether
+  the tool's own view or the raw canonical JSON wrote the text (`view`). The
+  messages as a whole are reported as the strategy's token estimate: the
+  journal holds no character count of them. Nothing is added to the journal
+  and the stored format stays 19.
 - `@xandreed/core/conformance`: `memoryConformance` checks `bound-on-write`:
   a result is shortened as it is written, or not by a later write. One a
   strategy shows shortened from its first build still resolves to its whole

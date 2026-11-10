@@ -15,6 +15,7 @@ import {
   presentedEntries, rawTranscript, referenceTranscript, renderLog, shownViewsOf, subjectsOf,
 } from "./memory-log.entity.functions.js"
 import { ArtifactId, ArtifactRef, BuiltContext, LogBody, LogEntry, Subject, SubjectId } from "./memory-log.entity.js"
+import type { EntryId } from "./memory-log.entity.js"
 
 /** The run of turn `turn`, as these logs name it. */
 const runOf = (turn: number) => RunId.make(`run-${turn}`)
@@ -657,23 +658,24 @@ describe("what a result shows in place of its view", () => {
   /** What the render shows for each result, by its call. */
   const rendered = (digests: boolean) => new Map(renderLog(entries, options(digests)).flatMap((message) =>
     message.role === "tool" ? message.content.map((part) => [String(part.toolCallId), part.output] as const) : []))
-  type Shown = { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }
+  type Shown = { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest"; readonly source: EntryId }
+  /** `source` is the compaction or digest entry that holds the text: the later of two rewrites. */
   const rewrites: ReadonlyArray<readonly [string, Shown]> = [
-    [idOf("compacted"), { text: "compact of compacted", by: "CompactViews" }],
-    [idOf("spilled"), { text: "preview of spilled", by: "Spill" }],
-    [idOf("digested-spilled"), { text: "preview of digested-spilled", by: "Spill" }],
-    [idOf("spilled-twice"), { text: "second preview", by: "Spill" }],
-    [idOf("compacted-spilled"), { text: "preview of compacted-spilled", by: "Spill" }],
-    [idOf("spilled-compacted"), { text: "compact of spilled-compacted", by: "CompactViews" }],
+    [idOf("compacted"), { text: "compact of compacted", by: "CompactViews", source: entryId(run, 31) }],
+    [idOf("spilled"), { text: "preview of spilled", by: "Spill", source: entryId(run, 32) }],
+    [idOf("digested-spilled"), { text: "preview of digested-spilled", by: "Spill", source: entryId(run, 34) }],
+    [idOf("spilled-twice"), { text: "second preview", by: "Spill", source: entryId(run, 36) }],
+    [idOf("compacted-spilled"), { text: "preview of compacted-spilled", by: "Spill", source: entryId(run, 38) }],
+    [idOf("spilled-compacted"), { text: "compact of spilled-compacted", by: "CompactViews", source: entryId(run, 40) }],
   ]
 
   test("shownViewsOf names the text and what wrote it, in the render's precedence", () => {
     expect(new Map(shownViewsOf(entries, { strategy: "window", digests: true }))).toEqual(new Map<string, Shown>([
-      [idOf("digested"), { text: "digest of digested", by: "ToolDigest" }], ...rewrites,
+      [idOf("digested"), { text: "digest of digested", by: "ToolDigest", source: entryId(run, 30) }], ...rewrites,
     ]))
     // A render that shows no digests shows the view of a result that only has one.
     expect(new Map(shownViewsOf(entries, { strategy: "window", digests: false }))).toEqual(new Map<string, Shown>(rewrites))
-    expect(shownViewsOf(entries, { strategy: "summary", digests: false }).get(idOf("foreign"))).toEqual({ text: "compact of foreign", by: "CompactViews" })
+    expect(shownViewsOf(entries, { strategy: "summary", digests: false }).get(idOf("foreign"))).toEqual({ text: "compact of foreign", by: "CompactViews", source: entryId(run, 42) })
   })
 
   test("shownViewsOf agrees with what the render shows for every result, with digests shown and without", () => {

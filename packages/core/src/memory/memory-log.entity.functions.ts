@@ -43,14 +43,21 @@ export const estimateMessageTokens = (messages: ReadonlyArray<AgentMessage>): nu
 
 export const entryId = (runId: RunId, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
 
-/** Recorded digests by result entry; the latest digest of an entry wins. */
-const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
-  new Map(entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[String(entry.body.entry), entry.body.text] as const] : []))
+/** A recorded digest's text, and the digest entry that holds it. */
+interface Digest {
+  readonly text: string
+  readonly source: EntryId
+}
 
-/** The text a compaction shows a result through, and the action that wrote it. */
+/** Recorded digests by result entry; the latest digest of an entry wins. */
+const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, Digest> =>
+  new Map(entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[String(entry.body.entry), { text: entry.body.text, source: entry.id }] as const] : []))
+
+/** The text a compaction shows a result through, the action that wrote it and the compaction entry that holds it. */
 interface Rewrite {
   readonly text: string
   readonly by: "CompactViews" | "Spill"
+  readonly source: EntryId
 }
 
 /**
@@ -73,9 +80,9 @@ const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string):
   const applying = entries.flatMap((entry) => entry.body._tag === "Compaction" && (entry.body.action._tag === "OmitMedia" || entry.body.strategy === strategy)
     ? [{ id: entry.id, action: entry.body.action }] : [])
   // One pass each, so many compactions cost no copy per compaction; a later view of an entry wins.
-  const views = new Map(applying.flatMap(({ action }): ReadonlyArray<readonly [string, Rewrite]> => CompactionAction.match(action, {
-    CompactViews: (compact) => compact.entries.map((id, index) => [id, { text: compact.texts[index] ?? "", by: "CompactViews" }] as const),
-    Spill: (spill) => [[spill.entry, { text: spill.preview, by: "Spill" }] as const],
+  const views = new Map(applying.flatMap(({ id: source, action }): ReadonlyArray<readonly [string, Rewrite]> => CompactionAction.match(action, {
+    CompactViews: (compact) => compact.entries.map((id, index) => [id, { text: compact.texts[index] ?? "", by: "CompactViews", source }] as const),
+    Spill: (spill) => [[spill.entry, { text: spill.preview, by: "Spill", source }] as const],
     OmitMedia: () => [],
     DropTurns: () => [],
     Summarize: () => [],
@@ -198,7 +205,7 @@ const charsOf = (images: ReadonlyArray<LogImage>): number => images.reduce((sum,
 /** What one render decided before it folds: the compactions and digests that apply, the turns it keeps, the images it sends. */
 interface MediaPlan {
   readonly applied: Applied
-  readonly digests: ReadonlyMap<string, string>
+  readonly digests: ReadonlyMap<string, Digest>
   readonly kept: (entry: LogEntry) => boolean
   /** The images an entry may send: none once its turn is dropped, its images omitted, or (a result) its view rewritten. */
   readonly imagesOf: (entry: LogEntry) => ReadonlyArray<LogImage>
@@ -301,7 +308,7 @@ export const requestEntryOfResult = (entries: ReadonlyArray<LogEntry>, result: L
  */
 const mediaPlan = (plan: RenderPlan, options: RenderOptions): MediaPlan => {
   const { entries, applied, kept } = plan
-  const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
+  const digests = options.digests ? digestsOf(entries) : new Map<string, Digest>()
   const imagesOf = (entry: LogEntry): ReadonlyArray<LogImage> => {
     const body = entry.body
     if (!kept(entry) || applied.omitted.has(entry.id)) return []
@@ -374,6 +381,35 @@ const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag:
   }
 }
 
+/** What a request shows of one tool result, and what wrote the text it shows. */
+export interface ShownResult {
+  /** The result's entry, with the latest presentation these entries hold of it. */
+  readonly entry: LogEntry
+  /** What wrote the text: the result's own view, or the compact view, spill preview or digest shown in its place. */
+  readonly by: "View" | "CompactViews" | "Spill" | "ToolDigest"
+  /** The compaction or digest entry that holds the text; none for the result's own view. */
+  readonly source: Option.Option<EntryId>
+  /** The result as the request carries it: the text with its image labels and artifact lines, and the images sent with it. */
+  readonly part: ToolResultPart
+}
+
+/**
+ * One result as a render shows it: this strategy's latest compact view or
+ * spill preview of it, else, when the render shows digests, its latest
+ * digest (the precedence `shownViewsOf` gives a strategy), else the view it
+ * was written with. The render folds `part` into its messages, and a report
+ * of what a request showed reads the same value.
+ */
+const shownResultOf = (entry: LogEntry, body: Extract<LogBody, { readonly _tag: "ToolResult" }>, plan: MediaPlan, options: RenderOptions): ShownResult => {
+  const rewrite = plan.applied.views.get(entry.id)
+  const digest = plan.digests.get(entry.id)
+  const shown: Pick<ShownResult, "by" | "source"> & { readonly text: string } = rewrite !== undefined
+    ? { text: rewrite.text, by: rewrite.by, source: Option.some(rewrite.source) }
+    : digest !== undefined ? { text: digest.text, by: "ToolDigest", source: Option.some(digest.source) }
+      : { text: body.view, by: "View", source: Option.none() }
+  return { entry, by: shown.by, source: shown.source, part: toolResultPart(entry, body, shown.text, options, plan.inline) }
+}
+
 /**
  * The exchanges another run of the turn being rendered has in flight: its request is recorded and a
  * call of it has no result yet. That run may still be running the call, so this render does not
@@ -409,7 +445,8 @@ const visiblePlanOf = (stored: ReadonlyArray<LogEntry>, options: RenderOptions):
 const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages" | "compactions"> => {
   const plan = visiblePlanOf(stored, options)
   const { entries, exchanges } = plan
-  const { applied, digests, kept, inline } = mediaPlan(plan, options)
+  const media = mediaPlan(plan, options)
+  const { applied, kept, inline } = media
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) =>
     entry.body._tag === "StepContext" && entry.runId === options.currentRun && entry.body.run === options.run).slice(-1)
   // Each turn's assistant texts in render order: a reply equal to the turn's last one before it is not shown again.
@@ -425,7 +462,7 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
     Message: (b) => !plan.messageVisible(entry) ? []
       : [Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
     ToolResult: (b): ReadonlyArray<AgentMessage> => !plan.resultVisible(entry) ? []
-      : [{ role: "tool", content: [toolResultPart(entry, b, applied.views.get(entry.id)?.text ?? digests.get(entry.id) ?? b.view, options, inline)] }],
+      : [{ role: "tool", content: [shownResultOf(entry, b, media, options).part] }],
     ToolDigest: () => [],
     ToolPresentation: () => [],
     StepContext: () => [],
@@ -444,6 +481,20 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
 
 export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> =>
   renderedContext(stored, options).messages
+
+/**
+ * The tool results a render of these entries shows, in the order it shows
+ * them, each as `renderLog` folds it into its messages (the same
+ * `shownResultOf`, the same visibility): what a request built from
+ * `entries` with `options` carried of each result, and what wrote that
+ * text. A call the render answers itself as `ToolInterrupted` has no
+ * recorded result and is not listed.
+ */
+export const shownResults = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<ShownResult> => {
+  const plan = visiblePlanOf(entries, options)
+  const media = mediaPlan(plan, options)
+  return plan.exchanges.ordered.flatMap((entry) => entry.body._tag === "ToolResult" && plan.resultVisible(entry) ? [shownResultOf(entry, entry.body, media, options)] : [])
+}
 
 /**
  * The entries whose images a render sends as images (a user's attachments,
@@ -570,14 +621,15 @@ export const toolInputsOf = (entries: ReadonlyArray<LogEntry>, tail: ReadonlyArr
  * entry id, in the render's own precedence: the text of this strategy's
  * latest compact view or spill preview of it (a result bounded as it was
  * written shows a spill's preview), else, when the render shows digests,
- * its latest digest. `by` names what wrote the text. A result the map lacks
- * shows its view.
+ * its latest digest. `by` names what wrote the text and `source` the
+ * compaction or digest entry that holds it. A result the map lacks shows its
+ * view.
  */
-export const shownViewsOf = (entries: ReadonlyArray<LogEntry>, options: { readonly strategy: string; readonly digests: boolean }): ReadonlyMap<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }> => {
+export const shownViewsOf = (entries: ReadonlyArray<LogEntry>, options: { readonly strategy: string; readonly digests: boolean }): ReadonlyMap<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest"; readonly source: EntryId }> => {
   const rewrites = appliedCompactions(entries, options.strategy).views
   if (!options.digests) return rewrites
-  const shown = new Map<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }>(
-    Array.from(digestsOf(entries), ([id, text]) => [id, { text, by: "ToolDigest" }] as const))
+  const shown = new Map<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest"; readonly source: EntryId }>(
+    Array.from(digestsOf(entries), ([id, digest]) => [id, { text: digest.text, by: "ToolDigest", source: digest.source }] as const))
   for (const [id, rewrite] of rewrites) shown.set(id, rewrite)
   return shown
 }
