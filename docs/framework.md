@@ -1523,16 +1523,31 @@ a new strategy rebuilds from the full-fidelity entries.
   shorter than that; at a turn's start, an earlier turn's bounded result
   takes its tool's compact view only when that is shorter than its preview.
   `compactPreviousTurn: false` means never at a turn's start: a turn start
-  then rewrites no earlier turn, so each request that fits its budget is the
-  one before it, byte for byte, with more messages after, and a provider's
-  cached prompt prefix holds. Compact views still apply under pressure,
-  with the option on or off: once a request passes its budget, earlier
-  turns' results take their compact views before anything is spilled or
-  dropped. A result takes one only when it is shorter than the text it
-  shows (its view, a preview or a digest); a tool with no compact view, a
-  pinned result and the current turn's results are left as they are; and
-  only as many are taken as the budget needs, the one that frees the most
-  characters first.
+  then rewrites no earlier turn's results, so within a turn each request
+  that fits its budget is the one before it, byte for byte, with more
+  messages after, and a provider's cached prompt prefix holds. A turn's
+  first request extends the previous turn's last one the same way only
+  while everything that request showed is still shown. With the default
+  `turnContext: "current"`, a turn context the previous turn recorded (a
+  turn-tier prompt section, as `@xandreed/plugin-memory` records with
+  `recallSection: "turn"`, its default, and `@xandreed/plugin-rag` with
+  `recall: true`, or a host's `turn.context`) is shown in its own turn
+  only: it leaves the next turn's requests, and the shared prefix ends at
+  that message. With `turnContext: "all"` it stays. Compact views still
+  apply under pressure, with the option on or off: once a request passes its
+  budget, earlier turns' results take their compact views before anything is
+  spilled or dropped. A result takes one only when it is shorter than the
+  text it shows (its view, a preview or a digest) and the request's estimate
+  falls with it: the estimate counts the characters of each message's JSON,
+  three to a token, so the compact view must take at least three fewer
+  there, and a shorter one that is heavier in JSON (quotes, backslashes and
+  newlines take two characters each) is left alone. A tool with no compact
+  view, a pinned result and the current turn's results are left as they
+  are. The fewest that fit are taken, the one that frees the most of the
+  estimate first. When all of them together do not fit, all are taken and
+  the window goes on to spill and drop; a turn it then drops shows none of
+  its results, so the decision records the compact views of the results in
+  the turns that stay and none for a dropped turn.
   `recall_context` reads a shortened result
   back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
@@ -1547,7 +1562,7 @@ a new strategy rebuilds from the full-fidelity entries.
   earlier turns are compacted, then dropped, and spills them only when the
   current turn alone does not fit (the fewest spills, then the fewest dropped
   turns); the strategy keeps its id `window` and its version becomes
-  `3+current-turn-first`, part of every request's `strategyVersion`, so
+  `4+current-turn-first`, part of every request's `strategyVersion`, so
   compactions recorded under either order replay as recorded.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
@@ -1582,9 +1597,11 @@ a new strategy rebuilds from the full-fidelity entries.
   results that are each bounded can still pass the budget together (see the
   limits under "Bounding what a tool shows" below).
 
-The window strategy's decisions are version 3 (it bounds results as they are
-written, spills a bounded result again under pressure and compacts earlier
-turns under pressure whatever `compactPreviousTurn` says); the summary
+The window strategy's decisions are version 4 (version 3 bounds results as
+they are written, spills a bounded result again under pressure and compacts
+earlier turns under pressure whatever `compactPreviousTurn` says; version 4
+takes a compact view under pressure only when the request's estimate falls
+with it, and records none for a turn the same decision drops); the summary
 strategy's are version 2, since what and when it summarizes is unchanged and
 the render checkpoints stored under that version keep applying. A recorded
 compaction replays as recorded whatever version wrote it. `MaintainSignal.phase` is `turn-start`,

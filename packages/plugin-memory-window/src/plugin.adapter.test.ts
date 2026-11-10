@@ -44,8 +44,10 @@ describe("window memory policy", () => {
     const spilled = await maintain(entries, tokens - 1_500, "step")
     expect(spilled).toMatchObject({ _tag: "Success", success: { actions: [compact, { _tag: "Spill", entry: "run-2:6" }] } })
     expect(spilled._tag === "Success" && spilled.success.actions).toHaveLength(2)
+    // Turn 1 dropped shows nothing of its result, so the decision that drops it records no compact view of it.
     const dropped = await maintain(entries, 200, "step")
-    expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [compact, { _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+    expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+    expect(dropped._tag === "Success" && dropped.success.actions).toHaveLength(2)
     const impossible = await maintain(entries, 5, "step")
     expect(impossible).toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
   })
@@ -100,10 +102,10 @@ describe("the plugin's strategy", () => {
   test("the memory it provides reports the version of the order it was configured with, under the same id", async () => {
     expect(await strategyOf(config)).toEqual(WINDOW_STRATEGY)
     expect(await strategyOf({ ...config, currentTurnFirst: false })).toEqual(WINDOW_STRATEGY)
-    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "3+current-turn-first" })
+    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "4+current-turn-first" })
   })
 
-  test("version 3 names what the memory records: a bound as a result is written and a second spill of it under pressure, each under the version of the order it runs", async () => {
+  test("version 4 names what the memory records: a bound as a result is written and a second spill of it under pressure, each under the version of the order it runs", async () => {
     /** What the plugin's memory records, configured with `options`, for one long result and then one token over the budget. */
     const recordedUnder = (options: typeof config & { readonly currentTurnFirst?: boolean }) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const built = yield* memoryWindowPlugin.build({ ...options, boundOnWriteChars: 200 }, Context.empty())
@@ -128,13 +130,13 @@ describe("the plugin's strategy", () => {
     })))
     // The bound shows the result's first 200 characters; under pressure the same result is spilled again, to its first 20.
     expect(await recordedUnder(config)).toEqual({
-      reported: { id: "window", version: "3" },
-      recorded: [{ strategy: "window", version: "3", shows: 200 }, { strategy: "window", version: "3", shows: 20 }],
+      reported: { id: "window", version: "4" },
+      recorded: [{ strategy: "window", version: "4", shows: 200 }, { strategy: "window", version: "4", shows: 20 }],
     })
-    expect(WINDOW_STRATEGY).toEqual({ id: "window", version: "3" })
+    expect(WINDOW_STRATEGY).toEqual({ id: "window", version: "4" })
     expect(await recordedUnder({ ...config, currentTurnFirst: true })).toEqual({
-      reported: { id: "window", version: "3+current-turn-first" },
-      recorded: [{ strategy: "window", version: "3+current-turn-first", shows: 200 }, { strategy: "window", version: "3+current-turn-first", shows: 20 }],
+      reported: { id: "window", version: "4+current-turn-first" },
+      recorded: [{ strategy: "window", version: "4+current-turn-first", shows: 200 }, { strategy: "window", version: "4+current-turn-first", shows: 20 }],
     })
   })
 

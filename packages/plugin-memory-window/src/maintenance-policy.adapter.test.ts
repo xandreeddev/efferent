@@ -341,21 +341,23 @@ describe("compact views under pressure", () => {
     const every = compacting(second, first)
     const under = (actions: ReadonlyArray<CompactionAction>) => tokensAfter(conversation, 3, actions) - 1
     expect((await decide(cacheFirst, conversation, 3, under([every]))).decision).toEqual([every, spill(current)])
-    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current)]))).decision).toEqual([every, spill(current), drop(1)])
-    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(1)]))).decision).toEqual([every, spill(current), drop(2)])
+    // A dropped turn's result keeps no compact view in the decision: it is not shown.
+    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current)]))).decision).toEqual([compacting(second), spill(current), drop(1)])
+    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(1)]))).decision).toEqual([spill(current), drop(2)])
     // Nothing is left to shorten: a step fails, and a turn's end keeps every reduction.
     expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(2)]))).decision).toBe("failed with context.budget")
-    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(2)]), "turn-end")).decision).toEqual([every, spill(current), drop(2)])
+    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(2)]), "turn-end")).decision).toEqual([spill(current), drop(2)])
   })
 
   test("currentTurnFirst compacts earlier turns, then drops the oldest turns, then spills the current turn's results", async () => {
     const every = compacting(second, first)
     const under = (actions: ReadonlyArray<CompactionAction>) => tokensAfter(conversation, 3, actions) - 1
-    expect((await decide(currentFirst, conversation, 3, under([every]))).decision).toEqual([every, drop(1)])
-    expect((await decide(currentFirst, conversation, 3, under([every, drop(1)]))).decision).toEqual([every, drop(2)])
+    // A dropped turn's result keeps no compact view in the decision: it is not shown.
+    expect((await decide(currentFirst, conversation, 3, under([every]))).decision).toEqual([compacting(second), drop(1)])
+    expect((await decide(currentFirst, conversation, 3, under([every, drop(1)]))).decision).toEqual([drop(2)])
     // The current turn alone does not fit: its result is spilled, and the earlier turns the budget then holds are kept, compact.
     expect((await decide(currentFirst, conversation, 3, under([every, drop(2)]))).decision).toEqual([every, spill(current)])
-    expect((await decide(currentFirst, conversation, 3, under([every, spill(current)]))).decision).toEqual([every, spill(current), drop(1)])
+    expect((await decide(currentFirst, conversation, 3, under([every, spill(current)]))).decision).toEqual([compacting(second), spill(current), drop(1)])
     expect((await decide(currentFirst, conversation, 3, under([every, spill(current), drop(2)]))).decision).toBe("failed with context.budget")
   })
 
@@ -418,8 +420,8 @@ describe("compact views under pressure", () => {
     // The digested result saves the most, then the one bounded at 2,000. The budget needs both and asks nothing more of the other three.
     const taken: CompactionAction = { _tag: "CompactViews", entries: [lengthy.id, wide.id], texts: [compactOf(viewOf(lengthy)), "w".repeat(1_500)] }
     expect(await decide(cacheFirst, all, 2, tokensAfter(all, 2, [taken]))).toEqual({ decision: [taken], asked: ["w", "n", "l", "b"] })
-    // Nothing else of turn 1 can be shortened without dropping the turn.
-    expect((await decide(cacheFirst, all, 2, tokensAfter(all, 2, [taken]) - 1)).decision).toEqual([taken, { _tag: "DropTurns", throughTurn: 1, ledger: ledgerOf(all, 1, options.ledgerTurnChars) }])
+    // Nothing else of turn 1 can be shortened without dropping the turn, and a dropped turn's results keep no compact view in the decision.
+    expect((await decide(cacheFirst, all, 2, tokensAfter(all, 2, [taken]) - 1)).decision).toEqual([{ _tag: "DropTurns", throughTurn: 1, ledger: ledgerOf(all, 1, options.ledgerTurnChars) }])
   })
 
   test("a compact view recorded under pressure is not decided again, and its result is not asked for again", async () => {
@@ -442,5 +444,111 @@ describe("compact views under pressure", () => {
     // Over budget after that, the current turn's result is spilled; no result is asked a second time.
     expect(await decide(compactAtStart, conversation, 3, tokensAfter(conversation, 3, [compacting(first, second)]) - 1, "turn-start"))
       .toEqual({ decision: [compacting(first, second), spill(current)], asked: ["a", "b"] })
+  })
+
+  test("a compact view of a result in a turn the same decision drops is not recorded: no request would show it", async () => {
+    const every = compacting(second, first)
+    const under = (actions: ReadonlyArray<CompactionAction>) => tokensAfter(conversation, 3, actions) - 1
+    const requestAfter = (actions: ReadonlyArray<CompactionAction>) => renderOf(3)([...conversation, ...recorded(11, 3, actions)])
+    // Both compact views and the spill do not fit, so turn 1 is dropped: the decision keeps the compact view of turn 2's result only.
+    expect(await decide(cacheFirst, conversation, 3, under([every, spill(current)]))).toEqual({ decision: [compacting(second), spill(current), drop(1)], asked: ["a", "b"] })
+    // The request is the one the compact view of the dropped turn's result would have left.
+    expect(requestAfter([compacting(second), spill(current), drop(1)])).toEqual(requestAfter([every, spill(current), drop(1)]))
+    expect(JSON.stringify(requestAfter([every, spill(current), drop(1)]))).not.toContain(compactOf(viewOf(first)))
+    // With both earlier turns dropped no compact view is left, and no empty action is recorded in their place.
+    expect((await decide(cacheFirst, conversation, 3, under([every, spill(current), drop(1)]))).decision).toEqual([spill(current), drop(2)])
+    expect(requestAfter([spill(current), drop(2)])).toEqual(requestAfter([every, spill(current), drop(2)]))
+    // The same where currentTurnFirst drops before it spills, and at a turn's end, which keeps the smallest reduction.
+    expect((await decide(currentFirst, conversation, 3, under([every]))).decision).toEqual([compacting(second), drop(1)])
+    expect((await decide(currentFirst, conversation, 3, under([every, drop(1)]))).decision).toEqual([drop(2)])
+    expect((await decide(cacheFirst, conversation, 3, 5, "turn-end")).decision).toEqual([spill(current), drop(2)])
+  })
+
+  test("with compactPreviousTurn on, a turn start that drops a turn records no compact view of its results, and a later turn start asks for none", async () => {
+    const compactAtStart = windowPolicy({ ...options, compactPreviousTurn: true })
+    // The turn start compacts both earlier results, and the budget still needs the spill and turn 1 dropped.
+    const started = await decide(compactAtStart, conversation, 3, tokensAfter(conversation, 3, [compacting(first, second), spill(current)]) - 1, "turn-start")
+    expect(started).toEqual({ decision: [compacting(second), spill(current), drop(1)], asked: ["a", "b"] })
+    // Turn 4 starts over that log: turn 1's result is not asked again, and takes no compact view no request would show.
+    const next = [...conversation, ...recorded(11, 3, [compacting(second), spill(current), drop(1)]), replies(14, 3, "third answer"), asks(15, 4, "fourth question")]
+    expect(await decide(compactAtStart, next, 4, 100_000, "turn-start")).toEqual({ decision: [compacting(current)], asked: ["c"] })
+    expect(await decide(cacheFirst, next, 4, tokensAfter(next, 4, []) - 1)).toEqual({ decision: [compacting(current)], asked: ["c"] })
+  })
+
+  describe("a compact view is taken only when the request's estimate falls with it", () => {
+    /** A compact view one character shorter than its view, all quotes and newlines: each takes two characters of the request's JSON. */
+    const escaped = (view: string): string => "\"\n".repeat(view.length).slice(0, view.length - 1)
+    /** The compact view of each tool here: `escaped`'s, and one that cuts a fixed number of characters off the end of its view. */
+    const cutting: Readonly<Record<string, (view: string) => string>> = {
+      escaped, "cut-2": (view) => view.slice(0, -2), "cut-3": (view) => view.slice(0, -3),
+    }
+    /** What `cacheFirst` decides in turn 2 at `budgetTokens`, and the first character of each result it asked a compact view for. */
+    const decideOver = async (entries: ReadonlyArray<LogEntry>, budgetTokens: number) => {
+      const asked: Array<string> = []
+      const views: MaintainSignal["views"] = { ...signal.views, compact: (tool, encoded) => Effect.sync(() => {
+        asked.push(String(encoded).charAt(0))
+        return Option.map(Option.fromNullishOr(cutting[tool]), (compact) => compact(String(encoded)))
+      }) }
+      const decision = await Effect.runPromise(Effect.match(cacheFirst.maintain({ entries, signal: { ...signal, phase: "step", budgetTokens, views }, turn: 2, runId: run(2), render: renderOf(2) }), {
+        onSuccess: (made): ReadonlyArray<CompactionAction> | string => made.actions, onFailure: (error) => `failed with ${error.code}`,
+      }))
+      return { decision, asked }
+    }
+    const taking = (tool: string, ...of: ReadonlyArray<LogEntry>): CompactionAction =>
+      ({ _tag: "CompactViews", entries: of.map((entry) => entry.id), texts: of.map((entry) => cutting[tool]!(viewOf(entry))) })
+
+    test("a compact view shorter in characters that takes more of the request is left alone, and the decision is the one without it", async () => {
+      // Turn 1 read three results whose compact views are one character shorter and twice as heavy in the request; turn 2 read one more.
+      const read = ["q", "r", "s"].map((letter, index) => result(2 + index * 2, 1, letter.repeat(900), { toolName: "escaped" }))
+      const latest = result(10, 2, "c".repeat(3_000))
+      const all = [
+        asks(0, 1, "read all three"), ...read.flatMap((entry, index) => [call(1 + index * 2, 1, "escaped"), entry]), replies(7, 1, "read"),
+        asks(8, 2, "and one more"), call(9, 2), latest,
+      ]
+      for (const entry of read) {
+        expect(escaped(viewOf(entry)).length).toBe(viewOf(entry).length - 1)
+        expect(tokensAfter(all, 2, [taking("escaped", entry)])).toBeGreaterThan(tokensAfter(all, 2, []))
+      }
+      // One token over: every compact view is asked for, none is taken, and the current turn's result is spilled as if the tool had none.
+      expect(await decideOver(all, tokensAfter(all, 2, []) - 1)).toEqual({ decision: [spill(latest)], asked: ["q", "r", "s"] })
+    })
+
+    test("a compact view that frees less than one token of the estimate is left alone, whatever else its message holds", async () => {
+      // Views of 300, 301 and 302 characters put their message's JSON at each remainder of a token.
+      const lengths = [300, 301, 302]
+      const logOf = (tool: string, length: number) => {
+        const earlier = result(2, 1, "v".repeat(length), { toolName: tool })
+        const latest = result(6, 2, "c".repeat(3_000))
+        return { earlier, latest, all: [asks(0, 1, "read it"), call(1, 1, tool), earlier, replies(3, 1, "read"), asks(4, 2, "and one more"), call(5, 2), latest] }
+      }
+      // Three characters less lower the estimate at every remainder: the compact view is taken, and it is enough for a budget one token under.
+      for (const length of lengths) {
+        const { earlier, all } = logOf("cut-3", length)
+        expect(tokensAfter(all, 2, []) - tokensAfter(all, 2, [taking("cut-3", earlier)])).toBe(1)
+        expect(await decideOver(all, tokensAfter(all, 2, []) - 1)).toEqual({ decision: [taking("cut-3", earlier)], asked: ["v"] })
+      }
+      // Two characters less lower it at some remainders only, so the view is not taken at any: the current turn's result is spilled.
+      const falls = lengths.map((length) => {
+        const { earlier, all } = logOf("cut-2", length)
+        return tokensAfter(all, 2, []) - tokensAfter(all, 2, [taking("cut-2", earlier)])
+      })
+      expect(falls.toSorted((left, right) => left - right)).toEqual([0, 1, 1])
+      for (const length of lengths) {
+        const { latest, all } = logOf("cut-2", length)
+        expect(await decideOver(all, tokensAfter(all, 2, []) - 1)).toEqual({ decision: [spill(latest)], asked: ["v"] })
+      }
+    })
+
+    test("a compact view longer in characters than what is shown is still left alone, though it would take less of the request", async () => {
+      // The view is 400 newlines, 800 characters of the request's JSON; its compact view is 500 plain characters, which the model would read as more.
+      const earlier = result(2, 1, "\n".repeat(400), { toolName: "plain-500" })
+      const latest = result(6, 2, "c".repeat(3_000))
+      const all = [asks(0, 1, "read it"), call(1, 1, "plain-500"), earlier, replies(3, 1, "read"), asks(4, 2, "and one more"), call(5, 2), latest]
+      const longer: CompactionAction = { _tag: "CompactViews", entries: [earlier.id], texts: ["p".repeat(500)] }
+      const views: MaintainSignal["views"] = { ...signal.views, compact: () => Effect.succeed(Option.some("p".repeat(500))) }
+      expect(tokensAfter(all, 2, [longer])).toBeLessThan(tokensAfter(all, 2, []))
+      const decided = await Effect.runPromise(cacheFirst.maintain({ entries: all, signal: { ...signal, phase: "step", budgetTokens: tokensAfter(all, 2, []) - 1, views }, turn: 2, runId: run(2), render: renderOf(2) }))
+      expect(decided.actions).toEqual([spill(latest)])
+    })
   })
 })

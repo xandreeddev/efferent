@@ -134,8 +134,8 @@ const whole = { alpha: records(alpha.query, alpha.limit), beta: records(beta.que
 const compactBeta = compactRecords(beta.query, beta.limit)
 
 test.each([
-  { order: "the default order", currentTurnFirst: false, version: "3" },
-  { order: "currentTurnFirst", currentTurnFirst: true, version: "3+current-turn-first" },
+  { order: "the default order", currentTurnFirst: false, version: "4" },
+  { order: "currentTurnFirst", currentTurnFirst: true, version: "4+current-turn-first" },
 ])("over budget with compactPreviousTurn off, the next request shows an earlier result through its compact view and nothing is spilled or dropped ($order)", async ({ currentTurnFirst, version }) => {
   const ran = await Effect.runPromise(runConversation(BUDGET, currentTurnFirst))
   expect(ran.outcomes).toEqual(["completed", "completed", "completed"])

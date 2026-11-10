@@ -178,7 +178,7 @@ const recallNext = (request: Seen): Part => Option.match(continuationOf(request.
 })
 
 const strategies = [
-  { plugin: memoryWindowPlugin, strategy: "window", version: "3" },
+  { plugin: memoryWindowPlugin, strategy: "window", version: "4" },
   { plugin: memorySummaryPlugin, strategy: "summary", version: "2" },
 ] as const
 

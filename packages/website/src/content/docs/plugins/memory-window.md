@@ -129,19 +129,43 @@ const memory = { plugin: memoryWindowPlugin, options: { compactPreviousTurn: fal
 ```
 
 `false` means never at a turn's start. While requests fit their budget,
-nothing is recorded and each request is the one before it, byte for byte,
-with more messages after. Compact views still apply under pressure: once a
-request passes its budget, earlier turns' results take their compact views
-before any result is spilled or any turn is dropped.
+nothing is rewritten. What memory records for a result then is recorded as
+the result is written (its bound, and its digest with `digestOnWriteChars`),
+and the result shows it from its first request. Within a turn, each request
+is then the one before it, byte for byte, with more messages after.
+
+A turn's first request extends the previous turn's last one the same way
+only while everything that request showed is still shown. With the default
+`turnContext: "current"`, a turn context recorded in the previous turn is
+shown in that turn only: it leaves the next turn's requests, and the shared
+prefix ends at that message. A turn-tier prompt section is such a context:
+[long-term memory](/docs/plugins/memory/) records one with
+`recallSection: "turn"`, its default, and [RAG](/docs/plugins/rag/) with
+`recall: true`; a host adds its own with `turn.context`. With
+`turnContext: "all"` it stays in later turns. An earlier turn's image that
+later requests show as a label line (`media: "none"`, or an image that no
+longer fits `maxImages` or `maxMediaChars`) ends the prefix the same way.
+
+Compact views still apply under pressure: once a request passes its budget,
+earlier turns' results take their compact views before any result is
+spilled or any turn is dropped.
 
 - Only results of turns before the current one are compacted. The current
   turn's results, pinned results and tools with no compact view are left as
   they are.
 - A result takes its compact view only when that is shorter than the text it
-  shows: its view, the preview of a bound or a spill, or a digest.
-- Only as many results are compacted as the budget needs, the one whose
-  compact view frees the most characters first. A later request over budget
-  compacts more, so the prefix can change at each of those requests.
+  shows (its view, the preview of a bound or a spill, or a digest) and the
+  request's estimate falls with it. The estimate counts the characters of
+  each message's JSON, three to a token, so the compact view must take at
+  least three fewer there. A shorter compact view that is heavier in JSON
+  (a quote, a backslash or a newline takes two characters) is left alone.
+- The fewest results that fit are compacted, the one whose compact view
+  frees the most of the estimate first. A later request over budget compacts
+  more, so the prefix can change at each of those requests.
+- When all compact views together do not fit, all are taken and the policy
+  goes on to spill and drop. A turn it then drops shows none of its results,
+  so the decision records the compact views of the results in the turns
+  that stay, and none for a dropped turn.
 - The rest of the order is unchanged: by default the current turn's largest
   results are spilled next and the oldest turns dropped last; with
   `currentTurnFirst` the oldest turns are dropped before anything is spilled.
@@ -170,7 +194,7 @@ choosing the fewest spills and then the fewest dropped turns, and fails with
 above.
 
 The option keeps the strategy id `window` and adds a suffix to its version:
-`3+current-turn-first`. Compactions recorded under either order keep applying
+`4+current-turn-first`. Compactions recorded under either order keep applying
 exactly as they were recorded, while each request's `strategyVersion` (in its
 recorded header and in `context.built`) shows which order decided it.
 
