@@ -81,7 +81,7 @@ export const outcomeOf = (task: DigestTask, reply: string): DigestOutcome => tas
  * @public
  */
 export const memoryDigestPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-digest", version: "0.19.2", scope: "session",
+  id: "@xandreed/plugin-memory-digest", version: "0.20.0", scope: "session",
   config: MemoryDigestConfig, defaults: memoryDigestDefaults,
   requires: [UtilityLlm],
   provides: [ResultDigester],

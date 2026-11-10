@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.20.0 — 2026-11-10
+
 ### Migration
 
 - Session stores must be fresh. Point `SessionLogFilesLive`,
@@ -280,6 +282,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   bounds the guides state to the constants the code enforces, the memory and
   rag pages' extraction-version history to `KNOWLEDGE_EXTRACTION_VERSION`,
   and the rules and spans guidance names to the ones that exist.
+
+### Changes
+
+- Session stores must be fresh (file layout 2, SQLite schema 3, stored format 19; older stores are refused, never migrated), session log calls and turn records take owner- and incarnation-qualified `SessionRef`s, and standalone loops and custom registries wrap their toolkit with `prepareToolkit`.
 
 ## 0.19.2 — 2026-11-08
 
