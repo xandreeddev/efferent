@@ -595,6 +595,7 @@ const stampPartFailure
 const stampPartModel
 const stampResponseFailure
 const stampResponseModel
+const storedFormatRefusal
 const storedJson
 const storedRecordOf
 const strictJsonSchema
