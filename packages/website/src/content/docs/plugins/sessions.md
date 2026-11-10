@@ -190,7 +190,7 @@ with the [render feed](/docs/plugins/render-feed/#live-frames).
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-sessions` · Version **0.20.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-sessions` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.20.1 — 2026-11-10
+
 ### Changed
 
 - The files and SQLite session logs record the stored format a store was
@@ -26,6 +28,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Nothing for stores created by 0.20.0. A store created by this release
   records its format, which 0.20.0 ignores; opening it with 0.20.0 after a
   later format bump is not supported.
+
+### Changes
+
+- Record the stored format in the files and SQLite session stores and refuse a store of another format when it opens; add `storedFormatRefusal` for custom session logs.
 
 ## 0.20.0 — 2026-11-10
 
