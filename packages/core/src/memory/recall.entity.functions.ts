@@ -13,9 +13,29 @@ export const RECALL_TOOL = "recall_context"
 /** The most characters one recall_context call returns. */
 export const RECALL_PAGE_CHARS = 8_000
 
-/** A spilled result's preview: its first `chars` characters, and how to read the rest. */
-export const spillPreview = (entry: LogEntry, view: string, chars: number): string =>
-  `${view.slice(0, chars)}\n[… ${Math.max(0, view.length - chars)} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${Math.min(chars, view.length)} to read them]`
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
+const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff
+
+/**
+ * Where a cut asked for at `at` falls in `text`: within the text, and one
+ * unit earlier when `at` is inside a surrogate pair, so neither side of the
+ * cut holds half a character (a lone surrogate is not valid text to send).
+ */
+const cutAt = (text: string, at: number): number => {
+  const end = Math.min(Math.max(0, Math.floor(at)), text.length)
+  return end > 0 && end < text.length && isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end)) ? end - 1 : end
+}
+
+/**
+ * A spilled result's preview: its first `chars` characters (one fewer when
+ * the cut would split a surrogate pair), and how to read the rest. The
+ * offset it prints is where the cut fell, so the page read from it starts
+ * at the next character.
+ */
+export const spillPreview = (entry: LogEntry, view: string, chars: number): string => {
+  const cut = cutAt(view, chars)
+  return `${view.slice(0, cut)}\n[… ${view.length - cut} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${cut} to read them]`
+}
 
 const RecallContext = Tool.make(RECALL_TOOL, {
   description: `Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most ${RECALL_PAGE_CHARS} characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.`,
@@ -28,10 +48,17 @@ const RecallContext = Tool.make(RECALL_TOOL, {
   failureMode: "return",
 })
 
-/** One page of a stored result: at most `RECALL_PAGE_CHARS` from `offset`, ending with how to read on while more remains. */
+/**
+ * One page of a stored result: at most `RECALL_PAGE_CHARS` from `offset`,
+ * ending with how to read on while more remains. A page never holds half a
+ * surrogate pair: it ends one unit earlier when its end would split one (the
+ * offset it prints is where it ended), and an `offset` given inside a pair
+ * starts at that pair's first unit.
+ */
 export const recallPage = (locator: string, view: string, offset: number): string => {
-  const end = offset + RECALL_PAGE_CHARS
-  const page = view.slice(offset, end)
+  const start = cutAt(view, offset)
+  const end = cutAt(view, start + RECALL_PAGE_CHARS)
+  const page = view.slice(start, end)
   return end >= view.length ? page
     : `${page}\n[… ${view.length - end} more characters; call recall_context with locator "${locator}" and offset ${end}]`
 }

@@ -85,8 +85,9 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
 /**
  * The ConversationMemory contract, as checks any strategy must pass: own
  * entry ids, a log that reads back exactly after a reopen, views and
- * artifacts kept, a result shown shortened from its first build still
- * resolvable in full (a strategy that shortens none passes it as it is), a
+ * artifacts kept, a result shortened as it is written or never by a later
+ * write (one shown shortened from its first build still resolves in full, one
+ * shown whole stays whole after the next write), a
  * pure build, a request's results in its calls' order,
  * another run's call still without a result left out of a build (only the
  * run's own or an ended turn's answered as interrupted), the step context only when asked and only its own run's,
@@ -157,7 +158,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* expect("views", result?.body._tag === "ToolResult" && result.body.view.startsWith("VIEW ") && result.body.artifacts[0]?.id === artifact.id,
         "the tool result lost its view or artifacts")
     })),
-    check("a result shown shortened from its first build stays resolvable in full", "bound-on-write", (open, log) => Effect.gen(function* () {
+    check("a result is shortened as it is written or not by a later write, and stays resolvable in full", "bound-on-write", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
       yield* session.record([said("read the long record")], 0)
       // Far longer than a strategy's bound on what a result shows: one that bounds results bounds this one.
@@ -170,8 +171,12 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const viewOf = (target: MemorySession) => target.resolve(result.id).pipe(Effect.map(Option.flatMap((entry) => entry.body._tag === "ToolResult" ? Option.some(entry.body.view) : Option.none())))
       const first = yield* shownBy(session)
       if (first === undefined) return yield* fail("bound-on-write")("the first build does not show the result")
-      // A strategy that shows every result whole has nothing to keep resolvable.
-      if (first === whole) return
+      // A strategy that shows the result whole has nothing to keep resolvable, and must go on showing it whole: a bound is
+      // recorded as the result is written, never by a later write, which would rewrite a request prefix already sent.
+      if (first === whole) {
+        yield* session.recordTail([{ role: "assistant", content: [{ type: "text", text: "read" }] }], long, 1, firstRun)
+        return yield* expect("bound-on-write", (yield* shownBy(session)) === whole, "the first build shows the result whole and a build after a later write shows it shortened")
+      }
       yield* expect("bound-on-write", first.length < whole.length, "the first build shows the result changed, and no shorter")
       yield* expect("bound-on-write", Option.contains(yield* viewOf(session), whole), "the result is shown shortened and its entry no longer resolves to the whole view")
       // The shortened form is a fact of the log: a later step and a reopened session show the same text and resolve the same view.

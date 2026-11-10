@@ -3366,7 +3366,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
           "owner": "fixture",
-          "incarnation": "ecaa0599-c0d2-4da0-9f23-e03ed38acb87",
+          "incarnation": "02a62bd0-825c-4b01-a80c-371d3faf67d8",
           "through": 116,
           "turnAtFork": 6
         }
@@ -3437,7 +3437,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
           "owner": "fixture",
-          "incarnation": "ecaa0599-c0d2-4da0-9f23-e03ed38acb87",
+          "incarnation": "02a62bd0-825c-4b01-a80c-371d3faf67d8",
           "through": 0,
           "turnAtFork": 0
         }
@@ -3488,6 +3488,29 @@
           "session": "00000000-0000-4000-8000-0000000060ff",
           "seq": 2,
           "turn": 1,
+          "kind": "memory.skills",
+          "at": 1767225600000,
+          "data": {
+            "entry": "snapshot-fixture-1:1",
+            "runId": "snapshot-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "skills": [
+                "memory.recall"
+              ],
+              "tools": [
+                "recall_context"
+              ],
+              "source": "always",
+              "decision": null
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-0000000060ff",
+          "seq": 3,
+          "turn": 1,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
@@ -3495,18 +3518,19 @@
             "run": 0,
             "planned": false,
             "activeTools": [
-              "load_skill"
+              "load_skill",
+              "recall_context"
             ]
           }
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 3,
+          "seq": 4,
           "turn": 1,
           "kind": "memory.system",
           "at": 1767225600000,
           "data": {
-            "entry": "snapshot-fixture-1:1",
+            "entry": "snapshot-fixture-1:2",
             "runId": "snapshot-fixture-1",
             "step": 0,
             "at": 1767225600000,
@@ -3519,7 +3543,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 4,
+          "seq": 5,
           "turn": 1,
           "kind": "context.built",
           "at": 1767225600000,
@@ -3532,17 +3556,18 @@
             "fingerprint": "ae8f1a2539",
             "systemFingerprint": "811c9dc50",
             "estimatedTokens": 19,
-            "reservedTokens": 100,
+            "reservedTokens": 273,
             "budgetTokens": 1000,
             "compactions": 0,
             "activeTools": [
-              "load_skill"
+              "load_skill",
+              "recall_context"
             ]
           }
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 5,
+          "seq": 6,
           "turn": 1,
           "kind": "request.part",
           "at": 1767225600000,
@@ -3556,7 +3581,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 6,
+          "seq": 7,
           "turn": 1,
           "kind": "request.part",
           "at": 1767225600000,
@@ -3589,7 +3614,44 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 7,
+          "seq": 8,
+          "turn": 1,
+          "kind": "request.part",
+          "at": 1767225600000,
+          "data": {
+            "hash": "8fde79b4397e718addc8ec7b84ae7d1a0698f48f90ccad68f66981c8629815db",
+            "part": {
+              "_tag": "Tool",
+              "tool": {
+                "name": "recall_context",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "locator": {
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
+                    }
+                  },
+                  "required": [
+                    "locator"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-0000000060ff",
+          "seq": 9,
           "turn": 1,
           "kind": "request.prepared",
           "at": 1767225600000,
@@ -3615,11 +3677,12 @@
                 "maxChars": 20000000
               }
             },
-            "through": "snapshot-fixture-1:1",
+            "through": "snapshot-fixture-1:2",
             "contextFingerprint": "ae8f1a2539",
             "stableMessages": 1,
             "tools": [
-              "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d"
+              "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
+              "8fde79b4397e718addc8ec7b84ae7d1a0698f48f90ccad68f66981c8629815db"
             ],
             "toolChoice": "auto",
             "model": null,
@@ -3629,7 +3692,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 8,
+          "seq": 10,
           "turn": 1,
           "kind": "model.called",
           "at": 1767225600000,
@@ -3661,12 +3724,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 9,
+          "seq": 11,
           "turn": 1,
           "kind": "memory.message",
           "at": 1767225600000,
           "data": {
-            "entry": "snapshot-fixture-1:2",
+            "entry": "snapshot-fixture-1:3",
             "runId": "snapshot-fixture-1",
             "step": 0,
             "at": 1767225600000,
@@ -3696,7 +3759,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 10,
+          "seq": 12,
           "turn": 1,
           "kind": "step.usage",
           "at": 1767225600000,
@@ -3717,7 +3780,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 11,
+          "seq": 13,
           "turn": 1,
           "kind": "step.ended",
           "at": 1767225600000,
@@ -3730,7 +3793,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 12,
+          "seq": 14,
           "turn": 1,
           "kind": "completion.evaluated",
           "at": 1767225600000,
@@ -3746,12 +3809,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 13,
+          "seq": 15,
           "turn": 1,
           "kind": "turn.reply",
           "at": 1767225600000,
           "data": {
-            "entry": "snapshot-fixture-1:3",
+            "entry": "snapshot-fixture-1:4",
             "runId": "snapshot-fixture-1",
             "step": 0,
             "at": 1767225600000,
@@ -3763,7 +3826,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 14,
+          "seq": 16,
           "turn": 1,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -3774,7 +3837,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 15,
+          "seq": 17,
           "turn": 2,
           "kind": "turn.started",
           "at": 1767225600000,
@@ -3793,7 +3856,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 16,
+          "seq": 18,
           "turn": 2,
           "kind": "model.called",
           "at": 1767225600000,
@@ -3825,7 +3888,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 17,
+          "seq": 19,
           "turn": 2,
           "kind": "memory.compaction",
           "at": 1767225600000,
@@ -3847,7 +3910,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 18,
+          "seq": 20,
           "turn": 2,
           "kind": "memory.snapshot",
           "at": 1767225600000,
@@ -3859,18 +3922,18 @@
             },
             "anchor": {
               "session": "00000000-0000-4000-8000-0000000060ff",
-              "seq": 15
+              "seq": 17
             },
             "through": {
               "session": "00000000-0000-4000-8000-0000000060ff",
-              "seq": 17
+              "seq": 19
             },
             "entries": []
           }
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 19,
+          "seq": 21,
           "turn": 2,
           "kind": "step.started",
           "at": 1767225600000,
@@ -3879,13 +3942,14 @@
             "run": 0,
             "planned": false,
             "activeTools": [
-              "load_skill"
+              "load_skill",
+              "recall_context"
             ]
           }
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 20,
+          "seq": 22,
           "turn": 2,
           "kind": "context.built",
           "at": 1767225600000,
@@ -3898,17 +3962,18 @@
             "fingerprint": "ef8466f21f8",
             "systemFingerprint": "811c9dc50",
             "estimatedTokens": 168,
-            "reservedTokens": 100,
+            "reservedTokens": 273,
             "budgetTokens": 1000,
             "compactions": 1,
             "activeTools": [
-              "load_skill"
+              "load_skill",
+              "recall_context"
             ]
           }
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 21,
+          "seq": 23,
           "turn": 2,
           "kind": "request.prepared",
           "at": 1767225600000,
@@ -3938,7 +4003,8 @@
             "contextFingerprint": "ef8466f21f8",
             "stableMessages": 2,
             "tools": [
-              "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d"
+              "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
+              "8fde79b4397e718addc8ec7b84ae7d1a0698f48f90ccad68f66981c8629815db"
             ],
             "toolChoice": "auto",
             "model": null,
@@ -3948,7 +4014,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 22,
+          "seq": 24,
           "turn": 2,
           "kind": "model.called",
           "at": 1767225600000,
@@ -3980,7 +4046,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 23,
+          "seq": 25,
           "turn": 2,
           "kind": "memory.message",
           "at": 1767225600000,
@@ -4015,7 +4081,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 24,
+          "seq": 26,
           "turn": 2,
           "kind": "step.usage",
           "at": 1767225600000,
@@ -4036,7 +4102,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 25,
+          "seq": 27,
           "turn": 2,
           "kind": "step.ended",
           "at": 1767225600000,
@@ -4049,7 +4115,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 26,
+          "seq": 28,
           "turn": 2,
           "kind": "completion.evaluated",
           "at": 1767225600000,
@@ -4065,7 +4131,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 27,
+          "seq": 29,
           "turn": 2,
           "kind": "turn.reply",
           "at": 1767225600000,
@@ -4082,7 +4148,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-0000000060ff",
-          "seq": 28,
+          "seq": 30,
           "turn": 2,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -5495,7 +5561,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-000000006023",
           "owner": "fixture",
-          "incarnation": "cbbdcbeb-92e9-43d7-9227-0bcfaa1495ad",
+          "incarnation": "912f237e-f427-4408-a303-fc4b85e5c269",
           "through": 0,
           "turnAtFork": 0
         }
@@ -5752,7 +5818,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-000000006024",
           "owner": "fixture",
-          "incarnation": "6390e79e-6cf7-4a98-9e3b-9c91e6a17e65",
+          "incarnation": "f0e331cb-218b-4dea-8a88-34d399c8f214",
           "through": 0,
           "turnAtFork": 0
         }

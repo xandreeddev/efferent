@@ -76,10 +76,12 @@ const memory = { plugin: memoryWindowPlugin, options: { boundOnWriteChars: 16_00
 A result whose view is longer than the bound is shown as its first characters
 and a notice, for example `[… 36000 more characters kept out of context; call
 recall_context with locator "run-1:4" and offset 16000 to read them]`. The
-journal keeps the whole result. What the result shows does not change again
-unless context pressure spills it, so the start of each request stays the same
-from one step to the next. If the process dies between storing a result and
-recording its bound, that result stays without one and is shown whole.
+journal keeps the whole result. Within its turn, what the result shows
+changes again only when context pressure spills it, so the start of each
+request stays the same from one step to the next. If the write stops between
+storing a result and recording its bound (the turn is cancelled, a sibling
+call fails, the result's view or an append fails, the process dies), that
+result stays without one and is shown whole until pressure spills it.
 
 - A tool sets its own bound with the `boundOnWriteChars` annotation of
   `defineTool`; a tool that ends its result with its own continuation (an

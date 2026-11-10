@@ -353,9 +353,8 @@ const record = Effect.gen(function* () {
   // producing the real summary strategy's protocol snapshot.
   const snapshotAddress: SessionAddress = { id: ConversationId.make(fixedId(0x60ff)), owner: address.owner }
   yield* sessions.create(snapshotAddress)
-  // The conversation records a summary and its snapshot; it bounds no result, so the summary plugin adds no recall tool to it.
   const summaryAgent = yield* Agent.define({
-    plugins: [{ plugin: memorySummaryPlugin, options: { triggerRatio: 0.5, cooldownTurns: 0, boundOnWriteChars: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
+    plugins: [{ plugin: memorySummaryPlugin, options: { triggerRatio: 0.5, cooldownTurns: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
     turnServices: [LanguageModel.LanguageModel, UtilityLlm],
     budgetTokens: 1_000,
     limits: { streaming: false, maxSteps: 1 },

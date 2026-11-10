@@ -1560,9 +1560,12 @@ a new strategy rebuilds from the full-fidelity entries.
   and decides nothing: the turn goes on with what memory holds (an earlier
   summary still applies), and the summarizer is not asked again in that
   turn. It bounds a result as it is written as the window strategy does
-  (`boundOnWriteChars`, 16,000 characters by default) and, while that is
-  above 0, contributes `recall_context` under its own capability id,
-  `@xandreed/plugin-memory-summary/recall`; it never spills under pressure.
+  (`boundOnWriteChars`, 16,000 characters by default) and contributes
+  `recall_context` under its own capability id,
+  `@xandreed/plugin-memory-summary/recall`, whatever that option is. It
+  never spills under pressure and never reduces the current turn, so
+  results that are each bounded can still pass the budget together (see the
+  limits under "Bounding what a tool shows" below).
 
 The window strategy's decisions are version 3 (it bounds results as they are
 written and spills a bounded result again under pressure); the summary
@@ -1644,16 +1647,23 @@ characters and then the notice a spill under pressure ends with:
 
 The stored result and its view stay whole: `MemoryReader.resolve`, the raw
 transcript and memory capture read them, and `recall_context` pages the
-rest from that offset. What the result shows does not change again unless
-the window strategy spills it under pressure, so the prefix that holds it
-stays the same from one request to the next.
+rest from that offset. The cut never splits a character: where the bound
+falls inside a surrogate pair the result shows one unit less, the notice
+gives that offset, and a `recall_context` page ends the same way. Within
+its turn, what the result shows changes again only when the window strategy
+spills it under pressure, so the prefix that holds it stays the same from
+one request of the turn to the next. At a later turn's start the window
+strategy replaces the preview with the tool's compact view when that is
+shorter, and either strategy stops showing the result once its turn is
+dropped or summarized.
 
 - A tool sets its own bound with the `boundOnWriteChars` annotation
   (`defineTool({ tool, handler, annotations: { boundOnWriteChars: 40_000 } })`),
   which replaces the strategy's for that tool. It is an annotation and not
   part of a view, so a tool with no view sets it too; the registry carries
   it on every view of the tool (`ToolView.boundOnWriteChars`), and nothing
-  stores it.
+  stores it. The annotation is a whole number of characters, 0 or more:
+  `defineTool` throws on any other value.
 - A tool that ends its result with its own continuation sets `0`, which
   keeps its results whole: a cut after the first characters would hide
   exactly that last line (the offset to read on from, how a command ended).
@@ -1666,9 +1676,11 @@ stays the same from one request to the next.
   no longer than the bound (a longer digest gives way to the preview); and
   a result the notice would not make shorter. A failed call's result is
   bounded like any other.
-- `boundOnWriteChars: 0` on a memory plugin bounds nothing, whatever a tool
-  asks. The summary plugin then contributes no `recall_context`, and its
-  tools and prompt are those of a release without the option. A custom
+- `boundOnWriteChars: 0` on a memory plugin bounds nothing from then on,
+  whatever a tool asks. Both plugins contribute `recall_context` all the
+  same: a bound is a fact of the session's log, so a session continued at
+  `0` still shows the results bounded earlier with their notice, and the
+  notice names that tool. A custom
   `MemoryPolicy` bounds only when it sets `boundOnWriteChars`, and then
   contributes the tool the notice names (`recallCapabilityOf(id)`);
   `windowPolicy` and `summaryPolicy` given a config written without the key
@@ -1680,15 +1692,27 @@ A bound is stored as a `memory.compaction` record holding its preview, so
 the journal keeps the result's first characters a second time, beside the
 whole result.
 
-Three limits. The bound is recorded after the result's view and, when the
-strategy digests on write, after that digest returns. A request that another
-run of the same turn builds in between shows the result whole, once. A
-process that dies there leaves the result without a bound, and nothing
-records one later: it is shown whole from then on, and only the window
-strategy's pressure can still shorten it. `context.built`'s `compactions`
-counts the bounds applied with the other compactions. A graph that holds
-both memory plugins registers `recall_context` twice and fails with
-`tools.duplicate`, unless the summary plugin's `boundOnWriteChars` is `0`.
+The limits. The raw result is stored first, before any host code runs, and
+its bound is recorded after the result's view and, when the strategy digests
+on write, after that digest returns.
+
+- A request that another run of the same turn builds in between shows the
+  result whole, once.
+- A write that stops in between leaves the result without a bound, and
+  nothing records one later: an interruption (a cancelled turn, a sibling
+  call that fails), a view or an append that fails, or a process that dies.
+  The result is shown whole from then on, and only the window strategy's
+  pressure can still shorten it.
+- Under the summary strategy nothing reduces the current turn: it folds
+  earlier turns only. Results that are each bounded can still pass the
+  budget together (twelve at the default bound fill the default
+  64,000-token budget), and the request is then sent as it is. Size
+  `boundOnWriteChars` or `budgetTokens` for the turns the agent runs, or
+  use the window strategy, which spills them again.
+- `context.built`'s `compactions` counts the bounds applied with the other
+  compactions.
+- A graph that holds both memory plugins registers `recall_context` twice
+  and fails with `tools.duplicate`: list only the one the graph binds.
 
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. Version 2 headers reference reusable system
@@ -2682,7 +2706,7 @@ defaults and its layer:
 | `@xandreed/plugin-session-sqlite` | `SessionLogSqliteLive(path)` | `SessionLog` | — |
 | `@xandreed/plugin-tasks` | `TasksPluginLive` | `Tasks`, `Capabilities` (with `tools`) | `Sessions`, `TaskRunner`, `TaskExecutor` |
 | `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | — |
-| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory`, `Capabilities` (recall, while `boundOnWriteChars` is above 0) | — at build; each turn's `UtilityLlm` (declared `optional`) |
+| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory`, `Capabilities` (recall) | — at build; each turn's `UtilityLlm` (declared `optional`) |
 | `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |

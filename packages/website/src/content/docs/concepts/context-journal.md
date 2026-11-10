@@ -140,13 +140,18 @@ first 16,000 characters followed by a notice:
 ```
 
 The journal keeps the returned result and its view whole. `recall_context`
-reads the rest a page at a time from that offset, and what the result shows
-does not change again unless window memory spills it under pressure, so the
-start of each request stays the same from one step to the next.
+reads the rest a page at a time from that offset. The cut never splits a
+character: where it would fall inside a surrogate pair, the result shows one
+unit less and the notice gives that offset. Within its turn, what the result
+shows changes again only when window memory spills it under pressure, so the
+start of each request stays the same from one step to the next. At a later
+turn's start window memory replaces the preview with the tool's compact view
+when that is shorter.
 
 - A tool sets its own bound with the `boundOnWriteChars` annotation of
   `defineTool`. It replaces the policy's bound for that tool, and a tool with
-  no view can set it.
+  no view can set it. It is a whole number of characters, 0 or more;
+  `defineTool` throws on any other value.
 - A tool that ends its result with its own continuation sets `0`, which keeps
   its results whole: a cut would hide exactly that last line. The workspace
   tools `read`, `ls`, `find`, `grep` and `bash` do, and so do `read_knowledge`
@@ -155,17 +160,27 @@ start of each request stays the same from one step to the next.
   never bounded. A result whose digest was recorded as it was written is shown
   through that digest while the digest is no longer than the bound. A failed
   call's result is bounded like any other.
-- `boundOnWriteChars: 0` on the memory plugin bounds nothing. Summary memory
-  then contributes no `recall_context`.
+- `boundOnWriteChars: 0` on the memory plugin bounds nothing from then on.
+  Both memory plugins contribute `recall_context` all the same: a session
+  continued at `0` still shows the results bounded earlier with their notice,
+  which names the tool.
 
-Three limits apply. The bound is recorded just after the result, and after
-the result's digest when the policy digests on write: a request built by
-another run of the same turn in between shows the result whole once, and a
-process that dies there leaves the result without a bound, shown whole from
-then on. `context.built`
-counts each bound among its `compactions`. A graph that holds both memory
-plugins registers `recall_context` twice and fails with `tools.duplicate`,
-unless summary memory's `boundOnWriteChars` is `0`.
+These limits apply. The result is stored first, and its bound is recorded
+just after, once its view is ready (and its digest, when the policy digests on
+write).
+
+- A request built by another run of the same turn in between shows the result
+  whole once.
+- A write that stops in between leaves the result without a bound, shown
+  whole from then on: an interruption (a cancelled turn, a sibling call that
+  fails), a view or an append that fails, or a process that dies. Only window
+  memory's pressure can still shorten it.
+- Summary memory never reduces the current turn. Results that are each
+  bounded can still pass the budget together, and the request is then sent as
+  it is.
+- `context.built` counts each bound among its `compactions`.
+- A graph that holds both memory plugins registers `recall_context` twice and
+  fails with `tools.duplicate`: list only the one the graph binds.
 
 ## What compaction changes
 

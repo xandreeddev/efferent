@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { Capabilities, ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunId, RunOrdinal, ToolCallId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
-import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
+import { Capabilities, ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import type { AgentMessage, LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
 
 const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(RunId.make(`run-${turn}`), seq), runId: RunId.make(`run-${turn}`), turn, step: 0, at: seq, body })
@@ -70,19 +70,57 @@ describe("results bounded as they are written", () => {
     }
   })))
 
-  test("recall_context is contributed only while the bound is on", async () => {
+  const recall = [{ id: "@xandreed/plugin-memory-summary/recall", tools: ["recall_context"] }]
+
+  test("recall_context is contributed whatever the bound is", async () => {
     const on = await builtWith(memorySummaryDefaults)
     expect(memorySummaryDefaults.boundOnWriteChars).toBe(16_000)
-    expect(on.capabilities).toEqual([{ id: "@xandreed/plugin-memory-summary/recall", tools: ["recall_context"] }])
+    expect(on.capabilities).toEqual(recall)
     // The bound is the strategy's own spill, under the version its summaries are recorded with.
     expect(on.bounds).toEqual([{ strategy: "summary", version: "2", action: "Spill" }])
     expect(on.shown).toEqual([`${"x".repeat(16_000)}\n[… 24000 more characters kept out of context; call recall_context with locator "run-1:2" and offset 16000 to read them]`])
 
-    // At 0 the plugin contributes nothing and the result is whole: the tools and the messages of a release without the option.
-    expect(await builtWith({ ...memorySummaryDefaults, boundOnWriteChars: 0 })).toEqual({ capabilities: [], bounds: [], shown: ["x".repeat(40_000)] })
+    // At 0 nothing is bounded and the result is whole. The tool is contributed all the same: a session may hold results bounded earlier.
+    expect(await builtWith({ ...memorySummaryDefaults, boundOnWriteChars: 0 })).toEqual({ capabilities: recall, bounds: [], shown: ["x".repeat(40_000)] })
     // Options that leave the key out take the default, as every option does.
     const { boundOnWriteChars: _bound, ...withoutKey } = memorySummaryDefaults
     expect(await builtWith(withoutKey)).toEqual(on)
+  })
+
+  test("a session bounded at the default and opened again at 0 still shows the notice, and the tool it names serves the page", async () => {
+    const record = (name: string) => Array.from({ length: 2_000 }, (_, index) => `${name} line ${String(index + 1).padStart(4, "0")} of the record`).join("\n")
+    const exchange = (id: string, name: string): ReadonlyArray<AgentMessage> => [
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(id), toolName: "lookup", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make(id), toolName: "lookup", output: record(name) }] },
+    ]
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+      const opened = (options: typeof memorySummaryDefaults) => Effect.gen(function* () {
+        const built = (yield* memorySummaryPlugin.build(options, Context.empty())) as Context.Context<ConversationMemory | Capabilities>
+        const session = yield* Context.get(built, ConversationMemory).open({ conversation: ConversationId.make("00000000-0000-4000-8000-000000000525"), runId: RunId.make("run-1"), log }).pipe(Effect.provideService(UtilityLlm, utility))
+        return { session, tools: Context.get(built, Capabilities).flatMap((capability) => capability.tools) }
+      })
+      const first = yield* opened(memorySummaryDefaults)
+      yield* first.session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the records" }) }], 0)
+      yield* first.session.recordTail(exchange("c1", "first"), views, 1)
+      // The same session, opened by a host that has since turned the bound off.
+      const later = yield* opened({ ...memorySummaryDefaults, boundOnWriteChars: 0 })
+      yield* later.session.recordTail(exchange("c2", "second"), views, 2)
+      const shown = (yield* later.session.build({ stepContext: "none", run: RunOrdinal.make(0) })).messages.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.output)) : [])
+      const named = later.tools.filter((registered) => registered.tool.name === "recall_context")
+      const page = yield* Effect.forEach(named, (registered) => Effect.result(registered.handler({ locator: "run-1:2", offset: 16_000 }).pipe(
+        Effect.provideService(RunContext, RunContext.of({ memory: later.session } as never)))), { concurrency: 1 })
+      return { shown, page: page.map((result) => result._tag === "Success" ? result.success : "refused") }
+    })))
+    const [first, second] = [record("first"), record("second")]
+    // The result bounded earlier keeps its notice; the one written at 0 is whole.
+    expect(observed.shown).toEqual([
+      `${first.slice(0, 16_000)}\n[… ${first.length - 16_000} more characters kept out of context; call recall_context with locator "run-1:2" and offset 16000 to read them]`,
+      second,
+    ])
+    // The tool the notice names is contributed at 0 too, and reads on from the notice's offset.
+    expect(observed.page).toEqual([`${first.slice(16_000, 24_000)}\n[… ${first.length - 24_000} more characters; call recall_context with locator "run-1:2" and offset 24000]`])
   })
 
   test("the public policy bounds under the same rule, and its version is unchanged", () => {

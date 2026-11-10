@@ -67,9 +67,8 @@ const report = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     { text: "second checkpoint", input: 2_000 },
     { text: "third checkpoint", input: 600 },
   ])
-  // This fixture is about when a summary runs under a 1,000-token budget: no result is bounded, and no recall tool takes part of that budget.
   const agent = yield* Agent.define({
-    plugins: [{ plugin: memorySummaryPlugin, options: { boundOnWriteChars: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
+    plugins: [memorySummaryPlugin, toolDiscoveryPlugin, stepLoopPlugin],
     turnServices: [LanguageModel.LanguageModel, UtilityLlm],
     limits: { streaming: false, maxSteps: 1 }, budgetTokens: 1_000,
   })

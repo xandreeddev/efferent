@@ -1008,11 +1008,15 @@ const deadPort = await new Promise<number>((resolve) => {
   })
 })
 const quietEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?|no|all)_proxy$/i.test(name)))
+// The consumer says what failed and exits, but has no deadline of its own: one that stops answering is ended here, so this step always returns.
 const proxyNode = Bun.spawn(["node", join(consumer, "proxy-consumer.mjs")], {
-  cwd: consumer, stdout: "inherit", stderr: "inherit",
+  cwd: consumer, stdout: "inherit", stderr: "inherit", timeout: 120_000,
   env: { ...quietEnv, NODE_USE_ENV_PROXY: "1", HTTP_PROXY: `http://127.0.0.1:${deadPort}`, HTTPS_PROXY: `http://127.0.0.1:${deadPort}` },
 })
-if (await proxyNode.exited !== 0) process.exit(1)
+if (await proxyNode.exited !== 0) {
+  console.error("the packed Node proxy transport check failed, or did not finish within 120 seconds and was ended")
+  process.exit(1)
+}
 // The installed bin runs as a command, which needs the shebang the build keeps.
 const evalBin = Bun.spawn([join(consumer, "node_modules/.bin/efferent-eval"), "--help"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const evalHelp = await new Response(evalBin.stdout).text()

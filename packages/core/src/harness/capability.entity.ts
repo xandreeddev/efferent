@@ -6,6 +6,14 @@ import { Schema } from "effect"
  * active set and prompt assembly belong to the plugins that consume them.
  */
 
+/**
+ * A bound on what a tool's result shows as it is written: a whole number of
+ * characters, `0` or more. `defineTool` checks the annotation it is given
+ * against it, so a bound that is negative or not whole fails where the tool
+ * is defined.
+ */
+export const BoundOnWriteChars = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+
 /** @public */
 export const ToolAnnotations = Schema.Struct({
   /** Read-only tools share a concurrency lane; others run exclusively. */
@@ -20,9 +28,10 @@ export const ToolAnnotations = Schema.Struct({
    * readable through `recall_context`. `0` keeps this tool's results whole:
    * set it on a tool that ends its result with its own continuation (an
    * offset to read on from, an exit status), which a cut would hide.
-   * Omitted, the strategy's bound applies.
+   * Omitted, the strategy's bound applies. `defineTool` throws on a value
+   * that is negative or not a whole number.
    */
-  boundOnWriteChars: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  boundOnWriteChars: Schema.optionalKey(BoundOnWriteChars),
   /** Grants the run must hold for the tool to be callable. */
   permissions: Schema.Array(Schema.String),
   maxCallsPerRun: Schema.OptionFromNullOr(Schema.Int),

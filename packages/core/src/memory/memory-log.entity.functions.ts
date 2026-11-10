@@ -566,17 +566,6 @@ export const toolInputsOf = (entries: ReadonlyArray<LogEntry>, tail: ReadonlyArr
   : []))
 
 /**
- * Entry ids this strategy already rewrote (compact views or spills);
- * `shownViewsOf` also gives the text each one shows.
- *
- * @public
- */
-export const rewrittenBy = (entries: ReadonlyArray<LogEntry>, strategy: string): ReadonlySet<string> => new Set(entries.flatMap((entry) =>
-  entry.body._tag !== "Compaction" || entry.body.strategy !== strategy ? []
-    : entry.body.action._tag === "CompactViews" ? entry.body.action.entries.map(String)
-      : entry.body.action._tag === "Spill" ? [String(entry.body.action.entry)] : []))
-
-/**
  * What each result shows in place of its view when `strategy` renders, by
  * entry id, in the render's own precedence: the text of this strategy's
  * latest compact view or spill preview of it (a result bounded as it was

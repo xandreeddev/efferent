@@ -76,17 +76,16 @@ evaluate the helper model before relying on summaries for exact records.
 
 The `digests` option displays previously recorded digests. The built-in summary
 policy does not itself request result digestion, and it never spills a result
-under context pressure. Use [window memory](/docs/plugins/memory-window/) when
-you want that behavior.
+under context pressure or reduces the current turn. Use
+[window memory](/docs/plugins/memory-window/) when you want that behavior.
 
 ## Bound results as they are written
 
 A tool result longer than `boundOnWriteChars` (16,000 characters by default)
 is bounded as it is written: every request shows its first 16,000 characters
 and a notice with the locator and offset to read the rest from, and the
-journal keeps the whole result. While the bound is above 0 the plugin
-contributes `recall_context`, which reads a bounded result a page of up to
-8,000 characters at a time.
+journal keeps the whole result. The plugin contributes `recall_context`,
+which reads a bounded result a page of up to 8,000 characters at a time.
 
 ```ts
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
@@ -94,11 +93,19 @@ import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 const memory = { plugin: memorySummaryPlugin, options: { boundOnWriteChars: 0 } }
 ```
 
-`boundOnWriteChars: 0` bounds nothing and contributes no tool: the tools and
-the prompt are those of a release without the option. A tool sets its own
-bound with the `boundOnWriteChars` annotation of `defineTool`, and `0` there
-keeps that tool's results whole. A pinned result, a `recall_context` page and
-a result that holds images are never bounded.
+`boundOnWriteChars: 0` bounds nothing from then on. The plugin contributes
+`recall_context` all the same: a session keeps the bounds it recorded, so one
+continued at `0` still shows the results bounded earlier with their notice,
+which names the tool. A tool sets its own bound with the `boundOnWriteChars`
+annotation of `defineTool`, and `0` there keeps that tool's results whole. A
+pinned result, a `recall_context` page and a result that holds images are
+never bounded.
+
+Summary memory folds earlier turns and never reduces the current one. Results
+that are each bounded can still pass the budget together within one turn
+(twelve at the default bound fill the default 64,000-token budget), and the
+request is then sent as it is: size `boundOnWriteChars` or `budgetTokens` for
+the turns your agent runs.
 
 Each bound is recorded as a compaction of the `summary` strategy, whose
 version stays `2`: render snapshots saved before this option keep applying.

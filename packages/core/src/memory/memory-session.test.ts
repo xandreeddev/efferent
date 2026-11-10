@@ -471,4 +471,58 @@ describe("a result bounded as it is written", () => {
     expect(observed.bounds).toEqual(["run-1:4"])
     expect(outputsOf(observed.built.messages)).toEqual(["x".repeat(101), `${"e".repeat(100)}\n${notice(400, "run-1:4", 100)}`])
   })
+
+  test("a bound that would split a surrogate pair is cut before it, and the notice gives that offset", async () => {
+    // The pair sits across unit 100, where the bound cuts.
+    const whole = `${"x".repeat(99)}\u{1F600}${"y".repeat(400)}`
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const { session } = yield* opened(bounding)
+      const recorded = yield* session.recordTail(exchange("c1", "lookup", whole), plain(), 1)
+      return { previews: boundsOf(recorded).map((bound) => bound.preview), resolved: yield* session.resolve(recorded[1]!.id) }
+    }))
+    expect(observed.previews).toEqual([`${"x".repeat(99)}\n${notice(whole.length - 99, "run-1:2", 99)}`])
+    expect(Option.map(observed.resolved, (entry) => entry.body._tag === "ToolResult" ? entry.body.view.slice(99) : "missing")).toEqual(Option.some(whole.slice(99)))
+  })
+
+  test("a write interrupted or failed between the result and its bound leaves the result whole in every later build, also after a reopen", async () => {
+    const whole = "x".repeat(500)
+    /** Stop the write of one long result after its raw append and before its bound; then write on, build twice and reopen. */
+    const stoppedBy = (stop: "interruption" | "a failed view" | "a failed append") => Effect.gen(function* () {
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const refusing = yield* Ref.make(stop === "a failed append")
+      // The log refuses the bound's append once: the raw result is stored by then.
+      const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.get(refusing).pipe(Effect.flatMap((refuse) =>
+        refuse && entries.some((entry) => entry.body._tag === "Compaction")
+          ? Ref.set(refusing, false).pipe(Effect.andThen(Effect.fail(new HarnessError({ code: "test.refused", message: "the append was refused" }))))
+          : Ref.update(stored, (all) => [...all, ...entries]))) }
+      const session = yield* openLogSession(log, bounding, { runId: RunId.make("run-1") })
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "look it up" }) }], 0)
+      const viewing = yield* Deferred.make<void>()
+      const stopping: ToolViews = stop === "a failed append" ? plain() : { ...plain(), view: () => stop === "interruption"
+        ? Deferred.succeed(viewing, undefined).pipe(Effect.andThen(Effect.never))
+        : Effect.die("the view failed") }
+      const writing = yield* session.recordTail(exchange("c1", "lookup", whole), stopping, 1).pipe(Effect.forkChild)
+      if (stop === "interruption") yield* Deferred.await(viewing).pipe(Effect.andThen(Fiber.interrupt(writing)))
+      const exit = yield* Fiber.await(writing)
+      const first = yield* session.build(build)
+      // A later write of the same session records its own bound and none for the result the stopped write left.
+      yield* session.recordTail(exchange("c2", "lookup", "z".repeat(500)), plain(), 2)
+      const second = yield* session.build(build)
+      const reopened = yield* openLogSession(log, bounding, { runId: RunId.make("run-1") })
+      yield* reopened.recordTail([{ role: "assistant", content: [{ type: "text", text: "both read" }] }], plain(), 3)
+      const third = yield* reopened.build(build)
+      return {
+        stopped: exit._tag === "Failure",
+        bounded: boundsOf(yield* Ref.get(stored)).map((bound) => bound.entry),
+        shown: [first, second, third].map((built) => outputsOf(built.messages)),
+      }
+    })
+    // Only the later result has a bound: nothing records one for the result the stopped write left.
+    const later = (locator: string) => `${"z".repeat(100)}\n${notice(400, locator, 100)}`
+    const left = (locator: string) => ({ stopped: true, bounded: [locator], shown: [[whole], [whole, later(locator)], [whole, later(locator)]] })
+    expect(await Effect.runPromise(stoppedBy("interruption"))).toEqual(left("run-1:4"))
+    expect(await Effect.runPromise(stoppedBy("a failed view"))).toEqual(left("run-1:4"))
+    // Here the first result's presentation was stored before its bound was refused, so the later result is one entry further.
+    expect(await Effect.runPromise(stoppedBy("a failed append"))).toEqual(left("run-1:5"))
+  })
 })

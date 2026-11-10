@@ -10,10 +10,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
-- A host that wants what its agent's model was shown before sets
+- A host that wants its agent's model to be shown results as before sets
   `boundOnWriteChars: 0` in the options of `memoryWindowPlugin` or
-  `memorySummaryPlugin`: nothing is bounded as it is written, and the summary
-  plugin contributes no `recall_context`.
+  `memorySummaryPlugin`: nothing is bounded as it is written.
+- A host on `memorySummaryPlugin` now sends one more tool declaration in
+  every request, `recall_context`, whatever `boundOnWriteChars` is. A host
+  that pins its requests or its journal byte for byte sees the tool list
+  change and 173 more estimated tokens in `context.built`'s
+  `reservedTokens`; a session's journal gains one `memory.skills` record
+  where the always-on skill `memory.recall` is first activated (the memory
+  entry ids of that turn after it move by one) and one `request.part` for
+  the tool. Re-record those pins. A provider's cached prefix from an earlier
+  release no longer matches. No option keeps the tool away, because a bound
+  is a fact of the session's log: a session bounded under the default and
+  continued at `0` still shows those results with their notice, and the
+  notice names the tool.
 - A host tool that ends its result with its own continuation (an offset to
   read on from, a next-page token, an exit status) sets the annotation
   `boundOnWriteChars: 0`, so a memory strategy never cuts that last line off:
@@ -28,8 +39,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   contributes `recall_context`, which a registry built before it would not
   hold.
 - A graph that holds both memory plugins now registers `recall_context`
-  twice and fails with `tools.duplicate`: set the summary plugin's
-  `boundOnWriteChars` to `0`.
+  twice and fails with `tools.duplicate`: list only the memory plugin the
+  graph binds `ConversationMemory` to.
+- Code that called `rewrittenBy(entries, id)` reads the same entry ids as
+  the keys of `shownViewsOf(entries, { strategy: id, digests: false })`.
+
+### Breaking
+
+- `@xandreed/core`: `rewrittenBy` is removed. Its replacement is
+  `shownViewsOf(entries, { strategy, digests })`, whose keys with
+  `digests: false` are the entry ids `rewrittenBy` returned, each with the
+  text the result shows and what wrote it.
 
 ### Added
 
@@ -50,7 +70,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: the tool annotation `boundOnWriteChars`
   (`ToolAnnotations`, `defineTool`'s `annotations`): a tool's own bound,
   which replaces the strategy's for that tool; `0` keeps its results whole.
-  It is an annotation, so a tool with no view sets it too.
+  It is an annotation, so a tool with no view sets it too. It is a whole
+  number of characters, 0 or more: `defineTool` throws on any other value.
   `ToolView.boundOnWriteChars` carries it to memory with every view of the
   tool, and `MemoryPolicy.boundOnWriteChars` is the bound a custom strategy
   sets (absent or `0`: nothing is bounded, whatever a tool asks). The bound
@@ -59,11 +80,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: `shownViewsOf(entries, { strategy, digests })`, the text
   each result shows in place of its view when a strategy renders (a compact
   view, a spill's or a bound's preview, a digest) and what wrote it, in the
-  render's own precedence. `rewrittenBy` stays.
+  render's own precedence. It replaces `rewrittenBy`.
 - `@xandreed/core/conformance`: `memoryConformance` checks `bound-on-write`:
-  a result a strategy shows shortened from its first build still resolves to
-  its whole view, also after a reopen. A strategy that shortens none passes
-  it as it is.
+  a result is shortened as it is written, or not by a later write. One a
+  strategy shows shortened from its first build still resolves to its whole
+  view and shows the same text after a later write and a reopen; one its
+  first build shows whole is still whole after the next write.
 
 ### Changed
 
@@ -85,8 +107,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   view when that is shorter; it kept its preview for good before.
   Compactions recorded by earlier versions replay as recorded.
 - `@xandreed/plugin-memory-summary` contributes `recall_context` (capability
-  `@xandreed/plugin-memory-summary/recall`) while `boundOnWriteChars` is above
-  0, so an agent on the summary strategy sends one more tool schema.
+  `@xandreed/plugin-memory-summary/recall`), whatever `boundOnWriteChars`
+  is, so an agent on the summary strategy sends one more tool schema.
   `SUMMARY_STRATEGY.version` stays `2`: its summary decisions are unchanged,
   and the render checkpoints stored under that version keep applying.
 - `@xandreed/plugin-workspace`: `read`, `ls`, `find`, `grep` and `bash` set
@@ -94,12 +116,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   is bounded by its own limits, so their results are shown as before.
   `@xandreed/plugin-rag`'s `read_knowledge` and `@xandreed/plugin-memory`'s
   `read_memory`, which end a page with the offset to continue at, set it too.
-- Known limits of the bound. It is recorded after the result's view and,
-  when the strategy digests on write, after that digest returns. A request
-  that another run of the same turn builds in between shows the result
-  whole, once. A process that dies there leaves the result without a bound,
-  and nothing records one later: it is shown whole from then on, and only
-  the window strategy's pressure can still shorten it.
+- Known limits of the bound. The raw result is stored first, and its bound
+  is recorded after the result's view and, when the strategy digests on
+  write, after that digest returns. A request that another run of the same
+  turn builds in between shows the result whole, once. A write that stops in
+  between leaves the result without a bound, and nothing records one later:
+  an interruption (a cancelled turn, a sibling call that fails), a view or
+  an append that fails, or a process that dies. The result is shown whole
+  from then on, and only the window strategy's pressure can still shorten
+  it. Under the summary strategy nothing reduces the current turn: results
+  that are each bounded can still pass the budget together (twelve at the
+  default bound fill the default 64,000-token budget), and the request is
+  then sent as it is.
 
 - `@xandreed/core`: `recall_context`, its paging and the spill preview now
   live in core, where every memory plugin can reach them.
@@ -112,11 +140,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the spill preview, the page continuation and the `UnknownLocator` and
   `OffsetOutOfRange` failures. Nothing changes for a host.
 
+### Fixed
+
+- `@xandreed/core`: the spill preview and a `recall_context` page never end
+  inside a surrogate pair. A cut that would split one falls one unit
+  earlier, and the offset the notice or the page prints is where the cut
+  fell, so the pages still join to the whole view. Before, a result cut
+  inside such a character was shown with half of it, which is not valid
+  text to send; a result bounded as it is written would have met that at
+  the bound.
+
 ### Repository
 
 - Git worktrees of the repository go under `.worktrees/`, which git now
   ignores. `AGENTS.md` and `CONTRIBUTING.md` say how to create one and that
   each needs its own `bun install`.
+- `verify:packages` ends the packed Node proxy check after 120 seconds and
+  says so. The check has no deadline of its own and was awaited without one,
+  so a consumer that stopped answering held the whole verification instead
+  of failing it.
 
 ## 0.20.1 — 2026-11-10
 

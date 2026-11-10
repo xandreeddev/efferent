@@ -70,8 +70,8 @@ const windowConfig: AgentConfig = {
  * This golden uses pre-request timing; the maintenance journey covers the
  * default after-run lifecycle and its helper accounting. The budget is the
  * 1,100 tokens the scenario was written for plus the 173 the schema of
- * `recall_context` reserves, which the plugin contributes while it bounds
- * results: the messages get what they had.
+ * `recall_context` reserves, which the plugin contributes: the messages get
+ * what they had.
  */
 const summaryConfig: AgentConfig = {
   ...common,
