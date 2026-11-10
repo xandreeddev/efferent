@@ -107,7 +107,7 @@ only through the recorded fork boundary, not their later turns.
 
 On reopening, an incomplete or corrupt final commit is set aside in
 `quarantine` and the previous whole commit becomes the head. Damage before
-the tail fails the read instead of silently discarding history. Only layout 2 is supported. Other markers and nonempty unmarked roots are refused without mutation (`staging/` may hold the probe and marker another process opening the same new root staged there; anything else in it counts). Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent; listing and removing sessions read only the sessions not removed, so that work does not grow with the sessions removed before. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
+the tail fails the read instead of silently discarding history. Only layout 2 is supported, at the stored format `store.json` records (none recorded, as the first layout-2 release wrote it, is format 19). Other markers, other formats and nonempty unmarked roots are refused without mutation (`staging/` may hold the probe and marker another process opening the same new root staged there; anything else in it counts). Configure a fresh location; there is no migration or automatic deletion. Claims and generation tombstones are permanent; listing and removing sessions read only the sessions not removed, so that work does not grow with the sessions removed before. Owner/incarnation references fence reads, commits, removals and ancestry against replacements.
 
 ## Admission and lifecycle
 

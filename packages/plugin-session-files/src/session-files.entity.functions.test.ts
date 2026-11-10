@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Option, Result } from "effect"
-import { ConversationId, SessionIncarnation } from "@xandreed/core"
+import { ConversationId, SessionIncarnation, storedFormatRefusal } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
-import { PublishNonce } from "./session-files.entity.js"
+import { PublishNonce, UNRECORDED_FORMAT } from "./session-files.entity.js"
 import type { CommitRecord, StoreHealth } from "./session-files.entity.js"
-import { abandonCall, admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isAbandonedStaging, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, sameBytes, stagedAtOf, stagingName, tailVerdict, trimCache } from "./session-files.entity.functions.js"
+import { markerFormatOf, markerOfText, abandonCall, admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isAbandonedStaging, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, sameBytes, stagedAtOf, stagingName, tailVerdict, trimCache } from "./session-files.entity.functions.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
 const record = (events: number, data: Record<string, unknown> = {}): CommitRecord => ({
@@ -150,3 +150,15 @@ describe("a handle's cache", () => {
   })
 })
 
+describe("the stored format store.json records", () => {
+  test("a marker without one (as layout 2 was first written) holds format 19; a recorded one is read as written", () => {
+    expect(UNRECORDED_FORMAT).toBe(19)
+    expect([markerOfText('{"layout":2}\n'), markerOfText('{"layout":2,"format":21}\n')].map((marker) => Result.isSuccess(marker) ? markerFormatOf(marker.success) : null)).toEqual([19, 21])
+  })
+
+  test("once the stored format moves past 19, a directory recording none is refused at open", () => {
+    const unrecorded = markerOfText('{"layout":2}\n')
+    const refusal = Result.isSuccess(unrecorded) ? storedFormatRefusal(markerFormatOf(unrecorded.success), 20) : Option.none()
+    expect(Option.map(refusal, (error) => error.code)).toEqual(Option.some("store.version"))
+  })
+})

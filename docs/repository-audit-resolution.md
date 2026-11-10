@@ -162,31 +162,31 @@ Every terminal Exit completes the ACK, including defects; external ledger waits
 must obey the port's bounded-operation contract. Making durable settlement broadly
 interruptible would lose accounting facts and is intentionally avoided.
 
-### Open owner decisions
+### Owner decisions after 0.20.0
 
-These are recorded, not resolved; each is needed before the release.
+Resolved:
 
-- A release that bumps `STORED_FORMAT` alone opens old stores, since the
-  backends check only their own layout (`FILES_LAYOUT`, `SCHEMA_VERSION`),
-  then refuses each session in them, and one such session fails its owner's
-  whole `list`. The guidance states the hazard (skill `change-event`,
-  `CONTRIBUTING.md`); neither remedy is chosen: bumping the backends' layout
-  with every format, enforced by `scripts/stored-format.ts`, or a store-level
-  format marker checked when a store opens.
+- A release that bumps `STORED_FORMAT` alone no longer opens old stores: the
+  files and SQLite backends record the format a store was created for
+  (`store.json`'s `format`; SQLite's `PRAGMA application_id`) and refuse
+  another when it opens, before any session is read (`storedFormatRefusal`).
+  Stores created by 0.20.0 record none and hold format 19.
+- No purge path for sessions in an unsupported format: a backend that records
+  its store's format never opens a store holding them, and hosts replace the
+  store. Migrations between formats are planned as the next step.
+
+Open (follow-ups, not release blockers):
+
 - Some stored records still read a key that records written before 0.14.0
   lack (a token count decodes as 0, in `token-usage.entity.ts`,
   `model-request.entity.ts` and `message-mapping.entity.functions.ts`), while
-  a stored `context.built` now requires its `budgetTokens`. Whether to drop
-  the remaining fallbacks under the current-format-only rule changes the
-  stored-format fingerprint.
-- Sessions stored in an unsupported (older) format can be neither read nor
-  removed through `Sessions`; whether to add a purge or remove path for them
-  is open.
+  a stored `context.built` now requires its `budgetTokens`. Dropping the
+  remaining fallbacks changes the stored-format fingerprint, so it waits for
+  the next format bump.
 - A removed file-store generation keeps its claim
   (`sessions/<id>/claims/<generation>.json`) as it was written, its claim
   time included. Fencing and numbering need only the id and the incarnation;
-  whether removal should rewrite the claim without its time (claims are
-  never rewritten today) is open.
+  claims are never rewritten.
 
 ## Verification
 

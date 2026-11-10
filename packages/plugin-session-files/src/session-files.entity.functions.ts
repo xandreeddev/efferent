@@ -1,7 +1,7 @@
 import { Option, Order, Result, Schema } from "effect"
 import { ConversationId, SessionIncarnation } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
-import { CommitEvent, CommitMeta, CommitState, CommitTrailer, GenerationClaim, HeaderRecord, StoreMarker } from "./session-files.entity.js"
+import { CommitEvent, CommitMeta, CommitState, CommitTrailer, GenerationClaim, HeaderRecord, StoreMarker, UNRECORDED_FORMAT } from "./session-files.entity.js"
 import type { CommitDamage, CommitRecord, StoreHealth, TailVerdict } from "./session-files.entity.js"
 
 /* ── CRC-32 (IEEE 802.3), over bytes ── */
@@ -191,6 +191,9 @@ export const headerOfText = (text: string): Result.Result<HeaderRecord, Schema.S
 
 /** `store.json`'s text as its marker. */
 export const markerOfText = (text: string): Result.Result<StoreMarker, Schema.SchemaError> => decodeMarkerText(text)
+
+/** The stored format a directory's marker records: `UNRECORDED_FORMAT` when it records none. */
+export const markerFormatOf = (marker: StoreMarker): number => marker.format ?? UNRECORDED_FORMAT
 
 /* ── listing ── */
 

@@ -1,6 +1,7 @@
-import { Effect, Predicate, Schema } from "effect"
-import { JsonObject } from "./session-log.entity.js"
-import type { RevisionConflict, SessionHead, SessionRef, SessionLogError } from "./session-log.entity.js"
+import { Effect, Option, Predicate, Schema } from "effect"
+import { JsonObject, SessionLogError } from "./session-log.entity.js"
+import type { RevisionConflict, SessionHead, SessionRef } from "./session-log.entity.js"
+import { STORED_FORMAT } from "./stored-format.entity.js"
 
 /** Any value written out as JSON text: `undefined` fields are dropped, as a store drops them. */
 const toText = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
@@ -33,3 +34,19 @@ export const isRevisionConflict = (error: unknown): error is RevisionConflict =>
 export const sessionRef = (head: SessionHead): SessionRef => ({ id: head.header.id, owner: head.header.owner, incarnation: head.incarnation })
 /** Whether a captured reference still identifies this head. @public */
 export const sameSession = (reference: SessionRef, head: SessionHead): boolean => reference.id === head.header.id && reference.owner === head.header.owner && reference.incarnation === head.incarnation
+
+/**
+ * Whether a store that records `recorded` as the stored format it holds
+ * opens under `current` (this release's `STORED_FORMAT`). A store holds one
+ * format, so a backend records it when it creates the store and checks it
+ * when it opens, before any session is read: an older or newer store is
+ * refused as a whole (`store.version`, naming both formats) instead of each
+ * session failing as it is used. `None` opens the store. A backend whose
+ * stores predate the record decides which format an unrecorded store holds.
+ *
+ * @public
+ */
+export const storedFormatRefusal = (recorded: number, current: number = STORED_FORMAT): Option.Option<SessionLogError> =>
+  recorded === current
+    ? Option.none()
+    : Option.some(new SessionLogError({ code: "store.version", message: `the store holds stored format ${recorded}; this release reads only stored format ${current}: configure a fresh store` }))

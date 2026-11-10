@@ -14,8 +14,10 @@
  *
  * The sessions plugin stamps the format at creation and accepts only this
  * format for reads and writes. Other formats fail with session.version.
- * Backends independently require their current physical layout. Existing
- * stores are left untouched; configure a fresh location. There is no migration.
+ * Persistent backends record the format a store was created for and refuse
+ * a store of another format when it opens (`storedFormatRefusal`,
+ * store.version), besides their own physical layout. Existing stores are
+ * left untouched; configure a fresh location. There is no migration.
  *
  * @public
  */

@@ -115,8 +115,9 @@ release previews use the maintainer-owned PR handoff below.
 - A change to a stored shape bumps `STORED_FORMAT` (skill `change-event`),
   and every bump needs a fresh store: Sessions refuses a session of any
   other format for every operation, reads included, with `session.version`,
-  and nothing migrates it. The backends refuse an old store at open only
-  when their own layout or schema changed too. Say so under **Migration**.
+  and nothing migrates it. The built-in backends record the format a store
+  was created for and refuse a store of another format when it opens
+  (`store.version`), so no layout bump is needed. Say so under **Migration**.
 - Every release's journal fixture is kept, byte-identical to its tag, as
   historical evidence of what that release wrote
   (`packages/sdk/fixtures/journal-<version>.json`).

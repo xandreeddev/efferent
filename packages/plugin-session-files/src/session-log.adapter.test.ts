@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os"
 import { join, resolve, sep } from "node:path"
 import { Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, References, Scope } from "effect"
-import { ConversationId, SessionIncarnation, sessionRef, SessionLog } from "@xandreed/core"
+import { ConversationId, SessionIncarnation, sessionRef, SessionLog, STORED_FORMAT } from "@xandreed/core"
 import { sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { LeaseExpired, RevisionConflict, SessionExists, SessionHeader, SessionLogError, SessionMissing } from "@xandreed/core"
 import { nodeFilesIo } from "./files-io.adapter.js"
@@ -217,7 +217,18 @@ describe("the directory", () => {
     const outcomes = await Promise.all([foreign, sessions, quarantine, staged].map(opened))
     expect(outcomes).toEqual([foreign, sessions, quarantine, staged].map(() => ({ outcome: "store.version", unchanged: true })))
     expect([(await opened(empty)).outcome, (await opened(opening)).outcome]).toEqual(["succeeded", "succeeded"])
-    expect(readFileSync(join(empty, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2 })}\n`)
+    expect(readFileSync(join(empty, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2, format: STORED_FORMAT })}\n`)
+  })
+
+  test.each([STORED_FORMAT - 1, STORED_FORMAT + 1])("a layout-2 store that records stored format %s is refused with store.version before anything in it changes", async (format) => {
+    const root = written(`format-${format}-`, { "store.json": `${JSON.stringify({ layout: 2, format })}\n`, "sessions/": "", "lives/": "", "staging/": "", "quarantine/": "" })
+    expect(await opened(root)).toEqual({ outcome: "store.version", unchanged: true })
+  })
+
+  test("a layout-2 store that records no stored format, as the first layout-2 release wrote it, opens as format 19 and keeps its marker", async () => {
+    const root = written("unrecorded-", { "store.json": `${JSON.stringify({ layout: 2 })}\n`, "sessions/": "", "lives/": "", "staging/": "", "quarantine/": "" })
+    expect((await opened(root)).outcome).toBe(STORED_FORMAT === 19 ? "succeeded" : "store.version")
+    expect(readFileSync(join(root, "store.json"), "utf8")).toBe(`${JSON.stringify({ layout: 2 })}\n`)
   })
 
   test.each(["the root", "its sessions"] as const)("a handle that inspects %s of a fresh directory while another opens it and creates a session opens it too", async (inspected) => {

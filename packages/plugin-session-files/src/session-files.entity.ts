@@ -31,8 +31,16 @@ export const FILES_LAYOUT = 2
  */
 export const STAGING_SWEEP_MS = 3_600_000
 
-/** `store.json`: the layout the directory holds. */
-export const StoreMarker = Schema.Struct({ layout: Schema.Int })
+/**
+ * The stored format a layout-2 directory holds when its `store.json` records
+ * none: the release that introduced layout 2 wrote format 19 and no record.
+ * Fixed, unlike `STORED_FORMAT`: once the format moves on, such a directory
+ * is refused at open.
+ */
+export const UNRECORDED_FORMAT = 19
+
+/** `store.json`: the layout the directory holds and the stored format it was created for (`STORED_FORMAT`; none: `UNRECORDED_FORMAT`). */
+export const StoreMarker = Schema.Struct({ layout: Schema.Int, format: Schema.optionalKey(Schema.Int) })
 export type StoreMarker = typeof StoreMarker.Type
 
 /** A writer's mark on what it published: told apart from another writer's after an answer that may be wrong (a retransmitted link). */
