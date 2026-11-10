@@ -1511,12 +1511,20 @@ and records them before they apply; it applies only its own compactions, so
 a new strategy rebuilds from the full-fidelity entries.
 
 - The window strategy keeps the current turn verbatim and shows earlier turns
-  through each tool's compact view. Under budget pressure it spills the
-  current turn's largest results to a preview plus a locator, then replaces
-  the oldest turns with a ledger. `recall_context` reads a spilled result
+  through each tool's compact view. It bounds a result as it is written
+  (`boundOnWriteChars`, 16,000 characters by default; see "Bounding what a
+  tool shows" below), so a long result is shown as its start and a locator
+  from the first request that includes it. Under budget pressure it spills
+  the current turn's results to a preview plus a locator, the result that
+  shows the most text first, then replaces the oldest turns with a ledger.
+  A bounded result counts as the text it shows, and is spilled again only
+  when the shorter pressure preview (`previewChars`, 600 characters) is
+  shorter than that; at a turn's start, an earlier turn's bounded result
+  takes its tool's compact view only when that is shorter than its preview.
+  `recall_context` reads a shortened result
   back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
-  page is never spilled again. It fails
+  page is never shortened. It fails
   with `context.budget` only when the current turn alone does not fit the
   budget it is given: the whole budget at the turn's start, and what the
   system prompt and tool schemas leave of it at each step. With
@@ -1524,7 +1532,7 @@ a new strategy rebuilds from the full-fidelity entries.
   earlier turns are compacted and dropped, and spills them only when the
   current turn alone does not fit (the fewest spills, then the fewest dropped
   turns); the strategy keeps its id `window` and its version becomes
-  `2+current-turn-first`, part of every request's `strategyVersion`, so
+  `3+current-turn-first`, part of every request's `strategyVersion`, so
   compactions recorded under either order replay as recorded.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
@@ -1551,9 +1559,16 @@ a new strategy rebuilds from the full-fidelity entries.
   call that fails or takes longer than `summaryTimeoutMs` (60 s) is logged
   and decides nothing: the turn goes on with what memory holds (an earlier
   summary still applies), and the summarizer is not asked again in that
-  turn.
+  turn. It bounds a result as it is written as the window strategy does
+  (`boundOnWriteChars`, 16,000 characters by default) and, while that is
+  above 0, contributes `recall_context` under its own capability id,
+  `@xandreed/plugin-memory-summary/recall`; it never spills under pressure.
 
-Both strategies use version 2 decisions. `MaintainSignal.phase` is `turn-start`,
+The window strategy's decisions are version 3 (it bounds results as they are
+written and spills a bounded result again under pressure); the summary
+strategy's are version 2, since what and when it summarizes is unchanged and
+the render checkpoints stored under that version keep applying. A recorded
+compaction replays as recorded whatever version wrote it. `MaintainSignal.phase` is `turn-start`,
 `step`, `turn-end` or `overflow`; `turn-end` comes after the turn's reply is
 final and sealed, and `overflow` is a force-maintenance input for a caller
 that owns recovery. End and overflow window maintenance returns safe
@@ -1610,6 +1625,70 @@ never recomputed on replay. A digest that fails records nothing and the
 result keeps its view; the digest plugin frames the request and the result
 as data, keeps them within `maxSourceChars`, and logs a call that fails or
 takes longer than `digestTimeoutMs` (30 s).
+
+**Bounding what a tool shows.** A tool with no view is shown to the model as
+its whole result (text as it is, anything else as canonical JSON), and the
+pressure rules above act only once a request passes its budget, by
+rewriting a result the model was already sent, which also ends a provider's
+cached prompt prefix at that message. So both memory strategies bound a
+result as it is written. A result whose view is longer than
+`boundOnWriteChars` (16,000 characters by default: two `recall_context`
+pages, about 5,400 estimated tokens, a twelfth of the default budget) is
+recorded with the strategy's own `Spill` before the write returns, so every
+request that includes it, the first one too, shows its first 16,000
+characters and then the notice a spill under pressure ends with:
+
+```text
+[… 36000 more characters kept out of context; call recall_context with locator "run-1:4" and offset 16000 to read them]
+```
+
+The stored result and its view stay whole: `MemoryReader.resolve`, the raw
+transcript and memory capture read them, and `recall_context` pages the
+rest from that offset. What the result shows does not change again unless
+the window strategy spills it under pressure, so the prefix that holds it
+stays the same from one request to the next.
+
+- A tool sets its own bound with the `boundOnWriteChars` annotation
+  (`defineTool({ tool, handler, annotations: { boundOnWriteChars: 40_000 } })`),
+  which replaces the strategy's for that tool. It is an annotation and not
+  part of a view, so a tool with no view sets it too; the registry carries
+  it on every view of the tool (`ToolView.boundOnWriteChars`), and nothing
+  stores it.
+- A tool that ends its result with its own continuation sets `0`, which
+  keeps its results whole: a cut after the first characters would hide
+  exactly that last line (the offset to read on from, how a command ended).
+  The workspace tools `read`, `ls`, `find`, `grep` and `bash` set it, and
+  so do `read_knowledge` and `read_memory`; their own limits are what
+  bounds them.
+- Never bounded: a pinned result; a `recall_context` page; a result that
+  holds images (a result shown through other text sends none); a result
+  whose digest was recorded as it was written, is shown (`digests`) and is
+  no longer than the bound (a longer digest gives way to the preview); and
+  a result the notice would not make shorter. A failed call's result is
+  bounded like any other.
+- `boundOnWriteChars: 0` on a memory plugin bounds nothing, whatever a tool
+  asks. The summary plugin then contributes no `recall_context`, and its
+  tools and prompt are those of a release without the option. A custom
+  `MemoryPolicy` bounds only when it sets `boundOnWriteChars`, and then
+  contributes the tool the notice names (`recallCapabilityOf(id)`);
+  `windowPolicy` and `summaryPolicy` given a config written without the key
+  bound nothing, while the plugins' options take the default. A host that
+  stacks typed layers stacks `MemorySummaryLive`, like `MemoryWindowLive`,
+  below `ToolDiscoveryLive`, so the registry holds the tool.
+
+A bound is stored as a `memory.compaction` record holding its preview, so
+the journal keeps the result's first characters a second time, beside the
+whole result.
+
+Three limits. The bound is recorded after the result's view and, when the
+strategy digests on write, after that digest returns. A request that another
+run of the same turn builds in between shows the result whole, once. A
+process that dies there leaves the result without a bound, and nothing
+records one later: it is shown whole from then on, and only the window
+strategy's pressure can still shorten it. `context.built`'s `compactions`
+counts the bounds applied with the other compactions. A graph that holds
+both memory plugins registers `recall_context` twice and fails with
+`tools.duplicate`, unless the summary plugin's `boundOnWriteChars` is `0`.
 
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. Version 2 headers reference reusable system
@@ -2342,6 +2421,15 @@ and declares the same services as the tools. The
 skills have no instructions, since an always-on skill's instructions never
 reach the model.
 
+`read`, `ls`, `find`, `grep` and `bash` each end a result with their own
+continuation (the offset to continue from, what was left out, how the
+command ended) and are bounded by their own limits (`maxLines`, `maxBytes`,
+`lsEntries`, `findResults`, `grepMatches`). They set the annotation
+`boundOnWriteChars: 0`, so a memory strategy shows their results whole
+instead of cutting that last line off (see "Bounding what a tool shows"
+above); `write` and `edit` return one short line and leave the strategy's
+bound in place.
+
 **Permissions.** `write` and `edit` need `fs.write` and `bash` needs
 `shell.exec` (`WORKSPACE_PERMISSIONS`). Tool discovery grants nothing by
 default: give the grants with its `grants` option or a turn's
@@ -2594,7 +2682,7 @@ defaults and its layer:
 | `@xandreed/plugin-session-sqlite` | `SessionLogSqliteLive(path)` | `SessionLog` | — |
 | `@xandreed/plugin-tasks` | `TasksPluginLive` | `Tasks`, `Capabilities` (with `tools`) | `Sessions`, `TaskRunner`, `TaskExecutor` |
 | `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | — |
-| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory` | — at build; each turn's `UtilityLlm` (declared `optional`) |
+| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory`, `Capabilities` (recall, while `boundOnWriteChars` is above 0) | — at build; each turn's `UtilityLlm` (declared `optional`) |
 | `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |

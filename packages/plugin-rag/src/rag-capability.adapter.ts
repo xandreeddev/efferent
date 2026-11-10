@@ -69,7 +69,8 @@ export const ragCapability = (config: RagConfig) => {
         }),
         view: { version: "1", render: (result) => knowledgeEvidenceText(result, config.evidenceChars) },
       }),
-      defineTool({ tool: Read, requires: [Knowledge, RunContext], annotations: { readOnly: true },
+      // A page ends with the offset to continue at, which a memory strategy's cut would hide: read_knowledge pages itself (boundOnWriteChars: 0).
+      defineTool({ tool: Read, requires: [Knowledge, RunContext], annotations: { readOnly: true, boundOnWriteChars: 0 },
         handler: (params) => Effect.gen(function* () {
           const reach = yield* reachOf().pipe(Effect.mapError(() => text.unavailable))
           const source = reach.sources === undefined || reach.sources.includes(params.sourceId)

@@ -140,7 +140,8 @@ const runTurn = (root, sessions, address, name, options = {}) => Effect.gen(func
     ]
   }), streamText: () => Stream.die("the snapshot fixture does not stream") }), { provider: "scripted", model: "snapshot", settings: {} })
   const agent = yield* Agent.define({
-    plugins: [{ plugin: memorySummaryPlugin, options: { cooldownTurns: 3, media: "none", maxMediaChars: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
+    // Snapshots under a 1,000-token budget: no result is bounded, and no recall tool takes part of that budget.
+    plugins: [{ plugin: memorySummaryPlugin, options: { cooldownTurns: 3, media: "none", maxMediaChars: 0, boundOnWriteChars: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
     capabilities: [defineCapability({ id: "snapshot-fixture", version: "1", tools: [
       defineTool({ tool: Pinned, annotations: { readOnly: true, pinned: true }, view: { version: "1", render: () => "Pinned image checkpoint." }, handler: () => Ref.update(handlers, (all) => [...all, "pinned"]).pipe(Effect.as({ nested: [image] })) }),
       defineTool({ tool: Plain, annotations: { readOnly: true }, handler: () => Ref.update(handlers, (all) => [...all, "plain"]).pipe(Effect.as("Plain old checkpoint.")) }),

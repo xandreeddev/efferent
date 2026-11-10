@@ -33,6 +33,13 @@ export interface ToolView {
   readonly artifacts: ReadonlyArray<ArtifactRef>
   readonly pinned: boolean
   /**
+   * The tool's own bound on what a result shows as it is written
+   * (`ToolAnnotations.boundOnWriteChars`), `0` for a tool whose results stay
+   * whole; omitted, the memory strategy's bound applies. Memory reads it
+   * when it records the result and never stores it.
+   */
+  readonly boundOnWriteChars?: number
+  /**
    * The images of the encoded result the model is sent with it, where they
    * are in it (`mediaSlotsOf`). Memory checks each one when it records the
    * result (`toolResultMedia`): an image that fails, or one over

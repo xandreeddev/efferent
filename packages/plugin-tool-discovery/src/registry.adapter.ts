@@ -232,10 +232,12 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       view: (name, encoded, params, isError) => {
         const entry = byName.get(name)
         const pinned = entry?.annotations.pinned ?? false
+        // The tool's own bound on what its result shows rides with every view of it, the raw one included: a tool with no view has no other place to set it.
+        const bound = entry?.annotations.boundOnWriteChars === undefined ? {} : { boundOnWriteChars: entry.annotations.boundOnWriteChars }
         // The raw view never carries an image's base64 as text: the images go as images (a failed call's as none).
         const slots = isError ? [] : selectedSlots(encoded, Option.none())
         const raw: ToolView = {
-          text: rawText(elideMediaData(encoded)), version: "raw", subjects: [], artifacts: [], pinned,
+          text: rawText(elideMediaData(encoded)), version: "raw", subjects: [], artifacts: [], pinned, ...bound,
           ...(slots.length === 0 ? {} : { media: slots }),
         }
         if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
@@ -245,7 +247,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
             const media = selectedSlots(encoded, Option.map(view.media, (select) => select(result, params)))
             return {
               text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
-              artifacts: view.artifacts(result, params), pinned,
+              artifacts: view.artifacts(result, params), pinned, ...bound,
               ...(media.length === 0 ? {} : { media }),
             }
           } })),

@@ -711,6 +711,14 @@ describe("workspaceToolsPlugin", () => {
     ])
   })
 
+  test("the tools that end a result with their own continuation keep it whole: read, ls, find, grep and bash set a bound of 0", async () => {
+    const capability = await scoped(bench().pipe(Effect.map((built) => built.capability)))
+    // write and edit return one short line: they leave the memory strategy's bound in place.
+    expect(capability.tools.map((registered) => [registered.tool.name, registered.annotations.boundOnWriteChars])).toEqual([
+      ["read", 0], ["ls", 0], ["find", 0], ["grep", 0], ["write", undefined], ["edit", undefined], ["bash", 0],
+    ])
+  })
+
   test("resolves in a graph after the local system, with Bash, and refuses bad options", async () => {
     const tools = await scoped(Effect.gen(function* () {
       const graph = yield* resolveGraph({ version: 1, plugins: [

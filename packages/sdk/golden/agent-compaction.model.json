@@ -1068,7 +1068,7 @@
         "turn": 1,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "845922d03a",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 19,
@@ -1086,7 +1086,7 @@
         "turn": 1,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "9b016d1d2cd",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 239,
@@ -1104,7 +1104,7 @@
         "turn": 1,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "bcc1cdd24eb",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 420,
@@ -1122,7 +1122,7 @@
         "turn": 2,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "25cfed78615",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 520,
@@ -1140,7 +1140,7 @@
         "turn": 2,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "046d77bc842",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 705,
@@ -1158,7 +1158,7 @@
         "turn": 3,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "eeeae28797b",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 809,
@@ -1176,7 +1176,7 @@
         "turn": 3,
         "run": 0,
         "strategy": "window",
-        "strategyVersion": "2",
+        "strategyVersion": "3",
         "fingerprint": "5ec800748a7",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 738,
@@ -1200,7 +1200,7 @@
         "body": {
           "_tag": "Compaction",
           "strategy": "window",
-          "version": "2",
+          "version": "3",
           "action": {
             "_tag": "Spill",
             "entry": "run-1:4",
@@ -1217,7 +1217,7 @@
         "body": {
           "_tag": "Compaction",
           "strategy": "window",
-          "version": "2",
+          "version": "3",
           "action": {
             "_tag": "DropTurns",
             "throughTurn": 2,
@@ -1295,6 +1295,29 @@
               "required": [
                 "query",
                 "limit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "recall_context",
+            "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "type": "string",
+                  "description": "The locator the shortened result shows."
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The first character to return; 0 by default."
+                }
+              },
+              "required": [
+                "locator"
               ],
               "additionalProperties": false
             }
@@ -1395,6 +1418,29 @@
               ],
               "additionalProperties": false
             }
+          },
+          {
+            "name": "recall_context",
+            "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "type": "string",
+                  "description": "The locator the shortened result shows."
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The first character to return; 0 by default."
+                }
+              },
+              "required": [
+                "locator"
+              ],
+              "additionalProperties": false
+            }
           }
         ],
         "toolChoice": "auto",
@@ -1462,6 +1508,29 @@
               "required": [
                 "query",
                 "limit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "name": "recall_context",
+            "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "type": "string",
+                  "description": "The locator the shortened result shows."
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The first character to return; 0 by default."
+                }
+              },
+              "required": [
+                "locator"
               ],
               "additionalProperties": false
             }
@@ -1567,6 +1636,29 @@
               ],
               "additionalProperties": false
             }
+          },
+          {
+            "name": "recall_context",
+            "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "type": "string",
+                  "description": "The locator the shortened result shows."
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The first character to return; 0 by default."
+                }
+              },
+              "required": [
+                "locator"
+              ],
+              "additionalProperties": false
+            }
           }
         ],
         "toolChoice": "auto",
@@ -1637,6 +1729,29 @@
               ],
               "additionalProperties": false
             }
+          },
+          {
+            "name": "recall_context",
+            "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "type": "string",
+                  "description": "The locator the shortened result shows."
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The first character to return; 0 by default."
+                }
+              },
+              "required": [
+                "locator"
+              ],
+              "additionalProperties": false
+            }
           }
         ],
         "toolChoice": "auto",
@@ -1668,12 +1783,13 @@
         "fingerprint": "97244c8b34",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 17,
-        "reservedTokens": 170,
-        "budgetTokens": 1100,
+        "reservedTokens": 343,
+        "budgetTokens": 1273,
         "compactions": 0,
         "activeTools": [
           "load_skill",
-          "lookup"
+          "lookup",
+          "recall_context"
         ]
       },
       {
@@ -1685,12 +1801,13 @@
         "fingerprint": "47498e199ea",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 846,
-        "reservedTokens": 170,
-        "budgetTokens": 1100,
+        "reservedTokens": 343,
+        "budgetTokens": 1273,
         "compactions": 0,
         "activeTools": [
           "load_skill",
-          "lookup"
+          "lookup",
+          "recall_context"
         ]
       },
       {
@@ -1702,12 +1819,13 @@
         "fingerprint": "bcef299222b",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 185,
-        "reservedTokens": 170,
-        "budgetTokens": 1100,
+        "reservedTokens": 343,
+        "budgetTokens": 1273,
         "compactions": 1,
         "activeTools": [
           "load_skill",
-          "lookup"
+          "lookup",
+          "recall_context"
         ]
       },
       {
@@ -1719,12 +1837,13 @@
         "fingerprint": "1e2467df9e0",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 843,
-        "reservedTokens": 170,
-        "budgetTokens": 1100,
+        "reservedTokens": 343,
+        "budgetTokens": 1273,
         "compactions": 1,
         "activeTools": [
           "load_skill",
-          "lookup"
+          "lookup",
+          "recall_context"
         ]
       },
       {
@@ -1736,12 +1855,13 @@
         "fingerprint": "f13cb9f426d",
         "systemFingerprint": "037617d319",
         "estimatedTokens": 206,
-        "reservedTokens": 170,
-        "budgetTokens": 1100,
+        "reservedTokens": 343,
+        "budgetTokens": 1273,
         "compactions": 2,
         "activeTools": [
           "load_skill",
-          "lookup"
+          "lookup",
+          "recall_context"
         ]
       }
     ],

@@ -8,7 +8,98 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- A host that wants what its agent's model was shown before sets
+  `boundOnWriteChars: 0` in the options of `memoryWindowPlugin` or
+  `memorySummaryPlugin`: nothing is bounded as it is written, and the summary
+  plugin contributes no `recall_context`.
+- A host tool that ends its result with its own continuation (an offset to
+  read on from, a next-page token, an exit status) sets the annotation
+  `boundOnWriteChars: 0`, so a memory strategy never cuts that last line off:
+  `defineTool({ tool, handler, annotations: { boundOnWriteChars: 0 } })`.
+- A host that builds its own `ConversationMemory` from `windowPolicy` or
+  `summaryPolicy` with the plugin's defaults now gets a bounding policy: it
+  contributes the tool the notice names (`recallCapabilityOf(id)` from
+  `@xandreed/core`; the window plugin's `recallCapability`), or sets
+  `boundOnWriteChars: 0`. A config written without the key bounds nothing.
+- A host that stacks typed layers itself stacks `MemorySummaryLive` below
+  `ToolDiscoveryLive`, as it does `MemoryWindowLive`: the layer now
+  contributes `recall_context`, which a registry built before it would not
+  hold.
+- A graph that holds both memory plugins now registers `recall_context`
+  twice and fails with `tools.duplicate`: set the summary plugin's
+  `boundOnWriteChars` to `0`.
+
+### Added
+
+- `boundOnWriteChars`, an option of `@xandreed/plugin-memory-window` and
+  `@xandreed/plugin-memory-summary` (16,000 by default; `0` is off): a tool
+  result whose view is longer than it is bounded as it is written. Every
+  request that includes the result, the first one too, shows its first
+  `boundOnWriteChars` characters and the notice a spill ends with
+  (`[… N more characters kept out of context; call recall_context with
+  locator "<id>" and offset <n> to read them]`, unchanged). The stored result
+  and its view stay whole, `recall_context` reads the rest, and the request
+  prefix that holds the result stays the same from step to step unless the
+  window strategy spills it again under pressure, so a provider's cached
+  prefix holds. A pinned result, a `recall_context` page, a result that
+  holds images and a result whose write-time digest is shown and is no
+  longer than the bound are never bounded; a failed call's result is bounded
+  like any other.
+- `@xandreed/core`: the tool annotation `boundOnWriteChars`
+  (`ToolAnnotations`, `defineTool`'s `annotations`): a tool's own bound,
+  which replaces the strategy's for that tool; `0` keeps its results whole.
+  It is an annotation, so a tool with no view sets it too.
+  `ToolView.boundOnWriteChars` carries it to memory with every view of the
+  tool, and `MemoryPolicy.boundOnWriteChars` is the bound a custom strategy
+  sets (absent or `0`: nothing is bounded, whatever a tool asks). The bound
+  is recorded as the strategy's own `Spill` compaction: no journal kind, event
+  or stored field is added, and the stored format stays 19.
+- `@xandreed/core`: `shownViewsOf(entries, { strategy, digests })`, the text
+  each result shows in place of its view when a strategy renders (a compact
+  view, a spill's or a bound's preview, a digest) and what wrote it, in the
+  render's own precedence. `rewrittenBy` stays.
+- `@xandreed/core/conformance`: `memoryConformance` checks `bound-on-write`:
+  a result a strategy shows shortened from its first build still resolves to
+  its whole view, also after a reopen. A strategy that shortens none passes
+  it as it is.
+
 ### Changed
+
+- `@xandreed/plugin-memory-window` and `@xandreed/plugin-memory-summary`
+  bound results as they are written by default (`boundOnWriteChars: 16_000`).
+  An agent whose tools return results longer than 16,000 characters sends
+  different requests than before: each such result is shown as its first
+  16,000 characters and a locator. `context.built`'s `compactions` counts
+  each bound, as it counts every compaction applied, and the journal stores
+  each bound as a `memory.compaction` record holding its preview: the
+  result's first characters a second time, beside the whole result.
+- `@xandreed/plugin-memory-window`: `WINDOW_STRATEGY.version` is `3`
+  (`3+current-turn-first` with `currentTurnFirst`), in every request header
+  and `context.built`. Under pressure the window spills the result that
+  shows the most text first, where it took the longest view first, and a
+  result already bounded or digested is spilled only when the pressure
+  preview (`previewChars`) is shorter than what it shows. At a turn's start,
+  an earlier turn's result shown through a preview takes its tool's compact
+  view when that is shorter; it kept its preview for good before.
+  Compactions recorded by earlier versions replay as recorded.
+- `@xandreed/plugin-memory-summary` contributes `recall_context` (capability
+  `@xandreed/plugin-memory-summary/recall`) while `boundOnWriteChars` is above
+  0, so an agent on the summary strategy sends one more tool schema.
+  `SUMMARY_STRATEGY.version` stays `2`: its summary decisions are unchanged,
+  and the render checkpoints stored under that version keep applying.
+- `@xandreed/plugin-workspace`: `read`, `ls`, `find`, `grep` and `bash` set
+  `boundOnWriteChars: 0`. Each ends its result with its own continuation and
+  is bounded by its own limits, so their results are shown as before.
+  `@xandreed/plugin-rag`'s `read_knowledge` and `@xandreed/plugin-memory`'s
+  `read_memory`, which end a page with the offset to continue at, set it too.
+- Known limits of the bound. It is recorded after the result's view and,
+  when the strategy digests on write, after that digest returns. A request
+  that another run of the same turn builds in between shows the result
+  whole, once. A process that dies there leaves the result without a bound,
+  and nothing records one later: it is shown whole from then on, and only
+  the window strategy's pressure can still shorten it.
 
 - `@xandreed/core`: `recall_context`, its paging and the spill preview now
   live in core, where every memory plugin can reach them.

@@ -184,3 +184,39 @@ test("snapshot publication waits for requested digest acknowledgements too", asy
   }).pipe(Effect.provideService(ResultDigester, { id: "fixture", version: "1", digest: () => Effect.succeed({ keep: [], summary: Option.some("short digest") }) })))
   expect(saved).toHaveLength(1)
 })
+
+test("a result bounded after a checkpoint still builds from the projection, as the full archive does", async () => {
+  /** Record one long result after a loaded checkpoint, under `bound`, and count what the next build reads of an entry the checkpoint left out. */
+  const after = (bound: number | undefined, projection: boolean) => Effect.runPromise(Effect.gen(function* () {
+    const touched: number[] = []
+    const message = { role: "assistant" as const, content: [{ type: "text" as const, text: "omitted answer ".repeat(100) }] }
+    const old = at(1, 1, { _tag: "Message", message })
+    const full = [archive[0]!, old, ...compacted.slice(2)]
+    // The checkpoint was published under this strategy and version before any result was bounded.
+    const prepared = Option.getOrThrow(yield* prepareMemorySnapshot(full, candidate.strategy))
+    const durable = yield* Ref.make<ReadonlyArray<LogEntry>>(full)
+    const session = yield* openLogSession({ read: Ref.get(durable), append: (appended) => Ref.update(durable, (all) => [...all, ...appended]), checkpoint: {
+      load: Effect.succeed(projection ? Option.some(prepared) : Option.none()), save: () => Effect.void,
+    } }, { ...policy, ...(bound === undefined ? {} : { boundOnWriteChars: bound }) }, { runId: run })
+    Object.defineProperty(old.body, "message", { configurable: true, get: () => { touched.push(1); return message } })
+    yield* session.build({ stepContext: "none", run: ordinal })
+    const long: ToolViews = { ...views, view: () => Effect.succeed({ text: "x".repeat(500), version: "1", pinned: false, subjects: [], artifacts: [] }) }
+    const recorded = yield* session.recordTail([
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("bounded"), toolName: "lookup", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("bounded"), toolName: "lookup", output: "raw" }] },
+    ], long, 1)
+    touched.length = 0
+    const built = yield* session.build({ stepContext: "none", run: ordinal })
+    return { built, reads: touched.length, recorded: recorded.map((entry) => entry.body._tag), all: yield* Ref.get(durable) }
+  }))
+  const [bounded, whole, archived] = [await after(100, true), await after(undefined, true), await after(100, false)]
+  expect(bounded.recorded).toEqual(["Message", "ToolResult", "ToolPresentation", "Compaction"])
+  expect(whole.recorded).toEqual(["Message", "ToolResult", "ToolPresentation"])
+  // The bound is one more of the strategy's own compactions: the projection holds, read as it is for a result left whole,
+  // and a build from the full archive reads more of the entry the checkpoint left out.
+  expect(bounded.reads).toBe(whole.reads)
+  expect(archived.reads).toBeGreaterThan(bounded.reads)
+  expect(bounded.built).toEqual(buildContext(bounded.all, options))
+  expect(bounded.built).toEqual(archived.built)
+  expect(JSON.stringify(bounded.built.messages)).toContain(`${"x".repeat(100)}\\n[… 400 more characters kept out of context`)
+})

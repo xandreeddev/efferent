@@ -11,7 +11,7 @@ import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from ".
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, withinAnyRoot } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
-import { FindResult, GrepResult, LsResult, ReadResult } from "./workspace-tools.entity.js"
+import { FindResult, GrepResult, LsResult, OWN_CONTINUATION, ReadResult } from "./workspace-tools.entity.js"
 import type { GrepLine, GrepUnreadable, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
 import { binaryRead, compactFind, fileTooLargeHint, compactGrep, compactLs, compactRead, readMedia, renderFind, renderGrep, renderLs, renderRead, toolDescriptions, toolParameters } from "./workspace-tools.entity.functions.js"
 
@@ -78,7 +78,7 @@ export const readTool = ({ config, path, resizesImages }: WorkspaceToolContext):
     })
   }),
   view: { version: "3", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
-  annotations: { readOnly: true },
+  annotations: { readOnly: true, ...OWN_CONTINUATION },
 })
 
 /** `ls`: a directory's entries by name, at most `lsEntries` of them. */
@@ -94,7 +94,7 @@ export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool =
     return { path: target.display, entries: entries.slice(0, limit).map((entry) => ({ name: entry.name, kind: entry.kind })), total: entries.length }
   }),
   view: { version: "2", render: renderLs, compact: compactLs },
-  annotations: { readOnly: true },
+  annotations: { readOnly: true, ...OWN_CONTINUATION },
 })
 
 /** `find`: the files under a directory whose path matches a glob, as paths relative to the workspace root. */
@@ -110,7 +110,7 @@ export const findTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     return { pattern: params.pattern, path: target.display, paths: found.paths.map((relative) => displayOf(access, access.path.join(target.path, relative))), truncated: found.truncated }
   }),
   view: { version: "2", render: (result) => renderFind(result, config.maxLines, config.maxBytes), compact: compactFind },
-  annotations: { readOnly: true },
+  annotations: { readOnly: true, ...OWN_CONTINUATION },
 })
 
 interface Searched {
@@ -225,5 +225,5 @@ export const grepTool = ({ config, path, openSearch = openRegexSearch }: Workspa
     return { pattern: params.pattern, path: target.display, ...searched }
   })),
   view: { version: "4", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
-  annotations: { readOnly: true },
+  annotations: { readOnly: true, ...OWN_CONTINUATION },
 })

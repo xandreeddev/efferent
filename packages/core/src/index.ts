@@ -311,6 +311,7 @@ export {
   queryLog,
   renderLog,
   rewrittenBy,
+  shownViewsOf,
   toolInputOf,
   toolInputsByResult,
   toolInputsOf,

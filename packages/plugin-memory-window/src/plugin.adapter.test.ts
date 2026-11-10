@@ -89,7 +89,20 @@ describe("the plugin's strategy", () => {
   test("the memory it provides reports the version of the order it was configured with, under the same id", async () => {
     expect(await strategyOf(config)).toEqual(WINDOW_STRATEGY)
     expect(await strategyOf({ ...config, currentTurnFirst: false })).toEqual(WINDOW_STRATEGY)
-    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "2+current-turn-first" })
+    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "3+current-turn-first" })
+  })
+
+  test("the strategy is version 3: it bounds results as they are written and spills a bounded result again under pressure", () => {
+    expect(WINDOW_STRATEGY).toEqual({ id: "window", version: "3" })
+  })
+
+  test("results are bounded at 16,000 characters by default; 0, or a config without the key, bounds nothing", () => {
+    expect(memoryWindowPlugin.defaults).toMatchObject({ boundOnWriteChars: 16_000 })
+    expect(windowPolicy({ ...config, boundOnWriteChars: 16_000 }).boundOnWriteChars).toBe(16_000)
+    expect("boundOnWriteChars" in windowPolicy({ ...config, boundOnWriteChars: 0 })).toBe(false)
+    expect("boundOnWriteChars" in windowPolicy(config)).toBe(false)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, boundOnWriteChars: -1 }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, boundOnWriteChars: 1.5 }))).toBe(true)
   })
 
   test("the option is off by default and validated as a boolean", () => {

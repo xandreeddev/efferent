@@ -49,7 +49,7 @@
         "origin": "user",
         "createdAt": 1767225600000,
         "meta": {
-          "recorded": "0.19.2"
+          "recorded": "0.20.1"
         },
         "parent": null
       },
@@ -256,7 +256,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "9c48f5e0cc",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 68,
@@ -395,7 +395,7 @@
             "runId": "run-1",
             "run": 0,
             "step": 0,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -786,7 +786,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "c07c91772d8",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 242,
@@ -811,7 +811,7 @@
             "runId": "run-1",
             "run": 0,
             "step": 1,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -1167,7 +1167,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "9464a1884d4",
             "systemFingerprint": "da652cecef",
             "estimatedTokens": 412,
@@ -1237,7 +1237,7 @@
             "runId": "run-1",
             "run": 0,
             "step": 2,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "afcf00169fb396b00191d2c9ea25647ddbc06c7810847382fe943400d273665b",
             "render": {
               "strategy": "window",
@@ -1796,7 +1796,7 @@
             "at": 1767225600000,
             "body": {
               "strategy": "window",
-              "version": "2",
+              "version": "3",
               "action": {
                 "_tag": "CompactViews",
                 "entries": [
@@ -2133,7 +2133,7 @@
             "turn": 4,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "4a6af3b8ad9",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 925,
@@ -2190,7 +2190,7 @@
             "runId": "run-4",
             "run": 0,
             "step": 1,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -2502,7 +2502,7 @@
             "turn": 4,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "d0d77d3edb2",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 1168,
@@ -2529,7 +2529,7 @@
             "runId": "run-4",
             "run": 0,
             "step": 2,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -3071,7 +3071,7 @@
             "at": 1767225600000,
             "body": {
               "strategy": "window",
-              "version": "2",
+              "version": "3",
               "action": {
                 "_tag": "CompactViews",
                 "entries": [
@@ -3146,7 +3146,7 @@
             "turn": 8,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "a4f478781001",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 1365,
@@ -3173,7 +3173,7 @@
             "runId": "run-8",
             "run": 0,
             "step": 0,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -3366,7 +3366,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
           "owner": "fixture",
-          "incarnation": "88542164-ed7b-4280-8f49-f253221922c2",
+          "incarnation": "ecaa0599-c0d2-4da0-9f23-e03ed38acb87",
           "through": 116,
           "turnAtFork": 6
         }
@@ -3437,7 +3437,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
           "owner": "fixture",
-          "incarnation": "88542164-ed7b-4280-8f49-f253221922c2",
+          "incarnation": "ecaa0599-c0d2-4da0-9f23-e03ed38acb87",
           "through": 0,
           "turnAtFork": 0
         }
@@ -4208,7 +4208,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "dbfa6d1391",
             "systemFingerprint": "51867e231d",
             "estimatedTokens": 48,
@@ -4316,7 +4316,7 @@
             "runId": "hook-fixture-1",
             "run": 0,
             "step": 0,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "0e5cb6ca3ff6ce271958e61afab924d382c87960f9686efa4284b937714c3c84",
             "render": {
               "strategy": "window",
@@ -4672,7 +4672,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "ef5858ad89",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 45,
@@ -4811,7 +4811,7 @@
             "runId": "interceptor-fixture-1",
             "run": 0,
             "step": 0,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -5188,7 +5188,7 @@
             "turn": 1,
             "run": 0,
             "strategy": "window",
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "fingerprint": "3028f98e27a",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 211,
@@ -5213,7 +5213,7 @@
             "runId": "interceptor-fixture-1",
             "run": 0,
             "step": 1,
-            "strategyVersion": "2",
+            "strategyVersion": "3",
             "system": "3b603fe7e93d1a4aae7dfcb8bafd3c4ccf5ddc8d71abcd9222fb167c9e44c427",
             "render": {
               "strategy": "window",
@@ -5495,7 +5495,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-000000006023",
           "owner": "fixture",
-          "incarnation": "45ae117a-0def-4b52-aae1-73582fd8f56f",
+          "incarnation": "cbbdcbeb-92e9-43d7-9227-0bcfaa1495ad",
           "through": 0,
           "turnAtFork": 0
         }
@@ -5752,7 +5752,7 @@
         "parent": {
           "id": "00000000-0000-4000-8000-000000006024",
           "owner": "fixture",
-          "incarnation": "bf7aa0f4-3314-4ce8-8cb9-ad7c54dd6a41",
+          "incarnation": "6390e79e-6cf7-4a98-9e3b-9c91e6a17e65",
           "through": 0,
           "turnAtFork": 0
         }

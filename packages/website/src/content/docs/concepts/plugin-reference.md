@@ -1479,7 +1479,8 @@ Requires: none
   "media": "inline",
   "maxImages": 8,
   "maxMediaChars": 20000000,
-  "currentTurnFirst": false
+  "currentTurnFirst": false,
+  "boundOnWriteChars": 16000
 }
 ```
 
@@ -1545,6 +1546,11 @@ Requires: none
     },
     "currentTurnFirst": {
       "type": "boolean"
+    },
+    "boundOnWriteChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -1570,6 +1576,8 @@ Scope: **runtime** · API 3 · Version 0.20.1
 
 Provides: `efferent/ConversationMemory`
 
+Contributes: `efferent/Capabilities`
+
 Requires: none
 
 Optional: `@xandreed/core/UtilityLlm`
@@ -1589,7 +1597,8 @@ Optional: `@xandreed/core/UtilityLlm`
   "maxImages": 8,
   "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
-  "summaryTimeoutMs": 60000
+  "summaryTimeoutMs": 60000,
+  "boundOnWriteChars": 16000
 }
 ```
 
@@ -1679,6 +1688,11 @@ Optional: `@xandreed/core/UtilityLlm`
       "type": "integer",
       "minimum": 100,
       "maximum": 600000
+    },
+    "boundOnWriteChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [

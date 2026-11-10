@@ -29,6 +29,7 @@ through KnowledgeStore. Node 24 and Bun.
   the rule hosts share, never a local reason check.
 - Chunk text and provenance are exact UTF-16 slices of the original source.
   Prefer paragraph, heading and line boundaries; never normalize source text.
+- `read_knowledge` ends a page with the offset to continue at, so it carries the tool annotation `boundOnWriteChars: 0`: a memory strategy that bounds results as they are written never cuts that line off, and `readChars` is what bounds a page. `search_knowledge` has no continuation and leaves the strategy's bound in place.
 - Plain RAG requires KnowledgeStore and EmbeddingModel. Graph extraction is
   opt-in and requires UtilityLlm; extracted entity identities and evidence
   are validated by core before publication. Review defaults to `always`;

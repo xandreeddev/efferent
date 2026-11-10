@@ -14,6 +14,15 @@ export const ToolAnnotations = Schema.Struct({
   pollable: Schema.Boolean,
   /** The result survives every compaction verbatim. */
   pinned: Schema.Boolean,
+  /**
+   * The most characters of a result's view the model is shown as the result
+   * is written, in place of the memory strategy's own bound: the rest stays
+   * readable through `recall_context`. `0` keeps this tool's results whole:
+   * set it on a tool that ends its result with its own continuation (an
+   * offset to read on from, an exit status), which a cut would hide.
+   * Omitted, the strategy's bound applies.
+   */
+  boundOnWriteChars: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Grants the run must hold for the tool to be callable. */
   permissions: Schema.Array(Schema.String),
   maxCallsPerRun: Schema.OptionFromNullOr(Schema.Int),

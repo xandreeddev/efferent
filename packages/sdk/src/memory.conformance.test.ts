@@ -90,6 +90,24 @@ test("the memory kit rejects a session that runs a tool view before storing the 
   expect(failures.flat()).toEqual(["raw-result-durable"])
 })
 
+// A bound is a fact about what a build shows, never a shorter stored view: the locator a shortened result names must give the whole text back.
+test("the memory kit rejects a session that shortens a result's stored view instead of what a build shows", async () => {
+  const cutting = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => session.recordTail(tail, {
+        ...views,
+        view: (tool, encoded, params, isError) => views.view(tool, encoded, params, isError).pipe(
+          Effect.map((view) => view.text.length <= 1_000 ? view : { ...view, text: `${view.text.slice(0, 1_000)}\n[shortened]` })),
+      }, step, run),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(cutting), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [`${result.failure.check}: ${result.failure.message}`] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["bound-on-write: the result is shown shortened and its entry no longer resolves to the whole view"])
+})
+
 // Without the run ordinal a build cannot tell another run's call in flight from one the turn left unanswered.
 test("the memory kit rejects a session that drops the run ordinal from recorded responses and results", async () => {
   const forgetful = ConversationMemory.of({

@@ -23,8 +23,8 @@ memory at each step. This page explains the contracts behind that example.
 | [Session files](/docs/plugins/session-files/) or [SQLite](/docs/plugins/session-sqlite/) | Persist that journal | Keeps events and head state across process restarts |
 | [Workspace filesystem](/docs/plugins/workspace-local/) | Read and change actual workspace files | Does not put their contents in context by itself |
 | [Workspace tools](/docs/plugins/workspace-tools/) | Expose file and command operations | Returned results and call arguments become journal evidence |
-| [Window memory](/docs/plugins/memory-window/) | Fit recent conversation into a request | Records compact views, spills and ledgers without deleting originals |
-| [Summary memory](/docs/plugins/memory-summary/) | Carry earlier conversation forward as a summary | Records a summary while retaining the original archive |
+| [Window memory](/docs/plugins/memory-window/) | Fit recent conversation into a request | Records bounds, compact views, spills and ledgers without deleting originals |
+| [Summary memory](/docs/plugins/memory-summary/) | Carry earlier conversation forward as a summary | Records bounds and a summary while retaining the original archive |
 | [Result digests](/docs/plugins/memory-digest/) | Shorten supported tool results with a helper model | Records an accepted digest separately from the original result |
 | [Memory capture](/docs/plugins/memory-capture/) | Copy selected committed evidence into processing jobs | Adds a capture checkpoint after durable enqueue |
 | [Long-term memory](/docs/plugins/memory/) | Learn and retrieve reusable interaction knowledge | Stores evidence-backed facts and graph relationships separately |
@@ -101,7 +101,8 @@ me what changed.” The following stages have different data and durability.
    the tool never returned. A later view or digest can be recorded separately.
 5. **The model decides what to do next.** The next request contains the result's
    current presentation. If the memory policy requests a supported digest, the
-   helper can select items or summarize it. Without a usable digest, its view stays.
+   helper can select items or summarize it. Without a usable digest, its view stays,
+   bounded when it is longer than the memory policy's bound (below).
 6. **The write happens.** A write or edit changes actual workspace files and
    returns a receipt or diff. Call arguments are also recorded: a write's input
    can contain the complete new text even when its result is only a small receipt.
@@ -113,7 +114,8 @@ me what changed.” The following stages have different data and durability.
    reply and tool evidence become durable memory-source jobs. Extraction,
    review and embedding finish asynchronously before new knowledge is searchable.
 
-The tool owns its initial limits. The memory policy owns later context pressure.
+The tool owns its initial limits. The memory policy bounds what a long result
+shows as it is written, and owns later context pressure.
 Reading a clipped result back with `recall_context` cannot recover a file range
 that was never returned. Read the actual file again for its current contents;
 that is new evidence and can differ from the earlier journal record.
@@ -123,19 +125,64 @@ can provide a spill pathname for additional captured output. Transient command
 progress is not the durable result. A spill file remains an ordinary filesystem
 artifact with its own lifetime; the journal does not automatically import it.
 
+## Bounding what a tool shows
+
+A tool with no view is shown to the model as its whole result, and context
+pressure acts only after a request has passed its budget, by rewriting a
+result the model was already sent. Both memory policies therefore bound a
+result as it is written. A result whose view is longer than
+`boundOnWriteChars` (16,000 characters by default, about a twelfth of the
+default budget) is shown, from the first request that includes it, as its
+first 16,000 characters followed by a notice:
+
+```text
+[… 36000 more characters kept out of context; call recall_context with locator "run-1:4" and offset 16000 to read them]
+```
+
+The journal keeps the returned result and its view whole. `recall_context`
+reads the rest a page at a time from that offset, and what the result shows
+does not change again unless window memory spills it under pressure, so the
+start of each request stays the same from one step to the next.
+
+- A tool sets its own bound with the `boundOnWriteChars` annotation of
+  `defineTool`. It replaces the policy's bound for that tool, and a tool with
+  no view can set it.
+- A tool that ends its result with its own continuation sets `0`, which keeps
+  its results whole: a cut would hide exactly that last line. The workspace
+  tools `read`, `ls`, `find`, `grep` and `bash` do, and so do `read_knowledge`
+  and `read_memory`; their own limits bound them.
+- A pinned result, a `recall_context` page and a result that holds images are
+  never bounded. A result whose digest was recorded as it was written is shown
+  through that digest while the digest is no longer than the bound. A failed
+  call's result is bounded like any other.
+- `boundOnWriteChars: 0` on the memory plugin bounds nothing. Summary memory
+  then contributes no `recall_context`.
+
+Three limits apply. The bound is recorded just after the result, and after
+the result's digest when the policy digests on write: a request built by
+another run of the same turn in between shows the result whole once, and a
+process that dies there leaves the result without a bound, shown whole from
+then on. `context.built`
+counts each bound among its `compactions`. A graph that holds both memory
+plugins registers `recall_context` twice and fails with `tools.duplicate`,
+unless summary memory's `boundOnWriteChars` is `0`.
+
 ## What compaction changes
 
 Choose one conversation policy. Window memory keeps the current turn detailed,
 compacts earlier results, spills oversized results to previews, and finally
-replaces old turns with a ledger under pressure. With `currentTurnFirst`, it
+replaces old turns with a ledger under pressure. A result bounded as it was
+written can be spilled again, to the shorter pressure preview; the result
+showing the most text goes first. With `currentTurnFirst`, it
 replaces old turns before it spills any of the current turn's results, and
 spills them only when the current turn alone does not fit. `recall_context`
 pages a stored result view by locator when the model needs more.
 
 Summary memory folds older whole turns into a helper-generated summary and
 keeps a recent tail verbatim. By default it considers a summary after the reply
-is sealed, with a later run's start as a safety net. It has no built-in spill
-recall tool. A summary can lose detail, so exact records need their source.
+is sealed, with a later run's start as a safety net. It never spills under
+pressure; it contributes `recall_context` for the results it bounds as they
+are written. A summary can lose detail, so exact records need their source.
 
 Result digestion is a separate operation. A tool supplies a selection or summary
 task, a policy requests it, and the digest plugin runs it. Window memory can

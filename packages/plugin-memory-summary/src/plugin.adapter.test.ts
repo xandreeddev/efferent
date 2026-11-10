@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunId, RunOrdinal, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import { Capabilities, ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunId, RunOrdinal, ToolCallId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
 
@@ -44,6 +44,56 @@ test("the built-in summary publishes one render checkpoint without another helpe
   expect(result).toBe(1)
   expect(snapshots).toHaveLength(1)
   expect(snapshots[0]).toMatchObject({ strategy: SUMMARY_STRATEGY })
+})
+
+describe("results bounded as they are written", () => {
+  const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+  const utility = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "SUMMARY", usage })) })
+  /** What the plugin built with `options` contributes, and what its memory records and shows for one 40,000-character result. */
+  const builtWith = (options: typeof memorySummaryDefaults) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const built = (yield* memorySummaryPlugin.build(options, Context.empty())) as Context.Context<ConversationMemory | Capabilities>
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const session = yield* Context.get(built, ConversationMemory).open({
+      conversation: ConversationId.make("00000000-0000-4000-8000-000000000524"), runId: RunId.make("run-1"),
+      log: { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) },
+    }).pipe(Effect.provideService(UtilityLlm, utility))
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the record" }) }], 0)
+    const recorded = yield* session.recordTail([
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "lookup", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: "x".repeat(40_000) }] },
+    ], views, 1)
+    const shown = (yield* session.build({ stepContext: "none", run: RunOrdinal.make(0) })).messages.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.output)) : [])
+    return {
+      capabilities: Context.get(built, Capabilities).map((capability) => ({ id: String(capability.id), tools: capability.tools.map((registered) => registered.tool.name) })),
+      bounds: recorded.flatMap((entry) => entry.body._tag === "Compaction" ? [{ strategy: entry.body.strategy, version: entry.body.version, action: entry.body.action._tag }] : []),
+      shown,
+    }
+  })))
+
+  test("recall_context is contributed only while the bound is on", async () => {
+    const on = await builtWith(memorySummaryDefaults)
+    expect(memorySummaryDefaults.boundOnWriteChars).toBe(16_000)
+    expect(on.capabilities).toEqual([{ id: "@xandreed/plugin-memory-summary/recall", tools: ["recall_context"] }])
+    // The bound is the strategy's own spill, under the version its summaries are recorded with.
+    expect(on.bounds).toEqual([{ strategy: "summary", version: "2", action: "Spill" }])
+    expect(on.shown).toEqual([`${"x".repeat(16_000)}\n[… 24000 more characters kept out of context; call recall_context with locator "run-1:2" and offset 16000 to read them]`])
+
+    // At 0 the plugin contributes nothing and the result is whole: the tools and the messages of a release without the option.
+    expect(await builtWith({ ...memorySummaryDefaults, boundOnWriteChars: 0 })).toEqual({ capabilities: [], bounds: [], shown: ["x".repeat(40_000)] })
+    // Options that leave the key out take the default, as every option does.
+    const { boundOnWriteChars: _bound, ...withoutKey } = memorySummaryDefaults
+    expect(await builtWith(withoutKey)).toEqual(on)
+  })
+
+  test("the public policy bounds under the same rule, and its version is unchanged", () => {
+    const summarize = () => Effect.succeed("SUMMARY")
+    expect(summaryPolicy(memorySummaryDefaults, summarize).boundOnWriteChars).toBe(16_000)
+    expect("boundOnWriteChars" in summaryPolicy({ ...memorySummaryDefaults, boundOnWriteChars: 0 }, summarize)).toBe(false)
+    // A config a host wrote before the option, given to the policy as it is, bounds nothing: no notice without the tool it names.
+    const { boundOnWriteChars: _bound, ...withoutKey } = memorySummaryDefaults
+    expect("boundOnWriteChars" in summaryPolicy(withoutKey, summarize)).toBe(false)
+    expect(summaryPolicy(memorySummaryDefaults, summarize).strategy).toEqual({ id: "summary", version: "2" })
+  })
 })
 
 /** Run with the test clock, collecting what is logged. */

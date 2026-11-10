@@ -221,6 +221,10 @@ for the scores, graph expansion and final prompt path.
 
 Read tools are `recall_memory` and `read_memory`. The separate management skill
 exposes `remember_memory` and `forget_memory` under the `memory.write` grant.
+`read_memory` ends a page with the offset to continue at, so it sets the tool
+annotation `boundOnWriteChars: 0`: a conversation-memory plugin's bound on what
+a result shows never cuts the continuation off, and `recallChars` is what
+bounds a page.
 A `recall` result's `sources` give the times and metadata of each source
 revision it cites. `renderMemoryRecall` and `memorySourcePage`, the text those
 tools show, are exported for a host's own tools

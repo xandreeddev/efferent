@@ -114,6 +114,9 @@ attempt's too, whose `GraphOmitted` note keeps the reason and message alone.
 
 The read-only tools are `search_knowledge` and `read_knowledge`. Results carry
 source references and bounded excerpts; a source read can continue by offset.
+`read_knowledge` ends a page with that offset, so it sets the tool annotation
+`boundOnWriteChars: 0`: a memory plugin's bound on what a result shows never
+cuts the continuation off, and `readChars` is what bounds a page.
 A `retrieve` result's `sources` give the times and host metadata of each source
 revision it cites, read in one store call. The package exports the tools' text,
 `knowledgeEvidenceText` and `knowledgeSourcePage`, so a host's own retrieval

@@ -325,3 +325,150 @@ test("maintenance renders its explicit run, placement and turn-end without obsol
   expect(shown.map(text => text.includes("FIRST"))).toEqual([true, false, false, false, false])
   expect(shown.map(text => text.includes("SECOND"))).toEqual([false, false, false, false, true])
 })
+
+describe("a result bounded as it is written", () => {
+  /** A strategy that bounds what a result shows at 100 characters and digests nothing. */
+  const bounding: MemoryPolicy = { ...policy, digestOnWrite: Option.none(), boundOnWriteChars: 100 }
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const text = (encoded: unknown): string => typeof encoded === "string" ? encoded : "y".repeat(500)
+  /** A tool's view is its result as it is; `own` gives the tools that set a bound of their own, `pinned` the pinned ones. */
+  const plain = (own: Readonly<Record<string, number>> = {}, pinned: ReadonlyArray<string> = []): ToolViews => ({
+    ...views,
+    view: (tool, encoded) => Effect.succeed({
+      text: text(encoded), version: "1", subjects: [], artifacts: [], pinned: pinned.includes(tool),
+      ...(Object.hasOwn(own, tool) ? { boundOnWriteChars: own[tool] } : {}),
+      ...(typeof encoded === "string" ? {} : { media: mediaSlotsOf(encoded) }),
+    }),
+  })
+  const exchange = (id: string, tool: string, output: unknown, isError = false): ReadonlyArray<AgentMessage> => [
+    { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(id), toolName: tool, input: {} }] },
+    { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make(id), toolName: tool, output, isError }] },
+  ]
+  const notice = (left: number, locator: string, offset: number) =>
+    `[… ${left} more characters kept out of context; call recall_context with locator "${locator}" and offset ${offset} to read them]`
+  /** The bounds a tail recorded: the entry each one shortens and the text it shows. */
+  const boundsOf = (entries: ReadonlyArray<LogEntry>) => entries.flatMap((entry) =>
+    entry.body._tag === "Compaction" && entry.body.action._tag === "Spill" ? [{ strategy: entry.body.strategy, version: entry.body.version, entry: String(entry.body.action.entry), preview: entry.body.action.preview }] : [])
+  /** What a build shows for each tool result, in order. */
+  const outputsOf = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) => message.role === "tool" ? message.content.map((part) => part.output) : [])
+  const opened = (ownPolicy: MemoryPolicy) => Effect.gen(function* () {
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+    const session = yield* openLogSession(log, ownPolicy, { runId: RunId.make("run-1") })
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "look it up" }) }], 0)
+    return { stored, log, session }
+  })
+  const build = { stepContext: "none" as const, run: RunOrdinal.make(0) }
+
+  test("a result longer than the bound is recorded with its preview before any build shows it", async () => {
+    const whole = "x".repeat(500)
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const { stored, session } = yield* opened(bounding)
+      const recorded = yield* session.recordTail(exchange("c1", "lookup", whole), plain(), 1)
+      // The bound is in the log when the write returns: no build can come between the result and it.
+      const durable = yield* Ref.get(stored)
+      const built = yield* session.build(build)
+      return { recorded, durable, built, resolved: yield* session.resolve(recorded[1]!.id) }
+    }))
+    expect(observed.recorded.map((entry) => entry.body._tag)).toEqual(["Message", "ToolResult", "ToolPresentation", "Compaction"])
+    const preview = `${"x".repeat(100)}\n${notice(400, "run-1:2", 100)}`
+    expect(boundsOf(observed.recorded)).toEqual([{ strategy: "test", version: "1", entry: "run-1:2", preview }])
+    expect(boundsOf(observed.durable)).toEqual(boundsOf(observed.recorded))
+    expect(outputsOf(observed.built.messages)).toEqual([preview])
+    expect(observed.built.compactions.map(String)).toEqual(["run-1:4"])
+    // The stored result stays whole, and it is what a locator resolves to.
+    expect(observed.durable.flatMap((entry) => entry.body._tag === "ToolResult" ? [entry.body.encoded] : [])).toEqual([whole])
+    expect(Option.map(observed.resolved, (entry) => entry.body._tag === "ToolResult" ? entry.body.view : "missing")).toEqual(Option.some(whole))
+  })
+
+  test("the prefix holding a bounded result is identical on every later build", async () => {
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const { log, session } = yield* opened(bounding)
+      yield* session.recordTail(exchange("c1", "lookup", "a".repeat(500)), plain(), 1)
+      const first = yield* session.build(build)
+      yield* session.recordTail(exchange("c2", "lookup", "b".repeat(700)), plain(), 2)
+      const second = yield* session.build(build)
+      yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: 1, views: plain() })
+      yield* session.recordTail([{ role: "assistant", content: [{ type: "text", text: "both read" }] }], plain(), 3)
+      const third = yield* session.build(build)
+      const reopened = yield* openLogSession(log, bounding, { runId: RunId.make("run-1") })
+      return { first, second, third, rebuilt: yield* reopened.build(build) }
+    }))
+    const { first, second, third, rebuilt } = observed
+    expect(outputsOf(first.messages)).toEqual([`${"a".repeat(100)}\n${notice(400, "run-1:2", 100)}`])
+    expect(first.messages).toHaveLength(3)
+    expect(second.messages.slice(0, first.messages.length)).toEqual([...first.messages])
+    expect(third.messages.slice(0, second.messages.length)).toEqual([...second.messages])
+    expect(outputsOf(third.messages)[1]).toBe(`${"b".repeat(100)}\n${notice(600, "run-1:6", 100)}`)
+    expect(rebuilt.fingerprint).toBe(third.fingerprint)
+  })
+
+  test("a digest no longer than the bound is shown instead of a preview", async () => {
+    const digesting = (summary: string, digests: boolean) => Effect.gen(function* () {
+      const { session } = yield* opened({ ...bounding, digestOnWrite: Option.some(() => true), render: { ...bounding.render, digests } }).pipe(
+        Effect.provideService(ResultDigester, ResultDigester.of({ id: "fixed", version: "1", digest: () => Effect.succeed({ keep: [], summary: Option.some(summary) }) })))
+      const recorded = yield* session.recordTail(exchange("c1", "lookup", "x".repeat(500)), plain(), 1)
+      return { tags: recorded.map((entry) => entry.body._tag), bounds: boundsOf(recorded).map((bound) => bound.preview), shown: outputsOf((yield* session.build(build)).messages) }
+    })
+    const preview = `${"x".repeat(100)}\n${notice(400, "run-1:2", 100)}`
+    expect(await Effect.runPromise(digesting("d".repeat(100), true))).toEqual({ tags: ["Message", "ToolResult", "ToolPresentation", "ToolDigest"], bounds: [], shown: ["d".repeat(100)] })
+    // A digest longer than the bound gives way to the preview of the view, and so does one the render does not show.
+    expect(await Effect.runPromise(digesting("d".repeat(101), true))).toEqual({ tags: ["Message", "ToolResult", "ToolPresentation", "ToolDigest", "Compaction"], bounds: [preview], shown: [preview] })
+    expect(await Effect.runPromise(digesting("d".repeat(10), false))).toEqual({ tags: ["Message", "ToolResult", "ToolPresentation", "ToolDigest", "Compaction"], bounds: [preview], shown: [preview] })
+  })
+
+  test("a pinned result, a recall page, a result with images and a tool with bound 0 stay whole", async () => {
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const { session } = yield* opened(bounding)
+      const image = yield* mediaFromBase64(pixelPng, { name: "shot.png" })
+      const whole = "x".repeat(500)
+      const recorded = yield* session.recordTail([
+        ...exchange("c1", "keep", whole), ...exchange("c2", "recall_context", whole), ...exchange("c3", "shot", { shot: image }),
+        ...exchange("c4", "paged", whole), ...exchange("c5", "lookup", whole),
+      ], plain({ paged: 0 }, ["keep"]), 1)
+      return { recorded, shown: outputsOf((yield* session.build(build)).messages) }
+    }))
+    // Only the ordinary result of the same tail is bounded: the others are whole in the build.
+    expect(boundsOf(observed.recorded).map((bound) => bound.entry)).toEqual(["run-1:10"])
+    const whole = "x".repeat(500)
+    expect(observed.shown.slice(0, 2)).toEqual([whole, whole])
+    expect(String(observed.shown[2]).startsWith("y".repeat(500))).toBe(true)
+    expect(observed.shown.slice(3)).toEqual([whole, `${"x".repeat(100)}\n${notice(400, "run-1:10", 100)}`])
+  })
+
+  test("a tool's own bound overrides the policy's", async () => {
+    const shown = await Effect.runPromise(Effect.gen(function* () {
+      const { session } = yield* opened(bounding)
+      yield* session.recordTail([...exchange("c1", "wide", "w".repeat(500)), ...exchange("c2", "narrow", "n".repeat(500)), ...exchange("c3", "wide", "w".repeat(300))], plain({ wide: 300, narrow: 20 }), 1)
+      return outputsOf((yield* session.build(build)).messages)
+    }))
+    expect(shown).toEqual([
+      `${"w".repeat(300)}\n${notice(200, "run-1:2", 300)}`,
+      `${"n".repeat(20)}\n${notice(480, "run-1:4", 20)}`,
+      "w".repeat(300),
+    ])
+  })
+
+  test("a policy without a bound records none", async () => {
+    const recordedUnder = (ownPolicy: MemoryPolicy) => Effect.gen(function* () {
+      const { session } = yield* opened(ownPolicy)
+      // A tool's own bound alone bounds nothing: the notice names a tool only a bounding strategy contributes.
+      const recorded = yield* session.recordTail([...exchange("c1", "lookup", "x".repeat(500)), ...exchange("c2", "narrow", "n".repeat(500))], plain({ narrow: 20 }), 1)
+      return { bounds: boundsOf(recorded), shown: outputsOf((yield* session.build(build)).messages) }
+    })
+    const whole = { bounds: [], shown: ["x".repeat(500), "n".repeat(500)] }
+    expect(await Effect.runPromise(recordedUnder({ ...policy, digestOnWrite: Option.none() }))).toEqual(whole)
+    expect(await Effect.runPromise(recordedUnder({ ...bounding, boundOnWriteChars: 0 }))).toEqual(whole)
+  })
+
+  test("a result is left whole when its preview would not be shorter, and a failed call's result is bounded like any other", async () => {
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const { session } = yield* opened(bounding)
+      // 101 characters under a bound of 100: the notice alone is longer than the one character it would leave out.
+      const recorded = yield* session.recordTail([...exchange("c1", "lookup", "x".repeat(101)), ...exchange("c2", "lookup", "e".repeat(500), true)], plain(), 1)
+      return { bounds: boundsOf(recorded).map((bound) => bound.entry), built: yield* session.build(build) }
+    }))
+    expect(observed.bounds).toEqual(["run-1:4"])
+    expect(outputsOf(observed.built.messages)).toEqual(["x".repeat(101), `${"e".repeat(100)}\n${notice(400, "run-1:4", 100)}`])
+  })
+})

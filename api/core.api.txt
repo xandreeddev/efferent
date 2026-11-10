@@ -585,6 +585,7 @@ const scaledTokens
 const sessionAttributes
 const sessionRef
 const shareTransient
+const shownViewsOf
 const shutdownGracefully
 const shutdownRefusal
 const skillIssuesText

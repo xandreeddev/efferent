@@ -12,6 +12,7 @@ import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews 
 import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
+import { RECALL_TOOL, spillPreview } from "./recall.entity.functions.js"
 import { MemoryStrategyId } from "./memory-snapshot.entity.js"
 import type { MemoryProjection } from "./memory-snapshot.entity.js"
 import { prepareMemorySnapshot, projectMemorySnapshot, validateMemorySnapshot } from "./memory-snapshot.entity.functions.js"
@@ -56,6 +57,20 @@ export interface MemoryPolicy {
   readonly digestOnWrite: Option.Option<(result: { readonly tool: string; readonly chars: number }) => boolean>
   /** Digest calls run at once (default 4); results are recorded in log order either way. */
   readonly digestConcurrency?: number
+  /**
+   * Bound a result as it is written: one whose view is longer than this many
+   * characters is shown, from the first request that includes it, as its
+   * first characters and core's continuation notice (`spillPreview`),
+   * recorded as this strategy's own `Spill`; the stored result stays whole
+   * and `recall_context` reads the rest. A tool's own bound
+   * (`ToolView.boundOnWriteChars`) replaces this one, and `0` there keeps
+   * that tool's results whole. A pinned result, a recalled page, a result
+   * holding images, and a result whose digest is shown and is no longer than
+   * the bound are never bounded. Omitted or `0`, nothing is bounded, whatever
+   * a tool asks: the notice names `recall_context`, so only a strategy that
+   * contributes that tool sets it.
+   */
+  readonly boundOnWriteChars?: number
   /** Decide compactions and digests from the full log; the session records them before the next build. */
   readonly maintain: (input: {
     readonly entries: ReadonlyArray<LogEntry>
@@ -171,6 +186,30 @@ export const openLogSession = Effect.fnUntraced(function* (
         return yield* record(bodies.flat(), step)
       }),
     })))
+  /**
+   * The bounds of the results just written, as this strategy's own spills: each shows the result's
+   * first characters and how to read the rest from the first build that includes it, so the prefix
+   * holding it never changes later. The preview is cut from the presented view, the text
+   * `recall_context` pages. A result is left whole when the strategy sets no bound or the tool's own
+   * is 0, when it is pinned, a recalled page (the page is what makes a bound lossless) or holds
+   * images (a result shown through other text sends none), when the digest just recorded for it is
+   * shown and is no longer than the bound, and when the preview would not be shorter than the view.
+   */
+  const boundsOnWrite = (shown: ReadonlyArray<LogEntry>, digests: ReadonlyArray<LogEntry>, own: ReadonlyMap<EntryId, number>): ReadonlyArray<LogBody> => {
+    const strategyBound = policy.boundOnWriteChars ?? 0
+    if (strategyBound <= 0) return []
+    const digested = new Map(digests.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[entry.body.entry, entry.body.text.length] as const] : []))
+    return shown.flatMap((entry): ReadonlyArray<LogBody> => {
+      const body = entry.body
+      if (body._tag !== "ToolResult" || body.pinned || body.toolName === RECALL_TOOL || (body.media ?? []).length > 0) return []
+      const chars = own.get(entry.id) ?? strategyBound
+      if (chars <= 0) return []
+      const digest = digested.get(entry.id)
+      if (policy.render.digests && digest !== undefined && digest <= chars) return []
+      const preview = spillPreview(entry, body.view, chars)
+      return preview.length >= body.view.length ? [] : [{ _tag: "Compaction", strategy: policy.strategy.id, version: policy.strategy.version, action: { _tag: "Spill", entry: entry.id, preview } }]
+    })
+  }
   const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.gen(function* () {
     const current = yield* CurrentToolResultReceipt
     const guard = Option.map(current, toolResultReceiptGuardOf)
@@ -220,28 +259,31 @@ export const openLogSession = Effect.fnUntraced(function* (
       yield* reservation.value.recorded(actual.id)
     }
     const all = yield* Ref.get(entries)
-    const presentations = yield* Effect.forEach(recorded, (entry): Effect.Effect<ReadonlyArray<LogBody>> => {
-      if (entry.body._tag !== "ToolResult") return Effect.succeed([])
+    // A tool's own bound rides beside its presentation, never in it: a presentation is stored, a bound is not.
+    const presentations = yield* Effect.forEach(recorded, (entry): Effect.Effect<{ readonly bodies: ReadonlyArray<LogBody>; readonly bound: Option.Option<readonly [EntryId, number]> }> => {
+      if (entry.body._tag !== "ToolResult") return Effect.succeed({ bodies: [], bound: Option.none() })
       const body = entry.body
       return views.view(body.toolName, body.encoded, toolInputOf(all, entry), body.isError).pipe(
-        Effect.flatMap((view) => toolResultMedia(body.encoded, body.isError ? [] : view.media ?? []).pipe(Effect.map((media): ReadonlyArray<LogBody> => {
+        Effect.flatMap((view) => toolResultMedia(body.encoded, body.isError ? [] : view.media ?? []).pipe(Effect.map((media) => {
           const presentation = {
             view: media.labels.length === 0 ? view.text : [view.text, ...media.labels].filter((line) => line.length > 0).join("\n"),
             viewVersion: view.version, subjects: view.subjects, artifacts: view.artifacts, pinned: view.pinned,
             media: media.slots, mediaNotes: media.labels,
           }
           const previous = { view: body.view, viewVersion: body.viewVersion, subjects: body.subjects, artifacts: body.artifacts, pinned: body.pinned, media: body.media ?? [], mediaNotes: body.mediaNotes ?? [] }
-          return canonicalJson(presentation) === canonicalJson(previous) ? [] : [{ _tag: "ToolPresentation", entry: entry.id, ...presentation }]
+          const bodies: ReadonlyArray<LogBody> = canonicalJson(presentation) === canonicalJson(previous) ? [] : [{ _tag: "ToolPresentation", entry: entry.id, ...presentation }]
+          return { bodies, bound: Option.map(Option.fromNullishOr(view.boundOnWriteChars), (chars) => [entry.id, chars] as const) }
         }))),
       )
     }, { concurrency: 1 })
-    const presented = yield* record(presentations.flat(), step)
+    const presented = yield* record(presentations.flatMap((presentation) => presentation.bodies), step)
     const shown = presentedEntries([...recorded, ...presented]).slice(0, recorded.length)
     const onWrite = policy.digestOnWrite
     const targets = Option.isNone(onWrite) ? [] : shown.filter((entry) =>
       entry.body._tag === "ToolResult" && onWrite.value({ tool: entry.body.toolName, chars: entry.body.view.length }))
     const digests = yield* digest(targets, views, "write", step)
-    return [...shown, ...presented, ...digests]
+    const bounds = yield* record(boundsOnWrite(shown, digests, new Map(presentations.flatMap((presentation) => Option.toArray(presentation.bound)))), step)
+    return [...shown, ...presented, ...digests, ...bounds]
     })
     return yield* withToolResultReceiptGuard(operation).pipe(Effect.onError(() => Option.match(reservation, {
       onNone: () => Effect.void, onSome: (reserved) => reserved.close,

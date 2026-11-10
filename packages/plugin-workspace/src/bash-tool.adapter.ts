@@ -5,7 +5,7 @@ import type { BashChunk, BashExit, BashOptions, RegisteredTool } from "@xandreed
 import { clipHead, tailText, utf8Length } from "./text-window.entity.functions.js"
 import { openWorkspace } from "./workspace-path.entity.functions.js"
 import type { WorkspaceAccess } from "./workspace-path.entity.functions.js"
-import { BashParams, BashToolResult, WORKSPACE_PERMISSIONS } from "./workspace-tools.entity.js"
+import { BashParams, BashToolResult, OWN_CONTINUATION, WORKSPACE_PERMISSIONS } from "./workspace-tools.entity.js"
 import { bashEnvironment, compactBash, renderBash, toolDescriptions } from "./workspace-tools.entity.functions.js"
 import { failure, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
 import type { WorkspaceToolContext } from "./read-tools.adapter.js"
@@ -165,5 +165,5 @@ export const bashTool = (context: WorkspaceToolContext): RegisteredTool => defin
     }
   }),
   view: { version: "2", render: renderBash, compact: compactBash },
-  annotations: { permissions: [WORKSPACE_PERMISSIONS.exec], pollable: true },
+  annotations: { permissions: [WORKSPACE_PERMISSIONS.exec], pollable: true, ...OWN_CONTINUATION },
 })

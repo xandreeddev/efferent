@@ -27,6 +27,17 @@ export type WorkspaceSkillName = typeof WorkspaceSkillName.Type
  */
 export const WORKSPACE_PERMISSIONS = { write: "fs.write", exec: "shell.exec" } as const
 
+/**
+ * The annotation of a tool whose result ends with its own continuation:
+ * `read` closes with the offset to continue from, `ls`, `find` and `grep`
+ * with what they left out, `bash` with how the command ended. A memory
+ * strategy that cut such a result at its own bound would hide exactly that
+ * line, so these tools keep their results whole (`boundOnWriteChars: 0`);
+ * their own limits (`maxLines`, `maxBytes`, `lsEntries`, `findResults`,
+ * `grepMatches`) are what bounds them.
+ */
+export const OWN_CONTINUATION = { boundOnWriteChars: 0 } as const
+
 const atLeast = (minimum: number) => Schema.Int.check(Schema.isGreaterThanOrEqualTo(minimum))
 const between = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
 

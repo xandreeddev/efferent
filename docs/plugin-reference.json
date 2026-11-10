@@ -1408,7 +1408,8 @@
       "media": "inline",
       "maxImages": 8,
       "maxMediaChars": 20000000,
-      "currentTurnFirst": false
+      "currentTurnFirst": false,
+      "boundOnWriteChars": 16000
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1469,6 +1470,11 @@
         },
         "currentTurnFirst": {
           "type": "boolean"
+        },
+        "boundOnWriteChars": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -1499,7 +1505,9 @@
     "provides": [
       "efferent/ConversationMemory"
     ],
-    "contributes": [],
+    "contributes": [
+      "efferent/Capabilities"
+    ],
     "defaults": {
       "summarizeAt": "turn-end",
       "triggerRatio": 0.8,
@@ -1512,7 +1520,8 @@
       "maxImages": 8,
       "maxMediaChars": 20000000,
       "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
-      "summaryTimeoutMs": 60000
+      "summaryTimeoutMs": 60000,
+      "boundOnWriteChars": 16000
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1597,6 +1606,11 @@
           "type": "integer",
           "minimum": 100,
           "maximum": 600000
+        },
+        "boundOnWriteChars": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

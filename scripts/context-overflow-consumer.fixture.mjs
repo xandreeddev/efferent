@@ -112,7 +112,8 @@ const runCase = async (scenario, index) => {
       const signals = []
       const observedSummary = definePlugin({
         id: "consumer/overflow-summary", version: "1", scope: "runtime",
-        config: MemorySummaryConfig, defaults: memorySummaryDefaults, optional: [UtilityLlm], provides: [ConversationMemory],
+        // This wrapper provides the summary strategy's memory alone, without the recall tool the plugin contributes: it bounds no result.
+        config: MemorySummaryConfig, defaults: { ...memorySummaryDefaults, boundOnWriteChars: 0 }, optional: [UtilityLlm], provides: [ConversationMemory],
         layer: (config) => Layer.effect(ConversationMemory, Effect.gen(function* () {
           const built = yield* memorySummaryPlugin.build(config, Context.empty())
           const base = Context.get(built, ConversationMemory)

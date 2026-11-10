@@ -1,6 +1,6 @@
 # @xandreed/plugin-memory-summary
 
-Summarizing conversation memory: a `ConversationMemory` with the window strategy's full-fidelity log and render, which folds older whole turns into one recorded summary (the previous summary included). Normal summaries run at `summarizeAt`: `turn-end` by default (after the reply is final and sealed, on the run's reported input, with the next run's start as the safety net for a summary that could not finish), `step` for pre-request timing; overflow can force an eligible reduction. The summarizer is the `UtilityLlm` of the turn that opens the session. Node 24 and Bun; layer `plugin-memory-summary` in `foundry.config.ts` (imports core only).
+Summarizing conversation memory: a `ConversationMemory` with the window strategy's full-fidelity log and render, which folds older whole turns into one recorded summary (the previous summary included). Normal summaries run at `summarizeAt`: `turn-end` by default (after the reply is final and sealed, on the run's reported input, with the next run's start as the safety net for a summary that could not finish), `step` for pre-request timing; overflow can force an eligible reduction. The summarizer is the `UtilityLlm` of the turn that opens the session. A result longer than `boundOnWriteChars` is shown as its first characters and a locator from the first request that includes it, and the plugin contributes core's `recall_context` to read the rest. Node 24 and Bun; layer `plugin-memory-summary` in `foundry.config.ts` (imports core only).
 
 ## Rules
 
@@ -13,7 +13,9 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 - Everything after the instructions in `summaryPrompt` is data: the transcript and an earlier summary go through core's `framed`, never pasted bare.
 - Opening without a `UtilityLlm` in the turn's services fails with `memory.summary`.
 - `open` is a `memory.open` span (`Effect.fn`); each ask of the summarizer is a `memory.summarize` span, failed when the call fails or outlasts `summaryTimeoutMs`. A step under the trigger asks nothing and opens no span.
-- `SUMMARY_STRATEGY.version` is `2`; bump it when a decision changes. Existing version 1 compactions and saved render recipes still apply without running a new summarizer.
+- Bounding a result as it is written is core's (`recordTail`, `packages/core/AGENTS.md`): the policy sets `MemoryPolicy.boundOnWriteChars` from the option (16,000 by default), and core records each bound as this strategy's own `Spill`. `boundOf(config)` is the one place the option is read: `0`, or a config written without the key and given to `summaryPolicy` as it is, bounds nothing.
+- The plugin contributes `Capabilities` always (the graph requires a declared contribution), and what it contributes follows `boundOf`: core's `recallCapabilityOf("@xandreed/plugin-memory-summary/recall")` while the bound is above 0, an empty list at `0`, so `0` leaves the tools and the prompt exactly those of a release without the option. Never contribute the tool without the bound or the bound without the tool: the notice names it. The capability id never changes. A graph that also holds the window plugin registers `recall_context` twice (`tools.duplicate`).
+- `SUMMARY_STRATEGY.version` is `2`; bump it when a summary decision changes. Existing version 1 compactions and saved render recipes still apply without running a new summarizer. Bounding results did not bump it, on purpose: a bump makes `validateMemorySnapshot` set every stored render checkpoint aside (`packages/core/src/memory/memory-snapshot.entity.functions.ts`), and keeping it is safe because a bound is a recorded `Spill` of the current turn that every release of this version already renders and retains (`appliedCompactions`, `retainedMemoryPrefix`), `decide` is unchanged, and a checkpoint saved before any bound still projects (`packages/core/src/memory/memory-checkpoint.adapter.test.ts`). What the version no longer tells apart is a session with bounded results from one without: read the compactions for that.
 - A text change updates its exact pin in `src/plugin.adapter.test.ts`; the sdk compaction golden shows it too, re-recorded with `EFFERENT_UPDATE_MODEL_GOLDEN=1` and the diff reviewed.
 
 ## Public surface
@@ -24,17 +26,18 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
-| `memorySummaryPlugin` | `@xandreed/plugin-memory-summary` | runtime | `efferent/ConversationMemory` | none | none; optional: `@xandreed/core/UtilityLlm` (read from each turn's services) |
+| `memorySummaryPlugin` | `@xandreed/plugin-memory-summary` | runtime | `efferent/ConversationMemory` | `efferent/Capabilities` (core's recall capability as `@xandreed/plugin-memory-summary/recall` while `boundOnWriteChars` is above 0; nothing at `0`) | none; optional: `@xandreed/core/UtilityLlm` (read from each turn's services) |
 
 ## Model-facing text
 
-All of it goes to the summarizer (the utility model), not to the agent's model.
+The plugin's own text all goes to the summarizer (the utility model), not to the agent's model. What its capability and its bounds show the agent's model is core's, inventoried in `packages/core/AGENTS.md`.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:63` | exact tests `src/plugin.adapter.test.ts#the default instructions open it` |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:92`, `:95`, `:98` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:95`, `:97` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
+| `recall_context`'s description and parameter descriptions, the spill preview a bounded result ends with, the page continuation and the `UnknownLocator` and `OffsetOutOfRange` failures, contributed here while `boundOnWriteChars` is above 0 | `packages/core/src/memory/recall.entity.functions.ts` | exact tests `packages/core/src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page`; `packages/core/src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `packages/core/src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next`; `src/plugin.adapter.test.ts#recall_context is contributed only while the bound is on` |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:84` | exact tests `src/plugin.adapter.test.ts#the default instructions open it` |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:126`, `:129`, `:132` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:129`, `:131` | exact tests `src/plugin.adapter.test.ts#instructions, the data rule, any earlier summary and the transcript, each framed, then what to reply` |
 
 ## Erasure files
 
@@ -44,16 +47,17 @@ None.
 
 | File | Role |
 |---|---|
-| `src/plugin.adapter.ts` | config, `summaryPrompt`, the summary policy, the plugin |
+| `src/plugin.adapter.ts` | config, `summaryPrompt`, the summary policy, the recall capability under this plugin's id, the plugin |
 | `src/summary-attempt.entity.ts`, `src/summary-attempt.entity.functions.ts` | the per-session paid-attempt phase and pure claims |
 | `src/index.ts` | the public exports |
 
 ## Tests
 
-- `src/plugin.adapter.test.ts`: the prompt, a summarizer that answers, fails or stalls (under `TestClock`), alone and in the plugin, and the spans.
+- `src/plugin.adapter.test.ts`: the prompt, a summarizer that answers, fails or stalls (under `TestClock`), alone and in the plugin, the spans, and the bound: the recall capability contributed only while it is on, the `Spill` recorded under `summary` version 2, and nothing at `0`.
 - `src/maintenance-policy.adapter.test.ts`: normal timing, force/cooldown, calibrated candidates, per-open no-progress memoization across budget oscillations, provider callback reentry, failed-helper preservation (including timeout cleanup) and public-policy reuse across sessions; `src/summary-attempt.entity.functions.test.ts` pins the phase transitions.
 - `packages/sdk/src/memory.conformance.test.ts` runs core's `memoryConformance` against this strategy and checks the `memory.summary` failure without a `UtilityLlm`.
-- The sdk compaction golden (`packages/sdk/src/agent.compaction-golden.test.ts`, `packages/sdk/golden/agent-compaction.model.json`) composes it with `cooldownTurns: 0` and a scripted summarizer: two summaries in consecutive turns, the second folding the first, each summarizer prompt recorded and the next request carrying core's handoff.
-- Run: `bun test packages/plugin-memory-summary packages/sdk/src/memory.conformance.test.ts packages/sdk/src/agent.compaction-golden.test.ts`.
+- The sdk compaction golden (`packages/sdk/src/agent.compaction-golden.test.ts`, `packages/sdk/golden/agent-compaction.model.json`) composes it with `cooldownTurns: 0` and a scripted summarizer: two summaries in consecutive turns, the second folding the first, each summarizer prompt recorded and the next request carrying core's handoff; every request offers `recall_context`.
+- `packages/sdk/src/bound-on-write.journey.test.ts`: four results far above the bound in one turn through `Agent.define`, each bounded from its first request, the next page read with `recall_context`, and `boundOnWriteChars: 0` (whole results, no recall tool).
+- Run: `bun test packages/plugin-memory-summary packages/sdk/src/memory.conformance.test.ts packages/sdk/src/agent.compaction-golden.test.ts packages/sdk/src/bound-on-write.journey.test.ts`.
 
 See the root AGENTS.md for the enforced rules and the definition of done.
