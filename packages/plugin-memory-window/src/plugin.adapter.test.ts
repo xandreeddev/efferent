@@ -33,13 +33,19 @@ describe("window memory policy", () => {
     const decided = await maintain(log("x".repeat(500)), 100_000)
     expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "CompactViews", entries: ["run-1:2"], texts: ["(compact 500)"] }], digest: [] } })
   })
-  test("under pressure it spills the current turn's largest result, then drops old turns, then fails", async () => {
+  test("under pressure it compacts the earlier turn, spills the current turn's largest result, then drops old turns, then fails", async () => {
+    // No turn start compacted turn 1's result: its compact view is the first thing pressure takes.
     const entries = log("x".repeat(3_000))
+    const compact = { _tag: "CompactViews", entries: ["run-1:2"], texts: ["(compact 3000)"] }
     const tokens = estimateMessageTokens(render(entries))
-    const spilled = await maintain(entries, tokens - 500, "step")
-    expect(spilled).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
-    const dropped = await maintain(entries, 400, "step")
-    expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+    const compacted = await maintain(entries, tokens - 500, "step")
+    expect(compacted).toMatchObject({ _tag: "Success", success: { actions: [compact] } })
+    expect(compacted._tag === "Success" && compacted.success.actions).toHaveLength(1)
+    const spilled = await maintain(entries, tokens - 1_500, "step")
+    expect(spilled).toMatchObject({ _tag: "Success", success: { actions: [compact, { _tag: "Spill", entry: "run-2:6" }] } })
+    expect(spilled._tag === "Success" && spilled.success.actions).toHaveLength(2)
+    const dropped = await maintain(entries, 200, "step")
+    expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [compact, { _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
     const impossible = await maintain(entries, 5, "step")
     expect(impossible).toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
   })
@@ -53,10 +59,15 @@ describe("reading a spilled result back", () => {
   })
 
   test("a recalled page is never spilled again: under pressure the other results are", async () => {
-    // The recalled page is the largest result of the turn, which would be spilled first.
-    const entries = [...log("x".repeat(3_000)), call(7, 2, 8), result(8, 2, "y".repeat(4_000), "recall_context")]
+    // The recalled page is the largest result of the turn, which would be spilled first. Turn 1's result already shows its compact view, as the turn's start left it.
+    const entries = [
+      ...log("x".repeat(3_000)),
+      at(7, 2, { _tag: "Compaction", strategy: WINDOW_STRATEGY.id, version: WINDOW_STRATEGY.version, action: { _tag: "CompactViews", entries: [entryId(RunId.make("run-1"), 2)], texts: ["(compact 3000)"] } }),
+      call(8, 2, 9), result(9, 2, "y".repeat(4_000), "recall_context"),
+    ]
     const decided = await maintain(entries, estimateMessageTokens(render(entries)) - 500, "step")
     expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
+    expect(decided._tag === "Success" && decided.success.actions).toHaveLength(1)
   })
 })
 
