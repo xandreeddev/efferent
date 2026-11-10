@@ -1843,6 +1843,79 @@ this contract. A host that redacts memory, or exports or streams session
 events, handles `request.part` and historical full headers the same way: they
 hold system text (step context included in `"system"` mode) and tool declarations.
 
+`contextReportOf(events, { largest })` reads what filled each request back
+from the same events, with no model call and no service: a row per
+`request.prepared`, in journal order, and a summary per turn.
+
+```ts
+import { Effect } from "effect"
+import { contextReportOf, Sessions } from "@xandreed/core"
+import type { SessionAddress } from "@xandreed/core"
+
+const reportOf = (address: SessionAddress) => Effect.gen(function* () {
+  const sessions = yield* Sessions
+  // Every event of the session, from its start: a part is stored once, before the first request that names it.
+  return yield* contextReportOf(yield* sessions.read(address), { largest: 5 })
+})
+```
+
+A row pairs its request with the `context.built` published for it (the latest
+one of its turn, run and step since that step's previous request) and
+resolves its header, so it holds:
+
+- `system` and `tools`: the characters and tokens of the system text and of
+  the tool declarations, with the `largest` declarations by tool. A
+  declaration counts its description and the canonical JSON of its
+  parameters, and each text's tokens are estimated on its own, as the turn
+  reserves them: `system.tokens + tools.tokens` is `built.reservedTokens`.
+  The two differ only for a tool declared without a description (the header
+  stores the one its parameter schema carries) and for one declared from a
+  raw JSON schema.
+- `built`: the strategy's `estimatedTokens` of the messages, `reservedTokens`,
+  `budgetTokens` and the `compactions` applied; none when retention removed
+  the `context.built`. The messages as a whole are that estimate: the journal
+  holds the entries a request is rebuilt from, never a character count of the
+  messages, and the report invents none.
+- `results`: how many tool results the request showed, and their characters
+  as shown.
+- `hookNote` and `stepContext`: the characters of a request hook's note, as
+  the model read it, and of the step policy's own step context, the blank
+  line between them in neither. Each is none when the request showed none of
+  it; 0 is an empty text.
+  `contextPlacement` says where they rode: after the messages (`tail`), where
+  a request shows the latest step context its run recorded (an earlier step's
+  when its own recorded none), or inside the system text (`system`), where
+  `system` counts them already.
+- `usage` and its `source`: the usage of the `Loop` call that completed for
+  the request (`model.called`), else of the response its step accepted
+  (`step.usage`), for a host whose model port records no calls. Each goes to
+  the latest request of its turn, run and step prepared before it.
+- `resend`: 0 for a step's first request. A request prepared again in the
+  same step, after the provider refused it for its size or over an image, is
+  a row of its own; the refused one has no usage.
+
+A turn's summary counts its `steps` and its `requests` separately (a
+host-planned step prepares no request), counts the `bounds`, `spills`, `drops`,
+`summaries` and `digests` memory recorded during it, and lists the `largest`
+tool results its requests showed: each once, at the largest size a request of
+the turn showed it, with its tool, its characters, the run, step and resend
+of that request, how it was `shown` (`whole`, `compact`, `digest`, `bounded`
+or `spilled`) and its `view` (`tool` when the tool's own view wrote the text,
+`raw` when it is the result's canonical JSON, whole or cut to a preview). A
+`bounded` result's preview was recorded before the `step.ended` of the step
+that returned it, as `recordTail` does when it bounds a result as it is
+written; a `spilled` one was shortened later, under pressure. When the
+journal holds no such `step.ended`, a preview recorded before the first
+request that included the result counts as `bounded`. The results are read
+through `shownResults`, the function the render folds each result with, so
+the report says what the request carried.
+
+It fails as its readers do: a record that does not decode with its
+`SchemaError`, and a header that does not resolve, or whose cut is not among
+the events, with `request.decode` or `request.diverged`.
+Pass the whole session (for a fork, the events it inherited too): each row
+rebuilds its request's render plan from the memory before it.
+
 `BuiltContext.stableMessages` is the rendered prefix length before the
 selected run's step-context tail, or the whole message count without that
 tail. It is bounded by `messages.length` and is computed from the same render,

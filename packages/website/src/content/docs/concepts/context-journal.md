@@ -211,6 +211,78 @@ one model request. Persistence is not an unlimited-context promise: system text,
 tool schemas, images and current-turn content still consume a finite budget.
 An irreducibly large current request can fail with `context.budget`.
 
+## What filled each request
+
+Before tuning a prompt, a tool's description or a memory option, measure what
+the requests of a real session held. `contextReportOf(events)` from
+`@xandreed/core` reads it back from the journal alone, with no model call
+and no service: a row per prepared request, and a summary per turn.
+
+```ts
+import { Effect, Option } from "effect"
+import { contextReportOf, Sessions } from "@xandreed/core"
+import type { SessionAddress } from "@xandreed/core"
+
+/** One line per model request of a session: what it carried, and what it cost. */
+const requestLines = (address: SessionAddress) => Effect.gen(function* () {
+  const sessions = yield* Sessions
+  const report = yield* contextReportOf(yield* sessions.read(address), { largest: 3 })
+  const count = (characters: Option.Option<number>) => Option.match(characters, { onNone: () => "none", onSome: String })
+  return report.rows.map((row) => [
+    `turn ${row.turn} step ${row.step}${row.resend > 0 ? ` resend ${row.resend}` : ""}`,
+    `system ${row.system.characters}`,
+    `tools ${row.tools.characters} (${row.tools.largest.map((tool) => `${tool.name} ${tool.characters}`).join(", ")})`,
+    `results ${row.results.characters}`,
+    `hook note ${count(row.hookNote)}`,
+    `step context ${count(row.stepContext)}`,
+    Option.match(row.built, { onNone: () => "not measured", onSome: (built) => `${built.estimatedTokens} + ${built.reservedTokens} of ${built.budgetTokens} tokens` }),
+    Option.match(row.usage, { onNone: () => "no response", onSome: ({ usage }) => `${usage.inputTokens} input tokens` }),
+  ].join(" | "))
+})
+```
+
+Give it every event of the session from its start, as `Sessions.read`
+returns them: a request's header names its system text and its tool
+declarations by hash, each stored once as a `request.part` record before the
+first request that names it, and each row rebuilds its request from the
+memory before it. A fork needs the events it inherited too.
+
+| A row holds | Read from |
+|---|---|
+| `system`, `tools`: characters and tokens of the system text and of the tool declarations, with the largest declarations by tool | the request's header and the parts it names; a declaration counts its description and the canonical JSON of its parameters, each tool estimated on its own, so the two token counts sum to `built.reservedTokens` |
+| `built`: the strategy's token estimate of the messages, the reserve, the budget and the compactions applied | the `context.built` published for that request; none when the journal holds none |
+| `results`: how many tool results the request showed, and their characters as shown | the render that built the request |
+| `hookNote`, `stepContext`: a request hook's note and the step policy's step context, each with its own count | the step context the request showed, and the hook's patch in the header it was recorded for |
+| `usage`, with its `source` | the `Loop` call that completed for the request (`model.called`), else the response its step accepted (`step.usage`) |
+
+The messages as a whole are an estimate, `built.estimatedTokens`: the journal
+stores the entries a request is rebuilt from, not a character count of the
+messages, and the report invents none. A hook note or a step context the
+request did not show is none; 0 is an empty text. A step context placed
+after the messages (`tail`) is the latest one its run recorded, so a step
+that recorded none still shows an earlier step's; one placed in the system
+text is counted in `system` already (`contextPlacement`). A request sent
+again in the same step, after the provider refused it for its size or over
+an image, is a row of its own (`resend`); the refused one has no usage.
+
+Each turn lists the largest tool results its requests showed, each once at
+its largest size, with its tool, its characters, the run and step of that
+request, and how it was shown:
+
+| `shown` | The request showed |
+|---|---|
+| `whole` | the view the result was written with |
+| `compact` | its tool's compact view, as an earlier turn's result |
+| `digest` | a recorded digest |
+| `bounded` | a preview recorded as the result was written: its first request already showed it shortened |
+| `spilled` | a preview recorded later, under budget pressure |
+
+`view` is `raw` when that text is the result's canonical JSON, whole or cut
+to a preview, which is what a tool with no view shows, and `tool` when the
+tool's own view wrote it. A turn also counts its `bounds`, `spills`, `drops`,
+`summaries` and `digests`, and its `steps` separately from its `requests`: a
+host-planned step prepares no request.
+
 ## The two kinds of checkpoint
 
 A summary **render snapshot** stores a checked projection that accelerates

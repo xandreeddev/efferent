@@ -402,8 +402,9 @@ a view or an append that fails, a process that dies) leaves the result
 without a bound (nothing records one later, and every later build shows it
 whole). `shownViewsOf(entries, { strategy, digests })` gives what a result
 shows in place of its view (a compact view, a spill's or bound's preview, a
-digest, in the render's precedence, with what wrote it): a strategy that
-compares against what is shown reads it there. The render keeps its own
+digest, in the render's precedence, with what wrote it and the compaction
+or digest entry that holds the text, `source`): a strategy that compares
+against what is shown reads it there. The render keeps its own
 expression of that precedence (`renderedContext`), and
 `src/memory/memory-log.entity.test.ts` holds the two equal for every result
 of one log; change them together. `memoryConformance`'s `bound-on-write`
@@ -413,6 +414,55 @@ write and a reopen, and a result its first build shows whole is still whole
 after the next write. Its careless sessions (a stored view cut short, a
 bound recorded by a later write, a bound kept outside the log) are in
 `packages/sdk/src/memory.conformance.test.ts`.
+
+`contextReportOf(events, { largest })` (`src/session/context-report.entity.ts`
+and its functions) reads what filled each model request back from a
+session's journal alone: a row per `request.prepared`, a request prepared
+again in its step included, and a summary per turn. Keep it a pure reader:
+no service, no journal kind, event or stored field of its own. A row's
+results come from `shownResults(entries, options)`
+(`src/memory/memory-log.entity.functions.ts`) over the entries up to the
+header's cut, with the header's saved render recipe. `renderedContext` folds
+every result through the same `shownResultOf`, so the report says what the
+request carried: a change to what a result shows (a compact view or a
+spill's preview, then a digest, then its view) goes there and in
+`shownViewsOf`, which gives a strategy the same precedence, and the report
+never gets a rule of its own for it. The rest follows the code that wrote
+the journal:
+
+- A request pairs with the latest `context.built` of its turn, run and step
+  since that step's previous request; the fields read from it are none when
+  the journal holds none.
+- Tool declarations count as the sdk's `schemaTokens` counts them (the
+  description, then the canonical JSON of the parameters, each tool
+  estimated on its own), so a row's system and tool tokens sum to its
+  `built.reservedTokens`. The header stores `Tool.getDescription` and a
+  dynamic tool's own JSON schema, which the reserve does not read: the doc
+  comment says where the two can differ.
+- The messages are the strategy's estimate. The journal holds no character
+  count of them and the report invents none.
+- Host context is the `StepContext` the request showed: under `tail` the
+  latest its run recorded within the cut, whichever step recorded it, and in
+  the system text the step's own. The hook's note is told from the step
+  policy's text by the `hook.context` of the header that context was
+  recorded for, as `applyModelRequestHook` joined them. Each is none when the
+  request showed none of it: 0 is an empty text.
+- Usage goes to the latest request of the same turn, run and step prepared
+  before it: a completed `Loop` `model.called` with reported usage, else the
+  `step.usage`. A helper call of the same step is not the request's.
+- A `Spill` is a bound when it precedes the `step.ended` that lists its
+  result (`recordTail` records the bound before the loop settles the step),
+  else a spill. A step's maintenance runs before its build, so a pressure
+  spill of a result no request has shown yet also precedes the first header
+  that includes it: that header rule decides only when no `step.ended` names
+  the result.
+
+Its unit tests build journals by hand (`src/session/context-report.entity.functions.test.ts`):
+a resend, a dropped turn, a summary, a digest, a compact view and a journal
+without its `step.ended` are records a short scripted turn does not write.
+The sdk's `context-report.journey.test.ts` holds it against what real turns'
+requests carried, one result bounded as it was written and one spilled under
+pressure before any request had shown it.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
@@ -645,14 +695,14 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact tests `src/turn/model-text.test.ts#a host note and a clip marker have one form`; `src/turn/model-text.test.ts#a clip keeps the text's start and counts what it cut` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact tests `src/turn/model-text.test.ts#text inside a frame cannot close or reopen it` |
 | The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/domain/message-mapping.entity.functions.ts:49-56` | exact tests `src/internal/mapping.entity.functions.test.ts#frames the summary as a host-noted record the summary itself cannot close` |
-| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:90` | exact tests `src/memory/memory-log.entity.test.ts#dropped turns: a host note, then the ledger, in their place` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:647-663` | exact tests `src/memory/memory-log.entity.test.ts#a ledger of condensed turns: each request and its reply` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:607-639` | exact tests `src/memory/memory-log.entity.test.ts#one entry per line; a line inside an entry is indented`; `src/memory/memory-log.entity.test.ts#a reply that repeats its turn's last assistant text is listed once` |
-| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:162-172` | exact tests `src/memory/memory-log.entity.test.ts#a result's artifacts: a reference line each, at most maxImages, then how many more` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:97` | exact tests `src/memory/memory-log.entity.test.ts#dropped turns: a host note, then the ledger, in their place` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:699-715` | exact tests `src/memory/memory-log.entity.test.ts#a ledger of condensed turns: each request and its reply` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:659-691` | exact tests `src/memory/memory-log.entity.test.ts#one entry per line; a line inside an entry is indented`; `src/memory/memory-log.entity.test.ts#a reply that repeats its turn's last assistant text is listed once` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:169-179` | exact tests `src/memory/memory-log.entity.test.ts#a result's artifacts: a reference line each, at most maxImages, then how many more` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:181-182` | exact tests `src/domain/media.entity.test.ts#a label names the type, the size, the name and the alt` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:666-669` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
-| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:647-662` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
-| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:521`, `:535`, `:607-621` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:718-721` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:699-714` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:572`, `:586`, `:659-673` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
 | `recall_context` description | `src/memory/recall.entity.functions.ts:41` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
 | `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:43-44` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
 | Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`): one text for a result bounded as it is written (`recordTail`, cut at the bound) and for one spilled under pressure (a strategy's `maintain`); its count and offset are those of the cut, which never splits a surrogate pair | `src/memory/recall.entity.functions.ts:37` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `src/memory/memory-session.test.ts#a result longer than the bound is recorded with its preview before any build shows it`; `src/memory/recall.entity.functions.test.ts#a preview cut inside a pair ends before it, and says so in its count and its offset` |

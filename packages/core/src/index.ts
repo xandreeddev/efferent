@@ -196,6 +196,8 @@ export {
 export type { KeyedKind, Stored, StoredKeysOf, StoredKind, StoredRecord } from "./session/session-event.entity.functions.js"
 export { ToolCallState } from "./session/tool-call-state.entity.js"
 export { toolCallStatesOf } from "./session/tool-call-state.entity.functions.js"
+export { ContextReport, ContextReportResult, ContextReportRow, ContextReportTurn } from "./session/context-report.entity.js"
+export { contextReportOf } from "./session/context-report.entity.functions.js"
 export {
   AdmittedTurn,
   BeginTurn,

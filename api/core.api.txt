@@ -119,6 +119,10 @@ const CompactionAction
 const CompletionEvaluatedEvent
 const CompletionVerdict
 const ContextBuiltEvent
+const ContextReport
+const ContextReportResult
+const ContextReportRow
+const ContextReportTurn
 const ConversationId
 const CurrentAgentRun
 const CurrentAgentStep
@@ -455,6 +459,7 @@ const clippedMarker
 const collectBashResult
 const collectSkillFiles
 const compileGlob
+const contextReportOf
 const corroborateKnowledgeMemory
 const costOf
 const decodeStored
@@ -743,6 +748,10 @@ type CollectSkillFilesOptions
 type CommittedTurn
 type CompactionAction
 type CompletionVerdict
+type ContextReport
+type ContextReportResult
+type ContextReportRow
+type ContextReportTurn
 type ConversationId
 type DecisionRecord
 type DegeneratePolicy
