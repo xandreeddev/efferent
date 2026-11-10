@@ -124,7 +124,9 @@ export type ContextReportRow = typeof ContextReportRow.Type
  * One turn's requests in sum: its steps and its requests as two counts (a
  * host-planned step prepares no request, a resend prepares a second one),
  * the largest tool results its requests showed, and what memory recorded
- * during it to shorten what later requests show.
+ * during it to shorten what later requests show. `bounds`, `spills`,
+ * `compacts` and `digests` count results; `drops` and `summaries` count the
+ * times earlier turns were replaced.
  *
  * @public
  */
@@ -135,12 +137,20 @@ export const ContextReportTurn = Schema.Struct({
   steps: Count,
   /** The requests the turn prepared (`request.prepared`): its rows. */
   requests: Count,
-  /** The largest tool results the turn's requests showed, largest first, each once. */
+  /**
+   * The largest tool results the turn's requests showed, largest first, each
+   * once, at the largest size a request of the turn showed it: a result one
+   * request showed whole and a later request of the same turn showed through
+   * its compact view is listed `whole`, by the request that showed it so,
+   * and counted in `compacts`.
+   */
   results: Schema.Array(ContextReportResult),
   /** Results shortened as they were written. */
   bounds: Count,
   /** Results shortened later, under budget pressure. */
   spills: Count,
+  /** Results given their tool's compact view, at the turn's start or under budget pressure: one for each result a compaction names. */
+  compacts: Count,
   /** Times earlier turns were replaced by a ledger. */
   drops: Count,
   /** Times earlier turns were replaced by a summary. */

@@ -159,8 +159,14 @@ const hostContextOf = (memory: ReadonlyArray<Located>, request: Prepared, prepar
  * was written), `spilled` one shortened after; when the journal holds no
  * such `step.ended`, a preview recorded before the first request that
  * included the result counts as `bounded`. A turn's `bounds` and `spills`
- * count the previews recorded during it by the same rule. `steps` and
- * `requests` are two counts: a host-planned step prepares no request.
+ * count the previews recorded during it by the same rule, and its
+ * `compacts` the results given their tool's compact view during it: one for
+ * each result a `CompactViews` compaction names, whether a turn's start or
+ * a request over its budget decided it. A result that one request of the
+ * turn showed whole and a later one showed compact is listed at its larger
+ * size, `whole`, by the request that showed it so: `compacts` is what says
+ * a compact view was recorded during the turn. `steps` and `requests` are
+ * two counts: a host-planned step prepares no request.
  *
  * Give it every event of the session, from its start, as `Sessions.read`
  * returns them: a header's parts are stored once, each before the first
@@ -302,7 +308,7 @@ export const contextReportOf = Effect.fnUntraced(function* (
     const key = turnKey(event.session, event.turn.value)
     if (!named.has(key)) named.set(key, { session: event.session, turn: event.turn.value })
   }
-  const zero = { bounds: 0, spills: 0, drops: 0, summaries: 0, digests: 0 }
+  const zero = { bounds: 0, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 }
   const turns = Array.from(named, ([key, { session, turn }]): ContextReportTurn => {
     const own = rowsOf.get(key) ?? []
     // Each result once, at the largest size a request of the turn showed it; the first such request among equals.
@@ -317,7 +323,8 @@ export const contextReportOf = Effect.fnUntraced(function* (
         Spill: (spill) => boundedOnWrite(entry.id, spill.entry) ? { ...sum, bounds: sum.bounds + 1 } : { ...sum, spills: sum.spills + 1 },
         DropTurns: () => ({ ...sum, drops: sum.drops + 1 }),
         Summarize: () => ({ ...sum, summaries: sum.summaries + 1 }),
-        CompactViews: () => sum,
+        // One for each result named: a compaction can give several results their compact views.
+        CompactViews: (compact) => ({ ...sum, compacts: sum.compacts + compact.entries.length }),
         OmitMedia: () => sum,
       })),
       Match.orElse(() => sum),

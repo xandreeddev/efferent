@@ -29,6 +29,13 @@ import type { AgentConfig } from "./agent.adapter.js"
  * A second session runs with the bound off and a budget the report does not
  * fit: memory spills it under pressure at the next step's start, before any
  * request has shown it. The report tells that spill from a bound.
+ *
+ * A third session keeps its provider's cached prefix (`compactPreviousTurn:
+ * false`) and reads records with a tool that has a compact view, under a
+ * budget its second turn passes at its second step: an earlier turn's
+ * result, which that turn's first request showed whole, takes its compact
+ * view. Its third turn is over the budget before its first request. The
+ * report counts each compact view in the turn that recorded it.
  */
 
 const FetchReport = Tool.make("fetch_report", {
@@ -67,6 +74,27 @@ const host = defineCapability({
     defineTool({ tool: CountReports, handler: () => Effect.succeed({ count: 4 }), annotations: { readOnly: true } }),
   ],
   skills: [defineSkill({ id: "core", summary: "Read the reports.", tools: ["fetch_report", "lookup", "count_reports"], always: true })],
+})
+
+const ReadRecords = Tool.make("read_records", {
+  description: "Read the records filed under a name.",
+  parameters: Schema.Struct({ name: Schema.String, count: Schema.Int }),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
+const records = (name: string, count: number): string =>
+  Array.from({ length: count }, (_, index) => `record-${name}-${String(index + 1).padStart(2, "0")}: ${name} entry ${index + 1}, filed under ${name}`).join("\n")
+/** What the records show through their compact view. */
+const compactRecords = (name: string, count: number): string => `${count} ${name} records, record-${name}-01 to record-${name}-${String(count).padStart(2, "0")}`
+
+const archive = defineCapability({
+  id: "context-report-archive", version: "1",
+  tools: [defineTool({
+    tool: ReadRecords, handler: ({ name, count }) => Effect.succeed(records(name, count)), annotations: { readOnly: true },
+    view: { version: "1", render: (result) => result, compact: (_result, { name, count }) => compactRecords(name, count) },
+  })],
+  skills: [defineSkill({ id: "core", summary: "Read the records.", tools: ["read_records"], always: true })],
 })
 
 const SYSTEM = "Answer from the reports."
@@ -123,14 +151,14 @@ const scripted = (seen: Ref.Ref<ReadonlyArray<Seen>>, script: ReadonlyArray<Part
 
 const outcomeOf = (result: { readonly outcome: TurnOutcome["outcome"]; readonly text: string }): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })
 
-/** A fresh session and an agent over `memory` with `budgetTokens`: its scripted turns, what the model was sent and the stored journal. */
-const sessionOf = (conversation: string, memory: AgentConfig["plugins"][number], budgetTokens: number) => Effect.gen(function* () {
+/** A fresh session and an agent over `memory` with `budgetTokens` and the tools of `capability`: its scripted turns, what the model was sent and the stored journal. */
+const sessionOf = (conversation: string, memory: AgentConfig["plugins"][number], budgetTokens: number, capability = host) => Effect.gen(function* () {
   const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
   const address = { id: ConversationId.make(conversation), owner: "context-report-journey" }
   yield* sessions.create({ owner: address.owner, id: address.id })
   const agent = yield* Agent.define({
     plugins: [memory, toolDiscoveryPlugin, stepLoopPlugin],
-    capabilities: [host],
+    capabilities: [capability],
     turnServices: [LanguageModel.LanguageModel, Sessions],
     limits: { streaming: false, maxSteps: 6 },
     system: SYSTEM,
@@ -183,6 +211,22 @@ const pressed = Effect.scoped(Effect.gen(function* () {
     (running) => running.tools.select(running.userMessage).pipe(Effect.andThen(running.run({ limits: { requireCompletion: false } })), Effect.map(outcomeOf)))
   const events = yield* session.events
   return { outcome: result.outcome, seen: yield* session.seen, events, report: yield* contextReportOf(events) }
+}))
+
+const ALPHA = { name: "alpha", count: 10 }
+const BETA = { name: "beta", count: 60 }
+/** The third turn's question takes more of the budget than the alpha records' compact view freed, so the turn is over it before its first request. */
+const QUESTION = `Compare the two sets record by record. ${"Which records are filed twice, and under which name? ".repeat(24)}`
+/** Three turns under `budgetTokens`, with no turn start rewriting an earlier turn and no bound: only the budget changes what a request shows. */
+const compacted = (budgetTokens: number) => Effect.scoped(Effect.gen(function* () {
+  const session = yield* sessionOf("00000000-0000-4000-8000-0000c0a7e9a3", { plugin: memoryWindowPlugin, options: { compactPreviousTurn: false, boundOnWriteChars: 0 } }, budgetTokens, archive)
+  const run = (runId: string, text: string, script: ReadonlyArray<Part>) => session.turn(runId, text, script, false,
+    (running) => running.tools.select(running.userMessage).pipe(Effect.andThen(running.run({ limits: { requireCompletion: false } })), Effect.map(outcomeOf)))
+  const first = yield* run("run-1", "read the alpha records", [call(["a1", "read_records", ALPHA]), stop("Alpha has ten records.")])
+  const second = yield* run("run-2", "and the beta records?", [call(["b1", "read_records", BETA]), stop("Beta has sixty records.")])
+  const third = yield* run("run-3", QUESTION, [stop("None is filed twice.")])
+  const events = yield* session.events
+  return { outcomes: [first.outcome, second.outcome, third.outcome], seen: yield* session.seen, events, report: yield* contextReportOf(events) }
 }))
 
 /** The entry id of the first `fetch_report` result the journal holds: the locator its notice names. */
@@ -247,8 +291,8 @@ test("the report of a real turn's journal matches what each request carried, one
   expect(kinds.indexOf("memory.compaction")).toBeGreaterThan(kinds.indexOf("memory.tool-result"))
   expect(kinds.indexOf("memory.compaction")).toBeLessThan(kinds.indexOf("step.ended"))
   expect(countedIn(turns)).toEqual([
-    { turn: 1, steps: 3, requests: 3, bounds: 1, spills: 0, drops: 0, summaries: 0, digests: 0 },
-    { turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, drops: 0, summaries: 0, digests: 0 },
+    { turn: 1, steps: 3, requests: 3, bounds: 1, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 },
+    { turn: 2, steps: 1, requests: 1, bounds: 0, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 },
   ])
 
   // The host's context, as each request closed with it: the policy's at step 0, the hook's note from step 1 on (step 2
@@ -288,5 +332,47 @@ test("a result spilled under pressure before any request showed it is reported s
   expect(kinds.indexOf("memory.compaction")).toBeGreaterThan(kinds.indexOf("step.ended"))
   expect(kinds.indexOf("memory.compaction")).toBeLessThan(kinds.lastIndexOf("request.prepared"))
   expect(shownIn(found.turns[0])).toEqual([["fetch_report", spilled.length, "spilled", "raw", 1]])
-  expect(countedIn(found.turns)).toEqual([{ turn: 1, steps: 2, requests: 2, bounds: 0, spills: 1, drops: 0, summaries: 0, digests: 0 }])
+  expect(countedIn(found.turns)).toEqual([{ turn: 1, steps: 2, requests: 2, bounds: 0, spills: 1, compacts: 0, drops: 0, summaries: 0, digests: 0 }])
+})
+
+test("a compact view recorded under pressure is counted in its turn, and its result listed as each request showed it", async () => {
+  // Under the agent's default budget the three turns fit: no compact view is recorded, and the report counts none.
+  const wide = await Effect.runPromise(compacted(BUDGET))
+  expect(wide.outcomes).toEqual(["completed", "completed", "completed"])
+  expect(wide.events.filter((event) => event.kind === "memory.compaction")).toEqual([])
+  expect(countedIn(wide.report.turns).map((turn) => turn.compacts)).toEqual([0, 0, 0])
+  const [alpha, beta] = [records(ALPHA.name, ALPHA.count), records(BETA.name, BETA.count)]
+  expect(wide.seen.at(-1)?.results).toEqual([{ name: "read_records", text: alpha }, { name: "read_records", text: beta }])
+
+  // One token under what the second turn's second request took there, that request is the first over the budget.
+  const needed = wide.report.rows.flatMap((row) => row.turn === 2 && row.step === 1 ? Option.toArray(Option.map(row.built, (built) => built.estimatedTokens + built.reservedTokens)) : [])[0] ?? 0
+  expect(needed).toBeGreaterThan(0)
+  const { outcomes, seen, events, report: found } = await Effect.runPromise(compacted(needed - 1))
+  expect(outcomes).toEqual(["completed", "completed", "completed"])
+  const [compactAlpha, compactBeta] = [compactRecords(ALPHA.name, ALPHA.count), compactRecords(BETA.name, BETA.count)]
+
+  // The second turn's first request showed the alpha records whole and its second, over the budget, compact;
+  // the third turn was over the budget before its first request, which showed the beta records compact too.
+  expect(seen.map((request) => request.results.map((result) => result.text))).toEqual([[], [alpha], [alpha], [compactAlpha, beta], [compactAlpha, compactBeta]])
+  expect(found.rows.map(reported)).toEqual(seen.map(sent))
+  expect(found.rows.map((row) => [row.turn, row.step, Option.map(row.built, (built) => built.compactions)])).toEqual([
+    [1, 0, Option.some(0)], [1, 1, Option.some(0)], [2, 0, Option.some(0)], [2, 1, Option.some(1)], [3, 0, Option.some(2)],
+  ])
+  expect(found.rows.every((row) => Option.exists(row.built, (built) => built.estimatedTokens + built.reservedTokens <= needed - 1))).toBe(true)
+
+  // Memory recorded one compaction in each of those turns, the third turn's before its first request.
+  const kinds = events.map((event) => event.kind)
+  expect(events.flatMap((event) => event.kind === "memory.compaction" ? [Option.getOrElse(event.turn, () => 0)] : [])).toEqual([2, 3])
+  expect(kinds.lastIndexOf("memory.compaction")).toBeLessThan(kinds.lastIndexOf("request.prepared"))
+  expect(countedIn(found.turns)).toEqual([
+    { turn: 1, steps: 2, requests: 2, bounds: 0, spills: 0, compacts: 0, drops: 0, summaries: 0, digests: 0 },
+    { turn: 2, steps: 2, requests: 2, bounds: 0, spills: 0, compacts: 1, drops: 0, summaries: 0, digests: 0 },
+    { turn: 3, steps: 1, requests: 1, bounds: 0, spills: 0, compacts: 1, drops: 0, summaries: 0, digests: 0 },
+  ])
+
+  // A turn lists a result at the largest size one of its requests showed it. The second turn's first request showed the
+  // alpha records whole, so that turn lists them whole, by that request: its count is what says they were compacted.
+  expect(shownIn(found.turns[1])).toEqual([["read_records", beta.length, "whole", "tool", 1], ["read_records", alpha.length, "whole", "tool", 0]])
+  // No request of the third turn showed either result larger than its compact view: both are listed compact.
+  expect(shownIn(found.turns[2])).toEqual([["read_records", compactAlpha.length, "compact", "tool", 0], ["read_records", compactBeta.length, "compact", "tool", 0]])
 })

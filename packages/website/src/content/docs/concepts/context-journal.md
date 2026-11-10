@@ -349,9 +349,16 @@ request, and how it was shown:
 
 `view` is `raw` when that text is the result's canonical JSON, whole or cut
 to a preview, which is what a tool with no view shows, and `tool` when the
-tool's own view wrote it. A turn also counts its `bounds`, `spills`, `drops`,
-`summaries` and `digests`, and its `steps` separately from its `requests`: a
-host-planned step prepares no request.
+tool's own view wrote it. A turn also counts its `bounds`, `spills`,
+`compacts`, `drops`, `summaries` and `digests`, and its `steps` separately
+from its `requests`: a host-planned step prepares no request.
+
+`compacts` is the number of results given their tool's compact view during
+the turn, at its start or once a request passed its budget. A result is
+listed at its largest size, so one that a request showed whole before a
+later request of the same turn showed it compact is listed `whole`, by the
+request that showed it so: the count is what tells you a compact view was
+recorded. A turn whose requests never showed it larger lists it `compact`.
 
 ## The two kinds of checkpoint
 
