@@ -1,26 +1,22 @@
-import { Tool } from "effect/ai"
 import { Array as Arr, Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
   Capabilities,
-  defineCapability,
-  defineSkill,
-  defineTool,
   definePlugin,
-  EntryId,
   estimateMessageTokens,
-  Failure,
   HarnessError,
   MEDIA_LIMITS,
   ledgerOf,
   openLogSession,
   pendingCompaction,
+  RECALL_TOOL,
+  recallCapabilityOf,
   rewrittenBy,
-  RunContext,
   scaledTokens,
+  spillPreview,
   toolInputOf,
 } from "@xandreed/core"
-import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
+import type { CompactionAction, MemoryPolicy } from "@xandreed/core"
 
 /** @public */
 export const MemoryWindowConfig = Schema.Struct({
@@ -78,10 +74,6 @@ export const WINDOW_STRATEGY = { id: "window", version: "2" } as const
 const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly version: string } =>
   config.currentTurnFirst === true ? { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` } : WINDOW_STRATEGY
 
-/** A spilled result's preview: its first `chars` characters, and how to read the rest. */
-export const spillPreview = (entry: LogEntry, view: string, chars: number): string =>
-  `${view.slice(0, chars)}\n[… ${Math.max(0, view.length - chars)} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${Math.min(chars, view.length)} to read them]`
-
 /**
  * The window policy: compact older turns, spill the current turn's oversized
  * results, then drop the oldest turns; with `currentTurnFirst`, drop the
@@ -116,7 +108,7 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     if (!over(views)) return views
     const spills = results
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
-      .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RecallContext.name && !rewritten.has(entry.id) && result.view.length >= config.spillMinChars)
+      .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RECALL_TOOL && !rewritten.has(entry.id) && result.view.length >= config.spillMinChars)
       .sort((left, right) => right.result.view.length - left.result.view.length)
       .map(({ entry, result }): CompactionAction => ({ _tag: "Spill", entry: entry.id, preview: spillPreview(entry, result.view, config.previewChars) }))
     const drops = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
@@ -146,56 +138,13 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     return yield* Effect.fail(new HarnessError({ code: "context.budget", message: `The current turn alone exceeds the ${signal.budgetTokens}-token context budget` }))
 })
 
-/** The most characters one recall_context call returns. */
-export const RECALL_PAGE_CHARS = 8_000
-
-const RecallContext = Tool.make("recall_context", {
-  description: `Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most ${RECALL_PAGE_CHARS} characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.`,
-  parameters: Schema.Struct({
-    locator: Schema.String.annotate({ description: "The locator the shortened result shows." }),
-    offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).annotate({ description: "The first character to return; 0 by default." })),
-  }),
-  success: Schema.String,
-  failure: Failure,
-  failureMode: "return",
-})
-
-/** One page of a stored result: at most `RECALL_PAGE_CHARS` from `offset`, ending with how to read on while more remains. */
-export const recallPage = (locator: string, view: string, offset: number): string => {
-  const end = offset + RECALL_PAGE_CHARS
-  const page = view.slice(offset, end)
-  return end >= view.length ? page
-    : `${page}\n[… ${view.length - end} more characters; call recall_context with locator "${locator}" and offset ${end}]`
-}
-
 /**
- * The memory-owned tool that makes spills lossless for the model.
+ * The memory-owned tool that makes spills lossless for the model: core's
+ * recall capability, contributed under this plugin's id.
  *
  * @public
  */
-export const recallCapability = defineCapability({
-  id: "@xandreed/plugin-memory-window/recall",
-  version: "1",
-  tools: [defineTool({
-    tool: RecallContext,
-    requires: [RunContext],
-    handler: ({ locator, offset }) => Effect.gen(function* () {
-      const run = yield* RunContext
-      const id = Schema.decodeUnknownOption(EntryId)(locator)
-      const entry = Option.isNone(id) ? Option.none<LogEntry>() : yield* run.memory.resolve(id.value)
-      const view = Option.flatMap(entry, (found) => found.body._tag === "ToolResult" ? Option.some(found.body.view) : Option.none())
-      const from = offset ?? 0
-      return yield* Option.match(view, {
-        onNone: () => Effect.fail({ error: "UnknownLocator", message: `No stored result has locator ${locator}; pass a locator exactly as a shortened result shows it` }),
-        onSome: (text) => from > 0 && from >= text.length
-          ? Effect.fail({ error: "OffsetOutOfRange", message: `The result has ${text.length} characters; pass an offset below ${text.length}` })
-          : Effect.succeed(recallPage(locator, text, from)),
-      })
-    }),
-    annotations: { readOnly: true },
-  })],
-  skills: [defineSkill({ id: "memory.recall", summary: "Read shortened earlier results in full.", tools: ["recall_context"], always: true })],
-})
+export const recallCapability = recallCapabilityOf("@xandreed/plugin-memory-window/recall")
 
 /**
  * Windowed conversation memory: every message and tool result is stored at

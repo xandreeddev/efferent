@@ -320,6 +320,8 @@ export { noMaintenance, openLogSession } from "./memory/memory-session.js"
 export type { MaintainDecision, MemoryPolicy } from "./memory/memory-session.js"
 export { MemoryObservation } from "./memory/memory-maintenance.entity.js"
 export { scaledTokens } from "./memory/memory-maintenance.entity.functions.js"
+// the tool that reads a shortened result back, for the memory plugins that contribute it
+export { RECALL_TOOL, recallCapabilityOf, spillPreview } from "./memory/recall.entity.functions.js"
 export { ConversationMemory, ResultDigester } from "./ports/memory.port.js"
 export type {
   DigestOutcome,

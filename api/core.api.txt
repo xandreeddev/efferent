@@ -302,6 +302,7 @@ const ProviderId
 const ProviderOptions
 const ProviderToolId
 const QueuedInput
+const RECALL_TOOL
 const RECORDED_ELSEWHERE
 const RESERVED_KINDS
 const ReadRange
@@ -560,6 +561,7 @@ const readSkillFiles
 const readStored
 const readStoredKeys
 const reasonOf
+const recallCapabilityOf
 const recordCompletion
 const recordDecision
 const renderLog
@@ -588,6 +590,7 @@ const shutdownRefusal
 const skillIssuesText
 const skillsFromFiles
 const sniffImageType
+const spillPreview
 const stackPlugins
 const stageKnowledgeExtraction
 const stampAiErrorFailure
