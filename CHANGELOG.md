@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.21.0 — 2026-11-10
+
 ### Migration
 
 - A host that wants its agent's model to be shown results as before sets
@@ -283,6 +285,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   says so. The check has no deadline of its own and was awaited without one,
   so a consumer that stopped answering held the whole verification instead
   of failing it.
+
+### Changes
+
+- Both memory strategies bound a tool result as it is written (`boundOnWriteChars`, 16,000 characters by default, `0` off): a longer result is shown from its first request as its first characters and a `recall_context` locator, while the stored result stays whole. A tool sets its own bound with the `boundOnWriteChars` annotation (`0` keeps its results whole, as the workspace tools `read`, `ls`, `find`, `grep` and `bash`, `read_knowledge` and `read_memory` do). The window strategy is version 3 and spills a bounded result again only under pressure, largest shown first; the summary plugin contributes `recall_context`, whatever its bound is. The preview and a `recall_context` page never end inside a surrogate pair, `defineTool` checks the annotation, and `rewrittenBy` is removed from `@xandreed/core` in favour of `shownViewsOf`.
+
+- A request over its budget shows earlier turns' results through their tools' compact views before the window spills a result or drops a turn, also with `compactPreviousTurn: false`, which now means never at a turn's start: the fewest results that fit, the one that frees the most first, and only when the compact view is shorter than what the result shows. Requests that fit their budget are unchanged. The order under pressure is compact, spill, drop; with `currentTurnFirst`, compact, drop, spill.
+
+- `contextReportOf(events, { largest })` reports what filled each model request of a session from its journal alone: a row per `request.prepared` (a resend is its own row) with the characters and tokens of the system text and of the tool declarations, which sum to the request's reserved tokens, the strategy's estimate, the budget, the tool results shown, a request hook's note and the step policy's step context in separate fields, and the usage the provider reported; and per turn the largest tool results with how each was shown (`whole`, `compact`, `digest`, `bounded` or `spilled`) and whether the tool's own view or the raw JSON wrote the text.
+
+- `recall_context` returns no text the turn still shows. Within the turn that wrote a result, a call from an offset inside the text the result still shows fails with `ResultShown`, and a call for a page the same turn already read fails with `AlreadyRecalled`; each reply names the offset to pass next, and a new offset is always a page. A model that keeps asking repeats one progress signature, so the step loop's breaker stops it before the step limit. A result of an earlier turn is served as before. The tool's description changes, nothing is stored for the guard, and no strategy version changes.
+
+- `recall_context`, its paging and the spill preview live in `@xandreed/core` (`recallCapabilityOf`, `spillPreview`, `RECALL_TOOL`); the window plugin's `recallCapability` keeps its id, and the move itself changes no text the model reads.
 
 ## 0.20.1 — 2026-11-10
 

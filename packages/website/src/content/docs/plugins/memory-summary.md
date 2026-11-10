@@ -131,7 +131,7 @@ request replay, and the difference between summaries and learned memory.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-memory-summary` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-memory-summary` · Version **0.21.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

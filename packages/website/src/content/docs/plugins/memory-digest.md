@@ -88,7 +88,7 @@ walkthrough and the limits of reconstructing content clipped by a tool.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-memory-digest` · Version **0.20.1** · Plugin API **3** · Scope **session**
+Plugin: `@xandreed/plugin-memory-digest` · Version **0.21.0** · Plugin API **3** · Scope **session**
 
 | Contract | Services |
 | --- | --- |

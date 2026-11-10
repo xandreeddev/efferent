@@ -6,7 +6,7 @@ while running and recover after a process restart. Hosts choose their model,
 tools, policy and application interface.
 
 These are source capabilities for the next release. Workspace manifests still
-share version `0.20.1`; the [Unreleased changelog](../CHANGELOG.md#unreleased)
+share version `0.21.0`; the [Unreleased changelog](../CHANGELOG.md#unreleased)
 records the changes. This page does not announce a package release.
 
 ## Completed milestones

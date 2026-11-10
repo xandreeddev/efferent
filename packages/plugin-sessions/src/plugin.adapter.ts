@@ -16,7 +16,7 @@ import { SessionsLive } from "./sessions.adapter.js"
  * @public
  */
 export const sessionsPlugin = definePlugin({
-  id: "@xandreed/plugin-sessions", version: "0.20.1", scope: "runtime",
+  id: "@xandreed/plugin-sessions", version: "0.21.0", scope: "runtime",
   config: SessionsConfig, defaults: sessionsDefaults,
   requires: [SessionLog, TurnAdmission],
   provides: [Sessions, TurnActivity, TurnShutdown, WaitingInput],

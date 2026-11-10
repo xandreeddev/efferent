@@ -90,7 +90,7 @@ it when the layer is released.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-session-sqlite/log` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-session-sqlite/log` · Version **0.21.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

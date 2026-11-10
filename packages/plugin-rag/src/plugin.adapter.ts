@@ -7,7 +7,7 @@ import { RagConfig, ragDefaults } from "./rag.entity.js"
 
 /** Native document ingestion, hybrid retrieval, cited tools and optional GraphRAG. @public */
 export const ragPlugin = definePlugin({
-  id: "@xandreed/plugin-rag", version: "0.20.1", scope: "runtime", config: RagConfig, defaults: ragDefaults,
+  id: "@xandreed/plugin-rag", version: "0.21.0", scope: "runtime", config: RagConfig, defaults: ragDefaults,
   requires: [KnowledgeStore, EmbeddingModel.EmbeddingModel], optional: [UtilityLlm], provides: [Knowledge], contributes: [BackgroundWorkers, Capabilities],
   layer: (config) => Layer.mergeAll(RagLive(config), Layer.succeed(Capabilities, [ragCapability(config)])),
 })
