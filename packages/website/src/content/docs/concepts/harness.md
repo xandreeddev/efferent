@@ -165,7 +165,18 @@ step's `context.built` event records it. The [event reference](/docs/concepts/ev
 lists the framework's stored failure codes; a turn that fails with a
 host's or a plugin's error stores that error's code.
 
-Memory strategies use version 2 decisions. Summaries default to
+Both memory strategies bound a tool result as it is written: a result whose
+view is longer than `boundOnWriteChars` (16,000 characters by default) is
+shown, from the first request that includes it, as its first characters and a
+notice of how to read the rest with `recall_context`, while the stored result
+stays whole. A tool sets its own bound with the `boundOnWriteChars`
+annotation, and `0` there keeps its results whole, as the workspace tools
+that end a result with their own continuation do.
+[Context and the journal](/docs/concepts/context-journal/#bounding-what-a-tool-shows)
+has the rules and the limits.
+
+The window strategy's decisions are version 3 and the summary strategy's
+version 2. Summaries default to
 `summarizeAt: "turn-end"`: after the turn's completed or partial reply is
 recorded and sealed, still inside the turn, billed by it and calibrated by its
 last run's reported input. Nothing that happens then can cost the reply or make

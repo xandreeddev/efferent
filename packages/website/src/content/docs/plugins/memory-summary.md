@@ -75,9 +75,42 @@ data. The result is model-generated and can omit detail. Tune `keepRatio` and
 evaluate the helper model before relying on summaries for exact records.
 
 The `digests` option displays previously recorded digests. The built-in summary
-policy does not itself request result digestion and does not contribute
-`recall_context`. Use [window memory](/docs/plugins/memory-window/) when you
-want its built-in spill-and-page behavior.
+policy does not itself request result digestion, and it never spills a result
+under context pressure or reduces the current turn. Use
+[window memory](/docs/plugins/memory-window/) when you want that behavior.
+
+## Bound results as they are written
+
+A tool result longer than `boundOnWriteChars` (16,000 characters by default)
+is bounded as it is written: every request shows its first 16,000 characters
+and a notice with the locator and offset to read the rest from, and the
+journal keeps the whole result. The plugin contributes `recall_context`,
+which reads a bounded result a page of up to 8,000 characters at a time.
+
+```ts
+import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
+
+const memory = { plugin: memorySummaryPlugin, options: { boundOnWriteChars: 0 } }
+```
+
+`boundOnWriteChars: 0` bounds nothing from then on. The plugin contributes
+`recall_context` all the same: a session keeps the bounds it recorded, so one
+continued at `0` still shows the results bounded earlier with their notice,
+which names the tool. A tool sets its own bound with the `boundOnWriteChars`
+annotation of `defineTool`, and `0` there keeps that tool's results whole. A
+pinned result, a `recall_context` page and a result that holds images are
+never bounded.
+
+Summary memory folds earlier turns and never reduces the current one. Results
+that are each bounded can still pass the budget together within one turn
+(twelve at the default bound fill the default 64,000-token budget), and the
+request is then sent as it is: size `boundOnWriteChars` or `budgetTokens` for
+the turns your agent runs.
+
+Each bound is recorded as a compaction of the `summary` strategy, whose
+version stays `2`: render snapshots saved before this option keep applying.
+[Context and the journal](/docs/concepts/context-journal/#bounding-what-a-tool-shows)
+lists the rules and the limits.
 
 ## Related plugins
 
@@ -101,7 +134,7 @@ Plugin: `@xandreed/plugin-memory-summary` · Version **0.20.1** · Plugin API **
 | Provides | `efferent/ConversationMemory` |
 | Requires | none |
 | Uses when available | `@xandreed/core/UtilityLlm` |
-| Contributes | none |
+| Contributes | `efferent/Capabilities` |
 
 ### Default options
 
@@ -118,7 +151,8 @@ Plugin: `@xandreed/plugin-memory-summary` · Version **0.20.1** · Plugin API **
   "maxImages": 8,
   "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
-  "summaryTimeoutMs": 60000
+  "summaryTimeoutMs": 60000,
+  "boundOnWriteChars": 16000
 }
 ```
 
@@ -211,6 +245,11 @@ Plugin: `@xandreed/plugin-memory-summary` · Version **0.20.1** · Plugin API **
       "type": "integer",
       "minimum": 100,
       "maximum": 600000
+    },
+    "boundOnWriteChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [

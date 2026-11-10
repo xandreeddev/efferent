@@ -106,8 +106,8 @@ const sendsWhole = (requests: ReadonlyArray<{ readonly runId: string; readonly t
 test("the default window spills the current turn's large result while it keeps the earlier turn", async () => {
   const { outcomes, requests, actions, versions } = await Effect.runPromise(runConversation(false))
   expect(outcomes).toEqual(["completed", "completed", "completed"])
-  expect(versions).toEqual(["2"])
-  expect(actions.filter((action) => action.turn === 2)).toMatchObject([{ _tag: "Spill", entry: "run-2:2", version: "2" }])
+  expect(versions).toEqual(["3"])
+  expect(actions.filter((action) => action.turn === 2)).toMatchObject([{ _tag: "Spill", entry: "run-2:2", version: "3" }])
   // No step after the one that read it sends the result whole: the model sees a preview and a locator.
   expect(sendsWhole(requests, "run-2")).toEqual([false, false, false])
 })
@@ -115,9 +115,9 @@ test("the default window spills the current turn's large result while it keeps t
 test("currentTurnFirst drops the earlier turn and keeps the current turn's large result whole at every step", async () => {
   const { outcomes, requests, actions, versions } = await Effect.runPromise(runConversation(true))
   expect(outcomes).toEqual(["completed", "completed", "completed"])
-  expect(versions).toEqual(["2+current-turn-first"])
+  expect(versions).toEqual(["3+current-turn-first"])
   const second = actions.filter((action) => action.turn === 2)
-  expect(second).toMatchObject([{ _tag: "DropTurns", throughTurn: 1, version: "2+current-turn-first" }])
+  expect(second).toMatchObject([{ _tag: "DropTurns", throughTurn: 1, version: "3+current-turn-first" }])
   expect(sendsWhole(requests, "run-2")).toEqual([false, true, true])
   // A current turn that does not fit even alone is spilled, and the earlier turns the budget cannot hold are dropped.
   expect(actions.filter((action) => action.turn === 3)).toMatchObject([{ _tag: "Spill", entry: "run-3:2" }, { _tag: "DropTurns", throughTurn: 2 }])

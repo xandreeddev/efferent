@@ -11,8 +11,8 @@ import {
   pendingCompaction,
   RECALL_TOOL,
   recallCapabilityOf,
-  rewrittenBy,
   scaledTokens,
+  shownViewsOf,
   spillPreview,
   toolInputOf,
 } from "@xandreed/core"
@@ -50,9 +50,21 @@ export const MemoryWindowConfig = Schema.Struct({
    * earlier turns are condensed: drop the oldest turns first, and spill the
    * current turn's largest results only when the current turn alone does not
    * fit. Off (the default), the current turn's results spill before any turn
-   * is dropped. On, the strategy's version is `2+current-turn-first`.
+   * is dropped. On, the strategy's version is `3+current-turn-first`.
    */
   currentTurnFirst: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Bound a result as it is written: a result whose view is longer than this
+   * many characters is shown, from the first request that includes it, as
+   * its first characters and a notice of how to read the rest with
+   * `recall_context`; the stored result stays whole. A tool's own
+   * `boundOnWriteChars` annotation replaces this bound for that tool, and
+   * `0` there keeps its results whole. Pinned results, recalled pages and
+   * results holding images are never bounded. `0` bounds nothing, whatever a
+   * tool asks. `windowPolicy` given a config written without the key bounds
+   * nothing either; the plugin's options take the default.
+   */
+  boundOnWriteChars: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 /** @public */
@@ -60,11 +72,11 @@ export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
   digestOnWriteChars: 0, digests: true, media: "inline", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
-  currentTurnFirst: false,
+  currentTurnFirst: false, boundOnWriteChars: 16_000,
 }
 
 /** @public */
-export const WINDOW_STRATEGY = { id: "window", version: "2" } as const
+export const WINDOW_STRATEGY = { id: "window", version: "3" } as const
 
 /**
  * The strategy a config runs: always `WINDOW_STRATEGY.id`, so compactions
@@ -75,9 +87,10 @@ const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly
   config.currentTurnFirst === true ? { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` } : WINDOW_STRATEGY
 
 /**
- * The window policy: compact older turns, spill the current turn's oversized
- * results, then drop the oldest turns; with `currentTurnFirst`, drop the
- * oldest turns before spilling any of the current turn's results.
+ * The window policy: bound a result as it is written, compact older turns,
+ * spill the current turn's oversized results, then drop the oldest turns;
+ * with `currentTurnFirst`, drop the oldest turns before spilling any of the
+ * current turn's results.
  *
  * @public
  */
@@ -85,19 +98,26 @@ export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
   strategy: strategyOf(config),
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
+  // A config written before the option has no key: given to the policy as it is, it bounds nothing.
+  ...(config.boundOnWriteChars === undefined || config.boundOnWriteChars === 0 ? {} : { boundOnWriteChars: config.boundOnWriteChars }),
   maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
 const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
     const strategy = strategyOf(config)
-    const rewritten = rewrittenBy(entries, strategy.id)
-    const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body }] : [])
+    // What each result shows where that is not its view: a compact view, the preview of a spill or of a bound, a digest.
+    const shownViews = shownViewsOf(entries, { strategy: strategy.id, digests: config.digests })
+    const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body, shown: Option.fromNullishOr(shownViews.get(entry.id)) }] : [])
+    // A result takes its compact view once. One shown through a preview is asked again, and takes it only when it is shorter than that preview.
     const older = signal.phase === "turn-start" && config.compactPreviousTurn
-      ? results.filter(({ entry, result }) => entry.turn < turn && !result.pinned && !rewritten.has(entry.id))
+      ? results.filter(({ entry, result, shown }) => entry.turn < turn && !result.pinned && !Option.exists(shown, (now) => now.by === "CompactViews"))
       : []
-    const compacted = yield* Effect.forEach(older, ({ entry, result }) =>
+    const compacted = yield* Effect.forEach(older, ({ entry, result, shown }) =>
       signal.views.compact(result.toolName, result.encoded, toolInputOf(entries, entry)).pipe(
-        Effect.map((text) => Option.toArray(Option.filter(text, (value) => value !== result.view)).map((value) => ({ id: entry.id, text: value }))),
+        Effect.map((text) => Option.toArray(Option.filter(text, (value) => Option.match(Option.filter(shown, (now) => now.by === "Spill"), {
+          onNone: () => value !== result.view,
+          onSome: (preview) => value.length < preview.text.length,
+        }))).map((value) => ({ id: entry.id, text: value }))),
       ), { concurrency: 1 }).pipe(Effect.map((all) => all.flat()))
     const views: ReadonlyArray<CompactionAction> = compacted.length === 0 ? [] : [{
       _tag: "CompactViews", entries: compacted.map((item) => item.id), texts: compacted.map((item) => item.text),
@@ -108,9 +128,16 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     if (!over(views)) return views
     const spills = results
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
-      .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RECALL_TOOL && !rewritten.has(entry.id) && result.view.length >= config.spillMinChars)
-      .sort((left, right) => right.result.view.length - left.result.view.length)
-      .map(({ entry, result }): CompactionAction => ({ _tag: "Spill", entry: entry.id, preview: spillPreview(entry, result.view, config.previewChars) }))
+      .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RECALL_TOOL && result.view.length >= config.spillMinChars)
+      .flatMap(({ entry, result, shown }) => {
+        const preview = spillPreview(entry, result.view, config.previewChars)
+        const showing = Option.match(shown, { onNone: () => result.view.length, onSome: (now) => now.text.length })
+        // A result shown through other text (a bound's preview, an earlier spill's, a digest) is spilled only when this preview is shorter than that text.
+        return Option.isSome(shown) && preview.length >= showing ? [] : [{ showing, action: { _tag: "Spill", entry: entry.id, preview } satisfies CompactionAction }]
+      })
+      // The largest text shown goes first: a bounded result counts as its preview, not as the whole view behind it.
+      .sort((left, right) => right.showing - left.showing)
+      .map((spill): CompactionAction => spill.action)
     const drops = Array.from({ length: Math.max(0, turn - 1) }, (_, index) => index + 1)
       .map((through): CompactionAction => ({ _tag: "DropTurns", throughTurn: through, ledger: ledgerOf(entries, through, config.ledgerTurnChars) }))
     // Each candidate keeps `base` and drops the oldest turns, one more turn at a time.

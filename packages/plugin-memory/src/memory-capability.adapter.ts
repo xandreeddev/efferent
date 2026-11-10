@@ -346,7 +346,8 @@ export const memoryCapability = (config: MemoryConfig) => defineCapability({
       }).pipe(Effect.mapError(toolFailure))
       return renderMemoryRecall(result, config.recallChars, yield* renderingOf(config))
     }) }),
-    defineTool({ tool: Read, requires: [RunContext, LongTermMemory], annotations: { readOnly: true }, handler: (input) => Effect.gen(function* () {
+    // A page ends with the offset to continue at, which a memory strategy's cut would hide: read_memory pages itself (boundOnWriteChars: 0).
+    defineTool({ tool: Read, requires: [RunContext, LongTermMemory], annotations: { readOnly: true, boundOnWriteChars: 0 }, handler: (input) => Effect.gen(function* () {
       const reach = yield* reachOf().pipe(Effect.mapError(toolFailure))
       const memory = yield* LongTermMemory
       const id = KnowledgeSourceId.make(input.source)

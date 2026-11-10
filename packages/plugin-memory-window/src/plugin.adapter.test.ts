@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Result, Schema, Tracer } from "effect"
+import { Context, Effect, Option, Ref, Result, Schema, Tracer } from "effect"
 import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { MemoryWindowConfig, memoryWindowPlugin, recallCapability, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
@@ -89,7 +89,51 @@ describe("the plugin's strategy", () => {
   test("the memory it provides reports the version of the order it was configured with, under the same id", async () => {
     expect(await strategyOf(config)).toEqual(WINDOW_STRATEGY)
     expect(await strategyOf({ ...config, currentTurnFirst: false })).toEqual(WINDOW_STRATEGY)
-    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "2+current-turn-first" })
+    expect(await strategyOf({ ...config, currentTurnFirst: true })).toEqual({ id: "window", version: "3+current-turn-first" })
+  })
+
+  test("version 3 names what the memory records: a bound as a result is written and a second spill of it under pressure, each under the version of the order it runs", async () => {
+    /** What the plugin's memory records, configured with `options`, for one long result and then one token over the budget. */
+    const recordedUnder = (options: typeof config & { readonly currentTurnFirst?: boolean }) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const built = yield* memoryWindowPlugin.build({ ...options, boundOnWriteChars: 200 }, Context.empty())
+      const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const session = yield* memory.open({
+        conversation: ConversationId.make("00000000-0000-4000-8000-0000000005c3"), runId: RunId.make("run-1"),
+        log: { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) },
+      })
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the record" }) }], 0)
+      yield* session.recordTail([
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "lookup", input: {} }] },
+        { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: "x".repeat(1_000) }] },
+      ], views, 1)
+      const fitting = (yield* session.build({ stepContext: "none", run: RunOrdinal.make(0) })).estimatedTokens
+      yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: fitting - 1, views })
+      return {
+        reported: memory.strategy,
+        recorded: (yield* Ref.get(stored)).flatMap((entry) => entry.body._tag === "Compaction" && entry.body.action._tag === "Spill"
+          ? [{ strategy: entry.body.strategy, version: entry.body.version, shows: entry.body.action.preview.indexOf("\n") }] : []),
+      }
+    })))
+    // The bound shows the result's first 200 characters; under pressure the same result is spilled again, to its first 20.
+    expect(await recordedUnder(config)).toEqual({
+      reported: { id: "window", version: "3" },
+      recorded: [{ strategy: "window", version: "3", shows: 200 }, { strategy: "window", version: "3", shows: 20 }],
+    })
+    expect(WINDOW_STRATEGY).toEqual({ id: "window", version: "3" })
+    expect(await recordedUnder({ ...config, currentTurnFirst: true })).toEqual({
+      reported: { id: "window", version: "3+current-turn-first" },
+      recorded: [{ strategy: "window", version: "3+current-turn-first", shows: 200 }, { strategy: "window", version: "3+current-turn-first", shows: 20 }],
+    })
+  })
+
+  test("results are bounded at 16,000 characters by default; 0, or a config without the key, bounds nothing", () => {
+    expect(memoryWindowPlugin.defaults).toMatchObject({ boundOnWriteChars: 16_000 })
+    expect(windowPolicy({ ...config, boundOnWriteChars: 16_000 }).boundOnWriteChars).toBe(16_000)
+    expect("boundOnWriteChars" in windowPolicy({ ...config, boundOnWriteChars: 0 })).toBe(false)
+    expect("boundOnWriteChars" in windowPolicy(config)).toBe(false)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, boundOnWriteChars: -1 }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, boundOnWriteChars: 1.5 }))).toBe(true)
   })
 
   test("the option is off by default and validated as a boolean", () => {

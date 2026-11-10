@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, ledgerOf, ModelId, ModelSelection, pendingCompaction, ProviderId, renderLog, RunId, RunOrdinal, scaledTokens, ToolCallId, UserMessage } from "@xandreed/core"
+import { entryId, estimateMessageTokens, ledgerOf, ModelId, ModelSelection, pendingCompaction, ProviderId, renderLog, RunId, RunOrdinal, scaledTokens, spillPreview, ToolCallId, UserMessage } from "@xandreed/core"
 import type { CompactionAction, LogBody, LogEntry, MaintainSignal, MemoryObservation, MemoryPolicy } from "@xandreed/core"
 import { memoryWindowDefaults, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
@@ -114,5 +114,147 @@ describe("currentTurnFirst", () => {
     expect(JSON.stringify(renderTurn2(replayed))).not.toContain("y".repeat(3_000))
     expect(await maintain(currentFirst, replayed, estimateMessageTokens(renderTurn2(replayed)))).toMatchObject({ _tag: "Success", success: { actions: [] } })
     expect(await maintain(currentFirst, replayed, estimateMessageTokens(renderTurn2(replayed)) - 1)).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "DropTurns", throughTurn: 1 }] } })
+  })
+})
+
+describe("results bounded as they were written", () => {
+  const options = { ...memoryWindowDefaults, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40, media: "none" as const }
+  const window = windowPolicy(options)
+  const run = (turn: number) => RunId.make(`run-${turn}`)
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(run(turn), seq), runId: run(turn), turn, step: 0, at: seq, body })
+  const call = (seq: number, turn: number): LogEntry => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(`c${seq + 1}`), toolName: "lookup", input: {} }] } })
+  const result = (seq: number, turn: number, view: string): LogEntry => at(seq, turn, {
+    _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName: "lookup", isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
+  })
+  /** The bound `recordTail` records for a result: this strategy's own spill, its preview cut at `chars`. */
+  const bound = (seq: number, of: LogEntry, chars: number): LogEntry => at(seq, of.turn, {
+    _tag: "Compaction", strategy: WINDOW_STRATEGY.id, version: WINDOW_STRATEGY.version,
+    action: { _tag: "Spill", entry: of.id, preview: spillPreview(of, of.body._tag === "ToolResult" ? of.body.view : "", chars) },
+  })
+  const recorded = (seq: number, turn: number, actions: ReadonlyArray<CompactionAction>): ReadonlyArray<LogEntry> =>
+    actions.map((action, index) => at(seq + index, turn, { _tag: "Compaction", strategy: WINDOW_STRATEGY.id, version: WINDOW_STRATEGY.version, action }))
+  const renderOf = (turn: number) => (all: ReadonlyArray<LogEntry>) => renderLog(all, { ...window.render, strategy: WINDOW_STRATEGY.id, currentTurn: turn, currentRun: run(turn), run: RunOrdinal.make(0), stepContext: "none" })
+  const spilled = (actions: ReadonlyArray<CompactionAction>) => actions.flatMap((action) => action._tag === "Spill" ? [String(action.entry)] : [])
+  /** What a maintenance decided: its actions, or the code it failed with. */
+  const decisionOf = (decision: Effect.Effect<{ readonly actions: ReadonlyArray<CompactionAction> }, { readonly code: string }>) =>
+    Effect.runPromise(Effect.match(decision, { onSuccess: (made): ReadonlyArray<CompactionAction> | string => made.actions, onFailure: (error) => `failed with ${error.code}` }))
+
+  test("a bounded result is spilled again only under pressure, largest shown first", async () => {
+    // The largest view shows the least: it was bounded at 400 characters. The middle one was bounded at 1,000; the smallest is whole.
+    const [largest, middle, whole] = [result(2, 1, "a".repeat(5_000)), result(5, 1, "c".repeat(3_000)), result(8, 1, "b".repeat(1_500))]
+    const all = [
+      at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read all three" }) }),
+      call(1, 1), largest, bound(3, largest, 400), call(4, 1), middle, bound(6, middle, 1_000), call(7, 1), whole,
+    ]
+    const render = renderOf(1)
+    const tokensWith = (actions: ReadonlyArray<CompactionAction>) => estimateMessageTokens(render([...all, ...actions.map((action, index) => pendingCompaction(window.strategy, action, index))]))
+    const maintain = (entries: ReadonlyArray<LogEntry>, budgetTokens: number) =>
+      Effect.runPromise(window.maintain({ entries, signal: { ...signal, phase: "step", budgetTokens }, turn: 1, runId: run(1), render })).then((decided) => decided.actions)
+    const spill = (of: LogEntry): CompactionAction => ({ _tag: "Spill", entry: of.id, preview: spillPreview(of, of.body._tag === "ToolResult" ? of.body.view : "", options.previewChars) })
+
+    // Within the budget the bounds stand: a bounded result is not shortened further.
+    expect(await maintain(all, tokensWith([]))).toEqual([])
+    // One token over, the result showing the most text goes first: the whole one, though its view is the smallest.
+    expect(await maintain(all, tokensWith([]) - 1)).toEqual([spill(whole)])
+    // Then the others, in the order of what they show, never of the views behind them.
+    expect(spilled(await maintain(all, tokensWith([spill(whole)]) - 1))).toEqual([String(whole.id), String(middle.id)])
+    const every = await maintain(all, tokensWith([spill(whole), spill(middle)]) - 1)
+    expect(every).toEqual([spill(whole), spill(middle), spill(largest)])
+    // What is recorded is not decided again: no preview would be shorter than the one each result now shows.
+    const after = [...all, ...recorded(9, 1, every)]
+    expect(await maintain(after, estimateMessageTokens(render(after)))).toEqual([])
+    expect(await Effect.runPromise(Effect.result(window.maintain({ entries: after, signal: { ...signal, phase: "step", budgetTokens: estimateMessageTokens(render(after)) - 1 }, turn: 1, runId: run(1), render }))))
+      .toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
+  })
+
+  test("a bounded result takes its compact view only when shorter", async () => {
+    // Turn 1 read three results: two bounded at 1,000 characters as they were written, one short enough to stay whole.
+    const [short, long, whole] = [result(2, 1, "s".repeat(3_000)), result(5, 1, "l".repeat(3_000)), result(8, 1, "w".repeat(300))]
+    const all = [
+      at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read all three" }) }),
+      call(1, 1), short, bound(3, short, 1_000), call(4, 1), long, bound(6, long, 1_000), call(7, 1), whole,
+      at(9, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("read") }),
+      at(10, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "and now?" }) }),
+    ]
+    const compactOf: Readonly<Record<string, string>> = { s: "(short: 3000 s)", l: `(long: ${"L".repeat(2_000)})`, w: `(whole, compact and longer: ${"W".repeat(400)})` }
+    const asked: Array<string> = []
+    const views: MaintainSignal["views"] = { ...signal.views, compact: (_tool, encoded) => Effect.sync(() => {
+      const key = String(encoded).charAt(0)
+      asked.push(key)
+      return Option.fromNullishOr(compactOf[key])
+    }) }
+    const turnStart = (entries: ReadonlyArray<LogEntry>) =>
+      Effect.runPromise(window.maintain({ entries, signal: { ...signal, phase: "turn-start", budgetTokens: 100_000, views }, turn: 2, runId: run(2), render: renderOf(2) })).then((decided) => decided.actions)
+
+    const first = await turnStart(all)
+    // The bounded result whose compact view is shorter takes it; the one whose compact view is longer keeps its preview.
+    // A result still shown whole takes its compact view whatever its length, as before.
+    expect(first).toEqual([{ _tag: "CompactViews", entries: [short.id, whole.id], texts: [compactOf.s!, compactOf.w!] }])
+    expect(asked).toEqual(["s", "l", "w"])
+    const shown = JSON.stringify(renderOf(2)([...all, ...recorded(11, 2, first)]))
+    expect(shown).toContain(compactOf.s!)
+    expect(shown).toContain(`${"l".repeat(1_000)}\\n[… 2000 more characters kept out of context`)
+    // A later turn start decides nothing more, and asks again only for the result still shown through a preview.
+    asked.length = 0
+    expect(await turnStart([...all, ...recorded(11, 2, first)])).toEqual([])
+    expect(asked).toEqual(["l"])
+  })
+
+  test("a result shown through its digest is spilled only when the pressure preview is shorter than the digest", async () => {
+    // Two results of 3,000 characters, each digested as it was written: one digest is shorter than a pressure preview, one longer.
+    const [brief, lengthy] = [result(2, 1, "a".repeat(3_000)), result(5, 1, "b".repeat(3_000))]
+    const digest = (seq: number, of: LogEntry, text: string): LogEntry => at(seq, 1, { _tag: "ToolDigest", entry: of.id, version: "1", mode: "summarize", keep: [], text, digester: "fixed@1", trigger: "write" })
+    const all = [
+      at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read both" }) }),
+      call(1, 1), brief, digest(3, brief, "a brief digest"), call(4, 1), lengthy, digest(6, lengthy, `a lengthy digest ${"d".repeat(1_000)}`),
+    ]
+    const spill = (of: LogEntry): CompactionAction => ({ _tag: "Spill", entry: of.id, preview: spillPreview(of, of.body._tag === "ToolResult" ? of.body.view : "", options.previewChars) })
+    /** What `policy` decides over the log at a budget `under` tokens below what `actions` leave, at a step and at the turn's end. */
+    const decided = (policy: MemoryPolicy, actions: ReadonlyArray<CompactionAction>, under: number, phase: MaintainSignal["phase"] = "step") => {
+      const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, strategy: WINDOW_STRATEGY.id, currentTurn: 1, currentRun: run(1), run: RunOrdinal.make(0), stepContext: "none" })
+      const budgetTokens = estimateMessageTokens(render([...all, ...actions.map((action, index) => pendingCompaction(policy.strategy, action, index))])) - under
+      return decisionOf(policy.maintain({ entries: all, signal: { ...signal, phase, budgetTokens }, turn: 1, runId: run(1), render }))
+    }
+    expect(spillPreview(brief, "a".repeat(3_000), options.previewChars).length).toBeGreaterThan("a brief digest".length)
+    // Within the budget nothing is decided. One token over, only the result whose digest is longer than a preview is spilled.
+    expect(await decided(window, [], 0)).toEqual([])
+    expect(await decided(window, [], 1)).toEqual([spill(lengthy)])
+    // The brief digest is never replaced by a longer preview: with nothing left to spill, a step fails and a turn's end keeps the one spill.
+    expect(await decided(window, [spill(lengthy)], 1)).toBe("failed with context.budget")
+    expect(await decided(window, [spill(lengthy)], 1, "turn-end")).toEqual([spill(lengthy)])
+    // A window that shows no digests shows both views whole: both are candidates, by the view each shows, in the order they were written.
+    const withoutDigests = windowPolicy({ ...options, digests: false })
+    expect(await decided(withoutDigests, [], 1)).toEqual([spill(brief)])
+    expect(await decided(withoutDigests, [spill(brief)], 1)).toEqual([spill(brief), spill(lengthy)])
+  })
+
+  test("currentTurnFirst drops earlier turns before it spills a bounded result again, and then spills the one showing the most first", async () => {
+    const currentFirst = windowPolicy({ ...options, currentTurnFirst: true })
+    // Turn 1 read one result. Turn 2, the current one, read two: the larger was bounded at 1,000 characters as it was written, the smaller is whole.
+    const [earlier, bounded, whole] = [result(2, 1, "x".repeat(3_000)), result(6, 2, "a".repeat(5_000)), result(9, 2, "b".repeat(1_500))]
+    const all = [
+      at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "first question" }) }), call(1, 1), earlier,
+      at(3, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("first answer") }),
+      at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second question" }) }),
+      call(5, 2), bounded, { ...bound(7, bounded, 1_000), body: { ...bound(7, bounded, 1_000).body, version: currentFirst.strategy.version } }, call(8, 2), whole,
+    ]
+    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...currentFirst.render, strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: run(2), run: RunOrdinal.make(0), stepContext: "none" })
+    const tokensWith = (entries: ReadonlyArray<LogEntry>, actions: ReadonlyArray<CompactionAction>) => estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(currentFirst.strategy, action, index))]))
+    const maintain = (entries: ReadonlyArray<LogEntry>, budgetTokens: number) =>
+      decisionOf(currentFirst.maintain({ entries, signal: { ...signal, phase: "step", budgetTokens }, turn: 2, runId: run(2), render }))
+    const spill = (of: LogEntry): CompactionAction => ({ _tag: "Spill", entry: of.id, preview: spillPreview(of, of.body._tag === "ToolResult" ? of.body.view : "", options.previewChars) })
+    const dropTurn1: CompactionAction = { _tag: "DropTurns", throughTurn: 1, ledger: ledgerOf(all, 1, options.ledgerTurnChars) }
+
+    // One token over: the earlier turn goes, and the bounded result keeps the preview it was written with.
+    expect(await maintain(all, tokensWith(all, []) - 1)).toEqual([dropTurn1])
+    // The current turn alone does not fit: the result showing the most text is spilled first, the whole one, though its view is the smaller.
+    expect(await maintain(all, tokensWith(all, [dropTurn1]) - 1)).toEqual([spill(whole), dropTurn1])
+    // Then the bounded one, again, to the shorter pressure preview.
+    const every = [spill(whole), spill(bounded), dropTurn1]
+    expect(await maintain(all, tokensWith(all, [spill(whole), dropTurn1]) - 1)).toEqual(every)
+    // What is recorded is not decided again, and nothing is left to shorten after it.
+    const after = [...all, ...every.map((action, index) => at(10 + index, 2, { _tag: "Compaction", strategy: currentFirst.strategy.id, version: currentFirst.strategy.version, action }))]
+    expect(await maintain(after, estimateMessageTokens(render(after)))).toEqual([])
+    expect(await maintain(after, estimateMessageTokens(render(after)) - 1)).toBe("failed with context.budget")
   })
 })

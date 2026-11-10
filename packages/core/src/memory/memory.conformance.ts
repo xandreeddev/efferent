@@ -85,7 +85,10 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
 /**
  * The ConversationMemory contract, as checks any strategy must pass: own
  * entry ids, a log that reads back exactly after a reopen, views and
- * artifacts kept, a pure build, a request's results in its calls' order,
+ * artifacts kept, a result shortened as it is written or never by a later
+ * write (one shown shortened from its first build still resolves in full, one
+ * shown whole stays whole after the next write), a
+ * pure build, a request's results in its calls' order,
  * another run's call still without a result left out of a build (only the
  * run's own or an ended turn's answered as interrupted), the step context only when asked and only its own run's,
  * append-only maintenance, a reference transcript without tool traffic, and
@@ -154,6 +157,34 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const result = raw === undefined ? undefined : Option.getOrUndefined(yield* reopened.resolve(raw.id))
       yield* expect("views", result?.body._tag === "ToolResult" && result.body.view.startsWith("VIEW ") && result.body.artifacts[0]?.id === artifact.id,
         "the tool result lost its view or artifacts")
+    })),
+    check("a result is shortened as it is written or not by a later write, and stays resolvable in full", "bound-on-write", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("read the long record")], 0)
+      // Far longer than a strategy's bound on what a result shows: one that bounds results bounds this one.
+      const whole = Array.from({ length: 2_000 }, (_, index) => `line ${index + 1} of the long record`).join("\n")
+      const long: ToolViews = { ...views, view: () => Effect.succeed({ text: whole, version: "1", subjects: [], artifacts: [], pinned: false }) }
+      const result = (yield* session.recordTail(toolTail, long, 0, firstRun)).find((entry) => entry.body._tag === "ToolResult")
+      if (result === undefined) return yield* fail("bound-on-write")("recordTail returned no tool result")
+      const shownBy = (target: MemorySession) => target.build({ stepContext: "none", run: firstRun }).pipe(Effect.map((built) =>
+        built.messages.flatMap((message) => message.role === "tool" ? message.content.flatMap((part) => part.toolCallId === callId ? [typeof part.output === "string" ? part.output : canonicalJson(part.output)] : []) : []).at(0)))
+      const viewOf = (target: MemorySession) => target.resolve(result.id).pipe(Effect.map(Option.flatMap((entry) => entry.body._tag === "ToolResult" ? Option.some(entry.body.view) : Option.none())))
+      const first = yield* shownBy(session)
+      if (first === undefined) return yield* fail("bound-on-write")("the first build does not show the result")
+      // A strategy that shows the result whole has nothing to keep resolvable, and must go on showing it whole: a bound is
+      // recorded as the result is written, never by a later write, which would rewrite a request prefix already sent.
+      if (first === whole) {
+        yield* session.recordTail([{ role: "assistant", content: [{ type: "text", text: "read" }] }], long, 1, firstRun)
+        return yield* expect("bound-on-write", (yield* shownBy(session)) === whole, "the first build shows the result whole and a build after a later write shows it shortened")
+      }
+      yield* expect("bound-on-write", first.length < whole.length, "the first build shows the result changed, and no shorter")
+      yield* expect("bound-on-write", Option.contains(yield* viewOf(session), whole), "the result is shown shortened and its entry no longer resolves to the whole view")
+      // The shortened form is a fact of the log: a later step and a reopened session show the same text and resolve the same view.
+      yield* session.recordTail([{ role: "assistant", content: [{ type: "text", text: "read" }] }], long, 1, firstRun)
+      yield* expect("bound-on-write", (yield* shownBy(session)) === first, "a later build shows the shortened result differently")
+      const reopened = yield* open(log, "run-1")
+      yield* expect("bound-on-write", (yield* shownBy(reopened)) === first, "a reopened session shows the shortened result differently")
+      yield* expect("bound-on-write", Option.contains(yield* viewOf(reopened), whole), "after a reopen the shortened result no longer resolves to the whole view")
     })),
     check("a tool's encoded result is durable while its view is still pending", "raw-result-durable", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")

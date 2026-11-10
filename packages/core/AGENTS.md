@@ -360,9 +360,59 @@ plugin's `recallCapability` is `@xandreed/plugin-memory-window/recall`),
 `spillPreview` writes the notice a shortened result ends with, and
 `RECALL_TOOL` is the tool's name, by which a strategy tells a recalled page
 and never shortens it. `RECALL_PAGE_CHARS` and `recallPage` are not
-exported: nothing outside core reads them. The capability's skill,
+exported: nothing outside core reads them. A cut never splits a surrogate
+pair (`cutAt`): the preview and a page end one unit earlier when the cut
+would, a page asked for from inside a pair starts at the pair's first unit,
+and the offset each prints is where its cut fell, so the pages read from a
+notice join to the whole view. Keep every new cut of a view on `cutAt`: a
+lone surrogate is not valid text to send. The capability's skill,
 `memory.recall`, is always-on, so its summary never reaches the model:
 guidance goes in the tool's and its parameters' descriptions.
+
+A result is bounded as it is written (`recordTail`, `src/memory/memory-session.ts`):
+when `MemoryPolicy.boundOnWriteChars` is above 0, a result whose presented
+view is longer than the bound is recorded with the strategy's own
+`Compaction { action: Spill { entry, preview } }`, its preview
+`spillPreview(entry, view, bound)`, after the presentation and after the
+digest step returns, so the first build that includes the result already
+shows it bounded and the prefix holding it never changes later. The bound is
+the tool's own when its view carries one (`ToolView.boundOnWriteChars`, from
+`ToolAnnotations.boundOnWriteChars`; `0` keeps the tool's results whole),
+else the policy's. Keep it a render-time fact: never record it as a
+`ToolPresentation` or shorten a stored view (`recall_context` and
+`MemoryReader.resolve` return the presented view, which must stay whole),
+and add no journal kind, event or stored field for it (the cap rides beside
+the presentation in `recordTail`, never in it; the stored format does not
+move). Left whole: a pinned result, a `RECALL_TOOL` page, a result holding
+images (a result with an applied view sends none), a result whose digest was
+just recorded, is shown (`render.digests`) and is no longer than the bound,
+and a result whose preview would not be shorter than its view. A failed
+call's result is bounded like any other: its view is canonical JSON, whose
+start holds the failure's name. A policy without the key, or with `0`,
+bounds nothing whatever a tool asks, since the notice names a tool only a
+bounding strategy contributes. A strategy that bounds contributes that tool
+whatever its bound is set to later: the bounds a session recorded stay in
+its log, and their notices name it. The annotation is a whole number of
+characters, 0 or more (`BoundOnWriteChars`): `defineTool` checks it as
+`defineSkill` checks an id, and throws on any other value. The raw append
+comes first, before any host code, so the view call and the digest call sit
+between it and the bound: a build by another run of the turn in between
+shows the result whole once, and a write that stops there (an interruption,
+a view or an append that fails, a process that dies) leaves the result
+without a bound (nothing records one later, and every later build shows it
+whole). `shownViewsOf(entries, { strategy, digests })` gives what a result
+shows in place of its view (a compact view, a spill's or bound's preview, a
+digest, in the render's precedence, with what wrote it): a strategy that
+compares against what is shown reads it there. The render keeps its own
+expression of that precedence (`renderedContext`), and
+`src/memory/memory-log.entity.test.ts` holds the two equal for every result
+of one log; change them together. `memoryConformance`'s `bound-on-write`
+holds every strategy to the rule: a result shown shortened from its first
+build resolves to its whole view and shows the same text after a later
+write and a reopen, and a result its first build shows whole is still whole
+after the next write. Its careless sessions (a stored view cut short, a
+bound recorded by a later write, a bound kept outside the log) are in
+`packages/sdk/src/memory.conformance.test.ts`.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
@@ -595,18 +645,18 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact tests `src/turn/model-text.test.ts#a host note and a clip marker have one form`; `src/turn/model-text.test.ts#a clip keeps the text's start and counts what it cut` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact tests `src/turn/model-text.test.ts#text inside a frame cannot close or reopen it` |
 | The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/domain/message-mapping.entity.functions.ts:49-56` | exact tests `src/internal/mapping.entity.functions.test.ts#frames the summary as a host-noted record the summary itself cannot close` |
-| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:82` | exact tests `src/memory/memory-log.entity.test.ts#dropped turns: a host note, then the ledger, in their place` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-635` | exact tests `src/memory/memory-log.entity.test.ts#a ledger of condensed turns: each request and its reply` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:579-611` | exact tests `src/memory/memory-log.entity.test.ts#one entry per line; a line inside an entry is indented`; `src/memory/memory-log.entity.test.ts#a reply that repeats its turn's last assistant text is listed once` |
-| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:154-164` | exact tests `src/memory/memory-log.entity.test.ts#a result's artifacts: a reference line each, at most maxImages, then how many more` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:90` | exact tests `src/memory/memory-log.entity.test.ts#dropped turns: a host note, then the ledger, in their place` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:647-663` | exact tests `src/memory/memory-log.entity.test.ts#a ledger of condensed turns: each request and its reply` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:607-639` | exact tests `src/memory/memory-log.entity.test.ts#one entry per line; a line inside an entry is indented`; `src/memory/memory-log.entity.test.ts#a reply that repeats its turn's last assistant text is listed once` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:162-172` | exact tests `src/memory/memory-log.entity.test.ts#a result's artifacts: a reference line each, at most maxImages, then how many more` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:181-182` | exact tests `src/domain/media.entity.test.ts#a label names the type, the size, the name and the alt` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:638-641` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
-| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:619-634` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
-| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:504`, `:518`, `:579-593` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
-| `recall_context` description | `src/memory/recall.entity.functions.ts:21` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
-| `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:23-24` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
-| Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`) | `src/memory/recall.entity.functions.ts:18` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from` |
-| `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`recallPage`) | `src/memory/recall.entity.functions.ts:36` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
-| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:49`, `:51` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:666-669` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:647-662` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:521`, `:535`, `:607-621` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
+| `recall_context` description | `src/memory/recall.entity.functions.ts:41` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:43-44` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`): one text for a result bounded as it is written (`recordTail`, cut at the bound) and for one spilled under pressure (a strategy's `maintain`); its count and offset are those of the cut, which never splits a surrogate pair | `src/memory/recall.entity.functions.ts:37` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `src/memory/memory-session.test.ts#a result longer than the bound is recorded with its preview before any build shows it`; `src/memory/recall.entity.functions.test.ts#a preview cut inside a pair ends before it, and says so in its count and its offset` |
+| `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`recallPage`); a page never ends inside a surrogate pair, and prints the offset it ended at | `src/memory/recall.entity.functions.ts:63` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next`; `src/memory/recall.entity.functions.test.ts#the pages read from the preview's offset are well formed and join to the whole view` |
+| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:76`, `:78` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

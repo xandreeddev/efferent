@@ -575,7 +575,6 @@ const resolveRequestHeader
 const resolvingModel
 const responseModelOf
 const resumeRefusal
-const rewrittenBy
 const sameEmbeddingSpace
 const sameKnowledgeScope
 const sameSession
@@ -585,6 +584,7 @@ const scaledTokens
 const sessionAttributes
 const sessionRef
 const shareTransient
+const shownViewsOf
 const shutdownGracefully
 const shutdownRefusal
 const skillIssuesText

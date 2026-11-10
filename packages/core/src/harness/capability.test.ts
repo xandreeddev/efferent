@@ -50,6 +50,15 @@ test("a tool's handler may read only the services it declares, and gets them whe
   expect([await at("a"), await at("b")]).toEqual(["in a", "in b"])
   expect(await Effect.runPromise(Effect.flip(declared.handler({})))).toMatchObject({ code: "requires.missing", message: `where requires ${SessionEnvironment.key}` })
 })
+test("a tool's boundOnWriteChars annotation is checked where the tool is defined: a whole number of characters, 0 or more", () => {
+  const Lookup = Tool.make("lookup", { parameters: Schema.Struct({}), success: Schema.String })
+  const boundOf = (annotations?: { readonly boundOnWriteChars: number }) => defineTool({ tool: Lookup, handler: () => Effect.succeed("found"), ...(annotations === undefined ? {} : { annotations }) }).annotations
+  expect([boundOf({ boundOnWriteChars: 0 }).boundOnWriteChars, boundOf({ boundOnWriteChars: 40_000 }).boundOnWriteChars]).toEqual([0, 40_000])
+  // A tool that sets none has no key: the memory strategy's bound applies.
+  expect(Object.hasOwn(boundOf(), "boundOnWriteChars")).toBe(false)
+  expect(() => boundOf({ boundOnWriteChars: -1 })).toThrow()
+  expect(() => boundOf({ boundOnWriteChars: 1.5 })).toThrow()
+})
 test("a prompt section may read only the services it declares, and gets them where it renders, once each is there", async () => {
   const Prefix = Context.Reference<string>("test/Prefix", { defaultValue: () => "in" })
   const workspace = SessionEnvironment.pipe(Effect.map((environment) => Option.some(environment.workspace)))

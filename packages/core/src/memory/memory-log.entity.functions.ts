@@ -47,13 +47,20 @@ export const entryId = (runId: RunId, index: number): EntryId => EntryIdSchema.m
 const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
   new Map(entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[String(entry.body.entry), entry.body.text] as const] : []))
 
+/** The text a compaction shows a result through, and the action that wrote it. */
+interface Rewrite {
+  readonly text: string
+  readonly by: "CompactViews" | "Spill"
+}
+
 /**
  * What a strategy decided for one render: only its own compactions apply,
  * except `OmitMedia`, which applies whatever strategy recorded it (an image
  * a provider refused stays refused).
  */
 interface Applied {
-  readonly views: ReadonlyMap<string, string>
+  /** The text each rewritten result shows, and whether a compact view or a spill's preview wrote it. */
+  readonly views: ReadonlyMap<string, Rewrite>
   readonly cutTurn: number
   readonly preamble: Option.Option<AgentMessage>
   readonly ids: ReadonlyArray<EntryId>
@@ -66,9 +73,9 @@ const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string):
   const applying = entries.flatMap((entry) => entry.body._tag === "Compaction" && (entry.body.action._tag === "OmitMedia" || entry.body.strategy === strategy)
     ? [{ id: entry.id, action: entry.body.action }] : [])
   // One pass each, so many compactions cost no copy per compaction; a later view of an entry wins.
-  const views = new Map(applying.flatMap(({ action }): ReadonlyArray<readonly [string, string]> => CompactionAction.match(action, {
-    CompactViews: (compact) => compact.entries.map((id, index) => [id, compact.texts[index] ?? ""] as const),
-    Spill: (spill) => [[spill.entry, spill.preview] as const],
+  const views = new Map(applying.flatMap(({ action }): ReadonlyArray<readonly [string, Rewrite]> => CompactionAction.match(action, {
+    CompactViews: (compact) => compact.entries.map((id, index) => [id, { text: compact.texts[index] ?? "", by: "CompactViews" }] as const),
+    Spill: (spill) => [[spill.entry, { text: spill.preview, by: "Spill" }] as const],
     OmitMedia: () => [],
     DropTurns: () => [],
     Summarize: () => [],
@@ -418,7 +425,7 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
     Message: (b) => !plan.messageVisible(entry) ? []
       : [Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
     ToolResult: (b): ReadonlyArray<AgentMessage> => !plan.resultVisible(entry) ? []
-      : [{ role: "tool", content: [toolResultPart(entry, b, applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view, options, inline)] }],
+      : [{ role: "tool", content: [toolResultPart(entry, b, applied.views.get(entry.id)?.text ?? digests.get(entry.id) ?? b.view, options, inline)] }],
     ToolDigest: () => [],
     ToolPresentation: () => [],
     StepContext: () => [],
@@ -558,11 +565,22 @@ export const toolInputsOf = (entries: ReadonlyArray<LogEntry>, tail: ReadonlyArr
   ? message.content.flatMap((part) => part.type === "tool-call" ? [[String(part.toolCallId), part.input] as const] : [])
   : []))
 
-/** Entry ids this strategy already rewrote (compact views or spills). */
-export const rewrittenBy = (entries: ReadonlyArray<LogEntry>, strategy: string): ReadonlySet<string> => new Set(entries.flatMap((entry) =>
-  entry.body._tag !== "Compaction" || entry.body.strategy !== strategy ? []
-    : entry.body.action._tag === "CompactViews" ? entry.body.action.entries.map(String)
-      : entry.body.action._tag === "Spill" ? [String(entry.body.action.entry)] : []))
+/**
+ * What each result shows in place of its view when `strategy` renders, by
+ * entry id, in the render's own precedence: the text of this strategy's
+ * latest compact view or spill preview of it (a result bounded as it was
+ * written shows a spill's preview), else, when the render shows digests,
+ * its latest digest. `by` names what wrote the text. A result the map lacks
+ * shows its view.
+ */
+export const shownViewsOf = (entries: ReadonlyArray<LogEntry>, options: { readonly strategy: string; readonly digests: boolean }): ReadonlyMap<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }> => {
+  const rewrites = appliedCompactions(entries, options.strategy).views
+  if (!options.digests) return rewrites
+  const shown = new Map<string, { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }>(
+    Array.from(digestsOf(entries), ([id, text]) => [id, { text, by: "ToolDigest" }] as const))
+  for (const [id, rewrite] of rewrites) shown.set(id, rewrite)
+  return shown
+}
 
 /** A hypothetical compaction entry, for estimating a render before recording it. */
 export const pendingCompaction = (strategy: { readonly id: string; readonly version: string }, action: CompactionAction, index: number): LogEntry => ({

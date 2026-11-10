@@ -41,6 +41,11 @@ and its recall capability. A durable session backend supplies persistence.
 
 ## What the model sees
 
+A tool result longer than `boundOnWriteChars` (16,000 characters by default)
+is bounded as it is written: every request shows its first 16,000 characters
+and a notice with the locator and offset to read the rest from. See
+[bound results as they are written](#bound-results-as-they-are-written).
+
 At a new turn, earlier tool results can use each tool's compact view. Under
 context pressure, the policy first replaces large current-turn results with
 a preview and locator, then replaces the oldest turns with a short ledger.
@@ -48,12 +53,51 @@ The current admitted turn stays intact as a turn; individual results can spill.
 
 The contributed `recall_context` tool reads a shortened result from the memory
 archive, up to 8,000 characters per call. Its continuation offset reads the next
-page. A recalled page is not spilled again. Recall cannot reconstruct content
+page. A recalled page is never shortened. Recall cannot reconstruct content
 the original tool clipped before returning it.
 
 Compaction actions are recorded before they apply. They change later model
 requests, leaving the original tool result and messages in the journal. A new
 memory strategy can rebuild from those original entries.
+
+## Bound results as they are written
+
+Without a bound, an agent whose tools return large results fills its context
+in a few calls, and the policy then shortens results the model has already
+been sent. `boundOnWriteChars` bounds each result once, before any request
+includes it:
+
+```ts
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+const memory = { plugin: memoryWindowPlugin, options: { boundOnWriteChars: 16_000 } }
+```
+
+A result whose view is longer than the bound is shown as its first characters
+and a notice, for example `[… 36000 more characters kept out of context; call
+recall_context with locator "run-1:4" and offset 16000 to read them]`. The
+journal keeps the whole result. Within its turn, what the result shows
+changes again only when context pressure spills it, so the start of each
+request stays the same from one step to the next. If the write stops between
+storing a result and recording its bound (the turn is cancelled, a sibling
+call fails, the result's view or an append fails, the process dies), that
+result stays without one and is shown whole until pressure spills it.
+
+- A tool sets its own bound with the `boundOnWriteChars` annotation of
+  `defineTool`; a tool that ends its result with its own continuation (an
+  offset to read on from, an exit status) sets `0` to keep its results whole.
+  The workspace tools `read`, `ls`, `find`, `grep` and `bash` do.
+- A pinned result, a `recall_context` page and a result that holds images are
+  never bounded. A digest recorded as the result was written is shown instead
+  while it is no longer than the bound.
+- Under pressure, a bounded result can be spilled again to the `previewChars`
+  preview. The result that shows the most text is spilled first.
+- At a new turn, an earlier turn's bounded result takes its tool's compact
+  view only when that is shorter than what it shows.
+- `boundOnWriteChars: 0` bounds nothing, as before the option.
+
+Each bound is recorded as a compaction of the `window` strategy, so
+`context.built` counts it among its `compactions`.
 
 ## Keep the current turn's results whole
 
@@ -76,7 +120,7 @@ choosing the fewest spills and then the fewest dropped turns, and fails with
 above.
 
 The option keeps the strategy id `window` and adds a suffix to its version:
-`2+current-turn-first`. Compactions recorded under either order keep applying
+`3+current-turn-first`. Compactions recorded under either order keep applying
 exactly as they were recorded, while each request's `strategyVersion` (in its
 recorded header and in `context.built`) shows which order decided it.
 
@@ -138,7 +182,8 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.20.1** · Plugin API **3
   "media": "inline",
   "maxImages": 8,
   "maxMediaChars": 20000000,
-  "currentTurnFirst": false
+  "currentTurnFirst": false,
+  "boundOnWriteChars": 16000
 }
 ```
 
@@ -207,6 +252,11 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.20.1** · Plugin API **3
     },
     "currentTurnFirst": {
       "type": "boolean"
+    },
+    "boundOnWriteChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [

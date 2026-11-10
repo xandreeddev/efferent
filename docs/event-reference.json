@@ -4335,8 +4335,8 @@
     },
     {
       "kind": "memory.compaction",
-      "writer": "Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`)",
-      "sensitive": "Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters).",
+      "writer": "Memory: the memory strategy's compactions (window, summary), a result's bound as it is written among them; the turn, when a provider refuses an image (`OmitMedia`)",
+      "sensitive": "Conversation text: summaries, compact views and the previews of spilled or bounded tool results (a bound's preview holds the result's first `boundOnWriteChars` characters); an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters).",
       "fields": [
         {
           "name": "entry",

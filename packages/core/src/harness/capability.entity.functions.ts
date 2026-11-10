@@ -3,7 +3,7 @@ import { Context, Effect, Option } from "effect"
 import { strictJsonSchema, toolParametersSchema } from "../turn/tool-schema.entity.functions.js"
 import type { Capability, PromptContext, PromptSection, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
-import { CapabilityId, CapabilityToolId, SkillId, SkillReferenceId } from "./capability.entity.js"
+import { BoundOnWriteChars, CapabilityId, CapabilityToolId, SkillId, SkillReferenceId } from "./capability.entity.js"
 import type {
   CapabilityCatalog,
   CapabilitySelection,
@@ -31,7 +31,9 @@ const checkedKeys = (requires: ServiceKeys): ReadonlyArray<string> =>
  * gets them where it runs, through `provideDeclared`, which fails the call
  * with `requires.missing` when one is not there; a registry checks the same
  * keys (`RegisteredTool.requires`) when it opens a run's tools, so a run
- * lacking one fails to open instead.
+ * lacking one fails to open instead. A `boundOnWriteChars` annotation is
+ * checked here, as a skill's id is by `defineSkill`: one that is negative or
+ * not a whole number throws.
  */
 export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = readonly []>(definition: {
   readonly tool: T
@@ -42,6 +44,7 @@ export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = r
 }): RegisteredTool => {
   const requires = definition.requires ?? ([] as const)
   const declared = provideDeclared(definition.tool.name, requires)
+  const bound = definition.annotations?.boundOnWriteChars
   return {
     tool: definition.tool,
     requires: checkedKeys(requires),
@@ -56,7 +59,7 @@ export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = r
       digest: Option.fromNullishOr(view.digest),
       media: Option.fromNullishOr(view.media),
     })) as RegisteredTool["view"],
-    annotations: { ...defaultAnnotations, ...definition.annotations },
+    annotations: { ...defaultAnnotations, ...definition.annotations, ...(bound === undefined ? {} : { boundOnWriteChars: BoundOnWriteChars.make(bound) }) },
   }
 }
 

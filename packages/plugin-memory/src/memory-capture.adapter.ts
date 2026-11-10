@@ -1,7 +1,7 @@
 import { Effect, Layer, Match, Option, Schema, Struct } from "effect"
 import {
   CommittedTurnObservers, HarnessError, KnowledgeError, KnowledgeJobId, KnowledgeSourceId,
-  LongTermMemory, Sessions, ToolCompletedEvent, definePlugin, entriesOfEvents, readStored, toolInputsByResult, userMessageText,
+  LongTermMemory, RECALL_TOOL, Sessions, ToolCompletedEvent, definePlugin, entriesOfEvents, readStored, toolInputsByResult, userMessageText,
 } from "@xandreed/core"
 import type { LogEntry, SessionAddress, SessionLogEvent } from "@xandreed/core"
 import { MemoryCapture, MemoryCaptureAdmission } from "./ports/memory-capture.port.js"
@@ -9,7 +9,7 @@ import { MemoryCaptureAck, MemoryCaptureConfig, MemoryCaptureDecision, memoryCap
 
 const ACK = "@xandreed/plugin-memory/capture.ack"
 const captureKinds = ["turn.started", "memory.message", "memory.tool-result", "tool.completed", "turn.reply", "turn.ended"]
-const excluded = new Set(["recall_memory", "read_memory", "remember_memory", "forget_memory", "search_knowledge", "read_knowledge", "recall_context", "load_skill", "read_skill_reference"])
+const excluded = new Set(["recall_memory", "read_memory", "remember_memory", "forget_memory", "search_knowledge", "read_knowledge", RECALL_TOOL, "load_skill", "read_skill_reference"])
 const Receipt = ToolCompletedEvent.mapFields(Struct.pick(["invocationId", "toolCallId", "tool", "ok", "step"]))
 type Receipt = typeof Receipt.Type
 const storageFailure = (cause: unknown) => new KnowledgeError({ reason: "Unavailable", message: "The committed conversation could not be synchronized", cause })

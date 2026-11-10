@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Layer, Option, Ref, Schema } from "effect"
 import {
+  Capabilities,
   ConversationMemory,
   definePlugin,
   digestTranscript,
@@ -10,6 +11,7 @@ import {
   MEDIA_LIMITS,
   openLogSession,
   pendingCompaction,
+  recallCapabilityOf,
   scaledTokens,
   UtilityLlm,
 } from "@xandreed/core"
@@ -59,6 +61,20 @@ export const MemorySummaryConfig = Schema.Struct({
    * that turn.
    */
   summaryTimeoutMs: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 100, maximum: 600_000 }))),
+  /**
+   * Bound a result as it is written: a result whose view is longer than this
+   * many characters is shown, from the first request that includes it, as
+   * its first characters and a notice of how to read the rest with
+   * `recall_context`, which the plugin contributes whatever this is; the
+   * stored result stays whole. A tool's own `boundOnWriteChars` annotation
+   * replaces this bound for that tool, and `0` there keeps its results
+   * whole. Pinned results, recalled pages and results holding images are
+   * never bounded. `0` bounds nothing from then on: results bounded earlier
+   * keep their notice, which is why the tool stays. `summaryPolicy` given a
+   * config written without the key bounds nothing either; the plugin's
+   * options take the default.
+   */
+  boundOnWriteChars: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
 })
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
 /** @public */
@@ -68,10 +84,28 @@ export const memorySummaryDefaults: MemorySummaryConfig = {
   maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
   summaryTimeoutMs: 60_000,
+  boundOnWriteChars: 16_000,
 }
 
-/** @public */
+/**
+ * The strategy's version names its summary decisions, which bounding a
+ * result as it is written does not change: it stays `2`, so the render
+ * checkpoints stored under it keep applying.
+ *
+ * @public
+ */
 export const SUMMARY_STRATEGY = { id: "summary", version: "2" } as const
+
+/** The bound a config sets on what a result shows as it is written: none for `0` or a config written without the key. */
+const boundOf = (config: MemorySummaryConfig): number => config.boundOnWriteChars ?? 0
+
+/**
+ * Core's recall tool under this plugin's id: what reads a bounded result's
+ * remaining text. The plugin contributes it whatever `boundOnWriteChars` is:
+ * a bound is a fact of the session's log, so a session opened with `0` may
+ * still show results bounded earlier, and their notice names this tool.
+ */
+const recallCapability = recallCapabilityOf("@xandreed/plugin-memory-summary/recall")
 
 const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullishOr(entries.flatMap((entry) =>
   entry.body._tag === "Compaction" && entry.body.strategy === SUMMARY_STRATEGY.id && entry.body.action._tag === "Summarize"
@@ -126,6 +160,7 @@ const policyWithAttempts = (
   checkpoint: "render",
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: Option.none(),
+  ...(boundOf(config) > 0 ? { boundOnWriteChars: boundOf(config) } : {}),
   maintain: (input) => decide(config, summarize, attempt, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
@@ -198,6 +233,9 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 
 /**
  * The summarizer is the UtilityLlm of where each session is opened (the turn), so it runs under that turn's budget.
+ * The plugin also contributes `recall_context`, which reads the rest of a result it bounded, whatever
+ * `boundOnWriteChars` is: at `0` it bounds nothing more, and a session that holds results bounded earlier still
+ * shows their notice, which names the tool.
  *
  * @public
  */
@@ -206,7 +244,9 @@ export const memorySummaryPlugin = definePlugin({
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
   optional: [UtilityLlm],
   provides: [ConversationMemory],
-  layer: (config) => Layer.succeed(ConversationMemory, ConversationMemory.of({
+  contributes: [Capabilities],
+  layer: (config) => Layer.mergeAll(
+    Layer.succeed(ConversationMemory, ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,
       open: Effect.fn("memory.open")(function* ({ runId, log }) {
         const utility = yield* Effect.serviceOption(UtilityLlm).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })))
@@ -218,9 +258,13 @@ export const memorySummaryPlugin = definePlugin({
         return yield* openLogSession(log, policy, { runId })
       }),
     })),
+    // The notice a bounded result ends with names recall_context, and a session keeps the bounds it recorded: the tool is always there.
+    Layer.succeed(Capabilities, [recallCapability]),
+  ),
 })
 /**
- * Summarizing memory as a typed layer: provides ConversationMemory (and needs a UtilityLlm per turn).
+ * Summarizing memory as a typed layer: provides ConversationMemory (and needs a UtilityLlm per turn) and
+ * contributes the recall tool, whatever `boundOnWriteChars` is.
  *
  * @public
  */

@@ -124,6 +124,13 @@ memory once, as the profile's record with its own count (the kept memory's suppo
 for a record without one). `recallMinSimilarity` (absent by default) is passed
 to the store as `KnowledgeSearch.minSimilarity`, a floor on the semantic arm.
 
+`read_memory` ends a page with the offset to continue at, so it carries the
+tool annotation `boundOnWriteChars: 0`: a `ConversationMemory` strategy that
+bounds results as they are written never cuts that line off, and `recallChars`
+is what bounds a page. `recall_memory` has no continuation and leaves the
+strategy's bound in place. Capture skips the conversation strategies' recall
+tool by core's `RECALL_TOOL`, never a copy of its name.
+
 Production imports core, `effect`, and `effect/ai` only. Tests additionally use
 the SDK, agent loop, PostgreSQL knowledge store, window memory, sessions, and
 tool discovery without adding those dependencies to production. See the repository skills and definition of done.

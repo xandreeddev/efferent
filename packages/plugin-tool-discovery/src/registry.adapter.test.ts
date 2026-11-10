@@ -51,6 +51,41 @@ describe("the views of a result holding images", () => {
   })
 })
 
+describe("a tool's own bound on what its result shows", () => {
+  const text = (name: string) => Tool.make(name, { description: "Read a record.", parameters: Schema.Struct({}), success: Schema.String, failure: Failure, failureMode: "return" })
+  const capability = defineCapability({
+    id: "bounds", version: "1",
+    tools: [
+      defineTool({ tool: text("viewed"), handler: () => Effect.die("unused"), view: { version: "1", render: (result) => `record: ${result}` }, annotations: { boundOnWriteChars: 4_000 } }),
+      defineTool({ tool: text("viewless"), handler: () => Effect.die("unused"), annotations: { boundOnWriteChars: 0 } }),
+      defineTool({ tool: text("unbounded"), handler: () => Effect.die("unused"), view: { version: "1", render: (result) => result } }),
+      defineTool({
+        tool: Tool.make("structured", { description: "Read a record.", parameters: Schema.Struct({}), success: Schema.Struct({ id: Schema.String }), failure: Failure, failureMode: "return" }),
+        handler: () => Effect.die("unused"), view: { version: "1", render: (result) => `record ${result.id}` }, annotations: { boundOnWriteChars: 2_000 },
+      }),
+    ],
+  })
+  const views = Effect.runSync(makeRegistry(config, [capability]).pipe(Effect.map((registry) => registry.views)))
+  const viewOf = (tool: string, isError = false, encoded: unknown = "alpha") => Effect.runSync(views.view(tool, encoded, {}, isError))
+
+  test("a view carries its tool's bound, for a tool with no view too", () => {
+    expect(viewOf("viewed")).toEqual({ text: "record: alpha", version: "1", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 4_000 })
+    expect(viewOf("viewless")).toEqual({ text: "alpha", version: "raw", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 0 })
+    // A failed call's result is shown raw, under the same bound.
+    expect(viewOf("viewed", true)).toEqual({ text: "alpha", version: "raw", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 4_000 })
+    // A tool that sets none, and a tool the registry does not know, leave the key out: the memory strategy's bound applies.
+    expect(viewOf("unbounded")).toEqual({ text: "alpha", version: "1", subjects: [], artifacts: [], pinned: false })
+    expect(viewOf("unknown")).toEqual({ text: "alpha", version: "raw", subjects: [], artifacts: [], pinned: false })
+  })
+
+  test("a stored result that does not decode against its tool's schema is shown raw, under the tool's bound all the same", () => {
+    expect(viewOf("structured", false, { id: "a" })).toEqual({ text: "record a", version: "1", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 2_000 })
+    // The authored view cannot render this one: the raw view takes its place and carries the same bound.
+    expect(viewOf("structured", false, "alpha")).toEqual({ text: "alpha", version: "raw", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 2_000 })
+    expect(viewOf("structured", false, { id: 7 })).toEqual({ text: '{"id":7}', version: "raw", subjects: [], artifacts: [], pinned: false, boundOnWriteChars: 2_000 })
+  })
+})
+
 describe("a tool's digest task", () => {
   const Search = Tool.make("search", {
     description: "Search records.",

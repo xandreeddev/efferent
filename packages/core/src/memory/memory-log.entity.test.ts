@@ -12,7 +12,7 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   artifactLines, buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, latestRunOf, ledgerOf, queryLog,
-  presentedEntries, rawTranscript, referenceTranscript, renderLog, subjectsOf,
+  presentedEntries, rawTranscript, referenceTranscript, renderLog, shownViewsOf, subjectsOf,
 } from "./memory-log.entity.functions.js"
 import { ArtifactId, ArtifactRef, BuiltContext, LogBody, LogEntry, Subject, SubjectId } from "./memory-log.entity.js"
 
@@ -621,5 +621,69 @@ describe("durable inbox user messages in memory", () => {
     const ended: LogEntry = { ...input, id: entryId(runOf(1), 3), body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some("done") } }
     expect(ledgerOf([started(1, "first", []), input, corrective, ended], 1, 1000)).toBe("Earlier in this conversation:\n- Asked: first\n  then\n  Reply: injected — replied: done")
     expect(digestTranscript([started(1, "first", []), input, corrective, ended], { result: 100, total: 1000 })).toBe("User: first\nUser: then\n  Reply: injected\nReply: done")
+  })
+})
+
+describe("what a result shows in place of its view", () => {
+  const run = runOf(1)
+  const at = (seq: number, body: LogBody): LogEntry => ({ id: entryId(run, seq), runId: run, turn: 1, step: 0, at: seq, body })
+  const names = ["plain", "digested", "compacted", "spilled", "digested-spilled", "spilled-twice", "compacted-spilled", "spilled-compacted", "foreign"] as const
+  type Name = typeof names[number]
+  /** Each result's entry: its call is entry `1 + 2i`, the result `2 + 2i`. */
+  const idOf = (name: Name) => entryId(run, 2 + 2 * names.indexOf(name))
+  const exchanges = names.flatMap((name, index): ReadonlyArray<LogEntry> => [
+    at(1 + 2 * index, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(name), toolName: "lookup", input: {} }] } }),
+    at(2 + 2 * index, { _tag: "ToolResult", toolCallId: ToolCallId.make(name), toolName: "lookup", isError: false, encoded: `view of ${name}`, view: `view of ${name}`, viewVersion: "1", subjects: [], artifacts: [], pinned: false }),
+  ])
+  const digest = (seq: number, name: Name): LogEntry => at(seq, { _tag: "ToolDigest", entry: idOf(name), version: "1", mode: "summarize", keep: [], text: `digest of ${name}`, digester: "fixed@1", trigger: "write" })
+  const spill = (seq: number, name: Name, preview: string, strategy = "window"): LogEntry => at(seq, { _tag: "Compaction", strategy, version: "3", action: { _tag: "Spill", entry: idOf(name), preview } })
+  const compact = (seq: number, name: Name, strategy = "window"): LogEntry => at(seq, { _tag: "Compaction", strategy, version: "3", action: { _tag: "CompactViews", entries: [idOf(name)], texts: [`compact of ${name}`] } })
+  const entries: ReadonlyArray<LogEntry> = [
+    at(0, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "look them up" }) }),
+    ...exchanges,
+    digest(30, "digested"), compact(31, "compacted"), spill(32, "spilled", "preview of spilled"),
+    // A rewrite of this strategy's comes before a digest, whichever was recorded first; of two rewrites the later one shows.
+    digest(33, "digested-spilled"), spill(34, "digested-spilled", "preview of digested-spilled"),
+    spill(35, "spilled-twice", "first preview"), spill(36, "spilled-twice", "second preview"),
+    compact(37, "compacted-spilled"), spill(38, "compacted-spilled", "preview of compacted-spilled"),
+    spill(39, "spilled-compacted", "preview of spilled-compacted"), compact(40, "spilled-compacted"),
+    // Another strategy's rewrites are not this render's.
+    spill(41, "foreign", "another strategy's preview", "summary"), compact(42, "foreign", "summary"),
+  ]
+  const options = (digests: boolean): RenderOptions => ({
+    strategy: "window", currentTurn: 1, currentRun: run, run: RunOrdinal.make(0), turnContext: "current", replies: true, stepContext: "none",
+    digests, media: { mode: "none", maxImages: 0, maxChars: 0 },
+  })
+  /** What the render shows for each result, by its call. */
+  const rendered = (digests: boolean) => new Map(renderLog(entries, options(digests)).flatMap((message) =>
+    message.role === "tool" ? message.content.map((part) => [String(part.toolCallId), part.output] as const) : []))
+  type Shown = { readonly text: string; readonly by: "CompactViews" | "Spill" | "ToolDigest" }
+  const rewrites: ReadonlyArray<readonly [string, Shown]> = [
+    [idOf("compacted"), { text: "compact of compacted", by: "CompactViews" }],
+    [idOf("spilled"), { text: "preview of spilled", by: "Spill" }],
+    [idOf("digested-spilled"), { text: "preview of digested-spilled", by: "Spill" }],
+    [idOf("spilled-twice"), { text: "second preview", by: "Spill" }],
+    [idOf("compacted-spilled"), { text: "preview of compacted-spilled", by: "Spill" }],
+    [idOf("spilled-compacted"), { text: "compact of spilled-compacted", by: "CompactViews" }],
+  ]
+
+  test("shownViewsOf names the text and what wrote it, in the render's precedence", () => {
+    expect(new Map(shownViewsOf(entries, { strategy: "window", digests: true }))).toEqual(new Map<string, Shown>([
+      [idOf("digested"), { text: "digest of digested", by: "ToolDigest" }], ...rewrites,
+    ]))
+    // A render that shows no digests shows the view of a result that only has one.
+    expect(new Map(shownViewsOf(entries, { strategy: "window", digests: false }))).toEqual(new Map<string, Shown>(rewrites))
+    expect(shownViewsOf(entries, { strategy: "summary", digests: false }).get(idOf("foreign"))).toEqual({ text: "compact of foreign", by: "CompactViews" })
+  })
+
+  test("shownViewsOf agrees with what the render shows for every result, with digests shown and without", () => {
+    for (const digests of [true, false]) {
+      const shown = shownViewsOf(entries, { strategy: "window", digests })
+      expect(rendered(digests)).toEqual(new Map(names.map((name) => [name, shown.get(idOf(name))?.text ?? `view of ${name}`] as const)))
+    }
+    // The render itself, so the agreement above is not two empty answers.
+    expect(rendered(true).get("digested")).toBe("digest of digested")
+    expect(rendered(false).get("digested")).toBe("view of digested")
+    expect(rendered(true).get("foreign")).toBe("view of foreign")
   })
 })

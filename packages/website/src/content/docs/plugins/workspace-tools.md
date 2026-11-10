@@ -69,6 +69,13 @@ its compact view is a short path/range note. Later context compaction or a
 digest can change what the model sees, without changing the recorded result
 or restoring content the tool never returned.
 
+`read`, `ls`, `find`, `grep` and `bash` end a result with their own
+continuation: the offset to continue from, what was left out, how the command
+ended. They set the tool annotation `boundOnWriteChars: 0`, so a memory
+plugin's bound on what a result shows as it is written never cuts that last
+line off; the limits above are what bounds them. `write` and `edit` return one
+short line and leave the memory plugin's bound in place.
+
 `write` changes the file and returns a path/byte-count receipt; its input
 contains the submitted content. `edit` returns a bounded diff for hosts but
 renders a short replacement summary to the model. Neither returns the whole

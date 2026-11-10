@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option } from "effect"
+import { Context, Effect, Option, Ref } from "effect"
 import { ConversationId, ConversationMemory, harnessCodeOf, MEDIA_LIMITS, openLogSession, RunId, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import { inMemoryLog, memoryConformance } from "@xandreed/core/conformance"
-import type { AgentMessage, MemoryPolicy, Plugin, RunOrdinal, ToolViews } from "@xandreed/core"
+import type { AgentMessage, LogBody, LogEntry, MemoryPolicy, Plugin, RunOrdinal, ToolViews } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 
@@ -88,6 +88,79 @@ test("the memory kit rejects a session that runs a tool view before storing the 
   const failures = await Effect.runPromise(Effect.forEach(memoryConformance(premature), (check) =>
     Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
   expect(failures.flat()).toEqual(["raw-result-durable"])
+})
+
+// A bound is a fact about what a build shows, never a shorter stored view: the locator a shortened result names must give the whole text back.
+test("the memory kit rejects a session that shortens a result's stored view instead of what a build shows", async () => {
+  const cutting = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => session.recordTail(tail, {
+        ...views,
+        view: (tool, encoded, params, isError) => views.view(tool, encoded, params, isError).pipe(
+          Effect.map((view) => view.text.length <= 1_000 ? view : { ...view, text: `${view.text.slice(0, 1_000)}\n[shortened]` })),
+      }, step, run),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(cutting), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [`${result.failure.check}: ${result.failure.message}`] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["bound-on-write: the result is shown shortened and its entry no longer resolves to the whole view"])
+})
+
+// A bound is recorded as the result is written. One recorded by a later write rewrites a request prefix the model was already sent.
+test("the memory kit rejects a session that shortens a result at a later write, after a build showed it whole", async () => {
+  const late = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => Effect.gen(function* () {
+      const session = yield* openLogSession(log, rollingPolicy, { runId })
+      // The long results written so far and still shown whole: the next write shortens them.
+      const waiting = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      return {
+        ...session,
+        recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.gen(function* () {
+          const earlier = yield* Ref.getAndSet(waiting, [])
+          yield* session.record(earlier.flatMap((entry): ReadonlyArray<LogBody> => entry.body._tag !== "ToolResult" ? [] : [{
+            _tag: "Compaction", strategy: rollingPolicy.strategy.id, version: rollingPolicy.strategy.version,
+            action: { _tag: "Spill", entry: entry.id, preview: `${entry.body.view.slice(0, 1_000)}\n[shortened]` },
+          }]), step)
+          const recorded = yield* session.recordTail(tail, views, step, run)
+          yield* Ref.set(waiting, recorded.filter((entry) => entry.body._tag === "ToolResult" && entry.body.view.length > 1_000))
+          return recorded
+        }),
+      }
+    }),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(late), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [`${result.failure.check}: ${result.failure.message}`] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["bound-on-write: the first build shows the result whole and a build after a later write shows it shortened"])
+})
+
+// A bound is a fact of the log. One a session only remembers is gone when the session is opened again, and the same request then rebuilds differently.
+test("the memory kit rejects a session that keeps a bound outside the log", async () => {
+  const forgetting = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => Effect.gen(function* () {
+      const session = yield* openLogSession(log, rollingPolicy, { runId })
+      // What this session shows for each long result, by its call: held here, recorded nowhere.
+      const shortened = yield* Ref.make<ReadonlyMap<string, string>>(new Map())
+      return {
+        ...session,
+        recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => session.recordTail(tail, views, step, run).pipe(
+          Effect.tap((recorded) => Ref.update(shortened, (held) => new Map([...held, ...recorded.flatMap((entry) =>
+            entry.body._tag === "ToolResult" && entry.body.view.length > 1_000 ? [[String(entry.body.toolCallId), `${entry.body.view.slice(0, 1_000)}\n[shortened]`] as const] : [])])))),
+        build: (options: Parameters<typeof session.build>[0]) => Effect.all([session.build(options), Ref.get(shortened)], { concurrency: 1 }).pipe(Effect.map(([built, held]) => ({
+          ...built,
+          messages: built.messages.map((message): AgentMessage => message.role !== "tool" ? message : {
+            ...message, content: message.content.map((part) => ({ ...part, output: held.get(String(part.toolCallId)) ?? part.output })),
+          }),
+        }))),
+      }
+    }),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(forgetting), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [`${result.failure.check}: ${result.failure.message}`] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["bound-on-write: a reopened session shows the shortened result differently"])
 })
 
 // Without the run ordinal a build cannot tell another run's call in flight from one the turn left unanswered.

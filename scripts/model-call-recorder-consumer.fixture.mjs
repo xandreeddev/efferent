@@ -39,8 +39,9 @@ const subject = {
     )) }
     const owner = yield* Scope.make()
     yield* Effect.addFinalizer(() => Scope.close(owner, Exit.void))
+    // The registry here is given no capabilities, so it holds no recall tool: the window memory bounds no result.
     const context = yield* Layer.buildWithScope(TurnLive({ turn: controlled }).pipe(
-      Layer.provide(Layer.merge(MemoryWindowLive(), ToolDiscoveryLive().pipe(Layer.provide(Layer.succeed(Capabilities, []))))),
+      Layer.provide(Layer.merge(MemoryWindowLive({ boundOnWriteChars: 0 }), ToolDiscoveryLive().pipe(Layer.provide(Layer.succeed(Capabilities, []))))),
     ), owner)
     return {
       recorder: Context.get(context, CurrentModelCallRecorder),
