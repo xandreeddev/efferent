@@ -43,6 +43,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   graph binds `ConversationMemory` to.
 - Code that called `rewrittenBy(entries, id)` reads the same entry ids as
   the keys of `shownViewsOf(entries, { strategy: id, digests: false })`.
+- A host that set `compactPreviousTurn: false` on `memoryWindowPlugin` so
+  that tools' compact views never ran now sees them once a request passes
+  its budget: earlier turns' results take their compact views before
+  anything is spilled or dropped. Requests that fit their budget are
+  unchanged. To keep a tool's results out of this stage, give that tool no
+  `compact` view: its results then go from whole to spilled or dropped, as
+  before. No option turns the stage off.
 
 ### Breaking
 
@@ -129,6 +136,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   an earlier turn's result shown through a preview takes its tool's compact
   view when that is shorter; it kept its preview for good before.
   Compactions recorded by earlier versions replay as recorded.
+- `@xandreed/plugin-memory-window`: a request over its budget shows earlier
+  turns' results through their tools' compact views before the window spills
+  a result or drops a turn, also with `compactPreviousTurn: false`, which
+  now means never at a turn's start. Before, a host that set it to `false`
+  to keep its provider's cached prefix never got compact views: over budget
+  the window went straight to 600-character previews and dropped turns.
+  Under pressure the order is: compact earlier turns, spill the current
+  turn's largest results, drop the oldest turns; with `currentTurnFirst`,
+  compact earlier turns, drop the oldest turns, then spill. Only results of
+  turns before the current one are compacted, a result takes its compact
+  view only when that is shorter than the text it shows (its view, a
+  bound's or a spill's preview, a digest), and a tool with no compact view
+  and a pinned result are left as they are. Only as many are compacted as
+  the budget needs, the one that frees the most characters first, so a
+  later request over budget can compact more. Requests that fit their
+  budget are byte for byte what they were, and nothing is recorded for
+  them. With `compactPreviousTurn: true` a turn's start compacts as before;
+  a step over budget now also compacts an earlier result that no turn start
+  compacted. This is part of strategy version `3`.
 - `@xandreed/plugin-memory-summary` contributes `recall_context` (capability
   `@xandreed/plugin-memory-summary/recall`), whatever `boundOnWriteChars`
   is, so an agent on the summary strategy sends one more tool schema.

@@ -145,8 +145,9 @@ character: where it would fall inside a surrogate pair, the result shows one
 unit less and the notice gives that offset. Within its turn, what the result
 shows changes again only when window memory spills it under pressure, so the
 start of each request stays the same from one step to the next. At a later
-turn's start window memory replaces the preview with the tool's compact view
-when that is shorter.
+turn's start (with `compactPreviousTurn: false`, once a later turn's request
+passes its budget) window memory replaces the preview with the tool's compact
+view when that is shorter.
 
 - A tool sets its own bound with the `boundOnWriteChars` annotation of
   `defineTool`. It replaces the policy's bound for that tool, and a tool with

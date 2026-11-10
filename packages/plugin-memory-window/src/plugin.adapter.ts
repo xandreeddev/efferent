@@ -16,11 +16,19 @@ import {
   spillPreview,
   toolInputOf,
 } from "@xandreed/core"
-import type { CompactionAction, MemoryPolicy } from "@xandreed/core"
+import type { CompactionAction, EntryId, MemoryPolicy } from "@xandreed/core"
 
 /** @public */
 export const MemoryWindowConfig = Schema.Struct({
-  /** At turn start, show earlier turns' tool results through their compact views. */
+  /**
+   * At turn start, show earlier turns' tool results through their compact
+   * views. Off, a turn start rewrites no earlier turn, so each request begins
+   * with the messages of the one before it and a provider's cached prefix
+   * holds while requests fit their budget. Either way, once a request passes
+   * its budget, earlier turns' results take their compact views before
+   * anything is spilled or dropped: the fewest that fit, the one whose
+   * compact view frees the most first.
+   */
   compactPreviousTurn: Schema.Boolean,
   turnContext: Schema.Literals(["current", "all"]),
   replies: Schema.Boolean,
@@ -47,10 +55,11 @@ export const MemoryWindowConfig = Schema.Struct({
   maxMediaChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: MEDIA_LIMITS.requestChars }))),
   /**
    * Under budget pressure, keep the current turn's results whole while
-   * earlier turns are condensed: drop the oldest turns first, and spill the
-   * current turn's largest results only when the current turn alone does not
-   * fit. Off (the default), the current turn's results spill before any turn
-   * is dropped. On, the strategy's version is `3+current-turn-first`.
+   * earlier turns are condensed: after earlier turns' results have taken
+   * their compact views, drop the oldest turns first, and spill the current
+   * turn's largest results only when the current turn alone does not fit.
+   * Off (the default), the current turn's results spill before any turn is
+   * dropped. On, the strategy's version is `3+current-turn-first`.
    */
   currentTurnFirst: Schema.optionalKey(Schema.Boolean),
   /**
@@ -87,10 +96,11 @@ const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly
   config.currentTurnFirst === true ? { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` } : WINDOW_STRATEGY
 
 /**
- * The window policy: bound a result as it is written, compact older turns,
- * spill the current turn's oversized results, then drop the oldest turns;
- * with `currentTurnFirst`, drop the oldest turns before spilling any of the
- * current turn's results.
+ * The window policy: bound a result as it is written, compact older turns
+ * (at each turn start with `compactPreviousTurn`, and under pressure whatever
+ * it says), spill the current turn's oversized results, then drop the oldest
+ * turns; with `currentTurnFirst`, drop the oldest turns before spilling any
+ * of the current turn's results.
  *
  * @public
  */
@@ -107,31 +117,61 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     const strategy = strategyOf(config)
     // What each result shows where that is not its view: a compact view, the preview of a spill or of a bound, a digest.
     const shownViews = shownViewsOf(entries, { strategy: strategy.id, digests: config.digests })
-    const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body, shown: Option.fromNullishOr(shownViews.get(entry.id)) }] : [])
+    const results = entries.flatMap((entry) => {
+      const result = entry.body
+      if (result._tag !== "ToolResult") return []
+      const shown = Option.fromNullishOr(shownViews.get(entry.id))
+      // `showing` is the length of the text the result shows now: its view, unless other text is shown in its place.
+      return [{ entry, result, shown, showing: Option.match(shown, { onNone: () => result.view.length, onSome: (now) => now.text.length }) }]
+    })
+    // The results that may still take a compact view: an earlier turn's, never the current turn's, a pinned one or one that already shows its compact view.
+    const earlier = results.filter(({ entry, result, shown }) => entry.turn < turn && !result.pinned && !Option.exists(shown, (now) => now.by === "CompactViews"))
+    const compactOf = ({ entry, result }: typeof results[number]) => signal.views.compact(result.toolName, result.encoded, toolInputOf(entries, entry))
+    const compactViews = (items: ReadonlyArray<{ readonly id: EntryId; readonly text: string }>): ReadonlyArray<CompactionAction> =>
+      items.length === 0 ? [] : [{ _tag: "CompactViews", entries: items.map((item) => item.id), texts: items.map((item) => item.text) }]
+    // With `compactPreviousTurn`, a turn start compacts every earlier turn, whatever the budget.
     // A result takes its compact view once. One shown through a preview is asked again, and takes it only when it is shorter than that preview.
-    const older = signal.phase === "turn-start" && config.compactPreviousTurn
-      ? results.filter(({ entry, result, shown }) => entry.turn < turn && !result.pinned && !Option.exists(shown, (now) => now.by === "CompactViews"))
-      : []
-    const compacted = yield* Effect.forEach(older, ({ entry, result, shown }) =>
-      signal.views.compact(result.toolName, result.encoded, toolInputOf(entries, entry)).pipe(
-        Effect.map((text) => Option.toArray(Option.filter(text, (value) => Option.match(Option.filter(shown, (now) => now.by === "Spill"), {
-          onNone: () => value !== result.view,
+    const atTurnStart = signal.phase === "turn-start" && config.compactPreviousTurn
+    const compacted = yield* Effect.forEach(atTurnStart ? earlier : [], (item) =>
+      compactOf(item).pipe(
+        Effect.map((text) => Option.toArray(Option.filter(text, (value) => Option.match(Option.filter(item.shown, (now) => now.by === "Spill"), {
+          onNone: () => value !== item.result.view,
           onSome: (preview) => value.length < preview.text.length,
-        }))).map((value) => ({ id: entry.id, text: value }))),
+        }))).map((value) => ({ id: item.entry.id, text: value }))),
       ), { concurrency: 1 }).pipe(Effect.map((all) => all.flat()))
-    const views: ReadonlyArray<CompactionAction> = compacted.length === 0 ? [] : [{
-      _tag: "CompactViews", entries: compacted.map((item) => item.id), texts: compacted.map((item) => item.text),
-    }]
+    const atStart = compactViews(compacted)
     const tokens = (actions: ReadonlyArray<CompactionAction>): number =>
       scaledTokens(estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(strategy, action, index))])), Option.fromNullishOr(signal.observed))
     const over = (actions: ReadonlyArray<CompactionAction>): boolean => tokens(actions) > signal.budgetTokens
-    if (!over(views)) return views
+    // Within the budget nothing more is decided and no compact view is asked for: without `compactPreviousTurn`, a request that fits is never rewritten.
+    if (!over(atStart)) return atStart
+    // Over the budget, earlier turns' results take their compact views before anything is spilled or dropped, whatever `compactPreviousTurn`
+    // says: a compact view takes less from the model than a preview or a ledger. A turn start that compacted has asked every one of them above.
+    // A turn this strategy has dropped shows none of its results, so a compact view of one would free nothing.
+    const droppedThrough = entries.reduce((through, entry) =>
+      entry.body._tag === "Compaction" && entry.body.strategy === strategy.id && entry.body.action._tag === "DropTurns" ? Math.max(through, entry.body.action.throughTurn) : through, 0)
+    const shorter = yield* Effect.forEach(atTurnStart ? [] : earlier.filter(({ entry }) => entry.turn > droppedThrough), (item) =>
+      compactOf(item).pipe(
+        // Only a compact view strictly shorter than the text shown is taken: a bounded, spilled or digested result may already show less.
+        Effect.map((text) => Option.toArray(Option.filter(text, (value) => value.length < item.showing)).map((value) => ({ id: item.entry.id, text: value, saved: item.showing - value.length }))),
+      ), { concurrency: 1 }).pipe(Effect.map((all) => all.flat()))
+    // The compact view that frees the most characters goes first; equal savings keep the order of the log.
+    const bySaving = shorter.toSorted((left, right) => right.saved - left.saved)
+    const compacting = (count: number): ReadonlyArray<CompactionAction> => [...atStart, ...compactViews(bySaving.slice(0, count))]
+    // The fewest compact views that fit, found by halving so the renders stay logarithmic in the earlier results: `enough` of them fit and `few` do not.
+    const fewest = (few: number, enough: number): number => {
+      if (enough - few <= 1) return enough
+      const middle = Math.floor((few + enough) / 2)
+      return over(compacting(middle)) ? fewest(middle, enough) : fewest(few, middle)
+    }
+    // When every compact view together does not fit, all of them are taken and the stages below start from there.
+    const views = compacting(bySaving.length)
+    if (bySaving.length > 0 && !over(views)) return compacting(fewest(0, bySaving.length))
     const spills = results
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
       .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RECALL_TOOL && result.view.length >= config.spillMinChars)
-      .flatMap(({ entry, result, shown }) => {
+      .flatMap(({ entry, result, shown, showing }) => {
         const preview = spillPreview(entry, result.view, config.previewChars)
-        const showing = Option.match(shown, { onNone: () => result.view.length, onSome: (now) => now.text.length })
         // A result shown through other text (a bound's preview, an earlier spill's, a digest) is spilled only when this preview is shorter than that text.
         return Option.isSome(shown) && preview.length >= showing ? [] : [{ showing, action: { _tag: "Spill", entry: entry.id, preview } satisfies CompactionAction }]
       })

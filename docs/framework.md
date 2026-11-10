@@ -1384,10 +1384,11 @@ the turn's start the memory strategy is given the whole budget. At each
 step the system prompt and the tool schemas are reserved first, and the
 memory strategy gets the rest for the messages; when they leave nothing,
 the step fails with `context.budget`. What the strategy does with the
-budget it is given is its own: the window strategy compacts older turns,
-spills the current turn's largest results and drops the oldest turns to
-fit (with `currentTurnFirst`, drops the oldest turns before it spills),
-and fails with `context.budget` when the current turn alone does not;
+budget it is given is its own: the window strategy compacts older turns
+(over budget even with `compactPreviousTurn: false`), spills the current
+turn's largest results and drops the oldest turns to fit (with
+`currentTurnFirst`, drops the oldest turns before it spills), and fails
+with `context.budget` when the current turn alone does not;
 the summary strategy summarizes once the calibrated messages pass its
 `triggerRatio` of it and keeps its `keepRatio`, normally after the loop run;
 the digester ignores it. Every step's
@@ -1521,6 +1522,17 @@ a new strategy rebuilds from the full-fidelity entries.
   when the shorter pressure preview (`previewChars`, 600 characters) is
   shorter than that; at a turn's start, an earlier turn's bounded result
   takes its tool's compact view only when that is shorter than its preview.
+  `compactPreviousTurn: false` means never at a turn's start: a turn start
+  then rewrites no earlier turn, so each request that fits its budget is the
+  one before it, byte for byte, with more messages after, and a provider's
+  cached prompt prefix holds. Compact views still apply under pressure,
+  with the option on or off: once a request passes its budget, earlier
+  turns' results take their compact views before anything is spilled or
+  dropped. A result takes one only when it is shorter than the text it
+  shows (its view, a preview or a digest); a tool with no compact view, a
+  pinned result and the current turn's results are left as they are; and
+  only as many are taken as the budget needs, the one that frees the most
+  characters first.
   `recall_context` reads a shortened result
   back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
   `offset`, each page ending with the offset of the next, and a recalled
@@ -1529,7 +1541,7 @@ a new strategy rebuilds from the full-fidelity entries.
   budget it is given: the whole budget at the turn's start, and what the
   system prompt and tool schemas leave of it at each step. With
   `currentTurnFirst: true` it keeps the current turn's results whole while
-  earlier turns are compacted and dropped, and spills them only when the
+  earlier turns are compacted, then dropped, and spills them only when the
   current turn alone does not fit (the fewest spills, then the fewest dropped
   turns); the strategy keeps its id `window` and its version becomes
   `3+current-turn-first`, part of every request's `strategyVersion`, so
@@ -1568,7 +1580,8 @@ a new strategy rebuilds from the full-fidelity entries.
   limits under "Bounding what a tool shows" below).
 
 The window strategy's decisions are version 3 (it bounds results as they are
-written and spills a bounded result again under pressure); the summary
+written, spills a bounded result again under pressure and compacts earlier
+turns under pressure whatever `compactPreviousTurn` says); the summary
 strategy's are version 2, since what and when it summarizes is unchanged and
 the render checkpoints stored under that version keep applying. A recorded
 compaction replays as recorded whatever version wrote it. `MaintainSignal.phase` is `turn-start`,
@@ -1652,10 +1665,11 @@ falls inside a surrogate pair the result shows one unit less, the notice
 gives that offset, and a `recall_context` page ends the same way. Within
 its turn, what the result shows changes again only when the window strategy
 spills it under pressure, so the prefix that holds it stays the same from
-one request of the turn to the next. At a later turn's start the window
-strategy replaces the preview with the tool's compact view when that is
-shorter, and either strategy stops showing the result once its turn is
-dropped or summarized.
+one request of the turn to the next. At a later turn's start (with
+`compactPreviousTurn: false`, once a later turn's request passes its
+budget) the window strategy replaces the preview with the tool's compact
+view when that is shorter, and either strategy stops showing the result
+once its turn is dropped or summarized.
 
 - A tool sets its own bound with the `boundOnWriteChars` annotation
   (`defineTool({ tool, handler, annotations: { boundOnWriteChars: 40_000 } })`),

@@ -46,10 +46,14 @@ is bounded as it is written: every request shows its first 16,000 characters
 and a notice with the locator and offset to read the rest from. See
 [bound results as they are written](#bound-results-as-they-are-written).
 
-At a new turn, earlier tool results can use each tool's compact view. Under
-context pressure, the policy first replaces large current-turn results with
-a preview and locator, then replaces the oldest turns with a short ledger.
-The current admitted turn stays intact as a turn; individual results can spill.
+At a new turn, earlier tool results use each tool's compact view
+(`compactPreviousTurn`, on by default). Under context pressure, the policy
+first shows earlier turns' results through the compact views they have not
+taken yet, then replaces large current-turn results with a preview and
+locator, then replaces the oldest turns with a short ledger. The current
+admitted turn stays intact as a turn; individual results can spill. See
+[keep the request prefix between turns](#keep-the-request-prefix-between-turns)
+for `compactPreviousTurn: false`.
 
 The contributed `recall_context` tool reads a shortened result from the memory
 archive, up to 8,000 characters per call. Its continuation offset reads the next
@@ -98,6 +102,40 @@ result stays without one and is shown whole until pressure spills it.
 
 Each bound is recorded as a compaction of the `window` strategy, so
 `context.built` counts it among its `compactions`.
+
+## Keep the request prefix between turns
+
+A provider's prompt cache reuses a request's leading bytes. With the default
+`compactPreviousTurn: true`, each new turn rewrites the previous turn's
+results to their compact views, so the cached prefix ends at the first
+result it rewrites. A host that prefers the cache turns the rewrite off:
+
+```ts
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+const memory = { plugin: memoryWindowPlugin, options: { compactPreviousTurn: false } }
+```
+
+`false` means never at a turn's start. While requests fit their budget,
+nothing is recorded and each request is the one before it, byte for byte,
+with more messages after. Compact views still apply under pressure: once a
+request passes its budget, earlier turns' results take their compact views
+before any result is spilled or any turn is dropped.
+
+- Only results of turns before the current one are compacted. The current
+  turn's results, pinned results and tools with no compact view are left as
+  they are.
+- A result takes its compact view only when that is shorter than the text it
+  shows: its view, the preview of a bound or a spill, or a digest.
+- Only as many results are compacted as the budget needs, the one whose
+  compact view frees the most characters first. A later request over budget
+  compacts more, so the prefix can change at each of those requests.
+- The rest of the order is unchanged: by default the current turn's largest
+  results are spilled next and the oldest turns dropped last; with
+  `currentTurnFirst` the oldest turns are dropped before anything is spilled.
+
+With `compactPreviousTurn: true` a turn's start has already compacted every
+earlier turn, so pressure normally finds no compact view left to take.
 
 ## Keep the current turn's results whole
 
