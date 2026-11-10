@@ -26,6 +26,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Git worktrees of the repository go under `.worktrees/`, which git now
   ignores. `AGENTS.md` and `CONTRIBUTING.md` say how to create one and that
   each needs its own `bun install`.
+- `@xandreed/plugin-render`: the tests that read a compressed SSE response
+  over `node:http` no longer fail on bytes the peer did send. They read the
+  response through `node:http`'s client, and Bun 1.3.0's can read part of a
+  body off the socket and never give it, or the end, to the response's
+  listeners. The test that a frame reaches the client while the response
+  stays open then failed with `did not decode to the expected frame within 3
+  seconds`, only the preamble decoded, and the test of a response that ends
+  ran into the test runner's 5 s timeout. Both now read the response off a
+  `node:net` socket, and a new test checks at the server, with no client or
+  deadline, that when a write of a compressing `sseNodePeer` completes, a
+  response that takes bytes already has the frame. Test change only:
+  `sseNodePeer` flushed every frame all along.
 
 ## 0.20.1 — 2026-11-10
 
