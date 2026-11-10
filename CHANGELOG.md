@@ -16,7 +16,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A host on `memorySummaryPlugin` now sends one more tool declaration in
   every request, `recall_context`, whatever `boundOnWriteChars` is. A host
   that pins its requests or its journal byte for byte sees the tool list
-  change and 173 more estimated tokens in `context.built`'s
+  change and 202 more estimated tokens in `context.built`'s
   `reservedTokens`; a session's journal gains one `memory.skills` record
   where the always-on skill `memory.recall` is first activated (the memory
   entry ids of that turn after it move by one) and one `request.part` for
@@ -50,8 +50,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   unchanged. To keep a tool's results out of this stage, give that tool no
   `compact` view: its results then go from whole to spilled or dropped, as
   before. No option turns the stage off.
+- A host that pins the description of `recall_context` (a request or a
+  journal pinned byte for byte) re-records the pin: the description changed,
+  so the tool's `request.part` has a new hash and `context.built`'s
+  `reservedTokens` is 29 higher for a host on `memoryWindowPlugin`, where
+  the tool was already active (a host on `memorySummaryPlugin` sees the 202
+  above). A provider's cached prefix from an earlier release no longer
+  matches.
+- A host whose agent relied on reading text again that the turn still shows
+  changes what it asks for. A `recall_context` call from an offset inside a
+  result's shown text, or for a page the same turn already read, now returns
+  a `ResultShown` or `AlreadyRecalled` failure that names the offset to pass
+  next, where it returned up to 8,000 characters. A prompt that tells the
+  model to read a bounded result of the same turn from offset 0 tells it to
+  pass the offset the notice shows. A result of an earlier turn is served as
+  before.
 
 ### Breaking
+
+- `@xandreed/plugin-memory-window` and `@xandreed/plugin-memory-summary`: a
+  graph that holds both memory plugins fails with `tools.duplicate`, where it
+  built before. Each now contributes `recall_context`, so the tool is
+  registered twice. List only the memory plugin the graph binds
+  `ConversationMemory` to.
 
 - `@xandreed/core`: `rewrittenBy` is removed. Its replacement is
   `shownViewsOf(entries, { strategy, digests })`, whose keys with
@@ -178,16 +199,58 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   default bound fill the default 64,000-token budget), and the request is
   then sent as it is.
 
+- `@xandreed/core`: `recall_context` returns no text the turn still shows.
+  Both memory plugins contribute the tool from core, so both get the guard.
+  Within the turn that wrote a result, a call from an offset inside the text
+  the result still shows fails with `ResultShown`: `The first 16000
+  characters of this result are shown above. To read on, pass offset 16000.`
+  for a result shown through a bound's or a spill's preview (both numbers
+  are the shown length, the offset its notice prints), and `This result is
+  shown in full above; nothing of it was left out.` for one shown whole. A
+  call for a page the same turn already read, while that page is still
+  shown, fails with `AlreadyRecalled`: `You already read this page in this
+  turn and it is shown above. To read on, pass offset 24000.` (where that
+  page ended), or `You already read this page in this turn and it is shown
+  above. It ends the result.` Both are returned failures, like
+  `UnknownLocator`. A new offset past the shown text is a page, never a
+  repeat, and once the window strategy spills a result under pressure, the
+  text that left the request is served again. Before, each such call
+  returned up to 8,000 characters the context already held and cost a step,
+  and a model that asked from a new offset each step ran to the step limit,
+  or past the window strategy's budget (`context.budget`). Every offset
+  inside one shown text now gets the same reply, so that model repeats one
+  progress signature and the step loop's breaker stops it after six calls
+  (`partial`, `degenerate-loop`). What is shown is derived from the run's
+  memory alone; nothing is stored for the guard, and the stored format, the
+  journal kinds and the events are unchanged. No strategy version changes.
+- `@xandreed/core`: the description of `recall_context` is now `Read on in a
+  tool result that is shown shortened, by the locator its shortened form
+  shows. Returns at most 8000 characters from offset (0 by default); when
+  more remains, the reply ends with the offset to pass next. Text still
+  shown in this turn is not returned again: the reply names the offset to
+  read from.` Its schema reserves 202 estimated tokens, 29 more than before.
+- Known limits of the guard. It covers the current turn only: a result of an
+  earlier turn is served from any offset and as often as asked, whatever the
+  request still shows of it, because the memory a tool reads names no
+  strategy and so cannot say what a later turn's render shows. Two calls for
+  the same page made together in one response are both served when they run
+  at once (`limits.toolConcurrency` above 1): neither has a result when the
+  other is checked. A turn runs a response's calls one after another by
+  default, and the second is then refused. A result shown through a compact
+  view, a digest or a custom strategy's own preview is served from its
+  start, as before.
+
 - `@xandreed/core`: `recall_context`, its paging and the spill preview now
   live in core, where every memory plugin can reach them.
   `recallCapabilityOf(id)` builds the recall capability under the id of the
   plugin that contributes it, `spillPreview` writes the notice a spilled
   result ends with, and `RECALL_TOOL` is the tool's name.
   `@xandreed/plugin-memory-window`'s `recallCapability` is that capability
-  under its unchanged id, `@xandreed/plugin-memory-window/recall`. Every text
-  the model reads is unchanged: the tool's and its parameters' descriptions,
-  the spill preview, the page continuation and the `UnknownLocator` and
-  `OffsetOutOfRange` failures. Nothing changes for a host.
+  under its unchanged id, `@xandreed/plugin-memory-window/recall`. The move
+  changes no text the model reads: the parameters' descriptions, the spill
+  preview, the page continuation and the `UnknownLocator` and
+  `OffsetOutOfRange` failures are as they were, and the tool's description
+  changes only with the guard above. The move changes nothing for a host.
 
 ### Fixed
 

@@ -183,6 +183,49 @@ write).
 - A graph that holds both memory plugins registers `recall_context` twice and
   fails with `tools.duplicate`: list only the one the graph binds.
 
+## Reading a shortened result on
+
+`recall_context` takes the locator a notice shows and an `offset` (0 by
+default) and returns at most 8,000 characters of the stored view from there.
+While more remains, the page ends with the offset to pass next.
+
+Within the turn that wrote a result, the tool returns no text the request
+already shows. Such a call would put up to 8,000 characters into the context a
+second time and cost a step. It is refused with a failure the model reads as
+the call's result:
+
+- `ResultShown` when the offset is inside the text the result still shows.
+  For a bounded or spilled result the reply names where to read on from:
+  `The first 16000 characters of this result are shown above. To read on,
+  pass offset 16000.` For a result shown whole it says `This result is shown
+  in full above; nothing of it was left out.`
+- `AlreadyRecalled` when a call of this turn already returned the page from
+  that offset and the page is still shown: `You already read this page in
+  this turn and it is shown above. To read on, pass offset 24000.`, or
+  `It ends the result.` after the last page.
+
+A new offset past the shown text is always a page. When window memory spills a
+result under pressure, the text that left the request is served again.
+
+Every offset inside the same shown text gets the same reply. The step loop
+tells a step that repeats an earlier one by its results, so a model that keeps
+asking is nudged after three repeats and its run is stopped after five
+(`partial`, `degenerate-loop`), long before the step limit.
+
+These limits apply:
+
+- The guard covers the current turn only. A result of an earlier turn is
+  served from any offset, as often as asked, whatever the request still shows
+  of it.
+- Two calls for the same page made together in one response are both served
+  when they run at once (`limits.toolConcurrency` above 1): neither has a
+  result when the other is checked. A turn runs them one after another by
+  default, and the second is then refused.
+- A result shown through a compact view, a digest or a custom policy's own
+  preview is served from its start, as before.
+
+Nothing is stored for the guard: a refusal is the failed result of its call.
+
 ## What compaction changes
 
 Choose one conversation policy. Window memory keeps the current turn detailed,

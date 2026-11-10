@@ -69,7 +69,7 @@ const windowConfig: AgentConfig = {
  * results fit the budget, and pass its trigger once the next turn starts.
  * This golden uses pre-request timing; the maintenance journey covers the
  * default after-run lifecycle and its helper accounting. The budget is the
- * 1,100 tokens the scenario was written for plus the 173 the schema of
+ * 1,100 tokens the scenario was written for plus the 202 the schema of
  * `recall_context` reserves, which the plugin contributes: the messages get
  * what they had.
  */
@@ -78,7 +78,7 @@ const summaryConfig: AgentConfig = {
   plugins: [{ plugin: memorySummaryPlugin, options: { cooldownTurns: 0, summarizeAt: "step" } }, toolDiscoveryPlugin, stepLoopPlugin],
   turnServices: [LanguageModel.LanguageModel, UtilityLlm],
   cacheKeyPrefix: "compaction-summary",
-  budgetTokens: 1_273,
+  budgetTokens: 1_302,
 }
 
 const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
