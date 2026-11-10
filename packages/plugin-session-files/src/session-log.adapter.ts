@@ -13,6 +13,8 @@ import {
   SessionLog,
   SessionLogError,
   SessionMissing,
+  STORED_FORMAT,
+  storedFormatRefusal,
   storedJson,
 } from "@xandreed/core"
 import type { JsonObject, SessionCommit, SessionCommitted, SessionHead, SessionHeader, SessionListQuery, SessionLogEvent, SessionReadQuery, SessionRef } from "@xandreed/core"
@@ -20,7 +22,7 @@ import { nodeFilesIo } from "./files-io.adapter.js"
 import { makeBoundedFilesCall } from "./bounded-call.adapter.js"
 import type { FilesIo } from "./files-io.adapter.js"
 import { FILES_LAYOUT, PublishNonce, sessionFilesDefaults, STAGING_SWEEP_MS } from "./session-files.entity.js"
-import type { CommitEvent, CommitMeta, CommitRecord, FileStoreIo, FileStoreStalled, GenerationClaim, HeaderRecord } from "./session-files.entity.js"
+import type { CommitEvent, CommitMeta, CommitRecord, FileStoreIo, FileStoreStalled, GenerationClaim, HeaderRecord, StoreMarker } from "./session-files.entity.js"
 import type { Generation } from "./session-files.entity.functions.js"
 import {
   CACHE_BOUNDS,
@@ -36,6 +38,7 @@ import {
   isAbandonedStaging,
   isSessionDirectory,
   isStoredGeneration,
+  markerFormatOf,
   markerOfText,
   metaOfLine,
   page,
@@ -234,7 +237,11 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   )
   const existing = yield* readMarker.pipe(Effect.map(Option.some), Effect.catchIf(vanished, () => Effect.succeedNone))
   const unsupported = (layout: number) => new SessionLogError({ code: "store.version", message: `the session directory uses unsupported layout ${layout}; configure a fresh store for layout ${FILES_LAYOUT}` })
-  if (Option.isSome(existing) && existing.value.layout !== FILES_LAYOUT) return yield* Effect.fail(unsupported(existing.value.layout))
+  /** A marker this release opens: its layout, then the stored format it records. Checked before the open writes anything. */
+  const refuseMarker = (marker: StoreMarker): Effect.Effect<void, SessionLogError> => marker.layout !== FILES_LAYOUT
+    ? Effect.fail(unsupported(marker.layout))
+    : Option.match(storedFormatRefusal(markerFormatOf(marker)), { onNone: () => Effect.void, onSome: Effect.fail })
+  if (Option.isSome(existing)) yield* refuseMarker(existing.value)
   /**
    * What an unmarked directory looks like is settled by its marker read
    * again: another handle may have initialized it since (and created
@@ -243,7 +250,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
    */
   const refuseUnmarked: Effect.Effect<void, SessionLogError> = readMarker.pipe(Effect.map(Option.some), Effect.catchIf(vanished, () => Effect.succeedNone), Effect.flatMap((marker) => Option.match(marker, {
     onNone: (): Effect.Effect<void, SessionLogError> => Effect.fail(unsupported(0)),
-    onSome: (found): Effect.Effect<void, SessionLogError> => found.layout === FILES_LAYOUT ? Effect.void : Effect.fail(unsupported(found.layout)),
+    onSome: refuseMarker,
   })))
   if (Option.isNone(existing)) {
     const contents = yield* call("list", root, () => io.list(root)).pipe(
@@ -276,13 +283,12 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   yield* linked
   if (Option.isNone(existing)) {
     const temporary = staged("store.json", openedAt)
-    yield* call("create", temporary, () => io.create(temporary, encoder.encode(`${JSON.stringify({ layout: FILES_LAYOUT })}\n`))).pipe(
+    yield* call("create", temporary, () => io.create(temporary, encoder.encode(`${JSON.stringify({ layout: FILES_LAYOUT, format: STORED_FORMAT })}\n`))).pipe(
       Effect.mapError(storeError("store.open", "initialize store.json")),
       Effect.andThen(call("link", markerPath, () => io.link(temporary, markerPath)).pipe(Effect.catchIf((error) => isCode(error, "EEXIST"), () => Effect.void), Effect.mapError(linkError("initialize store.json")))),
     )
     yield* bestEffort("unlink", temporary, () => io.unlink(temporary))
-    const marker = yield* readMarker
-    if (marker.layout !== FILES_LAYOUT) return yield* Effect.fail(unsupported(marker.layout))
+    yield* refuseMarker(yield* readMarker)
   }
   const abandoned = yield* call("list", stagingDir, () => io.list(stagingDir)).pipe(Effect.mapError(storeError("store.open", "list staging files")))
 
