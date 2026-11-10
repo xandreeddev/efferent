@@ -62,16 +62,14 @@ when they do not. Work through this list instead.
   Name the new format in the CHANGELOG entry. A description alone is not a
   change.
 - Every `STORED_FORMAT` bump needs a fresh store, an added optional key
-  included: Sessions refuses every session of another format, reads and
-  `list` included (`session.version`). The format is checked per session,
-  inside Sessions; the backends check only their own layout when they open
-  (files `FILES_LAYOUT`, SQLite `SCHEMA_VERSION`, `store.version`). A release
-  that bumps the format alone therefore opens old stores and then refuses
-  each session in them, and one such session fails its owner's whole `list`.
-  The remedy (a backend layout bump with every format, or a store-level
-  format marker checked at open) is an open owner decision
-  (`docs/repository-audit-resolution.md`, "Open owner decisions"): raise it
-  in the PR of any format bump until it is made.
+  included. The built-in backends record the format a store was created for
+  and refuse any other when the store opens, before a session is read
+  (`storedFormatRefusal`, `store.version`): files in `store.json`'s
+  `format`, SQLite in `PRAGMA application_id`. A store created before the
+  record holds `UNRECORDED_FORMAT` (19). A format bump therefore needs no
+  layout or schema bump; Sessions still checks each session's own format
+  (`session.version`). A custom `SessionLog` records and checks its store's
+  format the same way (`storedFormatRefusal` from `@xandreed/core`).
   Add a CHANGELOG **Breaking** entry and a **Migration** step (a fresh store;
   read old sessions with the release that wrote them); no update path is
   required. State the new format where `scripts/session-store-docs.test.ts`

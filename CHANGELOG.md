@@ -8,6 +8,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Changed
+
+- The files and SQLite session logs record the stored format a store was
+  created for (`store.json`'s `format`; SQLite's `PRAGMA application_id`) and
+  refuse a store of another format when it opens, with `store.version`
+  naming both formats, before any session is read and without changing the
+  store. A release that bumps `STORED_FORMAT` therefore refuses old stores at
+  open instead of failing each of their sessions as it is used. Stores
+  created by 0.20.0 record no format and open as format 19
+  (`UNRECORDED_FORMAT`); they are not rewritten.
+- `storedFormatRefusal(recorded, current?)` in `@xandreed/core` is the same
+  check for a custom `SessionLog` that records its store's format.
+
+### Migration
+
+- Nothing for stores created by 0.20.0. A store created by this release
+  records its format, which 0.20.0 ignores; opening it with 0.20.0 after a
+  later format bump is not supported.
+
 ## 0.20.0 — 2026-11-10
 
 ### Migration

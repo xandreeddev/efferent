@@ -60,8 +60,11 @@ The format is identical to the combined file plugin:
 A removed session keeps only its claim and its tombstone: its header,
 commits and quarantined bytes are deleted.
 
-Only layout 2 is supported. Other markers and nonempty unmarked roots are
-refused with `store.version` without mutation (`staging/` may hold the probe
+Only layout 2 is supported, at the stored format `store.json` records
+(`{"layout":2,"format":<STORED_FORMAT>}`; a marker without `format`, as the
+first layout-2 release wrote it, holds format 19). Other markers, other
+formats and nonempty unmarked roots are refused with `store.version` without
+mutation (`staging/` may hold the probe
 and marker another process opening the same new root staged there; anything
 else in it counts). Configure a fresh location;
 there is no migration or automatic deletion.

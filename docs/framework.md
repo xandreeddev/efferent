@@ -3300,7 +3300,11 @@ shapes into `docs/stored-format.json`, which keeps every format's
 fingerprint. Creation stamps stored format 19. Sessions rejects every other
 format on reads and writes with `SessionLogError` code `session.version`.
 Existing data is left untouched; use a fresh store. Physical backends require
-file layout 2 or SQLite schema 3 independently, with `store.version` on mismatch.
+file layout 2 or SQLite schema 3, and the stored format the store records
+(`store.json`'s `format`; SQLite's `PRAGMA application_id`; none recorded, as
+the first layout-2 and schema-3 release wrote them, is format 19), with
+`store.version` on mismatch when the store opens. A custom `SessionLog`
+checks its own record with `storedFormatRefusal`.
 
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, incarnation, turns, title, open, pending

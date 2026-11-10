@@ -55,9 +55,11 @@ A read from the end (`from: "end"`) walks a session's rows newest first
 along the sequence and kind indexes and stops at its limit; the rows come
 back in sequence order.
 
-Opening accepts schema 3 and initializes an empty unversioned database
-directly. Other versions, older or newer, and nonempty unversioned databases
-are refused with `store.version` before anything changes. Configure a fresh
+Opening accepts schema 3 at the stored format the database records in
+`PRAGMA application_id` (none recorded, as the first schema-3 release wrote
+it, is format 19), and initializes an empty unversioned database directly,
+recording this release's format. Other versions, older or newer, other
+formats and nonempty unversioned databases are refused with `store.version` before anything changes. Configure a fresh
 store; there is no migration.
 Published history stays in the existing database between process starts;
 changing the path selects another store. Use the session APIs for removal
