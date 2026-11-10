@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import { createServer, get, IncomingMessage, ServerResponse } from "node:http"
-import type { IncomingHttpHeaders, Server } from "node:http"
-import { Socket } from "node:net"
+import { createServer, IncomingMessage, ServerResponse } from "node:http"
+import type { Server } from "node:http"
+import { connect, Socket } from "node:net"
 import { brotliDecompressSync, constants, createBrotliDecompress, createGunzip, gunzipSync } from "node:zlib"
 import type { AddressInfo } from "node:net"
 import { Effect, Logger, Option, Ref, Result, Schema, Stream } from "effect"
@@ -431,16 +431,77 @@ const serving = (frames: () => Stream.Stream<FeedFrame>, ended: Array<string> = 
   return new Promise<Server>((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)))
 }
 
+/** A response's header fields by lowercase name. */
+type HeaderFields = Readonly<Record<string, string | undefined>>
+
+/** The fields of a response's head, its status line dropped. */
+const fieldsOf = (head: string): HeaderFields =>
+  Object.fromEntries(head.split("\r\n").slice(1).map((field) => [field.slice(0, field.indexOf(":")).toLowerCase(), field.slice(field.indexOf(":") + 1).trim()]))
+
+/** What `overSocket` passes on of a response: its header fields, the bytes of its body as they are read, and its end. */
+interface ResponseReader {
+  readonly head?: (fields: HeaderFields) => void
+  readonly body: (bytes: Buffer) => void
+  readonly end?: () => void
+}
+
+/**
+ * Requests `path` over a socket of its own and reads the response as the socket
+ * gives it, undoing the framing here: the head's fields go to `head`, the bytes
+ * of each chunk of the chunked transfer coding to `body` as they are read,
+ * without waiting for the chunk to end, and the chunk of no bytes that ends
+ * the body runs `end`.
+ *
+ * Not `node:http`'s client: Bun 1.3.0's can read part of a body off the socket
+ * and never give it, or the end, to the response's listeners, so a frame the
+ * peer sent would look as if it had not arrived.
+ */
+const overSocket = (server: Server, path: string, acceptEncoding: string, reader: ResponseReader): Socket => {
+  const { port } = server.address() as AddressInfo
+  let unread = Buffer.alloc(0)
+  let inHead = true
+  let left = 0
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(`GET ${path} HTTP/1.1\r\nhost: 127.0.0.1\r\naccept-encoding: ${acceptEncoding}\r\n\r\n`)
+  })
+  return socket.on("data", (bytes: Buffer) => {
+    unread = Buffer.concat([unread, bytes])
+    while (unread.length > 0) {
+      if (left > 0) {
+        const taken = unread.subarray(0, left)
+        unread = unread.subarray(taken.length)
+        left -= taken.length
+        reader.body(taken)
+        continue
+      }
+      // The head ends at an empty line. After it, a line is a chunk's size, or the empty one that ends a chunk.
+      const end = unread.indexOf(inHead ? "\r\n\r\n" : "\r\n")
+      if (end < 0) return
+      const line = unread.subarray(0, end).toString("latin1")
+      unread = unread.subarray(end + (inHead ? 4 : 2))
+      if (inHead) reader.head?.(fieldsOf(line))
+      else if (line === "0") reader.end?.()
+      else if (line !== "") left = Number.parseInt(line, 16)
+      inHead = false
+    }
+  })
+}
+
 /** The response headers and its whole body, without decoding the body. */
 const request = (server: Server, acceptEncoding: string) =>
-  new Promise<{ readonly headers: IncomingHttpHeaders; readonly body: Buffer }>((resolve, reject) => {
-    const { port } = server.address() as AddressInfo
-    get({ host: "127.0.0.1", port, path: `/${encodeURIComponent(acceptEncoding)}`, headers: { "accept-encoding": acceptEncoding } }, (response) => {
-      const chunks: Array<Buffer> = []
-      response.on("data", (chunk: Buffer) => { chunks.push(chunk) })
-      response.on("end", () => resolve({ headers: response.headers, body: Buffer.concat(chunks) }))
-      response.on("error", reject)
-    }).on("error", reject)
+  new Promise<{ readonly headers: HeaderFields; readonly body: Buffer }>((resolve, reject) => {
+    const chunks: Array<Buffer> = []
+    let headers: HeaderFields = {}
+    const socket = overSocket(server, `/${encodeURIComponent(acceptEncoding)}`, acceptEncoding, {
+      head: (fields) => { headers = fields },
+      body: (bytes) => { chunks.push(bytes) },
+      end: () => {
+        socket.destroy()
+        resolve({ headers, body: Buffer.concat(chunks) })
+      },
+    })
+    socket.on("error", reject)
+    socket.on("close", () => reject(new Error(`the response to ${JSON.stringify(acceptEncoding)} closed before its last chunk`)))
   })
 
 const decompress = (encoding: string | undefined, body: Buffer): string =>
@@ -458,6 +519,8 @@ test("a compressed SSE response decompresses to the same frames and ends with th
   const ended: Array<string> = []
   const server = await serving(() => Stream.fromIterable(repetitive), ended)
   const [br, gzip, plain] = await Promise.all([request(server, "gzip, br"), request(server, "gzip"), request(server, "identity")])
+  // A client can read a response's last chunk before the server has noted that its peer ended it: wait for the notes, not for time.
+  while (ended.length < 3) await new Promise((resolve) => setImmediate(resolve))
   server.close()
   expect([br, gzip, plain].map((response) => [response.headers["content-encoding"], response.headers["vary"], response.headers["content-type"]])).toEqual([
     ["br", "accept-encoding", "text/event-stream; charset=utf-8"],
@@ -477,32 +540,31 @@ test("a compressed SSE response decompresses to the same frames and ends with th
 const frameDeadline = "3 seconds"
 
 /**
- * Reads a response that never ends, asking for `encoding`, through the streaming
- * decoder for it until the decoded text holds `expected`. Fails, saying what was
- * decoded so far, when the request, the response or the decoder fails, or when
- * the text does not hold `expected` within `frameDeadline`; the request is then
- * destroyed.
+ * Reads a response that never ends, asking for `encoding`, off a socket and
+ * through the streaming decoder for it until the decoded text holds `expected`.
+ * Fails, saying what was decoded so far, when the socket or the decoder fails,
+ * or when the text does not hold `expected` within `frameDeadline`; the socket
+ * is then destroyed.
  */
 const decodedUntil = (server: Server, encoding: "br" | "gzip", expected: string) => Effect.suspend(() => {
   const decoded: Array<string> = []
   const failure = (what: string, cause?: unknown) =>
     new Error(`the ${encoding} response ${what}; decoded so far: ${JSON.stringify(decoded.join(""))}`, { cause })
   return Effect.callback<string, Error>((resume) => {
-    const { port } = server.address() as AddressInfo
     const failed = (what: string) => (error: Error) => resume(Effect.fail(failure(what, error)))
-    const sent = get({ host: "127.0.0.1", port, path: `/${encoding}`, headers: { "accept-encoding": encoding } }, (response) => {
-      const decoder = encoding === "br" ? createBrotliDecompress() : createGunzip()
-      decoder.setEncoding("utf8")
-      decoder.on("data", (text: string) => {
-        decoded.push(text)
-        if (decoded.join("").includes(expected)) resume(Effect.succeed(decoded.join("")))
-      })
-      decoder.on("error", failed("could not be decoded"))
-      response.on("error", failed("failed"))
-      response.pipe(decoder)
+    const decoder = encoding === "br" ? createBrotliDecompress() : createGunzip()
+    decoder.setEncoding("utf8")
+    decoder.on("data", (text: string) => {
+      decoded.push(text)
+      if (decoded.join("").includes(expected)) resume(Effect.succeed(decoded.join("")))
     })
-    sent.on("error", failed("could not be requested"))
-    return Effect.sync(() => { sent.destroy() })
+    decoder.on("error", failed("could not be decoded"))
+    const socket = overSocket(server, `/${encoding}`, encoding, { body: (bytes) => { decoder.write(bytes) } })
+    socket.on("error", failed("could not be read"))
+    return Effect.sync(() => {
+      socket.destroy()
+      decoder.destroy()
+    })
   }).pipe(Effect.timeoutOrElse({
     duration: frameDeadline,
     orElse: () => Effect.fail(failure(`did not decode to the expected frame within ${frameDeadline}`)),
@@ -520,6 +582,38 @@ test("a compressed SSE frame reaches the client before the next one is written",
     })),
   ))
   expect(seen.map(decodeSse)).toEqual([Result.succeed([first]), Result.succeed([first])])
+})
+
+/**
+ * What a compressing peer's compressor had given its response when each write
+ * of `chunks` completed, decoded: read at the server, where the compressor is
+ * piped into the response, so no client, socket or deadline decides it. The
+ * request only opens the response, and the server is closed once the texts
+ * are settled, so a socket that fails as it closes changes nothing.
+ */
+const givenByEachWrite = (encoding: "br" | "gzip", chunks: ReadonlyArray<string>) =>
+  new Promise<ReadonlyArray<string>>((resolve, reject) => {
+    const server = createServer((_request, response) => {
+      const given: Array<Buffer> = []
+      response.once("pipe", (compressor) => { compressor.on("data", (bytes: Buffer) => { given.push(bytes) }) })
+      Effect.runPromise(sseNodePeer(response, {}, "2 seconds", { compress: encoding }).pipe(
+        Effect.flatMap((peer) => Effect.forEach(chunks, (chunk) => peer.write(chunk).pipe(
+          Effect.andThen(Effect.sync(() => decompress(encoding, Buffer.concat(given)))),
+        ), { concurrency: 1 })),
+      )).then(resolve, reject).finally(() => {
+        server.closeAllConnections()
+        server.close()
+      })
+    })
+    server.listen(0, "127.0.0.1", () => { overSocket(server, "/", encoding, { body: () => {} }).on("error", reject) })
+  })
+
+test("a compressed SSE write completes only once its frame has left the compressor for the response", async () => {
+  const frames = [1, 2].map((sequence) => encodeSse(FeedRecord.make({ sequence, event: "message.updated", data: { text: `frame ${sequence}` } })))
+  const chunks = [ssePreamble, ...frames]
+  // Everything written so far, at each write: a frame still in the compressor is missing from the text of its own write.
+  const written = chunks.map((_, index) => chunks.slice(0, index + 1).join(""))
+  expect(await Promise.all([givenByEachWrite("br", chunks), givenByEachWrite("gzip", chunks)])).toEqual([written, written])
 })
 
 test("without compress, an SSE peer sends what it always sent and ends the response itself", async () => {
