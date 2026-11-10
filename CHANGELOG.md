@@ -30,6 +30,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   page's end, where 0.21.0 returned up to 8,000 characters, most of them
   text the request held. A prompt that tells the model to step through a
   result tells it to pass the offset each page ends with.
+- A host that pins a request header, `context.built` or its journal byte for
+  byte re-records the pin: `@xandreed/plugin-memory-window` writes
+  `strategyVersion` `4` (`4+current-turn-first` with `currentTurnFirst`)
+  where it wrote `3`, and `4` as the version of each compaction it records.
+  Compactions recorded under earlier versions replay as recorded.
 
 ### Fixed
 
@@ -123,6 +128,49 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - A custom strategy that shortens a recalled page makes an earlier
     `AlreadyRecalled` reply untrue of later requests. The memory plugins
     never shorten one.
+- `@xandreed/plugin-memory-window`: a decision that drops turns records no
+  compact view of a result in a turn it drops. When all compact views
+  together did not fit, the window recorded every one of them and then
+  dropped turns, so the journal kept compact texts of results that no request
+  showed (a `CompactViews` and a `DropTurns` where the `DropTurns` alone left
+  the same request). The requests are unchanged. A turn's start also stops
+  asking for the compact view of a result in a turn already dropped.
+- `@xandreed/plugin-memory-window`: over budget, a result takes its compact
+  view only when the request's estimate falls with it. The window compared
+  the characters of the compact view with those of the text shown, while the
+  budget is counted in the estimate, which reads each message as its JSON: a
+  compact view one character shorter but full of quotes or newlines raised
+  the estimate, and the window then spilled and dropped more than it would
+  have with no compact view at all. The compact view must now be shorter
+  than the text shown and take at least one estimated token less of the
+  request (three characters of the message's JSON, where a quote, a
+  backslash or a newline takes two), and the compact views are ordered by
+  that saving. For a result that holds images the rule reads its text alone.
+  The rule at a turn's start is unchanged.
+- `@xandreed/plugin-memory-window`: `WINDOW_STRATEGY.version` is `4`
+  (`4+current-turn-first` with `currentTurnFirst`), since the two fixes
+  above change what the window decides for the same log.
+- `@xandreed/plugin-memory-window`: three statements of the 0.21.0 notes and
+  of the documentation said more than the window does, and the documentation
+  now says what it does.
+  - "Only as many are compacted as the budget needs" holds while compact
+    views can make the request fit. When all of them together do not fit,
+    all are taken before anything is spilled or dropped, and the decision
+    records the compact views of the results in the turns that stay, none
+    for a turn it drops.
+  - "Nothing is recorded" for requests that fit their budget meant that
+    nothing is rewritten. The bounds of results as they are written
+    (`boundOnWriteChars`) are recorded whatever the budget, and each result
+    shows its bound from its first request.
+  - With `compactPreviousTurn: false`, each request that fits its budget
+    extends the one before it within a turn. Across a turn's start that
+    holds only while everything the previous request showed is still shown:
+    with the default `turnContext: "current"`, a turn context recorded in
+    the previous turn (a turn-tier prompt section, as
+    `@xandreed/plugin-memory` records with `recallSection: "turn"`, its
+    default, and `@xandreed/plugin-rag` with `recall: true`, or a host's
+    `turn.context`) leaves the next turn's requests, and the shared prefix
+    ends at that message. With `turnContext: "all"` it stays.
 
 ## 0.21.0 — 2026-11-10
 

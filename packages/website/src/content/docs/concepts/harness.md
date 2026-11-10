@@ -178,7 +178,7 @@ has the rules and the limits. Within the turn that wrote a result,
 with where to read on
 ([reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on)).
 
-The window strategy's decisions are version 3 and the summary strategy's
+The window strategy's decisions are version 4 and the summary strategy's
 version 2. Summaries default to
 `summarizeAt: "turn-end"`: after the turn's completed or partial reply is
 recorded and sealed, still inside the turn, billed by it and calibrated by its
