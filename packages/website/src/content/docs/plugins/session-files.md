@@ -132,7 +132,7 @@ commits remain available to a later runtime.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-session-files` · Version **0.20.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-session-files` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

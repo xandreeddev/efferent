@@ -92,7 +92,7 @@ builtin engine runs regular expressions in a worker it terminates there.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-workspace/images` · Version **0.20.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-workspace/images` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

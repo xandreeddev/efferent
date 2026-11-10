@@ -359,7 +359,7 @@ const LogConfig = Schema.Struct({ path: Schema.String })
 
 /** The session log in a SQLite file, as a plugin: provides SessionLog. */
 export const sessionLogSqlitePlugin = definePlugin({
-  id: "@xandreed/plugin-session-sqlite/log", version: "0.20.0", scope: "runtime",
+  id: "@xandreed/plugin-session-sqlite/log", version: "0.20.1", scope: "runtime",
   config: LogConfig, defaults: { path: ".efferent/runtime/sessions.db" }, provides: [SessionLog],
   layer: ({ path }) => SessionLogSqliteLive(path),
 })
