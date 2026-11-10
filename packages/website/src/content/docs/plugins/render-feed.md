@@ -294,7 +294,7 @@ const serve = (request: IncomingMessage, response: ServerResponse) =>
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-render/feed` · Version **0.19.2** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-render/feed` · Version **0.20.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

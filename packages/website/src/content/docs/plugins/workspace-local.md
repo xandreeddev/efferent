@@ -85,7 +85,7 @@ expressions in a worker it terminates there.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-workspace/local` · Version **0.19.2** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-workspace/local` · Version **0.20.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
