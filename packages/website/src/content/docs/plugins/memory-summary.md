@@ -86,9 +86,10 @@ is bounded as it is written: every request shows its first 16,000 characters
 and a notice with the locator and offset to read the rest from, and the
 journal keeps the whole result. The plugin contributes `recall_context`,
 which reads a bounded result a page of up to 8,000 characters at a time.
-Within the turn that wrote the result, the tool returns no text the request
-still shows (the first 16,000 characters, or a page read a step ago): the call
-is answered with a failure that names the offset to read on from. See
+Within the turn that wrote the result, the tool refuses a call for text the
+request still shows (the first 16,000 characters, or an offset inside a page
+read a step ago): the call is answered with a failure that says where to read
+on. See
 [reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on).
 
 ```ts

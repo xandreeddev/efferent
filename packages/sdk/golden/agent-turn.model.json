@@ -57,7 +57,7 @@
           "fingerprint": "9c48f5e0cc",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 68,
-          "reservedTokens": 426,
+          "reservedTokens": 464,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -76,7 +76,7 @@
           "fingerprint": "c07c91772d8",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 242,
-          "reservedTokens": 426,
+          "reservedTokens": 464,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -95,7 +95,7 @@
           "fingerprint": "9464a1884d4",
           "systemFingerprint": "3f61f4eeed",
           "estimatedTokens": 412,
-          "reservedTokens": 470,
+          "reservedTokens": 508,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -200,7 +200,7 @@
           "fingerprint": "677ca670b09",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 941,
-          "reservedTokens": 510,
+          "reservedTokens": 548,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -221,7 +221,7 @@
           "fingerprint": "4f529971c9e",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1076,
-          "reservedTokens": 510,
+          "reservedTokens": 548,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -310,7 +310,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -444,7 +444,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -611,7 +611,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -900,7 +900,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -1238,7 +1238,7 @@
         },
         {
           "name": "recall_context",
-          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. Text still shown in this turn is not returned again: the reply names the offset to read from.",
+          "description": "Read on in a tool result that is shown shortened, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remains, the reply ends with the offset to pass next. For a result of this turn, a call for text still shown above (an offset inside its shown part, or inside a page already read) can return no text: the reply then says where to read on, or that nothing is left.",
           "parameters": {
             "type": "object",
             "properties": {
