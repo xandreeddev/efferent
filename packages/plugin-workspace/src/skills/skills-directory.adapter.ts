@@ -56,7 +56,7 @@ export const loadSkillsDirectory = (config: SkillsDirectoryConfig, workspace: st
  * directory.
  */
 export const skillsDirectoryPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/skills", version: "0.20.1", scope: "runtime",
+  id: "@xandreed/plugin-workspace/skills", version: "0.21.0", scope: "runtime",
   config: SkillsDirectoryConfig, defaults: skillsDirectoryDefaults,
   requires: [FileSystem],
   optional: [SessionEnvironment],

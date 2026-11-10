@@ -163,7 +163,7 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  * @public
  */
 export const modelsPlugin = definePlugin({
-  id: "@xandreed/plugin-models", version: "0.20.1", scope: "runtime", config: Config,
+  id: "@xandreed/plugin-models", version: "0.21.0", scope: "runtime", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, modelSettings: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "", thinkingPrefixMismatch: "drop_block" },
   requires: [SessionEnvironment],
   optional: [HostCredentials, ModelsTransport, ModelSpend],

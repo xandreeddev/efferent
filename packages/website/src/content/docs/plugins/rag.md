@@ -207,7 +207,7 @@ retrieved passages enter model requests without becoming fresh capture evidence.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-rag` · Version **0.20.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-rag` · Version **0.21.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
