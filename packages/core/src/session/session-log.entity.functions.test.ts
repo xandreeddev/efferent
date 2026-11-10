@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { ConversationId } from "../domain/message.entity.js"
 import { LeaseExpired, RevisionConflict, SessionLogError, SessionMissing } from "./session-log.entity.js"
-import { isRevisionConflict, isStoreBusy } from "./session-log.entity.functions.js"
+import { isRevisionConflict, isStoreBusy, storedFormatRefusal } from "./session-log.entity.functions.js"
+import { STORED_FORMAT } from "./stored-format.entity.js"
 
 describe("isStoreBusy", () => {
   test("holds for a store that was too busy to answer, and for nothing else", () => {
@@ -25,5 +26,21 @@ describe("isRevisionConflict", () => {
       "RevisionConflict",
       undefined,
     ].map(isRevisionConflict)).toEqual([true, true, false, false, false, false, false])
+  })
+})
+
+describe("storedFormatRefusal", () => {
+  test("opens a store that records this release's format and refuses an older or newer one with store.version, naming both formats", () => {
+    expect(storedFormatRefusal(STORED_FORMAT)._tag).toBe("None")
+    const refusals = [STORED_FORMAT - 1, STORED_FORMAT + 1].map((recorded) => storedFormatRefusal(recorded))
+    expect(refusals.map((refusal) => refusal._tag === "Some" ? [refusal.value.code, refusal.value.message.includes(String(STORED_FORMAT))] : null))
+      .toEqual([["store.version", true], ["store.version", true]])
+  })
+
+  test("a later release refuses a store recorded at an earlier format: the check is against the current format, not a fixed one", () => {
+    const later = storedFormatRefusal(19, 20)
+    expect(later._tag === "Some" ? [later.value.code, later.value.message] : null)
+      .toEqual(["store.version", "the store holds stored format 19; this release reads only stored format 20: configure a fresh store"])
+    expect(storedFormatRefusal(20, 20)._tag).toBe("None")
   })
 })
