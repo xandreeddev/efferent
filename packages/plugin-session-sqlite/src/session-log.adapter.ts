@@ -18,6 +18,8 @@ import {
   SessionLogError,
   SessionMissing,
   reasonOf,
+  STORED_FORMAT,
+  storedFormatRefusal,
   storedJson,
 } from "@xandreed/core"
 import type { SessionCommit, SessionCommitted, SessionHead, SessionHeader, SessionListQuery, SessionLogEvent, SessionReadQuery, SessionRef } from "@xandreed/core"
@@ -115,25 +117,51 @@ const CURRENT_SCHEMA = `
 
 const userVersionOf = (db: Database): number => db.query<{ readonly user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0
 
-/** The schema a database holds when it is not this release's: none for schema 3, or for an empty, unversioned database (a fresh one). */
-const unsupportedSchema = (db: Database): Option.Option<number> => {
+/**
+ * The stored format a schema-3 database holds when it records none: the
+ * release that introduced schema 3 wrote format 19 and no record. Fixed,
+ * unlike `STORED_FORMAT`: once the format moves on, such a database is
+ * refused at open.
+ */
+export const UNRECORDED_FORMAT = 19
+
+/**
+ * The stored format a database was created for, kept in `PRAGMA
+ * application_id`: a header field SQLite reserves for the application, so
+ * recording it needs no table and no schema change. 0 (never set) is
+ * `UNRECORDED_FORMAT`.
+ */
+const storedFormatOf = (db: Database): number => {
+  const found = db.query<{ readonly application_id: number }, []>("PRAGMA application_id").get()?.application_id ?? 0
+  return found === 0 ? UNRECORDED_FORMAT : found
+}
+
+/**
+ * Why a database is not this release's: another schema, or the stored
+ * format it records; none for schema 3 at this release's format, or for an
+ * empty, unversioned database (a fresh one).
+ */
+const unsupportedSchema = (db: Database): Option.Option<SessionLogError> => {
   const found = userVersionOf(db)
-  if (found === SCHEMA_VERSION) return Option.none()
+  if (found === SCHEMA_VERSION) return storedFormatRefusal(storedFormatOf(db))
   const tables = db.query<{ readonly name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()
-  return found !== 0 || tables.length !== 0 ? Option.some(found) : Option.none()
+  return found !== 0 || tables.length !== 0
+    ? Option.some(new SessionLogError({ code: "store.version", message: `the session database is at unsupported schema ${found}; configure a fresh store for schema ${SCHEMA_VERSION}` }))
+    : Option.none()
 }
 
 const refuseSchema = Option.match({
   onNone: () => Effect.void,
-  onSome: (found: number) => Effect.fail(new SessionLogError({ code: "store.version", message: `the session database is at unsupported schema ${found}; configure a fresh store for schema ${SCHEMA_VERSION}` })),
+  onSome: (refusal: SessionLogError) => Effect.fail(refusal),
 })
 
-/** Initialize a fresh database; unsupported schemas are refused without DDL. */
+/** Initialize a fresh database, recording the stored format it holds; unsupported schemas and formats are refused without DDL. */
 export const initializeSessionDatabase = (db: Database): Effect.Effect<void, SessionLogError> =>
   operation(() => db.transaction(() => {
     const unsupported = unsupportedSchema(db)
     if (Option.isNone(unsupported) && userVersionOf(db) !== SCHEMA_VERSION) {
       db.exec(CURRENT_SCHEMA)
+      db.exec(`PRAGMA application_id = ${STORED_FORMAT}`)
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     }
     return unsupported

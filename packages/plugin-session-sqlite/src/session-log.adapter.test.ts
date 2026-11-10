@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { Context, Effect, Exit, Layer, Option, Scope, Tracer } from "effect"
-import { ConversationId, SessionLog} from "@xandreed/core"
+import { ConversationId, SessionLog, STORED_FORMAT } from "@xandreed/core"
 import { sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import { makeSessionLogSqlite, initializeSessionDatabase, openSessionDatabase, SessionLogSqliteLive } from "./session-log.adapter.js"
 
@@ -70,6 +70,7 @@ describe("the SQLite file", () => {
 const rawDatabase = (path: string) =>
   Effect.acquireRelease(Effect.sync(() => new Database(path, { create: true, strict: true })), (db) => Effect.sync(() => db.close()))
 const userVersion = (db: Database) => db.query<{ readonly user_version: number }, []>("PRAGMA user_version").get()?.user_version
+const applicationId = (db: Database) => db.query<{ readonly application_id: number }, []>("PRAGMA application_id").get()?.application_id
 const tablesOf = (db: Database) => db.query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY name").all()
 
 describe("the SQLite file's schema version", () => {
@@ -82,6 +83,34 @@ describe("the SQLite file's schema version", () => {
       return { version: userVersion(db), same: JSON.stringify(tablesOf(db)) === JSON.stringify(before) }
     })))
     expect(outcome).toEqual({ version: 3, same: true })
+  })
+
+  test("a new file records the stored format it holds in its application id", async () => {
+    const path = join(directory, "fresh-format.db")
+    const recorded = await Effect.runPromise(Effect.scoped(openSessionDatabase(path).pipe(Effect.map(applicationId))))
+    expect(recorded).toBe(STORED_FORMAT)
+  })
+
+  /** A schema-3 file whose application id reads `format` (0: none recorded), its connection closed. */
+  const atFormat = async (name: string, format: number) => {
+    const path = join(directory, name)
+    await Effect.runPromise(Effect.scoped(openSessionDatabase(path)))
+    await Effect.runPromise(Effect.scoped(rawDatabase(path).pipe(Effect.map((db) => db.exec(`PRAGMA journal_mode = DELETE; PRAGMA application_id = ${format}`)))))
+    return path
+  }
+
+  test.each([STORED_FORMAT - 1, STORED_FORMAT + 1])("a schema-3 file that records stored format %s is refused with store.version without changing its bytes", async (format) => {
+    const path = await atFormat(`format-${format}.db`, format)
+    const before = await Bun.file(path).bytes()
+    const error = await Effect.runPromise(Effect.flip(Effect.scoped(openSessionDatabase(path))))
+    expect([error._tag, error.code, error.message.includes(String(format))]).toEqual(["SessionLogError", "store.version", true])
+    expect(await Bun.file(path).bytes()).toEqual(before)
+  })
+
+  test("a schema-3 file that records no stored format, as the first schema-3 release wrote it, opens as format 19 and is left unrecorded", async () => {
+    const path = await atFormat("unrecorded.db", 0)
+    const opened = await Effect.runPromise(Effect.scoped(openSessionDatabase(path).pipe(Effect.map(applicationId), Effect.exit)))
+    expect(STORED_FORMAT === 19 ? opened._tag === "Success" && opened.value : opened._tag).toBe(STORED_FORMAT === 19 ? 0 : "Failure")
   })
 
   test.each([0, 1, 2, 4])("unsupported existing schema %s is refused without changing its data", async (version) => {
