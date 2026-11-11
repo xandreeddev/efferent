@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.21.1 — 2026-11-11
+
 ### Migration
 
 - `@xandreed/core`: a host that pins the description of `recall_context` (a
@@ -233,6 +235,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   labelled as that request showed it, so such a result is still listed
   `whole` in that turn, now with `compacts` at 1, and `compact` in a turn
   whose requests never showed it larger.
+
+### Changes
+
+- The turn summaries of `contextReportOf` count the compact views memory recorded during the turn, as `compacts`: one for each result a `CompactViews` compaction names, at the turn's start or once a request passed its budget. A turn that compacted an earlier result under pressure listed it `whole`, as its first request had shown it, with every count at 0; it now counts the compact view. `compacts` is a required key of `ContextReportTurn`, so a report a host kept from 0.21.0 no longer decodes with the schema, and it counts every compact view recorded in the turn, whatever strategy recorded it and whether or not a request showed the result through it. A result is still listed at the largest size a request of the turn showed it, labelled as that request showed it: `whole` in the turn that compacted it after showing it whole, `compact` in a turn whose requests never showed it larger.
+
+- `recall_context`'s guard keeps what it says. A `ResultShown` refusal no longer names an offset: it says what the result showed when the call was made and sends the model to the offset the result's shortened form shows when the reply is read, so it still leads to where the result's shown form ends after the window strategy spills the result again or gives it its compact view. An offset inside a page the turn already read is refused with that page's end, where only the page's own start was, in a reply that names no turn and so stays true when it is read in a later one. A model that steps forward inside a page it read repeats one progress signature, and the step loop's breaker stops it while six refused calls in a row fall inside that page (a stride of up to 1,333 characters). An offset below a page already read is still served a whole page, most of it shown, so a model that steps downward still ends at the step limit or fails with `context.budget`. A page counts as read only for the run that read it. The last sentence of the tool's description says a call for shown text can return no text, and the tool's declaration reserves 240 estimated tokens (202 in 0.21.0). The guard reads the turn's earlier recall inputs once per call.
+
+- Over budget, the window takes a compact view only when the request's estimate falls with it: it must be shorter than the text shown and take at least one estimated token less of the request's JSON, so a shorter compact view full of quotes or newlines no longer raises the estimate and costs extra spills and dropped turns. A compact view that saves fewer than three characters of that JSON is left alone, so a request that fit exactly under 0.21.0 by such a view can now spill a result or drop a turn; and the rule reads a result's text alone, so a result that holds images can still take a compact view that does not lower the estimate. A decision that drops turns records no compact view of a result in a turn it drops, and a turn's start asks for none in a turn already dropped; the requests are unchanged. Both change what the window decides, so `WINDOW_STRATEGY.version` is `4` (`4+current-turn-first` with `currentTurnFirst`): a host that pins a request header, `context.built` or its journal re-records the pin. The documentation says what is recorded when all compact views together do not fit, that requests within budget are not rewritten while bounds are still recorded, and that the request prefix holds across a turn's start only while everything the previous request showed is still shown, which a turn context of the previous turn is not under the default `turnContext: "current"`.
 
 ## 0.21.0 — 2026-11-10
 
