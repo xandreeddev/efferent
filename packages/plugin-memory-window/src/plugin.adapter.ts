@@ -34,7 +34,12 @@ export const MemoryWindowConfig = Schema.Struct({
    * passes its budget, earlier turns' results take their compact views
    * before anything is spilled or dropped: the fewest that fit, the one whose
    * compact view frees the most of the request's estimate first, and only
-   * where it is shorter than the text shown and that estimate falls with it.
+   * where it is shorter than the text shown and that estimate falls with it:
+   * it must take at least three characters fewer of the message's JSON, so
+   * one that takes one or two fewer is left alone. The rule reads a result's
+   * text alone: a result that holds images, whose image lines the request
+   * shows again after a compact view, can take one although the estimate does
+   * not fall.
    */
   compactPreviousTurn: Schema.Boolean,
   turnContext: Schema.Literals(["current", "all"]),

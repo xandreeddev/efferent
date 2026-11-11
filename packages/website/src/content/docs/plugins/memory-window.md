@@ -159,6 +159,15 @@ spilled or any turn is dropped.
   each message's JSON, three to a token, so the compact view must take at
   least three fewer there. A shorter compact view that is heavier in JSON
   (a quote, a backslash or a newline takes two characters) is left alone.
+- A compact view that takes one or two characters fewer there is left alone
+  too, though at some lengths of the message's JSON it would lower the
+  estimate by a token. A request that fit exactly under 0.21.0 by such a
+  view can now spill a result or drop a turn.
+- The rule reads a result's text alone. For a result that holds images it
+  does not count the label lines the request adds or which images are sent
+  as images, and a line memory wrote with the result for an image it never
+  sends is shown again after the compact view. Such a result can take a
+  compact view although the estimate does not fall.
 - The fewest results that fit are compacted, the one whose compact view
   frees the most of the estimate first. A later request over budget compacts
   more, so the prefix can change at each of those requests.

@@ -19,11 +19,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   provider's cached prefix from 0.21.0 no longer matches.
 - `@xandreed/core`: a host that matches the message of a `recall_context`
   refusal (a test, a prompt that quotes it, a reader of the transcript)
-  updates it. All four messages changed, and a `ResultShown` message no
-  longer names an offset. The `error` names, `ResultShown` and
-  `AlreadyRecalled`, are unchanged. A prompt that told the model to pass the
-  offset a `ResultShown` reply names tells it to pass the offset the
-  result's notice shows.
+  updates it. All four messages changed: a `ResultShown` message no longer
+  names an offset, and an `AlreadyRecalled` message no longer names the
+  turn. The `error` names, `ResultShown` and `AlreadyRecalled`, are
+  unchanged. A prompt that told the model to pass the offset a `ResultShown`
+  reply names tells it to pass the offset the result's notice shows.
 - `@xandreed/core`: a host whose agent read on in a result of the same turn
   from an offset inside a page it had already read changes what it asks for.
   Such a call now returns an `AlreadyRecalled` failure that names that
@@ -35,6 +35,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `strategyVersion` `4` (`4+current-turn-first` with `currentTurnFirst`)
   where it wrote `3`, and `4` as the version of each compaction it records.
   Compactions recorded under earlier versions replay as recorded.
+- `@xandreed/core`: `compacts` is a required key of `ContextReportTurn`. The
+  report stores nothing, so a host that only calls `contextReportOf` changes
+  nothing. A host that kept a report it built under 0.21.0 and decodes it
+  with `ContextReport` or `ContextReportTurn` finds that it no longer
+  decodes, since its turns have no `compacts`: it builds the report again
+  from the session's events, or decodes what it kept with a schema of its
+  own.
 
 ### Fixed
 
@@ -55,11 +62,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   a spill's preview, and `This result was shown in full when you asked:
   nothing of it was left out. If it is shown shortened now, pass the offset
   its shortened form shows, or offset 0 if it shows none.` for one shown
-  whole. Followed in any later request, each leads to the first text that
-  request lacks: the offset of the notice the result shows then, or the
-  result's start once only a compact view is shown. The summary strategy
-  never shortens a result again, so there the notice's offset is the one
-  0.21.0 named.
+  whole. Followed in any later request, each leads to where the result's
+  shown form ends then: the offset of the notice the result shows, or the
+  result's start once only a compact view is shown. Where the turn had
+  already read a page from there, the call that follows the reply is refused
+  with `AlreadyRecalled` in the same turn, which names where to go on, and
+  is served that page again in a later turn, which the guard does not cover.
+  The summary strategy never shortens a result again, so there the notice's
+  offset is the one 0.21.0 named.
 - `@xandreed/core`: `recall_context` refuses an offset inside a page the
   turn already read. 0.21.0 refused a page again only from the very offset
   it was read from, so a model that read on from the notice and then
@@ -68,16 +78,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   ended at the step limit under the summary strategy and failed with
   `context.budget` under the window strategy: the two endings the guard was
   added to remove. An offset inside a page of the same turn that is still
-  shown whole, its start included, now fails with `AlreadyRecalled`: `The
-  text from that offset is in a page you already read in this turn, shown
-  above. To read on, pass offset 24000.` (where that page ended; of several
-  pages that hold the offset, the one that ends last), or `The text from
-  that offset is in a page you already read in this turn, shown above. That
-  page ends the result.` Every offset inside one page gets the same reply,
-  so that model repeats one progress signature and the step loop's breaker
-  stops it after six refused calls (`partial`, `degenerate-loop`). An offset
-  past the shown text and outside every page already read is a page, as
-  before.
+  shown whole, its start included, now fails with `AlreadyRecalled`:
+  `The text from that offset is in a page you already read, shown above. To
+  read on, pass offset 24000.` (where that page ended; of several pages that
+  hold the offset, the one that ends last), or `The text from that offset is
+  in a page you already read, shown above. That page ends the result.`
+  Neither names the turn, as 0.21.0's `You already read this page in this
+  turn` did: the reply is read again in later turns, where its page is still
+  above it, since the two are recorded in the same turn and a turn leaves a
+  request only as a whole. Every offset inside one page gets the same reply,
+  so a model that steps forward inside a page it read repeats one progress
+  signature and the step loop's breaker stops it after six refused calls
+  (`partial`, `degenerate-loop`), while those six fall inside that page: a
+  stride of up to 1,333 characters, as the limits below derive. Forward
+  steps inside a page already read are the stepping this fix stops. An
+  offset past the shown text and outside every page already read is a page,
+  as before, also when it lies below a page already read: a model that
+  steps downward still reaches both endings (see the limits below).
 - `@xandreed/core`: a page counts as read only for the run that read it. A
   request leaves out another run's exchange of the same turn while one of
   its calls has no result, and 0.21.0 counted the page such an exchange
@@ -106,7 +123,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   no text the turn still shows, that a new offset past the shown text is
   never a repeat, and that a model that keeps asking is stopped by the
   breaker. The first two did not hold inside a page already read, which this
-  release fixes; the limits that remain are these.
+  release fixes for an offset inside such a page; the limits that remain are
+  these.
   - The guard covers the current turn only, as before: a result of an
     earlier turn is served from any offset, as often as asked.
   - The guard refuses only what it can tell is shown, so a call it serves
@@ -116,6 +134,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     result shown through a compact view, a digest or a custom strategy's own
     preview. The description therefore says a call for shown text can return
     no text.
+  - A call is refused by where its page would start, not by what the page
+    would hold. An offset below a page already read, outside the shown text
+    and every other page, is served a whole page, although that page's part
+    from the other one's start on is shown: asked 1,000 characters below a
+    page already read, the call returns 8,000 characters of which 7,000 are
+    in the request. Each such page is a new result, so the breaker counts no
+    repeat, and a model that steps downward, each call a little below the
+    last page it read, still ends at the step limit, or under the window
+    strategy fails with `context.budget` once those pages pass the budget,
+    as it did in 0.21.0.
   - Two calls for the same page made together in one response are both
     served when they run at once (`limits.toolConcurrency` above 1), as
     before.
@@ -124,7 +152,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     signature is every result of that step. A step that pairs a refused
     call with a call whose result is new, or that makes more refused calls
     than any step before it, counts as progress, and such a run ends at the
-    step limit. The breaker is unchanged.
+    step limit. A model that steps forward inside a page it read is stopped
+    only while six refused calls in a row fall inside that page: the first,
+    then the five repeats the breaker stops at by default (`breakAfter` of
+    `limits.degenerate`; `REPEAT_BREAK_AT` in
+    `packages/plugin-agent-loop/src/loop.ts`). A page holds 8,000 characters
+    (`RECALL_PAGE_CHARS` in
+    `packages/core/src/memory/recall.entity.functions.ts`), so those six fit
+    in the 7,999 characters past the page's start up to a stride of 1,333.
+    With a longer stride the model reaches the next page first, which is new
+    text and starts the count again: such a run costs steps, not context,
+    and ends at the step limit or at the result's end. The breaker is
+    unchanged.
   - A custom strategy that shortens a recalled page makes an earlier
     `AlreadyRecalled` reply untrue of later requests. The memory plugins
     never shorten one.
@@ -145,8 +184,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   than the text shown and take at least one estimated token less of the
   request (three characters of the message's JSON, where a quote, a
   backslash or a newline takes two), and the compact views are ordered by
-  that saving. For a result that holds images the rule reads its text alone.
-  The rule at a turn's start is unchanged.
+  that saving. A compact view that takes one or two characters fewer is
+  left alone too, though at some lengths of the message's JSON it would
+  lower the estimate by a token: a request that fit exactly under 0.21.0 by
+  such a view can now spill a result or drop a turn. For a result that
+  holds images the rule reads its text alone: it does not count the label
+  lines the request adds or which images are sent as images, and a line
+  memory wrote with the result for an image it never sends is shown again
+  after the compact view, so such a result can still take a compact view
+  that does not lower the estimate. The rule at a turn's start is unchanged.
 - `@xandreed/plugin-memory-window`: `WINDOW_STRATEGY.version` is `4`
   (`4+current-turn-first` with `currentTurnFirst`), since the two fixes
   above change what the window decides for the same log.
@@ -178,11 +224,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   earlier turns' results their compact views, and a turn's summary had no
   count for them: a turn whose first request showed a result whole and whose
   later request showed it compact listed the result `whole` with every count
-  at 0. `ContextReportTurn` gains the field. The list of a turn's largest
-  results is unchanged: each result is listed at the largest size a request
-  of the turn showed it, labelled as that request showed it, so such a
-  result is still listed `whole` in that turn, now with `compacts` at 1, and
-  `compact` in a turn whose requests never showed it larger.
+  at 0. `ContextReportTurn` gains the field, a required key (see Migration).
+  It counts every compact view recorded in the turn, whatever strategy
+  recorded it and whether or not a request showed the result through it, as
+  `bounds`, `spills`, `drops`, `summaries` and `digests` count what the
+  journal holds. The list of a turn's largest results is unchanged: each
+  result is listed at the largest size a request of the turn showed it,
+  labelled as that request showed it, so such a result is still listed
+  `whole` in that turn, now with `compacts` at 1, and `compact` in a turn
+  whose requests never showed it larger.
 
 ## 0.21.0 — 2026-11-10
 
