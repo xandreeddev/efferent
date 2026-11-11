@@ -19,6 +19,9 @@ import type { AgentConfig } from "./agent.adapter.js"
  * read a step ago, or an offset inside that page) gets no text again: the
  * reply says where to read on, the model follows it, and one that keeps
  * asking is stopped by the step loop's breaker long before the step limit.
+ * A page never holds text of a page already read: a model that steps down
+ * through the report, each call a little below the last, is served only the
+ * text between, and the request never holds a character of the report twice.
  * A refusal stays in the conversation after memory shortens the result it
  * was about: followed then, it still leads to where the result's shown form
  * ends. A report of an earlier turn is served as before. Two calls
@@ -126,6 +129,10 @@ const offsetFollowed = (request: Seen): Option.Option<number> => {
 const shortened = (locator: string, chars: number) => `${north.slice(0, chars)}\n[… ${north.length - chars} more characters kept out of context; call recall_context with locator "${locator}" and offset ${chars} to read them]`
 const bounded = (locator: string) => shortened(locator, BOUND)
 const page = (locator: string, from: number) => `${north.slice(from, from + RECALL_PAGE)}\n[… ${north.length - from - RECALL_PAGE} more characters; call recall_context with locator "${locator}" and offset ${from + RECALL_PAGE}]`
+/** A page of the report that ends at `to`, where text already read starts and runs to `next`. */
+const cutPage = (locator: string, from: number, to: number, next: number) => `${north.slice(from, to)}\n[… the next ${next - to} characters are in text you already read, shown above; ${north.length - next} more characters after them; call recall_context with locator "${locator}" and offset ${next}]`
+/** The characters of a page, without the line that says how to read on. */
+const pageBody = (served: string) => served.slice(0, served.lastIndexOf("\n[… "))
 
 /** The replies of `recall_context` that return no text, as the model reads them. */
 const headShown: Failure = { error: "ResultShown", message: "That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none." }
@@ -292,6 +299,33 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     const served = [BOUND, BOUND + 6 * stride, BOUND + 12 * stride, BOUND + 18 * stride]
     expect(ran.recalls.filter((recalled) => !recalled.isError)).toEqual(served.map((from) => ({ isError: false, view: page(locator, from) })))
     expect(ran.recalls.filter((recalled) => recalled.isError)).toHaveLength(MAX_STEPS - 1 - served.length)
+  })
+
+  test.each([
+    { stepping: "1,000 characters at a time", stride: 1_000 },
+    { stepping: "100 characters at a time", stride: 100 },
+  ])("a model that reads a page far into the report and then steps down $stepping is served only the text it does not have", async ({ stride }) => {
+    // Each call starts a little below the page the call before it read. A whole page from there is that page again, all but `stride` characters of it.
+    const top = 60_000
+    const asking = Array.from({ length: MAX_STEPS }, (_, index) => recall(`d${index + 1}`, () => top - index * stride))
+    const ran = await Effect.runPromise(runTurns(plugin, [[fetchNorth, ...asking]]))
+    const [turn] = ran.turns
+    // Every call returns text the request lacks, so the breaker counts no repeat and the run ends at the step limit: within the budget, where a whole page a call failed it.
+    expect(turn?.outcome).toBe("partial")
+    expect(turn?.reason).toBe("step-cap")
+    const requests = turn?.requests ?? []
+    expect(requests).toHaveLength(MAX_STEPS)
+    const locator = locatorOf(requests[1] ?? { calls: [], results: [] })
+    // The first page is whole. Each later one ends where the page before it starts, and names the offset after all of them.
+    expect(ran.recalls).toEqual([
+      { isError: false, view: page(locator, top) },
+      ...Array.from({ length: MAX_STEPS - 2 }, (_, index) => ({ isError: false, view: cutPage(locator, top - (index + 1) * stride, top - index * stride, top + RECALL_PAGE) })),
+    ])
+    // What the last request holds of the report through recall_context: each character once, from the lowest offset asked to the first page's end.
+    const held = (requests.at(-1)?.results ?? []).filter((result) => result.name === "recall_context").map((result) => pageBody(String(result.result)))
+    const lowest = top - (held.length - 1) * stride
+    expect(held.reduce((sum, body) => sum + body.length, 0)).toBe(top + RECALL_PAGE - lowest)
+    expect(held.toReversed().join("")).toBe(north.slice(lowest, top + RECALL_PAGE))
   })
 
   test("a result of an earlier turn is served as before, from any offset and as often as asked", async () => {

@@ -1781,9 +1781,22 @@ each as a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
   Of several pages that hold the offset, it names the end of the one that
   ends last.
 
-An offset past the shown text and outside every page already read is a page,
-also when it lies below a page already read and its page runs into that one
-(see the limits). The guard follows what is shown now: once the window
+An offset past the shown text and outside every page already read is a page.
+Within the turn that page never holds text of a page the same run already
+read and the request still shows whole: it ends where the next such page
+starts, when that is sooner than 8,000 characters on, wherever the call
+starts (below a page already read, or in a gap between two). So every
+character a call returns is new to the request, in whatever order the model
+asks, and the pages of one result together never hold more than the result
+does. A page with unread text right after it ends as it always did: `[… 28000
+more characters; call recall_context with locator "…" and offset 24000]`.
+Where the text after it is already read, its last line says how far that
+text runs and names the offset past it, so the model spends no call on a
+refusal: `[… the next 8000 characters are in text you already read, shown
+above; 24000 more characters after them; call recall_context with locator
+"…" and offset 28000]`; when that text runs to the result's end the line
+names no offset: `[… the remaining 8000 characters are in text you already
+read, shown above]`. The guard follows what is shown now: once the window
 strategy spills a result under pressure, the text the spill took out of the
 request is served again.
 
@@ -1816,9 +1829,15 @@ is not the one core writes (`spillPreview`). A page counts as read only for
 the run that read it (`CurrentAgentRun`, which the step loop sets around
 each call): a request leaves out another run's exchange of the same turn
 while one of its calls has no result, so a page that run read may not be in
-the request the call was made from. The guard stores nothing of its own: a
-refusal is the result of its call, a failed one, and the stored format, the
-journal kinds and the events are unchanged.
+the request the call was made from. What a page already read holds is read
+from the page as it was returned: the result's text from its call's offset,
+then the line the tool writes after it. A page that was cut so counts for
+the text it holds, not for 8,000 characters from its offset, and an
+`AlreadyRecalled` reply names the end the page has. A result recorded in
+the tool's name that is no such page (a host that answered the call itself)
+is not counted as read. The guard stores nothing of its own: a refusal is
+the result of its call, a failed one, and the stored format, the journal
+kinds and the events are unchanged.
 
 A refusal holds nothing of the request, so every offset inside one shown
 head gets the same reply, and so does every offset inside one page. The step
@@ -1827,7 +1846,8 @@ repeats one signature, and the loop's breaker nudges it after three repeats
 and stops the run after five (`partial`, `degenerate-loop`), long before the
 step limit. That stops a model that asks inside one shown head, and one that
 steps forward inside a page it read while six of its calls in a row fall
-inside that page; the limits below say which stepping it does not stop.
+inside that page; the limits below say which stepping it does not stop. No
+stepping is served text the request holds.
 
 The limits.
 
@@ -1842,20 +1862,12 @@ The limits.
   a policy that shows no digests (`digests: false`), which shows the result
   whole. The tool's description therefore says that a call for shown text
   can return no text, not that it does.
-- A call is refused by where its page would start, not by what the page
-  would hold. An offset below a page already read, outside the shown text
-  and every other page, is served a whole page, although that page's part
-  from the other one's start on is shown: asked 1,000 characters below a
-  page already read, the call returns 8,000 characters of which 7,000 are
-  in the request. Each such page is a new result, so the breaker counts no
-  repeat. A model that steps downward, each call a little below the last
-  page it read, still ends at the step limit, or under the window strategy
-  fails with `context.budget` once those pages pass the budget.
-- Two calls for the same page made together in one response are both
-  served when they run at once: neither has a result when the other is
-  checked. A turn runs a response's calls one after another by default
-  (`limits.toolConcurrency: 1`), and the second call is then refused; the
-  limit applies with `toolConcurrency` above 1.
+- Two calls made together in one response are each served as if the other
+  were not when they run at once: neither has a result when the other is
+  checked, so both can return the same page, or pages that overlap. A turn
+  runs a response's calls one after another by default
+  (`limits.toolConcurrency: 1`), and the second call is then refused or
+  cut; the limit applies with `toolConcurrency` above 1.
 - The breaker stops a model only when its steps repeat. It counts steps in
   a row whose results it has all seen before, and a step's signature is
   every result of that step: a step that pairs a refused call with a call
@@ -1869,7 +1881,9 @@ The limits.
   page's start up to a stride of 1,333. With a longer stride the model
   reaches the next page first: that page is new text and starts the count
   again, so the run costs steps, not context, and ends at the step limit or
-  at the result's end.
+  at the result's end. A model that steps downward, each call a little
+  below the last page it read, is in the same case: each call returns the
+  text between and nothing it has, which is a new result every time.
   That is the breaker's own rule (`limits.degenerate`), unchanged here.
 - A custom strategy that shortens a recalled page makes an earlier
   `AlreadyRecalled` reply untrue of later requests: the page it calls shown

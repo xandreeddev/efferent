@@ -159,6 +159,14 @@ describe("recall_context in the turn that wrote the result", () => {
   const shownInFull = { error: "ResultShown", message: "This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none." }
   const pageRead = (next: number) => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read, shown above. To read on, pass offset ${next}.` })
   const lastPageRead = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read, shown above. That page ends the result." }
+  /**
+   * A page that ends at `to`, where text already read starts: its characters,
+   * then how far that text runs and the offset after it (`next`), or that it
+   * runs to the result's end.
+   */
+  const cutPage = (text: string, locator: string, from: number, to: number, next: number): string => next >= text.length
+    ? `${text.slice(from, to)}\n[… the remaining ${text.length - to} characters are in text you already read, shown above]`
+    : `${text.slice(from, to)}\n[… the next ${next - to} characters are in text you already read, shown above; ${text.length - next} more characters after them; call recall_context with locator "${locator}" and offset ${next}]`
 
   /**
    * The offset a model that follows a refusal passes next, reading it beside
@@ -417,25 +425,220 @@ describe("recall_context in the turn that wrote the result", () => {
     expect(seen.shown[1]).toContain(text.slice(BOUND + 1, 24_000))
   })
 
-  test("of two pages already read that hold an offset, the reply names the end of the one that ends last", async () => {
-    const text = lines(60_000)
-    const seen = await inSession((turn) => Effect.gen(function* () {
-      yield* turn.begin("read the record")
-      const locator = yield* turn.returned(text)
-      // The model read ahead first, then a page that starts before it and runs into it.
-      const ahead = yield* turn.ask({ locator, offset: 20_000 })
-      const before = yield* turn.ask({ locator, offset: BOUND })
-      return {
-        locator, ahead, before,
-        // Inside both pages, inside the first one read only, inside the second only.
-        both: yield* turn.ask({ locator, offset: 22_000 }), later: yield* turn.ask({ locator, offset: 26_000 }), earlier: yield* turn.ask({ locator, offset: 18_000 }),
+  describe("a page never holds text of a page already read", () => {
+    test("a call below a page already read is cut at that page's start, and names the offset after the text already read", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        // The model read ahead first, then asks from the notice's offset: a whole page from there would run 4,000 characters into the page it has.
+        const ahead = yield* turn.ask({ locator, offset: 20_000 })
+        const before = yield* turn.ask({ locator, offset: BOUND })
+        return { locator, ahead, before, shown: yield* turn.shown }
+      }))
+      expect(seen.ahead).toBe(page(text, seen.locator, 20_000))
+      // It ends where the page already read starts, and sends the model past that page: to 28,000, not to a refusal at 20,000.
+      expect(seen.before).toBe(cutPage(text, seen.locator, BOUND, 20_000, 28_000))
+      expect(seen.before).toBe(`${text.slice(BOUND, 20_000)}\n[… the next 8000 characters are in text you already read, shown above; 32000 more characters after them; call recall_context with locator "${seen.locator}" and offset 28000]`)
+      // The request holds the result's start and the two pages: every character from 0 to 28,000 once.
+      const body = (shown: string) => shown.slice(0, shown.lastIndexOf("\n[… "))
+      expect(`${body(seen.shown[0] ?? "")}${body(seen.shown[2] ?? "")}${body(seen.shown[1] ?? "")}`).toBe(text.slice(0, 28_000))
+    })
+
+    test("an offset inside a cut page is refused with the end that page has, not the end of a whole page", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        yield* turn.ask({ locator, offset: 20_000 })
+        // This page holds 16,000 to 20,000 only.
+        yield* turn.ask({ locator, offset: BOUND })
+        return {
+          // Inside the cut page, at its last character, at its end (the other page's start), and inside the other page.
+          inside: yield* turn.ask({ locator, offset: 18_000 }), last: yield* turn.ask({ locator, offset: 19_999 }),
+          atEnd: yield* turn.ask({ locator, offset: 20_000 }), later: yield* turn.ask({ locator, offset: 26_000 }),
+        }
+      }))
+      expect(seen.inside).toEqual(pageRead(20_000))
+      expect(seen.last).toEqual(pageRead(20_000))
+      expect(seen.atEnd).toEqual(pageRead(28_000))
+      expect(seen.later).toEqual(pageRead(28_000))
+    })
+
+    test("a call in a gap between two pages already read is cut at the second, and a chain of read pages is passed in one step", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        yield* turn.ask({ locator, offset: BOUND })
+        yield* turn.ask({ locator, offset: 30_000 })
+        // The gap is 24,000 to 30,000. A call from inside it ends at 30,000,
+        const gap = yield* turn.ask({ locator, offset: 26_000 })
+        // and a call from its start ends at 26,000, with two pages read after it: 26,000 to 30,000, then 30,000 to 38,000.
+        const rest = yield* turn.ask({ locator, offset: 24_000 })
+        return { locator, gap, rest }
+      }))
+      expect(seen.gap).toBe(cutPage(text, seen.locator, 26_000, 30_000, 38_000))
+      expect(seen.rest).toBe(cutPage(text, seen.locator, 24_000, 26_000, 38_000))
+      expect(seen.rest).toBe(`${text.slice(24_000, 26_000)}\n[… the next 12000 characters are in text you already read, shown above; 22000 more characters after them; call recall_context with locator "${seen.locator}" and offset 38000]`)
+    })
+
+    test("a page that ends where text already read starts names the offset after that text", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        yield* turn.ask({ locator, offset: 24_000 })
+        // A whole page from the notice's offset ends at 24,000, where the page already read starts: nothing is cut, and the offset named is past that page.
+        return { locator, whole: yield* turn.ask({ locator, offset: BOUND }) }
+      }))
+      expect(seen.whole).toBe(cutPage(text, seen.locator, BOUND, 24_000, 32_000))
+    })
+
+    test("a page cut at text already read up to the result's end says that nothing after it is left", async () => {
+      const text = lines(40_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        const last = yield* turn.ask({ locator, offset: 32_000 })
+        const before = yield* turn.ask({ locator, offset: 30_000 })
+        return { locator, last, before }
+      }))
+      expect(seen.last).toBe(text.slice(32_000))
+      expect(seen.before).toBe(`${text.slice(30_000, 32_000)}\n[… the remaining 8000 characters are in text you already read, shown above]`)
+      expect(seen.before).toBe(cutPage(text, seen.locator, 30_000, 32_000, 40_000))
+    })
+
+    test("a cut beside a surrogate pair leaves no half character, on either side", async () => {
+      const face = "\u{1F600}"
+      const wellFormed = (value: string): boolean => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value)
+      // One pair sits across unit 20,000, another across unit 32,000.
+      const text = `${lines(19_999)}${face}${lines(11_998, "middle")}${face}${lines(20_000, "tail")}`
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        // Asked from inside the first pair, the page starts at the pair's first unit, 19,999, and would end inside none.
+        const ahead = yield* turn.ask({ locator, offset: 20_000 })
+        // A page from 16,000 is cut where that page starts: before the pair, not inside it.
+        const below = yield* turn.ask({ locator, offset: BOUND })
+        // Then the model reads on from 32,000, inside the second pair:
+        const far = yield* turn.ask({ locator, offset: 32_000 })
+        // it starts at 31,999, the second pair's first unit, and the page from 27,999 ends there.
+        const between = yield* turn.ask({ locator, offset: 27_999 })
+        return { locator, ahead, below, far, between, inside: yield* turn.ask({ locator, offset: 19_998 }) }
+      }))
+      expect(text.charCodeAt(19_999)).toBe(face.charCodeAt(0))
+      expect(text.charCodeAt(31_999)).toBe(face.charCodeAt(0))
+      expect(seen.ahead).toBe(`${text.slice(19_999, 27_999)}\n[… ${text.length - 27_999} more characters; call recall_context with locator "${seen.locator}" and offset 27999]`)
+      expect(seen.below).toBe(cutPage(text, seen.locator, BOUND, 19_999, 27_999))
+      expect(seen.far).toBe(`${text.slice(31_999, 39_999)}\n[… ${text.length - 39_999} more characters; call recall_context with locator "${seen.locator}" and offset 39999]`)
+      expect(seen.between).toBe(cutPage(text, seen.locator, 27_999, 31_999, 39_999))
+      expect([seen.ahead, seen.below, seen.far, seen.between].every((served) => typeof served === "string" && wellFormed(served))).toBe(true)
+      // The cut page's last character is the one before the pair: an offset there is refused with that page's real end.
+      expect(seen.inside).toEqual(pageRead(19_999))
+    })
+
+    test("pages two calls read at once can overlap: an offset in both is refused with the end of the one that ends last", async () => {
+      const text = lines(60_000)
+      const run = RunOrdinal.make(0)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text, run)
+        // Two calls of one response that ran at once: neither had a result when the other was checked, so each was served a whole page.
+        yield* turn.responded(run, [
+          { id: "ahead", toolName: RECALL_TOOL, input: { locator, offset: 20_000 }, output: page(text, locator, 20_000) },
+          { id: "before", toolName: RECALL_TOOL, input: { locator, offset: BOUND }, output: page(text, locator, BOUND) },
+        ])
+        return {
+          // Inside both pages, inside the later one only, inside the earlier one only: each page is read as it was served, not as a later call would have been cut.
+          both: (yield* turn.answer({ locator, offset: 22_000 }, run)).output, later: (yield* turn.answer({ locator, offset: 26_000 }, run)).output,
+          earlier: (yield* turn.answer({ locator, offset: 18_000 }, run)).output,
+        }
+      }))
+      expect(seen.both).toEqual(pageRead(28_000))
+      expect(seen.later).toEqual(pageRead(28_000))
+      expect(seen.earlier).toEqual(pageRead(24_000))
+    })
+
+    test("a recorded result of the tool that is not a page it writes is not counted as read", async () => {
+      const text = lines(60_000)
+      const run = RunOrdinal.make(0)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text, run)
+        // A host answered this call itself: the stored text is not the page the call's offset would have returned, so nothing says what it showed.
+        yield* turn.responded(run, [{ id: "answered", toolName: RECALL_TOOL, input: { locator, offset: 20_000 }, output: "a host's own answer" }])
+        return { locator, inside: (yield* turn.answer({ locator, offset: 22_000 }, run)).output, below: (yield* turn.answer({ locator, offset: BOUND }, run)).output }
+      }))
+      // Neither refused nor cut for it: each call is served its whole page.
+      expect(seen.inside).toBe(page(text, seen.locator, 22_000))
+      expect(seen.below).toBe(page(text, seen.locator, BOUND))
+    })
+
+    test("whatever order a model asks in, no character is served twice, and following each reply from the result's start reads all of it once", async () => {
+      // A seeded generator: the same sequences every run.
+      const seeded = (seed: number) => () => {
+        let state = (seed = (seed + 0x6d2b79f5) | 0)
+        state = Math.imul(state ^ (state >>> 15), 1 | state)
+        state = (state + Math.imul(state ^ (state >>> 7), 61 | state)) ^ state
+        return ((state ^ (state >>> 14)) >>> 0) / 4294967296
       }
-    }))
-    expect(seen.ahead).toBe(page(text, seen.locator, 20_000))
-    expect(seen.before).toBe(page(text, seen.locator, BOUND))
-    expect(seen.both).toEqual(pageRead(28_000))
-    expect(seen.later).toEqual(pageRead(28_000))
-    expect(seen.earlier).toEqual(pageRead(24_000))
+      const wellFormed = (value: string): boolean => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value)
+      /** The characters of a served page, without the line that says how to read on: no text here holds a bracket of its own. */
+      const bodyOf = (served: string): string => served.endsWith("]") && served.includes("\n[… ") ? served.slice(0, served.lastIndexOf("\n[… ")) : served
+      /** The offset a served page or a refusal names to read on from; none when it names none. */
+      const namedBy = (reply: unknown): Option.Option<number> => typeof reply === "string"
+        ? Option.map(Option.fromNullishOr(/ and offset (\d+)\]$/.exec(reply)?.[1]), Number)
+        : Option.map(Option.fromNullishOr(/To read on, pass offset (\d+)\.$/.exec(Schema.is(Failure)(reply) ? reply.message : "")?.[1]), Number)
+      const run = RunOrdinal.make(0)
+      const outcomes = await Effect.runPromise(Effect.forEach(Array.from({ length: 40 }, (_, index) => index + 1), (seed) => Effect.promise(() => inSession((turn) => Effect.gen(function* () {
+        const next = seeded(seed)
+        const pick = (low: number, high: number) => low + Math.floor(next() * (high - low + 1))
+        // Text of a few thousand to seventy thousand units, some of them pairs, none a bracket.
+        const length = pick(1, 10) === 1 ? pick(1, 9_000) : pick(17_000, 70_000)
+        const text = Array.from({ length: Math.ceil(length / 16) }, (_, index) => pick(1, 6) === 1 ? `row ${String(index).padStart(5, "0")} \u{1F600} ok\n` : `row ${String(index).padStart(5, "0")} of it\n`).join("")
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text, run)
+        /** The first unit of the pair an offset falls inside, else the offset: where the tool starts a page. */
+        const startOf = (offset: number): number => offset > 0 && offset < text.length && /[\uD800-\uDBFF]/.test(text.charAt(offset - 1)) && /[\uDC00-\uDFFF]/.test(text.charAt(offset)) ? offset - 1 : offset
+        const served: Array<{ readonly from: number; readonly body: string }> = []
+        const ask = (offset: number) => turn.ask({ locator, offset }, run).pipe(Effect.tap((reply) => Effect.sync(() => {
+          if (typeof reply === "string") served.push({ from: startOf(offset), body: bodyOf(reply) })
+        })))
+        // Any order: anywhere in the text, just below or inside a page already served, at a page's edges.
+        const spillAt = pick(1, 3) === 1 ? pick(0, 14) : -1
+        for (let step = 0; step < 16; step++) {
+          if (step === spillAt && text.length > 2_000) yield* turn.compacted({ _tag: "Spill", entry: EntryId.make(locator), preview: preview(text, locator, startOf(600)) })
+          const last = served.at(-1)
+          const offset = last === undefined || pick(1, 3) === 1 ? pick(0, text.length - 1)
+            : Math.min(text.length - 1, Math.max(0, pick(1, 2) === 1 ? last.from - pick(1, 9_000) : last.from + pick(-2, last.body.length + 2)))
+          yield* ask(offset)
+        }
+        // Then a model that follows every reply, from the result's start.
+        const shownNow = (yield* turn.shown)[0] ?? ""
+        const head = shownNow === text ? text.length : Number(/ and offset (\d+) to read them\]$/.exec(shownNow)?.[1])
+        const walk = (offset: number, steps: number): Effect.Effect<number, unknown> => steps > 400 ? Effect.succeed(steps) : ask(offset).pipe(
+          Effect.flatMap((reply) => Option.match(Schema.is(Failure)(reply) && reply.error === "ResultShown" ? Option.filter(Option.some(head), (shown) => shown < text.length) : namedBy(reply), {
+            onNone: () => Effect.succeed(steps), onSome: (named) => walk(named, steps + 1),
+          })))
+        const steps = yield* walk(0, 0)
+        // What the request holds of the result: its shown start, and every page served.
+        const held = new Uint8Array(text.length)
+        held.fill(1, 0, head)
+        const parts = served.map((part) => ({ ...part, matches: text.slice(part.from, part.from + part.body.length) === part.body, whole: wellFormed(part.body), empty: part.body.length === 0 && text.length > 0 }))
+        for (const part of parts) for (let at = part.from; at < part.from + part.body.length; at++) held[at] = (held[at] ?? 0) + 1
+        return {
+          seed, steps, pages: parts.length,
+          wrongText: parts.filter((part) => !part.matches).length, halfCharacters: parts.filter((part) => !part.whole).length, emptyPages: parts.filter((part) => part.empty).length,
+          twice: held.reduce((count, times) => count + (times > 1 ? 1 : 0), 0), never: held.reduce((count, times) => count + (times === 0 ? 1 : 0), 0),
+        }
+      }))), { concurrency: 1 }))
+      // Every page is the text at its offset, whole characters only, never empty; no character of a result is held twice, and none is left unread.
+      expect(outcomes.filter((outcome) => outcome.wrongText + outcome.halfCharacters + outcome.emptyPages + outcome.twice + outcome.never > 0)).toEqual([])
+      expect(outcomes.every((outcome) => outcome.steps <= 400)).toBe(true)
+      // The sequences did read pages: the property is not held by refusals alone.
+      expect(outcomes.reduce((sum, outcome) => sum + outcome.pages, 0)).toBeGreaterThan(200)
+    }, 60_000)
   })
 
   test("the next page, a page of another result and a page of an earlier turn are served", async () => {
