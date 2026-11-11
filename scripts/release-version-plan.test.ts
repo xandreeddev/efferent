@@ -54,6 +54,22 @@ describe("shared release version plans", () => {
     expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, changesets: [{ ...plan.changesets[0], releases: [{ name: "@xandreed/foundry", type: "patch" }] }] }), previous))).toBe(true)
     expect(success(releaseVersionPlan('{"changesets":[],"releases":[]}', previous))).toEqual({ hasChanges: false, version: previous, summaries: [] })
   })
+  test("an ignored workspace that depends on distribution packages is listed with no release, and is not part of the plan", () => {
+    const accepted = { hasChanges: true, version: next, summaries: ["Preserve source evidence."] }
+    const dependent = { name: "@xandreed/website", type: "none", oldVersion: "0.0.0", newVersion: "0.0.0" }
+    // Wherever the CLI lists it: after the distribution packages, or before them, where it must not be read as the release's version.
+    expect(success(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, dependent] }), previous))).toEqual(accepted)
+    expect(success(releaseVersionPlan(JSON.stringify({ ...plan, releases: [dependent, ...plan.releases] }), previous))).toEqual(accepted)
+    expect(success(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, dependent, { ...dependent, name: "@xandreed/foundry" }] }), previous))).toEqual(accepted)
+    // Only as the CLI writes such a dependent: a release of an ignored workspace, a version of it that moves, and another name with no release are refused.
+    expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, { ...dependent, type: "patch", newVersion: "0.0.1" }] }), previous))).toBe(true)
+    expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, { ...dependent, type: "patch" }] }), previous))).toBe(true)
+    expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, { ...dependent, newVersion: "0.0.1" }] }), previous))).toBe(true)
+    expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases, { ...dependent, name: "@xandreed/other" }] }), previous))).toBe(true)
+    // A distribution package with no release is refused as before, and an ignored dependent alone is no release.
+    expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases.slice(1), { name: releaseNames[0], type: "none", oldVersion: previous, newVersion: previous }] }), previous))).toBe(true)
+    expect(success(releaseVersionPlan(JSON.stringify({ changesets: [], releases: [dependent] }), previous))).toEqual({ hasChanges: false, version: previous, summaries: [] })
+  })
   test("plugin updates leave prompt, protocol and unrelated literal versions untouched", () => {
     const source = 'const prompt = {version: "1"}; const example = "0.16.0"; const one = definePlugin({id: "one", version: "0.16.0"}); const two = definePlugin({version: "0.16.0"});'
     const updated = success(pluginVersionText(source, previous, next))

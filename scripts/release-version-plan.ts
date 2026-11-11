@@ -8,6 +8,8 @@ export const releaseDirectories = [
   "plugin-session-files", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render", "plugin-workspace", "plugin-telemetry",
 ] as const
 export const releaseNames: ReadonlyArray<string> = releaseDirectories.map((name) => `@xandreed/${name}`)
+/** The workspace packages Changesets ignores: they are versioned and published by nothing here. */
+const ignoredNames: ReadonlyArray<string> = ["@xandreed/foundry", "@xandreed/website"]
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 export const isReleaseVersion = (value: string): boolean => stableVersion.test(value) && value.split(".").every((part) => Number.isSafeInteger(Number(part)))
 const order = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0
@@ -24,7 +26,7 @@ const Configuration = Schema.Struct({
   changelog: Schema.Literal(false), commit: Schema.Literal(false), ignore: Schema.Array(Schema.String), baseBranch: Schema.Literal("main"),
 })
 export const validateReleaseConfiguration = (text: string, buildSource: string): Result.Result<void, string> => Result.flatMap(json(Configuration, text), (config) => {
-  if (config.fixed.length !== 1 || !sameNames(config.fixed[0] ?? [], releaseNames) || config.linked.length !== 0 || !config.privatePackages.version || config.privatePackages.tag || !sameNames(config.ignore, ["@xandreed/foundry", "@xandreed/website"])) return failure("Changesets must version precisely the distribution packages as one fixed group, without private tags")
+  if (config.fixed.length !== 1 || !sameNames(config.fixed[0] ?? [], releaseNames) || config.linked.length !== 0 || !config.privatePackages.version || config.privatePackages.tag || !sameNames(config.ignore, ignoredNames)) return failure("Changesets must version precisely the distribution packages as one fixed group, without private tags")
   const file = ts.createSourceFile("build-packages.ts", buildSource, ts.ScriptTarget.Latest, true)
   const declarations: ts.VariableDeclaration[] = []
   const visit = (node: ts.Node) => { if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "names") declarations.push(node); ts.forEachChild(node, visit) }
@@ -49,11 +51,13 @@ export const releaseVersionPlan = (text: string, current: string): Result.Result
   if (plan.preState !== undefined) return failure("Prerelease mode is not supported by the shared stable release workflow")
   const notes = plan.changesets.filter((note) => note.releases.length > 0)
   if (notes.some((note) => note.releases.some((release) => !releaseNames.includes(release.name)))) return failure("A release note names a package outside the distribution group")
-  if (notes.length === 0 && plan.releases.length === 0) return Result.succeed({ hasChanges: false, version: current, summaries: [] })
-  const next = plan.releases[0]?.newVersion ?? ""
+  // An ignored workspace that depends on a distribution package is listed by the CLI with no release of its own (type `none`, its version unchanged): it is not part of the plan. Listed any other way it stays in, and is refused below as a foreign name.
+  const releases = plan.releases.filter((release) => !(ignoredNames.includes(release.name) && release.type === "none" && release.oldVersion === release.newVersion))
+  if (notes.length === 0 && releases.length === 0) return Result.succeed({ hasChanges: false, version: current, summaries: [] })
+  const next = releases[0]?.newVersion ?? ""
   const parts = (value: string) => value.split(".").map(Number)
   const newer = parts(next).some((part, index) => part > (parts(current)[index] ?? 0) && parts(next).slice(0, index).every((prior, previous) => prior === parts(current)[previous]))
-  if (notes.length === 0 || !sameNames(plan.releases.map((release) => release.name), releaseNames) || !isReleaseVersion(next) || !newer || plan.releases.some((release) => release.oldVersion !== current || release.newVersion !== next || release.type === "none")) return failure("Changesets must advance every distribution package to exactly one new stable version")
+  if (notes.length === 0 || !sameNames(releases.map((release) => release.name), releaseNames) || !isReleaseVersion(next) || !newer || releases.some((release) => release.oldVersion !== current || release.newVersion !== next || release.type === "none")) return failure("Changesets must advance every distribution package to exactly one new stable version")
   if (notes.some((note) => note.summary.trim().length === 0)) return failure("Every release note needs a nonempty summary")
   return Result.succeed({ hasChanges: true, version: next, summaries: [...new Set(notes.map((note) => note.summary.trim()))] })
 })
