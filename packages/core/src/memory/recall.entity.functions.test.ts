@@ -204,16 +204,18 @@ describe("recall_context in the turn that wrote the result", () => {
     readonly compacted: (action: CompactionAction) => Effect.Effect<void, unknown>
     /** A digest of a result, recorded as the session records one. */
     readonly digested: (locator: string, text: string) => Effect.Effect<void, unknown>
+    /** Another view of a result, recorded as a registry's presentation of it is: what the next request shows for it. */
+    readonly presented: (locator: string, view: string) => Effect.Effect<void, unknown>
     /** What the next request shows for each tool result, in order. */
     readonly shown: Effect.Effect<ReadonlyArray<string>, unknown>
     /** What the next request of `run` shows for each tool result, in order. */
     readonly shownTo: (run: RunOrdinal) => Effect.Effect<ReadonlyArray<string>, unknown>
   }
 
-  const inSession = <A>(body: (turn: Turn) => Effect.Effect<A, unknown>, strategy: MemoryPolicy = policy): Promise<A> => Effect.runPromise(Effect.gen(function* () {
+  const inSession = <A>(body: (turn: Turn) => Effect.Effect<A, unknown>, strategy: MemoryPolicy = policy, runId: RunId = RUN): Promise<A> => Effect.runPromise(Effect.gen(function* () {
     const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
     const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
-    const session = yield* openLogSession(log, strategy, { runId: RUN })
+    const session = yield* openLogSession(log, strategy, { runId })
     const steps = yield* Ref.make(0)
     const exchange = (toolName: string, input: unknown, answer: Effect.Effect<{ readonly output: unknown; readonly isError: boolean }, unknown>, run?: RunOrdinal) => Effect.gen(function* () {
       const step = yield* Ref.updateAndGet(steps, (count) => count + 1)
@@ -226,7 +228,7 @@ describe("recall_context in the turn that wrote the result", () => {
     const record = (body: LogBody) => session.record([body], 0).pipe(Effect.asVoid)
     // The handler runs where the loop calls it: with the run's memory, and with the loop's run when the call is one's.
     const answer: Turn["answer"] = (params, run) => Effect.gen(function* () {
-      const asking = run === undefined ? Option.none() : Option.some({ id: RUN, turn: yield* session.turn, ordinal: run })
+      const asking = run === undefined ? Option.none() : Option.some({ id: runId, turn: yield* session.turn, ordinal: run })
       const answered = yield* Effect.result(recall.handler(params).pipe(
         Effect.provideService(RunContext, RunContext.of({ memory: readerOf(session) } as never)),
         Effect.provideService(CurrentAgentRun, asking),
@@ -249,6 +251,7 @@ describe("recall_context in the turn that wrote the result", () => {
       }),
       compacted: (action) => record({ _tag: "Compaction", strategy: strategy.strategy.id, version: strategy.strategy.version, action }),
       digested: (locator, text) => record({ _tag: "ToolDigest", entry: EntryId.make(locator), version: "1", mode: "summarize", keep: [], text, digester: "test@1", trigger: "compaction" }),
+      presented: (locator, view) => record({ _tag: "ToolPresentation", entry: EntryId.make(locator), view, viewVersion: "host@1", subjects: [], artifacts: [], pinned: false, media: [], mediaNotes: [] }),
       shown: shownTo(RunOrdinal.make(0)),
       shownTo,
     })
@@ -610,6 +613,77 @@ describe("recall_context in the turn that wrote the result", () => {
       expect(seen.below).toBe(page(text, seen.locator, BOUND))
     })
 
+    test.each([
+      // The result's own text for 4,000 characters, then the marker a clipped text ends with: it starts as a page's last line does, and is none.
+      { answer: "text of the result cut by a host, with a marker of its own", output: (text: string, _locator: string) => `${text.slice(20_000, 24_000)}\n[… 4000 characters clipped]` },
+      // The line a page from 20,000 ends with, after text that is not the result's.
+      { answer: "another text before the line a page ends with", output: (text: string, locator: string) => `${"x".repeat(RECALL_PAGE_CHARS)}\n[… ${text.length - 28_000} more characters; call recall_context with locator "${locator}" and offset 28000]` },
+    ])("a recorded result that only looks like a page is not counted as read: $answer", async ({ output }) => {
+      const text = lines(60_000)
+      const run = RunOrdinal.make(0)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text, run)
+        yield* turn.responded(run, [{ id: "answered", toolName: RECALL_TOOL, input: { locator, offset: 20_000 }, output: output(text, locator) }])
+        return { locator, inside: (yield* turn.answer({ locator, offset: 22_000 }, run)).output, below: (yield* turn.answer({ locator, offset: BOUND }, run)).output }
+      }))
+      // A page is the result's text from its call's offset and then the tool's line, both: with one of them only, the calls are served whole pages.
+      expect(seen.inside).toBe(page(text, seen.locator, 22_000))
+      expect(seen.below).toBe(page(text, seen.locator, BOUND))
+    })
+
+    test("a page a host presents otherwise is not counted as read: the request does not show its text", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        const read = yield* turn.asked({ locator, offset: 20_000 })
+        // Before the view changes, the page is in the request and an offset inside it is refused.
+        const before = yield* turn.answer({ locator, offset: 22_000 })
+        yield* turn.presented(read.locator, "page 3 of the record, 8,000 characters")
+        return { locator, before: before.output, shown: yield* turn.shown, inside: (yield* turn.answer({ locator, offset: 22_000 })).output, below: (yield* turn.answer({ locator, offset: BOUND })).output }
+      }))
+      expect(seen.before).toEqual(pageRead(28_000))
+      // The request now shows the host's words for that result, not the page: what the call returned is not what counts.
+      expect(seen.shown[1]).toBe("page 3 of the record, 8,000 characters")
+      expect(seen.inside).toBe(page(text, seen.locator, 22_000))
+      expect(seen.below).toBe(page(text, seen.locator, BOUND))
+    })
+
+    test("a page of one result is not a page of another that holds the same text", async () => {
+      const text = lines(40_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read both records")
+        const first = yield* turn.returned(text)
+        const second = yield* turn.returned(text)
+        // The last page of the first result ends with no line, so nothing in it names its locator: only the call's input says whose page it is.
+        const last = yield* turn.ask({ locator: first, offset: 32_000 })
+        return { last, other: yield* turn.ask({ locator: second, offset: 32_000 }), again: yield* turn.ask({ locator: first, offset: 32_000 }) }
+      }))
+      expect(seen.last).toBe(text.slice(32_000))
+      expect(seen.other).toBe(text.slice(32_000))
+      expect(seen.again).toEqual(lastPageRead)
+    })
+
+    test("a locator that holds what a page's last line starts with is read back all the same", async () => {
+      // A run id is any string, and a result's locator starts with it: this one is printed inside every line a page of its results ends with.
+      const text = lines(40_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        const read = yield* turn.ask({ locator, offset: BOUND })
+        const asked = yield* Effect.forEach([BOUND, BOUND + 100, 20_000], (offset) => turn.ask({ locator, offset }), { concurrency: 1 })
+        // A page read ahead, then one below it: cut where that page starts, though its line too holds the locator.
+        const ahead = yield* turn.ask({ locator, offset: 30_000 })
+        return { locator, read, asked, ahead, below: yield* turn.ask({ locator, offset: 24_000 }) }
+      }), policy, RunId.make("weird\n[… run"))
+      expect(seen.locator).toContain("\n[… ")
+      expect(seen.read).toBe(page(text, seen.locator, BOUND))
+      expect(seen.asked).toEqual([pageRead(24_000), pageRead(24_000), pageRead(24_000)])
+      expect(seen.ahead).toBe(page(text, seen.locator, 30_000))
+      expect(seen.below).toBe(cutPage(text, seen.locator, 24_000, 30_000, 38_000))
+    })
+
     test("whatever order a model asks in, no character is served twice, and following each reply from the result's start reads all of it once", async () => {
       // A seeded generator: the same sequences every run.
       const seeded = (seed: number) => () => {
@@ -841,5 +915,28 @@ describe("recall_context in the turn that wrote the result", () => {
     expect(seen.again).toBe(page(text, seen.locator, BOUND))
     // The page just served again is whole in the request: an offset inside it is refused for that one.
     expect(seen.inside).toEqual(pageRead(24_000))
+  })
+
+  test.each([
+    { taken: "a compact view", replace: (turn: Turn, page: string) => turn.compacted({ _tag: "CompactViews", entries: [EntryId.make(page)], texts: ["a page of the record"] }), shows: "a page of the record" },
+    { taken: "a digest", replace: (turn: Turn, page: string) => turn.digested(page, "what the page says, in a line"), shows: "what the page says, in a line" },
+  ])("a page read earlier whose place $taken took is served again, from its start and from inside it", async ({ replace, shows }) => {
+    const text = lines(40_000)
+    const seen = await inSession((turn) => Effect.gen(function* () {
+      yield* turn.begin("read the record")
+      const locator = yield* turn.returned(text)
+      const read = yield* turn.asked({ locator, offset: BOUND })
+      yield* replace(turn, read.locator)
+      const shown = yield* turn.shown
+      // Asked without recording an answer, so each call is checked against the same request.
+      return { locator, shown, again: (yield* turn.answer({ locator, offset: BOUND })).output, inside: (yield* turn.answer({ locator, offset: BOUND + 1 })).output, below: (yield* turn.answer({ locator, offset: 12_000 })).output }
+    }))
+    // The request shows the page's stand-in, not its text.
+    expect(seen.shown[1]).toContain(shows)
+    expect(seen.shown[1]).not.toContain(text.slice(BOUND, BOUND + 200))
+    expect(seen.again).toBe(page(text, seen.locator, BOUND))
+    expect(seen.inside).toBe(page(text, seen.locator, BOUND + 1))
+    // The result's own shown start is still refused.
+    expect(seen.below).toEqual(headShown)
   })
 })

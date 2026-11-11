@@ -134,28 +134,35 @@ export const recallPage = (locator: string, view: string, offset: number): strin
  * as short as it was, and two pages that calls run at once were each served
  * whole overlap as they did. None for a result that is not such a page (a
  * host's own answer in the tool's name, a view presented again since): what
- * it showed cannot be told, and it is not counted as read.
+ * it showed cannot be told, and it is not counted as read. The line's own
+ * text can hold what a line starts with (it prints the locator, and a run id
+ * is any string), and so can the page's, so every place the line could start
+ * is tried, the last first.
  */
 const recordedEnd = (locator: string, view: string, start: number, recorded: string): Option.Option<number> => {
   if (recorded === view.slice(start)) return Option.some(view.length)
-  const at = recorded.lastIndexOf(CONTINUATION_START)
-  const end = start + at
-  if (at < 0 || end > view.length || recorded.slice(0, at) !== view.slice(start, end)) return Option.none()
-  const line = recorded.slice(at)
-  const named = Option.filter(Option.map(Option.fromNullishOr(/ and offset (\d+)\]$/.exec(line)?.[1]), Number), Number.isSafeInteger)
-  // The line names the page's own end, an offset past text already read, or none when that text runs to the result's end.
-  return [end, view.length, ...Option.toArray(named)].some((next) => next >= end && continuation(locator, view, end, next) === line) ? Option.some(end) : Option.none()
+  const named = Option.filter(Option.map(Option.fromNullishOr(/ and offset (\d+)\]$/.exec(recorded)?.[1]), Number), Number.isSafeInteger)
+  // Whether the recorded result is the view's text up to `end`, then a line written for that end: one that names the page's own end, an offset past text already read, or none when that text runs to the result's end.
+  const endsAt = (at: number): boolean => {
+    const end = start + at
+    return end <= view.length
+      && [end, view.length, ...Option.toArray(named)].some((next) => next >= end && continuation(locator, view, end, next) === recorded.slice(at))
+      && recorded.slice(0, at) === view.slice(start, end)
+  }
+  let at = recorded.lastIndexOf(CONTINUATION_START)
+  while (at >= 0 && !endsAt(at)) at = at === 0 ? -1 : recorded.lastIndexOf(CONTINUATION_START, at - 1)
+  return at < 0 ? Option.none() : Option.some(start + at)
 }
 
 type ToolResultBody = Extract<LogBody, { readonly _tag: "ToolResult" }>
 
-/** Whether a compaction rewrites what the result `id` shows: a compact view of it, or a spill's preview. */
-const rewrites = (action: CompactionAction, id: EntryId): boolean => CompactionAction.match(action, {
-  CompactViews: (compact) => compact.entries.includes(id),
-  Spill: (spill) => spill.entry === id,
-  DropTurns: () => false,
-  Summarize: () => false,
-  OmitMedia: () => false,
+/** The results a compaction rewrites what they show: those it gives a compact view, and the one a spill's preview stands for. */
+const rewritten = (action: CompactionAction): ReadonlyArray<EntryId> => CompactionAction.match(action, {
+  CompactViews: (compact) => compact.entries,
+  Spill: (spill) => [spill.entry],
+  DropTurns: () => [],
+  Summarize: () => [],
+  OmitMedia: () => [],
 })
 
 /**
@@ -171,7 +178,7 @@ const rewrites = (action: CompactionAction, id: EntryId): boolean => CompactionA
  * shows it alike.
  */
 const shownChars = (entries: ReadonlyArray<LogEntry>, result: LogEntry, body: ToolResultBody): number => {
-  const strategy = entries.flatMap((entry) => entry.body._tag === "Compaction" && rewrites(entry.body.action, result.id) ? [entry.body.strategy] : []).at(-1) ?? ""
+  const strategy = entries.flatMap((entry) => entry.body._tag === "Compaction" && rewritten(entry.body.action).includes(result.id) ? [entry.body.strategy] : []).at(-1) ?? ""
   return Option.match(Option.fromNullishOr(shownViewsOf(entries, { strategy, digests: true }).get(result.id)), {
     onNone: () => body.view.length,
     onSome: (shown) => shown.by === "Spill" ? previewChars(result, body.view, shown.text) : 0,
@@ -215,18 +222,15 @@ const readPagesOf = (entries: ReadonlyArray<LogEntry>, turn: number, asking: Opt
   const inputs = toolInputsByResult(entries)
   const touched = new Set<EntryId>([
     ...entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [entry.body.entry] : []),
-    ...entries.flatMap((entry) => entry.body._tag === "Compaction" ? CompactionAction.match(entry.body.action, {
-      CompactViews: (compact): ReadonlyArray<EntryId> => compact.entries, Spill: (spill) => [spill.entry], DropTurns: () => [], Summarize: () => [], OmitMedia: () => [],
-    }) : []),
+    ...entries.flatMap((entry) => entry.body._tag === "Compaction" ? rewritten(entry.body.action) : []),
   ])
   return results.flatMap(({ entry, page }) => Option.match(Option.filter(decodeRecallInput(inputs.get(entry.id)), (input) => input.locator === target.id), {
     onNone: () => [],
     onSome: (input) => {
       const start = cutAt(view, input.offset ?? 0)
       const whole = !touched.has(entry.id) || shownChars(entries, entry, page) >= page.view.length
-      // What the call returned is the page: its view is that text for the tool as core defines it, and a registry may show it otherwise.
-      const returned = typeof page.encoded === "string" ? page.encoded : page.view
-      return whole ? Option.toArray(Option.map(recordedEnd(target.id, view, start, returned), (end) => ({ start, end }))) : []
+      // The page is read from the view the request shows for the call's result: a registry or a host that shows it otherwise shows no page that can be told.
+      return whole ? Option.toArray(Option.map(recordedEnd(target.id, view, start, page.view), (end) => ({ start, end }))) : []
     },
   }))
 }
