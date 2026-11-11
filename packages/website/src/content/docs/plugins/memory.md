@@ -322,7 +322,7 @@ retention policy. See [capture](/docs/plugins/memory-capture/),
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-memory` · Version **0.21.1** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-memory` · Version **0.21.2** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |

@@ -152,7 +152,7 @@ export const MemoryCaptureLive = (config: MemoryCaptureConfig) => Layer.effect(M
 
 /** Capture after acknowledged commits; processing continues in the runtime memory worker. @public */
 export const memoryCapturePlugin = definePlugin({
-  id: "@xandreed/plugin-memory/capture", version: "0.21.1", scope: "session",
+  id: "@xandreed/plugin-memory/capture", version: "0.21.2", scope: "session",
   config: MemoryCaptureConfig, defaults: memoryCaptureDefaults,
   requires: [Sessions, LongTermMemory], provides: [MemoryCapture], contributes: [CommittedTurnObservers],
   layer: (config) => Layer.effect(CommittedTurnObservers, Effect.gen(function* () {
