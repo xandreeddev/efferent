@@ -17,14 +17,14 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "effect": "4.0.7",
       },
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@noble/hashes": "2.4.0",
         "@xandreed/core": "workspace:*",
@@ -33,7 +33,7 @@
     },
     "packages/evals-cli": {
       "name": "@xandreed/evals-cli",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "bin": {
         "efferent-eval": "./src/main.ts",
       },
@@ -48,7 +48,7 @@
     },
     "packages/evals-langfuse": {
       "name": "@xandreed/evals-langfuse",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@langfuse/client": "5.11.1",
         "@xandreed/evals": "workspace:*",
@@ -57,7 +57,7 @@
     },
     "packages/evals-langsmith": {
       "name": "@xandreed/evals-langsmith",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/evals": "workspace:*",
         "effect": "4.0.7",
@@ -74,7 +74,7 @@
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -82,7 +82,7 @@
     },
     "packages/plugin-knowledge-postgres": {
       "name": "@xandreed/plugin-knowledge-postgres",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -91,7 +91,7 @@
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -107,7 +107,7 @@
     },
     "packages/plugin-memory-digest": {
       "name": "@xandreed/plugin-memory-digest",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -115,7 +115,7 @@
     },
     "packages/plugin-memory-summary": {
       "name": "@xandreed/plugin-memory-summary",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -123,7 +123,7 @@
     },
     "packages/plugin-memory-window": {
       "name": "@xandreed/plugin-memory-window",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -131,7 +131,7 @@
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@effect/ai-anthropic": "4.0.7",
         "@effect/ai-openai": "4.0.7",
@@ -143,7 +143,7 @@
     },
     "packages/plugin-rag": {
       "name": "@xandreed/plugin-rag",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -158,7 +158,7 @@
     },
     "packages/plugin-render": {
       "name": "@xandreed/plugin-render",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -166,7 +166,7 @@
     },
     "packages/plugin-session-files": {
       "name": "@xandreed/plugin-session-files",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -177,7 +177,7 @@
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -188,7 +188,7 @@
     },
     "packages/plugin-sessions": {
       "name": "@xandreed/plugin-sessions",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -196,7 +196,7 @@
     },
     "packages/plugin-tasks": {
       "name": "@xandreed/plugin-tasks",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -207,7 +207,7 @@
     },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -222,7 +222,7 @@
     },
     "packages/plugin-tool-discovery": {
       "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -230,7 +230,7 @@
     },
     "packages/plugin-workspace": {
       "name": "@xandreed/plugin-workspace",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -247,7 +247,7 @@
     },
     "packages/process-host": {
       "name": "@xandreed/process-host",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -264,7 +264,7 @@
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.7",
@@ -272,7 +272,7 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/runtime": "workspace:*",
