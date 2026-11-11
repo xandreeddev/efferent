@@ -1,0 +1,23 @@
+---
+interface Props {
+  n: number
+  title: string
+  id: string
+  /** The pane this step is about: it is outlined while the step is shown. */
+  focus?: "model" | "code" | "chat" | "context"
+  /** Code pane: which file to show. */
+  file?: "agent" | "tiny"
+  /** Code pane: which read-only sections to unfold. */
+  unfold?: string
+  /** Context pane: which view to show. */
+  view?: "loop" | "inspector"
+  /** Give the Context pane the full width of the workbench while this step is shown. */
+  wide?: boolean
+}
+const { n, title, id, focus, file, unfold, view, wide } = Astro.props
+---
+
+<section class="learn-step" data-step data-focus={focus} data-file={file} data-unfold={unfold} data-view={view} data-wide={wide ? "true" : undefined} id={id} hidden>
+  <h2><span class="n">{n}</span>{title}</h2>
+  <div class="prose"><slot /></div>
+</section>

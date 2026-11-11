@@ -1,0 +1,27 @@
+---
+// Step 6: controls bound to the code in the playground (see learn/playground.ts, `data-control`).
+---
+
+<div class="learn-controls">
+  <label class="wide">
+    <span>System prompt</span>
+    <textarea data-control="system" rows="2"></textarea>
+  </label>
+  <label>
+    <span>Max steps</span>
+    <input type="number" min="1" max="50" data-control="maxSteps" />
+    <small>Model calls allowed per run. Without tools you only ever use one.</small>
+  </label>
+  <label>
+    <span>Budget tokens</span>
+    <input type="number" min="1" step="100" data-control="budgetTokens" />
+    <small>How much context memory may send per request.</small>
+  </label>
+  <label class="check">
+    <input type="checkbox" data-control="streaming" />
+    <span>Stream the reply</span>
+  </label>
+</div>
+<p class="learn-note" data-controls-note hidden>
+  A control is greyed out when its line is missing from your code. Press Reset code in the Code tab to bring it back.
+</p>

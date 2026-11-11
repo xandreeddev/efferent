@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true, "types": ["bun"], "lib": ["ESNext", "DOM", "DOM.Iterable"], "skipLibCheck": true, "allowImportingTsExtensions": true },
+  "include": ["src/learn/**/*.ts"],
+  "exclude": ["src/learn/models/cpu-worker.ts"]
+}

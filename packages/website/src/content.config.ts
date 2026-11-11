@@ -13,4 +13,14 @@ const docs = defineCollection({
   }),
 })
 
-export const collections = { docs }
+// Interactive lessons (the /learn track): one MDX file per lesson, ordered by its numeric prefix.
+const lessons = defineCollection({
+  loader: glob({ pattern: "*.mdx", base: "./src/content/learn" }),
+  schema: z.object({
+    title: z.string(),
+    description: z.string(),
+    minutes: z.number(),
+  }),
+})
+
+export const collections = { docs, lessons }

@@ -1,0 +1,90 @@
+---
+import BaseLayout from "./BaseLayout.astro"
+import Workbench from "../components/learn/Workbench.astro"
+import "../styles/prose.css"
+import "../styles/learn.css"
+import { href } from "../lib/nav"
+
+interface Props {
+  title: string
+  description: string
+  minutes: number
+}
+const { title, description, minutes } = Astro.props
+---
+
+<BaseLayout title={title} description={description} app>
+  <div class="wb" data-wb>
+    <aside class="wb-lesson" aria-label="Lesson">
+      <header class="wb-lesson-head">
+        <a class="wb-crumb" href={href("/learn")}>Learn</a>
+        <h1>{title}</h1>
+        <p class="wb-meta">{description} About {minutes} minutes.</p>
+        <ol class="wb-dots" data-dots aria-label="Steps"></ol>
+      </header>
+      <div class="wb-lesson-body" data-lesson-body>
+        <slot />
+      </div>
+      <footer class="wb-lesson-foot">
+        <button class="btn" type="button" data-prev>Back</button>
+        <span class="wb-count" data-count aria-live="polite">Step 1</span>
+        <button class="btn btn-primary" type="button" data-next>Next</button>
+      </footer>
+    </aside>
+    <Workbench />
+  </div>
+
+  <script>
+    const steps = [...document.querySelectorAll<HTMLElement>("[data-step]")]
+    const dots = document.querySelector<HTMLElement>("[data-dots]")!
+    const count = document.querySelector<HTMLElement>("[data-count]")!
+    const prev = document.querySelector<HTMLButtonElement>("[data-prev]")!
+    const next = document.querySelector<HTMLButtonElement>("[data-next]")!
+    const body = document.querySelector<HTMLElement>("[data-lesson-body]")!
+    let current = -1
+
+    const titleOf = (step: HTMLElement) => step.querySelector("h2")?.textContent?.replace(/^\d+/, "").trim() ?? ""
+    steps.forEach((step, i) => {
+      const dot = document.createElement("li")
+      const button = document.createElement("button")
+      button.type = "button"
+      button.title = titleOf(step)
+      button.setAttribute("aria-label", `Step ${i + 1}: ${titleOf(step)}`)
+      button.addEventListener("click", () => show(i))
+      dot.append(button)
+      dots.append(dot)
+    })
+
+    const show = (index: number, updateHash = true) => {
+      const clamped = Math.max(0, Math.min(steps.length - 1, index))
+      if (clamped === current) return
+      current = clamped
+      steps.forEach((step, i) => { step.hidden = i !== clamped; step.toggleAttribute("data-active", i === clamped) })
+      ;[...dots.children].forEach((dot, i) => {
+        dot.toggleAttribute("data-done", i < clamped)
+        dot.toggleAttribute("data-active", i === clamped)
+        dot.firstElementChild?.setAttribute("aria-current", i === clamped ? "step" : "false")
+      })
+      count.textContent = `Step ${clamped + 1} of ${steps.length}`
+      prev.disabled = clamped === 0
+      next.disabled = clamped === steps.length - 1
+      body.scrollTop = 0
+      const step = steps[clamped]!
+      if (updateHash) history.replaceState(null, "", `#${step.id}`)
+      window.dispatchEvent(new CustomEvent("learn:focus", {
+        detail: { pane: step.dataset.focus, step: step.id, file: step.dataset.file, unfold: step.dataset.unfold, view: step.dataset.view, wide: step.dataset.wide },
+      }))
+    }
+    prev.addEventListener("click", () => show(current - 1))
+    next.addEventListener("click", () => show(current + 1))
+    window.addEventListener("keydown", (event) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.closest("textarea, input, select, .cm-editor, [contenteditable]"))) return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.key === "ArrowRight") show(current + 1)
+      if (event.key === "ArrowLeft") show(current - 1)
+    })
+    const fromHash = steps.findIndex((step) => `#${step.id}` === location.hash)
+    show(fromHash >= 0 ? fromHash : 0, false)
+  </script>
+</BaseLayout>
