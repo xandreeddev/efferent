@@ -134,10 +134,13 @@ export const recallPage = (locator: string, view: string, offset: number): strin
  * as short as it was, and two pages that calls run at once were each served
  * whole overlap as they did. None for a result that is not such a page (a
  * host's own answer in the tool's name, a view presented again since): what
- * it showed cannot be told, and it is not counted as read. The line's own
- * text can hold what a line starts with (it prints the locator, and a run id
- * is any string), and so can the page's, so every place the line could start
- * is tried, the last first.
+ * it showed cannot be told, and it is not counted as read. Nor is a result
+ * the tool never writes that reads like one: a line with no text before it
+ * (a page of a result that has text holds some), or text that ends inside a
+ * surrogate pair. Counted, either would be refused from its own end, the
+ * offset its refusal names. The line's own text can hold what a line starts
+ * with (it prints the locator, and a run id is any string), and so can the
+ * page's, so every place the line could start is tried, the last first.
  */
 const recordedEnd = (locator: string, view: string, start: number, recorded: string): Option.Option<number> => {
   if (recorded === view.slice(start)) return Option.some(view.length)
@@ -145,13 +148,13 @@ const recordedEnd = (locator: string, view: string, start: number, recorded: str
   // Whether the recorded result is the view's text up to `end`, then a line written for that end: one that names the page's own end, an offset past text already read, or none when that text runs to the result's end.
   const endsAt = (at: number): boolean => {
     const end = start + at
-    return end <= view.length
+    return end <= view.length && cutAt(view, end) === end
       && [end, view.length, ...Option.toArray(named)].some((next) => next >= end && continuation(locator, view, end, next) === recorded.slice(at))
       && recorded.slice(0, at) === view.slice(start, end)
   }
   let at = recorded.lastIndexOf(CONTINUATION_START)
-  while (at >= 0 && !endsAt(at)) at = at === 0 ? -1 : recorded.lastIndexOf(CONTINUATION_START, at - 1)
-  return at < 0 ? Option.none() : Option.some(start + at)
+  while (at > 0 && !endsAt(at)) at = recorded.lastIndexOf(CONTINUATION_START, at - 1)
+  return at > 0 ? Option.some(start + at) : Option.none()
 }
 
 type ToolResultBody = Extract<LogBody, { readonly _tag: "ToolResult" }>

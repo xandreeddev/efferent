@@ -271,9 +271,10 @@ These limits apply:
   has a result when the other is checked, so both can return the same page,
   or pages that overlap. A turn runs them one after another by default, and
   the second is then refused or cut.
-- A page already read is known by the text its call returned. A result
-  recorded in the tool's name that is not such a page (a host that answered
-  the call itself) is not counted as read.
+- A page already read is known by what the request shows for its call's
+  result. A result recorded in the tool's name that is not such a page (a
+  host that answered the call itself, a registry that shows the page as
+  other text) is not counted as read.
 - A result shown through a compact view, a digest or a custom policy's own
   preview is served from its start, as before.
 - The breaker stops a model only when its steps repeat. A step that pairs a

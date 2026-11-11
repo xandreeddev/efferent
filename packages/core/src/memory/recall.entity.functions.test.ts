@@ -618,6 +618,8 @@ describe("recall_context in the turn that wrote the result", () => {
       { answer: "text of the result cut by a host, with a marker of its own", output: (text: string, _locator: string) => `${text.slice(20_000, 24_000)}\n[… 4000 characters clipped]` },
       // The line a page from 20,000 ends with, after text that is not the result's.
       { answer: "another text before the line a page ends with", output: (text: string, locator: string) => `${"x".repeat(RECALL_PAGE_CHARS)}\n[… ${text.length - 28_000} more characters; call recall_context with locator "${locator}" and offset 28000]` },
+      // The line a page ends with and nothing before it: the tool writes no page without text for a result that has some.
+      { answer: "the line a page ends with, alone", output: (text: string, locator: string) => `\n[… ${text.length - 20_000} more characters; call recall_context with locator "${locator}" and offset 20000]` },
     ])("a recorded result that only looks like a page is not counted as read: $answer", async ({ output }) => {
       const text = lines(60_000)
       const run = RunOrdinal.make(0)
@@ -630,6 +632,23 @@ describe("recall_context in the turn that wrote the result", () => {
       // A page is the result's text from its call's offset and then the tool's line, both: with one of them only, the calls are served whole pages.
       expect(seen.inside).toBe(page(text, seen.locator, 22_000))
       expect(seen.below).toBe(page(text, seen.locator, BOUND))
+    })
+
+    test("a recorded result that ends inside a surrogate pair is not counted as read: the tool cuts no page there", async () => {
+      // A pair sits across unit 24,000. A host's text for the call ends between its two units, with the line a page ending there would carry.
+      const text = `${lines(23_999)}\u{1F600}${lines(36_000, "tail")}`
+      const run = RunOrdinal.make(0)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text, run)
+        const split = `${text.slice(20_000, 24_000)}\n[… ${text.length - 24_000} more characters; call recall_context with locator "${locator}" and offset 24000]`
+        yield* turn.responded(run, [{ id: "answered", toolName: RECALL_TOOL, input: { locator, offset: 20_000 }, output: split }])
+        // A call from that end starts at the pair's first unit, 23,999: counted, the result would hold it, and refuse it with its own end again.
+        return { locator, atEnd: (yield* turn.answer({ locator, offset: 24_000 }, run)).output, inside: (yield* turn.answer({ locator, offset: 22_000 }, run)).output }
+      }))
+      expect(text.charCodeAt(23_999)).toBe(0xd83d)
+      expect(seen.atEnd).toBe(`${text.slice(23_999, 31_999)}\n[… ${text.length - 31_999} more characters; call recall_context with locator "${seen.locator}" and offset 31999]`)
+      expect(seen.inside).toBe(`${text.slice(22_000, 30_000)}\n[… ${text.length - 30_000} more characters; call recall_context with locator "${seen.locator}" and offset 30000]`)
     })
 
     test("a page a host presents otherwise is not counted as read: the request does not show its text", async () => {
