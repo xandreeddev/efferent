@@ -1,0 +1,35 @@
+---
+import { getCollection } from "astro:content"
+import BaseLayout from "../../layouts/BaseLayout.astro"
+import "../../styles/learn.css"
+import { href } from "../../lib/nav"
+
+const lessons = (await getCollection("lessons")).sort((a, b) => a.id.localeCompare(b.id))
+const slugOf = (id: string) => id.replace(/^\d+-/, "")
+---
+
+<BaseLayout title="Learn" description="Build an agent step by step in your browser, with a model that runs on your own machine.">
+  <main class="learn-index">
+    <h1>Learn Efferent by building</h1>
+    <p>
+      Short, hands-on lessons. Each one gives you a working agent in the page, shows the code behind it,
+      and lets you change it and see what happens. Models run on your own machine.
+    </p>
+    <ol class="learn-list">
+      {
+        lessons.map((lesson, i) => (
+          <li>
+            <a href={href(`/learn/${slugOf(lesson.id)}`)}>
+              <strong>{i + 1}. {lesson.data.title}</strong>
+              <span>{lesson.data.description} About {lesson.data.minutes} minutes.</span>
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+    <p class="learn-note">
+      More lessons will follow: tools, memory and sessions. The full reference is in the
+      <a href={href("/docs/getting-started")}>docs</a>.
+    </p>
+  </main>
+</BaseLayout>

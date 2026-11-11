@@ -14,12 +14,24 @@ const BASE = "/efferent"
 // into the docs via `?raw`, so Vite must be allowed to read them.
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url))
 
+const shim = (name) => fileURLToPath(new URL(`./src/learn/shims/${name}`, import.meta.url))
+
 export default defineConfig({
   site: "https://xandreeddev.github.io",
   base: BASE,
   trailingSlash: "ignore",
   vite: {
     server: { fs: { allow: [repoRoot] } },
+    // The learn playground runs the real framework in the page. Its packages
+    // import three Node modules; the browser gets small stand-ins (src/learn/shims).
+    resolve: {
+      alias: [
+        { find: /^node:crypto$/, replacement: shim("node-crypto.ts") },
+        { find: /^node:os$/, replacement: shim("node-os.ts") },
+        { find: /^node:process$/, replacement: shim("node-process.ts") },
+      ],
+      dedupe: ["effect"],
+    },
   },
   integrations: [mdx(), sitemap()],
   markdown: {

@@ -8,6 +8,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Changes
+
+- Docs site: a new interactive "Learn" track at `/learn`. Lesson 1, "Your
+  first agent", is a full-screen, paged workbench that runs the real
+  `Agent.define` and `agent.turn` in the page over a model on the learner's
+  own machine (an instant offline stand-in, small CPU models, WebLLM models
+  including Phi-3.5 mini, or Chrome's built-in model). It has a code editor
+  with read-only sections, a chat, a live diagram of the step loop, and a
+  context inspector that shows the stack a model was sent beside the journal
+  that holds everything, the memory window's drops and the prefix a provider
+  could cache; its last step has the learner write a small memory-strategy
+  plugin and swap it in. The chat renders replies as markdown, the code pane
+  has a Format button (Prettier, loaded only when used), every event opens to
+  its payload, and WebLLM downloads retry, switch to IndexedDB after a failed
+  Cache API write and recover from a lost GPU device. No published package
+  changes.
+
 ## 0.21.2 — 2026-11-11
 
 ### Migration

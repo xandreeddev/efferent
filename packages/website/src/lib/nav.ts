@@ -15,6 +15,7 @@ export const href = (path: string): string => {
 export const GITHUB = "https://github.com/xandreeddev/efferent"
 
 export const topNav = [
+  { label: "Learn", href: "/learn" },
   { label: "Docs", href: "/docs/getting-started" },
   { label: "Ecosystem", href: "/#ecosystem" },
   { label: "Plugins", href: "/docs/plugins" },

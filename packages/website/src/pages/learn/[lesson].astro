@@ -1,0 +1,16 @@
+---
+import { getCollection, render } from "astro:content"
+import LessonLayout from "../../layouts/LessonLayout.astro"
+
+export async function getStaticPaths() {
+  const entries = await getCollection("lessons")
+  return entries.map((entry) => ({ params: { lesson: entry.id.replace(/^\d+-/, "") }, props: { entry } }))
+}
+
+const { entry } = Astro.props
+const { Content } = await render(entry)
+---
+
+<LessonLayout title={entry.data.title} description={entry.data.description} minutes={entry.data.minutes}>
+  <Content />
+</LessonLayout>

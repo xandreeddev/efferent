@@ -1,0 +1,128 @@
+---
+// The right-hand side of a lesson: everything visible at once, no tabs.
+// Behaviour lives in learn/playground.ts; markup carries `data-*` hooks.
+import { chips } from "../../learn/suggestions"
+import LoopDiagram from "./LoopDiagram.astro"
+---
+
+<section class="wb-bench" aria-label="Playground">
+  <div class="wb-modelbar">
+    <button class="mb-toggle" type="button" data-model-toggle aria-expanded="false" aria-controls="model-panel">
+      <span class="mb-label">Model</span>
+      <strong data-model-name>Echo (instant)</strong>
+      <span aria-hidden="true">▾</span>
+    </button>
+    <span class="pg-chip" data-chip data-state="idle">starting…</span>
+    <div class="mb-progress" data-model-progress hidden>
+      <div class="pg-bar"><i></i></div>
+      <span data-model-progress-text></span>
+    </div>
+    <div class="mb-panel" id="model-panel" data-model-panel hidden>
+      <p class="mb-hint" data-model-hint></p>
+      <ul class="pg-models" data-models></ul>
+    </div>
+  </div>
+
+  <div class="wb-grid" data-grid>
+    <section class="pane pane-code" data-pane="code" aria-label="Code">
+      <header class="pane-head">
+        <div class="files" role="tablist" aria-label="Files">
+          <button role="tab" type="button" data-file="agent" aria-selected="true">agent.ts</button>
+          <button role="tab" type="button" data-file="tiny" aria-selected="false">tiny-memory.ts</button>
+        </div>
+        <span class="syntax" data-syntax aria-live="polite"></span>
+        <div class="pane-actions">
+          <button class="btn btn-quiet" type="button" data-format title="Tidy the indentation and line breaks of your code (Shift + Alt + F)">Format</button>
+          <button class="btn btn-quiet" type="button" data-reset-code title="Restore the starter code">Reset</button>
+          <button class="btn btn-primary" type="button" data-rebuild title="Rebuild the agent (Ctrl or Cmd + Enter)">Rebuild</button>
+          <button class="icon-btn" type="button" data-max aria-label="Maximise Code pane" title="Maximise">⤢</button>
+        </div>
+      </header>
+      <div class="pane-body editor-host" data-editor></div>
+      <div class="pane-foot" data-build data-state="idle" aria-live="polite">The agent has not been built yet.</div>
+    </section>
+
+    <section class="pane pane-chat" data-pane="chat" aria-label="Chat">
+      <header class="pane-head">
+        <h2>Chat</h2>
+        <label class="keep"><input type="checkbox" data-keep checked /> Keep chat on rebuild</label>
+        <div class="pane-actions">
+          <button class="btn btn-quiet" type="button" data-new-chat title="Start over: wipes the chat, the journal behind it and the context stack">Clear context</button>
+          <button class="icon-btn" type="button" data-max aria-label="Maximise Chat pane" title="Maximise">⤢</button>
+        </div>
+      </header>
+      <div class="pane-body" data-scroll>
+        <ol class="pg-messages" data-messages aria-live="polite"></ol>
+        <p class="pg-empty" data-empty>Ask the agent something. Echo needs no download; pick another model from the bar above.</p>
+      </div>
+      <div class="chips" data-chips>
+        {chips.map((chip) => <button type="button" class="chip" data-chip-text={chip}>{chip}</button>)}
+      </div>
+      <form class="compose" data-compose>
+        <textarea data-input rows="2" placeholder="Message the agent. Enter sends, Shift+Enter adds a line." aria-label="Message" disabled></textarea>
+        <button class="btn btn-primary" type="submit" data-send disabled>Send</button>
+        <button class="btn" type="button" data-stop hidden>Stop</button>
+      </form>
+      <p class="hint" data-hint></p>
+    </section>
+
+    <section class="pane pane-context" data-pane="context" aria-label="Context">
+      <header class="pane-head">
+        <div class="files" role="tablist" aria-label="Context views">
+          <button role="tab" type="button" data-view-tab="inspector" aria-selected="true">Context</button>
+          <button role="tab" type="button" data-view-tab="loop" aria-selected="false">Loop</button>
+        </div>
+        <div class="pane-actions">
+          <button class="icon-btn" type="button" data-max aria-label="Maximise Context pane" title="Maximise">⤢</button>
+        </div>
+      </header>
+      <div class="pane-body view insp" data-view="inspector">
+        <div class="insp-bar">
+          <div class="insp-nav">
+            <button class="icon-btn" type="button" data-insp-prev aria-label="Previous request">◂</button>
+            <span data-insp-label>No requests yet</span>
+            <button class="icon-btn" type="button" data-insp-next aria-label="Next request">▸</button>
+          </div>
+          <label class="insp-budget">
+            <span>Budget</span>
+            <input type="range" min="250" max="3000" step="50" value="3000" data-control="budgetTokens" aria-label="Context budget in tokens" />
+            <output data-insp-budget>3000</output>
+          </label>
+        </div>
+        <p class="insp-empty" data-insp-empty>Send a message to see what the model is sent, and what the journal keeps.</p>
+        <div class="insp-content" data-insp-content hidden>
+          <div class="insp-meter" data-insp-meter data-over="false"><div class="insp-fill"><i data-insp-fill></i></div><span data-insp-used></span></div>
+          <div class="insp-cols">
+            <section aria-label="What the model was sent">
+              <h3>What the model was sent</h3>
+              <p class="insp-sub" data-insp-prefix></p>
+              <ol class="stack" data-insp-stack></ol>
+            </section>
+            <section aria-label="The journal">
+              <h3>The journal keeps everything</h3>
+              <ol class="journal" data-insp-journal></ol>
+            </section>
+          </div>
+          <details class="insp-events"><summary>Journal records of this turn, with payloads</summary><ol data-insp-kinds></ol></details>
+        </div>
+        <p class="insp-foot">Token counts are estimates (about 3 characters per token). Local models have no prompt cache: "reusable" shows what a hosted provider's cache could reuse.</p>
+      </div>
+      <div class="pane-body view" data-view="loop" hidden>
+        <LoopDiagram />
+        <dl class="stats">
+          <div><dt>steps</dt><dd data-stat="steps">0</dd></div>
+          <div><dt>tokens in</dt><dd data-stat="in">0</dd></div>
+          <div><dt>tokens out</dt><dd data-stat="out">0</dd></div>
+          <div><dt>time</dt><dd data-stat="time">0.0s</dd></div>
+        </dl>
+        <p class="pg-events-note">The step loop plugin publishes these events on the turn's event stream while <code>agent.turn</code> runs; the page subscribes to that stream. Open one to see its payload.</p>
+        <ol class="pg-events" data-events></ol>
+        <p class="pg-empty" data-events-empty>Events from your agent's last turn appear here.</p>
+      </div>
+    </section>
+  </div>
+</section>
+
+<script>
+  import "../../learn/playground.ts"
+</script>

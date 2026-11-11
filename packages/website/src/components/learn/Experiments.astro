@@ -1,0 +1,21 @@
+---
+// Step 7: each button rewrites the config and rebuilds (see learn/playground.ts, `data-exp`).
+const experiments = [
+  { id: "pirate", title: "Change the personality", button: "Make it a pirate", text: "Only the system prompt changes. Echo ignores it; try a real model, and see the new prompt at the top of the stack." },
+  { id: "stream-off", title: "Turn streaming off", button: "Turn streaming off", text: "Send a message and watch the Loop view: the assistant.delta events are gone and the reply arrives whole." },
+  { id: "break-memory", title: "Break it on purpose", button: "Remove memoryWindowPlugin", text: "Agent.define checks that the plugins fit together, so it refuses and names what is missing." },
+  { id: "tiny-budget", title: "Starve the budget", button: "Set the budget to 5", text: "The message alone does not fit, so the turn fails with a refusal, not a crash." },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

@@ -3,7 +3,8 @@ import Icon from "./Icon.astro"
 import BrandLogo from "./BrandLogo.astro"
 import { href, topNav, GITHUB } from "../lib/nav"
 const path = Astro.url.pathname
-const isActive = (h: string) => h.startsWith("/docs") && path.includes("/docs")
+const isActive = (h: string) =>
+  (h.startsWith("/docs") && path.includes("/docs")) || (h === "/learn" && path.includes("/learn"))
 ---
 
 <header class="nav">
