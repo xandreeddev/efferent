@@ -157,8 +157,8 @@ describe("recall_context in the turn that wrote the result", () => {
   // The four refusals, as the model reads them.
   const headShown = { error: "ResultShown", message: "That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none." }
   const shownInFull = { error: "ResultShown", message: "This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none." }
-  const pageRead = (next: number) => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset ${next}.` })
-  const lastPageRead = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read in this turn, shown above. That page ends the result." }
+  const pageRead = (next: number) => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read, shown above. To read on, pass offset ${next}.` })
+  const lastPageRead = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read, shown above. That page ends the result." }
 
   /**
    * The offset a model that follows a refusal passes next, reading it beside
@@ -373,7 +373,7 @@ describe("recall_context in the turn that wrote the result", () => {
       const third = yield* turn.ask({ locator, offset: BOUND })
       return { locator, first, again, third, shown: yield* turn.shown }
     }))
-    const refusal = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset 24000." }
+    const refusal = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read, shown above. To read on, pass offset 24000." }
     expect(seen.first).toBe(page(text, seen.locator, BOUND))
     expect(seen.again).toEqual(refusal)
     expect(seen.third).toEqual(refusal)
@@ -393,7 +393,7 @@ describe("recall_context in the turn that wrote the result", () => {
       return { last, again, inside }
     }))
     expect(seen.last).toBe(text.slice(24_000))
-    expect(seen.again).toEqual({ error: "AlreadyRecalled", message: "The text from that offset is in a page you already read in this turn, shown above. That page ends the result." })
+    expect(seen.again).toEqual({ error: "AlreadyRecalled", message: "The text from that offset is in a page you already read, shown above. That page ends the result." })
     expect(seen.inside).toEqual(seen.again)
   })
 

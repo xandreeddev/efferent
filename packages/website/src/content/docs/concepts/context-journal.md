@@ -203,13 +203,14 @@ reads as the call's result:
   shortened form shows, or offset 0 if it shows none.`
 - `AlreadyRecalled` when the offset is inside a page a call of this turn
   already returned, its start included, and that page is still shown: `The
-  text from that offset is in a page you already read in this turn, shown
-  above. To read on, pass offset 24000.`, or `That page ends the result.`
-  after the last page.
+  text from that offset is in a page you already read, shown above. To read
+  on, pass offset 24000.`, or `That page ends the result.` after the last
+  page.
 
-An offset past the shown text and outside every page already read is a page.
-When window memory spills a result under pressure, the text that left the
-request is served again.
+An offset past the shown text and outside every page already read is a page,
+also when it lies below a page already read and its page runs into that one
+(see the limits). When window memory spills a result under pressure, the text
+that left the request is served again.
 
 A refusal stays in the conversation as its call's result, and the model reads
 it again in later requests, also after memory has shortened the result it is
@@ -218,13 +219,23 @@ an earlier turn's result its tool's compact view. A `ResultShown` reply
 therefore holds no offset of its own. It sends the model to the offset the
 result's shortened form shows when the reply is read: the new notice's after
 a second spill, and 0 after a compact view, which shows none. Either way the
-model reads on from the first text its request lacks.
+reply leads to where the result's shown form ends when it is read. Where the
+turn had already read a page from there, the call that follows the reply is
+refused with `AlreadyRecalled` in the same turn, and served that page again
+in a later turn, which the guard does not cover.
+
+An `AlreadyRecalled` reply names no turn, so it stays true when it is read in
+a later one: the page and the reply that calls it shown are recorded in the
+same turn, and a turn leaves a request only as a whole, so the page is still
+above the reply there.
 
 Every offset inside the same shown text gets the same reply, and so does
 every offset inside the same page. The step loop tells a step that repeats an
 earlier one by its results, so a model that keeps asking is nudged after
 three repeats and its run is stopped after five (`partial`,
-`degenerate-loop`), long before the step limit.
+`degenerate-loop`), long before the step limit. That stops a model that asks
+inside one shown text, and one that steps forward inside a page it read while
+six of its calls in a row fall inside that page.
 
 These limits apply:
 
@@ -236,6 +247,15 @@ These limits apply:
   result with a recorded digest under a policy that shows no digests. The
   tool's description says a call for shown text can return no text, not that
   it does.
+- A call is refused by where its page would start, not by what the page would
+  hold. An offset below a page already read, outside the shown text and every
+  other page, is served a whole page, although most of it can be shown: asked
+  1,000 characters below a page already read, the call returns 8,000
+  characters of which 7,000 are in the request. Each such page is a new
+  result, so the breaker counts no repeat. A model that steps downward, each
+  call a little below the last page it read, still ends at the step limit, or
+  under window memory fails with `context.budget` once those pages pass the
+  budget.
 - Two calls for the same page made together in one response are both served
   when they run at once (`limits.toolConcurrency` above 1): neither has a
   result when the other is checked. A turn runs them one after another by
@@ -245,7 +265,13 @@ These limits apply:
 - The breaker stops a model only when its steps repeat. A step that pairs a
   refused call with a call whose result is new, or that makes more refused
   calls than any step before it, counts as progress, and such a run ends at
-  the step limit.
+  the step limit. A model that steps forward inside a page it read is stopped
+  only while six refused calls in a row fall inside that page: the first,
+  then the five repeats the breaker stops at by default
+  (`limits.degenerate`). With pages of 8,000 characters that holds up to a
+  stride of 1,333. With a longer stride the model reaches the next page
+  first, which is new text and starts the count again: the run costs steps,
+  not context, and ends at the step limit or at the result's end.
 - A custom policy that shortens a recalled page makes an earlier
   `AlreadyRecalled` reply untrue of later requests. The memory plugins never
   shorten one.
@@ -354,7 +380,10 @@ tool's own view wrote it. A turn also counts its `bounds`, `spills`,
 from its `requests`: a host-planned step prepares no request.
 
 `compacts` is the number of results given their tool's compact view during
-the turn, at its start or once a request passed its budget. A result is
+the turn, at its start or once a request passed its budget. It counts every
+compact view recorded in the turn, whatever policy recorded it and whether or
+not a request showed the result through it, as the counts beside it count
+what the journal holds. A result is
 listed at its largest size, so one that a request showed whole before a
 later request of the same turn showed it compact is listed `whole`, by the
 request that showed it so: the count is what tells you a compact view was

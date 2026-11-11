@@ -20,8 +20,8 @@ import type { AgentConfig } from "./agent.adapter.js"
  * reply says where to read on, the model follows it, and one that keeps
  * asking is stopped by the step loop's breaker long before the step limit.
  * A refusal stays in the conversation after memory shortens the result it
- * was about: followed then, it still leads to the first text the request no
- * longer shows. A report of an earlier turn is served as before. Two calls
+ * was about: followed then, it still leads to where the result's shown form
+ * ends. A report of an earlier turn is served as before. Two calls
  * for one page made together in one response: the second is refused when a
  * turn runs its calls one after another, as it does by default, and both are
  * served when they run at once.
@@ -65,6 +65,10 @@ const host = defineCapability({
 
 const BOUND = 16_000
 const RECALL_PAGE = 8_000
+/** The refused calls in a row that end a run: the first, then the five repeats the loop's breaker stops at by default. */
+const REFUSALS_TO_STOP = 6
+/** The longest forward stride the breaker stops inside one page: that many calls must start past the page's start and before its end. */
+const STOPPED_STRIDE = Math.floor((RECALL_PAGE - 1) / REFUSALS_TO_STOP)
 const north = report("north")
 
 const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
@@ -125,7 +129,7 @@ const page = (locator: string, from: number) => `${north.slice(from, from + RECA
 
 /** The replies of `recall_context` that return no text, as the model reads them. */
 const headShown: Failure = { error: "ResultShown", message: "That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none." }
-const pageRead = (next: number): Failure => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset ${next}.` })
+const pageRead = (next: number): Failure => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read, shown above. To read on, pass offset ${next}.` })
 
 const MAX_STEPS = 24
 
@@ -251,6 +255,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
   test.each([
     { stepping: "one character at a time", stride: 1 },
     { stepping: "1,000 characters at a time", stride: 1_000 },
+    { stepping: "1,333 characters at a time, the longest stride that keeps six calls inside one page", stride: STOPPED_STRIDE },
   ])("a model that reads on from the notice and then steps $stepping, inside the page it just read, is stopped by the loop's breaker", async ({ stride }) => {
     // The first call is the one the notice asks for. Every later one starts inside the page that call returned: each got a page of its own before, nearly all of it text the request held.
     const asking = Array.from({ length: MAX_STEPS }, (_, index) => recall(`s${index + 1}`, () => BOUND + index * stride))
@@ -269,6 +274,24 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     expect(requests.at(-1)?.results.filter((result) => !String(result.result).startsWith("{"))).toEqual([
       { name: "fetch_report", result: bounded(locator) }, { name: "recall_context", result: page(locator, BOUND) },
     ])
+  })
+
+  test("a model that steps one character more than that stride leaves each page before the sixth refusal, and reads only new pages to the step limit", async () => {
+    // The bound the guides state: 1,333 characters, from the 8,000-character page and the breaker's five repeats.
+    expect(STOPPED_STRIDE).toBe(1_333)
+    const stride = STOPPED_STRIDE + 1
+    const asking = Array.from({ length: MAX_STEPS }, (_, index) => recall(`w${index + 1}`, () => BOUND + index * stride))
+    const ran = await Effect.runPromise(runTurns(plugin, [[fetchNorth, ...asking]]))
+    const [turn] = ran.turns
+    expect(turn?.outcome).toBe("partial")
+    expect(turn?.reason).toBe("step-cap")
+    const requests = turn?.requests ?? []
+    expect(requests).toHaveLength(MAX_STEPS)
+    const locator = locatorOf(requests[1] ?? { calls: [], results: [] })
+    // Five refusals inside a page, then the first offset past it: a page of new text, which starts the breaker's count again. No page holds text another returned.
+    const served = [BOUND, BOUND + 6 * stride, BOUND + 12 * stride, BOUND + 18 * stride]
+    expect(ran.recalls.filter((recalled) => !recalled.isError)).toEqual(served.map((from) => ({ isError: false, view: page(locator, from) })))
+    expect(ran.recalls.filter((recalled) => recalled.isError)).toHaveLength(MAX_STEPS - 1 - served.length)
   })
 
   test("a result of an earlier turn is served as before, from any offset and as often as asked", async () => {
@@ -332,6 +355,26 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     // The reply it followed is the first turn's, as it was written.
     expect(second[0]?.results[1]).toEqual({ name: "recall_context", result: failureShown(headShown) })
     expect(ran.recalls).toEqual([{ isError: true, view: failureShown(headShown) }, { isError: false, view: page(locator, unread) }])
+  })
+
+  test("a refusal for a page already read, read in the next turn, still has that page above it", async () => {
+    // The first turn reads the page after the report's shown start, then asks from inside it. The second turn's model reads that reply again and follows it.
+    const ran = await Effect.runPromise(runTurns(plugin, [
+      [fetchNorth, recall("p1", () => BOUND), recall("p2", () => BOUND + 4_000), () => stop("The north report is read on.")],
+      [followReply("p3"), () => stop("The north report is read further.")],
+    ]))
+    expect(ran.turns.map((turn) => turn.outcome)).toEqual(["completed", "completed"])
+    const first = ran.turns[0]?.requests ?? []
+    const second = ran.turns[1]?.requests ?? []
+    const locator = locatorOf(first[1] ?? { calls: [], results: [] })
+    // The next turn's first request: the report's shown start, the page, then the reply that calls that page shown above. The reply names no turn.
+    expect(second[0]?.results).toEqual([
+      { name: "fetch_report", result: bounded(locator) },
+      { name: "recall_context", result: page(locator, BOUND) },
+      { name: "recall_context", result: failureShown(pageRead(BOUND + RECALL_PAGE)) },
+    ])
+    // Followed there, the offset it names is the page after: nothing is skipped, and nothing the request shows is returned again.
+    expect(second.at(-1)?.results.at(-1)).toEqual({ name: "recall_context", result: page(locator, BOUND + RECALL_PAGE) })
   })
 }))
 

@@ -184,8 +184,8 @@ const recallRefusalOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: 
  * notice. So each text says what the result showed when the call was made,
  * holds no offset of its own, and sends the model to the offset the result's
  * shortened form shows when it reads the reply (the tool's description names
- * a shortened result that way): with a notice, that is where the text the
- * request lacks starts; with none, the result's start. A result still shown
+ * a shortened result that way): with a notice, that is where the result's
+ * shown form ends; with none, the result's start. A result still shown
  * whole is not shown shortened, so its text sends the model to no call that
  * would be refused again.
  */
@@ -198,15 +198,18 @@ const resultShownMessage: Record<ShownPart, string> = {
  * The failure `recall_context` returns for a refusal: what the request held
  * of the text asked for, and how to read on. It holds nothing of the call
  * (no offset asked for, no locator), so every offset inside one shown head,
- * and every offset inside one page, gets the same failure.
+ * and every offset inside one page, gets the same failure. An
+ * `AlreadyRecalled` text names no turn: it is read again in later turns,
+ * where the page it calls shown is still above it (the two are recorded in
+ * one turn, and a turn leaves a request only as a whole).
  */
 const recallRefusalFailure = (refusal: RecallRefusal): Failure => RecallRefusal.match(refusal, {
   ResultShown: ({ shown }) => ({ error: "ResultShown", message: resultShownMessage[shown] }),
   AlreadyRecalled: ({ next }) => ({
     error: "AlreadyRecalled",
     message: Option.match(next, {
-      onNone: () => "The text from that offset is in a page you already read in this turn, shown above. That page ends the result.",
-      onSome: (ended) => `The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset ${ended}.`,
+      onNone: () => "The text from that offset is in a page you already read, shown above. That page ends the result.",
+      onSome: (ended) => `The text from that offset is in a page you already read, shown above. To read on, pass offset ${ended}.`,
     }),
   }),
 })

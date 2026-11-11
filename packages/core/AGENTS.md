@@ -400,7 +400,16 @@ every such page is a page. Both are `Failure`s, returned like
   is one-sided: a call it serves may still return shown text (a digest
   recorded under a policy that shows none, a page another run read), and the
   tool's description says a call for shown text can return none, never that
-  it does.
+  it does. It is also decided by where a page would start, never by what the
+  page would hold: an offset below a page already read, outside the shown
+  text and every other page, is served a whole page, although its part from
+  that page's start on is shown. Each such page is a new result, so the
+  breaker counts no repeat, and a model that steps downward, each call a
+  little below the last page it read, still ends at the step limit, or under
+  the window strategy fails with `context.budget`. That limit is stated
+  wherever the guard is described: never write that the guard removes those
+  two endings, only that it removes them for a model that asks inside one
+  shown head or steps forward inside a page it read.
 - A refusal is read again after the request it was true of. It is the call's
   recorded result, so it stays in every later request of the turn and of
   later turns, while memory may shorten the result it is about (a spill
@@ -412,11 +421,19 @@ every such page is a page. Both are `Failure`s, returned like
   text for a result shown whole sends it nowhere while the result is still
   whole. Never put a number in a `ResultShown` text again: 0.21.0's `The
   first 16000 characters of this result are shown above. To read on, pass
-  offset 16000.` sent a model past text its request no longer held. An
-  `AlreadyRecalled` text names the page's end because a page is never
-  shortened by a strategy that contributes the tool, and it leaves a request
-  only with its whole turn; a strategy that shortens a recalled page makes
-  that text stale.
+  offset 16000.` sent a model past text its request no longer held. What
+  such a reply leads to is where the result's shown form ends when it is
+  read, not always the first text the request lacks: where the turn had
+  already read a page from there, the call that follows the reply is refused
+  with `AlreadyRecalled` in the same turn and served that page again in a
+  later one. An `AlreadyRecalled` text names the page's end because a page
+  is never shortened by a strategy that contributes the tool, and it leaves
+  a request only with its whole turn; a strategy that shortens a recalled
+  page makes that text stale. It names no turn (0.21.0's said `in this
+  turn`): the page and the reply that calls it shown are recorded in the
+  same turn, so the page is still above the reply in a later turn's
+  requests, and `shown above` stays true there where `in this turn` would
+  not. Never name the turn in a refusal's text again.
 - Only a recorded page that is not an error counts as read. The call being
   answered is in the log before its handler runs, and a refused call returned
   no page. Two calls for one page that run at once are both served: neither
@@ -437,7 +454,16 @@ every such page is a page. Both are `Failure`s, returned like
   (`packages/sdk/src/recall-guard.journey.test.ts`). The breaker counts
   steps whose results it has seen before in a row, and a step's signature is
   all of its results: a step that also returns something new, or more
-  refusals than any step before it, does not count.
+  refusals than any step before it, does not count. So a model that steps
+  forward inside a page it read is stopped only while six refused calls in a
+  row fall inside that page: the first, then the five repeats the loop's
+  default stops at (`REPEAT_BREAK_AT`, `packages/plugin-agent-loop/src/loop.ts`).
+  With `RECALL_PAGE_CHARS` at 8,000 those six fit in the 7,999 characters
+  past the page's start up to a stride of 1,333; a longer stride reaches the
+  next page first, which is new text and starts the count again, and such a
+  run costs steps, not context. The journey holds strides of 1, 1,000 and
+  1,333 as stopped and 1,334 as running to the step limit over new pages
+  only; change either constant and the bound moves with it.
 
 The guard adds no stored field, journal kind or event, and bumps no strategy
 version: a refusal is the failed call's result, recorded as any is.
@@ -532,7 +558,13 @@ the journal:
 - A turn's `compacts` counts results: one for each entry a `CompactViews`
   recorded during it names, whether a turn's start or a request over its
   budget decided it. `bounds`, `spills` and `digests` count results too;
-  `drops` and `summaries` count compactions. A turn lists each result at the
+  `drops` and `summaries` count compactions. Each counts what the journal
+  holds for the turn, whatever strategy recorded it: `compacts` counts every
+  compact view recorded in the turn, also one no request showed the result
+  through (another strategy's, or 0.21.0's of a result in a turn the same
+  decision dropped). `compacts` is a required key of `ContextReportTurn`,
+  so a report stored under 0.21.0 does not decode with the schema: the
+  CHANGELOG says so under Migration. A turn lists each result at the
   largest size one of its requests showed it, labelled as that request
   showed it, so a result compacted after a request of the same turn had
   shown it whole stays `whole` in that turn's list, and `compacts` is what
@@ -793,10 +825,10 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:58-59` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
 | Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`): one text for a result bounded as it is written (`recordTail`, cut at the bound) and for one spilled under pressure (a strategy's `maintain`); its count and offset are those of the cut, which never splits a surrogate pair | `src/memory/recall.entity.functions.ts:42` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `src/memory/memory-session.test.ts#a result longer than the bound is recorded with its preview before any build shows it`; `src/memory/recall.entity.functions.test.ts#a preview cut inside a pair ends before it, and says so in its count and its offset` |
 | `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`recallPage`); a page never ends inside a surrogate pair, and prints the offset it ended at | `src/memory/recall.entity.functions.ts:90` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next`; `src/memory/recall.entity.functions.test.ts#the pages read from the preview's offset are well formed and join to the whole view` |
-| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:222`, `:225` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
-| `recall_context`'s `ResultShown` failure for a result of the current turn shown in part when the call was made: `That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none.` It holds no offset of its own: read after memory shortened the result again, it still leads to the first text the request lacks (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:193` | exact tests `src/memory/recall.entity.functions.test.ts#a bounded result is refused anywhere in its head, and the reply sends the model to the offset its shortened form shows`; `src/memory/recall.entity.functions.test.ts#after a spill under pressure, the offset the refusal sends the model to is the new notice's`; `src/memory/recall.entity.functions.test.ts#after a compact view took the result's place in a later turn, the refusal leads to the result's start`; `packages/sdk/src/recall-guard.journey.test.ts#a model that asks for shown text is told where to read on from, and reads the next page` |
+| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:225`, `:228` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
+| `recall_context`'s `ResultShown` failure for a result of the current turn shown in part when the call was made: `That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none.` It holds no offset of its own: read after memory shortened the result again, it still leads to where the result's shown form ends (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:193` | exact tests `src/memory/recall.entity.functions.test.ts#a bounded result is refused anywhere in its head, and the reply sends the model to the offset its shortened form shows`; `src/memory/recall.entity.functions.test.ts#after a spill under pressure, the offset the refusal sends the model to is the new notice's`; `src/memory/recall.entity.functions.test.ts#after a compact view took the result's place in a later turn, the refusal leads to the result's start`; `packages/sdk/src/recall-guard.journey.test.ts#a model that asks for shown text is told where to read on from, and reads the next page` |
 | `recall_context`'s `ResultShown` failure for a result of the current turn shown whole when the call was made: `This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none.` (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:194` | exact tests `src/memory/recall.entity.functions.test.ts#a result shown whole is refused at every offset: nothing of it was left out` |
-| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page the run read earlier in the turn, with more after that page: `The text from that offset is in a page you already read in this turn, shown above. To read on, pass offset N.`, N where that page ended (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:209` | exact tests `src/memory/recall.entity.functions.test.ts#a page already read in this turn is refused, with the next offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a page already read is refused, with that page's end, whatever the offset` |
-| `recall_context`'s `AlreadyRecalled` failure for an offset inside the last page, read earlier in the turn: `The text from that offset is in a page you already read in this turn, shown above. That page ends the result.` (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:208` | exact tests `src/memory/recall.entity.functions.test.ts#the last page read again is refused as the end` |
+| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page the run read earlier in the turn, with more after that page: `The text from that offset is in a page you already read, shown above. To read on, pass offset N.`, N where that page ended. It names no turn: read in a later turn, its page is still above it (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:212` | exact tests `src/memory/recall.entity.functions.test.ts#a page already read in this turn is refused, with the next offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a page already read is refused, with that page's end, whatever the offset`; `packages/sdk/src/recall-guard.journey.test.ts#a refusal for a page already read, read in the next turn, still has that page above it` |
+| `recall_context`'s `AlreadyRecalled` failure for an offset inside the last page, read earlier in the turn: `The text from that offset is in a page you already read, shown above. That page ends the result.` (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:211` | exact tests `src/memory/recall.entity.functions.test.ts#the last page read again is refused as the end` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.
