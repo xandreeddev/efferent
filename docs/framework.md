@@ -1557,9 +1557,9 @@ a new strategy rebuilds from the full-fidelity entries.
   its results, so the decision records the compact views of the results in
   the turns that stay and none for a dropped turn.
   `recall_context` reads a shortened result
-  back a page (core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
-  `offset`, each page ending with the offset of the next, and a recalled
-  page is never shortened. Within the turn that wrote a result it refuses a
+  back a page (at most core's `RECALL_PAGE_CHARS`, 8,000 characters) at a time
+  from an `offset`, each page ending with the offset of the next, and a
+  recalled page is never shortened. Within the turn that wrote a result it refuses a
   call for text the request still shows (see "Reading a shortened result on"
   below).
   It fails
@@ -1571,7 +1571,11 @@ a new strategy rebuilds from the full-fidelity entries.
   current turn alone does not fit (the fewest spills, then the fewest dropped
   turns); the strategy keeps its id `window` and its version becomes
   `4+current-turn-first`, part of every request's `strategyVersion`, so
-  compactions recorded under either order replay as recorded.
+  compactions recorded under either order replay as recorded. With
+  `cutAtLineBreaks: true` its previews and the pages of `recall_context` end
+  at a line break near their limit (see "Cutting at line breaks" below), and
+  the version takes the suffix `+cut-at-line-breaks`, after the order's when
+  both are on.
 - The summary strategy folds the oldest turns into one recorded summary once
   the calibrated render passes its trigger. Its default `summarizeAt: "turn-end"`
   considers one after the turn's reply: once a completed or partial reply is
@@ -1600,7 +1604,9 @@ a new strategy rebuilds from the full-fidelity entries.
   turn. It bounds a result as it is written as the window strategy does
   (`boundOnWriteChars`, 16,000 characters by default) and contributes
   `recall_context` under its own capability id,
-  `@xandreed/plugin-memory-summary/recall`, whatever that option is. It
+  `@xandreed/plugin-memory-summary/recall`, whatever that option is; with
+  `cutAtLineBreaks: true` the bound's preview and the tool's pages end at a
+  line break near their limit, and its version stays `2`. It
   never spills under pressure and never reduces the current turn, so
   results that are each bounded can still pass the budget together (see the
   limits under "Bounding what a tool shows" below).
@@ -1680,7 +1686,8 @@ result as it is written. A result whose view is longer than
 pages, about 5,400 estimated tokens, a twelfth of the default budget) is
 recorded with the strategy's own `Spill` before the write returns, so every
 request that includes it, the first one too, shows its first 16,000
-characters and then the notice a spill under pressure ends with:
+characters (fewer with `cutAtLineBreaks`, below) and then the notice a spill
+under pressure ends with:
 
 ```text
 [… 36000 more characters kept out of context; call recall_context with locator "run-1:4" and offset 16000 to read them]
@@ -1756,6 +1763,103 @@ on write, after that digest returns.
 - A graph that holds both memory plugins registers `recall_context` twice
   and fails with `tools.duplicate`: list only the one the graph binds.
 
+**Cutting at line breaks.** A cut by character count can fall inside a
+record of a view made of lines. The result then ends with half a row and the
+page read from its notice starts with the other half, so the model holds a
+row's identifier in two pieces, in two results. `cutAtLineBreaks: true` on a
+memory plugin (off by default) makes each of its cuts fall just after a line
+break when one is near the limit: the preview of a result bounded as it is
+written, the preview of a result the window strategy spills under pressure,
+and every page `recall_context` returns, for results of the current turn and
+of earlier turns alike.
+
+The rule is one function, core's `cutAfterLineBreak`. A piece is asked for
+up to a limit: `boundOnWriteChars` from the result's start for a bound,
+`previewChars` for a pressure preview, 8,000 characters from its own start
+for a page. It is first cut at that limit, never inside a surrogate pair, as
+with the option off. When that cut reaches the result's end, nothing
+changes. Otherwise the last line break (`\n`) before the cut is looked for,
+and the cut moves to just after it when that leaves the piece some text and
+gives up no more than a quarter of the piece asked for (4,000 characters of
+a bound of 16,000, 150 of a pressure preview of 600, 2,000 of a page). Else
+the cut stays at the limit.
+
+- A view whose lines are shorter than that quarter is cut between two
+  lines wherever the rule chooses the cut. Two cuts are not the rule's: a
+  page stops where a page the run already read starts, and a page starts at
+  the offset its call names, which a model can choose inside a line.
+- A longer line can still be cut, and then at the limit: more than a
+  quarter of the piece past the line's start, so after the identifier a row
+  starts with when that identifier is shorter than the quarter.
+- A view with no line break near the limit is cut exactly as with the
+  option off. A tool with no view of its own is shown as its result: text
+  as it is, anything else as canonical JSON on one line. The option does
+  nothing for a result on one line, so a tool shows its rows on separate
+  lines (in the text it returns, or in its view) to gain from it.
+- The limits become upper bounds. At the defaults a bounded result shows
+  12,000 to 16,000 characters, a pressure preview 450 to 600 and a page
+  6,000 to 8,000, so a result is read in a few more pages. Each low end is
+  one less (11,999, 449, 5,999) where the limit would split a surrogate
+  pair: the quarter is counted back from the cut at the limit, which is then
+  one unit before it.
+- Pages have no fixed size, so the only offset to read on from is the one a
+  notice or a page's last line prints. A caller that adds 8,000 to the
+  offset it last passed skips the text between the page's end and that
+  offset, and nothing tells it so.
+- A result a little longer than the bound can be bounded where it was shown
+  whole with the option off. A result is left whole when its preview would
+  not be shorter than its view, and a preview cut at a line break is
+  shorter: 12,000 characters, a line break and 4,049 more are shown whole
+  at the default bound with the option off, and as 12,001 characters and a
+  notice with it on.
+- A `\r\n` stays whole when the cut falls after it. A cut the rule leaves
+  at the limit can still fall between the two.
+- A piece that ends with its line break is followed by an empty line, then
+  the notice or the page's last line.
+
+The model reads the same texts: the notice and a page's last line are
+unchanged, and the offset each prints is where its cut fell, so the pages
+read from a notice still join to the whole view. The guard below reads what
+a request shows back from the request, not from the rule: a result's shown
+head is the offset its notice prints, when the preview is exactly the view's
+text up to there and the notice core writes for it, and a page is what its
+recorded result holds. So one session can hold both cuts. A result
+shortened before the option was turned on, or by an earlier release, keeps
+the text it shows and is read on from the offset it prints, and so does one
+cut at a line break after the option is turned off. A page is still cut
+where a page the run already read starts, wherever that is: that cut is the
+edge of the text the request holds, not one the rule chooses.
+
+The window strategy says the option in its version, as it does
+`currentTurnFirst`: `4+cut-at-line-breaks`, or
+`4+current-turn-first+cut-at-line-breaks` with both, in every request's
+`strategyVersion` and in `context.built`. Its id stays `window`, so
+compactions recorded with or without the option keep applying. The summary
+strategy's version stays `2`: the option changes none of its summary
+decisions, and a new version would set aside every render checkpoint stored
+under it. Under it, where a bound was cut is read from its preview.
+
+The limits.
+
+- A row longer than a quarter of the piece can be cut inside its text, and a
+  row whose identifier is itself longer than that quarter inside the
+  identifier.
+- Turned on within a turn in which the window strategy already spilled a
+  result at the character limit, the option can make that result a
+  candidate once more. The rule is unchanged: a result is spilled again
+  only when the new preview is shorter than the text it shows. A preview cut
+  at a line break usually is, by the characters the line break gives up, so
+  a request still over its budget spills the result again and then never
+  again. It is not always shorter: where the count in the notice gains a
+  digit the two previews are as long, and nothing is spilled.
+- A custom `MemoryPolicy` sets `cutAtLineBreaks` for its bounds, passes
+  `{ cutAtLineBreaks: true }` to `spillPreview` for its own spills, and
+  contributes `recallCapabilityOf(id, { cutAtLineBreaks: true })` for its
+  pages. All three take the same value. The window plugin's exported
+  `recallCapability` always pages at the character limit: beside a policy
+  that cuts at line breaks it gives heads that end after a whole line and
+  pages that do not. The offsets stay right, and rows are split again.
+
 **Reading a shortened result on.** `recall_context` takes the locator a
 shortened result's notice shows and an `offset` (0 by default), and returns
 at most 8,000 characters of the stored view from there; while more remains,
@@ -1788,8 +1892,9 @@ each as a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
 An offset past the shown text and outside every page already read is a page.
 Within the turn that page never holds text of a page the same run already
 read and the request still shows whole: it ends where the next such page
-starts, when that is sooner than 8,000 characters on, wherever the call
-starts (below a page already read, or in a gap between two). So every
+starts, when that is sooner than its own end (8,000 characters on, or with
+`cutAtLineBreaks` the line break before that), wherever the call starts
+(below a page already read, or in a gap between two). So every
 character a call returns is new to the request, in whatever order the model
 asks, and the pages of one result together never hold more than the result
 does. A page with unread text right after it ends as it always did: `[… 28000
@@ -1812,8 +1917,8 @@ compact view at a turn's start or under pressure. That is why a
 `ResultShown` reply says what the result showed when the call was made and
 holds no offset of its own. It sends the model to the offset the result's
 shortened form shows when the reply is read: after a second spill that is
-the new notice's (600, not 16,000), and after a compact view, which shows
-none, it is 0, the result's start. Either way the reply leads to where the
+the new notice's (at the default limits 600, not 16,000), and after a
+compact view, which shows none, it is 0, the result's start. Either way the reply leads to where the
 result's shown form ends when it is read. Where the turn had already read a
 page from there, the call that follows the reply is refused with
 `AlreadyRecalled` in the same turn, which names where to go on, and is
@@ -1884,8 +1989,11 @@ The limits.
   five repeats the breaker stops at by default (`breakAfter` of
   `limits.degenerate`). Inside one page of 8,000 characters (core's
   `RECALL_PAGE_CHARS`) those six fit in the 7,999 characters past the
-  page's start up to a stride of 1,333; pages that follow on from one
-  another count as one stretch, which allows a longer stride. With a longer stride the model
+  page's start up to a stride of 1,333. With `cutAtLineBreaks` a page holds
+  6,000 to 8,000 characters (5,999 where the limit would split a surrogate
+  pair), so the longest stride stopped inside one is between 999 and 1,333,
+  by where the page ended. Pages that follow on from
+  one another count as one stretch, which allows a longer stride. With a longer stride the model
   reaches the next page first: that page is new text and starts the count
   again, so the run costs steps, not context, and ends at the step limit or
   at the result's end. A model that steps downward, each call a little

@@ -86,6 +86,41 @@ export const MemoryWindowConfig = Schema.Struct({
    * nothing either; the plugin's options take the default.
    */
   boundOnWriteChars: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  /**
+   * Cut what a shortened result shows at a line break: the preview of a
+   * result bounded as it is written (`boundOnWriteChars`), the preview of a
+   * result spilled under pressure (`previewChars`) and every page
+   * `recall_context` returns end just after the last line break within
+   * their limit, when cutting there gives up no more than a quarter of the
+   * limit; else at the limit, as with the option off. A result of rows
+   * shorter than that quarter is then cut between two rows wherever the rule
+   * chooses the cut. Two cuts are not the rule's: a page stops where a page
+   * the run already read starts, and starts at the offset its call names.
+   * Off (the default), each is cut at its character limit. On, the
+   * strategy's version ends with `+cut-at-line-breaks`.
+   *
+   * - Each limit becomes an upper bound: a preview or a page holds up to a
+   *   quarter fewer characters, counted back from the cut at the limit,
+   *   which is one unit before the limit where the limit would split a
+   *   surrogate pair. Pages have no fixed size, so the only offset to read
+   *   on from is the one a notice or a page prints: adding 8,000 to the
+   *   offset last passed skips text.
+   * - A view with no line break near a limit is cut as with the option off.
+   *   A tool with no view of its own that returns anything but text is shown
+   *   as JSON on one line, so the option does nothing for it: a tool shows
+   *   its rows on separate lines to gain from it.
+   * - A result a little longer than the bound can be bounded where it was
+   *   shown whole with the option off: a result is left whole when its
+   *   preview would not be shorter than its view, and a preview cut at a
+   *   line break is shorter.
+   * - Results shortened before the option changed keep the text they show,
+   *   and are read on from the offset they print.
+   * - A host that builds its own memory from `windowPolicy` with the option
+   *   contributes `recallCapabilityOf(id, { cutAtLineBreaks: true })` beside
+   *   it: the exported `recallCapability` always pages at the character
+   *   limit.
+   */
+  cutAtLineBreaks: Schema.optionalKey(Schema.Boolean),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 /** @public */
@@ -93,7 +128,7 @@ export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
   digestOnWriteChars: 0, digests: true, media: "inline", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
-  currentTurnFirst: false, boundOnWriteChars: 16_000,
+  currentTurnFirst: false, boundOnWriteChars: 16_000, cutAtLineBreaks: false,
 }
 
 /** @public */
@@ -101,11 +136,17 @@ export const WINDOW_STRATEGY = { id: "window", version: "4" } as const
 
 /**
  * The strategy a config runs: always `WINDOW_STRATEGY.id`, so compactions
- * recorded under either order keep applying, with `currentTurnFirst` in the
- * version, so request headers and `context.built` tell the two orders apart.
+ * recorded under any of its options keep applying, with each option that
+ * changes what the policy decides in the version, in this order:
+ * `currentTurnFirst` (which results it spills or drops first), then
+ * `cutAtLineBreaks` (where a spill's preview is cut). So request headers and
+ * `context.built` tell them apart. With neither it is `WINDOW_STRATEGY`
+ * itself.
  */
-const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly version: string } =>
-  config.currentTurnFirst === true ? { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}+current-turn-first` } : WINDOW_STRATEGY
+const strategyOf = (config: MemoryWindowConfig): { readonly id: string; readonly version: string } => {
+  const suffixes = [...(config.currentTurnFirst === true ? ["+current-turn-first"] : []), ...(config.cutAtLineBreaks === true ? ["+cut-at-line-breaks"] : [])]
+  return suffixes.length === 0 ? WINDOW_STRATEGY : { id: WINDOW_STRATEGY.id, version: `${WINDOW_STRATEGY.version}${suffixes.join("")}` }
+}
 
 /**
  * The window policy: bound a result as it is written, compact older turns
@@ -123,6 +164,8 @@ export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
   digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
   // A config written before the option has no key: given to the policy as it is, it bounds nothing.
   ...(config.boundOnWriteChars === undefined || config.boundOnWriteChars === 0 ? {} : { boundOnWriteChars: config.boundOnWriteChars }),
+  // Core cuts the preview of a bound as this policy cuts the preview of a spill.
+  ...(config.cutAtLineBreaks === true ? { cutAtLineBreaks: true } : {}),
   maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
@@ -210,7 +253,7 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
       // A recalled page is never spilled again: it is a bounded part of a result already spilled.
       .filter(({ entry, result }) => entry.turn === turn && !result.pinned && result.toolName !== RECALL_TOOL && result.view.length >= config.spillMinChars)
       .flatMap(({ entry, result, shown, showing }) => {
-        const preview = spillPreview(entry, result.view, config.previewChars)
+        const preview = spillPreview(entry, result.view, config.previewChars, { cutAtLineBreaks: config.cutAtLineBreaks === true })
         // A result shown through other text (a bound's preview, an earlier spill's, a digest) is spilled only when this preview is shorter than that text.
         return Option.isSome(shown) && preview.length >= showing ? [] : [{ showing, action: { _tag: "Spill", entry: entry.id, preview } satisfies CompactionAction }]
       })
@@ -244,13 +287,17 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     return yield* Effect.fail(new HarnessError({ code: "context.budget", message: `The current turn alone exceeds the ${signal.budgetTokens}-token context budget` }))
 })
 
+const RECALL_CAPABILITY_ID = "@xandreed/plugin-memory-window/recall"
+
 /**
  * The memory-owned tool that makes spills lossless for the model: core's
- * recall capability, contributed under this plugin's id.
+ * recall capability, contributed under this plugin's id. Its pages are cut
+ * at the character limit; the plugin contributes the same capability with
+ * pages cut at line breaks when `cutAtLineBreaks` is on.
  *
  * @public
  */
-export const recallCapability = recallCapabilityOf("@xandreed/plugin-memory-window/recall")
+export const recallCapability = recallCapabilityOf(RECALL_CAPABILITY_ID)
 
 /**
  * Windowed conversation memory: every message and tool result is stored at
@@ -273,7 +320,8 @@ export const memoryWindowPlugin = definePlugin({
         open: Effect.fn("memory.open")(({ runId, log }) => openLogSession(log, policy, { runId })),
       })
     }),
-    Layer.succeed(Capabilities, [recallCapability]),
+    // The pages follow the option the previews are cut with: the same capability id and tool either way.
+    Layer.succeed(Capabilities, [config.cutAtLineBreaks === true ? recallCapabilityOf(RECALL_CAPABILITY_ID, { cutAtLineBreaks: true }) : recallCapability]),
   ),
 })
 /** Windowed memory as a typed layer: provides ConversationMemory and contributes the recall tool. */

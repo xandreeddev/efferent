@@ -32,26 +32,62 @@ const cutAt = (text: string, at: number): number => {
 }
 
 /**
- * A spilled result's preview: its first `chars` characters (one fewer when
- * the cut would split a surrogate pair), and how to read the rest. The
- * offset it prints is where the cut fell, so the page read from it starts
- * at the next character.
+ * Where a cut asked for at `at` falls in `text` when it may fall at a line
+ * break, for a piece that starts at `from` (0 for a preview, a page's start
+ * for a page): just after the last line break (`\n`) before the character
+ * cut (`cutAt`), when that leaves the piece some text and gives up, of what
+ * the character cut would hold, no more than a quarter of the piece asked
+ * for (`at - from`); else the character cut. So a view of lines shorter than
+ * that quarter is only ever cut between two lines, and a text with no line
+ * break near the limit is cut as it always was. A cut that reaches the end
+ * of the text stays there, and no cut splits a surrogate pair: a line break
+ * is one unit. What is given up is counted from the character cut, not from
+ * `at`, so that cutting again at a position this chose returns that
+ * position. Only the stretch the cut may move into is searched, so a text
+ * with no line break costs no more than that quarter, wherever the piece
+ * starts.
  */
-export const spillPreview = (entry: LogEntry, view: string, chars: number): string => {
-  const cut = cutAt(view, chars)
-  return `${view.slice(0, cut)}\n[… ${view.length - cut} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${cut} to read them]`
+export const cutAfterLineBreak = (text: string, from: number, at: number): number => {
+  const cut = cutAt(text, at)
+  if (cut >= text.length) return cut
+  // The earliest place the cut may move to: past the piece's start, and no more than a quarter of the piece asked for before the character cut.
+  const earliest = Math.max(from + 1, Math.ceil(cut - (at - from) / 4))
+  // The line breaks that would put it there or later: none when the piece has no length.
+  const found = text.slice(earliest - 1, cut).lastIndexOf("\n")
+  return found < 0 ? cut : earliest + found
 }
+
+/** A view's first `cut` characters, and how to read the rest: the notice prints `cut`, where the page that follows starts. */
+const previewTo = (entry: LogEntry, view: string, cut: number): string =>
+  `${view.slice(0, cut)}\n[… ${view.length - cut} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${cut} to read them]`
+
+/**
+ * A spilled result's preview: its first `chars` characters (one fewer when
+ * the cut would split a surrogate pair), and how to read the rest. With
+ * `cutAtLineBreaks` the cut falls just after the last line break within
+ * `chars`, when one is near (`cutAfterLineBreak`), so the preview holds at
+ * most `chars` characters and ends with a whole line. The offset it prints
+ * is where the cut fell, so the page read from it starts at the next
+ * character.
+ */
+export const spillPreview = (entry: LogEntry, view: string, chars: number, options?: { readonly cutAtLineBreaks?: boolean }): string =>
+  previewTo(entry, view, options?.cutAtLineBreaks === true ? cutAfterLineBreak(view, 0, chars) : cutAt(view, chars))
 
 /**
  * How many characters of `view` a preview of it shows before its notice:
- * the offset the notice prints, when the preview is exactly what
- * `spillPreview` writes for that cut, else 0. A `Spill` holds whatever text
- * its strategy wrote, and only core's own preview says how much of the view
- * it shows.
+ * the offset the notice prints, when that offset is one a cut can fall at
+ * (not inside a surrogate pair) and the preview is exactly what
+ * `spillPreview` writes for a cut there, else 0. A `Spill` holds whatever
+ * text its strategy wrote, and only core's own preview says how much of the
+ * view it shows. The preview is rebuilt from the printed offset as it
+ * stands, never by cutting again under a rule: a session holds previews cut
+ * at the character limit and previews cut at a line break (the option was
+ * turned on or off, an earlier release wrote them), and each is read back
+ * whatever the option is now.
  */
 const previewChars = (entry: LogEntry, view: string, preview: string): number => {
   const printed = Option.map(Option.fromNullishOr(/ and offset (\d+) to read them\]$/.exec(preview)?.[1]), Number)
-  return Option.getOrElse(Option.filter(printed, (offset) => Number.isSafeInteger(offset) && spillPreview(entry, view, offset) === preview), () => 0)
+  return Option.getOrElse(Option.filter(printed, (offset) => Number.isSafeInteger(offset) && cutAt(view, offset) === offset && previewTo(entry, view, offset) === preview), () => 0)
 }
 
 const RecallParameters = Schema.Struct({
@@ -69,11 +105,17 @@ const RecallContext = Tool.make(RECALL_TOOL, {
 
 /**
  * Where the page asked for at `offset` starts and ends in `view`: at most
- * `RECALL_PAGE_CHARS` on, neither end inside a surrogate pair.
+ * `RECALL_PAGE_CHARS` on, neither end inside a surrogate pair. With
+ * `cutAtLineBreaks` it ends just after the last line break within that
+ * limit, when one is near (`cutAfterLineBreak`, the page's start its
+ * `from`): never empty, and never more than a quarter of the limit short of
+ * the character cut, which is the limit, or one unit before it where the
+ * limit would split a surrogate pair.
  */
-const pageBounds = (view: string, offset: number): { readonly start: number; readonly end: number } => {
+const pageBounds = (view: string, offset: number, cutAtLineBreaks: boolean): { readonly start: number; readonly end: number } => {
   const start = cutAt(view, offset)
-  return { start, end: cutAt(view, start + RECALL_PAGE_CHARS) }
+  const limit = start + RECALL_PAGE_CHARS
+  return { start, end: cutAtLineBreaks ? cutAfterLineBreak(view, start, limit) : cutAt(view, limit) }
 }
 
 /**
@@ -118,7 +160,7 @@ const pageText = (locator: string, view: string, page: RecallPage): string => `$
  * starts at that pair's first unit.
  */
 export const recallPage = (locator: string, view: string, offset: number): string => {
-  const { start, end } = pageBounds(view, offset)
+  const { start, end } = pageBounds(view, offset, false)
   return pageText(locator, view, { start, end, next: end })
 }
 
@@ -141,6 +183,9 @@ export const recallPage = (locator: string, view: string, offset: number): strin
  * offset its refusal names. The line's own text can hold what a line starts
  * with (it prints the locator, and a run id is any string), and so can the
  * page's, so every place the line could start is tried, the last first.
+ * Nothing here reads the page size or the rule that cut the page, so a page
+ * cut at a line break (`cutAtLineBreaks`) is read back as any other, whatever
+ * the option is when it is read.
  */
 const recordedEnd = (locator: string, view: string, start: number, recorded: string): Option.Option<number> => {
   if (recorded === view.slice(start)) return Option.some(view.length)
@@ -277,7 +322,10 @@ const readOnAfter = (pages: ReadonlyArray<ReadPage>, view: string, ended: number
  *   offset no such page holds, so the call that follows the reply is served.
  * - Otherwise a page, which never holds text of a page the request already
  *   holds: it ends where the next such page starts, when that is sooner
- *   than `RECALL_PAGE_CHARS` on. So every character a call returns is new
+ *   than its own end (`pageBounds`: `RECALL_PAGE_CHARS` on, or with
+ *   `cutAtLineBreaks` the line break before that). That cut stays where the
+ *   page already read starts, whatever the option: the text between is the
+ *   text the request lacks. So every character a call returns is new
  *   to the request, in whatever order the offsets come, and the pages of one
  *   result together never hold more than the result does. A page is never
  *   empty for that: its start is outside every page already read, so the
@@ -287,9 +335,9 @@ const readOnAfter = (pages: ReadonlyArray<ReadPage>, view: string, ended: number
  * served as if the other were not: neither has a result when the other is
  * checked.
  */
-const recallOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, body: ToolResultBody, offset: number): Result.Result<RecallPage, RecallRefusal> => {
+const recallOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, body: ToolResultBody, offset: number, cutAtLineBreaks: boolean): Result.Result<RecallPage, RecallRefusal> => {
   const view = body.view
-  const whole = pageBounds(view, offset)
+  const whole = pageBounds(view, offset, cutAtLineBreaks)
   if (target.turn !== turn) return Result.succeed({ ...whole, next: whole.end })
   const entries = presentedEntries(stored)
   const { start } = whole
@@ -348,7 +396,8 @@ const recallRefusalFailure = (refusal: RecallRefusal): Failure => RecallRefusal.
   }),
 })
 
-const recallTool = defineTool({
+/** The tool, its pages cut at the character limit or, with `cutAtLineBreaks`, at line breaks: the same tool to the model either way. */
+const recallToolOf = (cutAtLineBreaks: boolean) => defineTool({
   tool: RecallContext,
   requires: [RunContext],
   handler: ({ locator, offset }) => Effect.gen(function* () {
@@ -361,7 +410,7 @@ const recallTool = defineTool({
     const from = offset ?? 0
     if (from > 0 && from >= view.length) return yield* Effect.fail({ error: "OffsetOutOfRange", message: `The result has ${view.length} characters; pass an offset below ${view.length}` })
     // The loop's run where the loop makes the call; none for a call made outside one.
-    const recalled = recallOf(yield* run.memory.entries, yield* run.memory.turn, yield* CurrentAgentRun, found, body, from)
+    const recalled = recallOf(yield* run.memory.entries, yield* run.memory.turn, yield* CurrentAgentRun, found, body, from, cutAtLineBreaks)
     return yield* Result.match(recalled, {
       onSuccess: (page) => Effect.succeed(pageText(locator, view, page)),
       onFailure: (refused) => Effect.fail(recallRefusalFailure(refused)),
@@ -370,15 +419,22 @@ const recallTool = defineTool({
   annotations: { readOnly: true },
 })
 
+const recallTool = recallToolOf(false)
+const recallToolAtLineBreaks = recallToolOf(true)
+
 /**
  * The memory-owned tool that makes a shortened result lossless for the
  * model, as a capability under the id of the memory plugin that contributes
  * it. The tool, its always-on skill and every text of theirs are the same
- * under each id.
+ * under each id. With `cutAtLineBreaks` each page ends just after the last
+ * line break within `RECALL_PAGE_CHARS`, when one is near
+ * (`cutAfterLineBreak`): a strategy passes the option it cuts its previews
+ * with, so a result's head and its pages are cut alike. The id, the version
+ * and every text are the same with it.
  */
-export const recallCapabilityOf = (id: string): Capability => defineCapability({
+export const recallCapabilityOf = (id: string, options?: { readonly cutAtLineBreaks?: boolean }): Capability => defineCapability({
   id,
   version: "1",
-  tools: [recallTool],
+  tools: [options?.cutAtLineBreaks === true ? recallToolAtLineBreaks : recallTool],
   skills: [defineSkill({ id: "memory.recall", summary: "Read shortened earlier results in full.", tools: [RECALL_TOOL], always: true })],
 })

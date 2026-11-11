@@ -1480,7 +1480,8 @@ Requires: none
   "maxImages": 8,
   "maxMediaChars": 20000000,
   "currentTurnFirst": false,
-  "boundOnWriteChars": 16000
+  "boundOnWriteChars": 16000,
+  "cutAtLineBreaks": false
 }
 ```
 
@@ -1551,6 +1552,9 @@ Requires: none
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "cutAtLineBreaks": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -1598,7 +1602,8 @@ Optional: `@xandreed/core/UtilityLlm`
   "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
   "summaryTimeoutMs": 60000,
-  "boundOnWriteChars": 16000
+  "boundOnWriteChars": 16000,
+  "cutAtLineBreaks": false
 }
 ```
 
@@ -1693,6 +1698,9 @@ Optional: `@xandreed/core/UtilityLlm`
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "cutAtLineBreaks": {
+      "type": "boolean"
     }
   },
   "required": [

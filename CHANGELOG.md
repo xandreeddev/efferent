@@ -8,6 +8,105 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `cutAtLineBreaks`, an option of `@xandreed/plugin-memory-window` and
+  `@xandreed/plugin-memory-summary` (off by default): what a shortened
+  result shows is cut at a line break. A cut by character count can fall
+  inside a row of a result made of lines. The result then ends with half a
+  row and the page read from its notice starts with the other half, so a
+  model holds a row's identifier in two pieces, in two results. With the
+  option, three cuts fall just after the last line break (`\n`) within their
+  limit: the preview of a result bounded as it is written
+  (`boundOnWriteChars`), the preview of a result the window strategy spills
+  under pressure (`previewChars`), and every page `recall_context` returns,
+  for results of the current turn and of earlier turns alike. The cut moves
+  there only when that leaves the piece some text and gives up no more than
+  a quarter of the piece asked for (4,000 characters of a bound of 16,000,
+  150 of a preview of 600, 2,000 of a page of 8,000); otherwise it stays at
+  the limit, as with the option off.
+  - A result whose rows are shorter than that quarter is cut between two
+    rows wherever the rule chooses the cut. A longer row can be cut inside
+    its text, at the limit, past the identifier it starts with when that
+    identifier is shorter than the quarter.
+  - A view with no line break near the limit is cut exactly as before. A
+    tool with no view of its own is shown as its result, text as it is and
+    anything else as canonical JSON on one line: the option does nothing for
+    a result on one line, so a tool shows its rows on separate lines (in
+    the text it returns, or in its view) to gain from it.
+  - The limits become upper bounds: at the defaults a bounded result shows
+    12,000 to 16,000 characters, a pressure preview 450 to 600 and a page
+    6,000 to 8,000, so a result is read in a few more pages. Each low end
+    is one less (11,999, 449, 5,999) where the limit would split a
+    surrogate pair: the quarter is counted back from the cut at the limit,
+    which is then one unit before it.
+  - Pages have no fixed size, so the only offset to read on from is the one
+    a notice or a page's last line prints. A caller that adds 8,000 to the
+    offset it last passed skips the text between the page's end and that
+    offset, and nothing tells it so.
+  - A result a little longer than the bound can be bounded where it was
+    shown whole with the option off. A result is left whole when its
+    preview would not be shorter than its view, and a preview cut at a line
+    break is shorter: 12,000 characters, a line break and 4,049 more are
+    shown whole at the default bound with the option off, and as 12,001
+    characters and a notice with it on.
+  - No text the model reads changes. The notice and a page's last lines are
+    the same strings, and the offset each prints is where its cut fell, so
+    the pages read from a notice join to the whole view. A piece that ends
+    with its line break is followed by an empty line before them.
+  - A page is still cut where a page the run already read in the turn
+    starts, wherever that is, and a page starts at the offset its call
+    names.
+  - With the option off no cut, text, golden or stored record changes. One
+    thing does: each plugin's defaults gained `cutAtLineBreaks: false`, and
+    an agent's fingerprint (`Agent.fingerprint`) hashes its plugins' options
+    with their defaults, so an agent that uses either memory plugin has a
+    new fingerprint, whatever the option is.
+- The window strategy says the option in its version, as it does
+  `currentTurnFirst`: `4+cut-at-line-breaks`, or
+  `4+current-turn-first+cut-at-line-breaks` with both, in every request's
+  `strategyVersion` and in `context.built`. Its id stays `window`, so
+  compactions recorded with or without the option keep applying. The summary
+  strategy's version stays `2`: the option changes none of its summary
+  decisions, and render checkpoints stored under that version keep applying.
+  Under it, where a bound was cut is read from its preview.
+- `@xandreed/core`: `MemoryPolicy.cutAtLineBreaks` is how a custom strategy
+  asks for the bound's preview to be cut so, and `spillPreview` and
+  `recallCapabilityOf` take the option as a last parameter
+  (`spillPreview(entry, view, chars, { cutAtLineBreaks: true })`,
+  `recallCapabilityOf(id, { cutAtLineBreaks: true })`) for a strategy's own
+  spills and for the pages of the tool it contributes. A call without it
+  behaves as before. A custom strategy gives all three the same value: the
+  window plugin's exported `recallCapability` always pages at the character
+  limit, so beside a policy that cuts at line breaks it gives heads that end
+  after a whole line and pages that do not (the offsets stay right, and rows
+  are split again). No journal kind, event or stored field is added, and the
+  stored format stays 19.
+- A session can hold both cuts. `recall_context` reads what a request shows
+  back from the request, not from the option: a result shortened at the
+  character limit (before the option was turned on, or by an earlier
+  release) is still refused inside its shown head and read on from the
+  offset its notice prints, and so is one cut at a line break after the
+  option is turned off. A page already read counts for the text it holds,
+  whichever way it was cut.
+
+  The limits. A row longer than a quarter of the piece can be cut inside its
+  text, and a row whose identifier is itself longer than that quarter inside
+  the identifier. A `\r\n` stays whole when the cut falls after it, and a cut
+  the rule leaves at the limit can still fall between the two. Turned on
+  within a turn in which the window strategy already spilled a result at the
+  character limit, the option can make that result a candidate once more.
+  The rule is unchanged: a result is spilled again only when the new preview
+  is shorter than the text it shows. A preview cut at a line break usually
+  is, so a request still over its budget spills the result again, for the
+  few characters the line break gives up, and then never again; where the
+  count in the notice gains a digit the two previews are as long, and
+  nothing is spilled. The step loop's breaker stops a model that steps
+  forward inside a page it read up to a stride of 1,333 characters in a page
+  of 8,000; a page cut at a line break holds 6,000 to 8,000 (5,999 where the
+  limit would split a surrogate pair), so that stride is between 999 and
+  1,333.
+
 ### Changes
 
 - Docs site: a new interactive "Learn" track at `/learn`. Lesson 1, "Your

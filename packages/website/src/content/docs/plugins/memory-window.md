@@ -43,8 +43,11 @@ and its recall capability. A durable session backend supplies persistence.
 
 A tool result longer than `boundOnWriteChars` (16,000 characters by default)
 is bounded as it is written: every request shows its first 16,000 characters
-and a notice with the locator and offset to read the rest from. See
-[bound results as they are written](#bound-results-as-they-are-written).
+(fewer with `cutAtLineBreaks`) and a notice with the locator and offset to
+read the rest from. See
+[bound results as they are written](#bound-results-as-they-are-written), and
+[cut at line breaks](#cut-at-line-breaks) to end that preview, a spill's and
+each `recall_context` page after a whole line.
 
 At a new turn, earlier tool results use each tool's compact view
 (`compactPreviousTurn`, on by default). Under context pressure, the policy
@@ -117,6 +120,61 @@ result stays without one and is shown whole until pressure spills it.
 
 Each bound is recorded as a compaction of the `window` strategy, so
 `context.built` counts it among its `compactions`.
+
+## Cut at line breaks
+
+A cut by character count can fall inside a row of a result made of lines:
+the result ends with half a row, and the page read from its notice starts
+with the other half. Set `cutAtLineBreaks: true` to end each shortened piece
+after a whole line:
+
+```ts
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+const memory = { plugin: memoryWindowPlugin, options: { cutAtLineBreaks: true } }
+```
+
+The option applies to the preview of a result bounded as it is written
+(`boundOnWriteChars`), the preview of a result spilled under pressure
+(`previewChars`) and every page `recall_context` returns. Each is cut just
+after the last line break within its limit, when cutting there gives up no
+more than a quarter of the limit (4,000 characters of a bound of 16,000, 150
+of a preview of 600, 2,000 of a page); otherwise at the limit, as with the
+option off.
+
+- A result whose rows are shorter than that quarter is cut between two rows
+  wherever the rule chooses the cut. A page still stops where a page already
+  read starts, and starts at the offset its call names. A longer row can be
+  cut inside its text, at the limit, past the identifier it starts with when
+  that identifier is shorter than the quarter.
+- A result with no line break near a limit is cut as with the option off. A
+  tool with no view of its own that returns anything but text is shown as
+  JSON on one line, so the option does nothing for it: a tool shows its rows
+  on separate lines to gain from it.
+- The limits become upper bounds: a bounded result shows 12,000 to 16,000
+  characters at the default bound, and a page holds 6,000 to 8,000 (one less
+  at each low end where the limit would split a surrogate pair).
+- Pages have no fixed size. Read on from the offset a notice or a page's
+  last line prints: adding 8,000 to the last offset skips text.
+- A result a little longer than the bound can be bounded where it was shown
+  whole with the option off, because a preview cut at a line break is
+  shorter.
+- The notice and a page's last line are the same texts. The offset each
+  prints is where its cut fell.
+- Results shortened before the option changed keep the text they show and
+  are read on from the offset they print.
+- Turned on within a turn that already spilled a result at the character
+  limit, the option lets a request still over its budget spill that result
+  once more, when its preview cut at a line break is shorter than the one it
+  shows.
+- A host that builds its own memory from `windowPolicy` contributes
+  `recallCapabilityOf(id, { cutAtLineBreaks: true })` beside it. The exported
+  `recallCapability` always pages at the character limit.
+
+The option keeps the strategy id `window` and adds a suffix to its version:
+`4+cut-at-line-breaks`, or `4+current-turn-first+cut-at-line-breaks` with
+`currentTurnFirst`. [Context and the journal](/docs/concepts/context-journal/#cutting-at-line-breaks)
+has the rule and its limits.
 
 ## Keep the request prefix between turns
 
@@ -269,7 +327,8 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.21.2** · Plugin API **3
   "maxImages": 8,
   "maxMediaChars": 20000000,
   "currentTurnFirst": false,
-  "boundOnWriteChars": 16000
+  "boundOnWriteChars": 16000,
+  "cutAtLineBreaks": false
 }
 ```
 
@@ -343,6 +402,9 @@ Plugin: `@xandreed/plugin-memory-window` · Version **0.21.2** · Plugin API **3
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "cutAtLineBreaks": {
+      "type": "boolean"
     }
   },
   "required": [

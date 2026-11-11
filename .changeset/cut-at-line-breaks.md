@@ -1,0 +1,7 @@
+---
+"@xandreed/core": minor
+"@xandreed/plugin-memory-window": minor
+"@xandreed/plugin-memory-summary": minor
+---
+
+`cutAtLineBreaks`, an option of both memory strategies (off by default), cuts what a shortened result shows at a line break: the preview of a result bounded as it is written, the preview of a result the window strategy spills under pressure and every `recall_context` page end just after the last line break within their limit, when that gives up no more than a quarter of the piece asked for, so a result whose rows are shorter than that is cut between two rows wherever the rule chooses the cut (a page still stops where a page already read starts, and starts at the offset its call names). The notice and a page's last lines are the same texts with the cut's offsets, the limits become upper bounds (pages have no fixed size: read on from the offset a notice or a page prints), and a session can hold results cut either way. A view with no line break near a limit is cut as before, so a tool shows its rows on separate lines to gain from it. The window strategy's version takes the suffix `+cut-at-line-breaks`; the summary strategy's stays `2`. `MemoryPolicy.cutAtLineBreaks`, and a last parameter of `spillPreview` and `recallCapabilityOf` in `@xandreed/core`, carry the option for a custom strategy. Each plugin's defaults gained `cutAtLineBreaks: false`, so `Agent.fingerprint` changes for an agent that uses either, whatever the option is.

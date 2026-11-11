@@ -4,6 +4,8 @@ import { TestClock } from "effect/testing"
 import { Capabilities, ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { AgentMessage, LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
+import { Result, Schema } from "effect"
+import { MemorySummaryConfig } from "./plugin.adapter.js"
 
 const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(RunId.make(`run-${turn}`), seq), runId: RunId.make(`run-${turn}`), turn, step: 0, at: seq, body })
 /** Four turns of about 1,000 characters each: past the trigger of a 1,000-token budget, with only the last turn kept. */
@@ -305,4 +307,120 @@ describe("spans", () => {
     const decided = await run(() => policy.maintain({ entries: log, signal: { ...signal, budgetTokens: 100_000 }, turn: 4, runId: RunId.make("run-4"), render }).pipe(Effect.withTracer(tracer)))
     expect([decided.actions, shown()]).toEqual([[], []])
   })
+})
+
+describe("cutAtLineBreaks", () => {
+  const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+  const utility = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "SUMMARY", usage })) })
+  /** 2,000 lines of 30 characters with their line break: 16,000 falls 10 characters into a line, and a page of 8,000 from a line's start 20 characters into one. */
+  const record = Array.from({ length: 2_000 }, (_, index) => `first line ${String(index + 1).padStart(4, "0")} of the record\n`).join("")
+  /** What the plugin built with `options` reports and records for that record, what its first request shows, and the page its tool serves from `offset`. */
+  const builtWith = (options: typeof memorySummaryDefaults, offset: number) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const built = (yield* memorySummaryPlugin.build(options, Context.empty())) as Context.Context<ConversationMemory | Capabilities>
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const memory = Context.get(built, ConversationMemory)
+    const session = yield* memory.open({
+      conversation: ConversationId.make("00000000-0000-4000-8000-000000000526"), runId: RunId.make("run-1"),
+      log: { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) },
+    }).pipe(Effect.provideService(UtilityLlm, utility))
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the record" }) }], 0)
+    const recorded = yield* session.recordTail([
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "lookup", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: record }] },
+    ], views, 1)
+    const shown = (yield* session.build({ stepContext: "none", run: RunOrdinal.make(0) })).messages.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.output)) : [])
+    const capabilities = Context.get(built, Capabilities)
+    const pages = yield* Effect.forEach(capabilities.flatMap((capability) => capability.tools), (registered) => Effect.result(registered.handler({ locator: "run-1:2", offset }).pipe(
+      Effect.provideService(RunContext, RunContext.of({ memory: session } as never)))), { concurrency: 1 })
+    return {
+      strategy: memory.strategy,
+      capabilities: capabilities.map((capability) => ({ id: String(capability.id), tools: capability.tools.map((registered) => registered.tool.name) })),
+      bounds: recorded.flatMap((entry) => entry.body._tag === "Compaction" ? [{ strategy: entry.body.strategy, version: entry.body.version, action: entry.body.action._tag }] : []),
+      shown, pages: pages.map((page) => page._tag === "Success" ? page.success : "refused"),
+    }
+  })))
+
+  test("it is off by default, validated as a boolean, and set on the policy only when it is on; the strategy's version stays 2", () => {
+    const summarize = () => Effect.succeed("SUMMARY")
+    expect(memorySummaryPlugin.defaults).toMatchObject({ cutAtLineBreaks: false })
+    expect(Result.isSuccess(Schema.decodeUnknownResult(MemorySummaryConfig)({ ...memorySummaryDefaults, cutAtLineBreaks: true }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemorySummaryConfig)({ ...memorySummaryDefaults, cutAtLineBreaks: "yes" }))).toBe(true)
+    expect("cutAtLineBreaks" in summaryPolicy(memorySummaryDefaults, summarize)).toBe(false)
+    const { cutAtLineBreaks: _cut, ...withoutKey } = memorySummaryDefaults
+    expect("cutAtLineBreaks" in summaryPolicy(withoutKey, summarize)).toBe(false)
+    const cutting = summaryPolicy({ ...memorySummaryDefaults, cutAtLineBreaks: true }, summarize)
+    expect(cutting.cutAtLineBreaks).toBe(true)
+    // The option changes no summary decision: the version, and the render checkpoints stored under it, stay.
+    expect(cutting.strategy).toEqual({ id: "summary", version: "2" })
+    expect(cutting.checkpoint).toBe("render")
+  })
+
+  test("with it on, a result is bounded after its last whole line and the tool the plugin contributes pages after whole lines, under strategy version 2", async () => {
+    const on = await builtWith({ ...memorySummaryDefaults, cutAtLineBreaks: true }, 15_990)
+    expect(on.strategy).toEqual({ id: "summary", version: "2" })
+    expect(on.capabilities).toEqual([{ id: "@xandreed/plugin-memory-summary/recall", tools: ["recall_context"] }])
+    expect(on.bounds).toEqual([{ strategy: "summary", version: "2", action: "Spill" }])
+    // 533 lines, 15,990 characters, where the bound would have kept ten characters of the next line.
+    expect(on.shown).toEqual([`${record.slice(0, 15_990)}\n[… 44010 more characters kept out of context; call recall_context with locator "run-1:2" and offset 15990 to read them]`])
+    expect(record.slice(0, 15_990).endsWith(" of the record\n")).toBe(true)
+    // The page from that offset is 266 lines: it ends 20 characters short of 8,000, after a whole line.
+    expect(on.pages).toEqual([`${record.slice(15_990, 23_970)}\n[… 36030 more characters; call recall_context with locator "run-1:2" and offset 23970]`])
+  })
+
+  test("with it off, the same record is cut at 16,000 characters, inside a line, and paged 8,000 characters at a time", async () => {
+    const off = await builtWith(memorySummaryDefaults, 16_000)
+    expect(off.shown).toEqual([`${record.slice(0, 16_000)}\n[… 44000 more characters kept out of context; call recall_context with locator "run-1:2" and offset 16000 to read them]`])
+    expect(off.pages).toEqual([`${record.slice(16_000, 24_000)}\n[… 36000 more characters; call recall_context with locator "run-1:2" and offset 24000]`])
+    expect(record.slice(15_990, 16_000)).toBe("first line")
+  })
+})
+
+test("a render checkpoint saved with cutAtLineBreaks off is still used once it is on: the version it was saved under is unchanged", async () => {
+  type Snapshot = Parameters<NonNullable<LogHandle["checkpoint"]>["save"]>[0]
+  const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+  const utility = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "SUMMARY", usage })) })
+  // An answer in the first turn, which the summary folds: a build from the whole archive reads it, a build from the checkpoint does not.
+  const answer = { role: "assistant" as const, content: [{ type: "text" as const, text: "an early answer ".repeat(20) }] }
+  const early = at(100, 1, { _tag: "Message", message: answer })
+  const place = { stepContext: "none" as const, run: RunOrdinal.make(0) }
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([log[0]!, early, ...log.slice(1)])
+    const saved: Array<Snapshot> = []
+    const opened = (options: typeof config & { readonly cutAtLineBreaks?: boolean }, load: Option.Option<Snapshot>) => Effect.gen(function* () {
+      const built = yield* memorySummaryPlugin.build(options, Context.empty())
+      return yield* Context.get(built as Context.Context<ConversationMemory>, ConversationMemory).open({ conversation: ConversationId.make("00000000-0000-4000-8000-000000000527"), runId: RunId.make("run-4"), log: {
+        read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]),
+        checkpoint: { load: Effect.succeed(load), save: (candidate) => Effect.sync(() => { saved.push(candidate) }) },
+      } }).pipe(Effect.provideService(UtilityLlm, utility))
+    })
+    // With the option off, one summary folds the first three turns and publishes its checkpoint.
+    yield* (yield* opened(config, Option.none())).maintain(signal)
+    const [checkpoint] = saved
+    const reads: Array<number> = []
+    Object.defineProperty(early.body, "message", { configurable: true, get: () => { reads.push(1); return answer } })
+    /** How often a build reads the folded answer, in a session opened under `options` with `load` as its checkpoint. */
+    const readsWith = (options: typeof config & { readonly cutAtLineBreaks?: boolean }, load: Option.Option<Snapshot>) => Effect.gen(function* () {
+      const session = yield* opened(options, load)
+      // The first build of a placement is checked against a render of the whole archive; the next one shows what the session reads from then on.
+      yield* session.build(place)
+      reads.length = 0
+      yield* session.build(place)
+      return reads.length
+    })
+    const loaded = Option.fromNullishOr(checkpoint)
+    return {
+      saved: saved.map((candidate) => candidate.strategy),
+      off: yield* readsWith(config, loaded),
+      on: yield* readsWith({ ...config, cutAtLineBreaks: true }, loaded),
+      archive: yield* readsWith({ ...config, cutAtLineBreaks: true }, Option.none()),
+      // What a version of its own for the option would do to every checkpoint stored before it was turned on.
+      renamed: yield* readsWith({ ...config, cutAtLineBreaks: true }, Option.map(loaded, (candidate) => ({ ...candidate, strategy: { ...candidate.strategy, version: "2+cut-at-line-breaks" } }))),
+    }
+  })))
+  expect(observed.saved).toMatchObject([{ id: "summary", version: "2" }])
+  // The checkpoint is used with the option on as it is with it off: the folded turn is not read again.
+  expect(observed.on).toBe(observed.off)
+  expect(observed.archive).toBeGreaterThan(observed.on)
+  // Under another version it is set aside, and every build reads the whole archive.
+  expect(observed.renamed).toBe(observed.archive)
 })

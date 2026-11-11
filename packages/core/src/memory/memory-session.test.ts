@@ -525,4 +525,78 @@ describe("a result bounded as it is written", () => {
     // Here the first result's presentation was stored before its bound was refused, so the later result is one entry further.
     expect(await Effect.runPromise(stoppedBy("a failed append"))).toEqual(left("run-1:5"))
   })
+
+  describe("with cutAtLineBreaks", () => {
+    /** The same strategy, cutting at line breaks. */
+    const cutting: MemoryPolicy = { ...bounding, cutAtLineBreaks: true }
+    /** Rows of 13 characters: the bound of 100 falls 9 characters into the eighth, a bound of 300 one character into the twenty-fourth. */
+    const rows = (count: number): string => Array.from({ length: count }, (_, index) => `row ${String(index).padStart(4, "0")} abc\n`).join("")
+
+    test("a result of whole lines is bounded after the last line that fits, and the notice gives that offset", async () => {
+      const whole = rows(40)
+      const observed = await Effect.runPromise(Effect.gen(function* () {
+        const { stored, log, session } = yield* opened(cutting)
+        const recorded = yield* session.recordTail(exchange("c1", "lookup", whole), plain(), 1)
+        const first = yield* session.build(build)
+        yield* session.recordTail(exchange("c2", "lookup", "b".repeat(700)), plain(), 2)
+        const second = yield* session.build(build)
+        const reopened = yield* openLogSession(log, cutting, { runId: RunId.make("run-1") })
+        return { recorded, durable: yield* Ref.get(stored), first, second, rebuilt: yield* reopened.build(build), resolved: yield* session.resolve(recorded[1]!.id) }
+      }))
+      // Seven rows, 91 characters: the nine characters of the eighth row that the bound would have kept are left for the page that follows.
+      const preview = `${whole.slice(0, 91)}\n${notice(429, "run-1:2", 91)}`
+      expect(whole.slice(0, 91)).toBe(rows(7))
+      expect(boundsOf(observed.recorded)).toEqual([{ strategy: "test", version: "1", entry: "run-1:2", preview }])
+      expect(boundsOf(observed.durable).at(0)).toEqual(boundsOf(observed.recorded)[0])
+      // The first build shows it so, and every later build and a reopened session show the same prefix.
+      expect(outputsOf(observed.first.messages)).toEqual([preview])
+      expect(observed.second.messages.slice(0, observed.first.messages.length)).toEqual([...observed.first.messages])
+      expect(observed.rebuilt.fingerprint).toBe(observed.second.fingerprint)
+      // A result with no line break is cut at the bound, as without the option.
+      expect(outputsOf(observed.second.messages)[1]).toBe(`${"b".repeat(100)}\n${notice(600, "run-1:6", 100)}`)
+      // The stored result stays whole.
+      expect(Option.map(observed.resolved, (entry) => entry.body._tag === "ToolResult" ? entry.body.view : "missing")).toEqual(Option.some(whole))
+    })
+
+    test("a tool's own bound is cut after a whole line too; a line break further back than a quarter of the bound is not used", async () => {
+      // One line break at 60: 40 characters short of the bound, more than the 25 a quarter allows.
+      const early = `${"e".repeat(60)}\n${"f".repeat(439)}`
+      const shown = await Effect.runPromise(Effect.gen(function* () {
+        const { session } = yield* opened(cutting)
+        yield* session.recordTail([...exchange("c1", "wide", rows(40)), ...exchange("c2", "lookup", early)], plain({ wide: 300 }), 1)
+        return outputsOf((yield* session.build(build)).messages)
+      }))
+      expect(shown).toEqual([
+        `${rows(23)}\n${notice(520 - 299, "run-1:2", 299)}`,
+        `${early.slice(0, 100)}\n${notice(400, "run-1:4", 100)}`,
+      ])
+    })
+
+    test("a policy that does not set it cuts the same rows at the bound, inside a line", async () => {
+      const whole = rows(40)
+      const shownUnder = (ownPolicy: MemoryPolicy) => Effect.runPromise(Effect.gen(function* () {
+        const { session } = yield* opened(ownPolicy)
+        yield* session.recordTail(exchange("c1", "lookup", whole), plain(), 1)
+        return outputsOf((yield* session.build(build)).messages)
+      }))
+      const atTheBound = [`${whole.slice(0, 100)}\n${notice(420, "run-1:2", 100)}`]
+      expect(await shownUnder(bounding)).toEqual(atTheBound)
+      expect(await shownUnder({ ...bounding, cutAtLineBreaks: false })).toEqual(atTheBound)
+      expect(whole.slice(91, 100)).toBe("row 0007 ")
+    })
+
+    test("a result a little longer than the bound is left whole at the character limit, and bounded at a line break", async () => {
+      // 12,000 characters, a line break and 4,049 more: 16,050, fifty past a bound of 16,000.
+      const whole = `${"a".repeat(12_000)}\n${"b".repeat(4_049)}`
+      const recordedUnder = (ownPolicy: MemoryPolicy) => Effect.runPromise(Effect.gen(function* () {
+        const { session } = yield* opened({ ...ownPolicy, boundOnWriteChars: 16_000 })
+        const recorded = yield* session.recordTail(exchange("c1", "lookup", whole), plain(), 1)
+        return { bounds: boundsOf(recorded).length, shown: outputsOf((yield* session.build(build)).messages) }
+      }))
+      // At the character limit the preview, 16,000 characters and the notice, would be longer than the view: the result is left whole.
+      expect(await recordedUnder(bounding)).toEqual({ bounds: 0, shown: [whole] })
+      // Cut after the line break, 3,999 characters back, the preview is shorter than the view: the result is bounded where it was whole.
+      expect(await recordedUnder(cutting)).toEqual({ bounds: 1, shown: [`${whole.slice(0, 12_001)}\n${notice(4_049, "run-1:2", 12_001)}`] })
+    })
+  })
 })

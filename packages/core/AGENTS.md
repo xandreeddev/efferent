@@ -369,6 +369,32 @@ lone surrogate is not valid text to send. The capability's skill,
 `memory.recall`, is always-on, so its summary never reaches the model:
 guidance goes in the tool's and its parameters' descriptions.
 
+A strategy can ask for those cuts at line breaks: `cutAtLineBreaks`, off by
+default. It is each memory plugin's option, `MemoryPolicy.cutAtLineBreaks`
+for the bound `recordTail` records, and the last parameter of `spillPreview`
+(a strategy's own spills) and of `recallCapabilityOf` (its pages), so a
+result's head and its pages are cut alike. The rule is one function,
+`cutAfterLineBreak(text, from, at)`, exported from its module for the tests
+and not from the package: the character cut (`cutAt`), and when that is
+short of the text's end, just after the last `\n` before it, if that leaves
+the piece some text (`from` is 0 for a preview, the page's start for a page)
+and gives up no more than a quarter of the piece asked for (`at - from`);
+else the character cut. It searches only the stretch the cut may move into,
+so a page of a text with no line break costs the quarter, not the text
+before it. What is given up is counted from the character cut,
+never from `at`: where a surrogate pair moves that cut one unit back, a
+count from `at` makes the rule choose a line break when it is asked again
+at the cut it left, and a cut must be one the rule returns for itself
+(`src/memory/recall.line-cuts.test.ts`, "cutting again at a position the
+rule chose"). Keep the three cuts on that function, so a result's head, a
+spill of it and its pages are cut by one rule. With the option off no cut
+moves, and no text, golden or stored field differs. The option adds no model-facing text either: the notice and a
+page's last lines are the same strings, with the offsets and counts of the
+cut, and a piece that ends with its line break is followed by an empty line
+before them. Two cuts never move: where a page already read starts (the edge
+of the text the request holds), and a page's start, which is the offset the
+call names.
+
 `recall_context` can refuse a call for text the turn being run still shows,
 and cuts a page where text already read starts (`recallOf`; the refusals are
 the cases of `RecallRefusal`, `src/memory/recall.entity.ts`). The guard is
@@ -381,9 +407,16 @@ many characters of its view a current-turn result shows from its start: all
 of them while nothing rewrote or digested it, the head before the notice
 after a bound or a spill, and 0 for a compact view, a digest or any other
 preview. The head is `previewChars`, the inverse of `spillPreview`: the
-offset the notice prints, and only when `spillPreview` rebuilds the stored
-preview exactly from it, since a `Spill` holds whatever text its strategy
-wrote. The precedence is read from `shownViewsOf`, under the strategy whose
+offset the notice prints, and only when a cut can fall there (`cutAt` leaves
+it where it is) and the stored preview is exactly the view's text up to it
+and the notice written for it (`previewTo`), since a `Spill` holds whatever
+text its strategy wrote. The preview is rebuilt from the printed offset as
+it stands, never by cutting again under the session's rule: a log holds
+previews cut at the character limit and previews cut at a line break (the
+option was turned on or off, an earlier release wrote them), and each is
+read back whatever `cutAtLineBreaks` is now. A check that cut again at the
+printed offset would read a character-cut head as no head under the option,
+and serve the result from its start. The precedence is read from `shownViewsOf`, under the strategy whose
 compaction last named the result (a current-turn result is only ever
 rewritten by the session that renders it), with digests counted as shown;
 never write another copy of that precedence here. An offset inside the shown
@@ -402,8 +435,10 @@ offset does, and that the text to the result's end is in pages already
 read when pages after it hold the rest. Both are `Failure`s, returned like
 `UnknownLocator`. An offset past the shown text and outside every such page
 is a page, and that page never holds text of one: it ends where the next
-such page starts, when that is sooner than `RECALL_PAGE_CHARS` on, wherever
-the call starts (below a page already read, in a gap between two). So every
+such page starts, when that is sooner than its own end (`pageBounds`:
+`RECALL_PAGE_CHARS` on, or with `cutAtLineBreaks` the line break before
+that), wherever the call starts (below a page already read, in a gap between
+two). So every
 character a call returns is new to the request in whatever order the offsets
 come, and the pages of one result together never hold more than the result
 does. A page is never empty for it: its start is outside every page already
@@ -432,7 +467,9 @@ guard honest:
   line `continuation` writes for that end (the inverse of `pageText`, as
   `previewChars` is of `spillPreview`). So a cut page counts for the text it
   holds, an offset past its end is not refused for it, and two pages served
-  whole to calls that ran at once overlap as they did. Never rebuild
+  whole to calls that ran at once overlap as they did. A page cut at a line
+  break is read back the same way, whatever `cutAtLineBreaks` is when it is
+  read: nothing here knows the page size or the rule. Never rebuild
   a read page from its call's offset and the page size, and never replay the
   rule over earlier calls to guess what they were served: a replay cuts the
   second of two calls that were both served whole. The page is read from
@@ -522,13 +559,19 @@ guard honest:
   Inside one page, with `RECALL_PAGE_CHARS` at 8,000, those six fit in the
   7,999 characters past the page's start up to a stride of 1,333; a longer
   stride reaches the next page first, which is new text and starts the
-  count again, and such a run costs steps, not context. Pages that follow
+  count again, and such a run costs steps, not context. With
+  `cutAtLineBreaks` a page gives up at most a quarter, counted back from
+  the character cut, so it holds 6,000 to 8,000 characters (5,999 where the
+  limit would split a surrogate pair and the character cut is one unit
+  before it) and the longest stride stopped inside one is 999 to 1,333, by
+  where the page ended: 1,333 is then an upper bound. Pages that follow
   on from one another count as one stretch of text, whose refusals are one
   reply: the journey steps down ten times from 60,000 and then forward
   through those pages 1,000 characters at a time, and is stopped at the
   sixth refusal. The journey holds strides of 1, 1,000 and
   1,333 as stopped and 1,334 as running to the step limit over new pages
-  only; change either constant and the bound moves with it. A model that
+  only, with pages cut at the character limit; change either constant and
+  the bound moves with it. A model that
   steps downward, each call a little below the last page it read, is not
   stopped either, and no longer needs to be: each call returns the text
   between and nothing the request holds, a new result every time, so the
@@ -542,7 +585,10 @@ A result is bounded as it is written (`recordTail`, `src/memory/memory-session.t
 when `MemoryPolicy.boundOnWriteChars` is above 0, a result whose presented
 view is longer than the bound is recorded with the strategy's own
 `Compaction { action: Spill { entry, preview } }`, its preview
-`spillPreview(entry, view, bound)`, after the presentation and after the
+`spillPreview(entry, view, bound)` (cut at a line break near the bound when
+the policy sets `cutAtLineBreaks`; a result a little longer than the bound
+that is left whole at the character limit, its preview no shorter than its
+view, can so be bounded with the option), after the presentation and after the
 digest step returns, so the first build that includes the result already
 shows it bounded and the prefix holding it never changes later. The bound is
 the tool's own when its view carries one (`ToolView.boundOnWriteChars`, from
@@ -891,17 +937,17 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:718-721` | exact tests `src/memory/memory-log.entity.test.ts#rendering an interrupted tool exchange` |
 | A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:699-714` | exact tests `src/memory/memory-log.entity.test.ts#the condensed ledger keeps each real user instruction in order, with continuation lines indented` |
 | Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:572`, `:586`, `:659-673` | exact tests `src/memory/memory-log.entity.test.ts#reference, raw and digest transcripts retain actual steers as intent` |
-| `recall_context` description | `src/memory/recall.entity.functions.ts:63` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
-| `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:58-59` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
-| Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`): one text for a result bounded as it is written (`recordTail`, cut at the bound) and for one spilled under pressure (a strategy's `maintain`); its count and offset are those of the cut, which never splits a surrogate pair | `src/memory/recall.entity.functions.ts:42` | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `src/memory/memory-session.test.ts#a result longer than the bound is recorded with its preview before any build shows it`; `src/memory/recall.entity.functions.test.ts#a preview cut inside a pair ends before it, and says so in its count and its offset` |
-| `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`continuation`), the line of a page with unread text right after it; a page never ends inside a surrogate pair, and prints the offset it ended at | `src/memory/recall.entity.functions.ts:104` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next`; `src/memory/recall.entity.functions.test.ts#the pages read from the preview's offset are well formed and join to the whole view` |
-| `recall_context` page continuation where a page already read holds the text after the page, and unread text follows it: `[… the next N characters are in text you already read, shown above; M more characters after them; call recall_context with locator "…" and offset R]`, R the first offset past the text already read (`continuation`) | `src/memory/recall.entity.functions.ts:107` | exact tests `src/memory/recall.entity.functions.test.ts#a call below a page already read is cut at that page's start, and names the offset after the text already read`; `src/memory/recall.entity.functions.test.ts#a call in a gap between two pages already read is cut at the second, and a chain of read pages is passed in one step`; `packages/sdk/src/recall-guard.journey.test.ts#is served only the text it does not have` |
-| `recall_context` page continuation where pages already read hold the text after the page up to the result's end: `[… the remaining N characters are in text you already read, shown above]`. It names no offset, and says nothing of the text before the page (`continuation`) | `src/memory/recall.entity.functions.ts:106` | exact tests `src/memory/recall.entity.functions.test.ts#a page cut at text already read up to the result's end says that nothing after it is left` |
-| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:359`, `:362` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
-| `recall_context`'s `ResultShown` failure for a result of the current turn shown in part when the call was made: `That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none.` It holds no offset of its own: read after memory shortened the result again, it still leads to where the result's shown form ends (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:321` | exact tests `src/memory/recall.entity.functions.test.ts#a bounded result is refused anywhere in its head, and the reply sends the model to the offset its shortened form shows`; `src/memory/recall.entity.functions.test.ts#after a spill under pressure, the offset the refusal sends the model to is the new notice's`; `src/memory/recall.entity.functions.test.ts#after a compact view took the result's place in a later turn, the refusal leads to the result's start`; `packages/sdk/src/recall-guard.journey.test.ts#a model that asks for shown text is told where to read on from, and reads the next page` |
-| `recall_context`'s `ResultShown` failure for a result of the current turn shown whole when the call was made: `This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none.` (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:322` | exact tests `src/memory/recall.entity.functions.test.ts#a result shown whole is refused at every offset: nothing of it was left out` |
-| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page the run read earlier in the turn, with unread text after it: `The text from that offset is in a page you already read, shown above. To read on, pass offset N.`, N the first offset past that page whose text no page already read holds: the page's end, or the end of the last page that follows on from it, as a page's last line names it. It names no turn: read in a later turn, its pages are still above it (`recallRefusalFailure`, `readOnAfter`) | `src/memory/recall.entity.functions.ts:344` | exact tests `src/memory/recall.entity.functions.test.ts#a page already read in this turn is refused, with the next offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a page already read is refused, with that page's end, whatever the offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a cut page is refused with the offset after all the text read from there on, not with that page's end`; `src/memory/recall.entity.functions.test.ts#an offset inside pages read one after another is refused with the offset after the last of them`; `packages/sdk/src/recall-guard.journey.test.ts#a refusal for a page already read, read in the next turn, still has that page above it`; `packages/sdk/src/recall-guard.journey.test.ts#is sent past all of it by one reply` |
-| `recall_context`'s `AlreadyRecalled` failure for an offset inside the last page, read earlier in the turn: `The text from that offset is in a page you already read, shown above. That page ends the result.` (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:345` | exact tests `src/memory/recall.entity.functions.test.ts#the last page read again is refused as the end` |
-| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page that does not end the result, where pages read after it hold the text up to the result's end: `The text from that offset to the result's end is in pages you already read, shown above.` It names no offset and no page as the last (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:346` | exact tests `src/memory/recall.entity.functions.test.ts#an offset inside a page with pages read after it up to the result's end is told that the rest is read` |
+| `recall_context` description | `src/memory/recall.entity.functions.ts:99` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| `recall_context`'s `locator` and `offset` descriptions | `src/memory/recall.entity.functions.ts:94-95` | exact tests `src/memory/recall.entity.functions.test.ts#recall_context says what it returns and how to page` |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) (`spillPreview`): one text for a result bounded as it is written (`recordTail`, cut at the bound) and for one spilled under pressure (a strategy's `maintain`); its count and offset are those of the cut, which never splits a surrogate pair and, with `cutAtLineBreaks`, falls just after a line break near the limit: the same text, with that cut's numbers | `src/memory/recall.entity.functions.ts:62` (`previewTo`) | exact tests `src/memory/recall.entity.functions.test.ts#the preview says how many characters it left out and the offset to read them from`; `src/memory/memory-session.test.ts#a result longer than the bound is recorded with its preview before any build shows it`; `src/memory/recall.entity.functions.test.ts#a preview cut inside a pair ends before it, and says so in its count and its offset`; `src/memory/recall.line-cuts.test.ts#with cutAtLineBreaks the preview ends after the last whole row within the limit`; `src/memory/memory-session.test.ts#a result of whole lines is bounded after the last line that fits` |
+| `recall_context` page continuation (`[… N more characters; call recall_context …]`) (`continuation`), the line of a page with unread text right after it; a page never ends inside a surrogate pair, ends just after a line break near its limit with `cutAtLineBreaks`, and prints the offset it ended at | `src/memory/recall.entity.functions.ts:146` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next`; `src/memory/recall.entity.functions.test.ts#the pages read from the preview's offset are well formed and join to the whole view`; `src/memory/recall.line-cuts.test.ts#an earlier turn's result comes back in pages that each end after a whole row` |
+| `recall_context` page continuation where a page already read holds the text after the page, and unread text follows it: `[… the next N characters are in text you already read, shown above; M more characters after them; call recall_context with locator "…" and offset R]`, R the first offset past the text already read (`continuation`) | `src/memory/recall.entity.functions.ts:149` | exact tests `src/memory/recall.entity.functions.test.ts#a call below a page already read is cut at that page's start, and names the offset after the text already read`; `src/memory/recall.line-cuts.test.ts#a page cut where a page already read starts ends there, inside a row`; `src/memory/recall.entity.functions.test.ts#a call in a gap between two pages already read is cut at the second, and a chain of read pages is passed in one step`; `packages/sdk/src/recall-guard.journey.test.ts#is served only the text it does not have` |
+| `recall_context` page continuation where pages already read hold the text after the page up to the result's end: `[… the remaining N characters are in text you already read, shown above]`. It names no offset, and says nothing of the text before the page (`continuation`) | `src/memory/recall.entity.functions.ts:148` | exact tests `src/memory/recall.entity.functions.test.ts#a page cut at text already read up to the result's end says that nothing after it is left` |
+| `recall_context`'s `UnknownLocator`, `OffsetOutOfRange` failures | `src/memory/recall.entity.functions.ts:408`, `:411` | exact tests `src/memory/recall.entity.functions.test.ts#a result comes back a page at a time, each page ending with the offset of the next` |
+| `recall_context`'s `ResultShown` failure for a result of the current turn shown in part when the call was made: `That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none.` It holds no offset of its own: read after memory shortened the result again, it still leads to where the result's shown form ends (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:369` | exact tests `src/memory/recall.entity.functions.test.ts#a bounded result is refused anywhere in its head, and the reply sends the model to the offset its shortened form shows`; `src/memory/recall.entity.functions.test.ts#after a spill under pressure, the offset the refusal sends the model to is the new notice's`; `src/memory/recall.entity.functions.test.ts#after a compact view took the result's place in a later turn, the refusal leads to the result's start`; `packages/sdk/src/recall-guard.journey.test.ts#a model that asks for shown text is told where to read on from, and reads the next page` |
+| `recall_context`'s `ResultShown` failure for a result of the current turn shown whole when the call was made: `This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none.` (`resultShownMessage`) | `src/memory/recall.entity.functions.ts:370` | exact tests `src/memory/recall.entity.functions.test.ts#a result shown whole is refused at every offset: nothing of it was left out` |
+| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page the run read earlier in the turn, with unread text after it: `The text from that offset is in a page you already read, shown above. To read on, pass offset N.`, N the first offset past that page whose text no page already read holds: the page's end, or the end of the last page that follows on from it, as a page's last line names it. It names no turn: read in a later turn, its pages are still above it (`recallRefusalFailure`, `readOnAfter`) | `src/memory/recall.entity.functions.ts:392` | exact tests `src/memory/recall.entity.functions.test.ts#a page already read in this turn is refused, with the next offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a page already read is refused, with that page's end, whatever the offset`; `src/memory/recall.entity.functions.test.ts#an offset inside a cut page is refused with the offset after all the text read from there on, not with that page's end`; `src/memory/recall.entity.functions.test.ts#an offset inside pages read one after another is refused with the offset after the last of them`; `packages/sdk/src/recall-guard.journey.test.ts#a refusal for a page already read, read in the next turn, still has that page above it`; `packages/sdk/src/recall-guard.journey.test.ts#is sent past all of it by one reply` |
+| `recall_context`'s `AlreadyRecalled` failure for an offset inside the last page, read earlier in the turn: `The text from that offset is in a page you already read, shown above. That page ends the result.` (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:393` | exact tests `src/memory/recall.entity.functions.test.ts#the last page read again is refused as the end` |
+| `recall_context`'s `AlreadyRecalled` failure for an offset inside a page that does not end the result, where pages read after it hold the text up to the result's end: `The text from that offset to the result's end is in pages you already read, shown above.` It names no offset and no page as the last (`recallRefusalFailure`) | `src/memory/recall.entity.functions.ts:394` | exact tests `src/memory/recall.entity.functions.test.ts#an offset inside a page with pages read after it up to the result's end is told that the rest is read` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

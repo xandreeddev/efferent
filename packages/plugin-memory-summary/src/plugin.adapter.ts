@@ -75,6 +75,39 @@ export const MemorySummaryConfig = Schema.Struct({
    * options take the default.
    */
   boundOnWriteChars: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  /**
+   * Cut what a shortened result shows at a line break: the preview of a
+   * result bounded as it is written (`boundOnWriteChars`) and every page
+   * `recall_context` returns end just after the last line break within
+   * their limit, when cutting there gives up no more than a quarter of the
+   * limit; else at the limit, as with the option off. A result of rows
+   * shorter than that quarter is then cut between two rows wherever the rule
+   * chooses the cut. Two cuts are not the rule's: a page stops where a page
+   * the run already read starts, and starts at the offset its call names.
+   * Off (the default), each is cut at its character limit. The strategy's
+   * version does not change with it.
+   *
+   * - Each limit becomes an upper bound: a preview or a page holds up to a
+   *   quarter fewer characters, counted back from the cut at the limit,
+   *   which is one unit before the limit where the limit would split a
+   *   surrogate pair. Pages have no fixed size, so the only offset to read
+   *   on from is the one a notice or a page prints: adding 8,000 to the
+   *   offset last passed skips text.
+   * - A view with no line break near a limit is cut as with the option off.
+   *   A tool with no view of its own that returns anything but text is shown
+   *   as JSON on one line, so the option does nothing for it: a tool shows
+   *   its rows on separate lines to gain from it.
+   * - A result a little longer than the bound can be bounded where it was
+   *   shown whole with the option off: a result is left whole when its
+   *   preview would not be shorter than its view, and a preview cut at a
+   *   line break is shorter.
+   * - Results bounded before the option changed keep the text they show,
+   *   and are read on from the offset they print.
+   * - A host that builds its own memory from `summaryPolicy` with the option
+   *   contributes `recallCapabilityOf(id, { cutAtLineBreaks: true })` beside
+   *   it.
+   */
+  cutAtLineBreaks: Schema.optionalKey(Schema.Boolean),
 })
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
 /** @public */
@@ -85,12 +118,14 @@ export const memorySummaryDefaults: MemorySummaryConfig = {
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
   summaryTimeoutMs: 60_000,
   boundOnWriteChars: 16_000,
+  cutAtLineBreaks: false,
 }
 
 /**
  * The strategy's version names its summary decisions, which bounding a
- * result as it is written does not change: it stays `2`, so the render
- * checkpoints stored under it keep applying.
+ * result as it is written does not change, nor where that bound's preview is
+ * cut (`cutAtLineBreaks`): it stays `2`, so the render checkpoints stored
+ * under it keep applying.
  *
  * @public
  */
@@ -103,9 +138,11 @@ const boundOf = (config: MemorySummaryConfig): number => config.boundOnWriteChar
  * Core's recall tool under this plugin's id: what reads a bounded result's
  * remaining text. The plugin contributes it whatever `boundOnWriteChars` is:
  * a bound is a fact of the session's log, so a session opened with `0` may
- * still show results bounded earlier, and their notice names this tool.
+ * still show results bounded earlier, and their notice names this tool. Its
+ * pages are cut as the config cuts a bound's preview: at line breaks with
+ * `cutAtLineBreaks`, else at the character limit.
  */
-const recallCapability = recallCapabilityOf("@xandreed/plugin-memory-summary/recall")
+const recallOf = (config: MemorySummaryConfig) => recallCapabilityOf("@xandreed/plugin-memory-summary/recall", { cutAtLineBreaks: config.cutAtLineBreaks === true })
 
 const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullishOr(entries.flatMap((entry) =>
   entry.body._tag === "Compaction" && entry.body.strategy === SUMMARY_STRATEGY.id && entry.body.action._tag === "Summarize"
@@ -161,6 +198,8 @@ const policyWithAttempts = (
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: Option.none(),
   ...(boundOf(config) > 0 ? { boundOnWriteChars: boundOf(config) } : {}),
+  // Where core cuts the preview of a bound. No summary decision reads it, so the version stays.
+  ...(config.cutAtLineBreaks === true ? { cutAtLineBreaks: true } : {}),
   maintain: (input) => decide(config, summarize, attempt, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
@@ -259,7 +298,7 @@ export const memorySummaryPlugin = definePlugin({
       }),
     })),
     // The notice a bounded result ends with names recall_context, and a session keeps the bounds it recorded: the tool is always there.
-    Layer.succeed(Capabilities, [recallCapability]),
+    Layer.succeed(Capabilities, [recallOf(config)]),
   ),
 })
 /**
