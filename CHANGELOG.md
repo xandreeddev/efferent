@@ -24,12 +24,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   description, its `request.part` hash and the tokens it reserves are
   unchanged.
 - `@xandreed/core`: a host that answers a `recall_context` call itself (a
-  `ToolInterceptor` that responds for the call or replaces its result) no
-  longer has that answer counted as a page read. 0.21.1 took any result of
-  the tool that was not an error for 8,000 characters from its call's
-  offset and refused later calls inside them with `AlreadyRecalled`; only a
-  result that is the page the tool writes counts now, and those calls are
-  served.
+  `ToolInterceptor` that responds for the call or replaces its result), or
+  whose registry shows the tool's results as other text than the tool
+  returns (a view of its own for it), no longer has that result counted as
+  a page read. 0.21.1 took any result of the tool that was not an error for
+  8,000 characters from its call's offset and refused later calls inside
+  them with `AlreadyRecalled`; only a result the request shows as the page
+  the tool writes counts now, and those calls are served.
 - `@xandreed/core`: a host that pins or parses an `AlreadyRecalled` message
   finds a later offset in it, and one more message. `To read on, pass
   offset N.` named the end of the page that held the offset asked for; N is
@@ -67,22 +68,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     them; call recall_context with locator "run-1:2" and offset 28000]`.
     When that text runs to the result's end it names none: `[… the remaining
     8000 characters are in text you already read, shown above]`.
-  - A page already read is known by what its call returned, not by its
-    call's offset and the page size: the guard reads where a page ended
-    from the page as it is recorded, and counts it only when that text is
-    the result's text from the call's offset followed by the line the tool
+  - A page already read is known by what the request shows for its call's
+    result, not by its call's offset and the page size: the guard reads
+    where a page ended from that text, and counts it only when it is the
+    result's text from the call's offset followed by the line the tool
     writes. A cut page so counts for the text it holds, and two pages
     that calls run at once were each served whole overlap as they did.
   - An `AlreadyRecalled` reply names the first offset the request holds no
     text of, as a page's last line does: the end of the page that holds the
     offset asked for, or, where pages already read follow on from it, the
     end of the last of them. 0.21.1 named that page's own end, so after
-    pages read one after another (in order, or stepping down) a model that
-    asked from inside the first was refused once for each page on the way:
-    after ten downward steps of 1,000 characters, ten refusals before a
-    page. One reply now leads to a call that is served. When pages read
-    after the page hold the rest of the result, the reply says so and names
-    no offset (see Migration).
+    pages read in order a model that asked from inside the first was
+    refused once for each page on the way. The pages a cut leaves follow on
+    from one another by construction, so under that rule a model that had
+    stepped down ten times would have met a refusal for each of them. One
+    reply now leads to a call that is served. When pages read after the
+    page hold the rest of the result, the reply says so and names no offset
+    (see Migration).
+  - That text is the result's view, not the value the call returned: a
+    page a registry or a host presents as other text is not counted as
+    read, since the request does not show its text. Nor is a result the
+    tool never writes that reads like a page: the tool's line with no text
+    before it, or text that ends inside a surrogate pair. A locator that
+    holds the characters a page's last line starts with (a run id is any
+    string) is read back all the same: every place the line could start is
+    tried.
   - No page is empty for the cut: a call is served only from an offset
     outside every page already read, so the next such page starts past it.
     A call from a page's start or from inside one is refused with
@@ -94,7 +104,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     that ran at once with this one (`limits.toolConcurrency` above 1) is
     cut for only when its result was recorded before this call was
     checked. Where that call came later in the response, the line the cut
-    page ends with calls `shown above` a page the request shows after it.
+    page ends with, or the refusal, calls `shown above` a page the request
+    shows after it.
   - The step loop's breaker is unchanged, and so is its bound on forward
     steps inside one page already read (a stride of up to 1,333
     characters). Pages that follow on from one another now get one reply

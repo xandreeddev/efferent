@@ -1834,10 +1834,11 @@ the run that read it (`CurrentAgentRun`, which the step loop sets around
 each call): a request leaves out another run's exchange of the same turn
 while one of its calls has no result, so a page that run read may not be in
 the request the call was made from. What a page already read holds is read
-from the page as it was returned: the result's text from its call's offset,
-then the line the tool writes after it. A page that was cut so counts for
-the text it holds, not for 8,000 characters from its offset. A result recorded in
-the tool's name that is no such page (a host that answered the call itself)
+from what the request shows for its call's result: the result's text from
+its call's offset, then the line the tool writes after it. A page that was
+cut so counts for the text it holds, not for 8,000 characters from its
+offset. A result recorded in the tool's name that is no such page (a host
+that answered the call itself, a registry that shows the page as other text)
 is not counted as read. The guard stores nothing of its own: a refusal is
 the result of its call, a failed one, and the stored format, the journal
 kinds and the events are unchanged.
