@@ -19,6 +19,9 @@ import type { AgentConfig } from "./agent.adapter.js"
  * read a step ago, or an offset inside that page) gets no text again: the
  * reply says where to read on, the model follows it, and one that keeps
  * asking is stopped by the step loop's breaker long before the step limit.
+ * A page never holds text of a page already read: a model that steps down
+ * through the report, each call a little below the last, is served only the
+ * text between, and the request never holds a character of the report twice.
  * A refusal stays in the conversation after memory shortens the result it
  * was about: followed then, it still leads to where the result's shown form
  * ends. A report of an earlier turn is served as before. Two calls
@@ -126,6 +129,10 @@ const offsetFollowed = (request: Seen): Option.Option<number> => {
 const shortened = (locator: string, chars: number) => `${north.slice(0, chars)}\n[… ${north.length - chars} more characters kept out of context; call recall_context with locator "${locator}" and offset ${chars} to read them]`
 const bounded = (locator: string) => shortened(locator, BOUND)
 const page = (locator: string, from: number) => `${north.slice(from, from + RECALL_PAGE)}\n[… ${north.length - from - RECALL_PAGE} more characters; call recall_context with locator "${locator}" and offset ${from + RECALL_PAGE}]`
+/** A page of the report that ends at `to`, where text already read starts and runs to `next`. */
+const cutPage = (locator: string, from: number, to: number, next: number) => `${north.slice(from, to)}\n[… the next ${next - to} characters are in text you already read, shown above; ${north.length - next} more characters after them; call recall_context with locator "${locator}" and offset ${next}]`
+/** The characters of a page, without the line that says how to read on. */
+const pageBody = (served: string) => served.slice(0, served.lastIndexOf("\n[… "))
 
 /** The replies of `recall_context` that return no text, as the model reads them. */
 const headShown: Failure = { error: "ResultShown", message: "That offset was inside the text this result showed when you asked, so nothing was returned. To read on, pass the offset its shortened form shows now, or offset 0 if it shows none." }
@@ -202,7 +209,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
       recall("r3", () => BOUND),
       // and follows the reply again, which names the offset.
       followReply("r4"),
-      // It asks from the middle of the first page it read,
+      // It asks from the middle of the first page it read, and is sent past both pages,
       recall("r5", () => BOUND + 4_000),
       // and from the middle of the report's shown start.
       recall("r6", () => 8_000),
@@ -221,7 +228,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
       { name: "recall_context", result: page(locator, BOUND) },
       { name: "recall_context", result: failureShown(pageRead(BOUND + RECALL_PAGE)) },
       { name: "recall_context", result: page(locator, BOUND + RECALL_PAGE) },
-      { name: "recall_context", result: failureShown(pageRead(BOUND + RECALL_PAGE)) },
+      { name: "recall_context", result: failureShown(pageRead(BOUND + 2 * RECALL_PAGE)) },
       { name: "recall_context", result: failureShown(headShown) },
     ])
     // Each request shows what the one before it showed, and one more reply.
@@ -230,7 +237,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     expect(ran.recalls).toEqual([
       { isError: true, view: failureShown(headShown) }, { isError: false, view: page(locator, BOUND) },
       { isError: true, view: failureShown(pageRead(BOUND + RECALL_PAGE)) }, { isError: false, view: page(locator, BOUND + RECALL_PAGE) },
-      { isError: true, view: failureShown(pageRead(BOUND + RECALL_PAGE)) }, { isError: true, view: failureShown(headShown) },
+      { isError: true, view: failureShown(pageRead(BOUND + 2 * RECALL_PAGE)) }, { isError: true, view: failureShown(headShown) },
     ])
     // Every one of them names the turn's first run: a page is refused again because the handler knows the run that asks.
     expect(ran.recallRuns).toEqual([0, 0, 0, 0, 0, 0])
@@ -292,6 +299,72 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     const served = [BOUND, BOUND + 6 * stride, BOUND + 12 * stride, BOUND + 18 * stride]
     expect(ran.recalls.filter((recalled) => !recalled.isError)).toEqual(served.map((from) => ({ isError: false, view: page(locator, from) })))
     expect(ran.recalls.filter((recalled) => recalled.isError)).toHaveLength(MAX_STEPS - 1 - served.length)
+  })
+
+  test.each([
+    { stepping: "1,000 characters at a time", stride: 1_000 },
+    { stepping: "100 characters at a time", stride: 100 },
+  ])("a model that reads a page far into the report and then steps down $stepping is served only the text it does not have", async ({ stride }) => {
+    // Each call starts a little below the page the call before it read. A whole page from there is that page again, all but `stride` characters of it.
+    const top = 60_000
+    const asking = Array.from({ length: MAX_STEPS }, (_, index) => recall(`d${index + 1}`, () => top - index * stride))
+    const ran = await Effect.runPromise(runTurns(plugin, [[fetchNorth, ...asking]]))
+    const [turn] = ran.turns
+    // Every call returns text the request lacks, so the breaker counts no repeat and the run ends at the step limit: within the budget, where a whole page a call failed it.
+    expect(turn?.outcome).toBe("partial")
+    expect(turn?.reason).toBe("step-cap")
+    const requests = turn?.requests ?? []
+    expect(requests).toHaveLength(MAX_STEPS)
+    const locator = locatorOf(requests[1] ?? { calls: [], results: [] })
+    // The first page is whole. Each later one ends where the page before it starts, and names the offset after all of them.
+    expect(ran.recalls).toEqual([
+      { isError: false, view: page(locator, top) },
+      ...Array.from({ length: MAX_STEPS - 2 }, (_, index) => ({ isError: false, view: cutPage(locator, top - (index + 1) * stride, top - index * stride, top + RECALL_PAGE) })),
+    ])
+    // What the last request holds of the report through recall_context: each character once, from the lowest offset asked to the first page's end.
+    const held = (requests.at(-1)?.results ?? []).filter((result) => result.name === "recall_context").map((result) => pageBody(String(result.result)))
+    const lowest = top - (held.length - 1) * stride
+    expect(held.reduce((sum, body) => sum + body.length, 0)).toBe(top + RECALL_PAGE - lowest)
+    expect(held.toReversed().join("")).toBe(north.slice(lowest, top + RECALL_PAGE))
+  })
+
+  test("a model that asks from inside text it read while stepping down is sent past all of it by one reply", async () => {
+    // Ten calls, from 60,000 down to 51,000: a whole page, then nine pages of 1,000 characters, each ending where the one before starts.
+    const top = 60_000
+    const down = Array.from({ length: 10 }, (_, index) => recall(`d${index + 1}`, () => top - index * 1_000))
+    const ran = await Effect.runPromise(runTurns(plugin, [[
+      fetchNorth, ...down,
+      // It asks from inside the lowest page. Ten pages follow on from there, up to 68,000.
+      recall("in", () => top - 9 * 1_000 + 500),
+      // It follows the reply: one call, and it is served.
+      followReply("on"),
+      () => stop("The north report is read."),
+    ]]))
+    const [turn] = ran.turns
+    expect(turn?.outcome).toBe("completed")
+    const requests = turn?.requests ?? []
+    expect(requests).toHaveLength(14)
+    // The reply names the first offset the request holds no text of, as the last line of each cut page does: a reply naming its own page's end would lead to nine more refusals.
+    expect(ran.recalls.slice(10)).toEqual([
+      { isError: true, view: failureShown(pageRead(top + RECALL_PAGE)) },
+      { isError: false, view: north.slice(top + RECALL_PAGE) },
+    ])
+    expect(north.length).toBeGreaterThan(top + RECALL_PAGE)
+  })
+
+  test("a model that steps forward through pages it read while stepping down is stopped by the loop's breaker", async () => {
+    const top = 60_000
+    const down = Array.from({ length: 10 }, (_, index) => recall(`d${index + 1}`, () => top - index * 1_000))
+    // Then up again, 1,000 characters at a time from inside the lowest page: every call starts in another page, all of them read.
+    const up = Array.from({ length: MAX_STEPS }, (_, index) => recall(`u${index + 1}`, () => top - 9 * 1_000 + 500 + index * 1_000))
+    const ran = await Effect.runPromise(runTurns(plugin, [[fetchNorth, ...down, ...up]]))
+    const [turn] = ran.turns
+    expect(turn?.outcome).toBe("partial")
+    expect(turn?.reason).toBe("degenerate-loop")
+    // Pages that follow on from one another are refused with one reply, whichever of them a call starts in: six of them end the run, well before the step limit.
+    expect(ran.recalls.slice(10)).toEqual(Array.from({ length: REFUSALS_TO_STOP }, () => ({ isError: true, view: failureShown(pageRead(top + RECALL_PAGE)) })))
+    expect(turn?.requests ?? []).toHaveLength(1 + 10 + REFUSALS_TO_STOP)
+    expect(1 + 10 + REFUSALS_TO_STOP).toBeLessThan(MAX_STEPS)
   })
 
   test("a result of an earlier turn is served as before, from any offset and as often as asked", async () => {

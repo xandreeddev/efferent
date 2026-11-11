@@ -89,7 +89,8 @@ which reads a bounded result a page of up to 8,000 characters at a time.
 Within the turn that wrote the result, the tool refuses a call for text the
 request still shows (the first 16,000 characters, or an offset inside a page
 read a step ago): the call is answered with a failure that says where to read
-on. See
+on. A page never returns text of a page read earlier in the turn: it ends
+where that page starts. See
 [reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on).
 
 ```ts

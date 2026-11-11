@@ -8,6 +8,103 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- `@xandreed/core`: a host that reads the last line of a `recall_context`
+  page (a test that pins a page, a parser of the offset it names, a reader
+  of the transcript) handles two more lines, and pages shorter than 8,000
+  characters. A page with unread text right after it ends as before, byte
+  for byte: `[… N more characters; call recall_context with locator "…" and
+  offset E]`. A page that stops where text the run already read in the turn
+  starts ends `[… the next N characters are in text you already read, shown
+  above; M more characters after them; call recall_context with locator "…"
+  and offset R]`, R the first offset past that text, or, when that text runs
+  to the result's end, `[… the remaining N characters are in text you
+  already read, shown above]`, which names no offset. The tool's
+  description, its `request.part` hash and the tokens it reserves are
+  unchanged.
+- `@xandreed/core`: a host that answers a `recall_context` call itself (a
+  `ToolInterceptor` that responds for the call or replaces its result) no
+  longer has that answer counted as a page read. 0.21.1 took any result of
+  the tool that was not an error for 8,000 characters from its call's
+  offset and refused later calls inside them with `AlreadyRecalled`; only a
+  result that is the page the tool writes counts now, and those calls are
+  served.
+- `@xandreed/core`: a host that pins or parses an `AlreadyRecalled` message
+  finds a later offset in it, and one more message. `To read on, pass
+  offset N.` named the end of the page that held the offset asked for; N is
+  now the first offset past that page whose text no page already read
+  holds, so where pages already read follow on from it N is the end of the
+  last of them. `That page ends the result.` is still said of the last page
+  only. Where pages read after the page hold the text up to the result's
+  end, the message is `The text from that offset to the result's end is in
+  pages you already read, shown above.` The `error` name is unchanged.
+
+### Fixed
+
+- `@xandreed/core`: a page `recall_context` serves never holds text of a
+  page the same run already read in the turn. 0.21.1 refused a call by
+  where its page would start and then served 8,000 characters from there,
+  so an offset a little below a page already read returned that page again:
+  a model that stepped downward through a result (60000, 59000, 58000, and
+  so on) was served 8,000 characters a call, all but 1,000 of them text the
+  request held, and ended at the step limit under the summary strategy or
+  failed with `context.budget` under the window strategy, which the 0.21.1
+  notes below state as a limit. A page now ends where the next page already
+  read starts, when that is sooner than 8,000 characters on, wherever the
+  call starts: below a page already read, or in a gap between two. Every
+  character a call returns is new to the request, in whatever order the
+  model asks, and the pages of one result together never hold more than the
+  result does. That model is now served 1,000 characters a call and ends at
+  the step limit within the budget, the request holding each character once.
+  - The line a page ends with names the first offset past it whose text the
+    request does not hold. With unread text right after the page that is
+    the page's own end, in the line it always had. Where a page already
+    read holds the text there, the line says how far the text already read
+    runs and names the offset past it, across every page that follows on,
+    so the model spends no call on a refusal: `[… the next 8000 characters
+    are in text you already read, shown above; 32000 more characters after
+    them; call recall_context with locator "run-1:2" and offset 28000]`.
+    When that text runs to the result's end it names none: `[… the remaining
+    8000 characters are in text you already read, shown above]`.
+  - A page already read is known by what its call returned, not by its
+    call's offset and the page size: the guard reads where a page ended
+    from the page as it is recorded, and counts it only when that text is
+    the result's text from the call's offset followed by the line the tool
+    writes. A cut page so counts for the text it holds, and two pages
+    that calls run at once were each served whole overlap as they did.
+  - An `AlreadyRecalled` reply names the first offset the request holds no
+    text of, as a page's last line does: the end of the page that holds the
+    offset asked for, or, where pages already read follow on from it, the
+    end of the last of them. 0.21.1 named that page's own end, so after
+    pages read one after another (in order, or stepping down) a model that
+    asked from inside the first was refused once for each page on the way:
+    after ten downward steps of 1,000 characters, ten refusals before a
+    page. One reply now leads to a call that is served. When pages read
+    after the page hold the rest of the result, the reply says so and names
+    no offset (see Migration).
+  - No page is empty for the cut: a call is served only from an offset
+    outside every page already read, so the next such page starts past it.
+    A call from a page's start or from inside one is refused with
+    `AlreadyRecalled`, as before.
+  - The scope is the guard's: the current turn, the asking run's own pages,
+    pages still shown whole, under both memory strategies. A result of an
+    earlier turn is served whole pages from any offset, as before; a page
+    another run of the turn read is not cut for, and one read by a call
+    that ran at once with this one (`limits.toolConcurrency` above 1) is
+    cut for only when its result was recorded before this call was
+    checked. Where that call came later in the response, the line the cut
+    page ends with calls `shown above` a page the request shows after it.
+  - The step loop's breaker is unchanged, and so is its bound on forward
+    steps inside one page already read (a stride of up to 1,333
+    characters). Pages that follow on from one another now get one reply
+    for every offset inside them, so a model that steps forward through
+    them repeats one signature and is stopped at the sixth refusal, where
+    each refusal named another offset before and the run went on.
+    A model that steps downward returns new text with every call, so the
+    breaker counts no repeat: such a run costs steps, not context, and ends
+    at the step limit or once it has read down to the result's shown start.
+
 ## 0.21.1 — 2026-11-11
 
 ### Migration

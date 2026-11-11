@@ -204,13 +204,32 @@ reads as the call's result:
 - `AlreadyRecalled` when the offset is inside a page a call of this turn
   already returned, its start included, and that page is still shown: `The
   text from that offset is in a page you already read, shown above. To read
-  on, pass offset 24000.`, or `That page ends the result.` after the last
-  page.
+  on, pass offset 24000.` The offset is the first one past that page whose
+  text no page already read holds, so the call that follows is served. With
+  none left the reply ends `That page ends the result.` after the last
+  page, or reads `The text from that offset to the result's end is in pages
+  you already read, shown above.` when pages read after it hold the rest.
 
-An offset past the shown text and outside every page already read is a page,
-also when it lies below a page already read and its page runs into that one
-(see the limits). When window memory spills a result under pressure, the text
-that left the request is served again.
+An offset past the shown text and outside every page already read is a page.
+Within the turn a page never holds text of a page the same run already read:
+it ends where the next such page starts, when that is sooner than 8,000
+characters on, whether the call starts below a page already read or in a gap
+between two. So every character a call returns is new to the request, in
+whatever order the model asks, and the pages of one result never hold more
+than the result does.
+
+A page with unread text right after it ends as it always did: `[… 28000 more
+characters; call recall_context with locator "…" and offset 24000]`. Where
+the text after it is already read, its last line says how far that text runs
+and names the offset past it, so the model spends no call on a refusal: `[…
+the next 8000 characters are in text you already read, shown above; 24000
+more characters after them; call recall_context with locator "…" and offset
+28000]`. When that text runs to the result's end, the line names no offset:
+`[… the remaining 8000 characters are in text you already read, shown
+above]`.
+
+When window memory spills a result under pressure, the text that left the
+request is served again.
 
 A refusal stays in the conversation as its call's result, and the model reads
 it again in later requests, also after memory has shortened the result it is
@@ -247,31 +266,29 @@ These limits apply:
   result with a recorded digest under a policy that shows no digests. The
   tool's description says a call for shown text can return no text, not that
   it does.
-- A call is refused by where its page would start, not by what the page would
-  hold. An offset below a page already read, outside the shown text and every
-  other page, is served a whole page, although most of it can be shown: asked
-  1,000 characters below a page already read, the call returns 8,000
-  characters of which 7,000 are in the request. Each such page is a new
-  result, so the breaker counts no repeat. A model that steps downward, each
-  call a little below the last page it read, still ends at the step limit, or
-  under window memory fails with `context.budget` once those pages pass the
-  budget.
-- Two calls for the same page made together in one response are both served
-  when they run at once (`limits.toolConcurrency` above 1): neither has a
-  result when the other is checked. A turn runs them one after another by
-  default, and the second is then refused.
+- Two calls made together in one response are each served as if the other
+  were not when they run at once (`limits.toolConcurrency` above 1): neither
+  has a result when the other is checked, so both can return the same page,
+  or pages that overlap. A turn runs them one after another by default, and
+  the second is then refused or cut.
+- A page already read is known by the text its call returned. A result
+  recorded in the tool's name that is not such a page (a host that answered
+  the call itself) is not counted as read.
 - A result shown through a compact view, a digest or a custom policy's own
   preview is served from its start, as before.
 - The breaker stops a model only when its steps repeat. A step that pairs a
   refused call with a call whose result is new, or that makes more refused
   calls than any step before it, counts as progress, and such a run ends at
-  the step limit. A model that steps forward inside a page it read is stopped
-  only while six refused calls in a row fall inside that page: the first,
+  the step limit. A model that steps forward inside text it read is stopped
+  only while six refused calls in a row fall inside it: the first,
   then the five repeats the breaker stops at by default
-  (`limits.degenerate`). With pages of 8,000 characters that holds up to a
-  stride of 1,333. With a longer stride the model reaches the next page
+  (`limits.degenerate`). Inside one page of 8,000 characters that holds up
+  to a stride of 1,333; pages that follow on from one another count as one
+  stretch. With a longer stride the model reaches the next page
   first, which is new text and starts the count again: the run costs steps,
-  not context, and ends at the step limit or at the result's end.
+  not context, and ends at the step limit or at the result's end. A model
+  that steps downward, each call a little below the last page it read, is in
+  the same case: each call returns the text between and nothing it has.
 - A custom policy that shortens a recalled page makes an earlier
   `AlreadyRecalled` reply untrue of later requests. The memory plugins never
   shorten one.

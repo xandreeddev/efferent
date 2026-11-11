@@ -174,8 +174,8 @@ annotation, and `0` there keeps its results whole, as the workspace tools
 that end a result with their own continuation do.
 [Context and the journal](/docs/concepts/context-journal/#bounding-what-a-tool-shows)
 has the rules and the limits. Within the turn that wrote a result,
-`recall_context` refuses a call for text the request still shows: it answers
-with where to read on
+`recall_context` refuses a call for text the request still shows and answers
+with where to read on, and a page it serves holds none of a page already read
 ([reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on)).
 
 The window strategy's decisions are version 4 and the summary strategy's

@@ -1,5 +1,5 @@
 import { Tool } from "effect/ai"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Result, Schema } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
@@ -9,7 +9,7 @@ import { RunContext } from "../ports/run-context.port.js"
 import { presentedEntries, shownViewsOf, toolInputsByResult } from "./memory-log.entity.functions.js"
 import { CompactionAction, EntryId } from "./memory-log.entity.js"
 import type { LogBody, LogEntry } from "./memory-log.entity.js"
-import { RecallRefusal } from "./recall.entity.js"
+import { ReadOn, RecallRefusal } from "./recall.entity.js"
 import type { ShownPart } from "./recall.entity.js"
 
 /** The name of the tool that reads a shortened result back; a memory strategy never shortens one of its results. */
@@ -77,6 +77,40 @@ const pageBounds = (view: string, offset: number): { readonly start: number; rea
 }
 
 /**
+ * A page of a result's view: the text from `start` to `end`, and `next`, the
+ * first offset from `end` on whose text the request does not hold. `next` is
+ * `end` unless a page already read holds the text at `end`.
+ */
+interface RecallPage {
+  readonly start: number
+  readonly end: number
+  readonly next: number
+}
+
+/** What every line a page ends with starts with: a page with no such line ends the result. */
+const CONTINUATION_START = "\n[… "
+
+/**
+ * The line a page that ends at `end` closes with: how to read on. None when
+ * the page ends the result. While the text at `end` is not in the request
+ * (`next` is `end`), the offset to pass is `end`, as it always was. Where a
+ * page already read starts at `end`, the line says how much text from there
+ * is already shown, and names `next`, the offset past it, so the model spends
+ * no call on a refusal; when that text runs to the result's end it names no
+ * offset. Each line says only what stays true while the pages it speaks of
+ * are shown: they were read in the same turn, and leave a request with it.
+ */
+const continuation = (locator: string, view: string, end: number, next: number): string => {
+  if (next <= end) return end >= view.length ? "" : `${CONTINUATION_START}${view.length - end} more characters; call recall_context with locator "${locator}" and offset ${end}]`
+  return next >= view.length
+    ? `${CONTINUATION_START}the remaining ${view.length - end} characters are in text you already read, shown above]`
+    : `${CONTINUATION_START}the next ${next - end} characters are in text you already read, shown above; ${view.length - next} more characters after them; call recall_context with locator "${locator}" and offset ${next}]`
+}
+
+/** A page as the tool returns it: its text, then the line that says how to read on. */
+const pageText = (locator: string, view: string, page: RecallPage): string => `${view.slice(page.start, page.end)}${continuation(locator, view, page.end, page.next)}`
+
+/**
  * One page of a stored result: at most `RECALL_PAGE_CHARS` from `offset`,
  * ending with how to read on while more remains. A page never holds half a
  * surrogate pair: it ends one unit earlier when its end would split one (the
@@ -85,9 +119,32 @@ const pageBounds = (view: string, offset: number): { readonly start: number; rea
  */
 export const recallPage = (locator: string, view: string, offset: number): string => {
   const { start, end } = pageBounds(view, offset)
-  const page = view.slice(start, end)
-  return end >= view.length ? page
-    : `${page}\n[… ${view.length - end} more characters; call recall_context with locator "${locator}" and offset ${end}]`
+  return pageText(locator, view, { start, end, next: end })
+}
+
+/**
+ * Where a page that a call returned ended, read from the page as it is
+ * recorded: the inverse of `pageText`, as `previewChars` is of
+ * `spillPreview`. The page starts at `start` (its call's offset), and its
+ * text is all of the recorded result before its last line, so its end is
+ * `start` plus that length; the end counts only when the recorded result is
+ * exactly the view's text between the two followed by a line `continuation`
+ * writes for that end. A page is so known by what was served, never by what
+ * its call would be served now: one cut where a page already read started is
+ * as short as it was, and two pages that calls run at once were each served
+ * whole overlap as they did. None for a result that is not such a page (a
+ * host's own answer in the tool's name, a view presented again since): what
+ * it showed cannot be told, and it is not counted as read.
+ */
+const recordedEnd = (locator: string, view: string, start: number, recorded: string): Option.Option<number> => {
+  if (recorded === view.slice(start)) return Option.some(view.length)
+  const at = recorded.lastIndexOf(CONTINUATION_START)
+  const end = start + at
+  if (at < 0 || end > view.length || recorded.slice(0, at) !== view.slice(start, end)) return Option.none()
+  const line = recorded.slice(at)
+  const named = Option.filter(Option.map(Option.fromNullishOr(/ and offset (\d+)\]$/.exec(line)?.[1]), Number), Number.isSafeInteger)
+  // The line names the page's own end, an offset past text already read, or none when that text runs to the result's end.
+  return [end, view.length, ...Option.toArray(named)].some((next) => next >= end && continuation(locator, view, end, next) === line) ? Option.some(end) : Option.none()
 }
 
 type ToolResultBody = Extract<LogBody, { readonly _tag: "ToolResult" }>
@@ -133,47 +190,111 @@ const ofRun = (asking: Option.Option<RunRef>, entry: LogEntry, body: ToolResultB
   onSome: (run) => entry.runId === run.id && body.run === run.ordinal,
 })
 
+/** The text a page already read holds of a result's view: from `start` to `end`. */
+interface ReadPage {
+  readonly start: number
+  readonly end: number
+}
+
 /**
- * Why a page of `target` from `offset` is not served, if it is not: the
- * guard of the turn being run, decided from the run's memory alone. A result
- * of an earlier turn is always served.
+ * The pages of `target` the request the asking run answers from still holds:
+ * each returned by a `recall_context` call of this turn to that run, with
+ * the text it holds (`recordedEnd`), and still shown whole. Only a recorded
+ * page counts: a refused call returned none, and the call being answered
+ * has no result yet. Only the asking run's pages count (`ofRun`): a build
+ * leaves out another run's exchange while one of its calls has no result, so
+ * a page that run read may not be in the request this call was made from.
+ * The log is read in one pass each for the calls' inputs and for the results
+ * something rewrote or digested, and only when the turn holds a page at all:
+ * a page nothing names shows its whole view (`shownChars`).
+ */
+const readPagesOf = (entries: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, view: string): ReadonlyArray<ReadPage> => {
+  const results = entries.flatMap((entry) => entry.turn === turn && entry.body._tag === "ToolResult" && entry.body.toolName === RECALL_TOOL && !entry.body.isError && ofRun(asking, entry, entry.body)
+    ? [{ entry, page: entry.body }] : [])
+  if (results.length === 0) return []
+  const inputs = toolInputsByResult(entries)
+  const touched = new Set<EntryId>([
+    ...entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [entry.body.entry] : []),
+    ...entries.flatMap((entry) => entry.body._tag === "Compaction" ? CompactionAction.match(entry.body.action, {
+      CompactViews: (compact): ReadonlyArray<EntryId> => compact.entries, Spill: (spill) => [spill.entry], DropTurns: () => [], Summarize: () => [], OmitMedia: () => [],
+    }) : []),
+  ])
+  return results.flatMap(({ entry, page }) => Option.match(Option.filter(decodeRecallInput(inputs.get(entry.id)), (input) => input.locator === target.id), {
+    onNone: () => [],
+    onSome: (input) => {
+      const start = cutAt(view, input.offset ?? 0)
+      const whole = !touched.has(entry.id) || shownChars(entries, entry, page) >= page.view.length
+      // What the call returned is the page: its view is that text for the tool as core defines it, and a registry may show it otherwise.
+      const returned = typeof page.encoded === "string" ? page.encoded : page.view
+      return whole ? Option.toArray(Option.map(recordedEnd(target.id, view, start, returned), (end) => ({ start, end }))) : []
+    },
+  }))
+}
+
+/**
+ * The first offset from `from` on whose text no page already read holds:
+ * `from` itself unless a page holds it, else past every page that follows
+ * on from one that does. A page read later can end inside or at the start of
+ * another, so the pages are followed until none holds the offset reached.
+ */
+const firstUnread = (pages: ReadonlyArray<ReadPage>, from: number): number => {
+  const reached = pages.reduce((far, page) => page.start <= from && from < page.end ? Math.max(far, page.end) : far, from)
+  return reached === from ? from : firstUnread(pages, reached)
+}
+
+/**
+ * What follows the text already read from `ended` on, where the page that
+ * holds a refused call's offset ended: the first offset no page already read
+ * holds, past every page that follows on (`firstUnread`), as the last line of
+ * a page names it. So every offset inside pages that follow on from one
+ * another gets one answer, and it is never the start of another such page.
+ * With none left, whether that page itself ended the result or pages read
+ * after it hold the rest.
+ */
+const readOnAfter = (pages: ReadonlyArray<ReadPage>, view: string, ended: number): ReadOn => {
+  const unread = firstUnread(pages, ended)
+  if (unread < view.length) return { _tag: "From", offset: unread }
+  return ended < view.length ? { _tag: "ReadToEnd" } : { _tag: "PageEndsResult" }
+}
+
+/**
+ * What a call for `target` from `offset` gets: a page, or why none is
+ * served. It is the guard of the turn being run, decided from the run's
+ * memory alone. A result of an earlier turn is always served a whole page.
  *
  * - `ResultShown`: the page would start inside the text the result still
  *   shows (`shownChars`).
- * - `AlreadyRecalled`: the page would start inside a page of `target` that a
- *   `recall_context` call of this turn returned to the asking run, and that
- *   page is still shown whole. `next` is where that page ended; of several
- *   such pages, the one that ends last. Only a recorded page counts: a
- *   refused call returned none, and the call being answered has no result
- *   yet. Only the asking run's pages count (`ofRun`): a build leaves out
- *   another run's exchange while one of its calls has no result, so a page
- *   that run read may not be in the request this call was made from.
+ * - `AlreadyRecalled`: the page would start inside a page of `target` the
+ *   request already holds (`readPagesOf`), its start included. `next` is
+ *   what follows the text already read from there (`readOnAfter`): the first
+ *   offset no such page holds, so the call that follows the reply is served.
+ * - Otherwise a page, which never holds text of a page the request already
+ *   holds: it ends where the next such page starts, when that is sooner
+ *   than `RECALL_PAGE_CHARS` on. So every character a call returns is new
+ *   to the request, in whatever order the offsets come, and the pages of one
+ *   result together never hold more than the result does. A page is never
+ *   empty for that: its start is outside every page already read, so the
+ *   next one starts past it (only an empty result's one page holds nothing).
  *
- * An offset past the shown text and outside every such page is a page. Two
- * calls for one page that a response makes together and the loop runs at
- * once are both served: neither has a result when the other is checked.
+ * Two calls a response makes together and the loop runs at once are both
+ * served as if the other were not: neither has a result when the other is
+ * checked.
  */
-const recallRefusalOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, offset: number): Option.Option<RecallRefusal> => {
-  const body = target.body
-  if (body._tag !== "ToolResult" || target.turn !== turn) return Option.none()
-  const entries = presentedEntries(stored)
+const recallOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.Option<RunRef>, target: LogEntry, body: ToolResultBody, offset: number): Result.Result<RecallPage, RecallRefusal> => {
   const view = body.view
-  const { start } = pageBounds(view, offset)
+  const whole = pageBounds(view, offset)
+  if (target.turn !== turn) return Result.succeed({ ...whole, next: whole.end })
+  const entries = presentedEntries(stored)
+  const { start } = whole
   const shown = shownChars(entries, target, body)
-  if (start < shown) return Option.some({ _tag: "ResultShown", shown: shown < view.length ? "head" : "whole" })
-  const pages = entries.flatMap((entry) => entry.turn === turn && entry.body._tag === "ToolResult" && entry.body.toolName === RECALL_TOOL && !entry.body.isError && ofRun(asking, entry, entry.body)
-    ? [{ entry, page: entry.body }] : [])
-  // The inputs of every result are read in one pass over the log, and only when the turn holds a page at all.
-  const inputs = pages.length === 0 ? new Map<EntryId, unknown>() : toolInputsByResult(entries)
+  if (start < shown) return Result.fail({ _tag: "ResultShown", shown: shown < view.length ? "head" : "whole" })
+  const pages = readPagesOf(entries, turn, asking, target, view)
   // Where each page that holds the offset ended: one that starts there (an empty page holds nothing else), or one the offset falls inside.
-  const ends = pages.flatMap(({ entry, page }) => Option.match(Option.filter(decodeRecallInput(inputs.get(entry.id)), (input) => input.locator === target.id), {
-    onNone: () => [],
-    onSome: (input) => {
-      const read = pageBounds(view, input.offset ?? 0)
-      return (read.start === start || (read.start < start && start < read.end)) && shownChars(entries, entry, page) >= page.view.length ? [read.end] : []
-    },
-  }))
-  return ends.length === 0 ? Option.none() : Option.some({ _tag: "AlreadyRecalled", next: Option.filter(Option.some(Math.max(...ends)), (end) => end < view.length) })
+  const ends = pages.flatMap((page) => page.start === start || (page.start < start && start < page.end) ? [page.end] : [])
+  if (ends.length > 0) return Result.fail({ _tag: "AlreadyRecalled", next: readOnAfter(pages, view, Math.max(...ends)) })
+  // The page stops where the nearest page already read past its start begins.
+  const end = pages.reduce((nearest, page) => page.start > start ? Math.min(nearest, page.start) : nearest, whole.end)
+  return Result.succeed({ start, end, next: firstUnread(pages, end) })
 }
 
 /**
@@ -198,18 +319,24 @@ const resultShownMessage: Record<ShownPart, string> = {
  * The failure `recall_context` returns for a refusal: what the request held
  * of the text asked for, and how to read on. It holds nothing of the call
  * (no offset asked for, no locator), so every offset inside one shown head,
- * and every offset inside one page, gets the same failure. An
- * `AlreadyRecalled` text names no turn: it is read again in later turns,
- * where the page it calls shown is still above it (the two are recorded in
- * one turn, and a turn leaves a request only as a whole).
+ * and every offset inside one page, or inside pages that follow on from one
+ * another, gets the same failure. The offset an `AlreadyRecalled` text names
+ * is where the text already read ends, which is past the end of the page
+ * that holds the offset asked for when other pages follow on from it; the
+ * text says `That page ends the result.` only of that page, and has other
+ * words for pages read after it that hold the rest. It names no turn: it is
+ * read again in later turns, where the pages it calls shown are still above
+ * it (they are recorded in one turn, and a turn leaves a request only as a
+ * whole).
  */
 const recallRefusalFailure = (refusal: RecallRefusal): Failure => RecallRefusal.match(refusal, {
   ResultShown: ({ shown }) => ({ error: "ResultShown", message: resultShownMessage[shown] }),
   AlreadyRecalled: ({ next }) => ({
     error: "AlreadyRecalled",
-    message: Option.match(next, {
-      onNone: () => "The text from that offset is in a page you already read, shown above. That page ends the result.",
-      onSome: (ended) => `The text from that offset is in a page you already read, shown above. To read on, pass offset ${ended}.`,
+    message: ReadOn.match(next, {
+      From: ({ offset }) => `The text from that offset is in a page you already read, shown above. To read on, pass offset ${offset}.`,
+      PageEndsResult: () => "The text from that offset is in a page you already read, shown above. That page ends the result.",
+      ReadToEnd: () => "The text from that offset to the result's end is in pages you already read, shown above.",
     }),
   }),
 })
@@ -221,16 +348,16 @@ const recallTool = defineTool({
     const run = yield* RunContext
     const id = Schema.decodeUnknownOption(EntryId)(locator)
     const entry = Option.isNone(id) ? Option.none<LogEntry>() : yield* run.memory.resolve(id.value)
-    const target = Option.flatMap(entry, (found) => found.body._tag === "ToolResult" ? Option.some({ found, view: found.body.view }) : Option.none())
+    const target = Option.flatMap(entry, (found) => found.body._tag === "ToolResult" ? Option.some({ found, body: found.body, view: found.body.view }) : Option.none())
     if (Option.isNone(target)) return yield* Effect.fail({ error: "UnknownLocator", message: `No stored result has locator ${locator}; pass a locator exactly as a shortened result shows it` })
-    const { found, view } = target.value
+    const { found, body, view } = target.value
     const from = offset ?? 0
     if (from > 0 && from >= view.length) return yield* Effect.fail({ error: "OffsetOutOfRange", message: `The result has ${view.length} characters; pass an offset below ${view.length}` })
     // The loop's run where the loop makes the call; none for a call made outside one.
-    const refusal = recallRefusalOf(yield* run.memory.entries, yield* run.memory.turn, yield* CurrentAgentRun, found, from)
-    return yield* Option.match(refusal, {
-      onNone: () => Effect.succeed(recallPage(locator, view, from)),
-      onSome: (refused) => Effect.fail(recallRefusalFailure(refused)),
+    const recalled = recallOf(yield* run.memory.entries, yield* run.memory.turn, yield* CurrentAgentRun, found, body, from)
+    return yield* Result.match(recalled, {
+      onSuccess: (page) => Effect.succeed(pageText(locator, view, page)),
+      onFailure: (refused) => Effect.fail(recallRefusalFailure(refused)),
     })
   }),
   annotations: { readOnly: true },

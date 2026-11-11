@@ -64,11 +64,14 @@ Within the turn that wrote a result, `recall_context` refuses a call for text
 the request still shows: the start of a bounded or spilled result, or an
 offset inside a page read a step ago. The call is answered with a failure
 that says where to read on (`ResultShown`, `AlreadyRecalled`), and a model
-whose steps repeat that call is stopped by the step loop's breaker. Once a
-spill under pressure takes text out of the request, that text is served
-again, and a `ResultShown` reply written before the spill still leads to it:
-the reply holds no offset of its own and sends the model to the one the
-result's shortened form shows now. See
+whose steps repeat that call is stopped by the step loop's breaker. A page
+never returns text of a page read earlier in the turn: it ends where that
+page starts, and its last line says how far the text already read runs and,
+when more follows it, the offset past it. Once a spill under pressure takes
+text out of the request, that text is served again, and a `ResultShown`
+reply written before the spill still leads to it: the reply holds no offset
+of its own and sends the model to the one the result's shortened form shows
+now. See
 [reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on)
 for the replies and the limits.
 
