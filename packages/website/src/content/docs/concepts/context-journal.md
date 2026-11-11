@@ -204,8 +204,11 @@ reads as the call's result:
 - `AlreadyRecalled` when the offset is inside a page a call of this turn
   already returned, its start included, and that page is still shown: `The
   text from that offset is in a page you already read, shown above. To read
-  on, pass offset 24000.`, or `That page ends the result.` after the last
-  page.
+  on, pass offset 24000.` The offset is the first one past that page whose
+  text no page already read holds, so the call that follows is served. With
+  none left the reply ends `That page ends the result.` after the last
+  page, or reads `The text from that offset to the result's end is in pages
+  you already read, shown above.` when pages read after it hold the rest.
 
 An offset past the shown text and outside every page already read is a page.
 Within the turn a page never holds text of a page the same run already read:
@@ -276,11 +279,12 @@ These limits apply:
 - The breaker stops a model only when its steps repeat. A step that pairs a
   refused call with a call whose result is new, or that makes more refused
   calls than any step before it, counts as progress, and such a run ends at
-  the step limit. A model that steps forward inside a page it read is stopped
-  only while six refused calls in a row fall inside that page: the first,
+  the step limit. A model that steps forward inside text it read is stopped
+  only while six refused calls in a row fall inside it: the first,
   then the five repeats the breaker stops at by default
-  (`limits.degenerate`). With pages of 8,000 characters that holds up to a
-  stride of 1,333. With a longer stride the model reaches the next page
+  (`limits.degenerate`). Inside one page of 8,000 characters that holds up
+  to a stride of 1,333; pages that follow on from one another count as one
+  stretch. With a longer stride the model reaches the next page
   first, which is new text and starts the count again: the run costs steps,
   not context, and ends at the step limit or at the result's end. A model
   that steps downward, each call a little below the last page it read, is in

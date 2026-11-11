@@ -9,7 +9,7 @@ import { RunContext } from "../ports/run-context.port.js"
 import { presentedEntries, shownViewsOf, toolInputsByResult } from "./memory-log.entity.functions.js"
 import { CompactionAction, EntryId } from "./memory-log.entity.js"
 import type { LogBody, LogEntry } from "./memory-log.entity.js"
-import { RecallRefusal } from "./recall.entity.js"
+import { ReadOn, RecallRefusal } from "./recall.entity.js"
 import type { ShownPart } from "./recall.entity.js"
 
 /** The name of the tool that reads a shortened result back; a memory strategy never shortens one of its results. */
@@ -243,6 +243,21 @@ const firstUnread = (pages: ReadonlyArray<ReadPage>, from: number): number => {
 }
 
 /**
+ * What follows the text already read from `ended` on, where the page that
+ * holds a refused call's offset ended: the first offset no page already read
+ * holds, past every page that follows on (`firstUnread`), as the last line of
+ * a page names it. So every offset inside pages that follow on from one
+ * another gets one answer, and it is never the start of another such page.
+ * With none left, whether that page itself ended the result or pages read
+ * after it hold the rest.
+ */
+const readOnAfter = (pages: ReadonlyArray<ReadPage>, view: string, ended: number): ReadOn => {
+  const unread = firstUnread(pages, ended)
+  if (unread < view.length) return { _tag: "From", offset: unread }
+  return ended < view.length ? { _tag: "ReadToEnd" } : { _tag: "PageEndsResult" }
+}
+
+/**
  * What a call for `target` from `offset` gets: a page, or why none is
  * served. It is the guard of the turn being run, decided from the run's
  * memory alone. A result of an earlier turn is always served a whole page.
@@ -251,7 +266,8 @@ const firstUnread = (pages: ReadonlyArray<ReadPage>, from: number): number => {
  *   shows (`shownChars`).
  * - `AlreadyRecalled`: the page would start inside a page of `target` the
  *   request already holds (`readPagesOf`), its start included. `next` is
- *   where that page ended; of several such pages, the one that ends last.
+ *   what follows the text already read from there (`readOnAfter`): the first
+ *   offset no such page holds, so the call that follows the reply is served.
  * - Otherwise a page, which never holds text of a page the request already
  *   holds: it ends where the next such page starts, when that is sooner
  *   than `RECALL_PAGE_CHARS` on. So every character a call returns is new
@@ -275,7 +291,7 @@ const recallOf = (stored: ReadonlyArray<LogEntry>, turn: number, asking: Option.
   const pages = readPagesOf(entries, turn, asking, target, view)
   // Where each page that holds the offset ended: one that starts there (an empty page holds nothing else), or one the offset falls inside.
   const ends = pages.flatMap((page) => page.start === start || (page.start < start && start < page.end) ? [page.end] : [])
-  if (ends.length > 0) return Result.fail({ _tag: "AlreadyRecalled", next: Option.filter(Option.some(Math.max(...ends)), (end) => end < view.length) })
+  if (ends.length > 0) return Result.fail({ _tag: "AlreadyRecalled", next: readOnAfter(pages, view, Math.max(...ends)) })
   // The page stops where the nearest page already read past its start begins.
   const end = pages.reduce((nearest, page) => page.start > start ? Math.min(nearest, page.start) : nearest, whole.end)
   return Result.succeed({ start, end, next: firstUnread(pages, end) })
@@ -303,18 +319,24 @@ const resultShownMessage: Record<ShownPart, string> = {
  * The failure `recall_context` returns for a refusal: what the request held
  * of the text asked for, and how to read on. It holds nothing of the call
  * (no offset asked for, no locator), so every offset inside one shown head,
- * and every offset inside one page, gets the same failure. An
- * `AlreadyRecalled` text names no turn: it is read again in later turns,
- * where the page it calls shown is still above it (the two are recorded in
- * one turn, and a turn leaves a request only as a whole).
+ * and every offset inside one page, or inside pages that follow on from one
+ * another, gets the same failure. The offset an `AlreadyRecalled` text names
+ * is where the text already read ends, which is past the end of the page
+ * that holds the offset asked for when other pages follow on from it; the
+ * text says `That page ends the result.` only of that page, and has other
+ * words for pages read after it that hold the rest. It names no turn: it is
+ * read again in later turns, where the pages it calls shown are still above
+ * it (they are recorded in one turn, and a turn leaves a request only as a
+ * whole).
  */
 const recallRefusalFailure = (refusal: RecallRefusal): Failure => RecallRefusal.match(refusal, {
   ResultShown: ({ shown }) => ({ error: "ResultShown", message: resultShownMessage[shown] }),
   AlreadyRecalled: ({ next }) => ({
     error: "AlreadyRecalled",
-    message: Option.match(next, {
-      onNone: () => "The text from that offset is in a page you already read, shown above. That page ends the result.",
-      onSome: (ended) => `The text from that offset is in a page you already read, shown above. To read on, pass offset ${ended}.`,
+    message: ReadOn.match(next, {
+      From: ({ offset }) => `The text from that offset is in a page you already read, shown above. To read on, pass offset ${offset}.`,
+      PageEndsResult: () => "The text from that offset is in a page you already read, shown above. That page ends the result.",
+      ReadToEnd: () => "The text from that offset to the result's end is in pages you already read, shown above.",
     }),
   }),
 })

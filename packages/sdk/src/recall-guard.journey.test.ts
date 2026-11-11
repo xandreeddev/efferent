@@ -209,7 +209,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
       recall("r3", () => BOUND),
       // and follows the reply again, which names the offset.
       followReply("r4"),
-      // It asks from the middle of the first page it read,
+      // It asks from the middle of the first page it read, and is sent past both pages,
       recall("r5", () => BOUND + 4_000),
       // and from the middle of the report's shown start.
       recall("r6", () => 8_000),
@@ -228,7 +228,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
       { name: "recall_context", result: page(locator, BOUND) },
       { name: "recall_context", result: failureShown(pageRead(BOUND + RECALL_PAGE)) },
       { name: "recall_context", result: page(locator, BOUND + RECALL_PAGE) },
-      { name: "recall_context", result: failureShown(pageRead(BOUND + RECALL_PAGE)) },
+      { name: "recall_context", result: failureShown(pageRead(BOUND + 2 * RECALL_PAGE)) },
       { name: "recall_context", result: failureShown(headShown) },
     ])
     // Each request shows what the one before it showed, and one more reply.
@@ -237,7 +237,7 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     expect(ran.recalls).toEqual([
       { isError: true, view: failureShown(headShown) }, { isError: false, view: page(locator, BOUND) },
       { isError: true, view: failureShown(pageRead(BOUND + RECALL_PAGE)) }, { isError: false, view: page(locator, BOUND + RECALL_PAGE) },
-      { isError: true, view: failureShown(pageRead(BOUND + RECALL_PAGE)) }, { isError: true, view: failureShown(headShown) },
+      { isError: true, view: failureShown(pageRead(BOUND + 2 * RECALL_PAGE)) }, { isError: true, view: failureShown(headShown) },
     ])
     // Every one of them names the turn's first run: a page is refused again because the handler knows the run that asks.
     expect(ran.recallRuns).toEqual([0, 0, 0, 0, 0, 0])
@@ -326,6 +326,45 @@ strategies.map(({ plugin, strategy }) => describe(`recall_context and text the t
     const lowest = top - (held.length - 1) * stride
     expect(held.reduce((sum, body) => sum + body.length, 0)).toBe(top + RECALL_PAGE - lowest)
     expect(held.toReversed().join("")).toBe(north.slice(lowest, top + RECALL_PAGE))
+  })
+
+  test("a model that asks from inside text it read while stepping down is sent past all of it by one reply", async () => {
+    // Ten calls, from 60,000 down to 51,000: a whole page, then nine pages of 1,000 characters, each ending where the one before starts.
+    const top = 60_000
+    const down = Array.from({ length: 10 }, (_, index) => recall(`d${index + 1}`, () => top - index * 1_000))
+    const ran = await Effect.runPromise(runTurns(plugin, [[
+      fetchNorth, ...down,
+      // It asks from inside the lowest page. Ten pages follow on from there, up to 68,000.
+      recall("in", () => top - 9 * 1_000 + 500),
+      // It follows the reply: one call, and it is served.
+      followReply("on"),
+      () => stop("The north report is read."),
+    ]]))
+    const [turn] = ran.turns
+    expect(turn?.outcome).toBe("completed")
+    const requests = turn?.requests ?? []
+    expect(requests).toHaveLength(14)
+    // The reply names the first offset the request holds no text of, as the last line of each cut page does: a reply naming its own page's end would lead to nine more refusals.
+    expect(ran.recalls.slice(10)).toEqual([
+      { isError: true, view: failureShown(pageRead(top + RECALL_PAGE)) },
+      { isError: false, view: north.slice(top + RECALL_PAGE) },
+    ])
+    expect(north.length).toBeGreaterThan(top + RECALL_PAGE)
+  })
+
+  test("a model that steps forward through pages it read while stepping down is stopped by the loop's breaker", async () => {
+    const top = 60_000
+    const down = Array.from({ length: 10 }, (_, index) => recall(`d${index + 1}`, () => top - index * 1_000))
+    // Then up again, 1,000 characters at a time from inside the lowest page: every call starts in another page, all of them read.
+    const up = Array.from({ length: MAX_STEPS }, (_, index) => recall(`u${index + 1}`, () => top - 9 * 1_000 + 500 + index * 1_000))
+    const ran = await Effect.runPromise(runTurns(plugin, [[fetchNorth, ...down, ...up]]))
+    const [turn] = ran.turns
+    expect(turn?.outcome).toBe("partial")
+    expect(turn?.reason).toBe("degenerate-loop")
+    // Pages that follow on from one another are refused with one reply, whichever of them a call starts in: six of them end the run, well before the step limit.
+    expect(ran.recalls.slice(10)).toEqual(Array.from({ length: REFUSALS_TO_STOP }, () => ({ isError: true, view: failureShown(pageRead(top + RECALL_PAGE)) })))
+    expect(turn?.requests ?? []).toHaveLength(1 + 10 + REFUSALS_TO_STOP)
+    expect(1 + 10 + REFUSALS_TO_STOP).toBeLessThan(MAX_STEPS)
   })
 
   test("a result of an earlier turn is served as before, from any offset and as often as asked", async () => {

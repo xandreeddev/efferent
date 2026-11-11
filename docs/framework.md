@@ -1775,11 +1775,15 @@ each as a returned `Failure`, like `UnknownLocator` and `OffsetOutOfRange`:
   offset 0 if it shows none.`
 - `AlreadyRecalled`: the offset is inside a page of the result that a call
   of this turn already returned, its start included, and that page is still
-  shown whole. The reply names where that page ended (`The text from that
-  offset is in a page you already read, shown above. To read on, pass offset
-  24000.`), or ends `That page ends the result.` when it was the last one.
-  Of several pages that hold the offset, it names the end of the one that
-  ends last.
+  shown whole. The reply names the first offset past that page whose text
+  no page already read holds (`The text from that offset is in a page you
+  already read, shown above. To read on, pass offset 24000.`): the page's
+  end, or, where pages already read follow on from it, the end of the last
+  of them, so the call that follows the reply is served. With no unread
+  text after them it names none: it ends `That page ends the result.` when
+  the page that holds the offset was the last one, and reads `The text from
+  that offset to the result's end is in pages you already read, shown
+  above.` when pages read after it hold the rest.
 
 An offset past the shown text and outside every page already read is a page.
 Within the turn that page never holds text of a page the same run already
@@ -1814,11 +1818,11 @@ result's shown form ends when it is read. Where the turn had already read a
 page from there, the call that follows the reply is refused with
 `AlreadyRecalled` in the same turn, which names where to go on, and is
 served that page again in a later turn, which the guard does not cover. An
-`AlreadyRecalled` reply names its page's end, and no turn: a recalled page
-is never shortened by either memory strategy, and the page and the reply
-that calls it shown are recorded in the same turn, which leaves a request
-only as a whole. So the page is still above the reply when the reply is
-read in a later turn.
+`AlreadyRecalled` reply names where the text already read ends, and no
+turn: a recalled page is never shortened by either memory strategy, and the
+pages and the reply that calls them shown are recorded in the same turn,
+which leaves a request only as a whole. So they are still above the reply
+when the reply is read in a later turn.
 
 What a result shows is derived from the run's memory alone
 (`RunContext.memory`). A result of the current turn shows its whole view
@@ -1832,22 +1836,23 @@ while one of its calls has no result, so a page that run read may not be in
 the request the call was made from. What a page already read holds is read
 from the page as it was returned: the result's text from its call's offset,
 then the line the tool writes after it. A page that was cut so counts for
-the text it holds, not for 8,000 characters from its offset, and an
-`AlreadyRecalled` reply names the end the page has. A result recorded in
+the text it holds, not for 8,000 characters from its offset. A result recorded in
 the tool's name that is no such page (a host that answered the call itself)
 is not counted as read. The guard stores nothing of its own: a refusal is
 the result of its call, a failed one, and the stored format, the journal
 kinds and the events are unchanged.
 
 A refusal holds nothing of the request, so every offset inside one shown
-head gets the same reply, and so does every offset inside one page. The step
+head gets the same reply, and so does every offset inside one page, or
+inside pages that follow on from one another. The step
 loop signs a step's progress by its results: a model that keeps asking
 repeats one signature, and the loop's breaker nudges it after three repeats
 and stops the run after five (`partial`, `degenerate-loop`), long before the
 step limit. That stops a model that asks inside one shown head, and one that
-steps forward inside a page it read while six of its calls in a row fall
-inside that page; the limits below say which stepping it does not stop. No
-stepping is served text the request holds.
+steps forward inside text it read while six of its calls in a row fall
+inside it (one page, or pages that follow on from one another); the limits
+below say which stepping it does not stop. No stepping is served text the
+request holds.
 
 The limits.
 
@@ -1873,12 +1878,13 @@ The limits.
   every result of that step: a step that pairs a refused call with a call
   whose result is new, or that makes more refused calls than any step
   before it, counts as progress, and such a run ends at the step limit.
-  A model that steps forward inside a page it read is stopped only while
-  six refused calls in a row fall inside that page: the first, then the
+  A model that steps forward inside text it read is stopped only while
+  six refused calls in a row fall inside it: the first, then the
   five repeats the breaker stops at by default (`breakAfter` of
-  `limits.degenerate`). With pages of 8,000 characters (core's
+  `limits.degenerate`). Inside one page of 8,000 characters (core's
   `RECALL_PAGE_CHARS`) those six fit in the 7,999 characters past the
-  page's start up to a stride of 1,333. With a longer stride the model
+  page's start up to a stride of 1,333; pages that follow on from one
+  another count as one stretch, which allows a longer stride. With a longer stride the model
   reaches the next page first: that page is new text and starts the count
   again, so the run costs steps, not context, and ends at the step limit or
   at the result's end. A model that steps downward, each call a little

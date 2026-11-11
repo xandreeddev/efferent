@@ -159,6 +159,7 @@ describe("recall_context in the turn that wrote the result", () => {
   const shownInFull = { error: "ResultShown", message: "This result was shown in full when you asked: nothing of it was left out. If it is shown shortened now, pass the offset its shortened form shows, or offset 0 if it shows none." }
   const pageRead = (next: number) => ({ error: "AlreadyRecalled", message: `The text from that offset is in a page you already read, shown above. To read on, pass offset ${next}.` })
   const lastPageRead = { error: "AlreadyRecalled", message: "The text from that offset is in a page you already read, shown above. That page ends the result." }
+  const readToEnd = { error: "AlreadyRecalled", message: "The text from that offset to the result's end is in pages you already read, shown above." }
   /**
    * A page that ends at `to`, where text already read starts: its characters,
    * then how far that text runs and the offset after it (`next`), or that it
@@ -445,7 +446,7 @@ describe("recall_context in the turn that wrote the result", () => {
       expect(`${body(seen.shown[0] ?? "")}${body(seen.shown[2] ?? "")}${body(seen.shown[1] ?? "")}`).toBe(text.slice(0, 28_000))
     })
 
-    test("an offset inside a cut page is refused with the end that page has, not the end of a whole page", async () => {
+    test("an offset inside a cut page is refused with the offset after all the text read from there on, not with that page's end", async () => {
       const text = lines(60_000)
       const seen = await inSession((turn) => Effect.gen(function* () {
         yield* turn.begin("read the record")
@@ -459,10 +460,43 @@ describe("recall_context in the turn that wrote the result", () => {
           atEnd: yield* turn.ask({ locator, offset: 20_000 }), later: yield* turn.ask({ locator, offset: 26_000 }),
         }
       }))
-      expect(seen.inside).toEqual(pageRead(20_000))
-      expect(seen.last).toEqual(pageRead(20_000))
+      // The cut page ends at 20,000, where the page read first starts: a reply naming 20,000 would send the model to a second refusal. Each names 28,000, where the text already read ends.
+      expect(seen.inside).toEqual(pageRead(28_000))
+      expect(seen.last).toEqual(pageRead(28_000))
       expect(seen.atEnd).toEqual(pageRead(28_000))
       expect(seen.later).toEqual(pageRead(28_000))
+    })
+
+    test("an offset inside pages read one after another is refused with the offset after the last of them", async () => {
+      const text = lines(60_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        // Three pages read in order, each from the offset the one before named: 16,000 to 40,000.
+        yield* Effect.forEach([BOUND, 24_000, 32_000], (offset) => turn.ask({ locator, offset }), { concurrency: 1 })
+        // Inside the first, at the start of the second, at the last character of the third.
+        return { asked: yield* Effect.forEach([17_000, 24_000, 39_999], (offset) => turn.ask({ locator, offset }), { concurrency: 1 }), next: yield* turn.ask({ locator, offset: 40_000 }), locator }
+      }))
+      // One reply for every offset in the text read: it names where that text ends, so the call that follows it is served.
+      expect(seen.asked).toEqual([pageRead(40_000), pageRead(40_000), pageRead(40_000)])
+      expect(seen.next).toBe(page(text, seen.locator, 40_000))
+    })
+
+    test("an offset inside a page with pages read after it up to the result's end is told that the rest is read", async () => {
+      const text = lines(40_000)
+      const seen = await inSession((turn) => Effect.gen(function* () {
+        yield* turn.begin("read the record")
+        const locator = yield* turn.returned(text)
+        // The last page, 32,000 to the end, then the page below it, cut at 32,000.
+        yield* turn.ask({ locator, offset: 32_000 })
+        yield* turn.ask({ locator, offset: 30_000 })
+        return { below: yield* turn.ask({ locator, offset: 31_000 }), atStart: yield* turn.ask({ locator, offset: 30_000 }), last: yield* turn.ask({ locator, offset: 33_000 }) }
+      }))
+      // The page that holds 31,000 ends at 32,000, not at the result's end: the page read first holds the rest. No offset is named, and no page is said to end the result.
+      expect(seen.below).toEqual({ error: "AlreadyRecalled", message: "The text from that offset to the result's end is in pages you already read, shown above." })
+      expect(seen.atStart).toEqual(readToEnd)
+      // An offset inside the page that does end the result is told so, as before.
+      expect(seen.last).toEqual(lastPageRead)
     })
 
     test("a call in a gap between two pages already read is cut at the second, and a chain of read pages is passed in one step", async () => {
@@ -534,11 +568,11 @@ describe("recall_context in the turn that wrote the result", () => {
       expect(seen.far).toBe(`${text.slice(31_999, 39_999)}\n[… ${text.length - 39_999} more characters; call recall_context with locator "${seen.locator}" and offset 39999]`)
       expect(seen.between).toBe(cutPage(text, seen.locator, 27_999, 31_999, 39_999))
       expect([seen.ahead, seen.below, seen.far, seen.between].every((served) => typeof served === "string" && wellFormed(served))).toBe(true)
-      // The cut page's last character is the one before the pair: an offset there is refused with that page's real end.
-      expect(seen.inside).toEqual(pageRead(19_999))
+      // The cut page's last character is the one before the pair. The three pages after it follow on from one another, so an offset there is refused with the end of the last: 39,999.
+      expect(seen.inside).toEqual(pageRead(39_999))
     })
 
-    test("pages two calls read at once can overlap: an offset in both is refused with the end of the one that ends last", async () => {
+    test("pages two calls read at once can overlap: an offset in either is refused with the offset after both", async () => {
       const text = lines(60_000)
       const run = RunOrdinal.make(0)
       const seen = await inSession((turn) => Effect.gen(function* () {
@@ -557,7 +591,8 @@ describe("recall_context in the turn that wrote the result", () => {
       }))
       expect(seen.both).toEqual(pageRead(28_000))
       expect(seen.later).toEqual(pageRead(28_000))
-      expect(seen.earlier).toEqual(pageRead(24_000))
+      // The earlier page ends at 24,000, inside the later one: the text already read runs on to 28,000.
+      expect(seen.earlier).toEqual(pageRead(28_000))
     })
 
     test("a recorded result of the tool that is not a page it writes is not counted as read", async () => {
@@ -617,18 +652,23 @@ describe("recall_context in the turn that wrote the result", () => {
         // Then a model that follows every reply, from the result's start.
         const shownNow = (yield* turn.shown)[0] ?? ""
         const head = shownNow === text ? text.length : Number(/ and offset (\d+) to read them\]$/.exec(shownNow)?.[1])
-        const walk = (offset: number, steps: number): Effect.Effect<number, unknown> => steps > 400 ? Effect.succeed(steps) : ask(offset).pipe(
-          Effect.flatMap((reply) => Option.match(Schema.is(Failure)(reply) && reply.error === "ResultShown" ? Option.filter(Option.some(head), (shown) => shown < text.length) : namedBy(reply), {
-            onNone: () => Effect.succeed(steps), onSome: (named) => walk(named, steps + 1),
-          })))
-        const steps = yield* walk(0, 0)
+        // `named` says whether a reply of the tool named this offset; `refusedAfter` counts such offsets answered with AlreadyRecalled.
+        const walk = (offset: number, steps: number, named: boolean, refusedAfter: number): Effect.Effect<{ readonly steps: number; readonly refusedAfter: number }, unknown> => steps > 400 ? Effect.succeed({ steps, refusedAfter }) : ask(offset).pipe(
+          Effect.flatMap((reply) => {
+            const shownHead = Schema.is(Failure)(reply) && reply.error === "ResultShown"
+            const chained = refusedAfter + (named && Schema.is(Failure)(reply) && reply.error === "AlreadyRecalled" ? 1 : 0)
+            return Option.match(shownHead ? Option.filter(Option.some(head), (shown) => shown < text.length) : namedBy(reply), {
+              onNone: () => Effect.succeed({ steps, refusedAfter: chained }), onSome: (next) => walk(next, steps + 1, !shownHead, chained),
+            })
+          }))
+        const { steps, refusedAfter } = yield* walk(0, 0, false, 0)
         // What the request holds of the result: its shown start, and every page served.
         const held = new Uint8Array(text.length)
         held.fill(1, 0, head)
         const parts = served.map((part) => ({ ...part, matches: text.slice(part.from, part.from + part.body.length) === part.body, whole: wellFormed(part.body), empty: part.body.length === 0 && text.length > 0 }))
         for (const part of parts) for (let at = part.from; at < part.from + part.body.length; at++) held[at] = (held[at] ?? 0) + 1
         return {
-          seed, steps, pages: parts.length,
+          seed, steps, refusedAfter, pages: parts.length,
           wrongText: parts.filter((part) => !part.matches).length, halfCharacters: parts.filter((part) => !part.whole).length, emptyPages: parts.filter((part) => part.empty).length,
           twice: held.reduce((count, times) => count + (times > 1 ? 1 : 0), 0), never: held.reduce((count, times) => count + (times === 0 ? 1 : 0), 0),
         }
@@ -636,6 +676,8 @@ describe("recall_context in the turn that wrote the result", () => {
       // Every page is the text at its offset, whole characters only, never empty; no character of a result is held twice, and none is left unread.
       expect(outcomes.filter((outcome) => outcome.wrongText + outcome.halfCharacters + outcome.emptyPages + outcome.twice + outcome.never > 0)).toEqual([])
       expect(outcomes.every((outcome) => outcome.steps <= 400)).toBe(true)
+      // An offset a page's last line or an AlreadyRecalled reply names is unread text: following one never leads to a second refusal.
+      expect(outcomes.filter((outcome) => outcome.refusedAfter > 0)).toEqual([])
       // The sequences did read pages: the property is not held by refusals alone.
       expect(outcomes.reduce((sum, outcome) => sum + outcome.pages, 0)).toBeGreaterThan(200)
     }, 60_000)

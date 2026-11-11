@@ -30,6 +30,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   offset and refused later calls inside them with `AlreadyRecalled`; only a
   result that is the page the tool writes counts now, and those calls are
   served.
+- `@xandreed/core`: a host that pins or parses an `AlreadyRecalled` message
+  finds a later offset in it, and one more message. `To read on, pass
+  offset N.` named the end of the page that held the offset asked for; N is
+  now the first offset past that page whose text no page already read
+  holds, so where pages already read follow on from it N is the end of the
+  last of them. `That page ends the result.` is still said of the last page
+  only. Where pages read after the page hold the text up to the result's
+  end, the message is `The text from that offset to the result's end is in
+  pages you already read, shown above.` The `error` name is unchanged.
 
 ### Fixed
 
@@ -62,10 +71,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     call's offset and the page size: the guard reads where a page ended
     from the page as it is recorded, and counts it only when that text is
     the result's text from the call's offset followed by the line the tool
-    writes. An `AlreadyRecalled` reply so names the end a cut page has
-    (`To read on, pass offset 20000.` for a page that holds 16000 to 20000,
-    where a whole page would have ended at 24000), and two pages that calls
-    run at once were each served whole overlap as they did.
+    writes. A cut page so counts for the text it holds, and two pages
+    that calls run at once were each served whole overlap as they did.
+  - An `AlreadyRecalled` reply names the first offset the request holds no
+    text of, as a page's last line does: the end of the page that holds the
+    offset asked for, or, where pages already read follow on from it, the
+    end of the last of them. 0.21.1 named that page's own end, so after
+    pages read one after another (in order, or stepping down) a model that
+    asked from inside the first was refused once for each page on the way:
+    after ten downward steps of 1,000 characters, ten refusals before a
+    page. One reply now leads to a call that is served. When pages read
+    after the page hold the rest of the result, the reply says so and names
+    no offset (see Migration).
   - No page is empty for the cut: a call is served only from an offset
     outside every page already read, so the next such page starts past it.
     A call from a page's start or from inside one is refused with
@@ -73,10 +90,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - The scope is the guard's: the current turn, the asking run's own pages,
     pages still shown whole, under both memory strategies. A result of an
     earlier turn is served whole pages from any offset, as before; a page
-    another run of the turn read, or one read by a call that ran at once
-    with this one (`limits.toolConcurrency` above 1), is not cut for.
+    another run of the turn read is not cut for, and one read by a call
+    that ran at once with this one (`limits.toolConcurrency` above 1) is
+    cut for only when its result was recorded before this call was
+    checked. Where that call came later in the response, the line the cut
+    page ends with calls `shown above` a page the request shows after it.
   - The step loop's breaker is unchanged, and so is its bound on forward
-    steps inside a page already read (a stride of up to 1,333 characters).
+    steps inside one page already read (a stride of up to 1,333
+    characters). Pages that follow on from one another now get one reply
+    for every offset inside them, so a model that steps forward through
+    them repeats one signature and is stopped at the sixth refusal, where
+    each refusal named another offset before and the run went on.
     A model that steps downward returns new text with every call, so the
     breaker counts no repeat: such a run costs steps, not context, and ends
     at the step limit or once it has read down to the result's shown start.
