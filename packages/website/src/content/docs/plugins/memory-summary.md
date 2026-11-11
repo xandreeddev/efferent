@@ -83,12 +83,13 @@ under context pressure or reduces the current turn. Use
 
 A tool result longer than `boundOnWriteChars` (16,000 characters by default)
 is bounded as it is written: every request shows its first 16,000 characters
-and a notice with the locator and offset to read the rest from, and the
-journal keeps the whole result. The plugin contributes `recall_context`,
+(fewer with [`cutAtLineBreaks`](#cut-at-line-breaks)) and a notice with the
+locator and offset to read the rest from, and the journal keeps the whole
+result. The plugin contributes `recall_context`,
 which reads a bounded result a page of up to 8,000 characters at a time.
 Within the turn that wrote the result, the tool refuses a call for text the
-request still shows (the first 16,000 characters, or an offset inside a page
-read a step ago): the call is answered with a failure that says where to read
+request still shows (the characters before the notice, or an offset inside a
+page read a step ago): the call is answered with a failure that says where to read
 on. A page never returns text of a page read earlier in the turn: it ends
 where that page starts. See
 [reading a shortened result on](/docs/concepts/context-journal/#reading-a-shortened-result-on).
@@ -117,6 +118,50 @@ Each bound is recorded as a compaction of the `summary` strategy, whose
 version stays `2`: render snapshots saved before this option keep applying.
 [Context and the journal](/docs/concepts/context-journal/#bounding-what-a-tool-shows)
 lists the rules and the limits.
+
+## Cut at line breaks
+
+A cut by character count can fall inside a row of a result made of lines:
+the result ends with half a row, and the page read from its notice starts
+with the other half. Set `cutAtLineBreaks: true` to end a bounded result's
+preview and every `recall_context` page after a whole line:
+
+```ts
+import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
+
+const memory = { plugin: memorySummaryPlugin, options: { cutAtLineBreaks: true } }
+```
+
+Each is cut just after the last line break within its limit, when cutting
+there gives up no more than a quarter of the limit (4,000 characters of a
+bound of 16,000, 2,000 of a page); otherwise at the limit, as with the option
+off.
+
+- A result whose rows are shorter than that quarter is cut between two rows
+  wherever the rule chooses the cut. A page still stops where a page already
+  read starts, and starts at the offset its call names.
+- A result with no line break near a limit is cut as with the option off. A
+  tool with no view of its own that returns anything but text is shown as
+  JSON on one line, so the option does nothing for it: a tool shows its rows
+  on separate lines to gain from it.
+- The limits become upper bounds: a bounded result shows 12,000 to 16,000
+  characters at the default bound, and a page holds 6,000 to 8,000 (one less
+  at each low end where the limit would split a surrogate pair).
+- Pages have no fixed size. Read on from the offset a notice or a page's
+  last line prints: adding 8,000 to the last offset skips text.
+- A result a little longer than the bound can be bounded where it was shown
+  whole with the option off, because a preview cut at a line break is
+  shorter.
+- The notice and a page's last line are the same texts, and the offset each
+  prints is where its cut fell. Results bounded before the option changed
+  keep the text they show and are read on from the offset they print.
+- A host that builds its own memory from `summaryPolicy` contributes
+  `recallCapabilityOf(id, { cutAtLineBreaks: true })` beside it.
+
+The strategy's version stays `2` with the option: it changes no summary
+decision, and render snapshots saved under that version keep applying.
+[Context and the journal](/docs/concepts/context-journal/#cutting-at-line-breaks)
+has the rule and its limits.
 
 ## Related plugins
 
@@ -158,7 +203,8 @@ Plugin: `@xandreed/plugin-memory-summary` · Version **0.21.2** · Plugin API **
   "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
   "summaryTimeoutMs": 60000,
-  "boundOnWriteChars": 16000
+  "boundOnWriteChars": 16000,
+  "cutAtLineBreaks": false
 }
 ```
 
@@ -256,6 +302,9 @@ Plugin: `@xandreed/plugin-memory-summary` · Version **0.21.2** · Plugin API **
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "cutAtLineBreaks": {
+      "type": "boolean"
     }
   },
   "required": [

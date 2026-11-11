@@ -133,7 +133,8 @@ result the model was already sent. Both memory policies therefore bound a
 result as it is written. A result whose view is longer than
 `boundOnWriteChars` (16,000 characters by default, about a twelfth of the
 default budget) is shown, from the first request that includes it, as its
-first 16,000 characters followed by a notice:
+first 16,000 characters (fewer with
+[`cutAtLineBreaks`](#cutting-at-line-breaks)) followed by a notice:
 
 ```text
 [… 36000 more characters kept out of context; call recall_context with locator "run-1:4" and offset 16000 to read them]
@@ -183,6 +184,107 @@ write).
 - A graph that holds both memory plugins registers `recall_context` twice and
   fails with `tools.duplicate`: list only the one the graph binds.
 
+## Cutting at line breaks
+
+A cut by character count can fall inside a record of a view made of lines.
+The result then ends with half a row and the page read from its notice
+starts with the other half, so the model holds a row's identifier in two
+pieces, in two results. `cutAtLineBreaks: true` on a memory plugin (off by
+default) makes each of its cuts fall just after a line break when one is
+near the limit:
+
+- the preview of a result bounded as it is written;
+- the preview of a result window memory spills under pressure;
+- every page `recall_context` returns, for results of the current turn and
+  of earlier turns alike.
+
+```ts
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+const memory = { plugin: memoryWindowPlugin, options: { cutAtLineBreaks: true } }
+```
+
+A piece is asked for up to a limit: `boundOnWriteChars` from the result's
+start for a bound, `previewChars` for a pressure preview, 8,000 characters
+from its own start for a page. It is first cut at that limit, never inside a
+surrogate pair, as with the option off. When that cut reaches the result's
+end, nothing changes. Otherwise the cut moves to just after the last line
+break (`\n`) before it, when that leaves the piece some text and gives up no
+more than a quarter of the piece asked for: 4,000 characters of a bound of
+16,000, 150 of a pressure preview of 600, 2,000 of a page. Else the cut
+stays at the limit.
+
+- A view whose lines are shorter than that quarter is cut between two lines
+  wherever the rule chooses the cut. Two cuts are not the rule's: a page
+  stops where a page the run already read starts, and a page starts at the
+  offset its call names, which a model can choose inside a line.
+- A longer line can still be cut, and then at the limit: more than a quarter
+  of the piece past the line's start, so after the identifier a row starts
+  with when that identifier is shorter than the quarter.
+- A view with no line break near the limit is cut exactly as with the option
+  off. A tool with no view of its own is shown as its result: text as it is,
+  anything else as JSON on one line. The option does nothing for a result on
+  one line, so a tool shows its rows on separate lines (in the text it
+  returns, or in its view) to gain from it.
+- The limits become upper bounds. At the defaults a bounded result shows
+  12,000 to 16,000 characters, a pressure preview 450 to 600 and a page
+  6,000 to 8,000, so a result is read in a few more pages. Each low end is
+  one less (11,999, 449, 5,999) where the limit would split a surrogate
+  pair: the quarter is counted back from the cut at the limit, which is then
+  one unit before it.
+- Pages have no fixed size, so the only offset to read on from is the one a
+  notice or a page's last line prints. A caller that adds 8,000 to the
+  offset it last passed skips the text between the page's end and that
+  offset, and nothing tells it so.
+- A result a little longer than the bound can be bounded where it was shown
+  whole with the option off. A result is left whole when its preview would
+  not be shorter than its view, and a preview cut at a line break is
+  shorter: 12,000 characters, a line break and 4,049 more are shown whole at
+  the default bound with the option off, and as 12,001 characters and a
+  notice with it on.
+- A `\r\n` stays whole when the cut falls after it. A cut the rule leaves at
+  the limit can still fall between the two.
+- A piece that ends with its line break is followed by an empty line, then
+  the notice or the page's last line.
+
+The model reads the same texts: the notice and a page's last line are
+unchanged, and the offset each prints is where its cut fell, so the pages
+read from a notice still join to the whole view.
+
+One session can hold both cuts. A result shortened before the option was
+turned on, or by an earlier release, keeps the text it shows and is read on
+from the offset it prints, and so does one cut at a line break after the
+option is turned off: `recall_context` reads what a request shows back from
+the request, not from the rule. A page is still cut where a page the run
+already read starts, wherever that is.
+
+Window memory says the option in its version: `4+cut-at-line-breaks`, or
+`4+current-turn-first+cut-at-line-breaks` with both options, in every
+request's `strategyVersion` and in `context.built`. Its id stays `window`, so
+compactions recorded with or without the option keep applying. Summary
+memory's version stays `2`: the option changes none of its summary
+decisions, and render snapshots saved under that version keep applying.
+
+The limits:
+
+- A row longer than a quarter of the piece can be cut inside its text, and a
+  row whose identifier is itself longer than that quarter inside the
+  identifier.
+- Turned on within a turn in which window memory already spilled a result at
+  the character limit, the option can make that result a candidate once
+  more. The rule is unchanged: a result is spilled again only when the new
+  preview is shorter than the text it shows. A preview cut at a line break
+  usually is, so a request still over its budget spills the result again,
+  for the few characters the line break gives up, and then never again.
+  Where the count in the notice gains a digit the two previews are as long,
+  and nothing is spilled.
+- A host that builds its own memory passes the same value to its policy
+  (`cutAtLineBreaks`), to `spillPreview` for its own spills and to
+  `recallCapabilityOf(id, { cutAtLineBreaks: true })` for its pages. The
+  window plugin's exported `recallCapability` always pages at the character
+  limit: beside a policy that cuts at line breaks, heads end after a whole
+  line and pages do not.
+
 ## Reading a shortened result on
 
 `recall_context` takes the locator a notice shows and an `offset` (0 by
@@ -212,9 +314,10 @@ reads as the call's result:
 
 An offset past the shown text and outside every page already read is a page.
 Within the turn a page never holds text of a page the same run already read:
-it ends where the next such page starts, when that is sooner than 8,000
-characters on, whether the call starts below a page already read or in a gap
-between two. So every character a call returns is new to the request, in
+it ends where the next such page starts, when that is sooner than its own
+end (8,000 characters on, or with `cutAtLineBreaks` the line break before
+that), whether the call starts below a page already read or in a gap between
+two. So every character a call returns is new to the request, in
 whatever order the model asks, and the pages of one result never hold more
 than the result does.
 
@@ -284,7 +387,9 @@ These limits apply:
   only while six refused calls in a row fall inside it: the first,
   then the five repeats the breaker stops at by default
   (`limits.degenerate`). Inside one page of 8,000 characters that holds up
-  to a stride of 1,333; pages that follow on from one another count as one
+  to a stride of 1,333. With `cutAtLineBreaks` a page holds 6,000 to 8,000
+  characters (5,999 where the limit would split a surrogate pair), so the
+  longest stride stopped inside one is between 999 and 1,333. Pages that follow on from one another count as one
   stretch. With a longer stride the model reaches the next page
   first, which is new text and starts the count again: the run costs steps,
   not context, and ends at the step limit or at the result's end. A model

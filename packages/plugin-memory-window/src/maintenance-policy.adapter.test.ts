@@ -552,3 +552,109 @@ describe("compact views under pressure", () => {
     })
   })
 })
+
+describe("cutAtLineBreaks under pressure", () => {
+  const options = { ...memoryWindowDefaults, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40, media: "none" as const }
+  const [plain, cutting] = [windowPolicy(options), windowPolicy({ ...options, cutAtLineBreaks: true })]
+  const run = RunId.make("run-1")
+  const at = (seq: number, body: LogBody): LogEntry => ({ id: entryId(run, seq), runId: run, turn: 1, step: 0, at: seq, body })
+  /** Rows of 8 characters: the pressure preview's 20 fall 4 characters into the third. */
+  const rows = Array.from({ length: 400 }, (_, index) => `r${String(index).padStart(4, "0")}::\n`).join("")
+  const held = at(2, { _tag: "ToolResult", toolCallId: ToolCallId.make("c2"), toolName: "lookup", isError: false, encoded: rows, view: rows, viewVersion: "1", subjects: [], artifacts: [], pinned: false })
+  const turn = [
+    at(0, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the rows" }) }),
+    at(1, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c2"), toolName: "lookup", input: {} }] } }),
+    held,
+  ]
+  const [atLimit, atLine] = [spillPreview(held, rows, options.previewChars), spillPreview(held, rows, options.previewChars, { cutAtLineBreaks: true })]
+  const spill = (preview: string): CompactionAction => ({ _tag: "Spill", entry: held.id, preview })
+  const recorded = (seq: number, policy: MemoryPolicy, action: CompactionAction): LogEntry => at(seq, { _tag: "Compaction", strategy: policy.strategy.id, version: policy.strategy.version, action })
+  const render = (all: ReadonlyArray<LogEntry>) => renderLog(all, { ...plain.render, strategy: WINDOW_STRATEGY.id, currentTurn: 1, currentRun: run, run: RunOrdinal.make(0), stepContext: "none" })
+  /** What `policy` decides at a step, `under` tokens below what the log takes now: its actions, or the code it failed with. */
+  const decided = (policy: MemoryPolicy, entries: ReadonlyArray<LogEntry>, under: number) =>
+    Effect.runPromise(Effect.match(policy.maintain({ entries, signal: { ...signal, phase: "step", budgetTokens: estimateMessageTokens(render(entries)) - under }, turn: 1, runId: run, render }), {
+      onSuccess: (made): ReadonlyArray<CompactionAction> | string => made.actions, onFailure: (error) => `failed with ${error.code}`,
+    }))
+
+  test("the preview of a spill ends after the last whole row within previewChars, and a result that shows it is not spilled again", async () => {
+    expect(atLimit.startsWith("r0000::\nr0001::\nr000\n[… 3180 more characters")).toBe(true)
+    expect(atLine.startsWith("r0000::\nr0001::\n\n[… 3184 more characters")).toBe(true)
+    expect(await decided(cutting, turn, 0)).toEqual([])
+    expect(await decided(cutting, turn, 1)).toEqual([spill(atLine)])
+    // Without the option the same pressure cuts the preview at the limit, inside the third row.
+    expect(await decided(plain, turn, 1)).toEqual([spill(atLimit)])
+    const after = [...turn, recorded(3, cutting, spill(atLine))]
+    expect(await decided(cutting, after, 0)).toEqual([])
+    expect(await decided(cutting, after, 1)).toBe("failed with context.budget")
+  })
+
+  test("turned on in a turn that already spilled a result at the character limit, pressure spills it once more for the characters the line cut saves, and then never again", async () => {
+    // The turn's result was spilled under pressure before the option was turned on: its preview ends four characters into a row.
+    const before = [...turn, recorded(3, plain, spill(atLimit))]
+    expect(await decided(cutting, before, 0)).toEqual([])
+    // Still over the budget, the result is a candidate again: here the preview cut after a whole row is shorter than the one it shows.
+    expect(await decided(cutting, before, 1)).toEqual([spill(atLine)])
+    // Without the option nothing shorter is left to show, as before.
+    expect(await decided(plain, before, 1)).toBe("failed with context.budget")
+    const after = [...before, recorded(4, cutting, spill(atLine))]
+    expect(await decided(cutting, after, 1)).toBe("failed with context.budget")
+  })
+
+  test("turned on, a result is not spilled again when its preview cut at a line break is no shorter: the count in its notice gained a digit", async () => {
+    // 10,019 characters with one line break, at index 18: the limit leaves 9,999 characters out, the line break 10,000.
+    const view = `${"a".repeat(18)}\n${"b".repeat(10_000)}`
+    const wide = at(2, { _tag: "ToolResult", toolCallId: ToolCallId.make("c2"), toolName: "lookup", isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false })
+    const [limit, line] = [spillPreview(wide, view, options.previewChars), spillPreview(wide, view, options.previewChars, { cutAtLineBreaks: true })]
+    expect(line.startsWith(`${"a".repeat(18)}\n\n[… 10000 more characters`)).toBe(true)
+    expect(limit.startsWith(`${"a".repeat(18)}\nb\n[… 9999 more characters`)).toBe(true)
+    expect(line.length).toBe(limit.length)
+    // One character less of the view, one digit more in the count: nothing would be saved, so the result is no candidate and the step fails as without the option.
+    const before = [turn[0]!, turn[1]!, wide, recorded(3, plain, { _tag: "Spill", entry: wide.id, preview: limit })]
+    expect(await decided(cutting, before, 1)).toBe("failed with context.budget")
+    expect(await decided(plain, before, 1)).toBe("failed with context.budget")
+  })
+
+  test("turned off in a turn that spilled a result after a whole row, the result is not spilled again: the character cut would show more", async () => {
+    const before = [...turn, recorded(3, cutting, spill(atLine))]
+    expect(await decided(plain, before, 0)).toEqual([])
+    expect(await decided(plain, before, 1)).toBe("failed with context.budget")
+  })
+})
+
+describe("cutAtLineBreaks with currentTurnFirst under pressure", () => {
+  const options = { ...memoryWindowDefaults, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40, media: "none" as const, cutAtLineBreaks: true }
+  const [spillFirst, currentFirst] = [windowPolicy(options), windowPolicy({ ...options, currentTurnFirst: true })]
+  const run = RunId.make("run-2")
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(run, seq), runId: run, turn, step: 0, at: seq, body })
+  /** `count` rows of 8 characters: the pressure preview's 20 fall 4 characters into the third. */
+  const rows = (count: number, mark: string): string => Array.from({ length: count }, (_, index) => `${mark}${String(index).padStart(4, "0")}::\n`).join("")
+  const result = (seq: number, turn: number, view: string): LogEntry => at(seq, turn, { _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName: "lookup", isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false })
+  const call = (seq: number, turn: number): LogEntry => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(`c${seq + 1}`), toolName: "lookup", input: {} }] } })
+  // An earlier turn with one long result, then the current turn with a small result and a large one.
+  const [earlier, small, large] = [result(2, 1, rows(900, "e")), result(6, 2, rows(150, "s")), result(8, 2, rows(400, "l"))]
+  const entries = [
+    at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the first table" }) }), call(1, 1), earlier,
+    at(3, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("read") }),
+    at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "read two more" }) }), call(5, 2), small, call(7, 2), large,
+  ]
+  const render = (all: ReadonlyArray<LogEntry>) => renderLog(all, { ...spillFirst.render, strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: run, run: RunOrdinal.make(0), stepContext: "none" })
+  const tokensWith = (policy: MemoryPolicy, actions: ReadonlyArray<CompactionAction>) => estimateMessageTokens(render([...entries, ...actions.map((action, index) => pendingCompaction(policy.strategy, action, index))]))
+  const decided = (policy: MemoryPolicy, budgetTokens: number) =>
+    Effect.runPromise(policy.maintain({ entries, signal: { ...signal, phase: "step", budgetTokens }, turn: 2, runId: run, render })).then((made) => made.actions)
+  const drop: CompactionAction = { _tag: "DropTurns", throughTurn: 1, ledger: ledgerOf(entries, 1, options.ledgerTurnChars) }
+  /** The preview of a spill of `of`, cut after its second row: 16 characters where the limit would have kept 20. */
+  const spill = (of: LogEntry, mark: string): CompactionAction => ({ _tag: "Spill", entry: of.id, preview: `${mark}0000::\n${mark}0001::\n\n[… ${(of.body._tag === "ToolResult" ? of.body.view.length : 0) - 16} more characters kept out of context; call recall_context with locator "${of.id}" and offset 16 to read them]` })
+
+  test("one token over, the earlier turn is dropped and nothing of the current turn is spilled; without currentTurnFirst the largest current result is spilled, after a whole row", async () => {
+    expect(await decided(currentFirst, tokensWith(currentFirst, []) - 1)).toEqual([drop])
+    expect(await decided(spillFirst, tokensWith(spillFirst, []) - 1)).toEqual([spill(large, "l")])
+    expect([currentFirst.strategy.version, spillFirst.strategy.version]).toEqual(["4+current-turn-first+cut-at-line-breaks", "4+cut-at-line-breaks"])
+  })
+
+  test("when dropping every earlier turn does not fit, the current turn's largest result is spilled first, its preview ending after a whole row, and then the next", async () => {
+    // One token below what the drop alone leaves: the larger result is spilled, the smaller stays whole.
+    expect(await decided(currentFirst, tokensWith(currentFirst, [drop]) - 1)).toEqual([spill(large, "l"), drop])
+    // One token below that: both are spilled, the larger first.
+    expect(await decided(currentFirst, tokensWith(currentFirst, [spill(large, "l"), drop]) - 1)).toEqual([spill(large, "l"), spill(small, "s"), drop])
+  })
+})

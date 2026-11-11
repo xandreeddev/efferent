@@ -71,6 +71,15 @@ export interface MemoryPolicy {
    * contributes that tool sets it.
    */
   readonly boundOnWriteChars?: number
+  /**
+   * Cut a bound's preview just after the last line break within the bound,
+   * when one is near (`spillPreview`'s `cutAtLineBreaks`), so a result of
+   * lines is shown as whole lines. Omitted or `false`, the preview is cut at
+   * the bound. A strategy that sets it cuts its own spills the same way and
+   * contributes `recallCapabilityOf` with the same option, so the pages read
+   * from a notice end at line breaks too.
+   */
+  readonly cutAtLineBreaks?: boolean
   /** Decide compactions and digests from the full log; the session records them before the next build. */
   readonly maintain: (input: {
     readonly entries: ReadonlyArray<LogEntry>
@@ -190,7 +199,8 @@ export const openLogSession = Effect.fnUntraced(function* (
    * The bounds of the results just written, as this strategy's own spills: each shows the result's
    * first characters and how to read the rest from the first build that includes it, so the prefix
    * holding it never changes later. The preview is cut from the presented view, the text
-   * `recall_context` pages. A result is left whole when the strategy sets no bound or the tool's own
+   * `recall_context` pages, at the bound or, with the policy's `cutAtLineBreaks`, at the line
+   * break before it. A result is left whole when the strategy sets no bound or the tool's own
    * is 0, when it is pinned, a recalled page (the page is what makes a bound lossless) or holds
    * images (a result shown through other text sends none), when the digest just recorded for it is
    * shown and is no longer than the bound, and when the preview would not be shorter than the view.
@@ -206,7 +216,7 @@ export const openLogSession = Effect.fnUntraced(function* (
       if (chars <= 0) return []
       const digest = digested.get(entry.id)
       if (policy.render.digests && digest !== undefined && digest <= chars) return []
-      const preview = spillPreview(entry, body.view, chars)
+      const preview = spillPreview(entry, body.view, chars, { cutAtLineBreaks: policy.cutAtLineBreaks === true })
       return preview.length >= body.view.length ? [] : [{ _tag: "Compaction", strategy: policy.strategy.id, version: policy.strategy.version, action: { _tag: "Spill", entry: entry.id, preview } }]
     })
   }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option, Ref, Result, Schema, Tracer } from "effect"
 import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
+import { Capabilities, RunContext } from "@xandreed/core"
 import { MemoryWindowConfig, memoryWindowPlugin, recallCapability, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const config = {
@@ -175,5 +176,82 @@ describe("compact-view input correlation", () => {
       } }, turn: 2, runId: RunId.make("run-2"), render,
     }))
     expect(decided).toEqual({ actions: [{ _tag: "CompactViews", entries: [entryId(RunId.make("run-1"), 2), entryId(RunId.make("run-1"), 3)], texts: ['{"value":"first"}', '{"value":"second"}'] }], digest: [] })
+  })
+})
+
+describe("cutAtLineBreaks", () => {
+  type Options = typeof config & { readonly currentTurnFirst?: boolean; readonly cutAtLineBreaks?: boolean; readonly boundOnWriteChars?: number }
+  /** Rows of 6 characters: 200 and 20 each fall 2 characters into a row. */
+  const rows = (count: number): string => Array.from({ length: count }, (_, index) => `r${String(index).padStart(3, "0")}:\n`).join("")
+  const built = (options: Options) => memoryWindowPlugin.build(options, Context.empty())
+
+  test("it is off by default, validated as a boolean, and set on the policy only when it is on", () => {
+    expect(memoryWindowPlugin.defaults).toMatchObject({ cutAtLineBreaks: false })
+    expect(Result.isSuccess(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, cutAtLineBreaks: true }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(MemoryWindowConfig)({ ...config, cutAtLineBreaks: "yes" }))).toBe(true)
+    expect("cutAtLineBreaks" in windowPolicy(config)).toBe(false)
+    expect("cutAtLineBreaks" in windowPolicy({ ...config, cutAtLineBreaks: false })).toBe(false)
+    expect(windowPolicy({ ...config, cutAtLineBreaks: true }).cutAtLineBreaks).toBe(true)
+  })
+
+  test("the strategy keeps its id and says so in its version, after the order's suffix when both are on", async () => {
+    const strategyOf = (options: Options) => Effect.runPromise(Effect.scoped(built(options).pipe(Effect.map((services) => Context.get(services as Context.Context<ConversationMemory>, ConversationMemory).strategy))))
+    expect(await strategyOf({ ...config, cutAtLineBreaks: false })).toEqual(WINDOW_STRATEGY)
+    expect(await strategyOf({ ...config, cutAtLineBreaks: true })).toEqual({ id: "window", version: "4+cut-at-line-breaks" })
+    expect(await strategyOf({ ...config, currentTurnFirst: true, cutAtLineBreaks: true })).toEqual({ id: "window", version: "4+current-turn-first+cut-at-line-breaks" })
+    expect(windowPolicy({ ...config, currentTurnFirst: true, cutAtLineBreaks: true }).strategy).toEqual({ id: "window", version: "4+current-turn-first+cut-at-line-breaks" })
+  })
+
+  test("a bound as a result is written and the spill of it under pressure each end after a whole row, recorded under that version", async () => {
+    /** What the plugin's memory records, configured with `options`, for one long result of rows and then one token over the budget: where each preview's head ends. */
+    const recordedUnder = (options: Options) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const memory = Context.get((yield* built({ ...options, boundOnWriteChars: 200 })) as Context.Context<ConversationMemory>, ConversationMemory)
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const session = yield* memory.open({
+        conversation: ConversationId.make("00000000-0000-4000-8000-0000000005c4"), runId: RunId.make("run-1"),
+        log: { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) },
+      })
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "read the record" }) }], 0)
+      yield* session.recordTail([
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "lookup", input: {} }] },
+        { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: rows(200) }] },
+      ], views, 1)
+      const fitting = (yield* session.build({ stepContext: "none", run: RunOrdinal.make(0) })).estimatedTokens
+      yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: fitting - 1, views })
+      return (yield* Ref.get(stored)).flatMap((entry) => entry.body._tag === "Compaction" && entry.body.action._tag === "Spill"
+        ? [{ version: entry.body.version, shows: entry.body.action.preview.lastIndexOf("\n["), names: Number(/ and offset (\d+) to read them\]$/.exec(entry.body.action.preview)?.[1]) }] : [])
+    })))
+    // 198 characters, 33 rows, where the bound would have kept 200; 18 characters, 3 rows, where the pressure preview would have kept 20.
+    expect(await recordedUnder({ ...config, cutAtLineBreaks: true })).toEqual([
+      { version: "4+cut-at-line-breaks", shows: 198, names: 198 }, { version: "4+cut-at-line-breaks", shows: 18, names: 18 },
+    ])
+    expect(await recordedUnder({ ...config, currentTurnFirst: true, cutAtLineBreaks: true })).toEqual([
+      { version: "4+current-turn-first+cut-at-line-breaks", shows: 198, names: 198 }, { version: "4+current-turn-first+cut-at-line-breaks", shows: 18, names: 18 },
+    ])
+    // Without the option the same rows are cut at the limits, two characters into a row.
+    expect(await recordedUnder(config)).toEqual([{ version: "4", shows: 200, names: 200 }, { version: "4", shows: 20, names: 20 }])
+  })
+
+  test("the recall capability the plugin contributes pages at line breaks with the option, and at the character limit without it", async () => {
+    // Rows of 37 characters: 8,000 falls 8 characters into one.
+    const view = Array.from({ length: 400 }, (_, index) => `${`R-${String(index).padStart(5, "0")} entry `.padEnd(36, ".")}\n`).join("")
+    const held: LogEntry = result(2, 1, view)
+    /** The first page of an earlier turn's result, read with the tool the plugin contributes under `options`: the capability's id, and where the page ends. */
+    const firstPage = (options: Options) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const [capability] = Context.get((yield* built(options)) as Context.Context<Capabilities>, Capabilities)
+      const page = yield* capability!.tools[0]!.handler({ locator: "run-1:2" }).pipe(Effect.provideService(RunContext, RunContext.of({ memory: {
+        turn: Effect.succeed(2), entries: Effect.succeed([held]),
+        resolve: (id: string) => Effect.succeed(Option.some(held).pipe(Option.filter((entry) => entry.id === id))),
+      } } as never)))
+      return { id: String(capability!.id), tools: capability!.tools.map((registered) => String(registered.tool.name)), ends: Number(/ and offset (\d+)\]$/.exec(String(page))?.[1]), text: String(page).slice(0, String(page).lastIndexOf("\n[… ")) }
+    })))
+    const cutting = await firstPage({ ...config, cutAtLineBreaks: true })
+    expect({ id: cutting.id, tools: cutting.tools, ends: cutting.ends }).toEqual({ id: "@xandreed/plugin-memory-window/recall", tools: ["recall_context"], ends: 7_992 })
+    expect(cutting.text).toBe(view.slice(0, 7_992))
+    expect(cutting.text.endsWith(".\n")).toBe(true)
+    const plain = await firstPage(config)
+    expect({ id: plain.id, tools: plain.tools, ends: plain.ends }).toEqual({ id: "@xandreed/plugin-memory-window/recall", tools: ["recall_context"], ends: 8_000 })
+    expect(plain.text).toBe(view.slice(0, 8_000))
+    expect((await firstPage({ ...config, cutAtLineBreaks: false })).ends).toBe(8_000)
   })
 })

@@ -50,6 +50,25 @@ strategies.map(([name, plugin]) => describe(`the ${name} strategy conforms to Co
   }))
 }))
 
+/** The window or the summary strategy with `cutAtLineBreaks` on, built the way the graph does. */
+const cuttingStrategyOf = (name: "window" | "summary") => (name === "window"
+  ? memoryWindowPlugin.build({ ...memoryWindowPlugin.defaults, cutAtLineBreaks: true }, Context.empty())
+  : memorySummaryPlugin.build({ ...memorySummaryPlugin.defaults, cutAtLineBreaks: true }, Context.empty())
+).pipe(Effect.map((built) => Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)))
+
+// Where a bound's preview is cut changes nothing the kit holds a memory to: each strategy conforms with the option on too.
+const cuttingStrategies = ["window", "summary"] as const
+cuttingStrategies.map((name) => describe(`the ${name} strategy with cutAtLineBreaks conforms to ConversationMemory`, () => {
+  const checks = memoryConformance(ConversationMemory.of({
+    strategy: { id: name, version: "1" },
+    open: (scope) => cuttingStrategyOf(name).pipe(Effect.flatMap((memory) => memory.open(scope))),
+  }), utility)
+  checks.map((check) => test(check.name, async () => {
+    const exit = await Effect.runPromise(Effect.result(check.run))
+    expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
+  }))
+}))
+
 describe("the summary strategy reads its summarizer where the session is opened", () => {
   test("without a UtilityLlm there, opening fails with memory.summary", async () => {
     const exit = await Effect.runPromise(Effect.result(Effect.scoped(Effect.gen(function* () {
