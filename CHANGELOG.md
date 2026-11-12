@@ -11,63 +11,61 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 ### Added
 
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
-  everything else a plugin, as two new entries beside the existing engine,
-  which neither imports nor is imported by it. It is a first cut, with in-memory
-  storage and no tool execution, and it will change as the parts it leaves
-  out return. `docs/kernel.md` is its direction document.
+  every other part a plain Effect layer, as two new entries beside the
+  existing engine, which neither imports nor is imported by it. It is a
+  first cut, with journals kept in the process and no tool execution, and
+  it will change as the parts it leaves out return. `docs/kernel.md` is its
+  direction document.
   - `@xandreed/core/kernel` holds what every part agrees on: ids, `Message`,
-    the event envelope, the `Storage`, `Sessions`, `Memory` and `Loop`
-    contracts with a conformance kit each, the pure rules (a session's two
-    transitions and the fold of a journal to its state, `readJournal`,
-    `resolveRequest`, `estimateTokens`), `definePlugin`, and `Core`, which
-    is events only: `publish`, `on` (in the background, or with
-    `{ wait: true }`) and `events`. It imports `effect` alone.
+    the event envelope, the `JournalStorage`, `Sessions`, `Memory` and
+    `Loop` contracts with a conformance kit each, the pure rules (a
+    session's two transitions and the fold of a journal to its state,
+    `readJournal`, `resolveRequest`, `estimateTokens`, `inspectionOf`), and
+    `Core`, which is events only: `publish`, `on` (named, in the background
+    or with `{ wait: true }`) and `events`. `kernel({ system, capacity? })`
+    is the layer that provides `Core` and `Settings`. It imports `effect`
+    alone.
   - Events are named by the plugin that writes them
     (`plugin.session.turn.started`, `plugin.loop.request.sent`, …) and the
     set is open: a plugin defines its own with `storedEvent` and
     `liveEvent`, each with a schema for its data. A stored record says
-    whether a reader that does not know it may skip it.
-  - `@xandreed/sdk/kernel` holds `Agent.define({ model, system, storage,
-    sessions?, memory, loop?, plugins? })`, which returns `createSession`,
-    `send`, `inspect`, `events` and `with`, and four stock plugins:
-    `inMemoryStorage`, `sessions`, `windowMemory` and `stepLoop`. A turn
-    stores five events (its start, the user's message, the request, the
-    assistant's message, its end) and publishes the answer's pieces live.
-  - A plugin declares what it needs: `definePlugin` takes `requires`, the
-    contracts its `make` uses, and a `make` that uses another does not
-    compile. Any plugin may provide a contract of its own for another.
-    `Agent.define` and `agent.with` read the declarations before they build
-    anything: they build each plugin after the ones that provide what it
-    requires, whatever order the host lists them in, and refuse a set with
-    a missing provider, two providers of one contract, a circle, the same
-    plugin listed twice, or a shared part that requires a rebuilt one
-    (`PluginRefused`, which names the plugin and the contract).
-    `planPlugins` is that check as a pure function. A plugin is handed the
-    contracts it declared and nothing else: a service the host has around
-    `Agent.define` does not reach it.
+    whether a reader that does not know it may skip it. A live event names
+    its turn only when it happens inside one.
+  - `@xandreed/sdk/kernel` holds the stock plugins, each a layer whose type
+    says what it needs: `inProcessJournal()`, `sessions()`,
+    `windowMemory({ budgetTokens })`, `stepLoop` and `inbox`. A host
+    composes them with `Layer.provideMerge` over `kernel(...)`; a stack
+    whose type is written out does not compile when a part is missing. A
+    turn stores five events (its start, the user's message, the request,
+    the assistant's message, its end) and publishes the answer's pieces
+    live. `sessions.create` decodes its input (`InvalidSession`), and the
+    loop refuses a message of no text (`EmptyMessage`).
+  - `Memory` is one function, `build(session, step)`: it keeps nothing,
+    builds each request from the journal, and compacts by appending a
+    record of its own.
+  - The inbox queues messages per session and answers them in order, each
+    in a turn of its own: `enqueue(session, message)` returns at once with
+    the message's ticket and its reply. A failed turn fails only its own
+    reply, a full queue refuses (`InboxRefused`), and every reply not given
+    when the inbox's scope closes fails with `InboxClosed`. Queued messages
+    live in the process. Its contract, `Inbox`, is the plugin's own.
   - A request is stored as pointers into the journal, never as copies, so
-    each message's text is stored once; `agent.inspect` resolves every
+    each message's text is stored once; `inspectionOf` resolves every
     stored request back into what the model was sent.
-  - `agent.with({ memory })` (also `model`, `system`, `loop`, `plugins`)
-    replaces an agent by one over the same events, storage and sessions,
-    once the agent is idle. It refuses a `send` on the old handle from the
-    moment it is called (`Replacing`), waits for the turns that handle is
-    running and for its listeners to have handled what was published (at
-    most `idleWait`, 5 seconds), then builds the successor, closes the old
-    parts and switches. No event reaches the listeners of both agents, the
-    old ones lose none of their last turn, and a `with` that fails or is
-    interrupted leaves the handle usable as before.
+  - A part is replaced by providing a different layer; a host that keeps
+    sessions going across the change builds the kernel, the journal and
+    the session plugin once and swaps the stack above them.
   - One session's events reach listeners in journal order. A session is
     busy until its turn's end was announced, for at most `closeWait` (5
     seconds) after it was stored, and is free by the time the end reaches
-    a background listener or `agent.events`. Every turn begins from what
-    the journal holds, so two session plugins over one store take turns on
-    a session. Session ids are version 4 UUIDs from the platform's
+    a background listener or the stream. Every turn begins from what the
+    journal holds, so two session plugins over one store take turns on a
+    session. Session ids are version 4 UUIDs from the platform's
     cryptographic random source.
   - A limit on a wait for a listener holds whatever the listener does: a
-    listener that cannot be interrupted does not keep `send` from
-    returning, a session busy or an agent from being replaced. It is
-    reported as `core.listener.failed`.
+    listener that cannot be interrupted does not keep a turn from
+    returning or a session busy, nor a stack from closing. It is reported
+    as `core.listener.failed`.
   - `scriptedModel(script)` is a model that follows a script and calls no
     provider: what a host hands the loop kit, and what a test runs an
     agent on.
@@ -80,9 +78,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `core` can no longer reach `@xandreed/core/kernel` by its package name,
   nor one of the sdk `@xandreed/sdk/kernel`.
 - `bun run verify:packages` runs the kernel from the packed packages, on
-  Node and on Bun: the four contracts' kits on the stock plugins, one
-  turn on the scripted model, and plugins ordered and refused by what they
-  declare (`scripts/kernel-consumer.fixture.mjs`).
+  Node and on Bun: the four contracts' kits on the stock plugins, one turn
+  of a stack of layers on the scripted model, two messages queued with the
+  inbox, and a consumer's own contract composed as a layer
+  (`scripts/kernel-consumer.fixture.mjs`).
 
 ## 0.22.0 — 2026-11-12
 
