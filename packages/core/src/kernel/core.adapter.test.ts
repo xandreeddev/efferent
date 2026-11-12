@@ -90,6 +90,35 @@ describe("Core.publish", () => {
     expect(result.host.map((event) => event.name)).toEqual([ticked.name])
   })
 
+  test("told to report listener failures, runs every waiting listener, and reports each failure once the event was handed over, without failing", async () => {
+    const result = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const ran = yield* Ref.make<ReadonlyArray<string>>([])
+      const handed = yield* untilProbe(core)
+      yield* core.on(ticked, () => Effect.fail(new Broken({ message: "no room" })), { wait: true, name: "ledger" })
+      yield* core.on(ticked, () => Ref.update(ran, (all) => [...all, "between"]), { wait: true, name: "host" })
+      yield* core.on(ticked, () => Effect.die("a bug"), { wait: true, name: "buggy" })
+      yield* core.on(ticked, () => Ref.update(ran, (all) => [...all, "last"]), { wait: true, name: "host" })
+      const exit = yield* Effect.exit(core.publish(tick(1), { listenerFailures: "report" }))
+      yield* core.publish(probe)
+      const events = yield* Fiber.join(handed)
+      return {
+        exit: exit._tag,
+        ran: yield* Ref.get(ran),
+        handed: events.map((event) => event.name === listenerFailedEvent.name ? `${event.name} ${JSON.stringify(event.data)}` : event.name),
+      }
+    }))
+    expect(result.exit).toBe("Success")
+    expect(result.ran).toEqual(["between", "last"])
+    // The event first, as the default hands it over; then one report per failure, in the order the listeners ran.
+    expect(result.handed).toEqual([
+      ticked.name,
+      `${listenerFailedEvent.name} {"listener":"ledger","event":"${ticked.name}","reason":"Broken: no room"}`,
+      `${listenerFailedEvent.name} {"listener":"buggy","event":"${ticked.name}","reason":"defect"}`,
+      tocked.name,
+    ])
+  })
+
   test("a waiting listener that dies fails the publish too, as a failure and not a crash", async () => {
     const failure = await run(Effect.gen(function* () {
       const core = yield* makeCore()

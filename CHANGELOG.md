@@ -78,6 +78,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     change.
   - The writes of one open turn are stored one at a time: appends made at
     once both succeed, and the end waits for an append still being stored.
+    A write whose store did not report success (its caller interrupted
+    while the store had not answered, or a store that failed after it kept
+    the event) leaves the turn's place unknown, and the next write, the
+    end's included, reads the last place from the store: the end is still
+    stored after it, and the session takes its next turn. A turn stays open
+    in the journal only when its end could not be stored, or when the store
+    kept its start and reported a failure. A turn's body that appends a
+    record named under `core.` is refused (`SessionRefused`, `ReservedName`)
+    and nothing is stored: core's records are the session plugin's.
     A session's events appended one after another reach listeners in
     journal order. A session is
     busy until its turn's end was announced, for at most `closeWait` (5
@@ -93,6 +102,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     was not sent fails as any other (`ListenerFailed`): a background
     listener is reported and goes on listening, and a turn it is inside
     ends `Failed`, not `Interrupted`.
+  - `Core.publish(event, { listenerFailures: "report" })` runs every
+    waiting listener, whatever the others did, and reports each failure as
+    `core.listener.failed` once the event was handed over; it cannot fail.
+    The default is unchanged: the first failure stops the waiting listeners
+    after it and fails the publisher. The end of a turn and the inbox's
+    `plugin.inbox.queued` are announced this way, so a waiting listener
+    placed after a failing one still hears them. A turn interrupted as it
+    opened has its start announced before its end.
+  - The inbox's worker takes a message in one transition, then waits for
+    that message's own announcement before its turn starts, and each
+    announcement follows the session's announcement before it, whether
+    that message waits, was taken or runs.
+  - The memory kit checks that a memory refuses an unknown record of the
+    loop's that may not be skipped (`unknown-loop-refused`): a memory reads
+    the loop's records with the loop's reader, not its own prefix alone.
+  - Core's event envelope holds no `replaces`, and `SeqRange` is gone: a
+    plugin whose record stands for a run of the journal keeps that run in
+    its record's own data. `listenerFailed` is no longer exported: a
+    publisher that must report its listeners' failures publishes with
+    `{ listenerFailures: "report" }`.
   - `scriptedModel(script)` is a model that follows a script and calls no
     provider: what a host hands the loop kit, and what a test runs an
     agent on.
@@ -110,7 +139,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The boundaries gate holds the kernel's import graph: the sdk's kernel
   contracts are a layer that imports core's kernel and no plugin, and
   each plugin folder a layer that imports the contracts and core's kernel
-  and no other plugin's folder.
+  and no other plugin's folder. Test code anywhere under the sdk's kernel
+  (every test glob the build leaves out, inside a contract or a plugin
+  folder too) is its test layer, not that folder's.
 - The boundaries gate refuses a `restricted` subpath to the layer of the
   package's own entry too, unless that layer is granted it: a file of
   `core` can no longer reach `@xandreed/core/kernel` by its package name,

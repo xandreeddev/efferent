@@ -1,5 +1,5 @@
 import { Cause, Option, Predicate, Schema } from "effect"
-import type { AnnouncedEvent, EventDefinition, LiveDefinition, LiveEvent, SeqRange, StoredDefinition, StoredDraft, StoredEvent } from "./event.entity.js"
+import type { AnnouncedEvent, EventDefinition, LiveDefinition, LiveEvent, StoredDefinition, StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, PluginName } from "./ids.entity.js"
 import type { SessionId, TurnNumber } from "./ids.entity.js"
 import type { Message } from "./message.entity.js"
@@ -27,12 +27,12 @@ export const liveEvent = <D extends E, E extends Schema.Json>(
 
 /**
  * An event of a stored definition, ready for `session.append`. A record that
- * bears a message names it here, and the run of the journal it replaces, if any.
+ * bears a message names it here; anything more about it is in its data.
  */
 export const stored = <D extends Schema.Json>(
   definition: StoredDefinition<D>,
   data: D,
-  bears: { readonly message?: Message; readonly replaces?: SeqRange } = {},
+  bears: { readonly message?: Message } = {},
 ): StoredDraft => ({ name: definition.name, data, skippable: definition.skippable, ...bears })
 
 /** Where an event happened: a session and its open turn. An open session is one. */

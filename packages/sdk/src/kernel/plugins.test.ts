@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
 import type { Context } from "effect"
-import { Core, live, liveEvent, messageOf, originOf, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, live, liveEvent, messageOf, originOf, Seq, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
 import { assistantMessage, requestSent, userMessage } from "./contracts/loop/conversation.entity.functions.js"
 import { replyOf } from "./contracts/loop/loop.entity.functions.js"
 import { Loop } from "./contracts/loop/loop.port.js"
@@ -64,7 +64,8 @@ describe("a different loop layer", () => {
  */
 const CompactionDue = Schema.Struct({ messages: Schema.Int, estimatedTokens: Tokens })
 const compactionDue = liveEvent("compact", "due", { data: CompactionDue })
-const summaryWritten = storedEvent("compact", "summary", { data: Schema.Struct({ of: Schema.Int }), skippable: true })
+/** The memory's summary: how many messages it stands for, and the run of the journal they are in, both ends included. The meaning is the plugin's, in its own data. */
+const summaryWritten = storedEvent("compact", "summary", { data: Schema.Struct({ of: Schema.Int, from: Seq, through: Seq }), skippable: true })
 const swept = liveEvent("janitor", "swept", { data: Schema.Struct({ after: Schema.Int }) })
 
 /** A memory that sends every message until there are more than `keep`, then says so, writes a summary of its own and sends that with the turn's message. */
@@ -86,10 +87,9 @@ const compactingMemory = (keep: number) => Layer.effect(Memory, Effect.gen(funct
       const first = older[0]
       const through = older.at(-1)
       if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-      // Text memory writes for the model is its own record first, bearing the message and naming what it replaces; the request points at it.
-      const summary = yield* session.append(stored(summaryWritten, { of: older.length }, {
+      // Text memory writes for the model is its own record first, bearing the message, with what it replaces in its own data; the request points at it.
+      const summary = yield* session.append(stored(summaryWritten, { of: older.length, from: first.seq, through: through.seq }, {
         message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
-        replaces: { from: first.seq, through: through.seq },
       }))
       const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
       return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
@@ -99,12 +99,12 @@ const compactingMemory = (keep: number) => Layer.effect(Memory, Effect.gen(funct
 
 /** Whether an event is stored or only published is in its type: this compiles only because the two wrong calls are marked as errors. */
 const kindsAreTypes = (core: Context.Service.Shape<typeof Core>, session: OpenSession) => [
-  session.append(stored(summaryWritten, { of: 1 })),
+  session.append(stored(summaryWritten, { of: 1, from: Seq.make(1), through: Seq.make(1) })),
   core.publish(live(compactionDue, session, { messages: 1, estimatedTokens: Tokens.make(1) })),
   // @ts-expect-error a live event is not appended to the journal
   session.append(live(compactionDue, session, { messages: 1, estimatedTokens: Tokens.make(1) })),
   // @ts-expect-error a draft is not published before it is stored
-  core.publish(stored(summaryWritten, { of: 1 })),
+  core.publish(stored(summaryWritten, { of: 1, from: Seq.make(1), through: Seq.make(1) })),
 ]
 
 describe("a plugin adds an event on a compression check and another plugin reacts", () => {
@@ -141,7 +141,7 @@ describe("a plugin adds an event on a compression check and another plugin react
     expect(result.sweeps).toEqual([5])
     // The summary is stored once, as the plugin's record bearing a message, and the request points at it.
     const summary = result.inspection.events.find((event) => event.name === "plugin.compact.summary")
-    expect(summary).toMatchObject({ skippable: true, data: { of: 4 }, message: { _tag: "User", text: "Summary of 4 earlier messages." }, replaces: { from: 2, through: 9 } })
+    expect(summary).toMatchObject({ skippable: true, data: { of: 4, from: 2, through: 9 }, message: { _tag: "User", text: "Summary of 4 earlier messages." } })
     const last = result.inspection.requests.at(-1)
     expect(last?.messages.map((pointed): number => pointed.seq)).toEqual([13, 12])
     expect(result.received.at(-1)).toEqual([

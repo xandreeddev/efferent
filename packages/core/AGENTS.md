@@ -127,7 +127,12 @@ kernel's rules:
   fiber, as if it were called in place. `core.listener.failed` is never
   waited for: a listener registered for it with `{ wait: true }` is
   delivered in the background, and a report only hands the event over. A
-  listener removed while a publish is under way is passed over. The
+  listener removed while a publish is under way is passed over. By
+  default the first waiting listener that fails stops those after it and
+  fails the publish; `PublishOptions.listenerFailures: "report"` runs
+  every one, reports each failure after the hand-over, in the order the
+  listeners ran, and its overload of `publish` cannot fail (the session
+  plugin's end of a turn and the inbox's `plugin.inbox.queued` use it). The
   waiting listeners run, then the publisher's own step
   (`PublishOptions.beforeHandOver`), then the event is handed to the
   background ones and the stream, which hear of it on fibers of their own,
@@ -159,8 +164,13 @@ kernel's rules:
   one names a turn only when it happens inside one (`LiveEvent.turn` is an
   optional key), so an event about a session and no turn of it, such as
   the inbox's `plugin.inbox.queued`, is made with `live(definition, { id })`.
+  `core.` records are the session plugin's to write: `OpenSession.append`
+  refuses one (`SessionRefused`, `ReservedName`) and stores nothing, which
+  the sessions kit checks (`reserved-name`).
 - A message sits once, on the envelope (`StoredEvent.message`), and
-  `messageOf` reads it from any record, whichever plugin wrote it. What a
+  `messageOf` reads it from any record, whichever plugin wrote it. What it
+  stands for (the run of the journal a summary replaces) is the writing
+  plugin's own data: the envelope has no field for it. What a
   request is (pointers, `resolveRequest`, the estimate) is the loop
   contract's, not core's.
 - A contract carries a plugin's own tagged error as it was raised

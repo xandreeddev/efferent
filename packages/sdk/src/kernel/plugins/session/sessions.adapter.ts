@@ -6,7 +6,7 @@ import {
   Core,
   headerOf,
   InvalidSession,
-  listenerFailed,
+  KERNEL_READER,
   NewSession,
   outcomeOf,
   Seq,
@@ -43,20 +43,27 @@ export interface SessionsOptions {
 
 /**
  * A turn this process opened: where it is, the last place it wrote at,
- * whether it closed, and the lock its writes take one at a time.
+ * whether it closed, and the lock its writes take one at a time. The place
+ * is unknown after a write that did not report success: its store may have
+ * kept the event all the same, so the next write reads the place from the
+ * store.
  */
 interface Turn {
   readonly id: SessionId
   readonly turn: TurnNumber
-  readonly place: Ref.Ref<Seq>
+  readonly place: Ref.Ref<Option.Option<Seq>>
   readonly closed: Ref.Ref<boolean>
   readonly writes: Semaphore.Semaphore
 }
-/** A turn as `begin` opened it: the open session a body is given, and its stored start, not announced yet. */
+/**
+ * A turn as `begin` opened it: the open session a body is given, its stored
+ * start, not announced yet, and whether the announcement of the start began.
+ */
 interface Opened {
   readonly turn: Turn
   readonly session: OpenSession
   readonly started: AnnouncedEvent
+  readonly announcing: Ref.Ref<boolean>
 }
 
 const hex = (byte: number) => byte.toString(16).padStart(2, "0")
@@ -76,6 +83,9 @@ const mintUuid = Effect.sync(() => {
 const decodeSession = Schema.decodeUnknownEffect(NewSession)
 
 const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "SessionBusy", message: `session ${id} is busy: ${why}` })
+
+/** Whether a record is named under core's own prefix: core's records are this plugin's to write, never a body's. */
+const reserved = (event: StoredDraft) => KERNEL_READER.reads.some((prefix) => event.name.startsWith(prefix))
 
 /**
  * The session plugin: it owns turns and the order of the journal. One turn
@@ -99,14 +109,25 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     : [Effect.void, new Set([...now, id])]).pipe(Effect.flatten)
   const release = (id: SessionId) => Ref.update(held, (now) => new Set(Array.from(now).filter((other) => other !== id)))
 
-  /** Put an event at the next place of the turn's journal. The caller holds the turn's lock: one write at a time. */
+  /** The place of the last event the store holds for a session: 0 for none. */
+  const lastPlace = (id: SessionId) => Effect.map(storage.read(id), (journal) =>
+    Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq }))
+
+  /**
+   * Put an event at the next place of the turn's journal. The caller holds the turn's lock: one write at a time. The
+   * place is unknown from the moment the store is asked until it reports success: a store interrupted, or one that
+   * fails after it kept the event, leaves the next write, the end's included, to read the place from the store.
+   */
   const store = Effect.fnUntraced(function* (open: Turn, event: StoredDraft) {
-    const stored = yield* storage.append(open.id, yield* Ref.get(open.place), event)
-    yield* Ref.set(open.place, stored.seq)
+    const place = yield* Option.match(yield* Ref.get(open.place), { onNone: () => lastPlace(open.id), onSome: Effect.succeed })
+    yield* Ref.set(open.place, Option.none())
+    const stored = yield* storage.append(open.id, place, event)
+    yield* Ref.set(open.place, Option.some(stored.seq))
     return stored
   })
 
   const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+    if (reserved(event)) return yield* Effect.fail(new SessionRefused({ reason: "ReservedName", message: `${event.name} is core's to write, not a turn's body` }))
     const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
       if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
       return yield* store(open, event)                              // in the journal first
@@ -124,7 +145,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
       const open: Turn = {
         id,
         turn,
-        place: yield* Ref.make(Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq })),
+        place: yield* Ref.make(Option.some(Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq }))),
         closed: yield* Ref.make(false),
         writes: yield* Semaphore.make(1),
       }
@@ -134,7 +155,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
           error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer opened a turn")) : Effect.fail(error)),
       )
       const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open) }
-      const opened: Opened = { turn: open, session, started: announced(open, started) }
+      const opened: Opened = { turn: open, session, started: announced(open, started), announcing: yield* Ref.make(false) }
       return opened
     }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? release(id) : Effect.void))   // a turn that did not open, for whatever reason, holds nothing
   })
@@ -142,17 +163,20 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
   /**
    * Announce the end of a turn, and free its session. No listener can
    * fail it or hold it past `closeWait`, whether or not it can be
-   * interrupted: a failure, or a listener cut short, is
-   * `core.listener.failed`. The session is freed after the listeners the
-   * announcement waits for and before the end is handed to the background
-   * listeners and the host's stream, so whoever hears of the end there
-   * finds the session free.
+   * interrupted: every listener the announcement waits for hears it, and a
+   * failure, or a listener cut short, is `core.listener.failed`. The
+   * session is freed after the listeners the announcement waits for and
+   * before the end is handed to the background listeners and the host's
+   * stream, so whoever hears of the end there finds the session free. A
+   * start whose announcement never began, the turn interrupted as it
+   * opened, is announced first, so no listener hears an end without its
+   * start.
    */
-  const announceEnd = (id: SessionId, ended: AnnouncedEvent) => core.publish(ended, { beforeHandOver: release(id) }).pipe(
-    Effect.catchTag("ListenerFailed", (failure) => core.publish(listenerFailed(ended, failure)).pipe(
-      Effect.ignore({ log: "Warn", message: "the report of a failed listener could not be published" }),
-    )),
-    Effect.ensuring(release(id)),                                   // whatever became of the announcement
+  const announceEnd = (open: Opened, ended: AnnouncedEvent) => Effect.gen(function* () {
+    if (!(yield* Ref.get(open.announcing))) yield* core.publish(open.started, { listenerFailures: "report" })
+    yield* core.publish(ended, { beforeHandOver: release(open.turn.id), listenerFailures: "report" })
+  }).pipe(
+    Effect.ensuring(release(open.turn.id)),                         // whatever became of the announcement
     Effect.timeoutOption(options.closeWait ?? "5 seconds"),
   )
 
@@ -166,7 +190,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     )
     // Then announced, on a fiber of the plugin, and only then is the session free: the next turn's events reach
     // listeners after this end. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
-    const delivery = yield* Effect.forkIn(announceEnd(id, announced(open.turn, ended)), scope, { startImmediately: true })
+    const delivery = yield* Effect.forkIn(announceEnd(open, announced(open.turn, ended)), scope, { startImmediately: true })
     yield* Effect.interruptible(Fiber.await(delivery))
   })
 
@@ -178,7 +202,10 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     read: (id) => storage.read(id),
     turn: (id, body) => Effect.acquireUseRelease(
       begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
-      (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
+      (open) => Effect.andThen(                                     // announced inside the turn, so a listener that fails it still closes it
+        core.publish(open.started, { beforeHandOver: Ref.set(open.announcing, true) }),   // marked once handed over; the end announces a start never announced
+        body(open.session),
+      ),
       (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
     ),
   })

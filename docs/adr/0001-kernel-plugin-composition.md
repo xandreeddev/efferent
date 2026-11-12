@@ -28,7 +28,7 @@ A plugin takes part in four ways, and no fifth.
 | --- | --- | --- |
 | **Replace** | Another implementation of a contract | You want different behaviour of the whole part: another loop, another memory |
 | **Wrap** | A layer that requires a contract, provides the same contract, and calls the one below | You add to a part: a guard, a selection, a retry, extra tools, context data |
-| **Event** | `Core.on` on an event another part publishes | You observe, or act in the background. Nobody waits for an answer, and a turn's behaviour does not change |
+| **Event** | `Core.on` on an event another part publishes | You observe, or act in the background. Nobody waits for an answer, and a turn's behaviour does not change, with one exception: a listener registered with `{ wait: true }` is waited for, and its failure fails the publishing turn |
 | **Journal** | An entry appended through the open session | A fact other parts must see later: a summary, a loaded skill, a decision |
 
 The rule for choosing:
@@ -111,7 +111,8 @@ contract wraps nothing for it, and nothing says so.
   selector cut.
 - **Compression to pointers to files, cache-stable.** A memory implementation, replacing
   the window memory. It writes old turns to a file once and appends an entry that
-  replaces them with a summary and the file's path; everything after only appends. A
+  replaces them with a summary and the file's path; the run of the journal it replaces
+  is in the entry's own data, not in core's envelope. Everything after only appends. A
   read tool brings a file back when the model asks.
 - **Guardrails on tool results.** A wrapper of `Tools`. Its `execute` calls the one below
   and checks the result before the loop sees it.
@@ -142,7 +143,7 @@ model to have it for one turn, or for the whole session, kept through compaction
 **The shape.**
 
 - **Where:** a higher-order memory plugin fetches and appends the data, then delegates. It is not in the loop: the moment, before the request is built, is one a memory method already sees with the session in hand.
-- **No store beside the journal.** The data is an entry in the journal with a **lifetime**, and one pure reading rule in core, `visibleEntries(journal, turn)`, applies it for every memory:
+- **No store beside the journal.** The data is an entry in the journal with a **lifetime**, and one pure reading rule of the loop contract, `visibleEntries(journal, turn)`, beside `LOOP_READER`, applies it for every memory. It reads what a memory sends, so it is the loop contract's, not core's (ADR 0002):
 
 | Lifetime | Seen by the model | Under compaction | Cache |
 | --- | --- | --- | --- |
@@ -151,7 +152,7 @@ model to have it for one turn, or for the whole session, kept through compaction
 | `history` (the default) | as part of the conversation | compacted or dropped as usual | append-only |
 
 - **When it fetches is separate from when it appends.** A wrapper cannot know data changed without fetching. Its `refresh` option decides when it fetches: never (the default), each turn, or every N turns. It appends only when what it fetched differs from the latest entry of that key.
-- **Pointer order:** a request's pointers may be in any order (`resolveRequest` refuses only repeated, later or unknown places), so session entries first changes no core rule. The memory kit's `prefix` check must allow for a refreshed session entry.
+- **Pointer order:** a request's pointers may be in any order (`resolveRequest` refuses only repeated, later or unknown places), so session entries first changes no rule of the loop contract, which owns `resolveRequest` (ADR 0002). The memory kit's `prefix` check must allow for a refreshed session entry.
 
 **Open points:**
 

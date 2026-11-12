@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Core, kernel, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEndedEvent } from "@xandreed/core/kernel"
+import { Core, EventName, kernel, listenerFailedEvent, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -24,6 +24,14 @@ type Pause = (event: StoredDraft) => Effect.Effect<void>
 const atOnce: Pause = () => Effect.void
 
 /**
+ * What a storage double does once an append went through, as a remote store
+ * may: nothing, or keep the caller waiting, or report a failure, the event
+ * stored all the same.
+ */
+type After = (event: StoredDraft) => Effect.Effect<void, JournalStorageError>
+const acknowledged: After = () => Effect.void
+
+/**
  * The stock storage behind a double whose appends can be told to fail or
  * to suspend before they go through, and as many session plugins over that
  * one store as asked for.
@@ -33,16 +41,18 @@ const over = (count: number) => Effect.gen(function* () {
   const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
   const pause = yield* Ref.make<Pause>(atOnce)
+  const after = yield* Ref.make<After>(acknowledged)
   const storage = JournalStorage.of({
     ...real,
     append: (id, expectedSeq, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () =>
-      Effect.andThen(Effect.flatMap(Ref.get(pause), (wait) => wait(event)), real.append(id, expectedSeq, event)))),
+      Effect.andThen(Effect.flatMap(Ref.get(pause), (wait) => wait(event)), real.append(id, expectedSeq, event)).pipe(
+        Effect.tap(() => Effect.flatMap(Ref.get(after), (then) => then(event)))))),
   })
   const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
     Effect.map(Layer.build(Layer.provide(sessions(), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
-  return { plugins, core: Context.get(below, Core), fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), names }
+  return { plugins, core: Context.get(below, Core), fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), after: (next: After) => Ref.set(after, next), names }
 })
 
 /** Every test gives itself five seconds: code that waits on what never comes fails here and does not hang the run. */
@@ -129,6 +139,130 @@ describe("a turn whose end cannot be stored", () => {
     expect(result.next).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
     expect(result.names).toEqual([STARTED])
     expect(result.read).toBe(1)
+  })
+})
+
+describe("an append whose store did not report success", () => {
+  /** The next end of a turn as the stream hands it over, read from now: the session is free once it is there. */
+  const endOnStream = (core: Context.Service.Shape<typeof Core>) =>
+    Effect.forkScoped(Stream.runHead(Stream.filter(core.events, (event) => event.name === ENDED)), { startImmediately: true })
+
+  test("interrupted while its store, which has committed, still keeps it waiting: the turn's end is stored after it, and the next turn opens", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core, after, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const committed = yield* Deferred.make<void>()
+      // The noted record is stored, and then the store keeps its caller waiting, as a remote store may before it answers.
+      yield* after((event) => event.name === noted.name ? Effect.andThen(Deferred.succeed(committed, undefined), Effect.never) : Effect.void)
+      const handed = yield* endOnStream(core)
+      const running = yield* Effect.forkChild(turns.turn(id, (session) => session.append(stored(noted, {}))))
+      yield* Deferred.await(committed)
+      yield* Fiber.interrupt(running)
+      const stored_ = yield* names(id)
+      yield* after(acknowledged)
+      const announced = yield* Effect.timeoutOption(Fiber.join(handed), "1 second")
+      const next = yield* Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn))))
+      return { stored: stored_, announced: Option.isSome(announced), next, names: yield* names(id) }
+    }))
+    expect(result.stored).toEqual([STARTED, noted.name, ENDED])
+    expect(result.announced).toBe(true)
+    expect(result.next).toMatchObject({ _tag: "Success", value: 2 })
+    expect(result.names).toEqual([STARTED, noted.name, ENDED, STARTED, ENDED])
+  })
+
+  test("refused by a store that committed it and then reported a failure: the turn's end is stored after it, and the next turn opens", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], after, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      // The noted record is stored, and then the store says it could not store it: an uncertain acknowledgement.
+      yield* after((event) => event.name === noted.name ? Effect.fail(new JournalStorageError({ reason: "Unavailable", message: "the answer was lost" })) : Effect.void)
+      const refused = yield* turns.turn(id, (session) => Effect.flip(session.append(stored(noted, {}))))
+      yield* after(acknowledged)
+      const next = yield* Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn))))
+      return { refused, next, names: yield* names(id) }
+    }))
+    expect(result.refused).toMatchObject({ _tag: "JournalStorageError", reason: "Unavailable" })
+    expect(result.next).toMatchObject({ _tag: "Success", value: 2 })
+    expect(result.names).toEqual([STARTED, noted.name, ENDED, STARTED, ENDED])
+  })
+})
+
+describe("an append of a record named under core.", () => {
+  test("is refused with ReservedName, whatever the record, and nothing is stored or announced", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      yield* Effect.forEach([turnStartedEvent, turnEndedEvent], (definition) => core.on(definition, (event) => Ref.update(heard, (all) => [...all, event.name]), { name: "watch", wait: true }), { concurrency: 1, discard: true })
+      const drafts = [
+        turnEnded(TurnNumber.make(1), { _tag: "Completed" }),
+        turnStarted(TurnNumber.make(2)),
+        { name: EventName.make("core.session.anything"), data: {}, skippable: true },
+      ]
+      const refusals = yield* turns.turn(id, (session) => Effect.forEach(drafts, (draft) => Effect.flip(session.append(draft)), { concurrency: 1 }))
+      const next = yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn)))
+      return { refusals: refusals.map((refusal) => refusal._tag === "SessionRefused" ? refusal.reason : refusal._tag), next, names: yield* names(id), heard: yield* Ref.get(heard) }
+    }))
+    expect(result.refusals).toEqual(["ReservedName", "ReservedName", "ReservedName"])
+    expect(result.names).toEqual([STARTED, ENDED, STARTED, ENDED])
+    expect(result.heard).toEqual([STARTED, ENDED, STARTED, ENDED])
+    expect(result.next).toBe(2)
+  })
+})
+
+describe("a turn interrupted while it opens", () => {
+  test("has its start announced before its end, though its body never ran", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core, pause, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      const ended = yield* Deferred.make<void>()
+      yield* core.on(turnStartedEvent, (event) => Ref.update(heard, (all) => [...all, event.name]), { name: "watch", wait: true })
+      yield* core.on(turnEndedEvent, (event) => Effect.andThen(Ref.update(heard, (all) => [...all, event.name]), Deferred.succeed(ended, undefined)), { name: "watch", wait: true })
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      // The start's store holds the turn in its opening, which no interrupt cuts: the interrupt is delivered as the body would begin.
+      yield* pause((event) => event.name === STARTED ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void)
+      const ran = yield* Ref.make(false)
+      const running = yield* Effect.forkChild(turns.turn(id, () => Ref.set(ran, true)))
+      yield* Deferred.await(entered)
+      const stopping = yield* Effect.forkChild(Fiber.interrupt(running), { startImmediately: true })
+      yield* Deferred.succeed(go, undefined)
+      yield* Fiber.join(stopping)
+      yield* Effect.timeoutOption(Deferred.await(ended), "1 second")
+      return { ran: yield* Ref.get(ran), heard: yield* Ref.get(heard), names: yield* names(id) }
+    }))
+    expect(result.ran).toBe(false)
+    expect(result.names).toEqual([STARTED, ENDED])
+    expect(result.heard).toEqual([STARTED, ENDED])
+  })
+})
+
+describe("the listeners the end of a turn waits for", () => {
+  test("all hear it: one that fails holds back none after it, and is reported", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const heard = yield* Deferred.make<number>()
+      const reported = yield* Deferred.make<unknown>()
+      yield* core.on(listenerFailedEvent, (event) => Deferred.succeed(reported, event.data), { name: "reports" })
+      yield* core.on(turnEndedEvent, () => Effect.fail(new JournalStorageError({ reason: "Unavailable", message: "the first listener failed" })), { name: "first", wait: true })
+      yield* core.on(turnEndedEvent, (event) => Deferred.succeed(heard, Number(event.data.turn)), { name: "second", wait: true })
+      const value = yield* turns.turn(id, () => Effect.succeed("done"))
+      return {
+        value,
+        heard: yield* Effect.timeoutOption(Deferred.await(heard), "1 second"),
+        reported: yield* Effect.timeoutOption(Deferred.await(reported), "1 second"),
+      }
+    }))
+    expect(result.value).toBe("done")
+    expect(result.heard).toEqual(Option.some(1))
+    expect(result.reported).toEqual(Option.some({ listener: "first", event: ENDED, reason: "JournalStorageError: the first listener failed" }))
   })
 })
 

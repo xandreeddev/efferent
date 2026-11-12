@@ -76,8 +76,11 @@ const kitSession = Effect.gen(function* () {
  * and `budgetTokens`, never a request over its budget (`over-budget`); an
  * unknown record under its own prefix is passed over when it may be
  * skipped (`unknown-skipped`) and refused with `UnknownRecord` when it may
- * not (`unknown-refused`); another plugin's record it does not know is not
- * its concern (`foreign`).
+ * not (`unknown-refused`); so is an unknown record under the loop's prefix
+ * that may not be skipped, since a memory reads the loop's records with the
+ * loop's reader (`readerFor(name, own, LOOP_READER)`), not its own prefix
+ * alone (`unknown-loop-refused`); another plugin's record it does not know
+ * is not its concern (`foreign`).
  *
  * @public
  */
@@ -106,7 +109,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
   const answersTurn = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
     expect(id, Option.exists(turnMessageOf(journal), (seq) => request.messages.includes(seq)), `the request ${show(request.messages)} leaves out the message the turn answers`))
   const own = `plugin.${subject.name}.`
-  const unknown = (skippable: boolean) => stored(storedEvent(subject.name, "kit-unknown", { data: Schema.Struct({}), skippable }), {})
+  const unknown = (skippable: boolean, plugin: string = subject.name) => stored(storedEvent(plugin, "kit-unknown", { data: Schema.Struct({}), skippable }), {})
   const long = "long ".repeat(Math.max(1, Math.ceil(subject.budgetTokens / 4)))
 
   return [
@@ -175,6 +178,12 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.append(unknown(false))
       const session = yield* kit.openTurn("And a scope?")
       yield* refuses("unknown-refused", "a build over a record that may not be skipped", build(memory, session), (error) => error._tag === "UnknownRecord")
+    })),
+    check("an unknown record of the loop's that may not be skipped is refused", "unknown-loop-refused", (memory, kit) => Effect.gen(function* () {
+      yield* kit.pastTurn("What is a fiber?", "A light thread.")
+      yield* kit.append(unknown(false, "loop"))
+      const session = yield* kit.openTurn("And a scope?")
+      yield* refuses("unknown-loop-refused", "a build over a record of the loop's that may not be skipped", build(memory, session), (error) => error._tag === "UnknownRecord")
     })),
     check("another plugin's record it does not know is not its concern", "foreign", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")

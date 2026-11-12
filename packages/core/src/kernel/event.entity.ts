@@ -31,35 +31,25 @@ export interface LiveDefinition<D extends Schema.Json> {
 /** An event's definition, stored or live. The set of them is open: core holds no list. */
 export type EventDefinition<D extends Schema.Json> = StoredDefinition<D> | LiveDefinition<D>
 
-/**
- * A run of the journal, both ends included.
- *
- * @public
- */
-export const SeqRange = Schema.Struct({ from: Seq, through: Seq })
-export type SeqRange = typeof SeqRange.Type
-
 const envelope = {
   name: EventName,
   /** The event's own data, as JSON; storage never decodes it. */
   data: Schema.Json,
   /** Whether a reader that does not know this record may pass over it. */
   skippable: Schema.Boolean,
-  /** The message this record bears, when it bears one. A message sits here and nowhere else. */
+  /**
+   * The message this record bears, when it bears one. A message sits here and nowhere else. What a message stands
+   * for (a summary of earlier records, say) is the writing plugin's own data, not the envelope's.
+   */
   message: Schema.optionalKey(Message),
-  /** The run of the journal this record's message stands for, when it replaces one. */
-  replaces: Schema.optionalKey(SeqRange),
 }
 
-const replacesAMessage = Schema.makeFilter((event: { readonly message?: Message; readonly replaces?: SeqRange }) =>
-  event.replaces === undefined || event.message !== undefined ? true : "a record that replaces a range bears the message that stands for it")
-
 /** An event on its way into the journal: what `session.append` takes. Built with `stored` from a stored definition. */
-export const StoredDraft = Schema.Struct(envelope).check(replacesAMessage)
+export const StoredDraft = Schema.Struct(envelope)
 export type StoredDraft = typeof StoredDraft.Type
 
 /** An event as the journal keeps it: the draft, where it is and when it was stored. */
-export const StoredEvent = Schema.Struct({ seq: Seq, at: Schema.Number, ...envelope }).check(replacesAMessage)
+export const StoredEvent = Schema.Struct({ seq: Seq, at: Schema.Number, ...envelope })
 export type StoredEvent = typeof StoredEvent.Type
 
 /**

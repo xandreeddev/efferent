@@ -67,9 +67,14 @@ export type TurnOpen = typeof TurnOpen.Type
 export const SessionState = Schema.Union([Free, TurnOpen])
 export type SessionState = typeof SessionState.Type
 
-/** A transition the session's state does not allow: a turn begun while one is open, or ended while none is. */
+/**
+ * What a session refuses: a turn begun while one is open (`SessionBusy`), a
+ * write to a turn that is not open (`NoOpenTurn`), or a record a body
+ * appends under core's own names, which only the session plugin writes
+ * (`ReservedName`).
+ */
 export class SessionRefused extends Schema.TaggedError<SessionRefused>()("SessionRefused", {
-  reason: Schema.Literals(["SessionBusy", "NoOpenTurn"]),
+  reason: Schema.Literals(["SessionBusy", "NoOpenTurn", "ReservedName"]),
   message: Schema.String,
 }) {}
 

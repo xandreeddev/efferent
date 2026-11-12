@@ -44,7 +44,9 @@ file describes, over `@xandreed/core/kernel` (`docs/kernel.md`): every
 workflow contract and the stock plugins (ADR 0002). Its layers come before
 the sdk's: `sdk-kernel-contracts` (`contracts/**`), one
 `sdk-kernel-plugin-<name>` per plugin folder, `sdk-kernel` (the entry) and
-`sdk-kernel-tests` (tests and `testing.ts`). It imports core's kernel and
+`sdk-kernel-tests` (every test glob the build leaves out, wherever it sits
+under the kernel, a contract's or a plugin's folder included, placed
+before them all). It imports core's kernel and
 `effect/ai` and nothing else of the workspace, not core's root, not the
 runtime, not the rest of the sdk, and no runtime module:
 `browser-bundle.test.ts` builds its entry for a browser and records every
@@ -105,19 +107,24 @@ it: `./kernel` is a `restricted` subpath.
   the plugin that publishes `plugin.inbox.queued` (live, about the session
   and no turn), and the worker it planned. The announcement is started at
   once (a waiting listener that does not suspend has heard it when
-  `enqueue` returns) and follows the announcement of the session's
-  message before it while that one waits, so one session's announcements
-  are published in ticket order. The caller gets its ticket and reply
-  whatever becomes of the announcement; a failing waiting listener is
-  reported rather than failing the queueing, and an announcement cut short
-  by the scope's close interrupts its signal, so its message starts no
-  turn. The worker waits for the announcement of the first message
-  waiting before it takes it, so a message's `turn.started` follows its
-  `plugin.inbox.queued` reaching the listeners the publisher waits for.
-  Taking a message and putting its reply in its turn's hands is one
-  uninterruptible step, the turn itself interruptible, so a close finds
-  every reply either waiting, which the finalizer fails, or with a turn
-  that settles it. A failed turn fails its own reply; an interrupted wait
+  `enqueue` returns) and follows the session's last announcement, kept
+  beside the state (`Held.announcing`) whether its message waits, was
+  taken or runs, and dropped in the transition that removes the session's
+  queue, so one session's announcements are published in ticket order.
+  The caller gets its ticket and reply whatever becomes of the
+  announcement; it is published with `listenerFailures: "report"`, so a
+  failing waiting listener is reported, fails nothing and holds back none
+  after it, and an announcement cut short by the scope's close interrupts
+  its signal, so its message starts no turn. The worker takes the next
+  message in one transition, then waits for that message's own
+  announcement before its turn starts, so a message's `turn.started`
+  follows its `plugin.inbox.queued` reaching the listeners the publisher
+  waits for, whenever a message is queued. Taking a message and putting
+  its reply in the hands of what follows is one uninterruptible step: the
+  wait for the announcement and the turn run interruptibly under one exit
+  handler that settles the reply, so a close finds every reply either
+  waiting, which the finalizer fails, or with a worker that settles it
+  (`InboxClosed` for an announcement or a turn cut short). A failed turn fails its own reply; an interrupted wait
   for a reply does not cancel the turn; the close of the plugin's scope
   fails every reply not given with `InboxClosed`, the running turn's
   included, and refuses later messages (`InboxRefused`, `Closed`); a full
@@ -126,8 +133,8 @@ it: `./kernel` is a `restricted` subpath.
   without failing it. No test there can tell the worker's mask from its
   absence: Effect delivers an interrupt only where a fiber suspends or
   yields to the scheduler, and nothing suspends between the take and the
-  step that settles the reply, so the mask guards against a scheduler
-  yield there. Nor can one tell the interrupted signal from one that
+  start of the step whose exit settles the reply, so the mask guards
+  against a scheduler yield there. Nor can one tell the interrupted signal from one that
   succeeds: the scope's close interrupts the announcer, which settles at
   once, then the worker, before the worker can run.
 - `step-loop.usecase.ts`, the window memory's layer, the session plugin's
@@ -141,14 +148,24 @@ it: `./kernel` is a `restricted` subpath.
   append of `core.session.turn.started` there is the claim: a conflict is
   `SessionBusy`, not a storage failure, and a turn that did not open
   (failure or defect) holds nothing. A turn's start is announced inside the
-  turn. Its writes take one lock per open turn (`Turn.writes`): the check
+  turn; a turn interrupted as it opened, whose body never began, has its
+  start announced by the end, before the end (`Opened.announcing`, set in
+  the start's `beforeHandOver`). A body's append of a record named under
+  `core.` is refused (`ReservedName`) before anything is stored. Its
+  writes take one lock per open turn (`Turn.writes`): the check
   that the turn is open, the read of the last place and the store are one
   step, so two appends made at once are stored one after the other, and
   the end, once the body has returned, waits for an append still being
   stored and is stored after it; an append made after the end began is
   `NoOpenTurn`. The lock holds the store and not the announcement, so no
   listener holds the end; each event is announced after its own store.
-  Its end is stored, then announced on a fiber of the plugin bounded
+  The place is unknown from the moment a store is asked until it reports
+  success: a write interrupted while its store had not answered, or one
+  whose store failed after it kept the event, leaves the next write, the
+  end's included, to read the last place from the store, so the end is
+  stored after it (such an event is in the journal and was never
+  announced). Its end is stored, then announced with
+  `listenerFailures: "report"` on a fiber of the plugin bounded
   by `closeWait`, whatever its listeners do, and the session is freed in
   the publish's own step before the hand-over (`beforeHandOver`): events
   appended one after another reach listeners in journal order, whoever
@@ -157,7 +174,9 @@ it: `./kernel` is a `restricted` subpath.
   operations, the only way the background runs between the hand-over and
   the publisher's next step), and an interrupted caller does not wait. A
   turn whose end cannot be stored stays open and the caller gets the
-  storage failure. `append` after the close is `NoOpenTurn`. `create` decodes its input (`InvalidSession`). Ids are
+  storage failure; so does one whose start the store kept while it
+  reported a failure. Closing either is crash recovery, which returns with
+  the durable stores. `append` after the close is `NoOpenTurn`. `create` decodes its input (`InvalidSession`). Ids are
   version 4 UUIDs from `crypto.getRandomValues` (which needs no secure
   context, unlike `crypto.randomUUID`), or what `SessionsOptions.mintId`
   mints. `plugins/session/sessions.adapter.test.ts` and
@@ -180,11 +199,17 @@ it: `./kernel` is a `restricted` subpath.
   example), `swap` (a session going on over a shared base under another
   memory), `composition` (`type-level:` a stack missing a part does not
   compile where its type is annotated), `plugins/session/sessions.adapter`
-  (a store that fails or suspends on request, a turn's writes one at a
-  time, the end's hand-over to a background listener that opens the next
-  turn, two session plugins over one store, the ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
+  (a store that fails, suspends, or stores and then keeps its caller
+  waiting or reports a failure, on request; a turn's writes one at a
+  time; an append whose store did not report success followed by the
+  end; a body's append of a `core.` record; a turn interrupted as it
+  opens; every waiting listener of the end hearing it; the end's
+  hand-over to a background listener that opens the next turn; two
+  session plugins over one store; the ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
   when, how often, with what), `plugins/inbox/*` (the transitions as a
-  table, and the inbox's rules), `kits` (the four kits on the stock
+  table, and the inbox's rules, among them an announcement before its turn
+  and in ticket order under a scheduler that makes every fiber yield after
+  a few operations), `kits` (the four kits on the stock
   plugins and on careless ones: each careless plugin fails the checks of
   what it is careless about and no others, and between them every check),
   `browser-bundle`, `guide`, and beside the contracts' files their own

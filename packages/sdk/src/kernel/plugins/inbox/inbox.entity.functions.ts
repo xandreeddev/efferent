@@ -64,13 +64,6 @@ export const take = (state: InboxState, session: SessionId): Taken =>
     }),
   })
 
-/** The messages waiting for a session, first queued first: none for a session with no queue, and none in a closed inbox. */
-export const waitingFor = (state: InboxState, session: SessionId): ReadonlyArray<Pending> =>
-  Match.valueTags(state, {
-    Closed: (): ReadonlyArray<Pending> => [],
-    Open: ({ queues }): ReadonlyArray<Pending> => Option.match(HashMap.get(queues, session), { onNone: () => [], onSome: ({ pending }) => pending }),
-  })
-
 /** What `finish` decided: the closed inbox, and every message that was still waiting, with its session. */
 export interface Finished {
   readonly state: InboxState

@@ -7,11 +7,11 @@
 // imports nothing of the rest of core, no model type and no runtime module.
 export { EventName, Owner, PluginName, Seq, SessionId, ToolCallId, TurnNumber } from "./ids.entity.js"
 export { AssistantMessage, Message, ToolCall, UserMessage } from "./message.entity.js"
-export { AnnouncedEvent, KernelEvent, ListenerFailed, LiveEvent, SeqRange, StoredDraft, StoredEvent } from "./event.entity.js"
+export { AnnouncedEvent, KernelEvent, ListenerFailed, LiveEvent, StoredDraft, StoredEvent } from "./event.entity.js"
 export type { Delivered, EventDefinition, LiveDefinition, PluginFailure, StoredDefinition } from "./event.entity.js"
 export { announced, dataOf, live, liveEvent, originOf, stored, storedEvent } from "./event.entity.functions.js"
 export { KERNEL_READER, ListenerFailedData, TurnEndedData, TurnOutcome, TurnStartedData, listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
-export { listenerFailed, outcomeOf, turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
+export { outcomeOf, turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 export { Journal, Reader, JournalStorageError, UnknownRecord } from "./journal.entity.js"
 export { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
 export { Free, Inspection, InvalidSession, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnOpen } from "./session.entity.js"

@@ -16,7 +16,9 @@ export interface OpenSession {
    * Store the event at the next place of the journal, then announce it on
    * `Core` under the same name, and return it as stored. A waiting listener
    * that fails fails the append, after the event is stored. Once the turn
-   * closed, an append is refused (`SessionRefused`, `NoOpenTurn`).
+   * closed, an append is refused (`SessionRefused`, `NoOpenTurn`). A record
+   * named under `core.` is refused (`SessionRefused`, `ReservedName`) and
+   * nothing is stored: core's records are the session plugin's to write.
    */
   readonly append: (event: StoredDraft) => Effect.Effect<StoredEvent, JournalStorageError | ListenerFailed | SessionRefused>
 }

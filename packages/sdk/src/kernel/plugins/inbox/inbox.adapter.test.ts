@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema, Scope, Stream } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Scheduler, Schema, Scope, Stream } from "effect"
 import type { AiError, Response } from "effect/ai"
 import { Core, inspectionOf, listenerFailedEvent, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent } from "@xandreed/core/kernel"
@@ -206,6 +206,18 @@ describe("the inbox", () => {
     expect(result).toEqual({ ticket: 1, reply: { text: "Reply 1." }, report: { listener: "queued", event: inboxQueuedEvent.name, reason: "Refused: not now" }, names: FIVE })
   })
 
+  test("a waiting listener of plugin.inbox.queued that fails holds back none after it: the next one hears the message", async () => {
+    const result = await run(Effect.gen(function* () {
+      const heard = yield* Ref.make<ReadonlyArray<number>>([])
+      const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), {
+        extras: inOrder(onQueued(() => Effect.fail(new Refused({ message: "not now" }))), onQueued((ticket) => Ref.update(heard, (all) => [...all, ticket]))),
+      })
+      const queued = yield* kit.inbox.enqueue(kit.session, "One")
+      return { reply: yield* queued.reply, heard: yield* Ref.get(heard) }
+    }))
+    expect(result).toEqual({ reply: { text: "Reply 1." }, heard: [1] })
+  })
+
   test("fails the reply of a message whose announcement is held when the scope closes, and starts no turn for it", async () => {
     const result = await run(Effect.gen(function* () {
       const enteredTwo = yield* Deferred.make<void>()
@@ -241,6 +253,44 @@ describe("the inbox", () => {
       return { replies, heard: yield* Ref.get(heard) }
     }))
     expect(result).toEqual({ replies: [{ text: "Reply 1." }, { text: "Reply 2." }], heard: [1, 2] })
+  })
+
+  /*
+   * The worker takes a message and waits for its announcement; a message is
+   * queued while turns run. A scheduler that makes every fiber yield after a
+   * few operations lets the queueing land anywhere in the worker's steps, so
+   * a take that waited for an announcement other than its message's own, or
+   * an announcement chained to a message that is no longer waiting, shows.
+   */
+  const budgets = Array.from({ length: 40 }, (_, index) => index + 4)
+  const tickets = [1, 2, 3, 4, 5, 6, 7, 8]
+
+  test("a message's announcement reaches the listeners the publisher waits for before its turn starts, and announcements come in ticket order, wherever the worker is preempted", async () => {
+    const results = await run(Effect.forEach(budgets, (budget) => Effect.scoped(Effect.gen(function* () {
+      const lines = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (line: string) => Ref.update(lines, (all) => [...all, line])
+      // The announcement's listener suspends a while before it notes the ticket, so a turn that does not wait for it notes its start first.
+      const queued = onQueued((ticket) => Effect.andThen(Effect.forEach(Array.from({ length: 100 }), () => Effect.yieldNow, { concurrency: 1, discard: true }), note(`queued ${ticket}`)))
+      const started = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(turnStartedEvent, (event) => note(`started ${event.data.turn}`), { name: "turns", wait: true })))
+      const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), { extras: inOrder(queued, started) })
+      // Two messages at once, then each next one as the reply before it is given, after a few steps of the caller: the
+      // worker, which runs on after giving a reply, is then looking for the next message, or has found none yet.
+      let last = (yield* Effect.forEach([1, 2], (ticket) => kit.inbox.enqueue(kit.session, `Message ${ticket}`), { concurrency: 1 })).at(-1)
+      for (const ticket of tickets.slice(2)) {
+        if (last !== undefined) yield* last.reply
+        yield* Effect.forEach(Array.from({ length: ticket % 4 }), () => Effect.yieldNow, { concurrency: 1, discard: true })
+        last = yield* kit.inbox.enqueue(kit.session, `Message ${ticket}`)
+      }
+      if (last !== undefined) yield* last.reply
+      const all = yield* Ref.get(lines)
+      const at = (line: string) => all.indexOf(line)
+      return {
+        budget,
+        before: tickets.every((ticket) => at(`queued ${ticket}`) >= 0 && at(`queued ${ticket}`) < at(`started ${ticket}`)),
+        order: all.filter((line) => line.startsWith("queued")),
+      }
+    }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
+    expect(results).toEqual(budgets.map((budget) => ({ budget, before: true, order: tickets.map((ticket) => `queued ${ticket}`) })))
   })
 
   test("a waiting listener of plugin.inbox.queued that does not suspend has heard of the message when enqueue returns", async () => {

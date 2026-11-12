@@ -6,8 +6,9 @@ import { makeCore } from "./core.adapter.js"
 import type { Core } from "./core.port.js"
 import { dataOf, stored, storedEvent } from "./event.entity.functions.js"
 import type { EventDefinition, KernelEvent } from "./event.entity.js"
-import { Owner, SessionId } from "./ids.entity.js"
+import { EventName, Owner, SessionId, TurnNumber } from "./ids.entity.js"
 import type { Sessions } from "./sessions.port.js"
+import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
@@ -57,7 +58,9 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * `core.listener.failed` (`close-listener`); the session stays busy until
  * the end of its turn was announced, so its events reach listeners in
  * journal order (`ordered`); an open session kept after its turn closed
- * appends nothing (`closed-append`); a session never created is refused
+ * appends nothing (`closed-append`); a body's append of a record named
+ * under `core.` is refused with `ReservedName`, and nothing is stored or
+ * announced (`reserved-name`); a session never created is refused
  * before any body runs (`missing`); a session asked for with an empty
  * owner, or a parent that is no id, is refused with `InvalidSession`
  * (`invalid-session`).
@@ -234,6 +237,17 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* refuses("closed-append", "an append to a session whose turn closed", kept.append(note("late")), (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn")
       const journal = yield* sessions.read(id)
       yield* expect("closed-append", show(names(journal.events)) === show([STARTED, ENDED]), `an append after the turn closed left ${show(names(journal.events))}`)
+    })),
+    check("a record named under core. is refused, and nothing is stored or announced", "reserved-name", ({ sessions, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      const drafts = [turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)), { name: EventName.make("core.kit.anything"), data: {}, skippable: true }]
+      yield* sessions.turn(id, (session) => Effect.forEach(drafts, (draft) => refuses("reserved-name", `an append of ${draft.name}`, session.append(draft),
+        (error) => error._tag === "SessionRefused" && error.reason === "ReservedName"), { concurrency: 1, discard: true }))
+      const journal = yield* sessions.read(id)
+      yield* expect("reserved-name", show(names(journal.events)) === show([STARTED, ENDED]), `appends of core's records left ${show(names(journal.events))}`)
+      // Of core's records, at most the turn's own start and end were announced (whether a plugin announces at all is `announce`).
+      const announced = names(yield* seen)
+      yield* expect("reserved-name", announced.length <= 2 && announced.every((name) => name === STARTED || name === ENDED), `appends of core's records announced ${show(announced)}`)
     })),
     check("a session never created is refused before any body runs", "missing", ({ sessions }) => Effect.gen(function* () {
       const ran = yield* Ref.make(false)

@@ -75,14 +75,26 @@ export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}
     Effect.flatMap(Ref.get(waiting), (now) => now.some((entry) => entry.key === listener.key) ? listener.run(event) : Effect.void)
 
   // Waiting listeners first, in registration order; then the publisher's own step; then the hub, whatever they did, so
-  // the stream shows what the journal holds. A reader of the hub hears of the event only once it was handed over.
-  const publish = (event: KernelEvent, options?: PublishOptions): Effect.Effect<void, ListenerFailed> =>
-    Effect.uninterruptibleMask((restore) => restore(Ref.get(waiting).pipe(
-      Effect.flatMap((listeners) => Effect.forEach(listeners.filter((listener) => listener.event === event.name), (listener) => stillWaiting(listener, event), { concurrency: 1, discard: true })),
-    )).pipe(
-      Effect.ensuring(options?.beforeHandOver ?? Effect.void),
-      Effect.ensuring(hand(event)),
-    ))
+  // the stream shows what the journal holds. A reader of the hub hears of the event only once it was handed over. By
+  // default the first failure stops the waiting listeners after it and fails the publish; told to report, every one runs,
+  // and each failure is reported after the hand-over, in the order the listeners ran.
+  function publish(event: KernelEvent, options: PublishOptions & { readonly listenerFailures: "report" }): Effect.Effect<void>
+  function publish(event: KernelEvent, options?: PublishOptions): Effect.Effect<void, ListenerFailed>
+  function publish(event: KernelEvent, options?: PublishOptions): Effect.Effect<void, ListenerFailed> {
+    const reporting = options?.listenerFailures === "report"
+    return Effect.flatMap(Ref.make<ReadonlyArray<ListenerFailed>>([]), (failed) => {
+      const run = (listener: Waiting) => reporting
+        ? stillWaiting(listener, event).pipe(Effect.catchTag("ListenerFailed", (failure) => Ref.update(failed, (all) => [...all, failure])))
+        : stillWaiting(listener, event)
+      return Effect.uninterruptibleMask((restore) => restore(Ref.get(waiting).pipe(
+        Effect.flatMap((listeners) => Effect.forEach(listeners.filter((listener) => listener.event === event.name), run, { concurrency: 1, discard: true })),
+      )).pipe(
+        Effect.ensuring(options?.beforeHandOver ?? Effect.void),
+        Effect.ensuring(hand(event)),
+        Effect.ensuring(Effect.flatMap(Ref.get(failed), (all) => Effect.forEach(all, (failure) => report(event, failure), { concurrency: 1, discard: true }))),
+      ))
+    })
+  }
 
   const on = Effect.fnUntraced(function* <D extends Schema.Json, E>(definition: EventDefinition<D>, handler: (event: Delivered<D>) => Effect.Effect<void, E>, options: ListenOptions) {
     const listener = options.name

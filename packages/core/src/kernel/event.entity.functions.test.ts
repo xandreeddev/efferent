@@ -84,12 +84,13 @@ describe("a plugin's own events", () => {
     expect(announced(origin, kept)).toEqual({ _tag: "Stored", session: origin.id, turn: origin.turn, ...kept })
   })
 
-  test("a record that replaces a run of the journal bears the message that stands for it", () => {
-    const replaces = { from: Seq.make(2), through: Seq.make(9) }
-    const summary = stored(noted, { text: "", at: Seq.make(0) }, { message: { _tag: "User", text: "Summary." }, replaces })
+  test("the envelope holds the name, the data, the skip flag and the message, and nothing of what a message stands for", () => {
+    // What a record's message replaces, or any other meaning a plugin gives it, is that plugin's own data.
+    expect(Object.keys(StoredDraft.fields)).toEqual(["name", "data", "skippable", "message"])
+    expect(Object.keys(StoredEvent.fields)).toEqual(["seq", "at", "name", "data", "skippable", "message"])
+    const summary = stored(noted, { text: "Summary.", at: Seq.make(9) }, { message: { _tag: "User", text: "Summary." } })
     expect(Schema.is(StoredDraft)(summary)).toBe(true)
     expect(Schema.is(StoredEvent)({ seq: Seq.make(10), at: 0, ...summary })).toBe(true)
-    expect(Schema.is(StoredDraft)(stored(noted, { text: "", at: Seq.make(0) }, { replaces }))).toBe(false)
   })
 })
 

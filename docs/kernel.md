@@ -190,7 +190,9 @@ as `plugin.loop.assistant.delta`. Three rules are visible in the function.
 - "A turn always closes" belongs to the session plugin's `turn`: every exit
   closes it, the model's error, an interrupt, a request over the budget.
   The one exit it cannot close is its own store failing: a turn whose end
-  cannot be stored stays open, as the journal says it is.
+  cannot be stored stays open, as the journal says it is. An append whose
+  store did not answer, or failed after it had kept the event, does not
+  keep the end from being stored ([Inside a session](#inside-a-session)).
 - A request is resolved before it is stored, and the model is sent what was
   resolved. A request that points at a record bearing no message is refused
   (`RequestRefused`) with nothing of it in the journal.
@@ -227,16 +229,25 @@ a message queued before its turn opens, names none. The type of an event is open
 of names. A stored event is an envelope: its place in the journal (`seq`),
 when it was stored, its name, its data as JSON, whether a reader that does
 not know it may skip it, and, when the record bears one, a message. A
-message sits on the envelope and nowhere else.
+message sits on the envelope and nowhere else; what it stands for (a
+summary of earlier records, say) is in the data of the plugin that wrote
+it. Core's own records are the session plugin's to write: a turn's body
+that appends a record named under `core.` is refused (`SessionRefused`,
+`ReservedName`) and nothing is stored.
 
 ### publish and on
 
 `Core.publish(event)` first runs the listeners registered with
 `{ wait: true }`, in the order they registered, one after another; if one
-fails, the publish fails with `ListenerFailed`, which names the listener and
-the event, and inside a turn that fails the turn. Then it hands the event to
-the background listeners and to the host's stream, the `events` of `Core`, without
-waiting for them. Background delivery is bounded and sliding (`capacity`,
+fails, the publish runs none after it and fails with `ListenerFailed`, which
+names the listener and the event, and inside a turn that fails the turn.
+Then it hands the event to the background listeners and to the host's
+stream, the `events` of `Core`, without waiting for them. A publisher whose
+listeners must all hear the event and none may fail it asks
+`Core.publish(event, { listenerFailures: "report" })`: every waiting
+listener runs whatever the others did, each failure is reported as
+`core.listener.failed` once the event was handed over, and the publish
+cannot fail. Background delivery is bounded and sliding (`capacity`,
 256 when left out): a reader slower than the events loses the oldest ones it
 has not read. The journal is what is complete. A background listener that
 fails is reported as `core.listener.failed`, which is never waited for.
@@ -255,11 +266,13 @@ cuts a listener short. A background listener and the stream hear of an
 event only once it was handed over, on fibers of their own, after the
 waiting listeners and the publisher's own step.
 
-The end of a turn is the one publish whose listeners cannot fail the
-publisher. The session plugin stores `core.session.turn.ended`, announces
+The end of a turn is announced that way, and so is a message the inbox
+queues. The session plugin stores `core.session.turn.ended`, announces
 it, and frees the session once the listeners the announcement waits for are
 done or cut short after `closeWait` (5 seconds when left out), just before
-the end is handed to the background and the stream. So the events of one
+the end is handed to the background and the stream. A turn interrupted as
+it opened, its start stored but its body never begun, has its start
+announced there first, so no listener hears an end without its start. So the events of one
 session, appended one after another, arrive in journal order, and whoever
 hears of the end in the background finds the session free. Until then the session is busy, and a
 turn asked for it is refused with `SessionBusy`.
@@ -322,9 +335,16 @@ is the truth. The session plugin begins every turn by reading the journal,
 folding it to the phase and appending `core.session.turn.started` at the
 next place. That append is its claim: the store refuses an append at a
 place that is taken, so of two writers that begin a turn of one session at
-once, one is refused with `SessionBusy`. A turn whose end was never stored
-stays open in the journal; closing such a turn is crash recovery, which
-returns with the durable stores. Inside a turn, the writes take one lock
+once, one is refused with `SessionBusy`. A write whose store did not report
+success, because its caller was interrupted while the store had not
+answered or because the store failed after it had kept the event (an
+uncertain acknowledgement, as a remote store may give), leaves the turn's
+place unknown: the next write, the end's included, reads the last place
+from the store before it stores. Such an event may be in the journal and
+never announced. So a turn stays open in the journal only when its end
+could not be stored, or when the store kept its start and reported a
+failure; closing such a turn is crash recovery, which returns with the
+durable stores. Inside a turn, the writes take one lock
 in turn: two appends made at once are stored one after the other, and the
 end, once the body has returned, waits for an append still being stored
 and is stored after it. An append made after the end began is refused
@@ -337,6 +357,7 @@ journal's. The session plugin's two functions:
 
 ```ts
 const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+  if (reserved(event)) return yield* Effect.fail(new SessionRefused({ reason: "ReservedName", message: `${event.name} is core's to write, not a turn's body` }))
   const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
     if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
     return yield* store(open, event)                              // in the journal first
@@ -351,7 +372,10 @@ const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
 ```ts
 turn: (id, body) => Effect.acquireUseRelease(
   begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
-  (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
+  (open) => Effect.andThen(                                     // announced inside the turn, so a listener that fails it still closes it
+    core.publish(open.started, { beforeHandOver: Ref.set(open.announcing, true) }),   // marked once handed over; the end announces a start never announced
+    body(open.session),
+  ),
   (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
 ),
 ```
@@ -421,9 +445,10 @@ stream starts reading only when it is scheduled. The inbox's rules:
   ticket is given twice in one inbox; a session's tickets grow, with gaps
   where another session's messages came between.
 - **One worker per session**, forked in the plugin's scope, runs one
-  `loop.run` at a time and stops when nothing waits. It takes a message
-  only once the message was announced, so the message's turn starts after
-  the listeners its announcement waits for heard of it. Starting and stopping
+  `loop.run` at a time and stops when nothing waits. It takes the next
+  message in one transition, then waits for that message's own
+  announcement, so the message's turn starts after the listeners its
+  announcement waits for heard of it. Starting and stopping
   are decided in the same transitions as queueing and taking, so no message
   is ever left without a worker. A session has a queue only while its
   worker runs: the transition that stops the worker removes it, so the
@@ -447,10 +472,13 @@ stream starts reading only when it is scheduled. The inbox's rules:
   returns its ticket and reply whatever becomes of the announcement, and a
   listener of it that does not suspend has heard it by then, unless the
   session's message before it is still being announced. One session's
-  announcements are published in ticket order, and each reaches the
-  listeners the publisher waits for before its message's turn starts; one
-  that fails is reported (`core.listener.failed`) and the turn runs. An
-  announcement cut short by the close of the inbox's scope starts no turn.
+  announcements are published in ticket order: each follows the session's
+  announcement before it, whether that message waits, was taken or runs.
+  Each reaches every listener the publisher waits for before its
+  message's turn starts; one that fails is reported
+  (`core.listener.failed`), holds back none after it, and the turn runs. An
+  announcement cut short by the close of the inbox's scope starts no turn,
+  and its reply fails with `InboxClosed`.
 - **Do not mix the inbox and direct calls on one session.** A queued
   message whose turn is refused because a direct `loop.run` holds the
   session fails with `SessionBusy`.
@@ -463,7 +491,8 @@ nothing: `memory.build(session, step)` reads the session's journal and
 returns a request whose messages are pointers, the places (`seq`) of records
 that bear a message, never copies. When it compacts, it appends its own
 record first, through the open session it was given, bearing the text it
-wrote and naming the run of the journal it replaces, and points at that. A
+wrote, with the run of the journal it replaces in its own data, and points
+at that. A
 memory written in a few lines:
 
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#memory-plugin -->
@@ -503,7 +532,10 @@ records (`core.`, `KERNEL_READER`) and for those under its own prefix
 extends that plugin's reader, as a memory extends the loop's
 (`readerFor("window", own, LOOP_READER)`). A record it does not know is passed over when
 the record says it may be skipped, and refused with `UnknownRecord` when it
-may not. A record under another plugin's prefix is not its concern.
+may not. A record under another plugin's prefix is not its concern. The
+memory kit holds a memory to the loop's reader: an unknown record of the
+loop's that may not be skipped is refused (`unknown-loop-refused`), which a
+memory reading its own prefix alone would pass.
 
 ## Replacing a part
 

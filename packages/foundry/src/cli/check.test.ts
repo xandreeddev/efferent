@@ -9,6 +9,7 @@ import { Finding } from "../domain/Finding.js"
 import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
+import { matchesGlob } from "../gates/astWalk.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
 import { effectArchitecturePack, effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
 import { makePrivateTextGate } from "../gates/privateTextGate.js"
@@ -584,6 +585,23 @@ describe("the repository profile", () => {
     expect(registration.registries.some((registry) => registry.source === "const" && registry.name === "CURATED_ENTRIES")).toBe(true)
     const findings = await Effect.runPromise(makeRegistrationGate(config, registration).run({ rootDir, files: [] }))
     expect(findings.map((f) => f.message)).toEqual([])
+  })
+
+  test("test code anywhere in the sdk's kernel, a contract's or a plugin's folder included, is the kernel's test layer", async () => {
+    const { config } = await Effect.runPromise(loadConfig(path.join(REPO_ROOT, "foundry.config.ts")))
+    const layers = Option.getOrThrow(config.boundaries).layers
+    // A file is in the first layer whose glob matches it.
+    const layerOf = (file: string) => layers.find((layer) => matchesGlob(layer.path, `packages/sdk/src/kernel/${file}`))?.name
+    const scaffolding = [
+      "testing.ts", "lesson.test.ts", "testing/stacks.ts",
+      "contracts/loop/request.entity.functions.test.ts", "contracts/loop/testing.ts", "contracts/memory/memory.testing.ts",
+      "contracts/inbox/testing.port.ts", "contracts/inbox/testing/fixtures.ts", "contracts/loop/loop.bench.ts",
+      "plugins/session/sessions.adapter.test.ts", "plugins/session/testing.ts", "plugins/inbox/queue.testing.ts",
+      "plugins/loop/testing/fixtures.ts", "plugins/memory-window/testing.port.ts", "plugins/journal-in-process/journal.bench.ts",
+    ]
+    expect(scaffolding.map(layerOf)).toEqual(scaffolding.map(() => "sdk-kernel-tests"))
+    // The source beside it stays in its folder's own layer.
+    expect(["contracts/loop/loop.port.ts", "plugins/inbox/inbox.adapter.ts", "index.ts"].map(layerOf)).toEqual(["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel"])
   })
 
   test("the private-text profile names a denylist that git ignores", async () => {

@@ -24,7 +24,6 @@ const Owner
 const PluginName
 const Reader
 const Seq
-const SeqRange
 const SessionHeader
 const SessionId
 const SessionState
@@ -46,7 +45,6 @@ const headerOf
 const inspectionOf
 const journalStorageConformance
 const kernel
-const listenerFailed
 const listenerFailedEvent
 const live
 const liveEvent
@@ -92,7 +90,6 @@ type Owner
 type PluginName
 type Reader
 type Seq
-type SeqRange
 type SessionHeader
 type SessionId
 type SessionState

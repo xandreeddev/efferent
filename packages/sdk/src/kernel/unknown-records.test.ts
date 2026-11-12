@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
-import { Core, EventName, JournalStorage, kernel, Owner, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, EventName, JournalStorage, kernel, Owner, Seq, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import type { SessionId, StoredDraft } from "@xandreed/core/kernel"
 import { Tokens } from "./contracts/loop/request.entity.js"
 import { estimateRequest } from "./contracts/loop/request.entity.functions.js"
 import { Settings } from "./contracts/loop/settings.port.js"
@@ -17,6 +18,12 @@ import { answering, base, open } from "./testing.js"
 const windowFuture = (skippable: boolean) => stored(storedEvent("window", "future", { data: Schema.Struct({ note: Schema.String }), skippable }), { note: "from a later release" })
 const sessionFuture = (skippable: boolean) =>
   stored({ ...storedEvent("any", "future", { data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
+/**
+ * Store a record after the last one a session's journal holds, between its turns, as a later release of the session
+ * plugin, the one writer of core's records, would: no turn's body may append a record named under `core.`.
+ */
+const storedByAnotherRelease = (storage: Context.Service.Shape<typeof JournalStorage>, id: SessionId, draft: StoredDraft) =>
+  Effect.flatMap(storage.read(id), (journal) => storage.append(id, Seq.make(journal.events.at(-1)?.seq ?? 0), draft))
 /** Another plugin's record, which may not be skipped by those it concerns. */
 const stranger = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct({}), skippable: false }), {})
 
@@ -30,14 +37,21 @@ const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Layer.
   }),
 })))
 
-/** One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal: the same base, a stack above it each. */
+/**
+ * One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal: the
+ * same base, a stack above it each. Records under `core.` are stored after that turn, as another release of the
+ * session plugin would store them.
+ */
 const windowAfter = (records: ReadonlyArray<ReturnType<typeof windowFuture>>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model } = yield* answering("Fine.")
-  const shared = Layer.succeedContext(yield* Layer.build(base(model)))
+  const built = yield* Layer.build(base(model))
+  const shared = Layer.succeedContext(built)
   const before = yield* Scope.make()
-  const first = yield* open(stepLoop.pipe(Layer.provideMerge(scribe(records)), Layer.provideMerge(shared))).pipe(Scope.provide(before))
+  const ours = (record: StoredDraft) => record.name.startsWith("core.")
+  const first = yield* open(stepLoop.pipe(Layer.provideMerge(scribe(records.filter((record) => !ours(record)))), Layer.provideMerge(shared))).pipe(Scope.provide(before))
   const session = yield* first.createSession({ owner: "learner" })
   yield* first.send(session, "One")
+  yield* Effect.forEach(records.filter(ours), (record) => storedByAnotherRelease(Context.get(built, JournalStorage), session, record), { concurrency: 1, discard: true })
   yield* Scope.close(before, Exit.void)
   const agent = yield* open(stepLoop.pipe(Layer.provideMerge(windowMemory({ budgetTokens: 3000 })), Layer.provideMerge(shared)))
   const sent = yield* Effect.result(agent.send(session, "Two"))
@@ -118,11 +132,13 @@ describe("a session plugin that meets a session it did not run", () => {
 
   test("skips or refuses an unknown core record by its flag", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const { first, second } = yield* twoOverOneStore
+      const { first, second, storage } = yield* twoOverOneStore
       const skippable = yield* first.create({ owner })
-      yield* first.turn(skippable, (session) => session.append(sessionFuture(true)))
+      yield* first.turn(skippable, () => Effect.void)
+      yield* storedByAnotherRelease(storage, skippable, sessionFuture(true))
       const unskippable = yield* first.create({ owner })
-      yield* first.turn(unskippable, (session) => session.append(sessionFuture(false)))
+      yield* first.turn(unskippable, () => Effect.void)
+      yield* storedByAnotherRelease(storage, unskippable, sessionFuture(false))
       return {
         skipped: yield* second.turn(skippable, (session) => Effect.succeed(Number(session.turn))),
         refused: yield* Effect.flip(second.turn(unskippable, () => Effect.void)),
@@ -130,8 +146,8 @@ describe("a session plugin that meets a session it did not run", () => {
       }
     })))
     expect(result.skipped).toBe(2)
-    expect(result.refused).toMatchObject({ _tag: "UnknownRecord", name: "core.session.future", seq: 2 })
+    expect(result.refused).toMatchObject({ _tag: "UnknownRecord", name: "core.session.future", seq: 3 })
     // A session whose state cannot be read is not opened: nothing was stored for the refused turn.
-    expect(result.names).toEqual(["core.session.turn.started", "core.session.future", "core.session.turn.ended"])
+    expect(result.names).toEqual(["core.session.turn.started", "core.session.turn.ended", "core.session.future"])
   })
 })

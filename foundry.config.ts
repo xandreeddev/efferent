@@ -109,6 +109,18 @@ const TEST_SCAFFOLDING: Arr.NonEmptyReadonlyArray<string> = [
  */
 const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.adapter.ts"]
 
+/** What the sdk kernel's test code may import: every layer of the kernel, and core's. */
+const SDK_KERNEL_TESTS = [
+  "sdk-kernel",
+  "sdk-kernel-contracts",
+  "sdk-kernel-plugin-inbox",
+  "sdk-kernel-plugin-journal-in-process",
+  "sdk-kernel-plugin-loop",
+  "sdk-kernel-plugin-memory-window",
+  "sdk-kernel-plugin-session",
+  "core/kernel",
+]
+
 /** A package's source, by its directory name: one entry of a list below. */
 const src = (name: string): string => `packages/${name}/src/**`
 
@@ -545,11 +557,18 @@ const config: typeof GateSuiteConfig.Encoded = {
       // the one ADR 0002 records: the contracts (`contracts/**`) import core's
       // kernel and one another, never a plugin; each plugin folder is a layer
       // of its own that imports the contracts and core's kernel, never another
-      // plugin's folder; the entry (`index.ts`), the tests and `testing.ts`
-      // reach them all. A new plugin folder gets its layer here, before
-      // `sdk-kernel`, and its name in the three `canImport` lists below it.
-      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-loop", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "core/kernel"], externals: ["effect", "effect/ai", "node:", "bun:test"] },
-      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/testing.ts", canImport: ["sdk-kernel", "sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-loop", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
+      // plugin's folder; the entry (`index.ts`) and the test code reach them
+      // all. The test code is every TEST_SCAFFOLDING glob under the kernel,
+      // placed first, so test code inside a contract or a plugin folder is
+      // not that folder's source. A new plugin folder gets its layer here,
+      // before `sdk-kernel`, and its name in `sdk-kernel`'s `canImport` and
+      // in `SDK_KERNEL_TESTS`.
+      ...Arr.map(TEST_SCAFFOLDING, (glob) => ({
+        name: "sdk-kernel-tests",
+        path: `packages/sdk/src/kernel/${glob}`,
+        canImport: [...SDK_KERNEL_TESTS],
+        externals: ["effect", "effect/ai", "node:", "bun:test"],
+      })),
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

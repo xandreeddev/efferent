@@ -88,28 +88,45 @@ the loop contract, beside `LOOP_READER`, not to core: core's reader stays a read
 
 ## Core's API
 
-These are what a plugin may rely on from core, and what the rule below protects:
+Core's API is exactly what `@xandreed/core/kernel` exports (`packages/core/src/kernel/index.ts`),
+which `api/core--kernel.api.txt` lists. A plugin may rely on all of it:
 
-- the session and journal operations: `Sessions.create`, `read` and `turn`, and
-  `OpenSession.append` and `journal` inside a turn;
-- journal storage: `JournalStorage` (`create`, `append`, `read`) and its kit;
-- `Core.publish`, `Core.on` and `Core.events`;
-- defining events: `storedEvent`, `liveEvent`, `stored`, `live`, `announced`, `originOf`,
-  `dataOf`, and the envelope (`StoredDraft`, `StoredEvent`, `KernelEvent`);
-- reading a journal: `readJournal`, `readerFor`, `KERNEL_READER`, `sessionStateOf`,
-  `inspectionOf`;
-- the message vocabulary: `Message`, `UserMessage`, `AssistantMessage`, `ToolCall`,
-  `messageOf`;
-- `kernel({ capacity? })`.
+- **Ids:** `SessionId`, `Seq`, `TurnNumber`, `EventName`, `PluginName`, `Owner`, `ToolCallId`.
+- **The message vocabulary:** `Message`, `UserMessage`, `AssistantMessage`, `ToolCall`, and
+  `messageOf`, which reads the message any record bears.
+- **The event envelope and event definitions:** `StoredDraft`, `StoredEvent`, `AnnouncedEvent`,
+  `LiveEvent`, `KernelEvent`, `Delivered`; `EventDefinition`, `StoredDefinition`,
+  `LiveDefinition`; and the helpers a plugin defines and makes its own with: `storedEvent`,
+  `liveEvent`, `stored`, `live`, `announced`, `originOf`, `dataOf`.
+- **Core's own events:** the definitions `turnStartedEvent`, `turnEndedEvent` and
+  `listenerFailedEvent`; their data, `TurnStartedData`, `TurnEndedData`, `TurnOutcome` and
+  `ListenerFailedData`; and the constructors the session plugin stores a turn's start and end
+  with, `turnStarted`, `turnEnded` and `outcomeOf`.
+- **Reading a journal:** `Journal`, `Reader`, `readJournal`, `readerFor`, `KERNEL_READER`.
+- **Sessions:** `Sessions` (`create`, `read`, `turn`), `OpenSession` (`append` and `journal`
+  inside a turn), `TurnFailure`; a session's header and how one is asked for, `SessionHeader`,
+  `JOURNAL_FORMAT`, `NewSession`, `NewSessionInput`; its phase, `SessionState`, `Free`,
+  `TurnOpen`; the transitions and helpers the session plugin imports, `beginTurn`, `endTurn`,
+  `sessionStateOf`, `headerOf`, `newSession`; and inspecting a session, `Inspection`,
+  `inspectionOf`.
+- **Journal storage:** `JournalStorage` (`create`, `append`, `read`).
+- **Events at run time:** `Core` (`publish`, `on`, `events`) and `kernel({ capacity? })`, the
+  layer that provides it.
+- **Option types:** `KernelOptions`, `ListenOptions`, `PublishOptions`.
+- **Errors:** `ListenerFailed`, `JournalStorageError`, `UnknownRecord`, `SessionRefused`,
+  `InvalidSession`, and `PluginFailure`, the shape of a plugin's own error that the contracts
+  carry.
+- **Kits:** `journalStorageConformance` (`JournalStorageSubject`), `sessionsConformance`
+  (`SessionsSubject`), `ConformanceCheck`, `ConformanceFailure`.
 
-`api/core--kernel.api.txt` lists every exported name. There is no version constant: the
-package version is the version, and nothing would read a second one. One is added when
-plugins loaded from elsewhere need a handshake.
+There is no version constant: the package version is the version, and nothing would read a
+second one. One is added when plugins loaded from elsewhere need a handshake.
 
-**The rule:** a change to `api/core--kernel.api.txt` that removes or changes a name comes
-with a CHANGELOG line saying what a plugin must change. CI already fails when the report is
-out of date (`bun run verify:packages` compares it with the build; `bun run api:update`
-rewrites it), so every change to core's surface shows in review.
+**The rule protects the whole report:** a change to `api/core--kernel.api.txt` that removes or
+changes any name in it comes with a CHANGELOG line saying what a plugin must change, and the
+list above changes with it. CI already fails when the report is out of date (`bun run
+verify:packages` compares it with the build; `bun run api:update` rewrites it), so every
+change to core's surface shows in review.
 
 ## Considered and dropped
 

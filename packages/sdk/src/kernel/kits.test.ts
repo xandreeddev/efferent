@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Array as Arr, Context, Effect, Layer, Order, Ref } from "effect"
+import { Array as Arr, Context, Effect, Layer, Order, Ref, Result } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   announced,
   Core,
+  EventName,
   kernel,
   Owner,
   Seq,
@@ -13,6 +14,8 @@ import {
   sessionsConformance,
   JournalStorage,
   journalStorageConformance,
+  readerFor,
+  readJournal,
   TurnNumber,
   UnknownRecord,
 } from "@xandreed/core/kernel"
@@ -79,7 +82,7 @@ describe("the storage kit", () => {
 describe("the sessions kit", () => {
   const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal(), onCore(core))
   const stock: SessionsSubject = { open: (core) => built(Sessions, sessions(), over(core)) }
-  const every = ["create", "turn", "announce", "busy", "isolated", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "missing", "invalid-session"]
+  const every = ["create", "turn", "announce", "busy", "isolated", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "missing", "invalid-session"]
 
   test("has the checks its doc comment lists, and passes on the stock session plugin", async () => {
     expect(ids(sessionsConformance(stock))).toEqual(every)
@@ -129,7 +132,19 @@ describe("the sessions kit", () => {
         ...inner,
         turn: (id, body) => inner.turn(id, (session) => body({
           ...session,
-          append: (event) => Effect.catchTag(session.append(event), "SessionRefused", () => Effect.mapError(inner.turn(id, (again) => again.append(event)), (error) => error._tag === "UnknownRecord" ? new SessionRefused({ reason: "NoOpenTurn", message: error.message }) : error)),
+          append: (event) => Effect.catchIf(session.append(event), (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn", () =>
+            Effect.mapError(inner.turn(id, (again) => again.append(event)), (error) => error._tag === "UnknownRecord" ? new SessionRefused({ reason: "NoOpenTurn", message: error.message }) : error)),
+        })),
+      })),
+    }),
+    // A record a body appends under core's names is "helpfully" stored under a name of the body's own.
+    renaming: (): SessionsSubject => ({
+      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+        ...inner,
+        turn: (id, body) => inner.turn(id, (session) => body({
+          ...session,
+          append: (event) => Effect.catchIf(session.append(event), (error) => error._tag === "SessionRefused" && error.reason === "ReservedName", () =>
+            session.append({ ...event, name: EventName.make(`plugin.renamed.${event.name}`) })),
         })),
       })),
     }),
@@ -159,6 +174,7 @@ describe("the sessions kit", () => {
       private: await failedChecks(sessionsConformance(careless.private())),
       oneFlag: await failedChecks(sessionsConformance(careless.oneFlag())),
       pooled: await failedChecks(sessionsConformance(careless.pooled())),
+      renaming: await failedChecks(sessionsConformance(careless.renaming())),
       reopening: await failedChecks(sessionsConformance(careless.reopening())),
       trusting: await failedChecks(sessionsConformance(careless.trusting())),
       turnless: await failedChecks(sessionsConformance(careless.turnless())),
@@ -166,6 +182,7 @@ describe("the sessions kit", () => {
     expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered"])
     expect(failed.oneFlag).toEqual(["isolated"])
     expect(failed.pooled).toEqual(["ordered"])
+    expect(failed.renaming).toEqual(["reserved-name"])
     expect(failed.reopening).toEqual(["closed-append"])
     expect(failed.trusting).toEqual(["invalid-session"])
     expect(failed.turnless).toEqual(sorted(every))
@@ -178,7 +195,7 @@ describe("the memory kit", () => {
   const settings = Layer.succeed(Settings, { system })
   const subject = (name: string, layer: Layer.Layer<Memory, PluginFailure, Core | Settings>): MemorySubject =>
     ({ name, system, budgetTokens, open: (core) => built(Memory, layer, Layer.merge(onCore(core), settings)) })
-  const every = ["turn-message", "pointers", "estimate", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "foreign"]
+  const every = ["turn-message", "pointers", "estimate", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "unknown-loop-refused", "foreign"]
 
   test("has the checks its doc comment lists, and passes on the window memory plugin", async () => {
     expect(ids(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual(every)
@@ -210,18 +227,37 @@ describe("the memory kit", () => {
     })
   })))
 
+  /**
+   * The window memory, but it judges unknown records under its own prefix alone: it reads the journal with a reader
+   * over core's (`readerFor("window", own)`), not over the loop's, so a record of the loop's it does not know passes as
+   * another plugin's, and the window below never sees it.
+   */
+  const ownPrefixOnly = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
+    const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), Layer.merge(onCore(yield* Core), settings)))), Memory)
+    const reader = readerFor("window", [windowDroppedEvent])
+    const ofTheLoop = (name: string) => name.startsWith("plugin.loop.")
+    return Memory.of({
+      build: (session, step) => Effect.flatMap(session.journal, (journal) => Result.match(readJournal(reader)(journal), {
+        onFailure: Effect.fail,
+        onSuccess: () => inner.build({ ...session, journal: Effect.succeed(journal.filter((event) => !ofTheLoop(event.name) || LOOP_READER.knows.includes(event.name))) }, step),
+      })),
+    })
+  })))
+
   test("each careless memory fails the checks of what it is careless about, and between them every check", async () => {
     // It sends every message, reads no flag and keeps to no budget.
     const everything = await failedChecks(memoryConformance(careless("everything", (journal) => journal.filter((event) => event.message !== undefined).map((event) => event.seq))))
-    expect(everything).toEqual(["fits", "over-budget", "unknown-refused"])
+    expect(everything).toEqual(["fits", "over-budget", "unknown-loop-refused", "unknown-refused"])
     // It points at nothing.
     const nothing = await failedChecks(memoryConformance(careless("nothing", () => [])))
-    expect(nothing).toEqual(["fits", "over-budget", "pointers", "turn-message", "unknown-refused"])
+    expect(nothing).toEqual(["fits", "over-budget", "pointers", "turn-message", "unknown-loop-refused", "unknown-refused"])
     // It points at the last three records, message or not, counts nothing, and writes a record under another plugin's name.
     const sloppy = await failedChecks(memoryConformance(careless("sloppy", (journal) => journal.slice(-3).map((event) => event.seq), { count: false, writes: true })))
-    expect(sloppy).toEqual(["estimate", "fits", "over-budget", "own-records", "pointers", "prefix", "unknown-refused"])
+    expect(sloppy).toEqual(["estimate", "fits", "over-budget", "own-records", "pointers", "prefix", "unknown-loop-refused", "unknown-refused"])
     // It refuses records it should pass over: another plugin's, and its own that may be skipped.
     expect(await failedChecks(memoryConformance(strict()))).toEqual(["foreign", "unknown-skipped"])
+    // It reads its own prefix and not the loop's: an unknown record of the loop's passes.
+    expect(await failedChecks(memoryConformance(ownPrefixOnly()))).toEqual(["unknown-loop-refused"])
     expect(sorted([...everything, ...nothing, ...sloppy, "foreign", "unknown-skipped"])).toEqual(sorted(every))
   })
 })

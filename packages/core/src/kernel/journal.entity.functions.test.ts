@@ -61,7 +61,7 @@ describe("the message a record bears", () => {
   test("is on the envelope, for any record", () => {
     const [said, summary, started] = journal(
       stored(noted, {}, { message: { _tag: "User", text: "Hello" } }),
-      stored(noted, {}, { message: { _tag: "Assistant", text: "Summary.", toolCalls: [] }, replaces: { from: Seq.make(1), through: Seq.make(1) } }),
+      stored(noted, {}, { message: { _tag: "Assistant", text: "Summary.", toolCalls: [] } }),
       turnStarted(TurnNumber.make(1)),
     )
     expect(Option.map(Option.flatMap(Option.fromNullishOr(said), messageOf), (message) => message.text)).toEqual(Option.some("Hello"))

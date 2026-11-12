@@ -87,7 +87,8 @@ describe("the lesson's queue", () => {
       { role: "assistant", text: "Hello, Ana!" },
       { role: "user", text: "What's my name?" },
     ])
-    // `plugin.inbox.queued` was published three times, with tickets 1, 2 and 3, in that order: the listener the publisher waits for heard each before its turn started.
+    // `plugin.inbox.queued` was published three times, with tickets 1, 2 and 3, in that order. That each reached the
+    // listeners the publisher waits for before its turn started is the inbox's own test (`plugins/inbox/inbox.adapter.test.ts`).
     expect(result.lines.filter((line) => line.startsWith("(queued"))).toEqual(["(queued 1)", "(queued 2)", "(queued 3)"])
   })
 })
