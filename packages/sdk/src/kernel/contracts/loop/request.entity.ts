@@ -1,8 +1,11 @@
 import { Schema } from "effect"
-import { Seq } from "./ids.entity.js"
-import { Message } from "./message.entity.js"
+import { Message, Seq } from "@xandreed/core/kernel"
 
-/** A step's place in its turn, from 1: one model request and its answer. */
+/**
+ * A step's place in its turn, from 1: one model request and its answer.
+ *
+ * @public
+ */
 export const StepNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("StepNumber"))
 export type StepNumber = typeof StepNumber.Type
 
@@ -14,15 +17,25 @@ export type Tokens = typeof Tokens.Type
  * What memory builds for one request: the messages to send, each the place
  * (`seq`) of a record of the journal that bears a message, never a copy; its
  * estimate of the request's cost, and the budget it kept to.
+ *
+ * @public
  */
 export const ModelRequest = Schema.Struct({ messages: Schema.Array(Seq), estimatedTokens: Tokens, budgetTokens: Tokens })
 export type ModelRequest = typeof ModelRequest.Type
 
-/** A request as `plugin.loop.request.sent` stores it: the step, the system text, and what memory built. */
+/**
+ * A request as `plugin.loop.request.sent` stores it: the step, the system text, and what memory built.
+ *
+ * @public
+ */
 export const SentRequest = Schema.Struct({ step: StepNumber, system: Schema.String, ...ModelRequest.fields })
 export type SentRequest = typeof SentRequest.Type
 
-/** A pointer turned back into the message it points at. */
+/**
+ * A pointer turned back into the message it points at.
+ *
+ * @public
+ */
 export const PointedMessage = Schema.Struct({ seq: Seq, message: Message })
 export type PointedMessage = typeof PointedMessage.Type
 

@@ -81,10 +81,10 @@ layer's scope, and go when that scope closes.
 <!-- pinned: packages/sdk/src/kernel/lesson.test.ts#agent -->
 
 ```ts
-import { Core, kernel, Sessions, settings } from "@xandreed/core/kernel"
-import type { JournalStorage, Loop, Memory, Settings } from "@xandreed/core/kernel"
-import { Inbox, inbox, inProcessJournal, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
-import type { InvalidBudget } from "@xandreed/sdk/kernel"
+import { Core, kernel, Sessions } from "@xandreed/core/kernel"
+import type { JournalStorage } from "@xandreed/core/kernel"
+import { Inbox, inbox, inProcessJournal, sessions, settings, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import type { InvalidBudget, Loop, Memory, Settings } from "@xandreed/sdk/kernel"
 
 const AgentLive: Layer.Layer<Inbox | Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = inbox.pipe(
   Layer.provideMerge(stepLoop),
@@ -278,7 +278,8 @@ type: a live event cannot be appended and a draft cannot be published.
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#own-event -->
 
 ```ts
-import { Core, live, liveEvent, originOf, requestSentEvent, Tokens } from "@xandreed/core/kernel"
+import { Core, live, liveEvent, originOf } from "@xandreed/core/kernel"
+import { requestSentEvent, Tokens } from "@xandreed/sdk/kernel"
 
 // An event of the plugin's own, defined in the plugin's folder: its name, the schema of its data, live or stored.
 const requestCounted = liveEvent("meter", "request.counted", { data: Schema.Struct({ requests: Schema.Int, tokens: Tokens }) })
@@ -348,7 +349,7 @@ The inbox is a plugin over the loop, and the proof that a plugin can be
 added without touching core: its contract, `Inbox`, lives in its own
 folder, under a key named after its package.
 
-<!-- pinned: packages/sdk/src/kernel/plugins/inbox/inbox.port.ts -->
+<!-- pinned: packages/sdk/src/kernel/contracts/inbox/inbox.port.ts -->
 
 ```ts
 export class Inbox extends Context.Service<Inbox, {
@@ -363,8 +364,8 @@ The first lesson's chat queues three messages at once, as a test does, with
 <!-- pinned: packages/sdk/src/kernel/lesson.test.ts#program -->
 
 ```ts
-import { assistantDeltaEvent, turnEndedEvent } from "@xandreed/core/kernel"
-import { inboxQueuedEvent } from "@xandreed/sdk/kernel"
+import { turnEndedEvent } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, inboxQueuedEvent } from "@xandreed/sdk/kernel"
 
 const program = Effect.gen(function* () {
   const core     = yield* Core
@@ -454,7 +455,8 @@ memory written in a few lines:
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#memory-plugin -->
 
 ```ts
-import { estimateRequest, Memory, messageOf, Settings, Tokens, userMessageEvent } from "@xandreed/core/kernel"
+import { messageOf } from "@xandreed/core/kernel"
+import { estimateRequest, Memory, Settings, Tokens, userMessageEvent } from "@xandreed/sdk/kernel"
 
 /** A memory that sends the message the turn answers and nothing before it. */
 const goldfish = () => Layer.effect(Memory, Effect.gen(function* () {

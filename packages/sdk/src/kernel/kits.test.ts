@@ -3,35 +3,33 @@ import { Array as Arr, Context, Effect, Layer, Order, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   announced,
-  assistantDelta,
-  assistantMessage,
   Core,
-  estimateRequest,
-  firstStep,
   kernel,
-  LOOP_READER,
-  Loop,
-  loopConformance,
-  Memory,
-  memoryConformance,
   Owner,
-  replyOf,
-  requestSent,
-  resolveRequest,
   Seq,
   SessionId,
   SessionRefused,
   Sessions,
   sessionsConformance,
-  Settings,
   JournalStorage,
   journalStorageConformance,
-  Tokens,
   TurnNumber,
   UnknownRecord,
-  userMessage,
 } from "@xandreed/core/kernel"
-import type { AssistantMessage, ConformanceCheck, JournalStorageSubject, LoopScript, LoopSubject, MemorySubject, PluginFailure, SessionsSubject } from "@xandreed/core/kernel"
+import { LOOP_READER } from "./contracts/loop/conversation.entity.js"
+import { assistantDelta, assistantMessage, requestSent, userMessage } from "./contracts/loop/conversation.entity.functions.js"
+import { loopConformance } from "./contracts/loop/loop.conformance.js"
+import { replyOf } from "./contracts/loop/loop.entity.functions.js"
+import { Loop } from "./contracts/loop/loop.port.js"
+import { Tokens } from "./contracts/loop/request.entity.js"
+import { estimateRequest, firstStep, resolveRequest } from "./contracts/loop/request.entity.functions.js"
+import { Settings } from "./contracts/loop/settings.port.js"
+import { memoryConformance } from "./contracts/memory/memory.conformance.js"
+import { Memory } from "./contracts/memory/memory.port.js"
+import type { AssistantMessage, ConformanceCheck, JournalStorageSubject, PluginFailure, SessionsSubject } from "@xandreed/core/kernel"
+import type { LoopSubject } from "./contracts/loop/loop.conformance.js"
+import type { LoopScript } from "./contracts/loop/loop.entity.js"
+import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
 import { callModel, inProcessJournal, scriptedModel, sessions, stepLoop, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*

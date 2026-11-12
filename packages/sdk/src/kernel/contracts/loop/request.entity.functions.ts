@@ -1,19 +1,23 @@
 import { Array as Arr, Option, Result } from "effect"
-import { dataOf } from "./event.entity.functions.js"
-import type { StoredEvent } from "./event.entity.js"
-import type { Seq } from "./ids.entity.js"
-import type { Message } from "./message.entity.js"
+import { dataOf } from "@xandreed/core/kernel"
+import type { Message, Seq, StoredEvent } from "@xandreed/core/kernel"
 import { RequestRefused, StepNumber, Tokens } from "./request.entity.js"
 import type { InspectedRequest, PointedMessage } from "./request.entity.js"
 import { requestSentEvent, userMessageEvent } from "./conversation.entity.js"
 
-/** The step every turn starts with. */
+/**
+ * The step every turn starts with.
+ *
+ * @public
+ */
 export const firstStep: StepNumber = StepNumber.make(1)
 
 /**
  * The estimate of what a text costs, in tokens: a quarter of its
  * characters, rounded up. An approximation, and the only one: memory, the
  * kits and every reader count with this function.
+ *
+ * @public
  */
 export const estimateTokens = (text: string): Tokens => Tokens.make(Math.ceil(text.length / 4))
 
@@ -28,6 +32,8 @@ export const estimateRequest = (system: string, messages: ReadonlyArray<Message>
  * message: a place that holds none, the same place twice, or a place at or
  * after `before` (the place of the stored request itself, when it has one)
  * refuses the request.
+ *
+ * @public
  */
 export const resolveRequest = (journal: ReadonlyArray<StoredEvent>, request: { readonly messages: ReadonlyArray<Seq> }, before?: Seq): Result.Result<ReadonlyArray<PointedMessage>, RequestRefused> => {
   const stored = new Map(journal.map((event) => [event.seq, event] as const))

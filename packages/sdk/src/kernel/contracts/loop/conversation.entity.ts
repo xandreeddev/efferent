@@ -1,7 +1,6 @@
 import { Schema } from "effect"
-import { liveEvent, storedEvent } from "./event.entity.functions.js"
-import type { Reader } from "./journal.entity.js"
-import { readerFor } from "./journal.entity.functions.js"
+import { liveEvent, readerFor, storedEvent } from "@xandreed/core/kernel"
+import type { Reader } from "@xandreed/core/kernel"
 import { SentRequest, StepNumber } from "./request.entity.js"
 
 /*
@@ -24,7 +23,11 @@ export const requestSentEvent = storedEvent("loop", "request.sent", { data: Sent
 export const AssistantMessageData = Schema.Struct({ step: StepNumber })
 export type AssistantMessageData = typeof AssistantMessageData.Type
 
-/** `plugin.loop.assistant.message`: the model's whole answer in a step. Stored; the message is on the envelope. */
+/**
+ * `plugin.loop.assistant.message`: the model's whole answer in a step. Stored; the message is on the envelope.
+ *
+ * @public
+ */
 export const assistantMessageEvent = storedEvent("loop", "assistant.message", { data: AssistantMessageData, skippable: false })
 
 /**

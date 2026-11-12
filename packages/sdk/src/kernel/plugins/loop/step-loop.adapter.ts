@@ -1,5 +1,5 @@
 import { Layer } from "effect"
-import { Loop } from "@xandreed/core/kernel"
+import { Loop } from "../../contracts/loop/loop.port.js"
 import { makeStepLoop } from "./step-loop.usecase.js"
 
 /**

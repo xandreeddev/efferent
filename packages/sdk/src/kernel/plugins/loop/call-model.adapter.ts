@@ -1,7 +1,8 @@
 import { Effect, Match, Stream } from "effect"
 import { Prompt } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
-import type { AssistantMessage, PointedMessage } from "@xandreed/core/kernel"
+import type { AssistantMessage } from "@xandreed/core/kernel"
+import type { PointedMessage } from "../../contracts/loop/request.entity.js"
 import { ModelFailed } from "./loop.entity.js"
 
 /** The system text and the resolved messages as the model's prompt, in order. */

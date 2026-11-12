@@ -1,18 +1,12 @@
 import { Context, Effect, Layer, Option, Ref } from "effect"
 import type { Schema, Scope } from "effect"
-import { expect, refuses, show, unexpected } from "./conformance.entity.functions.js"
-import type { ConformanceCheck } from "./conformance.entity.js"
-import { kernel } from "./core.adapter.js"
-import { Core } from "./core.port.js"
-import { dataOf } from "./event.entity.functions.js"
-import type { KernelEvent } from "./event.entity.js"
-import { Owner } from "./ids.entity.js"
+import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
+import { Core, dataOf, kernel, Owner, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { ConformanceCheck, KernelEvent, Sessions } from "@xandreed/core/kernel"
 import type { LoopScript } from "./loop.entity.js"
 import type { Loop } from "./loop.port.js"
 import { resolveRequest, turnMessageOf } from "./request.entity.functions.js"
-import type { Sessions } from "./sessions.port.js"
 import { assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./conversation.entity.js"
-import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 

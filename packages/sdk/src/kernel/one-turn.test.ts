@@ -1,17 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Result } from "effect"
-import {
-  assistantDeltaEvent,
-  assistantMessageEvent,
-  requestSentEvent,
-  resolveRequest,
-  Seq,
-  StepNumber,
-  Tokens,
-  turnEndedEvent,
-  turnStartedEvent,
-  userMessageEvent,
-} from "@xandreed/core/kernel"
+import { Seq, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
+import { StepNumber, Tokens } from "./contracts/loop/request.entity.js"
+import { resolveRequest } from "./contracts/loop/request.entity.functions.js"
 import { answering, open, recording, stack } from "./testing.js"
 
 const everyDefinition = [turnStartedEvent, userMessageEvent, requestSentEvent, assistantDeltaEvent, assistantMessageEvent, turnEndedEvent]

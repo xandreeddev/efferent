@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
-import { Memory, Settings, stored, storedEvent } from "@xandreed/core/kernel"
+import { stored, storedEvent } from "@xandreed/core/kernel"
+import { Settings } from "./contracts/loop/settings.port.js"
+import { Memory } from "./contracts/memory/memory.port.js"
 import { windowMemory } from "./index.js"
 import { counting, open, stack } from "./testing.js"
 

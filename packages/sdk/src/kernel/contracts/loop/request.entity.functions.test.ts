@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { dataOf } from "./event.entity.functions.js"
-import type { StoredDraft, StoredEvent } from "./event.entity.js"
-import { Seq, TurnNumber } from "./ids.entity.js"
+import { dataOf, Seq, turnEnded, TurnNumber, turnStarted } from "@xandreed/core/kernel"
+import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { estimateRequest, estimateTokens, firstStep, requestsOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
 import { Tokens } from "./request.entity.js"
 import { assistantMessage, requestSent, userMessage } from "./conversation.entity.functions.js"
 import { requestSentEvent } from "./conversation.entity.js"
-import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 
 const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, ...draft }))
 const answer = (text: string) => assistantMessage(firstStep, { _tag: "Assistant", text, toolCalls: [] })

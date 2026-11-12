@@ -1,19 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
-import {
-  assistantDeltaEvent,
-  Core,
-  estimateRequest,
-  live,
-  liveEvent,
-  Memory,
-  messageOf,
-  originOf,
-  requestSentEvent,
-  Settings,
-  Tokens,
-  userMessageEvent,
-} from "@xandreed/core/kernel"
+import { Core, live, liveEvent, messageOf, originOf } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
+import { Tokens } from "./contracts/loop/request.entity.js"
+import { estimateRequest } from "./contracts/loop/request.entity.functions.js"
+import { Settings } from "./contracts/loop/settings.port.js"
+import { Memory } from "./contracts/memory/memory.port.js"
 import { answering, open, recording, stack } from "./testing.js"
 
 /*
@@ -142,7 +134,7 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
-      "packages/sdk/src/kernel/plugins/inbox/inbox.port.ts#",
+      "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/lesson.test.ts#program",
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
       "packages/sdk/src/kernel/swap.test.ts#swap",

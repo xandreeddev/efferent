@@ -1,7 +1,7 @@
 import { HashMap, Match, Option, Result } from "effect"
 import { live } from "@xandreed/core/kernel"
 import type { LiveEvent, SessionId } from "@xandreed/core/kernel"
-import { inboxQueuedEvent, InboxRefused, Ticket } from "./inbox.entity.js"
+import { inboxQueuedEvent, InboxRefused, Ticket } from "../../contracts/inbox/inbox.entity.js"
 import type { InboxState, Pending } from "./inbox.entity.js"
 
 /** The inbox as it is opened: no session has a queue yet, and the first message is ticket 1. */

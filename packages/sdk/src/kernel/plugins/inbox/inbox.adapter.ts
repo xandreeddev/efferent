@@ -1,11 +1,15 @@
 import { Array as Arr, Deferred, Effect, Exit, HashMap, Layer, Option, Ref, Result } from "effect"
-import { Core, listenerFailed, Loop } from "@xandreed/core/kernel"
-import type { LoopFailure, Reply, SessionId } from "@xandreed/core/kernel"
+import { Core, listenerFailed } from "@xandreed/core/kernel"
+import { Loop } from "../../contracts/loop/loop.port.js"
+import type { SessionId } from "@xandreed/core/kernel"
+import type { Reply } from "../../contracts/loop/loop.entity.js"
+import type { LoopFailure } from "../../contracts/loop/loop.port.js"
 import { enqueue as queue, finish, inboxQueued, openInbox, take, waitingFor } from "./inbox.entity.functions.js"
 import type { Enqueued } from "./inbox.entity.functions.js"
-import { InboxClosed } from "./inbox.entity.js"
-import type { InboxOptions, InboxRefused, InboxState, Pending, Ticket } from "./inbox.entity.js"
-import { Inbox } from "./inbox.port.js"
+import { InboxClosed } from "../../contracts/inbox/inbox.entity.js"
+import type { InboxOptions, InboxState, Pending } from "./inbox.entity.js"
+import type { InboxRefused, Ticket } from "../../contracts/inbox/inbox.entity.js"
+import { Inbox } from "../../contracts/inbox/inbox.port.js"
 
 const DEFAULT_CAPACITY = 64
 

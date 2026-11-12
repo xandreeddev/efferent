@@ -1,6 +1,7 @@
 import { Effect } from "effect"
-import { resolveRequest } from "@xandreed/core/kernel"
-import type { AssistantMessage, ModelRequest, OpenSession } from "@xandreed/core/kernel"
+import { resolveRequest } from "../../contracts/loop/request.entity.functions.js"
+import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
+import type { ModelRequest } from "../../contracts/loop/request.entity.js"
 import { EmptyMessage, ToolsNotRun } from "./loop.entity.js"
 
 /**

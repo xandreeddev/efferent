@@ -1,16 +1,24 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result, Schema } from "effect"
-import { dataOf, stored, storedEvent } from "./event.entity.functions.js"
-import { StoredDraft } from "./event.entity.js"
-import type { StoredDefinition, StoredEvent } from "./event.entity.js"
-import { Seq, SessionId, TurnNumber } from "./ids.entity.js"
-import { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
+import {
+  dataOf,
+  KERNEL_READER,
+  messageOf,
+  readerFor,
+  readJournal,
+  Seq,
+  SessionId,
+  stored,
+  StoredDraft,
+  storedEvent,
+  TurnNumber,
+  turnStarted,
+} from "@xandreed/core/kernel"
+import type { StoredDefinition, StoredEvent } from "@xandreed/core/kernel"
 import { firstStep } from "./request.entity.functions.js"
 import { Tokens } from "./request.entity.js"
 import { assistantDelta, assistantMessage, requestSent, userMessage } from "./conversation.entity.functions.js"
 import { assistantDeltaEvent, assistantMessageEvent, LOOP_READER, requestSentEvent, userMessageEvent } from "./conversation.entity.js"
-import { turnStarted } from "./vocabulary.entity.functions.js"
-import { KERNEL_READER } from "./vocabulary.entity.js"
 
 const origin = { id: SessionId.make("s-1"), turn: TurnNumber.make(2) }
 const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, ...draft }))

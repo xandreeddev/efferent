@@ -1,8 +1,10 @@
-// `@xandreed/core/kernel`: what every part of the kernel agrees on. Its
-// value objects and entities, the event definitions and the helpers a
-// plugin defines its own with, the pure rules, the four contracts and their
-// kits, `Core`: publish, on, events, built by `kernel`, and `settings`.
-// It imports nothing of the rest of core, no model type and no runtime module.
+// `@xandreed/core/kernel`: what every agent has, whatever its workflow. The
+// ids and the message vocabulary, the event envelope, the definitions of
+// core's own events and the helpers a plugin defines its own with, reading
+// a journal, sessions and journal storage with their kits, and `Core`:
+// publish, on, events, built by `kernel`. No loop, memory, prompt or request
+// to a model: those are plugins' contracts (`@xandreed/sdk/kernel`). It
+// imports nothing of the rest of core, no model type and no runtime module.
 export { EventName, Owner, PluginName, Seq, SessionId, ToolCallId, TurnNumber } from "./ids.entity.js"
 export { AssistantMessage, Message, ToolCall, UserMessage } from "./message.entity.js"
 export { AnnouncedEvent, KernelEvent, ListenerFailed, LiveEvent, SeqRange, StoredDraft, StoredEvent } from "./event.entity.js"
@@ -28,20 +30,3 @@ export { journalStorageConformance } from "./journal-storage.conformance.js"
 export type { JournalStorageSubject } from "./journal-storage.conformance.js"
 export { sessionsConformance } from "./sessions.conformance.js"
 export type { SessionsSubject } from "./sessions.conformance.js"
-// The loop contract, the request vocabulary and the memory contract: what the next change moves out of core.
-export { AssistantDeltaData, AssistantMessageData, LOOP_READER, assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./conversation.entity.js"
-export { assistantDelta, assistantMessage, requestSent, userMessage } from "./conversation.entity.functions.js"
-export { InspectedRequest, ModelRequest, PointedMessage, RequestRefused, ResolvedRequest, SentRequest, StepNumber, Tokens } from "./request.entity.js"
-export { estimateRequest, estimateTokens, firstStep, requestsOf, resolveRequest } from "./request.entity.functions.js"
-export { LoopScript, ModelAnswer, Reply, TurnInput } from "./loop.entity.js"
-export { replyOf, wantsTools } from "./loop.entity.functions.js"
-export { Loop } from "./loop.port.js"
-export type { LoopFailure } from "./loop.port.js"
-export { loopConformance } from "./loop.conformance.js"
-export type { LoopSubject } from "./loop.conformance.js"
-export { Settings } from "./settings.port.js"
-export { settings } from "./settings.adapter.js"
-export { Memory } from "./memory.port.js"
-export type { MemoryFailure } from "./memory.port.js"
-export { memoryConformance } from "./memory.conformance.js"
-export type { MemorySubject } from "./memory.conformance.js"

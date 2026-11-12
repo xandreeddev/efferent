@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
-import { Core, estimateRequest, EventName, JournalStorage, kernel, Memory, Owner, Sessions, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { Core, EventName, JournalStorage, kernel, Owner, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import { Tokens } from "./contracts/loop/request.entity.js"
+import { estimateRequest } from "./contracts/loop/request.entity.functions.js"
+import { Settings } from "./contracts/loop/settings.port.js"
+import { Memory } from "./contracts/memory/memory.port.js"
 import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import { answering, base, open } from "./testing.js"
 

@@ -1,7 +1,7 @@
 import { Effect, Layer, Match, Ref, Stream } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import type { LoopScript } from "@xandreed/core/kernel"
+import type { LoopScript } from "../../contracts/loop/loop.entity.js"
 
 const usage = { inputTokens: { total: 0, uncached: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } }
 

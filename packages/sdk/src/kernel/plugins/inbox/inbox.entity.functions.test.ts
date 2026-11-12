@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Array as Arr, HashMap, Match, Option, Order, Result } from "effect"
 import { SessionId } from "@xandreed/core/kernel"
 import { enqueue, finish, openInbox, take, waitingFor } from "./inbox.entity.functions.js"
-import { Ticket } from "./inbox.entity.js"
+import { Ticket } from "../../contracts/inbox/inbox.entity.js"
 import type { InboxState, Pending, SessionQueue } from "./inbox.entity.js"
 
 /*

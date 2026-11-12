@@ -1,5 +1,6 @@
 import { Schema } from "effect"
-import { liveEvent, Seq, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { liveEvent, Seq, storedEvent } from "@xandreed/core/kernel"
+import { Tokens } from "../../contracts/loop/request.entity.js"
 
 /**
  * How the window memory is set up.

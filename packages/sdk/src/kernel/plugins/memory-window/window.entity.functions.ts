@@ -1,6 +1,10 @@
 import { Option, Predicate, Result } from "effect"
-import { dataOf, estimateTokens, live, LOOP_READER, originOf, readerFor, stored, Tokens, turnStartedEvent } from "@xandreed/core/kernel"
-import type { Delivered, LiveEvent, ModelRequest, Reader, SentRequest, Seq, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
+import { dataOf, live, originOf, readerFor, stored, turnStartedEvent } from "@xandreed/core/kernel"
+import { LOOP_READER } from "../../contracts/loop/conversation.entity.js"
+import { Tokens } from "../../contracts/loop/request.entity.js"
+import { estimateTokens } from "../../contracts/loop/request.entity.functions.js"
+import type { Delivered, LiveEvent, Reader, Seq, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
+import type { ModelRequest, SentRequest } from "../../contracts/loop/request.entity.js"
 import { InvalidBudget, OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
 /** What the window memory reads of a journal: core's records and the loop's, whose reader it extends, and its own. */

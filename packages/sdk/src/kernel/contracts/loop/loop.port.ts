@@ -1,9 +1,8 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { PluginFailure } from "./event.entity.js"
+import type { PluginFailure, TurnFailure } from "@xandreed/core/kernel"
 import type { RequestRefused } from "./request.entity.js"
 import type { Reply, TurnInput } from "./loop.entity.js"
-import type { TurnFailure } from "./sessions.port.js"
 
 /**
  * What a turn can fail with: the session's refusals, a request that cannot be sent, or a plugin's own error (memory's, the model's, the loop's).
@@ -20,4 +19,4 @@ export type LoopFailure = TurnFailure | RequestRefused | PluginFailure
 export class Loop extends Context.Service<Loop, {
   /** Run one turn of the session and return its reply. */
   readonly run: (input: TurnInput) => Effect.Effect<Reply, LoopFailure>
-}>()("@xandreed/core/kernel/Loop") {}
+}>()("@xandreed/sdk/kernel/Loop") {}

@@ -1,26 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
 import type { Context } from "effect"
-import {
-  assistantMessage,
-  Core,
-  estimateRequest,
-  firstStep,
-  live,
-  liveEvent,
-  Loop,
-  Memory,
-  messageOf,
-  originOf,
-  replyOf,
-  requestSent,
-  Sessions,
-  Settings,
-  stored,
-  storedEvent,
-  Tokens,
-  userMessage,
-} from "@xandreed/core/kernel"
+import { Core, live, liveEvent, messageOf, originOf, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import { assistantMessage, requestSent, userMessage } from "./contracts/loop/conversation.entity.functions.js"
+import { replyOf } from "./contracts/loop/loop.entity.functions.js"
+import { Loop } from "./contracts/loop/loop.port.js"
+import { Tokens } from "./contracts/loop/request.entity.js"
+import { estimateRequest, firstStep } from "./contracts/loop/request.entity.functions.js"
+import { Settings } from "./contracts/loop/settings.port.js"
+import { Memory } from "./contracts/memory/memory.port.js"
 import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
 import { answering, inOrder, open, recording, stack, SYSTEM as system } from "./testing.js"
 const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]

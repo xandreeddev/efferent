@@ -1,6 +1,8 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { LoopFailure, Reply, SessionId } from "@xandreed/core/kernel"
+import type { SessionId } from "@xandreed/core/kernel"
+import type { Reply } from "../loop/loop.entity.js"
+import type { LoopFailure } from "../loop/loop.port.js"
 import type { InboxClosed, InboxRefused, Ticket } from "./inbox.entity.js"
 
 /**

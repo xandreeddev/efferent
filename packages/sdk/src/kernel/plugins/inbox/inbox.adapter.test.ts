@@ -3,12 +3,12 @@ import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema, Scope, Stre
 import type { AiError, Response } from "effect/ai"
 import { Core, inspectionOf, listenerFailedEvent, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent } from "@xandreed/core/kernel"
-import type { Settings } from "@xandreed/core/kernel"
+import type { Settings } from "../../contracts/loop/settings.port.js"
 import type { SessionsOptions } from "../../index.js"
 import { answer, inOrder, modelDown, scripted, stack } from "../../testing.js"
 import { inboxOf } from "./inbox.adapter.js"
-import { inboxQueuedEvent } from "./inbox.entity.js"
-import { Inbox } from "./inbox.port.js"
+import { inboxQueuedEvent } from "../../contracts/inbox/inbox.entity.js"
+import { Inbox } from "../../contracts/inbox/inbox.port.js"
 
 class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema.String }) {}
 

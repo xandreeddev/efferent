@@ -5,8 +5,8 @@
 // Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
-import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Loop, loopConformance, Memory, memoryConformance, requestsOf, Sessions, sessionsConformance, Settings, settings } from "@xandreed/core/kernel"
-import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance } from "@xandreed/core/kernel"
+import { Inbox, inbox, inProcessJournal, Loop, loopConformance, Memory, memoryConformance, requestsOf, scriptedModel, sessions, Settings, settings, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200

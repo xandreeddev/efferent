@@ -1,7 +1,11 @@
 import { Schema } from "effect"
-import { SessionId } from "./ids.entity.js"
+import { SessionId } from "@xandreed/core/kernel"
 
-/** What a turn is run with: the session and the user's message. */
+/**
+ * What a turn is run with: the session and the user's message.
+ *
+ * @public
+ */
 export const TurnInput = Schema.Struct({ session: SessionId, message: Schema.String })
 export type TurnInput = typeof TurnInput.Type
 
@@ -27,6 +31,8 @@ export type ModelAnswer = typeof ModelAnswer.Type
 /**
  * What the loop kit asks of the model under the loop it checks: call `n`
  * gets the `n`th answer, and calls past the end get the last one.
+ *
+ * @public
  */
 export const LoopScript = Schema.Array(ModelAnswer)
 export type LoopScript = typeof LoopScript.Type

@@ -1,9 +1,7 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { ListenerFailed, PluginFailure } from "./event.entity.js"
-import type { JournalStorageError, UnknownRecord } from "./journal.entity.js"
-import type { ModelRequest, StepNumber } from "./request.entity.js"
-import type { OpenSession } from "./sessions.port.js"
+import type { JournalStorageError, ListenerFailed, OpenSession, PluginFailure, UnknownRecord } from "@xandreed/core/kernel"
+import type { ModelRequest, StepNumber } from "../loop/request.entity.js"
 
 /**
  * What memory can fail with: storage, a record it may not skip, a waiting listener, or an error of its own (over budget is one).
@@ -29,4 +27,4 @@ export class Memory extends Context.Service<Memory, {
    * message, and pointed at.
    */
   readonly build: (session: OpenSession, step: StepNumber) => Effect.Effect<ModelRequest, MemoryFailure>
-}>()("@xandreed/core/kernel/Memory") {}
+}>()("@xandreed/sdk/kernel/Memory") {}

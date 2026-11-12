@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Ref, Schema, Scope, Stream } from "effect"
-import { Core, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { Settings } from "@xandreed/core/kernel"
+import { Core, listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import { requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
+import type { Settings } from "./contracts/loop/settings.port.js"
 import type { SessionsOptions } from "./index.js"
 import { answering, inOrder, open, recording, stack } from "./testing.js"
 const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
