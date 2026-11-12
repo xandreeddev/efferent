@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect"
 import { Core, definePlugin, Memory, readJournal, requestSentEvent, Settings } from "@xandreed/core/kernel"
+import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf, fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
 import type { WindowOptions } from "./window.entity.js"
 
@@ -27,16 +28,15 @@ export const windowMemory = (options: WindowOptions) => definePlugin({
       nearlyFull(sent.data, options.pressureAt) ? core.publish(windowPressure(sent)) : Effect.void)
 
     return Memory.of({
-      open: (session) => Effect.succeed({
-        build: Effect.fn("kernel.window.build")(function* () {
-          const known = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
-          const fitted = yield* Effect.fromResult(fitToBudget(settings.system, known, budgetTokens))
-          yield* Option.match(fitted.dropped, {
-            onNone: () => Effect.void,
-            onSome: (through) => session.append(windowDropped(through)),    // its own record, stored before the request that leaves the turns out
-          })
-          return fitted.request
-        }),
+      // Nothing is kept between requests: each is built from the journal as it stands.
+      build: Effect.fn("kernel.window.build")(function* (session: OpenSession) {
+        const known = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
+        const fitted = yield* Effect.fromResult(fitToBudget(settings.system, known, budgetTokens))
+        yield* Option.match(fitted.dropped, {
+          onNone: () => Effect.void,
+          onSome: (through) => session.append(windowDropped(through)),    // its own record, stored before the request that leaves the turns out
+        })
+        return fitted.request
       }),
     })
   }),

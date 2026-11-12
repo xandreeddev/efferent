@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Context, Effect, Option, Ref, References } from "effect"
 import type { Contracts } from "@xandreed/core/kernel"
 import { LanguageModel } from "effect/ai"
-import { Core, CoreIdle, CurrentPlugin, definePlugin, Loop, Memory, Sessions, Settings, Storage, userMessageEvent } from "@xandreed/core/kernel"
+import { Core, CoreIdle, CurrentPlugin, definePlugin, Loop, Memory, Sessions, Settings, JournalStorage, userMessageEvent } from "@xandreed/core/kernel"
 import type { PluginOf } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import { Glossary, Summaries } from "./testing.port.js"
 import { answering } from "./testing.js"
 
@@ -59,11 +59,11 @@ const witness = (log: Ref.Ref<ReadonlyArray<string>>, name = "witness") => defin
 const loggedStorage = (log: Ref.Ref<ReadonlyArray<string>>) => definePlugin({
   name: "storage",
   requires: [],
-  provides: Storage,
+  provides: JournalStorage,
   make: Effect.gen(function* () {
     yield* Ref.update(log, (all) => [...all, "storage built"])
     yield* Effect.addFinalizer(() => Ref.update(log, (all) => [...all, "storage released"]))
-    return Context.get(yield* inMemoryStorage().build(Context.empty()), Storage)
+    return Context.get(yield* inProcessJournal().build(Context.empty()), JournalStorage)
   }),
 })
 
@@ -80,7 +80,7 @@ describe("plugins that declare what they need", () => {
       const agent = yield* Agent.define({
         model,
         system,
-        storage: inMemoryStorage(),
+        storage: inProcessJournal(),
         memory: windowMemory({ budgetTokens: 3000 }),
         plugins: [reader(log), summaries(log)],
       })
@@ -98,7 +98,7 @@ describe("plugins that declare what they need", () => {
     const built = (order: (log: Ref.Ref<ReadonlyArray<string>>) => ReadonlyArray<PluginOf>) => run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
       const log = yield* Ref.make<ReadonlyArray<string>>([])
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: order(log) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: order(log) })
       const before = (yield* Ref.get(log)).length
       yield* agent.send(yield* agent.createSession({ owner: "learner" }), "Hello")
       return { built: (yield* Ref.get(log)).slice(0, before).map((line) => line.split(" ")[0]), heard: (yield* Ref.get(log)).slice(before).map((line) => line.split(" ")[0]) }
@@ -123,10 +123,10 @@ describe("plugins that declare what they need", () => {
           const provided = yield* Summaries
           const line = yield* provided.of([])
           yield* Ref.update(log, (all) => [...all, `memory built with ${line}`])
-          return Memory.of({ open: () => Effect.die("not opened in this test") })
+          return Memory.of({ build: () => Effect.die("not asked in this test") })
         }),
       })
-      const defined = yield* Effect.exit(Agent.define({ model, system, storage: inMemoryStorage(), memory: noting, plugins: [witness(log), summaries(log)] }))
+      const defined = yield* Effect.exit(Agent.define({ model, system, storage: inProcessJournal(), memory: noting, plugins: [witness(log), summaries(log)] }))
       return { defined: defined._tag, log: yield* Ref.get(log) }
     })))
     expect(result.defined).toBe("Success")
@@ -173,7 +173,7 @@ describe("plugins that declare what they need", () => {
         }),
       })
       // The host runs `define` with a service of its own around it, and a setting of Effect's that it changed.
-      yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [curious] }).pipe(
+      yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [curious] }).pipe(
         Effect.provideService(Summaries, Summaries.of({ of: () => Effect.succeed("the host's") })),
         Effect.provideService(References.MinimumLogLevel, "Error"),
       )
@@ -186,7 +186,7 @@ describe("plugins that declare what they need", () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
       const found = yield* Ref.make("not asked")
-      const config = { model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) }
+      const config = { model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) }
       const requiring = definePlugin({ name: "requiring", requires: [CoreIdle], make: Effect.asVoid(CoreIdle) })
       const refused = yield* Effect.flip(Agent.define({ ...config, plugins: [requiring] }))
       const looking = definePlugin({ name: "looking", requires: [Core], make: Effect.flatMap(Effect.serviceOption(CoreIdle), (idle) => Ref.set(found, Option.isSome(idle) ? "found" : "not there")) })
@@ -200,7 +200,7 @@ describe("plugins that declare what they need", () => {
   test("what a plugin declared is kept as keys, in the order written; a Reference, which has a default, declares nothing", () => {
     expect(stepLoop().requires).toEqual([Core.key, Sessions.key, Memory.key, LanguageModel.LanguageModel.key, Settings.key])
     expect(stepLoop().provides).toBe(Loop.key)
-    expect([inMemoryStorage().requires, sessions().requires, windowMemory({ budgetTokens: 3000 }).requires]).toEqual([[], [Core.key, Storage.key], [Core.key, Settings.key]])
+    expect([inProcessJournal().requires, sessions().requires, windowMemory({ budgetTokens: 3000 }).requires]).toEqual([[], [Core.key, JournalStorage.key], [Core.key, Settings.key]])
     const named = definePlugin({ name: "named", requires: [CurrentPlugin, Core], make: Effect.flatMap(Core, () => CurrentPlugin) })
     expect(named.requires).toEqual([Core.key])
     expect(named.provides).toBeUndefined()
@@ -228,7 +228,7 @@ describe("plugins that declare what they need", () => {
       const { model } = yield* answering("Hi.")
       const loosely: Contracts = [Core]
       const unchecked = definePlugin({ name: "unchecked", requires: loosely, make: Effect.gen(function* () { yield* Core; yield* Summaries }) })
-      return yield* Effect.exit(Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [unchecked, summaries(yield* Ref.make<ReadonlyArray<string>>([]))] }))
+      return yield* Effect.exit(Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [unchecked, summaries(yield* Ref.make<ReadonlyArray<string>>([]))] }))
     })))
     // No typed failure names it: the plugin declared `Core` alone, was handed `Core` alone, and asked for more.
     const died = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "defined"
@@ -272,12 +272,12 @@ describe("a set of plugins that does not fit is refused when the agent is define
     expect(twice.refusal).toMatchObject({ _tag: "PluginRefused", reason: "DuplicateProvider", plugin: "other-summaries", contract: Summaries.key })
     expect(twice.log).toEqual([])
     // An extra that provides a slot's contract, or one the wiring provides itself, is a second provider too.
-    const slot = await defined(() => ({ plugins: [definePlugin({ name: "second-memory", requires: [], provides: Memory, make: Effect.succeed(Memory.of({ open: () => Effect.die("unused") })) })] }))
+    const slot = await defined(() => ({ plugins: [definePlugin({ name: "second-memory", requires: [], provides: Memory, make: Effect.succeed(Memory.of({ build: () => Effect.die("unused") })) })] }))
     expect(slot.refusal).toMatchObject({ reason: "DuplicateProvider", plugin: "second-memory", contract: Memory.key })
     const given = await defined(() => ({ plugins: [definePlugin({ name: "second-settings", requires: [], provides: Settings, make: Effect.succeed({ system: "Mine." }) })] }))
     expect(given.refusal).toMatchObject({ reason: "DuplicateProvider", plugin: "second-settings", contract: Settings.key })
     // So is a shared part that says it provides what the wiring builds for the rebuilt ones.
-    const shared = await defined(() => ({ storage: { ...inMemoryStorage(), provides: Settings.key } }))
+    const shared = await defined(() => ({ storage: { ...inProcessJournal(), provides: Settings.key } }))
     expect(shared.refusal).toMatchObject({ reason: "DuplicateProvider", plugin: "storage", contract: Settings.key })
     expect([...slot.log, ...given.log, ...shared.log]).toEqual([])
   })
@@ -320,7 +320,7 @@ describe("a set of plugins that does not fit is refused when the agent is define
 
   test("a shared part requires a part that `with` rebuilds: storage or sessions needing the settings, memory or an extra's contract", async () => {
     const cases = [
-      ["storage needs the settings", await defined(() => ({ storage: declaring(inMemoryStorage(), Settings.key) })), "storage", Settings.key],
+      ["storage needs the settings", await defined(() => ({ storage: declaring(inProcessJournal(), Settings.key) })), "storage", Settings.key],
       ["sessions needs memory", await defined(() => ({ sessions: declaring(sessions(), Memory.key) })), "session", Memory.key],
       ["sessions needs an extra's contract", await defined((log) => ({ sessions: declaring(sessions(), Summaries.key), plugins: [summaries(log)] })), "session", Summaries.key],
     ] as const
@@ -342,7 +342,7 @@ describe("agent.with checks what the changed plugins declare before it builds th
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Fine.")
       const log = yield* Ref.make<ReadonlyArray<string>>([])
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const missing = yield* Effect.flip(agent.with({ plugins: [witness(log), reader(log)] }))
       const afterRefusal = yield* Ref.get(log)
@@ -369,7 +369,7 @@ describe("agent.with checks what the changed plugins declare before it builds th
       // Each is defined in this test's scope, which stays open: only the wiring itself can release what it built.
       const failed = yield* Effect.flip(Agent.define({ model, system, storage: loggedStorage(log), memory: windowMemory({ budgetTokens: 3000 }), plugins: [witness(log), broken] }))
       const afterDefine = yield* Ref.get(log)
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const replaced = yield* Effect.flip(agent.with({ plugins: [witness(log, "again"), broken] }))
       return { failed, afterDefine, replaced, afterWith: (yield* Ref.get(log)).slice(afterDefine.length), reply: yield* agent.send(yield* agent.createSession({ owner: "learner" }), "Hello") }
     })))

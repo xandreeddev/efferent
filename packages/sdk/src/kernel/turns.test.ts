@@ -3,7 +3,7 @@ import { Deferred, Effect, Fiber, Stream } from "effect"
 import { assistantDeltaEvent, definePlugin, Memory, Seq, Tokens } from "@xandreed/core/kernel"
 import type { Response } from "effect/ai"
 import type { AgentHandle } from "./index.js"
-import { Agent, inMemoryStorage, isOverBudget, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, isOverBudget, windowMemory } from "./index.js"
 import { answer, answering, counting, modelDown, recording, scripted } from "./testing.js"
 
 const system = "You are a friendly tutor."
@@ -25,7 +25,7 @@ describe("twenty turns", () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* counting
       const deltas = yield* recording([assistantDeltaEvent])
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [deltas.plugin] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [deltas.plugin] })
       const session = yield* agent.createSession({ owner: "learner" })
       const replies = yield* Effect.forEach(Array.from({ length: 20 }, (_, turn) => `Question ${turn + 1}?`), (question) => agent.send(session, question), { concurrency: 1 })
       return { replies, journal: yield* journalOf(agent, session), received: yield* received, deltas: yield* deltas.seen }
@@ -51,7 +51,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
   test("a model that fails", async () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* scripted((call) => call === 0 ? Stream.fail(modelDown) : answer("Back."))
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const failed = yield* Effect.flip(agent.send(session, "Hello"))
       const afterFailure = yield* journalOf(agent, session)
@@ -71,7 +71,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const asked = yield* Deferred.make<void>()
       const { model } = yield* scripted((call) => call === 0 ? Stream.unwrap(Effect.as(Deferred.succeed(asked, undefined), Stream.never)) : answer("Back."))
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const turn = yield* Effect.forkChild(agent.send(session, "Hello"))
       yield* Deferred.await(asked)
@@ -90,7 +90,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
   test("a turn that alone is over the budget: memory's own error, with the estimate and the budget", async () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 8 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 8 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const refused = yield* Effect.flip(agent.send(session, "Hello"))
       const afterRefusal = yield* journalOf(agent, session)
@@ -122,7 +122,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
       const asked = yield* Deferred.make<void>()
       const go = yield* Deferred.make<void>()
       const { model } = yield* scripted(() => Stream.unwrap(Effect.as(Effect.andThen(Deferred.succeed(asked, undefined), Deferred.await(go)), answer("Hi."))))
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const first = yield* Effect.forkChild(agent.send(session, "Hello"))
       yield* Deferred.await(asked)
@@ -148,7 +148,7 @@ describe("a model that fails part-way through its answer", () => {
       ])
       const { model } = yield* scripted((call) => call === 0 ? broken : answer("Whole."))
       const deltas = yield* recording([assistantDeltaEvent])
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [deltas.plugin] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [deltas.plugin] })
       const session = yield* agent.createSession({ owner: "learner" })
       const failed = yield* Effect.result(agent.send(session, "Hello"))
       const afterFailure = yield* journalOf(agent, session)
@@ -173,14 +173,14 @@ describe("a request memory builds badly", () => {
     requires: [],
     provides: Memory,
     make: Effect.succeed(Memory.of({
-      open: () => Effect.succeed({ build: () => Effect.succeed({ messages: [Seq.make(1)], estimatedTokens: Tokens.make(1), budgetTokens: Tokens.make(3000) }) }),
+      build: () => Effect.succeed({ messages: [Seq.make(1)], estimatedTokens: Tokens.make(1), budgetTokens: Tokens.make(3000) }),
     })),
   })
 
   test("is refused before anything of it is stored, so the session stays readable", async () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: misdirected })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: misdirected })
       const session = yield* agent.createSession({ owner: "learner" })
       const refused = yield* Effect.flip(agent.send(session, "Hello"))
       // Inspecting resolves every stored request: a bad pointer stored for good would fail it from here on.
@@ -200,7 +200,7 @@ describe("what an agent refuses before it starts", () => {
   test("a message of no text, with a reason of its own, and nothing is stored for it", async () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       return {
         empty: yield* Effect.flip(agent.send(session, "")),
@@ -218,7 +218,7 @@ describe("what an agent refuses before it starts", () => {
   test("a window memory with a budget that is none fails the agent's definition with a typed error, not a crash", async () => {
     const defined = (budgetTokens: number) => run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
-      return yield* Effect.result(Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens }) }))
+      return yield* Effect.result(Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens }) }))
     })).pipe(Effect.map((result) => result._tag === "Failure" ? result.failure._tag : "defined")))
     expect(await Promise.all([Number.NaN, Number.POSITIVE_INFINITY, 0, -5, 0.5].map(defined))).toEqual(["InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget"])
     expect(await Promise.all([1, 8.9, 3000].map(defined))).toEqual(["defined", "defined", "defined"])

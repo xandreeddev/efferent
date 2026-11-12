@@ -20,11 +20,10 @@ export const makeStepLoop = Effect.gen(function* () {
   const run = (input: TurnInput) =>
     sessions.turn(input.session, (session) => Effect.gen(function* () {
       yield* session.append(userMessage(input.message))
-      const context = yield* memory.open(session)
 
       let step = firstStep
       while (true) {
-        const request  = yield* context.build(step)
+        const request  = yield* memory.build(session, step)
         const messages = yield* resolve(session, request)                      // pointers → the exact messages; refused if one points nowhere
         yield* session.append(requestSent(step, settings.system, request))
         const message  = yield* callModel(model, settings.system, messages,

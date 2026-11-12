@@ -102,7 +102,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     })).pipe(unexpected(id)),
   })
   /** The first request of the session's open turn. */
-  const build = (memory: MemoryShape, session: OpenSession) => Effect.flatMap(memory.open(session), (opened) => opened.build(firstStep))
+  const build = (memory: MemoryShape, session: OpenSession) => memory.build(session, firstStep)
   /** The request, resolved against the journal as it is after the build. */
   const resolved = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
     Result.match(resolveRequest(journal, request), {

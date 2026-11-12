@@ -16,8 +16,8 @@ import type {
   SessionId,
   SessionRefused,
   Sessions,
-  Storage,
-  StorageError,
+  JournalStorage,
+  JournalStorageError,
   UnknownRecord,
 } from "@xandreed/core/kernel"
 
@@ -27,7 +27,7 @@ import type {
  * declares (`requires`), and `Agent.define` checks every declaration before
  * it builds anything.
  *
- * The parts come in two stages. Storage and sessions are built once and
+ * The parts come in two stages. JournalStorage and sessions are built once and
  * shared by every agent `with` returns: they may need `Core` and each
  * other. Memory, the loop and the extra plugins are built again by `with`:
  * they may need `Core`, `Settings`, the model, the shared parts and each
@@ -40,7 +40,7 @@ export interface AgentConfig {
   readonly model: Layer.Layer<LanguageModel.LanguageModel>
   /** The system text, fixed for the agent. */
   readonly system: string
-  readonly storage: PluginOf<Storage>
+  readonly storage: PluginOf<JournalStorage>
   /** The stock session plugin when left out. */
   readonly sessions?: PluginOf<Sessions>
   readonly memory: PluginOf<Memory>
@@ -58,7 +58,7 @@ export interface AgentConfig {
 }
 
 /**
- * What `agent.with` may change. Storage, sessions and `Core` stay the agent's own.
+ * What `agent.with` may change. JournalStorage, sessions and `Core` stay the agent's own.
  *
  * @public
  */
@@ -97,11 +97,11 @@ export class AgentRefused extends Schema.TaggedError<AgentRefused>()("AgentRefus
  */
 export interface AgentHandle {
   /** Create a session and return its id: plain data, kept by the host. */
-  readonly createSession: (input: NewSessionInput) => Effect.Effect<SessionId, AgentRefused | StorageError>
+  readonly createSession: (input: NewSessionInput) => Effect.Effect<SessionId, AgentRefused | JournalStorageError>
   /** Run one turn of the session and return its reply. Refused with `Replacing` while `with` is replacing this handle, with `Replaced` once it has, and with `EmptyMessage` for a message of no text. */
   readonly send: (session: SessionId, message: string) => Effect.Effect<Reply, AgentRefused | LoopFailure>
   /** The session as its journal tells it: its state, its events, and every request it sent, resolved. */
-  readonly inspect: (session: SessionId) => Effect.Effect<Inspection, StorageError | UnknownRecord | SessionRefused | RequestRefused>
+  readonly inspect: (session: SessionId) => Effect.Effect<Inspection, JournalStorageError | UnknownRecord | SessionRefused | RequestRefused>
   /** Every event of the agent, live, from the moment the stream is run. */
   readonly events: Stream.Stream<KernelEvent>
   /**

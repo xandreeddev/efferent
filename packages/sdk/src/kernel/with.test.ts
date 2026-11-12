@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Option, Predicate, Ref, Stream } from "effect"
 import { assistantMessageEvent, Core, definePlugin, estimateRequest, Memory, messageOf, requestSentEvent, Settings, Tokens, turnEndedEvent, turnMessageOf, userMessageEvent } from "@xandreed/core/kernel"
 import type { AgentHandle } from "./index.js"
-import { Agent, inMemoryStorage, sessions, windowMemory, windowPressureEvent } from "./index.js"
+import { Agent, inProcessJournal, sessions, windowMemory, windowPressureEvent } from "./index.js"
 import { answer, answering, scripted } from "./testing.js"
 
 const system = "You are a friendly tutor."
@@ -18,12 +18,10 @@ const forgetful = (heard: Ref.Ref<number>) => definePlugin({
     const settings = yield* Settings
     yield* core.on(requestSentEvent, () => Ref.update(heard, (count) => count + 1), { wait: true })
     return Memory.of({
-      open: (session) => Effect.succeed({
-        build: () => Effect.map(session.journal, (journal) => {
-          const asked = Option.toArray(turnMessageOf(journal))
-          const messages = journal.filter((event) => asked.includes(event.seq)).flatMap((event) => Option.toArray(messageOf(event)))
-          return { messages: asked, estimatedTokens: estimateRequest(settings.system, messages), budgetTokens: Tokens.make(3000) }
-        }),
+      build: (session) => Effect.map(session.journal, (journal) => {
+        const asked = Option.toArray(turnMessageOf(journal))
+        const messages = journal.filter((event) => asked.includes(event.seq)).flatMap((event) => Option.toArray(messageOf(event)))
+        return { messages: asked, estimatedTokens: estimateRequest(settings.system, messages), budgetTokens: Tokens.make(3000) }
       }),
     })
   }),
@@ -49,7 +47,7 @@ describe("agent.with", () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Fine.")
       const heard = yield* Ref.make(0)
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: forgetful(heard) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: forgetful(heard) })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "One")
       yield* agent.send(session, "Two")
@@ -90,7 +88,7 @@ describe("agent.with", () => {
       const heard = yield* Ref.make(0)
       // The same memory object and the same extra plugin before and after: both are built again, the first build closed.
       const memory = windowMemory({ budgetTokens: 3000 })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory, plugins: [counting(heard)] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory, plugins: [counting(heard)] })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "One")
       const next = yield* agent.with({ system: "You are a terse tutor who answers in one word." })
@@ -116,7 +114,7 @@ describe("agent.with", () => {
       const note = (line: string) => Ref.update(order, (all) => [...all, line])
       const watch = definePlugin({ name: "watch", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => note("the turn ended"), { wait: true })) })
       // No part of this agent listens in the background: while the model thinks nothing is under way but the turn itself.
-      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: forgetful(yield* Ref.make(0)), plugins: [watch] })
+      const agent = yield* Agent.define({ model: model.model, system, storage: inProcessJournal(), memory: forgetful(yield* Ref.make(0)), plugins: [watch] })
       const session = yield* agent.createSession({ owner: "learner" })
       const other = yield* agent.createSession({ owner: "learner" })
       const running = yield* Effect.forkChild(agent.send(session, "One"))
@@ -153,7 +151,7 @@ describe("agent.with", () => {
         definePlugin({ name: "pressures", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(windowPressureEvent, () => Ref.update(pressures, (count) => count + 1), { wait: true })) }),
       ]
       // Every request presses: the window memory announces it from a background listener of its own.
-      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000, pressureAt: 0.001 }), plugins: extras })
+      const agent = yield* Agent.define({ model: model.model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000, pressureAt: 0.001 }), plugins: extras })
       const sessionA = yield* agent.createSession({ owner: "learner" })
       const sessionB = yield* agent.createSession({ owner: "learner" })
       const running = yield* Effect.forkChild(agent.send(sessionA, "One"))
@@ -190,7 +188,7 @@ describe("agent.with", () => {
           yield* core.on(turnEndedEvent, () => note("the end"))
         }),
       })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [held] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [held] })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "One")
       // The turn is over and its listeners have written nothing. `with` is started, and only then are they let go.
@@ -225,7 +223,7 @@ describe("agent.with", () => {
           yield* core.on(turnEndedEvent, () => Effect.andThen(Effect.sleep("10 millis"), Ref.update(heard, (all) => [...all, "in the background"])))
         }),
       })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions({ closeWait: "1 minute" }), memory: windowMemory({ budgetTokens: 3000 }), plugins: [ends] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), sessions: sessions({ closeWait: "1 minute" }), memory: windowMemory({ budgetTokens: 3000 }), plugins: [ends] })
       const session = yield* agent.createSession({ owner: "learner" })
       const sending = yield* Effect.forkChild(agent.send(session, "One"))
       yield* Deferred.await(entered)
@@ -243,7 +241,7 @@ describe("agent.with", () => {
   test("interrupted while it waits for a turn, it changes nothing: a send that was refused during the wait works again", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const model = yield* gated
-      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: forgetful(yield* Ref.make(0)) })
+      const agent = yield* Agent.define({ model: model.model, system, storage: inProcessJournal(), memory: forgetful(yield* Ref.make(0)) })
       const session = yield* agent.createSession({ owner: "learner" })
       const other = yield* agent.createSession({ owner: "learner" })
       const running = yield* Effect.forkChild(agent.send(session, "One"))
@@ -269,7 +267,7 @@ describe("agent.with", () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Fine.")
       const heard = yield* Ref.make(0)
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [counting(heard)] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [counting(heard)] })
       const session = yield* agent.createSession({ owner: "learner" })
       // What a caller without the types can write: every key there, none with a value.
       const nothing: Record<string, undefined> = { model: undefined, system: undefined, memory: undefined, loop: undefined, plugins: undefined }
@@ -300,7 +298,7 @@ describe("agent.with", () => {
       })
       // And one built after it, which never finishes building.
       const slow = definePlugin({ name: "slow", requires: [], make: Effect.andThen(Deferred.succeed(building, undefined), Effect.never) })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       // `with` builds in this test's scope, which stays open: only `with` itself can release what it built.
       const replacing = yield* Effect.forkChild(agent.with({ plugins: [early, slow] }))
@@ -317,7 +315,7 @@ describe("agent.with", () => {
   test("that cannot build its successor fails with the plugin's own error and changes nothing", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Fine.")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       const failed = yield* Effect.flip(agent.with({ memory: windowMemory({ budgetTokens: Number.NaN }) }))
       return { failed, reply: yield* agent.send(session, "Still there?") }
@@ -343,7 +341,7 @@ describe("agent.with", () => {
           }),
         })), { wait: true })),
       })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [meddler] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [meddler] })
       yield* Ref.set(self, Option.some(agent))
       const session = yield* agent.createSession({ owner: "learner" })
       const reply = yield* agent.send(session, "Hello")
@@ -360,7 +358,7 @@ describe("agent.with", () => {
     const changes = (agent: AgentHandle) => [
       agent.with({ system: "Other." }),
       // @ts-expect-error storage stays the agent's own: `with` takes model, system, memory, loop and plugins
-      agent.with({ storage: inMemoryStorage() }),
+      agent.with({ storage: inProcessJournal() }),
     ]
     // Nothing runs here: the claim is the compiler's, held by the directive above.
     expect(changes).toBeFunction()

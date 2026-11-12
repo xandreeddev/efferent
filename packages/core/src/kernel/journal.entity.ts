@@ -13,7 +13,7 @@ export type Journal = typeof Journal.Type
  * append that expected another journal than the stored one (`SeqConflict`),
  * or a store that cannot be reached (`Unavailable`).
  */
-export class StorageError extends Schema.TaggedError<StorageError>()("StorageError", {
+export class JournalStorageError extends Schema.TaggedError<JournalStorageError>()("JournalStorageError", {
   reason: Schema.Literals(["SessionExists", "SessionMissing", "SeqConflict", "Unavailable"]),
   message: Schema.String,
 }) {}

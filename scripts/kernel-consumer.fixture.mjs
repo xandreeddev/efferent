@@ -4,8 +4,8 @@
 // Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
-import { Core, definePlugin, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings, Storage, storageConformance } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Core, definePlugin, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings, JournalStorage, journalStorageConformance } from "@xandreed/core/kernel"
+import { Agent, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -15,8 +15,8 @@ const built = (key, plugin, over) =>
   Effect.map(Effect.orDie(Layer.build(Layer.provide(Layer.fresh(plugin.layer), over))), (services) => Context.get(services, key))
 
 const kits = {
-  storage: storageConformance({ open: built(Storage, inMemoryStorage(), Layer.empty) }),
-  sessions: sessionsConformance({ open: (core) => built(Sessions, sessions(), Layer.provideMerge(inMemoryStorage().layer, onCore(core))) }),
+  storage: journalStorageConformance({ open: built(JournalStorage, inProcessJournal(), Layer.empty) }),
+  sessions: sessionsConformance({ open: (core) => built(Sessions, sessions(), Layer.provideMerge(inProcessJournal().layer, onCore(core))) }),
   memory: memoryConformance({
     name: windowMemory({ budgetTokens }).name,
     system,
@@ -26,7 +26,7 @@ const kits = {
   loop: loopConformance({
     open: (core, script) => Effect.gen(function* () {
       const { model } = yield* scriptedModel(script)
-      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inMemoryStorage().layer, onCore(core)))
+      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inProcessJournal().layer, onCore(core)))
       const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }).layer, Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
       const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(Layer.fresh(stepLoop().layer), parts)))
       return { loop: Context.get(services, Loop), sessions: Context.get(services, Sessions) }
@@ -50,7 +50,7 @@ for (const [name, checks] of Object.entries(kits)) {
 
 const turn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model, calls } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Hel", "lo!"] }])
-  const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+  const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
   const session = yield* agent.createSession({ owner: "consumer" })
   const reply = yield* agent.send(session, "Hello")
   const inspection = yield* agent.inspect(session)
@@ -78,7 +78,7 @@ const planned = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Hi."] }])
   const seen = []
   const reads = () => definePlugin({ name: "reads", requires: [Notes], make: Effect.map(Notes, (provided) => { seen.push(provided.of("built")) }) })
-  const config = { model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) }
+  const config = { model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) }
   yield* Agent.define({ ...config, plugins: [reads(), notes()] })
   const refused = yield* Effect.flip(Agent.define({ ...config, plugins: [reads()] }))
   return { seen, refused: { tag: refused._tag, reason: refused.reason, plugin: refused.plugin, contract: refused.contract } }

@@ -4,12 +4,12 @@ import { expect, fail } from "./conformance.entity.functions.js"
 import type { ConformanceCheck, ConformanceFailure } from "./conformance.entity.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, Owner, Seq, SessionId } from "./ids.entity.js"
-import type { StorageError } from "./journal.entity.js"
+import type { JournalStorageError } from "./journal.entity.js"
 import { JOURNAL_FORMAT } from "./session.entity.js"
 import type { SessionHeader } from "./session.entity.js"
-import type { Storage } from "./storage.port.js"
+import type { JournalStorage } from "./journal-storage.port.js"
 
-type StorageShape = Context.Service.Shape<typeof Storage>
+type JournalStorageShape = Context.Service.Shape<typeof JournalStorage>
 
 /**
  * A storage backend as the kit opens it: an empty one per check, released
@@ -17,8 +17,8 @@ type StorageShape = Context.Service.Shape<typeof Storage>
  *
  * @public
  */
-export interface StorageSubject {
-  readonly open: Effect.Effect<StorageShape, never, Scope.Scope>
+export interface JournalStorageSubject {
+  readonly open: Effect.Effect<JournalStorageShape, never, Scope.Scope>
 }
 
 const session = SessionId.make("kit-session")
@@ -39,7 +39,7 @@ const show = (value: unknown): string => JSON.stringify(value)
 const draftOf = ({ seq: _seq, at: _at, ...rest }: StoredEvent): StoredDraft => rest
 
 /** `call` must be refused for `reason`. */
-const refused = (id: string, what: string, reason: StorageError["reason"], call: Effect.Effect<unknown, StorageError>) =>
+const refused = (id: string, what: string, reason: JournalStorageError["reason"], call: Effect.Effect<unknown, JournalStorageError>) =>
   Effect.matchEffect(call, {
     onSuccess: () => fail(id, `${what} was accepted, not refused with ${reason}`),
     onFailure: (error) => expect(id, error.reason === reason, `${what} was refused with ${error.reason}, not ${reason}`),
@@ -59,13 +59,13 @@ const refused = (id: string, what: string, reason: StorageError["reason"], call:
  *
  * @public
  */
-export const storageConformance = (subject: StorageSubject): ReadonlyArray<ConformanceCheck> => {
-  /** One check over a fresh store. A `StorageError` the check did not expect fails it. */
-  const check = (name: string, id: string, body: (storage: StorageShape) => Effect.Effect<void, ConformanceFailure | StorageError>): ConformanceCheck => ({
+export const journalStorageConformance = (subject: JournalStorageSubject): ReadonlyArray<ConformanceCheck> => {
+  /** One check over a fresh store. A `JournalStorageError` the check did not expect fails it. */
+  const check = (name: string, id: string, body: (storage: JournalStorageShape) => Effect.Effect<void, ConformanceFailure | JournalStorageError>): ConformanceCheck => ({
     id,
     name,
     run: Effect.scoped(Effect.flatMap(subject.open, body)).pipe(
-      Effect.catchTag("StorageError", (error) => fail(id, `unexpected ${error.reason}: ${error.message}`)),
+      Effect.catchTag("JournalStorageError", (error) => fail(id, `unexpected ${error.reason}: ${error.message}`)),
     ),
   })
   return [

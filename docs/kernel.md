@@ -46,10 +46,10 @@ one to build on until the kernel has caught up.
 | Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `StepNumber`, `Tokens`; `Message`; `StoredEvent` and `KernelEvent` |
 | Event definitions | core, and each plugin's own folder | a name, the schema of the data, stored or live, and for a stored one whether it may be skipped |
 | `Core` | core | `publish`, `on`, `events` |
-| Contracts | core | `Storage`, `Sessions`, `Memory`, `Loop`, each with a conformance kit |
+| Contracts | core | `JournalStorage`, `Sessions`, `Memory`, `Loop`, each with a conformance kit |
 | Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal, resolving a request, the estimate, the order to build plugins in |
 | `definePlugin` | core | a name, the contracts required, the contract provided, the effect that makes it; for a shipped plugin, its version |
-| `inMemoryStorage` | sdk, `plugins/storage-memory` | keeps journals; knows nothing else |
+| `inProcessJournal` | sdk, `plugins/journal-in-process` | keeps journals; knows nothing else |
 | `sessions` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `windowMemory` | sdk, `plugins/memory-window` | decides what the model is sent; owns the budget |
 | `stepLoop` | sdk, `plugins/loop` | the main function; the model call lives with it |
@@ -65,12 +65,12 @@ logic, `.adapter.ts` an implementation and its layer.
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#boot -->
 
 ```ts
-import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Agent, inProcessJournal, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const agent = yield* Agent.define({
   model,                                        // Effect AI's model layer
   system: "You are a friendly tutor.",
-  storage: inMemoryStorage(),
+  storage: inProcessJournal(),
   sessions: sessions(),
   memory: windowMemory({ budgetTokens: 3000 }),
   loop: stepLoop(),
@@ -114,11 +114,10 @@ export const makeStepLoop = Effect.gen(function* () {
   const run = (input: TurnInput) =>
     sessions.turn(input.session, (session) => Effect.gen(function* () {
       yield* session.append(userMessage(input.message))
-      const context = yield* memory.open(session)
 
       let step = firstStep
       while (true) {
-        const request  = yield* context.build(step)
+        const request  = yield* memory.build(session, step)
         const messages = yield* resolve(session, request)                      // pointers → the exact messages; refused if one points nowhere
         yield* session.append(requestSent(step, settings.system, request))
         const message  = yield* callModel(model, settings.system, messages,
@@ -140,7 +139,7 @@ agent.send(session, "Hello")
 └─ loop.run                              loop plugin
    ├─ sessions.turn opens                plugin.session.turn.started      stored
    ├─ session.append(user message)       plugin.loop.user.message         stored
-   ├─ memory.open, context.build         memory plugin
+   ├─ memory.build(session, step)        memory plugin
    ├─ resolve(request)                   pointers → messages, or refused
    ├─ session.append(request)            plugin.loop.request.sent         stored
    ├─ model call                         plugin.loop.assistant.delta ×n   live only
@@ -151,7 +150,7 @@ agent.send(session, "Hello")
 Three rules are visible in it.
 
 - A stored fact is `session.append(...)` on the session plugin, which
-  stores it through `Storage` and then publishes the stored event. A live
+  stores it through `JournalStorage` and then publishes the stored event. A live
   fact is `Core.publish(...)`, which stores nothing.
 - "A turn always closes" belongs to the session plugin's `turn`. A loop
   plugin that uses it gets that for every exit: the model's error, an
@@ -332,7 +331,7 @@ They are pure functions, tested as a table. The state is also the fold of
 the journal (`sessionStateOf`), and the store is the truth. The session
 plugin begins every turn by reading the journal: it folds it to the phase,
 takes its last place, and appends `plugin.session.turn.started` at the next
-one. That append is its claim on the turn. Storage refuses an append at a
+one. That append is its claim on the turn. JournalStorage refuses an append at a
 place that is taken, so of two writers that begin a turn of one session at
 once, one stores its start and the other is refused with `SessionBusy`.
 
@@ -378,7 +377,7 @@ turn stays open, as the journal says it is.
 ### What the model is sent
 
 Memory owns the budget and decides what the model is sent.
-`context.build(step)` returns a request whose messages are pointers, the
+`memory.build(session, step)` returns a request whose messages are pointers, the
 places (`seq`) of records of the journal that bear a message, never copies.
 When memory writes text of its own for the model, a summary for instance,
 it appends that text first, through the open session it was given, as its
@@ -459,7 +458,7 @@ is being built, before any turn, is heard by the old agent's listeners too.
 And `with` is the host's to call: a background listener of the agent that
 calls it waits for itself until the bound.
 
-Storage and sessions are not `with`'s to change. Nothing is loaded or
+JournalStorage and sessions are not `with`'s to change. Nothing is loaded or
 unloaded inside a live agent.
 
 Writing a plugin is listing what it needs and writing the effect that makes
@@ -478,22 +477,20 @@ const goldfish = () => definePlugin({
   make: Effect.gen(function* () {
     const settings = yield* Settings
     return Memory.of({
-      open: (session) => Effect.succeed({
-        build: () => Effect.map(session.journal, (journal) => {
-          const asked = journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
-          return {
-            messages: asked.map((event) => event.seq),          // pointers into the journal, never copies
-            estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => Option.toArray(messageOf(event)))),
-            budgetTokens: Tokens.make(1000),
-          }
-        }),
+      build: (session) => Effect.map(session.journal, (journal) => {
+        const asked = journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
+        return {
+          messages: asked.map((event) => event.seq),          // pointers into the journal, never copies
+          estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => Option.toArray(messageOf(event)))),
+          budgetTokens: Tokens.make(1000),
+        }
       }),
     })
   }),
 })
 ```
 
-Each contract ships with its kit: `storageConformance`,
+Each contract ships with its kit: `journalStorageConformance`,
 `sessionsConformance`, `memoryConformance` and `loopConformance` are the
 contracts as runnable checks, and a plugin is proved by running its kit.
 The example above would not pass the memory kit as it stands: it keeps to
@@ -507,10 +504,10 @@ ships.
 
 Every plugin declares the contracts it needs, in `requires`, and the one it
 provides, in `provides`. A contract is a `Context.Service`: `Core`,
-`Storage`, `Sessions`, `Memory`, `Loop`, `Settings`, the model's
+`JournalStorage`, `Sessions`, `Memory`, `Loop`, `Settings`, the model's
 (`LanguageModel.LanguageModel`), or one a plugin declares itself. A plugin
 that needs none writes an empty list. The stock plugins declare theirs the
-same way: storage needs nothing, sessions `Core` and `Storage`, the window
+same way: storage needs nothing, sessions `Core` and `JournalStorage`, the window
 memory `Core` and `Settings`, and the loop `Core`, `Sessions`, `Memory`,
 the model and `Settings`.
 
@@ -538,7 +535,7 @@ it is the agent's memory, and the one that provides it is an extra plugin:
 
 ```ts
 import { definePlugin, estimateRequest, Memory, messageOf, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage } from "@xandreed/sdk/kernel"
+import { Agent, inProcessJournal } from "@xandreed/sdk/kernel"
 import { Summaries } from "./summaries.port.js"
 
 /** Provides `Summaries`. It needs no contract, and says so. */
@@ -562,25 +559,23 @@ const compress = () => definePlugin({
     const settings  = yield* Settings
     const summaries = yield* Summaries                    // declared above; a contract that is not declared does not compile here
     return Memory.of({
-      open: (session) => Effect.succeed({
-        build: () => Effect.gen(function* () {
-          const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
-          const asked = said.slice(-1)
-          const earlier = said.slice(0, -1)
-          const request = (records: typeof said) => ({
-            messages: records.map((event) => event.seq),
-            estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
-            budgetTokens: Tokens.make(1000),
-          })
-          const [first, last] = [earlier[0], earlier.at(-1)]
-          if (first === undefined || last === undefined) return request(asked)
-          const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
-          const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
-            message: { _tag: "User", text },
-            replaces: { from: first.seq, through: last.seq },
-          }))
-          return request([summary, ...asked])
-        }),
+      build: (session) => Effect.gen(function* () {
+        const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
+        const asked = said.slice(-1)
+        const earlier = said.slice(0, -1)
+        const request = (records: typeof said) => ({
+          messages: records.map((event) => event.seq),
+          estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
+          budgetTokens: Tokens.make(1000),
+        })
+        const [first, last] = [earlier[0], earlier.at(-1)]
+        if (first === undefined || last === undefined) return request(asked)
+        const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
+        const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
+          message: { _tag: "User", text },
+          replaces: { from: first.seq, through: last.seq },
+        }))
+        return request([summary, ...asked])
       }),
     })
   }),
@@ -589,7 +584,7 @@ const compress = () => definePlugin({
 const agent = yield* Agent.define({
   model,
   system: "You are a friendly tutor.",
-  storage: inMemoryStorage(),
+  storage: inProcessJournal(),
   memory: compress(),                           // requires Summaries,
   plugins: [summaries()],                       // which an extra plugin provides: it is built before the memory
 })
@@ -633,7 +628,7 @@ with `PluginRefused`, which names the plugin and the contract, when
 const refused = yield* Effect.flip(Agent.define({
   model,
   system: "You are a friendly tutor.",
-  storage: inMemoryStorage(),
+  storage: inProcessJournal(),
   memory: compress(),                           // nothing provides Summaries
 }))
 ```

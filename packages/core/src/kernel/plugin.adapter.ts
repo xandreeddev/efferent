@@ -87,7 +87,7 @@ interface PluginSpec<Requires extends Contracts, E, S> {
  * Define a plugin from its name, the contracts it needs, the contract it
  * provides and the effect that makes it.
  *
- * `requires` lists every contract `make` uses: `Core`, `Storage`,
+ * `requires` lists every contract `make` uses: `Core`, `JournalStorage`,
  * `Sessions`, `Memory`, `Loop`, `Settings`, the model's key, or a contract
  * another plugin declares in its own folder. A `make` that uses a contract
  * the list lacks does not compile. A `Context.Reference` needs no

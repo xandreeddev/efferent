@@ -25,15 +25,15 @@ import {
   Sessions,
   sessionsConformance,
   Settings,
-  Storage,
-  storageConformance,
+  JournalStorage,
+  journalStorageConformance,
   Tokens,
   TurnNumber,
   UnknownRecord,
   userMessage,
 } from "@xandreed/core/kernel"
-import type { AssistantMessage, ConformanceCheck, LoopScript, LoopSubject, MemorySubject, Plugin, PluginFailure, SessionsSubject, StorageSubject } from "@xandreed/core/kernel"
-import { callModel, inMemoryStorage, scriptedModel, sessions, stepLoop, windowDroppedEvent, windowMemory } from "./index.js"
+import type { AssistantMessage, ConformanceCheck, LoopScript, LoopSubject, MemorySubject, Plugin, PluginFailure, SessionsSubject, JournalStorageSubject } from "@xandreed/core/kernel"
+import { callModel, inProcessJournal, scriptedModel, sessions, stepLoop, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The four contracts' kits: each passes on its stock plugin, and each
@@ -59,28 +59,28 @@ const built = <I, S, R>(key: Context.Key<I, S>, plugin: Plugin<I, PluginFailure,
   Effect.map(Effect.orDie(Layer.build(Layer.provide(Layer.fresh(plugin.layer), over))), (services) => Context.get(services, key))
 
 describe("the storage kit", () => {
-  const stock: StorageSubject = { open: built(Storage, inMemoryStorage(), Layer.empty) }
+  const stock: JournalStorageSubject = { open: built(JournalStorage, inProcessJournal(), Layer.empty) }
   const every = ["create", "append", "conflict", "read-from", "missing"]
 
-  test("has the checks its doc comment lists, and passes on the in-memory storage plugin", async () => {
-    expect(ids(storageConformance(stock))).toEqual(every)
-    expect(await failedChecks(storageConformance(stock))).toEqual([])
+  test("has the checks its doc comment lists, and passes on the in-process journal plugin", async () => {
+    expect(ids(journalStorageConformance(stock))).toEqual(every)
+    expect(await failedChecks(journalStorageConformance(stock))).toEqual([])
   })
 
   test("fails every check on a store that keeps nothing", async () => {
-    const forgetful: StorageSubject = {
-      open: Effect.succeed(Storage.of({
+    const forgetful: JournalStorageSubject = {
+      open: Effect.succeed(JournalStorage.of({
         create: () => Effect.void,
         append: (_id, expectedSeq, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, ...event }),
         read: (id) => Effect.succeed({ header: { id, owner: Owner.make("nobody"), format: 1 }, events: [] }),
       })),
     }
-    expect(await failedChecks(storageConformance(forgetful))).toEqual(sorted(every))
+    expect(await failedChecks(journalStorageConformance(forgetful))).toEqual(sorted(every))
   })
 })
 
 describe("the sessions kit", () => {
-  const over = (core: CoreShape) => Layer.provideMerge(inMemoryStorage().layer, onCore(core))
+  const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal().layer, onCore(core))
   const stock: SessionsSubject = { open: (core) => built(Sessions, sessions(), over(core)) }
   const every = ["create", "turn", "announce", "busy", "isolated", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "missing"]
 
@@ -111,8 +111,8 @@ describe("the sessions kit", () => {
     // Two session plugins over one store, each turn on the other one: neither knows the other is still announcing an end.
     pooled: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
-        const storage = yield* built(Storage, inMemoryStorage(), Layer.empty)
-        const parts = Layer.merge(onCore(core), Layer.succeed(Storage, storage))
+        const storage = yield* built(JournalStorage, inProcessJournal(), Layer.empty)
+        const parts = Layer.merge(onCore(core), Layer.succeed(JournalStorage, storage))
         const pool = [yield* built(Sessions, sessions(), parts), yield* built(Sessions, sessions(), parts)]
         const turns = yield* Ref.make(0)
         const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool") }))
@@ -132,11 +132,11 @@ describe("the sessions kit", () => {
     // It appends what a body gives it and announces it, with no start, no end, no phase and no check that the session exists.
     turnless: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
-        const storage = yield* built(Storage, inMemoryStorage(), Layer.empty)
+        const storage = yield* built(JournalStorage, inProcessJournal(), Layer.empty)
         const only = SessionId.make("the-only-session")
         return Sessions.of({
           create: () => Effect.as(Effect.ignore(storage.create({ id: only, owner: Owner.make("nobody"), format: 1 }), { log: "Debug", message: "the careless plugin keeps one session" }), only),
-          read: (id) => Effect.catchTag(storage.read(id), "StorageError", () => Effect.succeed({ header: { id, owner: Owner.make("nobody"), format: 1 as const }, events: [] })),
+          read: (id) => Effect.catchTag(storage.read(id), "JournalStorageError", () => Effect.succeed({ header: { id, owner: Owner.make("nobody"), format: 1 as const }, events: [] })),
           turn: (id, body) => body({
             id,
             turn: TurnNumber.make(1),
@@ -186,15 +186,13 @@ describe("the memory kit", () => {
       requires: [],
       provides: Memory,
       make: Effect.succeed(Memory.of({
-        open: (session) => Effect.succeed({
-          build: () => Effect.gen(function* () {
-            if (options.writes === true) yield* session.append(userMessage("a note in another plugin's name"))
-            const journal = yield* session.journal
-            const messages = pick(journal)
-            const estimatedTokens = options.count === false ? Tokens.make(0)
-              : estimateRequest(system, journal.filter((event) => messages.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
-            return { messages, estimatedTokens, budgetTokens: Tokens.make(budgetTokens) }
-          }),
+        build: (session) => Effect.gen(function* () {
+          if (options.writes === true) yield* session.append(userMessage("a note in another plugin's name"))
+          const journal = yield* session.journal
+          const messages = pick(journal)
+          const estimatedTokens = options.count === false ? Tokens.make(0)
+            : estimateRequest(system, journal.filter((event) => messages.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
+          return { messages, estimatedTokens, budgetTokens: Tokens.make(budgetTokens) }
         }),
       })),
     }))
@@ -208,12 +206,10 @@ describe("the memory kit", () => {
       const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(Layer.fresh(windowMemory({ budgetTokens }).layer), Layer.merge(onCore(yield* Core), settings)))), Memory)
       const known: ReadonlyArray<string> = [...KERNEL_READER.knows, windowDroppedEvent.name]
       return Memory.of({
-        open: (session) => Effect.map(inner.open(session), (opened) => ({
-          build: (step) => Effect.flatMap(session.journal, (journal) => {
-            const stranger = journal.find((event) => !known.includes(event.name))
-            return stranger === undefined ? opened.build(step) : Effect.fail(new UnknownRecord({ name: stranger.name, seq: stranger.seq, message: "this memory reads nothing it does not know" }))
-          }),
-        })),
+        build: (session, step) => Effect.flatMap(session.journal, (journal) => {
+          const stranger = journal.find((event) => !known.includes(event.name))
+          return stranger === undefined ? inner.build(session, step) : Effect.fail(new UnknownRecord({ name: stranger.name, seq: stranger.seq, message: "this memory reads nothing it does not know" }))
+        }),
       })
     }),
   }))
@@ -241,7 +237,7 @@ describe("the loop kit", () => {
   const subject = (loop: () => LoopPlugin): LoopSubject => ({
     open: (core: CoreShape, script: LoopScript) => Effect.gen(function* () {
       const { model } = yield* scriptedModel(script)
-      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inMemoryStorage().layer, onCore(core)))
+      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inProcessJournal().layer, onCore(core)))
       const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }).layer, Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
       const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(Layer.fresh(loop().layer), parts)))
       return { loop: Context.get(services, Loop), sessions: Context.get(services, Sessions) }
@@ -269,7 +265,7 @@ describe("the loop kit", () => {
       return Loop.of({
         run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
           yield* session.append(userMessage(input.message))
-          const request = yield* (yield* memory.open(session)).build(firstStep)
+          const request = yield* memory.build(session, firstStep)
           const messages = yield* Effect.fromResult(resolveRequest(yield* session.journal, request))
           // "copies": what the user said is written into the stored request as well as into its own record.
           yield* session.append(requestSent(firstStep, flaw === "copies" ? `${settings.system} The user said: ${input.message}` : settings.system, request))

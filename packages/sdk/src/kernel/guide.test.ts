@@ -17,7 +17,7 @@ import {
   Tokens,
   userMessageEvent,
 } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import { Summaries } from "./testing.port.js"
 import { answering, recording } from "./testing.js"
 
@@ -35,7 +35,7 @@ describe("the kernel guide's code", () => {
       const agent = yield* Agent.define({
         model,                                        // Effect AI's model layer
         system: "You are a friendly tutor.",
-        storage: inMemoryStorage(),
+        storage: inProcessJournal(),
         sessions: sessions(),
         memory: windowMemory({ budgetTokens: 3000 }),
         loop: stepLoop(),
@@ -61,7 +61,7 @@ describe("the kernel guide's code", () => {
   test("a host follows the answer as it streams", async () => {
     const pieces = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hel", "lo!")
-      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       // #region follow
       const answer = yield* agent.events.pipe(
@@ -98,7 +98,7 @@ describe("the kernel guide's code", () => {
       })
       // #endregion own-event
       const record = yield* recording([requestCounted])
-      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [record.plugin, meter] })
+      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [record.plugin, meter] })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
       yield* agent.send(session, "Again")
@@ -113,7 +113,7 @@ describe("the kernel guide's code", () => {
   test("a memory plugin written in a few lines replaces the stock one, on the same session", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
       // #region memory-plugin
@@ -125,15 +125,13 @@ describe("the kernel guide's code", () => {
         make: Effect.gen(function* () {
           const settings = yield* Settings
           return Memory.of({
-            open: (session) => Effect.succeed({
-              build: () => Effect.map(session.journal, (journal) => {
-                const asked = journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
-                return {
-                  messages: asked.map((event) => event.seq),          // pointers into the journal, never copies
-                  estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => Option.toArray(messageOf(event)))),
-                  budgetTokens: Tokens.make(1000),
-                }
-              }),
+            build: (session) => Effect.map(session.journal, (journal) => {
+              const asked = journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
+              return {
+                messages: asked.map((event) => event.seq),          // pointers into the journal, never copies
+                estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => Option.toArray(messageOf(event)))),
+                budgetTokens: Tokens.make(1000),
+              }
             }),
           })
         }),
@@ -174,25 +172,23 @@ describe("the kernel guide's code", () => {
           const settings  = yield* Settings
           const summaries = yield* Summaries                    // declared above; a contract that is not declared does not compile here
           return Memory.of({
-            open: (session) => Effect.succeed({
-              build: () => Effect.gen(function* () {
-                const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
-                const asked = said.slice(-1)
-                const earlier = said.slice(0, -1)
-                const request = (records: typeof said) => ({
-                  messages: records.map((event) => event.seq),
-                  estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
-                  budgetTokens: Tokens.make(1000),
-                })
-                const [first, last] = [earlier[0], earlier.at(-1)]
-                if (first === undefined || last === undefined) return request(asked)
-                const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
-                const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
-                  message: { _tag: "User", text },
-                  replaces: { from: first.seq, through: last.seq },
-                }))
-                return request([summary, ...asked])
-              }),
+            build: (session) => Effect.gen(function* () {
+              const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
+              const asked = said.slice(-1)
+              const earlier = said.slice(0, -1)
+              const request = (records: typeof said) => ({
+                messages: records.map((event) => event.seq),
+                estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
+                budgetTokens: Tokens.make(1000),
+              })
+              const [first, last] = [earlier[0], earlier.at(-1)]
+              if (first === undefined || last === undefined) return request(asked)
+              const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
+              const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
+                message: { _tag: "User", text },
+                replaces: { from: first.seq, through: last.seq },
+              }))
+              return request([summary, ...asked])
             }),
           })
         }),
@@ -201,7 +197,7 @@ describe("the kernel guide's code", () => {
       const agent = yield* Agent.define({
         model,
         system: "You are a friendly tutor.",
-        storage: inMemoryStorage(),
+        storage: inProcessJournal(),
         memory: compress(),                           // requires Summaries,
         plugins: [summaries()],                       // which an extra plugin provides: it is built before the memory
       })
@@ -213,7 +209,7 @@ describe("the kernel guide's code", () => {
       const refused = yield* Effect.flip(Agent.define({
         model,
         system: "You are a friendly tutor.",
-        storage: inMemoryStorage(),
+        storage: inProcessJournal(),
         memory: compress(),                           // nothing provides Summaries
       }))
       // #endregion refused

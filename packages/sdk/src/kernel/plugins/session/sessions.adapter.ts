@@ -13,11 +13,11 @@ import {
   SessionRefused,
   Sessions,
   sessionStateOf,
-  Storage,
+  JournalStorage,
   turnEnded,
   turnStarted,
 } from "@xandreed/core/kernel"
-import type { AnnouncedEvent, OpenSession, StorageError, StoredDraft, TurnNumber } from "@xandreed/core/kernel"
+import type { AnnouncedEvent, OpenSession, JournalStorageError, StoredDraft, TurnNumber } from "@xandreed/core/kernel"
 
 /**
  * How the session plugin is set up.
@@ -83,11 +83,11 @@ const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "Sessi
 export const sessions = (options: SessionsOptions = {}) => definePlugin({
   name: "session",
   version: "0.22.0",
-  requires: [Core, Storage],
+  requires: [Core, JournalStorage],
   provides: Sessions,
   make: Effect.gen(function* () {
     const core    = yield* Core
-    const storage = yield* Storage
+    const storage = yield* JournalStorage
     const scope   = yield* Effect.scope
     /** The sessions with a turn open or closing in this process: the journal cannot say that an end is still being announced. */
     const held    = yield* Ref.make<ReadonlySet<SessionId>>(new Set())
@@ -125,7 +125,7 @@ export const sessions = (options: SessionsOptions = {}) => definePlugin({
         }
         // The first append is the claim on the journal: a conflict there is another writer's turn, not a storage failure.
         const started = yield* store(open, turnStarted(turn)).pipe(
-          Effect.catchTag("StorageError", (error): Effect.Effect<never, SessionRefused | StorageError> =>
+          Effect.catchTag("JournalStorageError", (error): Effect.Effect<never, SessionRefused | JournalStorageError> =>
             error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer opened a turn")) : Effect.fail(error)),
         )
         const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open) }

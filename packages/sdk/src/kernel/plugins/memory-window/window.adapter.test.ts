@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Stream } from "effect"
-import { Agent, inMemoryStorage, windowMemory, windowPressureEvent } from "../../index.js"
+import { Agent, inProcessJournal, windowMemory, windowPressureEvent } from "../../index.js"
 import { answering, recording } from "../../testing.js"
 
 const system = "You are a friendly tutor."
@@ -21,7 +21,7 @@ describe("plugin.window.pressure", () => {
   const pressed = (pressureAt: number | undefined, turns: number) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const { model } = yield* answering("An answer of some length.")
     const heard = yield* recording([windowPressureEvent])
-    const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory(pressureAt === undefined ? { budgetTokens: 40 } : { budgetTokens: 40, pressureAt }), plugins: [heard.plugin] })
+    const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory(pressureAt === undefined ? { budgetTokens: 40 } : { budgetTokens: 40, pressureAt }), plugins: [heard.plugin] })
     const session = yield* agent.createSession({ owner: "learner" })
     yield* Effect.forEach(Array.from({ length: turns }), (_, index) => agent.send(session, `Message number ${index + 1}`), { concurrency: 1 })
     const requests = (yield* agent.inspect(session)).requests.map((request) => Number(request.estimatedTokens))
@@ -32,7 +32,7 @@ describe("plugin.window.pressure", () => {
   test("is not published for a request under the share of the budget it was told, and is published once for each one at or over it, with that request's estimate and the budget", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("An answer of some length.")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 40, pressureAt: 0.5 }) })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 40, pressureAt: 0.5 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       // Read from before the first turn: the stream has no replay. Two are expected, from the second and third turn.
       const live = yield* Effect.forkScoped(Stream.runCollect(Stream.take(Stream.filter(agent.events, (event) => event.name === windowPressureEvent.name), 2)), { startImmediately: true })

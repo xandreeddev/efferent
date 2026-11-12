@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
-import { Core, CoreLive, definePlugin, estimateRequest, Memory, Sessions, Settings, Owner, Storage, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { Core, CoreLive, definePlugin, estimateRequest, Memory, Sessions, Settings, Owner, JournalStorage, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
 import type { Plugin } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, windowMemory } from "./index.js"
 import { answering } from "./testing.js"
 
 const system = "You are a friendly tutor."
@@ -23,13 +23,11 @@ const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Plugin
   requires: [Settings],
   provides: Memory,
   make: Effect.map(Settings, (settings) => Memory.of({
-    open: (session) => Effect.succeed({
-      build: () => Effect.gen(function* () {
-        yield* Effect.forEach(records, (record) => session.append(record), { concurrency: 1, discard: true })
-        const journal = yield* session.journal
-        const asked = journal.filter((event) => event.name === "plugin.loop.user.message").slice(-1)
-        return { messages: asked.map((event) => event.seq), estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => event.message === undefined ? [] : [event.message])), budgetTokens: Tokens.make(3000) }
-      }),
+    build: (session) => Effect.gen(function* () {
+      yield* Effect.forEach(records, (record) => session.append(record), { concurrency: 1, discard: true })
+      const journal = yield* session.journal
+      const asked = journal.filter((event) => event.name === "plugin.loop.user.message").slice(-1)
+      return { messages: asked.map((event) => event.seq), estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => event.message === undefined ? [] : [event.message])), budgetTokens: Tokens.make(3000) }
     }),
   })),
 })
@@ -37,7 +35,7 @@ const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Plugin
 /** One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal. */
 const windowAfter = (records: ReadonlyArray<ReturnType<typeof windowFuture>>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model } = yield* answering("Fine.")
-  const first = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: scribe(records) })
+  const first = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: scribe(records) })
   const session = yield* first.createSession({ owner: "learner" })
   yield* first.send(session, "One")
   const agent = yield* first.with({ memory: windowMemory({ budgetTokens: 3000 }) })
@@ -85,11 +83,11 @@ describe("a stored plugin record a reader does not know", () => {
 describe("a session plugin that meets a session it did not run", () => {
   /** Two session plugins over one storage. */
   const twoOverOneStore = Effect.gen(function* () {
-    const shared = yield* Layer.build(Layer.provideMerge(inMemoryStorage().layer, CoreLive()))
+    const shared = yield* Layer.build(Layer.provideMerge(inProcessJournal().layer, CoreLive()))
     const over = Layer.succeedContext(shared)
     const first = Context.get(yield* Layer.build(Layer.provide(Layer.fresh(sessions().layer), over)), Sessions)
     const second = Context.get(yield* Layer.build(Layer.provide(Layer.fresh(sessions().layer), over)), Sessions)
-    return { first, second, storage: Context.get(shared, Storage), core: Context.get(shared, Core) }
+    return { first, second, storage: Context.get(shared, JournalStorage), core: Context.get(shared, Core) }
   })
   const owner = Owner.make("learner")
 

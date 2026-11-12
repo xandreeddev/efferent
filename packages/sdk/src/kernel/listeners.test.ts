@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema, Stream } from "effect"
 import { Core, definePlugin, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Plugin } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, windowMemory } from "./index.js"
 import type { SessionsOptions } from "./index.js"
 import { answering, recording } from "./testing.js"
 
@@ -21,7 +21,7 @@ const agentWith = (extra: Plugin<never, never, Core>, options: SessionsOptions =
   const reports = yield* Queue.unbounded<unknown>()
   const reporter = definePlugin({ name: "reports", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
   const turns = yield* recording([turnStartedEvent, turnEndedEvent])
-  const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions(options), memory: windowMemory({ budgetTokens: 3000 }), plugins: [turns.plugin, extra, reporter] })
+  const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), sessions: sessions(options), memory: windowMemory({ budgetTokens: 3000 }), plugins: [turns.plugin, extra, reporter] })
   const session = yield* agent.createSession({ owner: "learner" })
   const names = Effect.map(agent.inspect(session), (inspection) => inspection.events.map((event): string => event.name))
   const announced = Effect.map(turns.seen, (seen) => seen.map((event) => event._tag === "Stored" ? Number(event.seq) : 0))
@@ -177,7 +177,7 @@ describe("a listener on the turn's end", () => {
       const reports = yield* Queue.unbounded<unknown>()
       const reporter = definePlugin({ name: "reports", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
       const deaf = definePlugin({ name: "deaf", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.uninterruptible(Effect.never))) })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [reporter, deaf], core: { idleWait: "20 millis" } })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [reporter, deaf], core: { idleWait: "20 millis" } })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
       // The wait for the listeners gives up at its limit, and closing the old parts does not wait for the listener either.

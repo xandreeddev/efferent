@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
-import { Core, CoreLive, Owner, SessionId, Sessions, Storage, StorageError, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, CoreLive, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
-import { inMemoryStorage } from "../storage-memory/storage.adapter.js"
+import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
 
 const owner = Owner.make("learner")
@@ -12,11 +12,11 @@ const ENDED = "plugin.session.turn.ended"
 const noted = storedEvent("notes", "noted", { data: Schema.Struct({}), skippable: true })
 
 /** What a storage double does with one append: let it through, refuse it, or die. */
-type Fault = (event: StoredDraft) => Option.Option<Effect.Effect<never, StorageError>>
+type Fault = (event: StoredDraft) => Option.Option<Effect.Effect<never, JournalStorageError>>
 const through: Fault = () => Option.none()
 /** Fail the appends of `name` with a storage error of `reason`. */
-const failing = (name: string, reason: StorageError["reason"]): Fault => (event) =>
-  event.name === name ? Option.some(Effect.fail(new StorageError({ reason, message: `the store was told to refuse ${name}` }))) : Option.none()
+const failing = (name: string, reason: JournalStorageError["reason"]): Fault => (event) =>
+  event.name === name ? Option.some(Effect.fail(new JournalStorageError({ reason, message: `the store was told to refuse ${name}` }))) : Option.none()
 const dying = (name: string): Fault => (event) => event.name === name ? Option.some(Effect.die("the store broke")) : Option.none()
 
 /**
@@ -24,14 +24,14 @@ const dying = (name: string): Fault => (event) => event.name === name ? Option.s
  * as many session plugins over that one store as asked for.
  */
 const over = (count: number) => Effect.gen(function* () {
-  const below = yield* Layer.build(Layer.provideMerge(inMemoryStorage().layer, CoreLive()))
-  const real = Context.get(below, Storage)
+  const below = yield* Layer.build(Layer.provideMerge(inProcessJournal().layer, CoreLive()))
+  const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
-  const storage = Storage.of({
+  const storage = JournalStorage.of({
     ...real,
     append: (id, expectedSeq, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () => real.append(id, expectedSeq, event))),
   })
-  const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(Storage, storage))
+  const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
     Effect.map(Layer.build(Layer.provide(Layer.fresh(sessions().layer), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
@@ -52,7 +52,7 @@ describe("a turn whose end cannot be stored", () => {
       const next = yield* Effect.flip(turns.turn(id, () => Effect.succeed("again")))
       return { failed, next, names: yield* names(id), read: (yield* turns.read(id)).events.length }
     }))
-    expect(result.failed).toMatchObject({ _tag: "StorageError", reason: "Unavailable" })
+    expect(result.failed).toMatchObject({ _tag: "JournalStorageError", reason: "Unavailable" })
     // The journal holds a turn that started and never ended: the session is busy, and nothing was written over it.
     expect(result.next).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
     expect(result.names).toEqual([STARTED])
@@ -88,7 +88,7 @@ describe("a turn that cannot open", () => {
       yield* fault(through)
       return { failed, died: died._tag, turn: yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn))), names: yield* names(id) }
     }))
-    expect(result.failed).toMatchObject({ _tag: "StorageError", reason: "Unavailable" })
+    expect(result.failed).toMatchObject({ _tag: "JournalStorageError", reason: "Unavailable" })
     expect(result.died).toBe("Failure")
     // Neither left the session held: the next turn is the first the journal holds.
     expect(result.turn).toBe(1)
@@ -144,7 +144,7 @@ describe("a session's id", () => {
     const result = await run(Effect.gen(function* () {
       const minted = yield* Ref.make(0)
       const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`session-${count}`))
-      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }).layer, Layer.provideMerge(inMemoryStorage().layer, CoreLive())))
+      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }).layer, Layer.provideMerge(inProcessJournal().layer, CoreLive())))
       const turns = Context.get(below, Sessions)
       const ids = [yield* turns.create({ owner }), yield* turns.create({ owner })]
       return { ids: ids.map(String), turn: yield* turns.turn(SessionId.make("session-2"), (session) => Effect.succeed(Number(session.turn))) }

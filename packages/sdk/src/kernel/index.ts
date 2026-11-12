@@ -4,7 +4,7 @@
 export { Agent } from "./agent.adapter.js"
 export { AgentRefused } from "./agent.entity.js"
 export type { AgentChanges, AgentConfig, AgentHandle, NewSessionInput } from "./agent.entity.js"
-export { inMemoryStorage } from "./plugins/storage-memory/storage.adapter.js"
+export { inProcessJournal } from "./plugins/journal-in-process/journal.adapter.js"
 export { sessions } from "./plugins/session/sessions.adapter.js"
 export type { SessionsOptions } from "./plugins/session/sessions.adapter.js"
 export { windowMemory } from "./plugins/memory-window/window.adapter.js"

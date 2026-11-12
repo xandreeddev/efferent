@@ -22,7 +22,7 @@ import {
   userMessage,
 } from "@xandreed/core/kernel"
 import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, windowMemory } from "./index.js"
 import { answering, recording } from "./testing.js"
 
 const system = "You are a friendly tutor."
@@ -44,7 +44,7 @@ const shoutLoop = () => definePlugin({
     return Loop.of({
       run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
         yield* session.append(userMessage(input.message))
-        const request = yield* (yield* memory.open(session)).build(firstStep)
+        const request = yield* memory.build(session, firstStep)
         yield* session.append(requestSent(firstStep, settings.system, request))
         const message: AssistantMessage = { _tag: "Assistant", text: input.message.toUpperCase(), toolCalls: [] }
         yield* session.append(assistantMessage(firstStep, message))
@@ -58,7 +58,7 @@ describe("a different loop plugin", () => {
   test("runs with the storage, session and memory plugins untouched", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("never asked")
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions(), memory: windowMemory({ budgetTokens: 3000 }), loop: shoutLoop() })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), sessions: sessions(), memory: windowMemory({ budgetTokens: 3000 }), loop: shoutLoop() })
       const session = yield* agent.createSession({ owner: "learner" })
       const replies = [yield* agent.send(session, "hello"), yield* agent.send(session, "again")]
       return { replies, inspection: yield* agent.inspect(session), received: yield* received }
@@ -97,28 +97,26 @@ const compactingMemory = (keep: number) => definePlugin({
     const settings = yield* Settings
     const budgetTokens = Tokens.make(3000)
     return Memory.of({
-      open: (session) => Effect.succeed({
-        build: () => Effect.gen(function* () {
-          const journal = yield* session.journal
-          const bearing = journal.filter((event) => event.message !== undefined && event.name !== summaryWritten.name)
-          const estimate = (seqs: ReadonlyArray<number>) => estimateRequest(settings.system, journal.filter((event) => seqs.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
-          const all = bearing.map((event) => event.seq)
-          if (bearing.length <= keep) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-          // The compression check tripped: announce it, live, under this plugin's own name.
-          yield* core.publish(live(compactionDue, session, { messages: bearing.length, estimatedTokens: estimate(all) }))
-          const older = bearing.slice(0, -1)
-          const last = bearing.at(-1)
-          const first = older[0]
-          const through = older.at(-1)
-          if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-          // Text memory writes for the model is its own record first, bearing the message and naming what it replaces; the request points at it.
-          const summary = yield* session.append(stored(summaryWritten, { of: older.length }, {
-            message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
-            replaces: { from: first.seq, through: through.seq },
-          }))
-          const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
-          return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
-        }),
+      build: (session) => Effect.gen(function* () {
+        const journal = yield* session.journal
+        const bearing = journal.filter((event) => event.message !== undefined && event.name !== summaryWritten.name)
+        const estimate = (seqs: ReadonlyArray<number>) => estimateRequest(settings.system, journal.filter((event) => seqs.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
+        const all = bearing.map((event) => event.seq)
+        if (bearing.length <= keep) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
+        // The compression check tripped: announce it, live, under this plugin's own name.
+        yield* core.publish(live(compactionDue, session, { messages: bearing.length, estimatedTokens: estimate(all) }))
+        const older = bearing.slice(0, -1)
+        const last = bearing.at(-1)
+        const first = older[0]
+        const through = older.at(-1)
+        if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
+        // Text memory writes for the model is its own record first, bearing the message and naming what it replaces; the request points at it.
+        const summary = yield* session.append(stored(summaryWritten, { of: older.length }, {
+          message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
+          replaces: { from: first.seq, through: through.seq },
+        }))
+        const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
+        return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
       }),
     })
   }),
@@ -157,7 +155,7 @@ describe("a plugin adds an event on a compression check and another plugin react
         }),
       })
       const record = yield* recording([compactionDue, swept, summaryWritten])
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: compactingMemory(3), plugins: [record.plugin, janitor] })
+      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: compactingMemory(3), plugins: [record.plugin, janitor] })
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "One")
       const quiet = yield* record.names

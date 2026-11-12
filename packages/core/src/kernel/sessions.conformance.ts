@@ -236,7 +236,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     check("a session never created is refused before any body runs", "missing", ({ sessions }) => Effect.gen(function* () {
       const ran = yield* Ref.make(false)
       yield* refuses("missing", "a turn of a session never created", sessions.turn(SessionId.make("kit-stranger"), () => Ref.set(ran, true)),
-        (error) => error._tag === "StorageError" && error.reason === "SessionMissing")
+        (error) => error._tag === "JournalStorageError" && error.reason === "SessionMissing")
       yield* refuses("missing", "a read of a session never created", sessions.read(SessionId.make("kit-stranger")), (error) => error.reason === "SessionMissing")
       yield* expect("missing", !(yield* Ref.get(ran)), "the body of a turn of a missing session ran")
     })),

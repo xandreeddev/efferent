@@ -61,10 +61,10 @@ describe("planning plugins from what they declare", () => {
       ["a plugin requires what it provides itself", [plugin("self", ["S"], "S")], [], undefined, { reason: "Cycle", plugin: "self", contract: "S" }],
       ["two plugins require each other", [plugin("a", ["B"], "A"), plugin("b", ["A"], "B")], [], undefined, { reason: "Cycle", plugin: "b", contract: "A" }],
       ["three in a circle, behind one that is not in it", [plugin("free"), plugin("a", ["B"], "A"), plugin("b", ["C"], "B"), plugin("c", ["A"], "C")], [], undefined, { reason: "Cycle", plugin: "c", contract: "A" }],
-      ["a plugin requires what exists only later", [plugin("store", ["Settings"], "Storage")], ["Core"], ["Settings"], { reason: "LaterContract", plugin: "store", contract: "Settings" }],
+      ["a plugin requires what exists only later", [plugin("store", ["Settings"], "JournalStorage")], ["Core"], ["Settings"], { reason: "LaterContract", plugin: "store", contract: "Settings" }],
       ["the same provider listed twice is told before a second provider", [once, plugin("a"), once], [], undefined, { reason: "ListedTwice", plugin: "once", contract: "O" }],
       ["the same listener listed twice", [plugin("a"), twice, twice], [], undefined, { reason: "ListedTwice", plugin: "twice", contract: "" }],
-      ["later is told apart from missing", [plugin("store", ["Nothing"], "Storage")], ["Core"], ["Settings"], { reason: "MissingProvider", plugin: "store", contract: "Nothing" }],
+      ["later is told apart from missing", [plugin("store", ["Nothing"], "JournalStorage")], ["Core"], ["Settings"], { reason: "MissingProvider", plugin: "store", contract: "Nothing" }],
     ]
     for (const [title, plugins, given, later, refusal] of cases) expect([title, planned(plugins, given, later)]).toEqual([title, refusal])
   })

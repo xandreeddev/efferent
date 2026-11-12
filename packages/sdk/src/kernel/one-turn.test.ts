@@ -12,7 +12,7 @@ import {
   turnStartedEvent,
   userMessageEvent,
 } from "@xandreed/core/kernel"
-import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "./index.js"
+import { Agent, inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import { answering, recording } from "./testing.js"
 
 const everyDefinition = [turnStartedEvent, userMessageEvent, requestSentEvent, assistantDeltaEvent, assistantMessageEvent, turnEndedEvent]
@@ -25,7 +25,7 @@ describe("one turn of the kernel", () => {
       const agent = yield* Agent.define({
         model,
         system: "You are a friendly tutor.",
-        storage: inMemoryStorage(),
+        storage: inProcessJournal(),
         sessions: sessions(),
         memory: windowMemory({ budgetTokens: 3000 }),
         loop: stepLoop(),
@@ -70,7 +70,7 @@ describe("one turn of the kernel", () => {
   test("a session asked for with no owner, or a parent that is no id, is refused before anything is stored", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
       return {
         noOwner: yield* Effect.flip(agent.createSession({ owner: "" })),
         blankOwner: yield* Effect.flip(agent.createSession({ owner: "   " })),
