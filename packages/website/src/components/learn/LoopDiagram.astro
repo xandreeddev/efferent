@@ -1,20 +1,21 @@
 ---
-// The loop, live: lights up from the real TurnEvents the playground publishes.
+// The loop, live: lights up from the kernel events the page hears on Core (learn/runtime.ts, `LessonEvent`).
 ---
 
 <figure class="learn-fig" data-loop-diagram>
   <svg class="dg" viewBox="0 0 640 250" role="img" aria-labelledby="loop-t loop-d">
     <title id="loop-t">One turn through the step loop</title>
-    <desc id="loop-d">Your message goes to the memory window, which builds the context. The step loop sends it to the model and receives the answer, then decides whether to stop or go around again, and finally returns the reply.</desc>
+    <desc id="loop-d">Your message waits in the inbox until its turn. The step loop stores it, asks memory to build the request, sends the request to the model and stores the answer, then returns the reply. With tools it would go around again.</desc>
 
     <g class="node" data-node="you"><rect class="box" x="8" y="92" width="104" height="60" rx="12" />
-      <text x="60" y="127" font-size="14" text-anchor="middle">your message</text></g>
+      <text x="60" y="118" font-size="14" text-anchor="middle">your message</text>
+      <text class="dim" x="60" y="138" font-size="12" text-anchor="middle">in the inbox</text></g>
     <g class="node" data-node="memory"><rect class="box" x="148" y="92" width="140" height="60" rx="12" />
-      <text class="mono" x="218" y="118" font-size="13" text-anchor="middle">memory window</text>
-      <text class="dim" x="218" y="138" font-size="12" text-anchor="middle">builds the context</text></g>
+      <text class="mono" x="218" y="118" font-size="13" text-anchor="middle">memory</text>
+      <text class="dim" x="218" y="138" font-size="12" text-anchor="middle">builds the request</text></g>
     <g class="node" data-node="loop"><rect class="box" x="324" y="92" width="122" height="60" rx="12" />
       <text class="mono" x="385" y="118" font-size="13" text-anchor="middle">step loop</text>
-      <text class="dim" x="385" y="138" font-size="12" text-anchor="middle">asks, records</text></g>
+      <text class="dim" x="385" y="138" font-size="12" text-anchor="middle">asks, stores</text></g>
     <g class="node" data-node="model"><rect class="box" x="490" y="92" width="142" height="60" rx="12" />
       <text class="mono" x="561" y="118" font-size="13" text-anchor="middle">LanguageModel</text>
       <text class="dim" x="561" y="138" font-size="12" text-anchor="middle">writes the answer</text></g>
@@ -27,18 +28,21 @@
     <g class="eg" data-edge="model-loop"><path class="edge" d="M490 134 H458" /><path class="head" d="M462 128 L450 134 L462 140 Z" /></g>
     <g class="eg" data-edge="loop-again"><path class="edge" d="M356 92 C356 42 414 42 414 86" /><path class="head" d="M408 82 L414 94 L420 82 Z" /></g>
     <g class="eg" data-edge="loop-reply"><path class="edge" d="M385 152 V184" /><path class="head" d="M379 180 L385 192 L391 180 Z" /></g>
-    <text class="dim" x="385" y="32" font-size="12" text-anchor="middle">another step?</text>
+    <text class="dim" x="385" y="32" font-size="12" text-anchor="middle">another step? only with tools</text>
   </svg>
   <ol class="dg-list">
-    <li>Your message goes to the memory window, which builds the context.</li>
-    <li>The step loop sends it to the model and records the answer.</li>
-    <li>The loop decides: another step, or finish and return the reply.</li>
+    <li>Your message waits in the inbox until its turn opens.</li>
+    <li>The step loop stores it; memory builds the request from the journal.</li>
+    <li>The loop sends the request to the model, stores the answer, and returns the reply.</li>
   </ol>
   <p class="dg-log" aria-live="polite" data-log>Send a message in the playground and watch the turn travel through.</p>
-  <figcaption>Live: each highlight is a real event from your agent's turn.</figcaption>
+  <figcaption>Live: each highlight is a kernel event the page heard.</figcaption>
 </figure>
 
 <script>
+  import { Match } from "effect"
+  import type { LessonEvent } from "../../learn/runtime.ts"
+
   const root = document.querySelector<HTMLElement>("[data-loop-diagram]")
   if (root) {
     const nodes = new Map([...root.querySelectorAll<SVGGElement>("[data-node]")].map((n) => [n.dataset.node!, n]))
@@ -58,30 +62,28 @@
     const say = (text: string) => { log.textContent = text }
 
     window.addEventListener("learn:start", () => {
-      reset(); on("you", "on"); edge("you-memory", true); say("Your message goes in.")
+      reset(); on("you", "on"); say("Your message goes into the inbox.")
     })
     window.addEventListener("learn:event", (e) => {
-      const ev = (e as CustomEvent<{ _tag: string; [k: string]: unknown }>).detail
-      switch (ev._tag) {
-        case "step.started":
-          on("you", "done"); on("loop", "on"); edge("loop-again", false); edge("loop-reply", false)
-          say(`step ${ev.step}: the loop begins a step.`); break
-        case "context.built":
-          on("memory", "done"); edge("memory-loop", true)
-          say(`memory built the context (~${ev.estimatedTokens} tokens of ${ev.budgetTokens}).`); break
-        case "assistant.delta":
-          on("model", "on"); edge("loop-model", true); edge("model-loop", true)
-          say("the model is writing; the loop receives each piece."); break
-        case "assistant.message":
-          on("model", "done"); say("the model finished its answer; the loop records it."); break
-        case "step.ended":
-          edge("loop-again", true); say(`step ${ev.step} ended (${String(ev.status)}).`); break
-        case "completion.evaluated":
-          say("the loop decides whether to go again: no tool calls, so the reply stands."); break
-      }
+      const event = (e as CustomEvent<LessonEvent>).detail
+      Match.value(event).pipe(
+        Match.tag("Queued", (queued) => { on("you", "on"); say(`queued with ticket ${queued.ticket}.`) }),
+        Match.tag("TurnStarted", (started) => { reset(); on("you", "done"); on("loop", "on"); say(`turn ${started.turn} opens.`) }),
+        Match.tag("UserMessage", (message) => { edge("you-memory", true); say(`turn ${message.turn}: the loop stores your message in the journal.`) }),
+        Match.tag("WindowDropped", (dropped) => { on("memory", "on"); say(`the window leaves out older turns, through record ${dropped.through}, and records that.`) }),
+        Match.tag("RequestSent", (sent) => {
+          on("memory", "done"); edge("memory-loop", true); edge("loop-model", true)
+          say(`step ${sent.step}: memory built a request of ${sent.messages} message${sent.messages === 1 ? "" : "s"} (~${sent.estimatedTokens} of ${sent.budgetTokens} tokens); the loop stores it and sends it.`)
+        }),
+        Match.tag("Delta", () => { on("model", "on"); edge("model-loop", true); say("the model is writing; each piece is published as it arrives.") }),
+        Match.tag("AssistantMessage", () => { on("model", "done"); say("the model finished; the loop stores the answer. It asked for no tool, so the turn ends.") }),
+        Match.tag("TurnEnded", (ended) => {
+          on("loop", "done"); on("reply", "on"); edge("loop-reply", true)
+          say(ended.outcome._tag === "Completed" ? `turn ${ended.turn} closes: the reply goes back to you.` : `turn ${ended.turn} closes: ${ended.outcome._tag.toLowerCase()}.`)
+        }),
+        Match.orElse(() => {}),
+      )
     })
-    window.addEventListener("learn:done", () => {
-      on("loop", "done"); on("reply", "on"); edge("loop-reply", true); edge("loop-again", false); say("The reply goes back to you.")
-    })
+    window.addEventListener("learn:done", () => { edge("loop-again", false) })
   }
 </script>

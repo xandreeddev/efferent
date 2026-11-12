@@ -8,3 +8,6 @@ node_modules/
 # Local preview/playwright artifacts
 .playwright-mcp/
 *.log
+
+# Written and removed by src/learn/lesson1.program.test.ts
+src/learn/generated-program-check/

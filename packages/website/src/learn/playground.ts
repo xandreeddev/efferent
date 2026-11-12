@@ -1,7 +1,8 @@
 // The playground: wires the panes (model bar, code, chat, context) to the
-// lesson runtime, which runs the real framework.
-import { DEFAULT_CONFIG } from "./lesson1.source.ts"
-import { readControls, setField } from "./config-edit.ts"
+// lesson runtime, which runs the kernel in the page.
+import { Match, Option, Result } from "effect"
+import { DEFAULT_AGENT } from "./lesson1.source.ts"
+import { readControls, setField, withoutMemory } from "./config-edit.ts"
 import type { ControlKey } from "./config-edit.ts"
 import { echoChoice } from "./models/mock.ts"
 import { loadModel, probeDevice } from "./models/registry.ts"
@@ -15,10 +16,15 @@ import { mountEditor } from "./panes/editor.ts"
 import { mountInspector } from "./panes/inspector.ts"
 import type { Section } from "./panes/editor.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
-import type { LessonRuntime } from "./runtime.ts"
+import type { BuildResult, LessonEvent, LessonRuntime, Sent, SendOutcome } from "./runtime.ts"
 
 const root = document.querySelector<HTMLElement>(".wb-bench")
 if (root) boot(root)
+
+/** "Send three at once": the second and third turns can only answer from the turns before them. */
+const THREE = ["My name is Ana.", "What did I just say?", "What is in your context?"]
+/** Step 6's fill: five short messages, queued at once. */
+const FILL = ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"]
 
 function boot(root: HTMLElement) {
   const q = <T extends HTMLElement>(selector: string): T => {
@@ -38,9 +44,10 @@ function boot(root: HTMLElement) {
     model: undefined as LoadedModel | undefined,
     device: { gpu: { webgpu: false, f16: false, compatOnly: false }, chrome: { state: "unavailable", reason: "Checking…" } } as Device,
     built: false,
-    running: false,
     loading: false,
+    building: false,
   }
+  const busy = () => state.runtime?.busy ?? false
 
   // ── panes ───────────────────────────────────────────────────────────────
   const ctx = mountContext(q('[data-pane="context"]'))
@@ -48,41 +55,130 @@ function boot(root: HTMLElement) {
   const models = mountModels(q(".wb-modelbar"), { choose: (choice) => void chooseModel(choice) })
   const editor = mountEditor(q("[data-editor]"), { onRebuild: () => void rebuild(), onEdit: () => checkSyntaxSoon(), onFormat: () => void formatCode() })
   const chat = mountChat(q('[data-pane="chat"]'), {
-    send: (text) => void send(text),
-    stop: () => state.runtime?.stop(),
-    newChat: () => { if (!state.running) void newConversation() },
+    send: (text) => void send([text]),
+    sendThree: () => void send(THREE),
+    stop: () => void stop(),
+    newChat: () => { if (!busy()) void newConversation() },
   })
 
   // ── status ──────────────────────────────────────────────────────────────
   const setChip = (text: string, kind: "idle" | "ready" | "error") => { chip.textContent = text; chip.dataset.state = kind }
   const refresh = () => {
-    const ready = Boolean(state.runtime && state.model && state.built)
+    const ready = Boolean(state.runtime && state.model && state.built && !state.building)
     chat.setState({
-      ready, running: state.running,
+      ready, running: busy(),
       hint: ready ? "" : state.model ? "Build the agent first (Rebuild in the Code pane)." : "Pick a model from the bar above.",
     })
-    models.setBusy(state.loading || state.running)
+    models.setBusy(state.loading || busy())
     if (state.loading) return setChip("loading model…", "idle")
     if (!state.runtime) return setChip("starting…", "idle")
     if (!state.model) return setChip("pick a model", "idle")
+    if (state.building) return setChip("building…", "idle")
     if (!state.built) return setChip("agent not built", "error")
-    setChip("agent ready", "ready")
+    setChip(busy() ? "answering" : "agent ready", "ready")
   }
 
   const ensureRuntime = (): Promise<LessonRuntime> => {
     state.runtimeReady ??= import("./runtime.ts").then(async ({ LessonRuntime }) => {
-      state.runtime = await LessonRuntime.create()
-      return state.runtime
+      const runtime = await LessonRuntime.create()
+      runtime.onEvent(heard)
+      state.runtime = runtime
+      return runtime
     })
     return state.runtimeReady
   }
 
-  /** Read the journal back and redraw the context panes from it. */
+  /** Read the journal back and redraw the context pane from it alone. */
   const refreshInspector = async () => {
     const runtime = state.runtime
     if (!runtime) return
-    const { events, report, captures } = await runtime.inspect()
-    inspector.update(inspectorOf({ events, rows: report.rows, captures }), events)
+    Result.match(inspectorOf(await runtime.journal()), {
+      onFailure: (refused) => inspector.refused(refused.message),
+      onSuccess: (model) => {
+        inspector.update(model)
+        Option.match(model.last, {
+          onNone: () => {},
+          onSome: (last) => {
+            ctx.stat("steps", String(last.steps))
+            ctx.stat("sent", String(last.sentTokens))
+            ctx.stat("answered", String(last.answeredTokens))
+          },
+        })
+      },
+    })
+  }
+
+  // ── what the agent does, as the page hears it on Core ───────────────────
+  /** The page's own messages: the bubble the inbox queued, and the answer its turn is writing. */
+  const bubbles = new Map<number, { readonly user: HTMLElement; answer?: HTMLElement; text: string }>()
+  /** The answer being written in each turn, by turn number. */
+  const writing = new Map<number, number>()
+  let t0 = 0
+
+  /** The bubble of the page's message whose turn is writing in `turn`. */
+  const writerOf = (turn: number) => Option.fromNullishOr(bubbles.get(writing.get(turn) ?? 0))
+
+  function heard(event: LessonEvent) {
+    ctx.event(event, t0)
+    window.dispatchEvent(new CustomEvent("learn:event", { detail: event }))
+    Match.value(event).pipe(
+      Match.tag("Queued", (queued) => { bubbles.set(queued.id, { user: chat.queued(queued.ticket, queued.text), text: "" }) }),
+      Match.tag("UserMessage", (message) => Option.match(Option.flatMap(message.id, (id) => Option.fromNullishOr(bubbles.get(id))), {
+        onNone: () => {},
+        onSome: (bubble) => {
+          chat.started(bubble.user)
+          bubble.answer = chat.add("agent", "")
+          bubble.answer.dataset.live = ""
+          writing.set(message.turn, Option.getOrElse(message.id, () => 0))
+        },
+      })),
+      Match.tag("Delta", (delta) => Option.match(writerOf(delta.turn), {
+        onNone: () => {},
+        onSome: (bubble) => { bubble.text += delta.text; if (bubble.answer) chat.setReply(bubble.answer, bubble.text) },
+      })),
+      Match.tag("TurnEnded", (ended) => { writing.delete(ended.turn); void refreshInspector() }),
+      Match.orElse(() => {}),
+    )
+  }
+
+  /** How one message ended: its reply (the whole text, whatever pieces the page heard), or why it has none. */
+  const settle = async (sent: Sent, outcome: SendOutcome) => {
+    const bubble = bubbles.get(sent.id)
+    bubbles.delete(sent.id)
+    const answer = bubble?.answer
+    answer?.removeAttribute("data-live")
+    const dropEmpty = () => { if (answer && !bubble?.text) answer.remove() }
+    await Match.valueTags(outcome, {
+      Replied: (replied) => { if (answer) chat.setReply(answer, replied.text.length > 0 ? replied.text : "(the model sent no text)") },
+      Stopped: () => {
+        dropEmpty()
+        if (answer) chat.add("note", "Stopped.")
+        else if (bubble) {
+          // Its turn never started: the message waited in the queue when the inbox closed.
+          const badge = bubble.user.querySelector(".msg-queued")
+          if (badge) badge.textContent = "stopped while queued"
+        }
+      },
+      OverBudget: (over) => { dropEmpty(); explainBudget(over) },
+      Refused: (refused) => { dropEmpty(); chat.add("error", refused.message) },
+      Failed: async (failed) => {
+        dropEmpty()
+        const lost = state.model
+        if (lost?.choice.kind === "webllm" && /device was lost|mapAsync|GPUBuffer|Model not loaded before/i.test(failed.message)) {
+          // After a lost device every later request fails the same way: drop the engine and say what to do.
+          await Promise.resolve(lost.dispose()).catch(() => undefined)
+          await fallBackToEcho()
+          chat.add("error", `The GPU stopped running ${lost.choice.label}: it ran out of memory or the driver reset the device. Echo is active again. Choose ${lost.choice.label} again to reload it. It needs about ${(lost.choice.memoryMB / 1000).toFixed(1)} GB of GPU memory, so on a GPU that shares memory with the system a smaller model is safer.`)
+        } else chat.add("error", failed.message)
+      },
+    })
+    if (!busy()) {
+      ctx.stat("time", `${((performance.now() - t0) / 1000).toFixed(1)}s`)
+      window.dispatchEvent(new CustomEvent("learn:done"))
+      chat.focus()
+    }
+    refresh()
+    void refreshInspector()
   }
 
   // ── models ──────────────────────────────────────────────────────────────
@@ -94,10 +190,11 @@ function boot(root: HTMLElement) {
     runtime.setModel(echo)
     setModelName(root, echoChoice.label)
     models.setActive(echoChoice.id)
+    await rebuild()
   }
 
   const chooseModel = async (choice: ModelChoice) => {
-    if (state.loading || state.running) return
+    if (state.loading || busy()) return
     state.loading = true
     refresh()
     models.note(choice.id, "")
@@ -119,6 +216,8 @@ function boot(root: HTMLElement) {
       setModelName(root, choice.label)
       models.setActive(choice.id)
       models.close()
+      // The model is part of the agent: the agent is built again over the same base, so the chat goes on.
+      if (state.built) await rebuild()
       if (chat.hasMessages()) chat.add("note", `Model: ${choice.label}`)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
@@ -138,33 +237,33 @@ function boot(root: HTMLElement) {
   }
 
   // ── code ────────────────────────────────────────────────────────────────
-  const showBuild = (result: Awaited<ReturnType<LessonRuntime["rebuild"]>>) => {
+  const showBuild = (result: BuildResult) => {
     buildBox.replaceChildren()
-    if (result.ok) {
+    if (result._tag === "Built") {
       buildBox.dataset.state = "ok"
-      const ids = result.plugins.map((id) => id.replace("@xandreed/", "")).join(", ")
-      buildBox.textContent = `Agent.define accepted: ${ids}.`
-      result.warnings.forEach((warning) => { buildBox.append(document.createElement("br"), `Note: ${warning}`) })
-      if (result.restarted) buildBox.append(document.createElement("br"), "The memory strategy changed, so the conversation started again.")
+      buildBox.textContent = "Built: the agent runs over the base. The conversation is kept."
     } else {
       buildBox.dataset.state = "error"
-      buildBox.textContent = `Agent.define refused this: ${result.message}`
+      buildBox.textContent = `The agent did not build: ${result.message}`
     }
   }
 
-  /** A setting changed while a turn was running: rebuild when it ends, rather than dropping it. */
-  let rebuildQueued = false
   const rebuild = async (): Promise<boolean> => {
-    if (state.running) { rebuildQueued = true; return false }
     const runtime = await ensureRuntime()
-    const result = await runtime.rebuild(editor.agentConfig(), editor.tinySource())
-    state.built = result.ok
+    if (runtime.busy) {
+      buildBox.dataset.state = "idle"
+      buildBox.textContent = "The agent is answering. It is built again once every queued message has its reply."
+    }
+    state.building = !runtime.busy
+    refresh()
+    const result = await runtime.rebuild(editor.agentSource(), editor.tinySource())
+    state.building = false
+    state.built = result._tag === "Built"
     showBuild(result)
-    if (result.ok && result.restarted) { chat.clear(); ctx.resetTurn(); inspector.clear() }
-    else if (result.ok && !keep.checked) await newConversation(false)
+    if (state.built && !keep.checked) await newConversation(false)
     refresh()
     syncControls()
-    return result.ok
+    return state.built
   }
   q("[data-rebuild]").addEventListener("click", () => void rebuild())
   const formatButton = q<HTMLButtonElement>("[data-format]")
@@ -182,7 +281,7 @@ function boot(root: HTMLElement) {
   }
   formatButton.addEventListener("click", () => void formatCode())
   q("[data-reset-code]").addEventListener("click", () => {
-    editor.setAgentConfig(DEFAULT_CONFIG)
+    editor.setAgentSource(DEFAULT_AGENT)
     editor.setTinySource(DEFAULT_TINY)
     void rebuild()
   })
@@ -192,7 +291,7 @@ function boot(root: HTMLElement) {
     clearTimeout(syntaxTimer)
     syntaxTimer = setTimeout(() => {
       try {
-        new Function(`return (${editor.file() === "agent" ? editor.agentConfig() : editor.tinySource()}\n)`)
+        new Function(`return (${editor.file() === "agent" ? editor.agentSource() : editor.tinySource()}\n)`)
         syntaxBox.textContent = ""
       } catch (error) {
         syntaxBox.textContent = error instanceof Error ? error.message : String(error)
@@ -200,7 +299,7 @@ function boot(root: HTMLElement) {
       syncControls()
     }, 350)
   }
-  root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showFile(tab.dataset.file as "agent" | "tiny")))
+  root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showFile(tab.dataset.file === "tiny" ? "tiny" : "agent")))
   const showFile = (file: "agent" | "tiny") => {
     editor.showFile(file)
     root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.file === file)))
@@ -208,93 +307,62 @@ function boot(root: HTMLElement) {
   }
 
   // ── chat ────────────────────────────────────────────────────────────────
-  /** Wipe the chat, the journal behind it and everything the context panes show of it. */
+  /** A new, empty session in the same base: the chat and the context panes start over. */
   const newConversation = async (announce = true) => {
-    await state.runtime?.reset()
+    await state.runtime?.clear()
+    bubbles.clear()
+    writing.clear()
     chat.clear()
     ctx.resetTurn()
     inspector.clear()
     if (announce) refresh()
   }
 
-  /** The window refused a request it cannot fit: say why, and give the two ways out. */
-  const explainBudget = (messageBudget: number) => {
-    // The framework counts the system prompt and tool schemas outside the message budget; the learner sees the whole figure.
-    const budget = readControls(editor.agentConfig()).budgetTokens ?? messageBudget
-    const item = chat.add("error", `The window could not fit this request in a ${budget}-token budget. Besides your message it carries the system prompt and a ledger note for every turn it dropped, and that note grows by one line per dropped turn (your message and the reply, each cut to 240 characters), so a very small budget works for a few turns and then stops. Your message is already in the journal, so sending again fails the same way until the budget goes up or the context is cleared.`)
+  const send = async (texts: ReadonlyArray<string>) => {
+    const runtime = state.runtime
+    if (!runtime || !state.built || !state.model || state.building) return
+    if (!runtime.busy) {
+      ctx.resetTurn()
+      t0 = performance.now()
+      window.dispatchEvent(new CustomEvent("learn:start"))
+    }
+    const sent = await runtime.send(texts)
+    refresh()
+    sent.forEach((entry) => { void entry.outcome.then((outcome) => settle(entry, outcome)) })
+  }
+
+  /** Stop: the running turn ends Interrupted, queued messages are dropped, and the agent is built again. */
+  const stop = async () => {
+    const runtime = state.runtime
+    if (!runtime) return
+    state.building = true
+    refresh()
+    const result = await runtime.stop()
+    state.building = false
+    state.built = result._tag === "Built"
+    showBuild(result)
+    refresh()
+  }
+
+  /** Memory refused a request it cannot fit: say why from its own figures, and offer the way out. */
+  const explainBudget = (outcome: Extract<SendOutcome, { _tag: "OverBudget" }>) => {
+    const item = chat.add("error", `This request does not fit the ${outcome.budgetTokens}-token budget. Memory always sends the system text and the message this turn answers, and leaves out only older messages; those two alone come to about ${outcome.estimatedTokens} tokens. Your message is in the journal, but no request was sent. Raise the budget, or shorten the system text, and send again.`)
     const actions = document.createElement("div")
     actions.className = "msg-actions"
-    const raised = Math.min(3000, Math.max(600, budget * 2))
+    const raised = Math.min(3000, Math.max(100, outcome.estimatedTokens * 2))
     const raise = document.createElement("button")
     raise.type = "button"
     raise.className = "btn btn-quiet"
     raise.textContent = `Raise budget to ${raised}`
     raise.addEventListener("click", async () => {
-      const next = setField(editor.agentConfig(), "budgetTokens", raised)
-      if (next === undefined) return
-      editor.setAgentConfig(next)
+      const next = setField(editor.agentSource(), "budgetTokens", raised)
+      if (Option.isNone(next)) return
+      editor.setAgentSource(next.value)
       await rebuild()
-      syncControls()
       actions.remove()
     })
-    const clear = document.createElement("button")
-    clear.type = "button"
-    clear.className = "btn btn-quiet"
-    clear.textContent = "Clear context"
-    clear.addEventListener("click", () => void newConversation())
-    actions.append(raise, clear)
+    actions.append(raise)
     item.append(actions)
-  }
-
-  let t0 = 0
-  const send = async (text: string) => {
-    const runtime = state.runtime
-    if (!runtime || state.running || !state.built || !state.model) return
-    chat.add("user", text)
-    const live = chat.add("agent", "")
-    live.dataset.live = ""
-    let reply = ""
-    ctx.resetTurn()
-    t0 = performance.now()
-    window.dispatchEvent(new CustomEvent("learn:start"))
-    state.running = true
-    refresh()
-    let steps = 0
-    try {
-      const result = await runtime.send(text, {
-        onEvent: (event) => {
-          const e = event as unknown as Record<string, unknown>
-          if (e._tag === "assistant.delta" && e.channel === "text") { reply += String(e.delta); chat.setReply(live, reply) }
-          if (e._tag === "step.started") { steps += 1; ctx.stat("steps", String(steps)) }
-          ctx.event(e, t0)
-          window.dispatchEvent(new CustomEvent("learn:event", { detail: event }))
-        },
-      })
-      live.removeAttribute("data-live")
-      if (result.outcome === "stopped") { if (!reply) live.remove(); chat.add("note", "Stopped.") }
-      else chat.setReply(live, result.text.length > 0 ? result.text : reply || "(the model sent no text)")
-      ctx.stat("steps", String(result.steps)); ctx.stat("in", String(result.inputTokens)); ctx.stat("out", String(result.outputTokens))
-      ctx.stat("time", `${((performance.now() - t0) / 1000).toFixed(1)}s`)
-      window.dispatchEvent(new CustomEvent("learn:done"))
-    } catch (error) {
-      live.remove()
-      const message = error instanceof Error ? error.message : String(error)
-      const budget = Number(/exceeds the (\d+)-token context budget/.exec(message)?.[1])
-      const lost = state.model
-      if (Number.isFinite(budget)) explainBudget(budget)
-      else if (lost?.choice.kind === "webllm" && /device was lost|mapAsync|GPUBuffer|Model not loaded before/i.test(message)) {
-        // After a lost device every later request fails the same way: drop the engine and say what to do.
-        await Promise.resolve(lost.dispose()).catch(() => undefined)
-        await fallBackToEcho()
-        chat.add("error", `The GPU stopped running ${lost.choice.label}: it ran out of memory or the driver reset the device. Echo is active again. Choose ${lost.choice.label} again to reload it. It needs about ${(lost.choice.memoryMB / 1000).toFixed(1)} GB of GPU memory, so on a GPU that shares memory with the system a smaller model is safer.`)
-      } else chat.add("error", message)
-    } finally {
-      state.running = false
-      refresh()
-      chat.focus()
-      void refreshInspector()
-      if (rebuildQueued) { rebuildQueued = false; void rebuild() }
-    }
   }
 
   // ── panes: maximise, focus ──────────────────────────────────────────────
@@ -304,7 +372,7 @@ function boot(root: HTMLElement) {
     if (grid.dataset.max === pane) { delete grid.dataset.max; button.textContent = "⤢" } else { grid.dataset.max = pane; button.textContent = "⤡" }
   }))
 
-  const ALL_SECTIONS: ReadonlyArray<Section> = ["imports", "session", "define"]
+  const ALL_SECTIONS: ReadonlyArray<Section> = ["imports", "base", "run"]
   type Focus = { pane?: string | undefined; file?: string | undefined; unfold?: string | undefined; view?: string | undefined; wide?: string | undefined }
   const applyFocus = (detail: Focus) => {
     ctx.showView(detail.view ?? "inspector")
@@ -318,17 +386,19 @@ function boot(root: HTMLElement) {
   const active = document.querySelector<HTMLElement>("[data-step][data-active]")
   if (active) applyFocus({ pane: active.dataset.focus, file: active.dataset.file, unfold: active.dataset.unfold, view: active.dataset.view, wide: active.dataset.wide })
 
-  // ── lesson controls (settings step) and experiments ─────────────────────
+  // ── lesson controls and experiments ─────────────────────────────────────
   const controlEls = [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[data-control]")]
+  const keyOf = (control: HTMLElement): ControlKey | undefined => {
+    const key = control.dataset.control
+    return key === "system" || key === "budgetTokens" || key === "memory" ? key : undefined
+  }
   function syncControls() {
-    const values = readControls(editor.agentConfig())
+    const values = readControls(editor.agentSource())
     controlEls.forEach((control) => {
-      const key = control.dataset.control as ControlKey
-      const value = values[key]
+      const key = keyOf(control)
+      const value = key === undefined ? undefined : values[key]
       control.disabled = value === undefined
-      if (value === undefined) return
-      if (control instanceof HTMLInputElement && control.type === "checkbox") control.checked = Boolean(value)
-      else if (document.activeElement !== control) control.value = String(value)
+      if (value !== undefined && document.activeElement !== control) control.value = String(value)
     })
     // The inspector's budget readout follows the code, not the other way round.
     if (values.budgetTokens !== undefined) document.querySelectorAll<HTMLElement>("[data-insp-budget]").forEach((out) => { out.textContent = String(values.budgetTokens) })
@@ -336,40 +406,43 @@ function boot(root: HTMLElement) {
   }
   let pending: ReturnType<typeof setTimeout> | undefined
   controlEls.forEach((control) => control.addEventListener("input", () => {
-    const key = control.dataset.control as ControlKey
-    const raw = control instanceof HTMLInputElement && control.type === "checkbox" ? control.checked : key === "system" ? control.value : Number(control.value)
+    const key = keyOf(control)
+    if (key === undefined) return
+    const raw = key === "budgetTokens" ? Number(control.value) : control.value
     if (typeof raw === "number" && !Number.isFinite(raw)) return
-    const next = setField(editor.agentConfig(), key, raw)
-    if (next === undefined) return
-    editor.setAgentConfig(next)
-    clearTimeout(pending)
-    pending = setTimeout(() => void rebuild(), 400)
+    Option.match(setField(editor.agentSource(), key, raw), {
+      onNone: () => {},
+      onSome: (next) => {
+        editor.setAgentSource(next)
+        clearTimeout(pending)
+        pending = setTimeout(() => void rebuild(), 400)
+      },
+    })
   }))
 
-  const experiments: Record<string, () => string> = {
-    pirate: () => setField(editor.agentConfig(), "system", "You are a pirate. Answer in at most two short sentences, and always say arr.") ?? editor.agentConfig(),
-    "tiny-swap": () => editor.agentConfig().replace(/memoryWindowPlugin,|tinyMemory\(\d+\),/, "tinyMemory(2),"),
-    "window-swap": () => editor.agentConfig().replace(/tinyMemory\(\d+\),/, "memoryWindowPlugin,"),
-    "stream-off": () => setField(editor.agentConfig(), "streaming", false) ?? editor.agentConfig(),
-    "break-memory": () => editor.agentConfig().replace(/\n\s*memoryWindowPlugin,[^\n]*/, ""),
-    "tiny-budget": () => setField(editor.agentConfig(), "budgetTokens", 5) ?? editor.agentConfig(),
+  const experiments: Record<string, () => Option.Option<string>> = {
+    pirate: () => setField(editor.agentSource(), "system", "You are a pirate. Answer in at most two short sentences, and always say arr."),
+    "no-memory": () => withoutMemory(editor.agentSource()),
+    "tiny-budget": () => setField(editor.agentSource(), "budgetTokens", 5),
+    "swap-memory": () => setField(editor.agentSource(), "memory", readControls(editor.agentSource()).memory === "last" ? "window" : "last"),
+    "last-memory": () => setField(editor.agentSource(), "memory", "last"),
+    "window-memory": () => setField(editor.agentSource(), "memory", "window"),
   }
   document.querySelectorAll<HTMLElement>("[data-exp]").forEach((button) => button.addEventListener("click", async () => {
-    const make = experiments[button.dataset.exp!]
+    const make = experiments[button.dataset.exp ?? ""]
     if (!make) return
-    editor.setAgentConfig(make())
+    const next = make()
+    if (Option.isNone(next)) {
+      buildBox.dataset.state = "error"
+      buildBox.textContent = "This experiment could not find its line in your code. Press Reset in the Code pane to bring it back."
+      return
+    }
+    editor.setAgentSource(next.value)
     await rebuild()
-    if (button.dataset.exp === "stream-off") chat.add("note", "Streaming is off: send a message and compare the events below.")
   }))
 
-  // "Send 5 short messages": builds up a conversation to look at in the context pane.
-  const FILL = ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"]
-  document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true
-    try {
-      for (const text of FILL) { if (!state.built || !state.model) break; await send(text) }
-    } finally { button.disabled = false }
-  }))
+  // "Send 5 short messages": queued at once through the inbox, to build up a conversation to look at.
+  document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => void send(FILL)))
 
   // ── start ───────────────────────────────────────────────────────────────
   // Echo and the agent come up at once; the device probe (a GPU lookup that can

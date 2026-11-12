@@ -1,6 +1,6 @@
 ---
 title: Your first agent
-description: Build a conversational agent from Efferent's plugins, watch its loop and its memory, then write a memory plugin yourself.
+description: Build a conversational agent from small layers over Efferent's kernel, watch its loop and its memory, then write a memory yourself.
 minutes: 25
 ---
 
@@ -10,11 +10,11 @@ import Experiments from '../../components/learn/Experiments.astro'
 
 <Step n={1} id="build" title="What you will build" focus="code">
 
-An Efferent agent is not one big class. It is a handful of **plugins**, each with one job, that `Agent.define` checks and joins into one agent.
+An Efferent agent is not one big class. It is a stack of small parts, each an Effect `Layer` with one job.
 
-Yours needs three: one to **remember** the conversation, one to **find tools** (none yet, but the loop expects a registry), and the **loop** that asks the model for an answer.
+At the bottom is a small **kernel**: events, a journal that records the conversation, and sessions. On top you put the parts of an agent: an **inbox** that queues your messages, the **loop** that asks the model, a **memory** that decides what the model is sent, and the **system text**.
 
-Everything here is the real framework running in your browser. The code on the right is the whole agent: three plugins and one `Agent.define` call.
+Everything here runs in your browser. The code on the right is the whole program.
 
 </Step>
 
@@ -31,65 +31,76 @@ For real answers use a model on your own machine; nothing you type leaves your b
 
 <Step n={3} id="code" title="The agent in a few lines" focus="code">
 
-The **Code** pane is the whole program. The grey chips (imports, session, run a turn) are read-only; click one to open it.
+The **Code** pane is the whole program. The grey chips (imports, the base, run) are read-only; click one to open it.
 
-You edit the object passed to `Agent.define`:
+The **base** is built once: the kernel's events, a journal kept in memory, and sessions. The conversation lives there.
 
-- **`system`**: instructions the model sees on every request.
-- **`plugins`**: what the agent is made of; `{ plugin, options }` configures one.
-- **`limits`**: `maxSteps` model calls per run; `streaming` shows the reply as it arrives.
-- **`budgetTokens`**: how much context memory may send per request.
+You edit the **agent**, the layers above the base:
 
-Press **Rebuild** (Ctrl/Cmd + Enter) to see what `Agent.define` accepted, or why it refused.
+- **`inbox`**: queues each message and answers them in order, one turn each.
+- **`stepLoop`**: the loop. It stores your message, asks memory for a request, calls the model and stores the answer.
+- **`windowMemory({ budgetTokens })`**: decides what each request sends, within a budget of tokens.
+- **`settings({ system })`**: the system text the loop and memory read.
+
+Each part says in its type what it needs. `Layer.provideMerge` puts a part under the one above it, so the stack reads from the top down and is built from the bottom up.
+
+Press **Rebuild** (Ctrl/Cmd + Enter). The page closes the old agent and builds yours over the same base, or says why it could not.
 
 </Step>
 
 <Step n={4} id="chat" title="Talk to it" focus="chat">
 
-Say something in the **Chat** pane, then ask **"What did I just say?"**. The second turn can answer because the memory plugin gives the model the first one.
+Say something in the **Chat** pane, then ask **"What did I just say?"**. The second turn can answer because memory sends the model the first one.
 
-A turn is one message in and one reply out: `agent.turn` runs the loop until the model has answered. **Stop** interrupts a reply.
+Messages go through the inbox. Press **Send three at once**: all three are queued before the first is answered. Each gets a ticket, then a turn of its own, in order, and each turn sees the turns before it.
 
-**Clear context** wipes the chat and the conversation behind it. A rebuild keeps the conversation unless you untick **Keep chat on rebuild**.
+**Stop** ends the turn that is running and drops the messages still waiting. The page then builds the agent again.
+
+**Clear context** starts a new, empty session. A rebuild keeps the conversation, because it lives in the base. Untick **Keep chat on rebuild** to start a new one on every rebuild.
 
 </Step>
 
 <Step n={5} id="loop" title="The loop, step by step" focus="context" view="loop">
 
-Send a message and watch the **Loop** view: each highlight is a real event.
+Send a message and watch the **Loop** view. Each row is a kernel event the page heard on `Core`; the pieces of one answer share a row.
 
-1. Memory **builds the context** (`context.built`).
-2. The loop **calls the model** (`assistant.delta`).
-3. It **records the answer** (`assistant.message`, `step.ended`).
-4. It **decides whether to go again** (`completion.evaluated`). A reply with no tool calls ends the run.
+1. The inbox **queues** your message (`plugin.inbox.queued`).
+2. A **turn** opens (`core.session.turn.started`), and the loop stores your message (`plugin.loop.user.message`).
+3. Memory **builds the request**, and the loop stores it before the call (`plugin.loop.request.sent`). Its messages are pointers into the journal, not copies.
+4. The model **answers** piece by piece (`plugin.loop.assistant.delta`), and the loop stores the whole answer (`plugin.loop.assistant.message`).
+5. The turn **closes** (`core.session.turn.ended`), with how it ended.
 
-With tools, a step can end with "run this tool" and the loop goes around again. That is lesson 2.
+With tools, the loop would go around again after step 4. That is lesson 2.
 
 </Step>
 
-<Step n={6} id="context" title="Context: the journal and the memory window" focus="context" view="inspector" unfold="session" wide="true">
+<Step n={6} id="context" title="Context: the journal and memory" focus="context" view="inspector" unfold="base" wide="true">
 
-Every message goes into the **journal**: an append-only record that is never edited. The **memory window** plugin then decides which of it the model sees on each request. The session setup in the Code pane is where the journal lives.
+Every message goes into the **journal**: an append-only record that is never edited. **Memory** then decides which of it the model sees on each request. The base in the Code pane is where the journal lives.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-fill>Send 5 short messages</button></p>
 
-Then drag **Budget** down to about 350 and **send another message**: the budget applies to the next request. Older turns leave the **stack** and become a ledger note; the **journal** keeps them.
+They are queued at once and answered in order. With Echo, each turn costs about 24 tokens and the system text 12, so five turns fit easily in 3000.
 
-The green bar marks what matches the previous request: all a provider's prompt cache could reuse. It shrinks when older turns are rewritten.
+Then drag **Budget** down to about 80 and **send another message**: the budget applies to the next request. Whole turns leave the **stack**, oldest first, until the request fits. The **journal** keeps them, and the window records what it dropped (`plugin.window.dropped`). A turn once dropped stays dropped.
 
-Too low and the window refuses: the system prompt, the ledger note and your current message must all fit, and the ledger grows with every dropped turn. The chat then offers to raise the budget or clear the context. Each dropped turn costs up to 480 characters in the ledger (`ledgerTurnChars`, 240 per message and reply, is an option of `memoryWindowPlugin`), so a real model's long replies reach the limit sooner than Echo's short ones.
+The green bar marks what matches the previous request: all a provider's prompt cache could reuse. While nothing is dropped, each request starts with the one before it, so the bar grows. The request that drops turns starts elsewhere: only the system text matches the one before it.
+
+Too low and memory refuses. It always sends the system text and the message the turn answers, and drops only older turns. If those two alone are over the budget, the turn fails with `OverBudget` and no request is sent. The chat says so and offers to raise the budget. A real model's longer replies fill the budget sooner than Echo's short ones.
 
 </Step>
 
-<Step n={7} id="tiny" title="Write a memory plugin" focus="code" file="tiny" view="inspector">
+<Step n={7} id="tiny" title="Write a memory" focus="code" file="tiny" view="inspector">
 
-A memory strategy is just a plugin that provides `ConversationMemory`. The **tiny-memory.ts** file is a complete one in about 60 lines (the **Format** button tidies whatever you change): it keeps the last *n* turns and replaces older ones with a ledger note.
+A memory is a layer that provides `Memory`. Its one function, `build`, reads the journal and returns pointers to the messages to send, with an estimate and the budget. The **tiny-memory.ts** file is a whole one in under 50 lines (the **Format** button tidies whatever you change): `lastMessages` sends the last *n* messages, fewer if they do not fit the budget.
 
-<p class="learn-try"><button class="btn btn-primary" type="button" data-exp="tiny-swap">Swap in tinyMemory(2)</button> <button class="btn" type="button" data-exp="window-swap">Swap the window back</button></p>
+<p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-memory">Swap in lastMessages</button> <button class="btn" type="button" data-exp="window-memory">Swap the window back</button></p>
 
-Swapping starts a new conversation here, so you compare both strategies from the same starting point. Send five messages and compare the stack with the window's. Unlike the window, this plugin never looks at the budget: it keeps a fixed number of turns, even if that goes over.
+The swap sets `n: 1`: the model sees only your newest message. Ask "What did I just say?" and Echo has nothing earlier to recall. The journal still holds everything, so with the window back the next request sends the conversation again, within its budget.
 
-Edit the plugin (try `ledgerOf(entries, dropThrough, 10)`) and rebuild. Use ⤢ on the Context pane for the full picture.
+Change `n` to 3 in agent.ts and rebuild: the model sees the last three messages, yours and its answers.
+
+The kit that checks the stock memory checks yours too (`memoryConformance`). It passes every check but one: `prefix`. While nothing presses, a request should start with the one before it, so a provider can reuse its cache. A sliding memory moves the start of every request, so nothing after the system text can be reused. The green bar shows it. Use ⤢ on the Context pane for the full picture.
 
 </Step>
 
@@ -99,8 +110,8 @@ Edit the plugin (try `ledgerOf(entries, dropThrough, 10)`) and rebuild. Use ⤢ 
 
 <Experiments />
 
-After the last two, press **Reset** in the Code pane.
+After breaking it, press **Reset** in the Code pane.
 
-**Next:** tools. The loop gets interesting once the model can ask for something and use the answer. For the plugins you used, see the [step loop](/docs/plugins/agent-loop-steps/), [memory window](/docs/plugins/memory-window/) and [tool discovery](/docs/plugins/tool-discovery/) guides.
+**Next:** tools. The loop gets interesting once the model can ask for something and use the answer. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
 
 </Step>

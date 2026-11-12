@@ -8,7 +8,7 @@ const STYLE = { parser: "babel", semi: false, singleQuote: false, printWidth: 10
 
 /**
  * Format `text`, which is not a whole file: `prefix` is the code that
- * precedes it (`const config = `), so Prettier sees a valid program, and is
+ * precedes it (`const Agent = `), so Prettier sees a valid program, and is
  * cut off again afterwards. A syntax error comes back as a message.
  */
 export const formatRegion = async (text: string, prefix: string): Promise<Formatted> => {

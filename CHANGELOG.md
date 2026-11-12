@@ -153,6 +153,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   of a stack of layers on the scripted model, two messages queued with the
   inbox, and a consumer's own contract composed as a layer
   (`scripts/kernel-consumer.fixture.mjs`).
+- Docs site: Lesson 1, "Your first agent", runs on the kernel. The code
+  pane shows one program: the base (`sessions()` over `inProcessJournal()`
+  and `kernel()`), built once in the page, the agent the learner edits
+  (`inbox` over `stepLoop`, a memory and `settings({ system })`), built
+  again over the same base on every rebuild so the conversation stays, and
+  the run, which listens with `core.on` and queues messages with the inbox.
+  A test compiles, type-checks and runs that exact text on the scripted
+  model. The chat can send three messages at once and draws each queued
+  message from `plugin.inbox.queued`; Stop ends the running turn as
+  `Interrupted`. The context pane is read from the journal alone
+  (`requestsOf`), so it draws any memory; the Loop view lists the kernel's
+  events. The last step's memory is `lastMessages({ n, budgetTokens })`,
+  which the memory kit passes on every check but `prefix`, and the lesson
+  says why. The controls are the system text, the budget and a memory
+  picker. The page's Node module stand-ins are gone: nothing it runs
+  imports one. No published package changes.
 
 ## 0.22.0 — 2026-11-12
 

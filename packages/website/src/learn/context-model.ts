@@ -1,48 +1,39 @@
-// What the context inspector draws, worked out from three things and nothing else:
-//   - the journal (every event the session recorded, in order),
-//   - the context report (one row per model request: tokens by layer),
-//   - the requests the model was actually sent (captured per turn, run and step).
-// Pure: no DOM, no framework services, so it is tested on its own.
-import { Option } from "effect"
-import type { CapturedMessage, CapturedRequest } from "./capture.ts"
+// What the context inspector draws, worked out from the session's journal
+// and nothing else: every request the session sent is in it
+// (`plugin.loop.request.sent`, its messages as pointers), and `requestsOf`
+// turns the pointers back into exactly what the model was sent. So it works
+// for any memory. Pure: no DOM, no services, tested on its own.
+import { Option, Result } from "effect"
+import { dataOf, messageOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
+import { estimateTokens, requestsOf, userMessageEvent } from "@xandreed/sdk/kernel"
+import type { InspectedRequest, RequestRefused } from "@xandreed/sdk/kernel"
 
-/** The slice of a journal event this model reads. */
-export interface JournalEvent {
+/** A record of the journal, with the turn it belongs to. */
+export interface JournalRecord {
   readonly seq: number
-  readonly kind: string
+  readonly name: string
   readonly turn: Option.Option<number>
   readonly data: unknown
+  readonly message: Option.Option<string>
 }
 
-/** The slice of a context-report row this model reads. */
-export interface ReportRow {
-  readonly seq: number
-  readonly turn: number
-  readonly run: number
-  readonly step: number
-  readonly system: { readonly tokens: number }
-  readonly tools: { readonly tokens: number }
-  readonly built: Option.Option<{ readonly estimatedTokens: number; readonly reservedTokens: number; readonly budgetTokens: number; readonly compactions: number }>
-}
-
+/** A message the journal holds. */
 export interface JournalEntry {
-  /** The journal sequence number of the event that holds it. */
   readonly seq: number
   readonly turn: number
   readonly role: "you" | "agent"
   readonly text: string
-  /** ~3 characters a token: the framework's own estimate. */
+  /** The kernel's estimate: a quarter of the characters, rounded up. */
   readonly tokens: number
 }
 
-export interface Drop {
-  readonly seq: number
-  readonly throughTurn: number
-}
+export type LayerKind = "system" | "past" | "current"
 
-export type Layer = {
-  readonly kind: "system" | "ledger" | "past" | "current"
-  readonly role: string
+/** One part of a request, in the order the model was sent it. */
+export interface StackLayer {
+  readonly kind: LayerKind
+  readonly role: "system" | "user" | "assistant"
   readonly text: string
   readonly tokens: number
   /** The same as in the previous request, up to here: a provider's prompt cache could reuse it. */
@@ -54,8 +45,8 @@ export type EntryStatus = "current" | "shown" | "dropped" | "reply"
 export interface EntryView {
   readonly entry: JournalEntry
   readonly status: EntryStatus
-  /** Its own turn failed before a request was made. A later request still carries the message as history. */
-  readonly turnFailed: boolean
+  /** How the entry's turn ended, when it did not complete. */
+  readonly ended: Option.Option<"Failed" | "Interrupted">
 }
 
 export interface RequestView {
@@ -63,157 +54,115 @@ export interface RequestView {
   readonly turn: number
   readonly step: number
   readonly seq: number
-  /** Absent when the request was not captured (it could not be shown). */
-  readonly layers: ReadonlyArray<Layer>
+  readonly layers: ReadonlyArray<StackLayer>
   readonly entries: ReadonlyArray<EntryView>
   /** What the model answered to this request: output, so it is not part of the request's own tokens. */
   readonly reply: Option.Option<JournalEntry>
-  readonly messageTokens: number
-  readonly reservedTokens: number
-  readonly usedTokens: number
+  readonly estimatedTokens: number
   readonly budgetTokens: number
   readonly over: boolean
-  readonly compactions: number
-  /** Against the previous request; absent for the first. */
+  /** Against the previous request; none for the first. */
   readonly prefix: Option.Option<{ readonly layers: number; readonly tokens: number; readonly of: number }>
 }
 
+/** The last turn, as the Loop view's figures show it. */
+export interface TurnStats {
+  readonly turn: number
+  /** Model requests the turn sent (`plugin.loop.request.sent`). */
+  readonly steps: number
+  /** Memory's estimate of the turn's last request. */
+  readonly sentTokens: number
+  /** The kernel's estimate of what the model answered. */
+  readonly answeredTokens: number
+}
+
 export interface InspectorModel {
+  readonly records: ReadonlyArray<JournalRecord>
   readonly journal: ReadonlyArray<JournalEntry>
-  readonly drops: ReadonlyArray<Drop>
   readonly requests: ReadonlyArray<RequestView>
+  readonly last: Option.Option<TurnStats>
 }
 
-const estimate = (text: string): number => Math.ceil(text.length / 3)
-
-const textOfContent = (content: unknown): string => {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  return content.flatMap((part: { type?: string; text?: string }) => (part.type === "text" && typeof part.text === "string" ? [part.text] : [])).join("")
+/** Each record's turn: the one the last `core.session.turn.started` before it opened. */
+export const recordsOf = (events: ReadonlyArray<StoredEvent>): ReadonlyArray<JournalRecord> => {
+  let turn = Option.none<number>()
+  return events.map((event) => {
+    turn = Option.match(dataOf(turnStartedEvent, event), { onNone: () => turn, onSome: (started) => Option.some<number>(started.turn) })
+    return { seq: event.seq, name: event.name, turn, data: event.data, message: Option.map(messageOf(event), (message) => message.text) }
+  })
 }
 
-const dataOf = (event: JournalEvent): Record<string, unknown> =>
-  typeof event.data === "object" && event.data !== null ? (event.data as Record<string, unknown>) : {}
+/** How each turn ended, by its number. */
+const outcomesOf = (events: ReadonlyArray<StoredEvent>): ReadonlyMap<number, TurnOutcome> =>
+  new Map(events.flatMap((event) => Option.toArray(Option.map(dataOf(turnEndedEvent, event), (ended) => [ended.turn as number, ended.outcome] as const))))
 
-/** Split `total` over `weights` so the parts sum to it exactly (largest remainder). */
-export const allocate = (total: number, weights: ReadonlyArray<number>): ReadonlyArray<number> => {
-  const sum = weights.reduce((a, b) => a + b, 0)
-  if (weights.length === 0) return []
-  if (sum === 0) return weights.map(() => 0)
-  const exact = weights.map((w) => (w / sum) * total)
-  const parts = exact.map(Math.floor)
-  let left = total - parts.reduce((a, b) => a + b, 0)
-  const order = exact.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest)
-  for (const { index } of order) {
-    if (left <= 0) break
-    parts[index] = (parts[index] ?? 0) + 1
-    left -= 1
-  }
-  return parts
-}
+const roleOf = (tag: "User" | "Assistant") => tag === "User" ? "user" as const : "assistant" as const
 
-/** Journal entries (what was said) and drops (what the window forgot), in journal order. */
-export const journalOf = (events: ReadonlyArray<JournalEvent>): { entries: ReadonlyArray<JournalEntry>; drops: ReadonlyArray<Drop> } => {
-  const entries: JournalEntry[] = []
-  const drops: Drop[] = []
-  for (const event of events) {
-    const data = dataOf(event)
-    const turn = Option.getOrElse(event.turn, () => 0)
-    if (event.kind === "turn.started") {
-      const text = String((data.userMessage as { text?: unknown } | undefined)?.text ?? "")
-      entries.push({ seq: event.seq, turn, role: "you", text, tokens: estimate(text) })
-    } else if (event.kind === "memory.message") {
-      const message = (data.body as { message?: { role?: string; content?: unknown } } | undefined)?.message
-      if (message?.role === "assistant") {
-        const text = textOfContent(message.content)
-        entries.push({ seq: event.seq, turn, role: "agent", text, tokens: estimate(text) })
-      }
-    } else if (event.kind === "memory.compaction") {
-      const action = (data.body as { action?: { _tag?: string; throughTurn?: number } } | undefined)?.action
-      if (action?._tag === "DropTurns" && typeof action.throughTurn === "number") drops.push({ seq: event.seq, throughTurn: action.throughTurn })
-    }
-  }
-  return { entries, drops }
-}
-
-const sameMessage = (a: CapturedMessage, b: CapturedMessage): boolean => a.role === b.role && a.text === b.text
-
-/** How many leading messages two requests share, never past the volatile tail and only when the tools match. */
-const sharedMessages = (previous: CapturedRequest, current: CapturedRequest): number => {
-  if (previous.tools.join("|") !== current.tools.join("|")) return 0
+/** How many leading pointers two requests share. */
+const sharedPrefix = (previous: InspectedRequest, current: InspectedRequest): number => {
   let shared = 0
-  while (shared < previous.messages.length && shared < current.messages.length) {
-    const a = previous.messages[shared]!
-    const b = current.messages[shared]!
-    if (!sameMessage(a, b) || a.volatile || b.volatile) break
-    shared += 1
-  }
+  while (shared < previous.messages.length && shared < current.messages.length && previous.messages[shared]?.seq === current.messages[shared]?.seq) shared += 1
   return shared
 }
 
-const isLedger = (message: CapturedMessage): boolean => message.role === "user" && message.text.startsWith("[Host note:")
+/**
+ * The inspector's model of a session's journal. A stored request that
+ * points at no message, or at one stored after it, refuses the journal:
+ * the refusal comes back as it is, for the pane to show.
+ */
+export const inspectorOf = (events: ReadonlyArray<StoredEvent>): Result.Result<InspectorModel, RequestRefused> => Result.map(requestsOf(events), (sent) => {
+  const records = recordsOf(events)
+  const outcomes = outcomesOf(events)
+  const turnAt = new Map(records.map((record) => [record.seq, Option.getOrElse(record.turn, () => 0)] as const))
+  const journal: ReadonlyArray<JournalEntry> = events.flatMap((event) => Option.toArray(Option.map(messageOf(event), (message): JournalEntry => ({
+    seq: event.seq, turn: turnAt.get(event.seq) ?? 0, role: message._tag === "User" ? "you" : "agent", text: message.text, tokens: estimateTokens(message.text),
+  }))))
+  // The message each turn answers: its `plugin.loop.user.message`.
+  const asked = new Map(events.filter((event) => event.name === userMessageEvent.name).map((event) => [turnAt.get(event.seq) ?? 0, event.seq as number] as const))
+  const endedOf = (turn: number): EntryView["ended"] => Option.flatMap(Option.fromNullishOr(outcomes.get(turn)), (outcome) =>
+    outcome._tag === "Completed" ? Option.none() : Option.some(outcome._tag))
 
-export const inspectorOf = (input: {
-  readonly events: ReadonlyArray<JournalEvent>
-  readonly rows: ReadonlyArray<ReportRow>
-  readonly captures: ReadonlyMap<string, CapturedRequest>
-}): InspectorModel => {
-  const { entries, drops } = journalOf(input.events)
-  const rows = [...input.rows].sort((a, b) => a.seq - b.seq)
-  const sentTurns = new Set(rows.map((row) => row.turn))
-
-  const requests: RequestView[] = []
-  rows.forEach((row, index) => {
-    const captured = input.captures.get(`${row.turn}:${row.run}:${row.step}`)
-    const built = Option.getOrUndefined(row.built)
-    const reserved = built?.reservedTokens ?? row.system.tokens + row.tools.tokens
-    const messages = captured?.messages ?? []
-    const body = messages.filter((m, i) => !(i === 0 && m.role === "system"))
-    const messageTokens = built?.estimatedTokens ?? body.reduce((sum, m) => sum + estimate(m.text), 0)
-    const tokens = allocate(messageTokens, body.map((m) => m.text.length + 8))
-
-    const first = messages[0]
-    const layers: Layer[] = []
-    if (first?.role === "system") layers.push({ kind: "system", role: "system", text: first.text, tokens: row.system.tokens, reusable: false })
-    body.forEach((message, i) => {
-      const isLast = i === body.length - 1
-      layers.push({
-        kind: isLedger(message) ? "ledger" : isLast && message.role === "user" ? "current" : "past",
-        role: message.role, text: message.text, tokens: tokens[i] ?? 0, reusable: false,
-      })
-    })
-
-    // The reusable prefix: the leading layers identical to the previous request's.
-    const previous = index > 0 ? input.captures.get(`${rows[index - 1]!.turn}:${rows[index - 1]!.run}:${rows[index - 1]!.step}`) : undefined
-    const shared = captured && previous ? sharedMessages(previous, captured) : 0
-    const marked = layers.map((layer, i) => ({ ...layer, reusable: i < shared }))
-    const prefixTokens = marked.filter((layer) => layer.reusable).reduce((sum, layer) => sum + layer.tokens, 0)
-    const total = marked.reduce((sum, layer) => sum + layer.tokens, 0)
-
-    const entryViews: EntryView[] = entries
-      .filter((entry) => entry.seq < row.seq)
-      .map((entry): EntryView => {
-        const turnFailed = !sentTurns.has(entry.turn)
-        if (entry.turn === row.turn && entry.role === "you") return { entry, status: "current", turnFailed }
-        const dropped = drops.some((drop) => drop.seq < row.seq && drop.throughTurn >= entry.turn)
-        return { entry, status: dropped ? "dropped" : "shown", turnFailed }
-      })
-
-    // The first agent message the journal got after this request and before the next one.
-    const until = rows[index + 1]?.seq ?? Number.POSITIVE_INFINITY
-    const reply = entries.find((entry) => entry.role === "agent" && entry.turn === row.turn && entry.seq > row.seq && entry.seq < until)
-
-    requests.push({
-      index, turn: row.turn, step: row.step, seq: row.seq,
-      layers: marked,
-      entries: reply ? [...entryViews, { entry: reply, status: "reply", turnFailed: false }] : entryViews,
+  const requests = sent.map((request, index): RequestView => {
+    const turn = turnAt.get(request.seq) ?? 0
+    const current = asked.get(turn)
+    const previous = Option.fromNullishOr(index > 0 ? sent[index - 1] : undefined)
+    // A changed system text starts a new prefix: nothing after it can be reused either.
+    const shared = Option.map(previous, (before) => before.system === request.system ? 1 + sharedPrefix(before, request) : 0)
+    const layers = [
+      { kind: "system" as const, role: "system" as const, text: request.system },
+      ...request.messages.map(({ seq, message }) => ({ kind: seq === current ? "current" as const : "past" as const, role: roleOf(message._tag), text: message.text })),
+    ].map((layer, at): StackLayer => ({ ...layer, tokens: estimateTokens(layer.text), reusable: Option.exists(shared, (count) => at < count) }))
+    const pointed = new Set<number>(request.messages.map((message) => message.seq))
+    const until = sent[index + 1]?.seq ?? Number.POSITIVE_INFINITY
+    const reply = journal.find((entry) => entry.role === "agent" && entry.turn === turn && entry.seq > request.seq && entry.seq < until)
+    const before = journal.filter((entry) => entry.seq < request.seq).map((entry): EntryView => ({
+      entry,
+      status: entry.seq === current ? "current" : pointed.has(entry.seq) ? "shown" : "dropped",
+      ended: endedOf(entry.turn),
+    }))
+    const total = layers.reduce((sum, layer) => sum + layer.tokens, 0)
+    return {
+      index, turn, step: request.step, seq: request.seq, layers,
+      entries: reply === undefined ? before : [...before, { entry: reply, status: "reply", ended: Option.none() }],
       reply: Option.fromNullishOr(reply),
-      messageTokens, reservedTokens: reserved, usedTokens: messageTokens + reserved,
-      budgetTokens: built?.budgetTokens ?? 0,
-      over: built !== undefined && messageTokens + reserved > built.budgetTokens,
-      compactions: built?.compactions ?? 0,
-      prefix: captured && previous ? Option.some({ layers: shared, tokens: prefixTokens, of: total }) : Option.none(),
-    })
+      estimatedTokens: request.estimatedTokens, budgetTokens: request.budgetTokens, over: request.estimatedTokens > request.budgetTokens,
+      prefix: Option.map(shared, (count) => ({
+        layers: count,
+        tokens: layers.filter((layer) => layer.reusable).reduce((sum, layer) => sum + layer.tokens, 0),
+        of: total,
+      })),
+    }
   })
-  return { journal: entries, drops, requests }
-}
+
+  const lastTurn = Option.flatMap(Option.fromNullishOr(records.at(-1)), (record) => record.turn)
+  const last = Option.map(lastTurn, (turn): TurnStats => {
+    const ofTurn = requests.filter((request) => request.turn === turn)
+    return {
+      turn,
+      steps: ofTurn.length,
+      sentTokens: ofTurn.at(-1)?.estimatedTokens ?? 0,
+      answeredTokens: journal.filter((entry) => entry.turn === turn && entry.role === "agent").reduce((sum, entry) => sum + entry.tokens, 0),
+    }
+  })
+  return { records, journal, requests, last }
+})

@@ -1,10 +1,10 @@
 ---
-// Step 7: each button rewrites the config and rebuilds (see learn/playground.ts, `data-exp`).
+// Step 8: each button rewrites the agent's code and rebuilds (see learn/playground.ts, `data-exp`).
 const experiments = [
-  { id: "pirate", title: "Change the personality", button: "Make it a pirate", text: "Only the system prompt changes. Echo ignores it; try a real model, and see the new prompt at the top of the stack." },
-  { id: "stream-off", title: "Turn streaming off", button: "Turn streaming off", text: "Send a message and watch the Loop view: the assistant.delta events are gone and the reply arrives whole." },
-  { id: "break-memory", title: "Break it on purpose", button: "Remove memoryWindowPlugin", text: "Agent.define checks that the plugins fit together, so it refuses and names what is missing." },
-  { id: "tiny-budget", title: "Starve the budget", button: "Set the budget to 5", text: "The message alone does not fit, so the turn fails with a refusal, not a crash." },
+  { id: "pirate", title: "Change the personality", button: "Make it a pirate", text: "Only the system text changes. Echo ignores it; try a real model. The stack shows the new text at the top, and nothing of the request can be reused from the one before." },
+  { id: "no-memory", title: "Break it on purpose", button: "Remove the memory line", text: "The loop needs a Memory, and now nothing provides one. The stack does not build, and the Code pane says what is missing." },
+  { id: "tiny-budget", title: "Starve the budget", button: "Set the budget to 5", text: "The system text alone is over 5 tokens. The turn fails with memory's own error, OverBudget, and the chat offers to raise the budget." },
+  { id: "swap-memory", title: "Swap the memory", button: "Swap windowMemory and lastMessages", text: "The other memory reads the same journal, so the conversation goes on. Send a message and compare what each one sends." },
 ]
 ---
 

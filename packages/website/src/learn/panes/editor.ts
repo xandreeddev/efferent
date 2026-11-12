@@ -10,20 +10,21 @@ import { javascript } from "@codemirror/lang-javascript"
 import { bracketMatching, codeFolding, foldEffect, foldedRanges, indentOnInput, syntaxHighlighting, unfoldEffect } from "@codemirror/language"
 import { classHighlighter } from "@lezer/highlight"
 import { editableText, lockedExtension, regionField } from "../editor-locks.ts"
-import { DEFAULT_CONFIG, DEFINE_START_MARK, SECTIONS, programOf } from "../lesson1.source.ts"
+import { DEFAULT_AGENT, RUN_START_MARK, SECTIONS, programOf } from "../lesson1.source.ts"
 import { DEFAULT_TINY, TINY_INTRO, tinyProgramOf } from "../tiny-memory.source.ts"
 import { formatRegion } from "../format.ts"
 import type { Formatted } from "../format.ts"
 
 export type FileName = "agent" | "tiny"
-export type Section = "imports" | "session" | "define"
+export type Section = "imports" | "base" | "run"
 
 export interface CodeEditor {
   readonly file: () => FileName
   readonly showFile: (file: FileName) => void
-  readonly agentConfig: () => string
+  /** The agent expression the learner edits. */
+  readonly agentSource: () => string
   readonly tinySource: () => string
-  readonly setAgentConfig: (text: string) => void
+  readonly setAgentSource: (text: string) => void
   readonly setTinySource: (text: string) => void
   /** Fold exactly these read-only sections of agent.ts; the rest are open. */
   readonly foldOnly: (folded: ReadonlyArray<Section>) => void
@@ -55,8 +56,8 @@ const lockedLines = ViewPlugin.fromClass(class {
 
 const chipLabel = (start: string): string =>
   start.startsWith("import") ? "imports"
-    : start.startsWith("// Conversations") ? "session setup"
-      : start.startsWith("const agent") || start.startsWith("// One message") ? "define the agent and run a turn"
+    : start.startsWith("// The base") ? "the base, built once"
+      : start.startsWith(RUN_START_MARK) ? "run: listen, then queue messages"
         : "read-only"
 
 const folding = codeFolding({
@@ -89,13 +90,13 @@ const baseExtensions = (onRebuild: () => void, onEdit: () => void, onFormat: () 
 ]
 
 export const mountEditor = (host: HTMLElement, hooks: { onRebuild: () => void; onEdit: () => void; onFormat: () => void }): CodeEditor => {
-  const agentDoc = programOf(DEFAULT_CONFIG)
-  const configFrom = SECTIONS.configFrom
+  const agentDoc = programOf(DEFAULT_AGENT)
+  const agentFrom = SECTIONS.agentFrom
   const make = (doc: string, region: { from: number; to: number }) =>
     EditorState.create({ doc, extensions: [...baseExtensions(hooks.onRebuild, hooks.onEdit, hooks.onFormat), lockedExtension(region)] })
 
   const states: Record<FileName, EditorState> = {
-    agent: make(agentDoc, { from: configFrom, to: configFrom + DEFAULT_CONFIG.length }),
+    agent: make(agentDoc, { from: agentFrom, to: agentFrom + DEFAULT_AGENT.length }),
     tiny: make(tinyProgramOf(DEFAULT_TINY), { from: TINY_INTRO.length, to: TINY_INTRO.length + DEFAULT_TINY.length }),
   }
   let current: FileName = "agent"
@@ -116,11 +117,11 @@ export const mountEditor = (host: HTMLElement, hooks: { onRebuild: () => void; o
   const sectionRanges = (state: EditorState): Record<Section, { from: number; to: number }> => {
     const { to } = state.field(regionField)
     const doc = state.doc.toString()
-    const defineFrom = doc.indexOf(DEFINE_START_MARK, to)
+    const runFrom = doc.indexOf(RUN_START_MARK, to)
     return {
       imports: SECTIONS.imports,
-      session: SECTIONS.session,
-      define: { from: defineFrom < 0 ? doc.length : defineFrom, to: doc.length },
+      base: SECTIONS.base,
+      run: { from: runFrom < 0 ? doc.length : runFrom, to: doc.length },
     }
   }
 
@@ -132,9 +133,9 @@ export const mountEditor = (host: HTMLElement, hooks: { onRebuild: () => void; o
       current = file
       view.setState(states[file])
     },
-    agentConfig: () => textOf("agent"),
+    agentSource: () => textOf("agent"),
     tinySource: () => textOf("tiny"),
-    setAgentConfig: (text) => replace("agent", text),
+    setAgentSource: (text) => replace("agent", text),
     setTinySource: (text) => replace("tiny", text),
     foldOnly: (folded) => {
       if (current !== "agent") return
@@ -151,7 +152,7 @@ export const mountEditor = (host: HTMLElement, hooks: { onRebuild: () => void; o
     format: async () => {
       const file = current
       const before = textOf(file)
-      const result = await formatRegion(before, file === "agent" ? "const config = " : "const tinyMemory = ")
+      const result = await formatRegion(before, file === "agent" ? "const Agent = " : "const lastMessages = ")
       // Typing while Prettier loaded wins: formatting stale text would undo it.
       if (result.ok && result.text !== before && textOf(file) === before) replace(file, result.text)
       return result
