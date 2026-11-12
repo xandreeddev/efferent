@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
-import { Core, estimateRequest, JournalStorage, kernel, Memory, Owner, Sessions, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { Core, estimateRequest, EventName, JournalStorage, kernel, Memory, Owner, Sessions, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
 import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
-import { answering, base, open, SYSTEM as system } from "./testing.js"
+import { answering, base, open } from "./testing.js"
 
 /*
  * Records a later release of a plugin might write, which this one does not
- * know: one under the window memory's prefix, one under the session
- * plugin's. Each says whether a reader that does not know it may skip it.
+ * know: one under the window memory's prefix, one under core's, where the
+ * session's records are. Each says whether a reader that does not know it
+ * may skip it.
  */
 const windowFuture = (skippable: boolean) => stored(storedEvent("window", "future", { data: Schema.Struct({ note: Schema.String }), skippable }), { note: "from a later release" })
-const sessionFuture = (skippable: boolean) => stored(storedEvent("session", "future", { data: Schema.Struct({}), skippable }), {})
+const sessionFuture = (skippable: boolean) =>
+  stored({ ...storedEvent("any", "future", { data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
 /** Another plugin's record, which may not be skipped by those it concerns. */
 const stranger = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct({}), skippable: false }), {})
 
@@ -50,7 +52,7 @@ describe("a stored plugin record a reader does not know", () => {
     const result = await windowAfter([windowFuture(false)])
     expect(result.sent).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "plugin.window.future", seq: 3 } })
     const inspection = result.inspected._tag === "Success" ? result.inspected.success : undefined
-    expect(inspection?.events.map((event): string => event.name).slice(6)).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.session.turn.ended"])
+    expect(inspection?.events.map((event): string => event.name).slice(6)).toEqual(["core.session.turn.started", "plugin.loop.user.message", "core.session.turn.ended"])
     expect(inspection?.events.at(-1)?.data).toMatchObject({ outcome: { _tag: "Failed" } })
   })
 
@@ -60,14 +62,14 @@ describe("a stored plugin record a reader does not know", () => {
     expect(result.inspected).toMatchObject({ _tag: "Success" })
   })
 
-  test("under the session plugin's prefix: skipped by the readers of the session's state when it may be, refused when it may not", async () => {
+  test("under core's prefix: skipped by the readers of the session's state when it may be, refused when it may not", async () => {
     const skipped = await windowAfter([sessionFuture(true)])
     expect(skipped.sent).toMatchObject({ _tag: "Success", success: { text: "Fine." } })
     expect(skipped.inspected).toMatchObject({ _tag: "Success", success: { state: { _tag: "Free", turns: 2 } } })
     const refused = await windowAfter([sessionFuture(false)])
-    // The window memory answers for `plugin.session.` too, and so does whoever folds the journal to a state.
-    expect(refused.sent).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "plugin.session.future" } })
-    expect(refused.inspected).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "plugin.session.future" } })
+    // The window memory answers for `core.` too, and so does whoever folds the journal to a state.
+    expect(refused.sent).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "core.session.future" } })
+    expect(refused.inspected).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "core.session.future" } })
   })
 })
 
@@ -78,7 +80,7 @@ describe("a stored plugin record a reader does not know", () => {
 describe("a session plugin that meets a session it did not run", () => {
   /** Two session plugins over one storage. */
   const twoOverOneStore = Effect.gen(function* () {
-    const shared = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel({ system })))
+    const shared = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel()))
     const over = Layer.succeedContext(shared)
     const first = Context.get(yield* Layer.build(Layer.provide(sessions(), over)), Sessions)
     const second = Context.get(yield* Layer.build(Layer.provide(sessions(), over)), Sessions)
@@ -110,7 +112,7 @@ describe("a session plugin that meets a session it did not run", () => {
     expect(result).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
   })
 
-  test("skips or refuses an unknown record of the session plugin by its flag", async () => {
+  test("skips or refuses an unknown core record by its flag", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { first, second } = yield* twoOverOneStore
       const skippable = yield* first.create({ owner })
@@ -124,8 +126,8 @@ describe("a session plugin that meets a session it did not run", () => {
       }
     })))
     expect(result.skipped).toBe(2)
-    expect(result.refused).toMatchObject({ _tag: "UnknownRecord", name: "plugin.session.future", seq: 2 })
+    expect(result.refused).toMatchObject({ _tag: "UnknownRecord", name: "core.session.future", seq: 2 })
     // A session whose state cannot be read is not opened: nothing was stored for the refused turn.
-    expect(result.names).toEqual(["plugin.session.turn.started", "plugin.session.future", "plugin.session.turn.ended"])
+    expect(result.names).toEqual(["core.session.turn.started", "core.session.future", "core.session.turn.ended"])
   })
 })

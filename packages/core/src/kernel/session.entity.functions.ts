@@ -3,9 +3,9 @@ import type { StoredEvent } from "./event.entity.js"
 import { TurnNumber } from "./ids.entity.js"
 import type { SessionId } from "./ids.entity.js"
 import { readJournal } from "./journal.entity.functions.js"
-import type { UnknownRecord } from "./journal.entity.js"
+import type { Journal, UnknownRecord } from "./journal.entity.js"
 import { JOURNAL_FORMAT, SessionRefused } from "./session.entity.js"
-import type { Free, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
+import type { Free, Inspection, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
 import { KERNEL_READER, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 /**
@@ -35,7 +35,7 @@ export const endTurn = (state: SessionState): Result.Result<Free, SessionRefused
 
 /**
  * A session's state as its journal tells it: the two transitions folded
- * over its `plugin.session.turn.started` and `plugin.session.turn.ended`
+ * over its `core.session.turn.started` and `core.session.turn.ended`
  * records. So the state can be rebuilt from storage alone. A journal the
  * transitions do not allow (a turn ended that never started) is refused as
  * they refuse it.
@@ -60,3 +60,11 @@ export const headerOf = (id: SessionId, input: NewSession): SessionHeader => ({
   ...(input.parent === undefined ? {} : { parent: input.parent }),
   format: JOURNAL_FORMAT,
 })
+
+/**
+ * A session as a host inspects it: its header, the state its journal
+ * folds to, and its journal. A plugin's inspection reads more of the same
+ * journal: the loop contract's `requestsOf` resolves every request it sent.
+ */
+export const inspectionOf = (journal: Journal): Result.Result<Inspection, UnknownRecord | SessionRefused> =>
+  Result.map(sessionStateOf(journal.events), (state) => ({ header: journal.header, state, events: journal.events }))

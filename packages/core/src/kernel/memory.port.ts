@@ -1,9 +1,8 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
 import type { ListenerFailed, PluginFailure } from "./event.entity.js"
-import type { StepNumber } from "./ids.entity.js"
 import type { JournalStorageError, UnknownRecord } from "./journal.entity.js"
-import type { ModelRequest } from "./request.entity.js"
+import type { ModelRequest, StepNumber } from "./request.entity.js"
 import type { OpenSession } from "./sessions.port.js"
 
 /**

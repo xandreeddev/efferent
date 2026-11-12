@@ -7,7 +7,6 @@ import type { KernelEvent } from "./event.entity.js"
 import { SessionId, TurnNumber } from "./ids.entity.js"
 import { listenerFailed } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent } from "./vocabulary.entity.js"
-import { Settings } from "./settings.port.js"
 import { ListenerFailed } from "./event.entity.js"
 
 const origin = { id: SessionId.make("s-1"), turn: TurnNumber.make(1) }
@@ -316,16 +315,16 @@ describe("a listener's registration", () => {
 })
 
 describe("kernel", () => {
-  test("provides Core and the system text the plugins read, and its events end with its scope", async () => {
+  test("provides Core and nothing else, and its events end with its scope", async () => {
     const result = await run(Effect.gen(function* () {
-      const built = yield* Layer.build(kernel({ system: "You are a kit.", capacity: 4 }))
+      const built = yield* Layer.build(kernel({ capacity: 4 }))
       const core = Context.get(built, Core)
       const heard = yield* Deferred.make<number>()
       yield* core.on(ticked, (event) => Deferred.succeed(heard, event.data.n), { name: "host" })
       yield* core.publish(tick(7))
-      return { system: Context.get(built, Settings).system, heard: yield* Deferred.await(heard) }
+      return { keys: Array.from(built.mapUnsafe.keys()).filter((key) => !key.startsWith("effect/")), heard: yield* Deferred.await(heard) }
     }).pipe(Effect.timeout("2 seconds")))
-    expect(result).toEqual({ system: "You are a kit.", heard: 7 })
+    expect(result).toEqual({ keys: ["@xandreed/core/kernel/Core"], heard: 7 })
   })
 })
 

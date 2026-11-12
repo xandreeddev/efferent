@@ -11,13 +11,15 @@ import { KERNEL_READER } from "./vocabulary.entity.js"
 export const messageOf = (event: { readonly message?: Message }): Option.Option<Message> => Option.fromNullishOr(event.message)
 
 /**
- * The reader of plugin `plugin`: it answers for the session and loop
- * plugins' records and for those under its own prefix, and knows, of its
- * own, the definitions in `own`.
+ * The reader of plugin `plugin`: it answers for what `over` answers for
+ * (core's own records when left out) and for the records under its own
+ * prefix, and knows, of its own, the definitions in `own`. A plugin that
+ * reads another plugin's records extends that plugin's reader: a memory
+ * extends the loop's.
  */
-export const readerFor = (plugin: string, own: ReadonlyArray<{ readonly name: EventName }>): Reader => ({
-  reads: [...KERNEL_READER.reads, `plugin.${PluginName.make(plugin)}.`],
-  knows: [...KERNEL_READER.knows, ...own.map((definition) => definition.name)],
+export const readerFor = (plugin: string, own: ReadonlyArray<{ readonly name: EventName }>, over: Reader = KERNEL_READER): Reader => ({
+  reads: [...over.reads, `plugin.${PluginName.make(plugin)}.`],
+  knows: [...over.knows, ...own.map((definition) => definition.name)],
 })
 
 /**

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { StoredEvent } from "./event.entity.js"
 import { Owner, SessionId, TurnNumber } from "./ids.entity.js"
 
 /**
@@ -72,6 +73,14 @@ export class SessionRefused extends Schema.TaggedError<SessionRefused>()("Sessio
   message: Schema.String,
 }) {}
 
-/** What a turn is run with: the session and the user's message. */
-export const TurnInput = Schema.Struct({ session: SessionId, message: Schema.String })
-export type TurnInput = typeof TurnInput.Type
+/**
+ * A session as a host inspects it (`inspectionOf`): its header, the state its journal folds to, and its journal.
+ *
+ * @public
+ */
+export const Inspection = Schema.Struct({
+  header: SessionHeader,
+  state: SessionState,
+  events: Schema.Array(StoredEvent),
+})
+export type Inspection = typeof Inspection.Type

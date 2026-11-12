@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { assistantDeltaEvent, Core, kernel, Sessions, turnEndedEvent } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, Core, kernel, Sessions, settings, turnEndedEvent } from "@xandreed/core/kernel"
 import type { JournalStorage, Loop, Memory, Settings } from "@xandreed/core/kernel"
 import { Inbox, inbox, inboxQueuedEvent, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "./index.js"
 import type { InvalidBudget } from "./index.js"
@@ -28,10 +28,11 @@ describe("the lesson's queue", () => {
       const AgentLive: Layer.Layer<Inbox | Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = inbox.pipe(
         Layer.provideMerge(stepLoop),
         Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+        Layer.provideMerge(settings({ system: "You are a friendly tutor." })),   // the system text the loop and memory read
         Layer.provideMerge(sessions()),
         Layer.provideMerge(inProcessJournal()),
-        Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),   // Core + Settings
-        Layer.provideMerge(model),                                             // any LanguageModel layer; scriptedModel(...) in tests
+        Layer.provideMerge(kernel()),                                            // Core: events, and nothing of a workflow
+        Layer.provideMerge(model),                                               // any LanguageModel layer; scriptedModel(...) in tests
       )
       // #endregion agent
 
@@ -68,11 +69,11 @@ describe("the lesson's queue", () => {
     // The replies come back in order.
     expect(result.replies).toEqual([{ text: "Hello, Ana!" }, { text: "Your name is Ana." }, { text: "A-n-A." }])
     // The journal holds three turns, in order, each with its message.
-    const turns = result.journal.events.filter((event) => event.name === "plugin.session.turn.started").map((event) => event.data)
+    const turns = result.journal.events.filter((event) => event.name === "core.session.turn.started").map((event) => event.data)
     expect(turns).toEqual([{ turn: 1 }, { turn: 2 }, { turn: 3 }])
     expect(result.journal.events.flatMap((event) => event.name === "plugin.loop.user.message" && event.message !== undefined ? [event.message.text] : []))
       .toEqual(["Hi, I'm Ana.", "What's my name?", "Spell it backwards."])
-    expect(result.journal.events.filter((event) => event.name === "plugin.session.turn.ended").map((event) => event.data))
+    expect(result.journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data))
       .toEqual([1, 2, 3].map((turn) => ({ turn, outcome: { _tag: "Completed" } })))
     // The second request the model received holds the first turn's messages, then its own.
     expect(result.calls[1]).toEqual([

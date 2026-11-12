@@ -28,7 +28,7 @@ import type { AnnouncedEvent, OpenSession, JournalStorageError, StoredDraft, Tur
 export interface SessionsOptions {
   /**
    * How long the close of a turn gives the listeners of
-   * `plugin.session.turn.ended`. The session stays busy while they run and
+   * `core.session.turn.ended`. The session stays busy while they run and
    * is free when they are done or, at the latest, after this long, when a
    * listener still running is cut short. 5 seconds when left out.
    */
@@ -177,9 +177,9 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     ),
     read: (id) => storage.read(id),
     turn: (id, body) => Effect.acquireUseRelease(
-      begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started
+      begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
       (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
-      (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, announces it, frees the session; always runs
+      (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
     ),
   })
 }))

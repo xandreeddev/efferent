@@ -1,15 +1,14 @@
 import { Array as Arr, Option, Result } from "effect"
 import { dataOf } from "./event.entity.functions.js"
 import type { StoredEvent } from "./event.entity.js"
-import { Tokens } from "./ids.entity.js"
 import type { Seq } from "./ids.entity.js"
-import type { Journal, UnknownRecord } from "./journal.entity.js"
 import type { Message } from "./message.entity.js"
-import { RequestRefused } from "./request.entity.js"
-import type { Inspection, PointedMessage } from "./request.entity.js"
-import { sessionStateOf } from "./session.entity.functions.js"
-import type { SessionRefused } from "./session.entity.js"
-import { requestSentEvent, userMessageEvent } from "./vocabulary.entity.js"
+import { RequestRefused, StepNumber, Tokens } from "./request.entity.js"
+import type { InspectedRequest, PointedMessage } from "./request.entity.js"
+import { requestSentEvent, userMessageEvent } from "./conversation.entity.js"
+
+/** The step every turn starts with. */
+export const firstStep: StepNumber = StepNumber.make(1)
 
 /**
  * The estimate of what a text costs, in tokens: a quarter of its
@@ -50,19 +49,18 @@ export const turnMessageOf = (journal: ReadonlyArray<StoredEvent>): Option.Optio
   Option.map(Arr.findLast(journal, (event) => event.name === userMessageEvent.name), (event) => event.seq)
 
 /**
- * A session as a host inspects it: the state its journal folds to, and
- * every request it sent with its pointers resolved.
+ * Every request a journal says was sent, each with its pointers resolved:
+ * what the model was sent, request by request. A stored request that
+ * points at no message, or at one stored after it, refuses the journal.
  */
-export const inspectionOf = (journal: Journal): Result.Result<Inspection, UnknownRecord | SessionRefused | RequestRefused> => {
-  const state = sessionStateOf(journal.events)
-  if (Result.isFailure(state)) return Result.fail(state.failure)
-  const requests: Array<Inspection["requests"][number]> = []
-  for (const event of journal.events) {
+export const requestsOf = (journal: ReadonlyArray<StoredEvent>): Result.Result<ReadonlyArray<InspectedRequest>, RequestRefused> => {
+  const requests: Array<InspectedRequest> = []
+  for (const event of journal) {
     const sent = dataOf(requestSentEvent, event)
     if (Option.isNone(sent)) continue
-    const messages = resolveRequest(journal.events, sent.value, event.seq)
+    const messages = resolveRequest(journal, sent.value, event.seq)
     if (Result.isFailure(messages)) return Result.fail(messages.failure)
     requests.push({ seq: event.seq, step: sent.value.step, system: sent.value.system, messages: messages.success, estimatedTokens: sent.value.estimatedTokens, budgetTokens: sent.value.budgetTokens })
   }
-  return Result.succeed({ header: journal.header, state: state.success, events: journal.events, requests })
+  return Result.succeed(requests)
 }

@@ -12,17 +12,9 @@ export type Owner = typeof Owner.Type
 export const TurnNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("TurnNumber"))
 export type TurnNumber = typeof TurnNumber.Type
 
-/** A step's place in its turn, from 1: one model request and its answer. */
-export const StepNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("StepNumber"))
-export type StepNumber = typeof StepNumber.Type
-
 /** A stored event's place in its journal, from 1; 0 is the journal that holds none yet. */
 export const Seq = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("Seq"))
 export type Seq = typeof Seq.Type
-
-/** A count of tokens: an estimate or a budget. */
-export const Tokens = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("Tokens"))
-export type Tokens = typeof Tokens.Type
 
 /**
  * A plugin's name, which is also the prefix of the events it writes: `plugin.<name>.`.

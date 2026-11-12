@@ -1,19 +1,20 @@
 import { Effect, Option, Predicate, Ref, Result, Schema } from "effect"
-import type { Context, Scope } from "effect"
+import { Context, Layer } from "effect"
+import type { Scope } from "effect"
 import { expect, fail, refuses, show, unexpected } from "./conformance.entity.functions.js"
 import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
-import { makeCore } from "./core.adapter.js"
-import type { Core } from "./core.port.js"
+import { kernel } from "./core.adapter.js"
+import { Core } from "./core.port.js"
 import { stored, storedEvent } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
-import { firstStep } from "./ids.entity.functions.js"
 import { Seq, SessionId, TurnNumber } from "./ids.entity.js"
 import type { Memory } from "./memory.port.js"
-import { estimateRequest, estimateTokens, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
+import { estimateRequest, estimateTokens, firstStep, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
 import type { ModelRequest } from "./request.entity.js"
 import type { OpenSession } from "./sessions.port.js"
-import { assistantMessage, requestSent, turnEnded, turnStarted, userMessage } from "./vocabulary.entity.functions.js"
+import { assistantMessage, requestSent, userMessage } from "./conversation.entity.functions.js"
+import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type MemoryShape = Context.Service.Shape<typeof Memory>
@@ -72,7 +73,7 @@ const kitSession = Effect.gen(function* () {
  * The memory contract as checks, each over a journal the kit writes: the
  * request points at the message the turn answers (`turn-message`); every
  * pointer is the place of a record that bears a message, none twice
- * (`pointers`); the estimate is core's estimate of the system text and the
+ * (`pointers`); the estimate is `estimateRequest` of the system text and the
  * messages pointed at, within the budget (`estimate`); what memory appends
  * while it builds is under its own prefix (`own-records`); while nothing
  * presses, the next turn's request starts with this turn's, so the prefix a
@@ -97,7 +98,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
-      const memory = yield* subject.open(yield* makeCore())
+      const memory = yield* subject.open(Context.get(yield* Layer.build(kernel()), Core))
       yield* body(memory, yield* kitSession)
     })).pipe(unexpected(id)),
   })
@@ -128,13 +129,13 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       const sent = yield* resolved("pointers", kit, request)
       yield* expect("pointers", sent.messages.length === request.messages.length && sent.messages.length > 0, `the request ${show(request.messages)} resolved to ${sent.messages.length} messages`)
     })),
-    check("the estimate is core's estimate of what is sent, within the budget", "estimate", (memory, kit) => Effect.gen(function* () {
+    check("the estimate is `estimateRequest` of what is sent, within the budget", "estimate", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       const session = yield* kit.openTurn("And a scope?")
       const request = yield* build(memory, session)
       const sent = yield* resolved("estimate", kit, request)
       const counted = estimateRequest(subject.system, sent.messages.map((pointed) => pointed.message))
-      yield* expect("estimate", request.estimatedTokens === counted, `the request is estimated at ${request.estimatedTokens}; core counts ${counted}`)
+      yield* expect("estimate", request.estimatedTokens === counted, `the request is estimated at ${request.estimatedTokens}; estimateRequest counts ${counted}`)
       yield* expect("estimate", request.estimatedTokens <= request.budgetTokens && request.budgetTokens === subject.budgetTokens,
         `the request is estimated at ${request.estimatedTokens} under a budget of ${request.budgetTokens}; the subject's is ${subject.budgetTokens}`)
     })),

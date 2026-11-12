@@ -9,7 +9,7 @@ import {
   estimateRequest,
   firstStep,
   kernel,
-  KERNEL_READER,
+  LOOP_READER,
   Loop,
   loopConformance,
   Memory,
@@ -91,7 +91,7 @@ describe("the sessions kit", () => {
   /** The checks each careless session plugin fails. */
   const careless = {
     // It announces on a bus of its own: nothing it stores reaches the listeners it was given.
-    private: (): SessionsSubject => ({ open: () => Effect.flatMap(Layer.build(kernel({ system: "A bus of its own." })), (own) => built(Sessions, sessions(), over(Context.get(own, Core)))) }),
+    private: (): SessionsSubject => ({ open: () => Effect.flatMap(Layer.build(kernel()), (own) => built(Sessions, sessions(), over(Context.get(own, Core)))) }),
     // One busy flag for every session.
     oneFlag: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
@@ -203,7 +203,7 @@ describe("the memory kit", () => {
   /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
   const strict = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
     const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), Layer.merge(onCore(yield* Core), settings)))), Memory)
-    const known: ReadonlyArray<string> = [...KERNEL_READER.knows, windowDroppedEvent.name]
+    const known: ReadonlyArray<string> = [...LOOP_READER.knows, windowDroppedEvent.name]
     return Memory.of({
       build: (session, step) => Effect.flatMap(session.journal, (journal) => {
         const stranger = journal.find((event) => !known.includes(event.name))

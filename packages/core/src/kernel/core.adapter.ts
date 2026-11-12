@@ -6,25 +6,18 @@ import { dataOf, reasonOf } from "./event.entity.functions.js"
 import { ListenerFailed } from "./event.entity.js"
 import type { Delivered, EventDefinition, KernelEvent } from "./event.entity.js"
 import type { EventName } from "./ids.entity.js"
-import { Settings } from "./settings.port.js"
 import { listenerFailed } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent } from "./vocabulary.entity.js"
 
-/** How `Core` is set up. */
-export interface CoreOptions {
-  /** How many events background delivery holds for a reader that is behind, before it loses the oldest. 256 when left out. */
-  readonly capacity?: number
-}
-
 /**
- * What an agent's kernel is set up with: the system text its plugins read
- * (`Settings`), and how `Core` is set up.
+ * How an agent's kernel is set up: how `Core` delivers events. Nothing of
+ * a workflow: a system text is the loop contract's (`settings`).
  *
  * @public
  */
-export interface KernelOptions extends CoreOptions {
-  /** The system text, fixed for the agent. */
-  readonly system: string
+export interface KernelOptions {
+  /** How many events background delivery holds for a reader that is behind, before it loses the oldest. 256 when left out. */
+  readonly capacity?: number
 }
 
 const DEFAULT_CAPACITY = 256
@@ -48,7 +41,7 @@ interface Waiting {
  * of a scope, hold at their own time, and a listener cut short is reported
  * by the one who stopped waiting.
  */
-export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) {
+export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}) {
   const hub = yield* Effect.acquireRelease(PubSub.sliding<KernelEvent>(options.capacity ?? DEFAULT_CAPACITY), PubSub.shutdown)
   const waiting = yield* Ref.make<ReadonlyArray<Waiting>>([])
   const keys = yield* Ref.make(0)
@@ -130,10 +123,9 @@ export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) 
 
 /**
  * The kernel of an agent, as a layer: `Core`, the events of the agent in
- * one process, and `Settings`, the system text its plugins read. Every
- * other part is a layer of its own, composed over this one.
+ * one process, and nothing else. Every other part is a layer of its own,
+ * composed over this one: sessions and their storage, and every workflow.
  *
  * @public
  */
-export const kernel = (options: KernelOptions): Layer.Layer<Core | Settings> =>
-  Layer.merge(Layer.effect(Core, makeCore({ ...(options.capacity === undefined ? {} : { capacity: options.capacity }) })), Layer.succeed(Settings, Settings.of({ system: options.system })))
+export const kernel = (options: KernelOptions = {}): Layer.Layer<Core> => Layer.effect(Core, makeCore(options))

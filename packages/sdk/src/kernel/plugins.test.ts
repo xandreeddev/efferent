@@ -23,7 +23,7 @@ import {
 } from "@xandreed/core/kernel"
 import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
 import { answering, inOrder, open, recording, stack, SYSTEM as system } from "./testing.js"
-const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
+const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
 
 /*
  * A different loop plugin, written here on the same contracts: it asks no

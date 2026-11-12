@@ -1,10 +1,10 @@
 import { Option, Predicate, Result } from "effect"
-import { dataOf, estimateTokens, live, originOf, readerFor, stored, Tokens, turnStartedEvent } from "@xandreed/core/kernel"
+import { dataOf, estimateTokens, live, LOOP_READER, originOf, readerFor, stored, Tokens, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Delivered, LiveEvent, ModelRequest, Reader, SentRequest, Seq, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { InvalidBudget, OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
-/** What the window memory reads of a journal: the session and loop records, and its own. */
-export const WINDOW_READER: Reader = readerFor("window", [windowDroppedEvent])
+/** What the window memory reads of a journal: core's records and the loop's, whose reader it extends, and its own. */
+export const WINDOW_READER: Reader = readerFor("window", [windowDroppedEvent], LOOP_READER)
 
 /** The budget a window memory was given, as whole tokens; a number that is no budget is refused. */
 export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBudget> =>

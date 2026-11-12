@@ -17,11 +17,13 @@ const AssistantMessage
 const AssistantMessageData
 const EventName
 const Free
+const InspectedRequest
 const Inspection
 const JOURNAL_FORMAT
 const Journal
 const KERNEL_READER
 const KernelEvent
+const LOOP_READER
 const ListenerFailedData
 const LiveEvent
 const LoopScript
@@ -84,9 +86,11 @@ const readerFor
 const replyOf
 const requestSent
 const requestSentEvent
+const requestsOf
 const resolveRequest
 const sessionStateOf
 const sessionsConformance
+const settings
 const stored
 const storedEvent
 const turnEnded
@@ -116,6 +120,7 @@ type Delivered
 type EventDefinition
 type EventName
 type Free
+type InspectedRequest
 type Inspection
 type Journal
 type KernelEvent

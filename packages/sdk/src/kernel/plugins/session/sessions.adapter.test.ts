@@ -7,8 +7,8 @@ import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
 
 const owner = Owner.make("learner")
-const STARTED = "plugin.session.turn.started"
-const ENDED = "plugin.session.turn.ended"
+const STARTED = "core.session.turn.started"
+const ENDED = "core.session.turn.ended"
 const noted = storedEvent("notes", "noted", { data: Schema.Struct({}), skippable: true })
 
 /** What a storage double does with one append: let it through, refuse it, or die. */
@@ -29,7 +29,7 @@ const atOnce: Pause = () => Effect.void
  * one store as asked for.
  */
 const over = (count: number) => Effect.gen(function* () {
-  const below = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel({ system: "You are a kit." })))
+  const below = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel()))
   const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
   const pause = yield* Ref.make<Pause>(atOnce)
@@ -95,7 +95,7 @@ describe("the end of a turn", () => {
    */
   const budgets = Array.from({ length: 61 }, (_, index) => index + 4)
 
-  test("finds the session free for a background listener of plugin.session.turn.ended that opens the next turn in its handler, wherever the publisher is preempted", async () => {
+  test("finds the session free for a background listener of core.session.turn.ended that opens the next turn in its handler, wherever the publisher is preempted", async () => {
     const results = await run(Effect.forEach(budgets, (budget) => Effect.scoped(Effect.gen(function* () {
       const { plugins: [turns], core } = yield* over(1)
       if (turns === undefined) return yield* Effect.die("no session plugin")
@@ -216,7 +216,7 @@ describe("a session's id", () => {
     const result = await run(Effect.gen(function* () {
       const minted = yield* Ref.make(0)
       const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`session-${count}`))
-      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }), Layer.provideMerge(inProcessJournal(), kernel({ system: "You are a kit." }))))
+      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }), Layer.provideMerge(inProcessJournal(), kernel())))
       const turns = Context.get(below, Sessions)
       const ids = [yield* turns.create({ owner }), yield* turns.create({ owner })]
       return { ids: ids.map(String), turn: yield* turns.turn(SessionId.make("session-2"), (session) => Effect.succeed(Number(session.turn))) }

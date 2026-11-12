@@ -29,22 +29,22 @@ describe("one turn of the kernel", () => {
     expect(run.reply).toEqual({ text: "Hello!" })
     const stored = run.inspection.events
     expect(stored.map((event): string => event.name)).toEqual([
-      "plugin.session.turn.started",
+      "core.session.turn.started",
       "plugin.loop.user.message",
       "plugin.loop.request.sent",
       "plugin.loop.assistant.message",
-      "plugin.session.turn.ended",
+      "core.session.turn.ended",
     ])
     expect(stored.map((event): number => event.seq)).toEqual([1, 2, 3, 4, 5])
     // Published: each stored event after it was stored, and the deltas live only.
     expect(run.seen.map((event) => `${event._tag} ${event.name}`)).toEqual([
-      "Stored plugin.session.turn.started",
+      "Stored core.session.turn.started",
       "Stored plugin.loop.user.message",
       "Stored plugin.loop.request.sent",
       "Live plugin.loop.assistant.delta",
       "Live plugin.loop.assistant.delta",
       "Stored plugin.loop.assistant.message",
-      "Stored plugin.session.turn.ended",
+      "Stored core.session.turn.ended",
     ])
     expect(run.seen.every((event) => event.session === run.session && event.turn === 1)).toBe(true)
     // The request is stored as pointers; resolved, it is what the model received.

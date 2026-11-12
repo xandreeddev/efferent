@@ -40,8 +40,8 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
 /**
  * The sessions contract as checks, each over a fresh session plugin: a
  * created session reads back empty, and two creations give two ids
- * (`create`); a turn stores `plugin.session.turn.started`, what its body
- * appends and `plugin.session.turn.ended`, at consecutive places, its body
+ * (`create`); a turn stores `core.session.turn.started`, what its body
+ * appends and `core.session.turn.ended`, at consecutive places, its body
  * reading what it appended, and the next turn is numbered after it
  * (`turn`); every stored event is announced on `Core` after it is in the
  * journal, under the same name, with its session and turn (`announce`); a

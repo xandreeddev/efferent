@@ -1,9 +1,9 @@
-import { Effect, Option, Ref } from "effect"
-import type { Context, Schema, Scope } from "effect"
+import { Context, Effect, Layer, Option, Ref } from "effect"
+import type { Schema, Scope } from "effect"
 import { expect, refuses, show, unexpected } from "./conformance.entity.functions.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
-import { makeCore } from "./core.adapter.js"
-import type { Core } from "./core.port.js"
+import { kernel } from "./core.adapter.js"
+import { Core } from "./core.port.js"
 import { dataOf } from "./event.entity.functions.js"
 import type { KernelEvent } from "./event.entity.js"
 import { Owner } from "./ids.entity.js"
@@ -11,7 +11,8 @@ import type { LoopScript } from "./loop.entity.js"
 import type { Loop } from "./loop.port.js"
 import { resolveRequest, turnMessageOf } from "./request.entity.functions.js"
 import type { Sessions } from "./sessions.port.js"
-import { assistantDeltaEvent, assistantMessageEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "./vocabulary.entity.js"
+import { assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./conversation.entity.js"
+import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 
@@ -36,9 +37,9 @@ const FIVE = [turnStartedEvent.name, userMessageEvent.name, requestSentEvent.nam
 
 /**
  * The loop contract as checks, each over a fresh loop and a scripted
- * model: a turn stores exactly `plugin.session.turn.started`,
+ * model: a turn stores exactly `core.session.turn.started`,
  * `plugin.loop.user.message`, `plugin.loop.request.sent`,
- * `plugin.loop.assistant.message` and `plugin.session.turn.ended`, in
+ * `plugin.loop.assistant.message` and `core.session.turn.ended`, in
  * order, and returns the model's answer (`records`); the answer's pieces
  * are published live as `plugin.loop.assistant.delta` and stored nowhere
  * (`deltas`); the stored request is pointers that resolve, the turn's
@@ -55,7 +56,7 @@ export const loopConformance = (subject: LoopSubject): ReadonlyArray<Conformance
     id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
-      const core = yield* makeCore()
+      const core = Context.get(yield* Layer.build(kernel()), Core)
       yield* body({ core, ...(yield* subject.open(core, script)) })
     })).pipe(unexpected(id)),
   })

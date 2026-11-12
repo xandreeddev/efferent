@@ -1,4 +1,17 @@
 import { Schema } from "effect"
+import { SessionId } from "./ids.entity.js"
+
+/** What a turn is run with: the session and the user's message. */
+export const TurnInput = Schema.Struct({ session: SessionId, message: Schema.String })
+export type TurnInput = typeof TurnInput.Type
+
+/**
+ * What a turn answers its user with.
+ *
+ * @public
+ */
+export const Reply = Schema.Struct({ text: Schema.String })
+export type Reply = typeof Reply.Type
 
 /**
  * What a scripted model does with one call: stream these pieces as its answer, or fail.

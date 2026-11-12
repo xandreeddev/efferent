@@ -30,9 +30,9 @@ caught up.
 |---|---|---|
 | Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `StepNumber`, `Tokens`; `Message`; `StoredEvent` and `KernelEvent` |
 | Event definitions | core, and each plugin's own folder | a name, the schema of the data, stored or live, and for a stored one whether it may be skipped |
-| Contracts | core | `JournalStorage`, `Sessions`, `Memory`, `Loop`, each with a kit; `Settings`, the system text |
+| Contracts | core | `JournalStorage`, `Sessions`, `Memory`, `Loop`, each with a kit; `Settings`, the system text, and `settings({ system })`, its layer |
 | Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal, resolving a request, the estimate |
-| `kernel({ system, capacity? })` | core | the layer that provides `Core` and `Settings` |
+| `kernel({ capacity? })` | core | the layer that provides `Core`, and nothing of a workflow |
 | `inProcessJournal()` | sdk, `plugins/journal-in-process` | keeps journals in the process; knows nothing else |
 | `sessions()` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | decides what the model is sent; owns the budget |
@@ -81,7 +81,7 @@ layer's scope, and go when that scope closes.
 <!-- pinned: packages/sdk/src/kernel/lesson.test.ts#agent -->
 
 ```ts
-import { Core, kernel, Sessions } from "@xandreed/core/kernel"
+import { Core, kernel, Sessions, settings } from "@xandreed/core/kernel"
 import type { JournalStorage, Loop, Memory, Settings } from "@xandreed/core/kernel"
 import { Inbox, inbox, inProcessJournal, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 import type { InvalidBudget } from "@xandreed/sdk/kernel"
@@ -89,10 +89,11 @@ import type { InvalidBudget } from "@xandreed/sdk/kernel"
 const AgentLive: Layer.Layer<Inbox | Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = inbox.pipe(
   Layer.provideMerge(stepLoop),
   Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+  Layer.provideMerge(settings({ system: "You are a friendly tutor." })),   // the system text the loop and memory read
   Layer.provideMerge(sessions()),
   Layer.provideMerge(inProcessJournal()),
-  Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),   // Core + Settings
-  Layer.provideMerge(model),                                             // any LanguageModel layer; scriptedModel(...) in tests
+  Layer.provideMerge(kernel()),                                            // Core: events, and nothing of a workflow
+  Layer.provideMerge(model),                                               // any LanguageModel layer; scriptedModel(...) in tests
 )
 ```
 
@@ -120,8 +121,9 @@ A session is plain data, an id the host keeps. `sessions.create` decodes
 what it is given and refuses an empty owner, or a parent that is no session
 id, with `InvalidSession`. The stock loop refuses a message of no text with
 `EmptyMessage` before the turn opens, so nothing is stored for it. A host
-that wants to see a session as its journal tells it, every request resolved,
-reads it and calls `inspectionOf(yield* sessions.read(id))`.
+that wants to see a session as its journal tells it reads it and calls
+`inspectionOf(journal)`, its header, state and events, and
+`requestsOf(journal.events)`, every request it sent, resolved.
 
 ## The loop's main function
 
@@ -162,10 +164,10 @@ export const makeStepLoop = Effect.gen(function* () {
 })
 ```
 
-One turn stores five events, in this order: `plugin.session.turn.started`
+One turn stores five events, in this order: `core.session.turn.started`
 as the session plugin opens the turn, `plugin.loop.user.message`,
 `plugin.loop.request.sent` before the model call,
-`plugin.loop.assistant.message` after it, and `plugin.session.turn.ended`
+`plugin.loop.assistant.message` after it, and `core.session.turn.ended`
 as the turn closes. While the answer streams, each piece is published live
 as `plugin.loop.assistant.delta`. Three rules are visible in the function.
 
@@ -186,12 +188,14 @@ through an answer. No assistant message is stored for an answer that was cut.
 
 ## Events
 
-Events are named by the plugin that writes them.
+An event is named by the owner of the contract that defines it: core's
+session contract names its own `core.`, a plugin's contract
+`plugin.<plugin name>.`.
 
 | Event | Written by | Kept |
 |---|---|---|
-| `plugin.session.turn.started` | the session plugin, as a turn opens | stored |
-| `plugin.session.turn.ended` | the session plugin, as a turn closes, with its outcome | stored |
+| `core.session.turn.started` | the session plugin, as a turn opens | stored |
+| `core.session.turn.ended` | the session plugin, as a turn closes, with its outcome | stored |
 | `plugin.loop.user.message` | the loop plugin | stored; bears the message |
 | `plugin.loop.request.sent` | the loop plugin, before each model call | stored |
 | `plugin.loop.assistant.message` | the loop plugin, after each model call | stored; bears the message |
@@ -201,8 +205,9 @@ Events are named by the plugin that writes them.
 | `plugin.inbox.queued` | the inbox, as it queues a message, with its ticket | live only; about the session, no turn |
 | `core.listener.failed` | core, when a listener fails where nothing can fail for it | live only |
 
-Core defines the first six and the last: the facts other plugins rely on,
-so a second loop plugin writes the same names. A plugin's own events are
+Core defines the session's two and the last; the loop contract defines the
+four `plugin.loop.` events, the facts a memory relies on, so a second loop
+plugin writes the same names. A plugin's own events are
 defined in its own folder. A live event names its session, and its turn
 when it happens inside one: an event about the session and no turn of it,
 a message queued before its turn opens, names none. The type of an event is open: core holds no list
@@ -238,7 +243,7 @@ event only once it was handed over, on fibers of their own, after the
 waiting listeners and the publisher's own step.
 
 The end of a turn is the one publish whose listeners cannot fail the
-publisher. The session plugin stores `plugin.session.turn.ended`, announces
+publisher. The session plugin stores `core.session.turn.ended`, announces
 it, and frees the session once the listeners the announcement waits for are
 done or cut short after `closeWait` (5 seconds when left out), just before
 the end is handed to the background and the stream. So the events of one
@@ -300,7 +305,7 @@ a table.
 
 The state is also the fold of the journal (`sessionStateOf`), and the store
 is the truth. The session plugin begins every turn by reading the journal,
-folding it to the phase and appending `plugin.session.turn.started` at the
+folding it to the phase and appending `core.session.turn.started` at the
 next place. That append is its claim: the store refuses an append at a
 place that is taken, so of two writers that begin a turn of one session at
 once, one is refused with `SessionBusy`. A turn whose end was never stored
@@ -331,9 +336,9 @@ const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
 
 ```ts
 turn: (id, body) => Effect.acquireUseRelease(
-  begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started
+  begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
   (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
-  (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, announces it, frees the session; always runs
+  (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
 ),
 ```
 
@@ -417,7 +422,7 @@ stream starts reading only when it is scheduled. The inbox's rules:
   refused (`InboxRefused`, `Closed`). None hangs.
 - **The next message waits for the session to be free.** `loop.run`
   returns only once the session plugin has freed the session, so a slow
-  listener of `plugin.session.turn.ended`, bounded by `closeWait`, delays
+  listener of `core.session.turn.ended`, bounded by `closeWait`, delays
   the next queued message instead of failing it with `SessionBusy`.
 - **Capacity:** a session's queue holds 64 waiting messages unless
   `inboxOf({ capacity })` says otherwise; a full one refuses with
@@ -469,16 +474,18 @@ const goldfish = () => Layer.effect(Memory, Effect.gen(function* () {
 
 `plugin.loop.request.sent` stores the system text, the pointers, memory's
 estimate and the budget. One pure function, `resolveRequest`, turns the
-pointers back into messages, for the model call and for `inspectionOf`
+pointers back into messages, for the model call and for `requestsOf`
 alike. The estimate is one pure function too, `estimateTokens`, a quarter of
 the characters rounded up. `windowMemory` sends every message and counts the
 system text the settings hold; over the budget it drops whole turns, oldest
 first, and records `plugin.window.dropped`. When the current turn alone does
 not fit, it fails with `OverBudget` (`isOverBudget` tells it).
 
-A journal outlives the code that wrote it. A reader answers for the records
-of the session and loop plugins and for those under its own prefix
-(`readerFor`, `readJournal`): a record it does not know is passed over when
+A journal outlives the code that wrote it. A reader answers for core's
+records (`core.`, `KERNEL_READER`) and for those under its own prefix
+(`readerFor`, `readJournal`); a reader that reads another plugin's records
+extends that plugin's reader, as a memory extends the loop's
+(`readerFor("window", own, LOOP_READER)`). A record it does not know is passed over when
 the record says it may be skipped, and refused with `UnknownRecord` when it
 may not. A record under another plugin's prefix is not its concern.
 
@@ -552,7 +559,7 @@ memory, one loop and no tool execution. What follows returns in this order.
 A provider caches a request by its prefix, so a context tailored for each
 request must not disturb what came before. What a turn's tailoring adds, it
 adds at the end. The system text is fixed for a stack: one built with
-another `kernel({ system })` starts a new prefix. Nothing earlier is
+another `settings({ system })` starts a new prefix. Nothing earlier is
 rewritten until memory compacts. The memory kit checks the last rule as it
 applies to this cut: while nothing presses, the next turn's request starts
 with this turn's.

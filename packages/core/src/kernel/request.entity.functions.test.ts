@@ -2,13 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import { dataOf } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
-import { firstStep } from "./ids.entity.functions.js"
-import { Owner, Seq, SessionId, Tokens, TurnNumber } from "./ids.entity.js"
-import { estimateRequest, estimateTokens, inspectionOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
-import { JOURNAL_FORMAT } from "./session.entity.js"
-import type { SessionHeader } from "./session.entity.js"
-import { assistantMessage, requestSent, turnEnded, turnStarted, userMessage } from "./vocabulary.entity.functions.js"
-import { requestSentEvent } from "./vocabulary.entity.js"
+import { Seq, TurnNumber } from "./ids.entity.js"
+import { estimateRequest, estimateTokens, firstStep, requestsOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
+import { Tokens } from "./request.entity.js"
+import { assistantMessage, requestSent, userMessage } from "./conversation.entity.functions.js"
+import { requestSentEvent } from "./conversation.entity.js"
+import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 
 const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, ...draft }))
 const answer = (text: string) => assistantMessage(firstStep, { _tag: "Assistant", text, toolCalls: [] })
@@ -85,19 +84,15 @@ describe("the message a turn answers", () => {
   })
 })
 
-describe("inspecting a session", () => {
-  const header: SessionHeader = { id: SessionId.make("s-1"), owner: Owner.make("learner"), format: JOURNAL_FORMAT }
+describe("the requests a session sent", () => {
   const built = (...messages: ReadonlyArray<number>) => ({ messages: messages.map((seq) => Seq.make(seq)), estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000) })
 
-  test("gives the state the journal folds to and every request it sent, resolved", () => {
+  test("are every request the journal stored, each resolved", () => {
     const events = journal(
       turnStarted(TurnNumber.make(1)), userMessage("Hello"), requestSent(firstStep, "Be brief.", built(2)), answer("Hi"), turnEnded(TurnNumber.make(1), { _tag: "Completed" }),
       turnStarted(TurnNumber.make(2)), userMessage("Again"), requestSent(firstStep, "Be brief.", built(2, 4, 7)),
     )
-    const inspection = Result.getOrThrow(inspectionOf({ header, events }))
-    expect(inspection.state).toEqual({ _tag: "TurnOpen", turn: TurnNumber.make(2) })
-    expect(inspection.events).toEqual(events)
-    expect(inspection.requests).toEqual([
+    expect(Result.getOrThrow(requestsOf(events))).toEqual([
       { seq: Seq.make(3), step: firstStep, system: "Be brief.", estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000), messages: [{ seq: Seq.make(2), message: { _tag: "User", text: "Hello" } }] },
       {
         seq: Seq.make(8),
@@ -115,7 +110,7 @@ describe("inspecting a session", () => {
   })
 
   test("refuses a journal whose stored request points at no message, or at a message stored after it", () => {
-    const told = (...drafts: ReadonlyArray<StoredDraft>) => Result.match(inspectionOf({ header, events: journal(...drafts) }), { onSuccess: () => "inspected", onFailure: (refusal) => `${refusal._tag} ${"reason" in refusal ? refusal.reason : ""}` })
+    const told = (...drafts: ReadonlyArray<StoredDraft>) => Result.match(requestsOf(journal(...drafts)), { onSuccess: () => "inspected", onFailure: (refusal) => `${refusal._tag} ${refusal.reason}` })
     expect(told(turnStarted(TurnNumber.make(1)), userMessage("Hello"), requestSent(firstStep, "Be brief.", built(1)))).toBe("RequestRefused UnknownMessage")
     expect(told(turnStarted(TurnNumber.make(1)), userMessage("Hello"), requestSent(firstStep, "Be brief.", built(2, 4)), answer("Hi"))).toBe("RequestRefused LaterMessage")
   })

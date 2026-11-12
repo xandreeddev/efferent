@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Layer } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { kernel } from "@xandreed/core/kernel"
+import { kernel, settings } from "@xandreed/core/kernel"
 import type { Core, JournalStorage, Loop, Memory, Sessions, Settings } from "@xandreed/core/kernel"
 import { inbox, inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import type { Inbox, InvalidBudget } from "./index.js"
@@ -19,9 +19,10 @@ const complete = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
   const AgentLive: Agent = inbox.pipe(
     Layer.provideMerge(stepLoop),
     Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(settings({ system: "You are a friendly tutor." })),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),
+    Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
   return AgentLive
@@ -32,8 +33,9 @@ const withoutSessions = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
   const AgentLive: Agent = inbox.pipe(
     Layer.provideMerge(stepLoop),
     Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(settings({ system: "You are a friendly tutor." })),
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),
+    Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
   return AgentLive
@@ -44,9 +46,10 @@ const withoutTheModel = () => {
   const AgentLive: Agent = inbox.pipe(
     Layer.provideMerge(stepLoop),
     Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(settings({ system: "You are a friendly tutor." })),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),
+    Layer.provideMerge(kernel()),
   )
   return AgentLive
 }
@@ -56,9 +59,10 @@ const loopBelowItsMemory = (model: Layer.Layer<LanguageModel.LanguageModel>) => 
   const AgentLive: Agent = inbox.pipe(
     Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
     Layer.provideMerge(stepLoop),
+    Layer.provideMerge(settings({ system: "You are a friendly tutor." })),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),
+    Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
   return AgentLive

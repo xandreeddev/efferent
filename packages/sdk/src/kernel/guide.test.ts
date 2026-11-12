@@ -158,16 +158,16 @@ describe("docs/kernel.md", () => {
 
   test("names no stored event that the kernel does not write, and every one it does", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
-    const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:session|loop|window|inbox)|core)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
+    const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:loop|window|inbox)|core)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
     expect(named).toEqual([
       "core.listener.failed",
+      "core.session.turn.ended",
+      "core.session.turn.started",
       "plugin.inbox.queued",
       "plugin.loop.assistant.delta",
       "plugin.loop.assistant.message",
       "plugin.loop.request.sent",
       "plugin.loop.user.message",
-      "plugin.session.turn.ended",
-      "plugin.session.turn.started",
       "plugin.window.dropped",
       "plugin.window.pressure",
     ])

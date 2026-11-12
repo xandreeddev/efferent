@@ -4,7 +4,7 @@ import { Core, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStarte
 import type { Settings } from "@xandreed/core/kernel"
 import type { SessionsOptions } from "./index.js"
 import { answering, inOrder, open, recording, stack } from "./testing.js"
-const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
+const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
 
 class AuditFailed extends Schema.TaggedError<AuditFailed>()("AuditFailed", { message: Schema.String }) {}
 
@@ -39,7 +39,7 @@ describe("a listener the publisher waits for", () => {
       const reply = yield* Fiber.join(turn)
       return { during, reply, names: yield* kernel.names }
     })))
-    expect(result.during).toEqual({ names: ["plugin.session.turn.started", "plugin.loop.user.message"], calls: 0 })
+    expect(result.during).toEqual({ names: ["core.session.turn.started", "plugin.loop.user.message"], calls: 0 })
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.names).toEqual(FIVE)
   })
@@ -66,7 +66,7 @@ describe("a listener the publisher waits for", () => {
     })))
     expect(result.failed).toMatchObject({ _tag: "ListenerFailed", listener: "audit", event: "plugin.loop.request.sent", message: "AuditFailed: the audit log is full" })
     // The request was stored before it was announced; the model was never called; the turn closed as failed.
-    expect(result.afterFailure.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.session.turn.ended"])
+    expect(result.afterFailure.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "core.session.turn.ended"])
     expect(result.afterFailure.calls).toBe(0)
     expect(result.afterFailure.inspection.events.at(-1)?.data).toEqual({ turn: 1, outcome: { _tag: "Failed", reason: "ListenerFailed: AuditFailed: the audit log is full" } })
     expect(result.afterFailure.inspection.state).toEqual({ _tag: "Free", turns: 1 })
@@ -106,9 +106,9 @@ describe("a listener the publisher waits for, on the turn's start", () => {
       const reply = yield* kernel.send(kernel.session, "Again")
       return { failed, afterFailure, reply, names: yield* kernel.names }
     })))
-    expect(result.failed).toMatchObject({ _tag: "ListenerFailed", listener: "gate", event: "plugin.session.turn.started" })
+    expect(result.failed).toMatchObject({ _tag: "ListenerFailed", listener: "gate", event: "core.session.turn.started" })
     // The start is announced inside the turn: the body never ran, and the turn closed as failed and freed the session.
-    expect(result.afterFailure.names).toEqual(["plugin.session.turn.started", "plugin.session.turn.ended"])
+    expect(result.afterFailure.names).toEqual(["core.session.turn.started", "core.session.turn.ended"])
     expect(result.afterFailure.inspection.events.at(-1)?.data).toEqual({ turn: 1, outcome: { _tag: "Failed", reason: "ListenerFailed: AuditFailed: not now" } })
     expect(result.afterFailure.inspection.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.reply).toEqual({ text: "Hi." })
@@ -129,7 +129,7 @@ describe("a listener on the turn's end", () => {
     })))
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.state).toEqual({ _tag: "Free", turns: 1 })
-    expect(result.report).toEqual({ listener: "audit", event: "plugin.session.turn.ended", reason: "AuditFailed: the audit log is full" })
+    expect(result.report).toEqual({ listener: "audit", event: "core.session.turn.ended", reason: "AuditFailed: the audit log is full" })
     expect(result.again).toEqual({ text: "Hi." })
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })
@@ -147,8 +147,8 @@ describe("a listener on the turn's end", () => {
     expect(result.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.again).toEqual({ text: "Hi." })
     expect(result.reports).toEqual([
-      { listener: "stuck", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
-      { listener: "stuck", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
+      { listener: "stuck", event: "core.session.turn.ended", reason: "interrupted before it finished" },
+      { listener: "stuck", event: "core.session.turn.ended", reason: "interrupted before it finished" },
     ])
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })
@@ -165,8 +165,8 @@ describe("a listener on the turn's end", () => {
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.again).toEqual({ text: "Hi." })
     expect(result.reports).toEqual([
-      { listener: "deaf", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
-      { listener: "deaf", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
+      { listener: "deaf", event: "core.session.turn.ended", reason: "interrupted before it finished" },
+      { listener: "deaf", event: "core.session.turn.ended", reason: "interrupted before it finished" },
     ])
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })

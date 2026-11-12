@@ -8,14 +8,14 @@ import { isOverBudget, windowMemory } from "./index.js"
 import { answer, answering, counting, modelDown, open, recording, scripted, stack, SYSTEM as system } from "./testing.js"
 
 type Agent = Effect.Success<ReturnType<typeof open>>
-const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
+const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
 
 const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(effect)
 
 /** The names a session's journal holds, and how each turn ended. */
 const journalOf = (agent: Agent, session: SessionId) => Effect.map(agent.inspect(session), (inspection) => ({
   names: inspection.events.map((event): string => event.name),
-  ends: inspection.events.filter((event) => event.name === "plugin.session.turn.ended").map((event) => event.data),
+  ends: inspection.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data),
   state: inspection.state,
   events: inspection.events,
   requests: inspection.requests,
@@ -60,7 +60,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
       return { failed, afterFailure, reply, journal: yield* journalOf(agent, session) }
     })))
     expect(result.failed._tag).toBe("AiError")
-    expect(result.afterFailure.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.session.turn.ended"])
+    expect(result.afterFailure.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "core.session.turn.ended"])
     expect(result.afterFailure.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("AiError") } }])
     expect(result.afterFailure.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.reply).toEqual({ text: "Back." })
@@ -81,7 +81,7 @@ describe("every exit closes the turn with its outcome, and the next send works",
       const reply = yield* agent.send(session, "Again")
       return { afterInterrupt, reply, journal: yield* journalOf(agent, session) }
     })))
-    expect(result.afterInterrupt.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.session.turn.ended"])
+    expect(result.afterInterrupt.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "core.session.turn.ended"])
     expect(result.afterInterrupt.ends).toEqual([{ turn: 1, outcome: { _tag: "Interrupted" } }])
     expect(result.afterInterrupt.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.reply).toEqual({ text: "Back." })
@@ -102,17 +102,17 @@ describe("every exit closes the turn with its outcome, and the next send works",
     // 7 tokens of system text and 2 of message, under a budget of 8. The error is the plugin's own, told by its guard.
     expect(isOverBudget(result.refused) ? { estimatedTokens: Number(result.refused.estimatedTokens), budgetTokens: Number(result.refused.budgetTokens) } : result.refused._tag).toEqual({ estimatedTokens: 9, budgetTokens: 8 })
     expect(result.calls).toBe(0)
-    expect(result.afterRefusal.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.session.turn.ended"])
+    expect(result.afterRefusal.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "core.session.turn.ended"])
     expect(result.afterRefusal.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("OverBudget") } }])
     // The next turn fits once the refused turn's message leaves the window, which the window records.
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.journal.names.slice(3)).toEqual([
-      "plugin.session.turn.started",
+      "core.session.turn.started",
       "plugin.loop.user.message",
       "plugin.window.dropped",
       "plugin.loop.request.sent",
       "plugin.loop.assistant.message",
-      "plugin.session.turn.ended",
+      "core.session.turn.ended",
     ])
     expect(result.journal.events[5]).toMatchObject({ skippable: true, data: { through: 2 } })
     expect(result.received).toEqual([[{ role: "system", text: system }, { role: "user", text: "Hi" }]])
@@ -159,7 +159,7 @@ describe("a model that fails part-way through its answer", () => {
     expect(result.failed).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelFailed", cause: { status: 529, body: "overloaded" } } })
     // What streamed before the error was shown live; none of it is stored as an answer.
     expect(result.deltas[0]).toEqual({ text: "Half an ans" })
-    expect(result.afterFailure.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.session.turn.ended"])
+    expect(result.afterFailure.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "core.session.turn.ended"])
     expect(result.afterFailure.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("ModelFailed") } }])
     expect(JSON.stringify(result.afterFailure.events)).not.toContain("Half an ans")
     expect(result.reply).toEqual({ text: "Whole." })
@@ -185,7 +185,7 @@ describe("a request memory builds badly", () => {
     })))
     expect(result.refused).toMatchObject({ _tag: "RequestRefused", reason: "UnknownMessage", seq: 1 })
     expect(result.calls).toBe(0)
-    expect(result.journal.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.session.turn.ended"])
+    expect(result.journal.names).toEqual(["core.session.turn.started", "plugin.loop.user.message", "core.session.turn.ended"])
     expect(result.journal.requests).toEqual([])
     expect(result.journal.state).toEqual({ _tag: "Free", turns: 1 })
   })

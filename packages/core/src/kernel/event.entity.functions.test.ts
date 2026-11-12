@@ -1,54 +1,38 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
 import { announced, dataOf, live, liveEvent, originOf, reasonOf, stored, storedEvent } from "./event.entity.functions.js"
-import { KernelEvent, StoredDraft, StoredEvent } from "./event.entity.js"
+import { KernelEvent, ListenerFailed, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { StoredDefinition } from "./event.entity.js"
-import { firstStep } from "./ids.entity.functions.js"
-import { Seq, SessionId, Tokens, TurnNumber } from "./ids.entity.js"
-import { assistantDelta, assistantMessage, outcomeOf, requestSent, turnEnded, turnStarted, userMessage } from "./vocabulary.entity.functions.js"
-import {
-  assistantDeltaEvent,
-  assistantMessageEvent,
-  listenerFailedEvent,
-  requestSentEvent,
-  turnEndedEvent,
-  turnStartedEvent,
-  userMessageEvent,
-} from "./vocabulary.entity.js"
+import { Seq, SessionId, TurnNumber } from "./ids.entity.js"
+import { listenerFailed, outcomeOf, turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
+import { listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 const origin = { id: SessionId.make("s-1"), turn: TurnNumber.make(2) }
 
-describe("the kernel's own events", () => {
-  test("are named by the plugin that writes them, stored but the delta and core's own", () => {
-    expect([turnStartedEvent, turnEndedEvent, userMessageEvent, requestSentEvent, assistantMessageEvent, assistantDeltaEvent, listenerFailedEvent].map((definition) => `${definition.kind} ${definition.name}`)).toEqual([
-      "stored plugin.session.turn.started",
-      "stored plugin.session.turn.ended",
-      "stored plugin.loop.user.message",
-      "stored plugin.loop.request.sent",
-      "stored plugin.loop.assistant.message",
-      "live plugin.loop.assistant.delta",
+describe("core's own events", () => {
+  test("are named `core.`, after the contract that defines them: the session's are stored, the listener's failure live", () => {
+    expect([turnStartedEvent, turnEndedEvent, listenerFailedEvent].map((definition) => `${definition.kind} ${definition.name}`)).toEqual([
+      "stored core.session.turn.started",
+      "stored core.session.turn.ended",
       "live core.listener.failed",
     ])
   })
 
   test("each constructor's data reads back through its definition's schema", () => {
-    const request = { messages: [Seq.make(2)], estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000) }
     const table: ReadonlyArray<readonly [StoredDefinition<Schema.Json>, StoredDraft, Schema.Json]> = [
       [turnStartedEvent, turnStarted(TurnNumber.make(3)), { turn: 3 }],
       [turnEndedEvent, turnEnded(TurnNumber.make(3), { _tag: "Failed", reason: "AiError: down" }), { turn: 3, outcome: { _tag: "Failed", reason: "AiError: down" } }],
-      [userMessageEvent, userMessage("Hello"), {}],
-      [requestSentEvent, requestSent(firstStep, "Be brief.", request), { step: 1, system: "Be brief.", messages: [2], estimatedTokens: 9, budgetTokens: 3000 }],
-      [assistantMessageEvent, assistantMessage(firstStep, { _tag: "Assistant", text: "Hi", toolCalls: [] }), { step: 1 }],
     ]
     table.forEach(([definition, draft, data]) => {
       expect(draft.name).toBe(definition.name)
       expect(draft.skippable).toBe(false)
       expect(dataOf(definition, draft)).toEqual(Option.some(data))
       expect(Schema.is(StoredDraft)(draft)).toBe(true)
+      expect(draft.message).toBeUndefined()
     })
-    expect(userMessage("Hello").message).toEqual({ _tag: "User", text: "Hello" })
-    expect(assistantMessage(firstStep, { _tag: "Assistant", text: "Hi", toolCalls: [] }).message).toEqual({ _tag: "Assistant", text: "Hi", toolCalls: [] })
-    expect(assistantDelta(origin, "Hel")).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: assistantDeltaEvent.name, data: { text: "Hel" } })
+    const failure = new ListenerFailed({ listener: "audit", event: turnEndedEvent.name, message: "the audit log is full" })
+    const about = announced(origin, { seq: Seq.make(4), at: 0, ...turnEnded(TurnNumber.make(2), { _tag: "Completed" }) })
+    expect(listenerFailed(about, failure)).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "audit", event: turnEndedEvent.name, reason: "the audit log is full" } })
   })
 })
 

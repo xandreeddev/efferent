@@ -16,7 +16,7 @@ class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema
 const onQueued = <E>(handle: (ticket: number) => Effect.Effect<void, E>) =>
   Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(inboxQueuedEvent, (event) => handle(event.data.ticket), { name: "queued", wait: true })))
 
-const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
+const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
 
 /**
  * The stock stack with the inbox on top, built in the scope it is run in,

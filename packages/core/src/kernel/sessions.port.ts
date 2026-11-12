@@ -34,7 +34,7 @@ export type TurnFailure = SessionRefused | JournalStorageError | UnknownRecord |
  * a turn open refuses another (`SessionRefused`, `SessionBusy`), and stays
  * busy until its end was announced: it is free by the time the end reaches
  * a background listener or the host's stream, so whoever hears of
- * `plugin.session.turn.ended` there may start the next turn. A store
+ * `core.session.turn.ended` there may start the next turn. A store
  * failure is a `JournalStorageError`, and a turn whose end cannot be stored
  * stays open, as the journal says it is.
  * `sessionsConformance` is the contract as runnable checks.
@@ -46,8 +46,8 @@ export class Sessions extends Context.Service<Sessions, {
   readonly read: (id: SessionId) => Effect.Effect<Journal, JournalStorageError>
   /**
    * Run `body` as the session's next turn. Opening stores
-   * `plugin.session.turn.started`; every exit of the body (its value, its
-   * failure, an interrupt) stores `plugin.session.turn.ended` with the
+   * `core.session.turn.started`; every exit of the body (its value, its
+   * failure, an interrupt) stores `core.session.turn.ended` with the
    * outcome and frees the session.
    */
   readonly turn: <A, E, R>(id: SessionId, body: (session: OpenSession) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | TurnFailure, R>

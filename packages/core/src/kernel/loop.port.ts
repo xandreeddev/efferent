@@ -1,9 +1,8 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
 import type { PluginFailure } from "./event.entity.js"
-import type { Reply } from "./message.entity.js"
 import type { RequestRefused } from "./request.entity.js"
-import type { TurnInput } from "./session.entity.js"
+import type { Reply, TurnInput } from "./loop.entity.js"
 import type { TurnFailure } from "./sessions.port.js"
 
 /**

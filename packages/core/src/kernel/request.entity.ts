@@ -1,8 +1,14 @@
 import { Schema } from "effect"
-import { StoredEvent } from "./event.entity.js"
-import { Seq, StepNumber, Tokens } from "./ids.entity.js"
+import { Seq } from "./ids.entity.js"
 import { Message } from "./message.entity.js"
-import { SessionHeader, SessionState } from "./session.entity.js"
+
+/** A step's place in its turn, from 1: one model request and its answer. */
+export const StepNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("StepNumber"))
+export type StepNumber = typeof StepNumber.Type
+
+/** A count of tokens: an estimate or a budget. */
+export const Tokens = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("Tokens"))
+export type Tokens = typeof Tokens.Type
 
 /**
  * What memory builds for one request: the messages to send, each the place
@@ -47,14 +53,10 @@ export class RequestRefused extends Schema.TaggedError<RequestRefused>()("Reques
 }) {}
 
 /**
- * A session as a host inspects it (`inspectionOf`): its header, its state, its journal, and every request it sent, resolved.
+ * A request the session sent, as a host inspects it (`requestsOf`): where
+ * it is stored, its step, and what the model was sent, resolved.
  *
  * @public
  */
-export const Inspection = Schema.Struct({
-  header: SessionHeader,
-  state: SessionState,
-  events: Schema.Array(StoredEvent),
-  requests: Schema.Array(Schema.Struct({ seq: Seq, step: StepNumber, ...ResolvedRequest.fields })),
-})
-export type Inspection = typeof Inspection.Type
+export const InspectedRequest = Schema.Struct({ seq: Seq, step: StepNumber, ...ResolvedRequest.fields })
+export type InspectedRequest = typeof InspectedRequest.Type

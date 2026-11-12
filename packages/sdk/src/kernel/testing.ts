@@ -1,8 +1,8 @@
-import { Context, Effect, Layer, Ref, Stream } from "effect"
+import { Context, Effect, Layer, Ref, Result, Stream } from "effect"
 import type { Schema } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Core, inspectionOf, kernel, Loop, Sessions } from "@xandreed/core/kernel"
+import { Core, inspectionOf, kernel, Loop, requestsOf, Sessions, settings } from "@xandreed/core/kernel"
 import type { EventDefinition, JournalStorage, KernelEvent, Memory, NewSessionInput, SessionId, Settings } from "@xandreed/core/kernel"
 import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
 import type { InvalidBudget, SessionsOptions } from "./index.js"
@@ -71,11 +71,12 @@ export interface Parts<EM, EL, EX> {
 export const inOrder = <E>(...layers: ReadonlyArray<Layer.Layer<never, E, Core | Settings>>): Layer.Layer<never, E, Core | Settings> =>
   layers.reduce<Layer.Layer<never, E, Core | Settings>>((built, next) => next.pipe(Layer.provideMerge(built)), Layer.empty)
 
-/** The parts built once and shared by the stacks above them: the kernel, a journal kept in the process, and the session plugin, over the model. */
+/** The parts built once and shared by the stacks above them: the kernel, a journal kept in the process, the session plugin and the settings, over the model. */
 export const base = (model: Layer.Layer<LanguageModel.LanguageModel>, parts: { readonly system?: string; readonly sessions?: SessionsOptions } = {}) =>
   sessions(parts.sessions).pipe(
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(kernel({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(settings({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
 
@@ -89,7 +90,8 @@ export const stack = <EM = never, EL = never, EX = never>(model: Layer.Layer<Lan
     Layer.provideMerge(sessions(parts.sessions)),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(extras),
-    Layer.provideMerge(kernel({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(settings({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
 }
@@ -97,7 +99,8 @@ export const stack = <EM = never, EL = never, EX = never>(model: Layer.Layer<Lan
 /**
  * A stack built in the scope, with what a test calls on it: a test's own
  * shorthand, not a handle the kernel ships. `send` is the loop's `run`,
- * `inspect` the session read and resolved (`inspectionOf`), `events` the
+ * `inspect` the session read, folded and its requests resolved
+ * (`inspectionOf` and `requestsOf`), `events` the
  * host's stream of `Core`.
  */
 export const open = <E>(layer: Layer.Layer<Core | Sessions | Loop, E>) => Effect.map(Layer.build(layer), (built) => {
@@ -109,7 +112,9 @@ export const open = <E>(layer: Layer.Layer<Core | Sessions | Loop, E>) => Effect
     loop,
     createSession: (input: NewSessionInput) => sessionsOf.create(input),
     send: (session: SessionId, message: string) => loop.run({ session, message }),
-    inspect: (session: SessionId) => Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(inspectionOf(journal))),
+    inspect: (session: SessionId) => Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(
+      Result.flatMap(inspectionOf(journal), (inspection) => Result.map(requestsOf(journal.events), (requests) => ({ ...inspection, requests }))),
+    )),
     events: core.events,
   }
 })

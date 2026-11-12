@@ -5,7 +5,7 @@
 // Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
-import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings } from "@xandreed/core/kernel"
+import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Loop, loopConformance, Memory, memoryConformance, requestsOf, Sessions, sessionsConformance, Settings, settings } from "@xandreed/core/kernel"
 import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
@@ -51,9 +51,10 @@ for (const [name, checks] of Object.entries(kits)) {
 /** The stock agent over a model, composed as a host composes it. */
 const agentOf = (model) => stepLoop.pipe(
   Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+  Layer.provideMerge(settings({ system })),
   Layer.provideMerge(sessions()),
   Layer.provideMerge(inProcessJournal()),
-  Layer.provideMerge(kernel({ system })),
+  Layer.provideMerge(kernel()),
   Layer.provideMerge(model),
 )
 
@@ -64,10 +65,12 @@ const turn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const loop = yield* Loop
     const session = yield* sessionsOf.create({ owner: "consumer" })
     const reply = yield* loop.run({ session, message: "Hello" })
-    const inspection = yield* Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(inspectionOf(journal)))
+    const journal = yield* sessionsOf.read(session)
+    const inspection = yield* Effect.fromResult(inspectionOf(journal))
+    const requests = yield* Effect.fromResult(requestsOf(journal.events))
     const refused = yield* Effect.flip(loop.run({ session, message: "  " }))
     const invalid = yield* Effect.flip(sessionsOf.create({ owner: "" }))
-    return { reply, refused, invalid, state: inspection.state._tag, names: inspection.events.map((event) => event.name), requests: inspection.requests.length, calls: yield* calls }
+    return { reply, refused, invalid, state: inspection.state._tag, names: inspection.events.map((event) => event.name), requests: requests.length, calls: yield* calls }
   }).pipe(Effect.provide(agentOf(model)))
 })).pipe(Effect.timeout("20 seconds")))
 assert.deepEqual(turn.reply, { text: "Hello!" })
@@ -75,11 +78,11 @@ assert.equal(turn.refused._tag, "EmptyMessage")
 assert.equal(turn.invalid._tag, "InvalidSession")
 assert.equal(turn.state, "Free")
 assert.deepEqual(turn.names, [
-  "plugin.session.turn.started",
+  "core.session.turn.started",
   "plugin.loop.user.message",
   "plugin.loop.request.sent",
   "plugin.loop.assistant.message",
-  "plugin.session.turn.ended",
+  "core.session.turn.ended",
 ])
 assert.equal(turn.requests, 1)
 assert.deepEqual(turn.calls, [[{ role: "system", text: system }, { role: "user", text: "Hello" }]])
