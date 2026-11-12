@@ -32,7 +32,7 @@ The package has four entries, each an `index.ts` of explicit named exports:
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
-| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`): ids, `Message`, the event envelope, the event definitions and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), the pure rules (`inspectionOf` among them), the `JournalStorage`, `Sessions`, `Memory` and `Loop` contracts with their kits, `Settings`, and `Core` (publish, on, events) with `kernel`, the layer that provides `Core` and `Settings` | a first cut: it changes as the parts it leaves out return | the sdk's kernel only (`core/kernel`) |
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`): what every agent has whatever its workflow. Ids, `Message`, the event envelope, core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: those are the sdk's kernel contracts | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -91,9 +91,20 @@ it, by a relative path or as `@xandreed/core/kernel`: `./kernel` is a
 file describes the existing engine's side of core, not the kernel. The
 kernel's rules:
 
-- Core stores nothing and runs no turn. `Core` is `publish`, `on` and
+- Core owns what every agent has, whatever its workflow: sessions and
+  their journal, journal storage, events and the message vocabulary
+  (ADR 0002). It never owns a loop, a memory, a prompt, a system text or a
+  request to a model: those are contracts of the sdk's kernel
+  (`packages/sdk/src/kernel/contracts`), and nothing here may name them.
+  Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
-  vocabulary, pure rules, contracts and kits.
+  vocabulary, pure rules, the two contracts and their kits.
+- Core's API is a product. `api/core--kernel.api.txt` lists it, and
+  `verify:packages` fails when it differs from the build (`bun run
+  api:update` rewrites it). A change that removes or changes a name there
+  comes with a CHANGELOG line saying what a plugin must change. There is no
+  API version constant: the package version is the version, and nothing
+  would read a second one; one comes when remote plugins need a handshake.
 - A limit on a wait for a listener holds whatever the listener does. A
   publisher waits for its waiting listeners while it is not interrupted
   itself, which is the contract inside a turn; every limit put on such a
@@ -127,46 +138,43 @@ kernel's rules:
 - A listener is named by its registrant: `Core.on` takes `{ name, wait? }`,
   and `name` is how a failure of it is reported. There is no ambient
   plugin name: a plugin is a layer, and nothing sets one around it.
-- `kernel({ system, capacity? })` (`core.adapter.ts`) is the layer of
-  `Core` and `Settings`; every other part is a plugin's layer, composed
+- `kernel({ capacity? })` (`core.adapter.ts`) is the layer of `Core`
+  and nothing else; every other part is a plugin's layer, composed
   over it by the host. Core has no wiring of its own: no plan, no
   declaration of what a plugin needs beside its layer's type, no wait for
   `Core` to fall quiet. A plugin's listeners go with its layer's scope.
-- The event type is open. `vocabulary.entity.ts` defines only the facts
-  other plugins rely on (`plugin.session.turn.started`,
-  `plugin.session.turn.ended`, `plugin.loop.user.message`,
-  `plugin.loop.request.sent`, `plugin.loop.assistant.message`,
-  `plugin.loop.assistant.delta`) and `core.listener.failed`. A plugin's own
-  events are defined in the plugin's folder with `storedEvent` and
-  `liveEvent`. Never type `Core.publish`, `Core.on`, `OpenSession.append`
+- The event type is open. An event is named after the owner of the
+  contract that defines it: `vocabulary.entity.ts` defines core's own,
+  the session's `core.session.turn.started` and `core.session.turn.ended`
+  and `core.listener.failed`, and nothing else. A plugin contract's events
+  (the loop's `plugin.loop.*`) and a plugin's own are defined in its
+  folder with `storedEvent` and `liveEvent`. `KERNEL_READER` answers for
+  `core.` records only; a plugin's reader adds its prefix over it, or over
+  the reader of the plugin whose records it reads
+  (`readerFor(name, own, over)`). Never type `Core.publish`, `Core.on`, `OpenSession.append`
   or `JournalStorage.append` with a list of names: the sdk's
   `plugins.test.ts` defines two events of its own and must keep compiling.
   A stored event is always announced with its turn (`announced`); a live
   one names a turn only when it happens inside one (`LiveEvent.turn` is an
   optional key), so an event about a session and no turn of it, such as
   the inbox's `plugin.inbox.queued`, is made with `live(definition, { id })`.
-- A message sits once, on the envelope (`StoredEvent.message`); a request
-  is pointers (`ModelRequest.messages`), turned back into messages by
-  `resolveRequest` alone, which returns the pointed messages
-  (`PointedMessage`) and refuses a place that bears no message, a place
-  named twice and, given the request's own place, one that is not before
-  it. The estimate is `estimateTokens` alone.
+- A message sits once, on the envelope (`StoredEvent.message`), and
+  `messageOf` reads it from any record, whichever plugin wrote it. What a
+  request is (pointers, `resolveRequest`, the estimate) is the loop
+  contract's, not core's.
 - A contract carries a plugin's own tagged error as it was raised
-  (`PluginFailure`), so core names no memory's or model's error.
-- `Memory` is one function, `build(session, step)`, and keeps nothing by
-  contract: it reads the session's journal, may append a record of its own
-  through the open session it is given, and returns pointers.
+  (`PluginFailure`), so core names no plugin's error.
 - `Sessions.create` takes the input as a host writes it
   (`NewSessionInput`, the encoded side of `NewSession`) and decodes it: an
   empty owner, or a parent that is no id, is `InvalidSession`. The kit
   checks it (`invalid-session`).
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
-  kernel's own helpers (`conformance.entity.ts` and its functions), not
-  core's `src/conformance.functions.ts`. A check has an `id`, the one its
-  kit's doc comment lists, and a failure names the check it came from.
-  `journalStorageConformance` has its self-test here; the other three
-  run, with their careless plugins, where the stock plugins live
-  (`packages/sdk/src/kernel/kits.test.ts`). A new check comes with a
+  kernel's own helpers (`conformance.entity.ts` and its functions, which
+  are not exported), not core's `src/conformance.functions.ts`. A check
+  has an `id`, the one its kit's doc comment lists, and a failure names
+  the check it came from. `journalStorageConformance` has its self-test
+  here; `sessionsConformance` runs, with its careless plugins, where the
+  stock plugins live (`packages/sdk/src/kernel/kits.test.ts`). A new check comes with a
   careless plugin that fails it and no other check it is not careless
   about. A check never counts scheduler turns to show that something did
   not happen: it waits on a latch or publishes a probe after.

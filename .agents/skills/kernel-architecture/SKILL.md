@@ -1,12 +1,30 @@
 ---
 name: kernel-architecture
-description: How the efferent kernel's parts compose — replace a plugin, wrap one with a higher-order plugin, react to an event, or record a fact in the journal; no hooks, registries, priorities or config wiring. Read before adding or changing a kernel contract, a stock kernel plugin, the loop or memory, or before proposing a new way for plugins to extend each other.
+description: How the efferent kernel's parts compose — what core owns and what a plugin's contract owns, where a contract and a plugin live, and how plugins extend each other (replace, wrap with a higher-order plugin, react to an event, record a fact in the journal; no hooks, registries, priorities or config wiring). Read before adding or changing a kernel contract, a stock kernel plugin, the loop or memory, anything in core's kernel, or before proposing a new way for plugins to extend each other.
 ---
 
 # Change the kernel's architecture
 
-The decision is `docs/adr/0001-kernel-plugin-composition.md`. Read it before you design.
-This skill is the checklist; the record has the reasons.
+Two records hold the decisions. Read both before you design; this skill is the checklist,
+the records have the reasons.
+
+- `docs/adr/0002-core-owns-state-plugins-own-workflows.md`: what core owns (sessions and
+  their journal, events, the message vocabulary) and what it never will (a loop, a memory,
+  a prompt, a request); where a contract and a plugin live, and the import graph.
+- `docs/adr/0001-kernel-plugin-composition.md`: how plugins compose.
+
+## Choose the place
+
+- [ ] Every agent has it, whatever its workflow: core (`packages/core/src/kernel`). Rare:
+      it changes `api/core--kernel.api.txt`, and a name removed or changed there needs a
+      CHANGELOG line saying what a plugin must change.
+- [ ] Anything else: a contract in `packages/sdk/src/kernel/contracts/<name>/` (entities,
+      events, pure rules, kit), its stock plugin in `plugins/<name>/`.
+- [ ] A plugin imports contracts and core, never another plugin's folder; a contract
+      imports core and other contracts, never a plugin. The boundaries gate refuses both.
+- [ ] An event is named after the owner of the contract that defines it: `core.` for
+      core's, `plugin.<name>.` for a plugin contract's. A reader of another plugin's records
+      extends that plugin's reader (`readerFor(name, own, LOOP_READER)`).
 
 ## Choose the way
 

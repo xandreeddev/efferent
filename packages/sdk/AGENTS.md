@@ -40,20 +40,37 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 ## The kernel (`src/kernel`)
 
 `@xandreed/sdk/kernel` is a second, much smaller agent beside the one this
-file describes, over the contracts of `@xandreed/core/kernel`
-(`docs/kernel.md`). It is its own layer, `sdk-kernel` (tests and
-`testing.ts` in `sdk-kernel-tests`), placed before the sdk's: it imports
-core's kernel and `effect/ai` and nothing else of the workspace, not core's
-root, not the runtime, not the rest of the sdk, and no runtime module:
+file describes, over `@xandreed/core/kernel` (`docs/kernel.md`): every
+workflow contract and the stock plugins (ADR 0002). Its layers come before
+the sdk's: `sdk-kernel-contracts` (`contracts/**`), one
+`sdk-kernel-plugin-<name>` per plugin folder, `sdk-kernel` (the entry) and
+`sdk-kernel-tests` (tests and `testing.ts`). It imports core's kernel and
+`effect/ai` and nothing else of the workspace, not core's root, not the
+runtime, not the rest of the sdk, and no runtime module:
 `browser-bundle.test.ts` builds its entry for a browser and records every
 specifier the bundler resolves, none of which may name one (`node:`,
 `bun:`, or a bare builtin name); its control, `fixtures/kernel-node-import.ts`,
 imports `node:path` and must be caught. The rest of the sdk may not import
 it: `./kernel` is a `restricted` subpath.
 
+- A contract lives in `contracts/<name>/`: its entities, events, pure
+  rules and kit. `contracts/loop` holds `Loop` (`run(input)`, which names
+  no memory), `TurnInput`, `Reply`, the loop kit and its `LoopScript`,
+  `Settings` and `settings({ system })`, the conversation's events
+  (`plugin.loop.*`), the request vocabulary (`ModelRequest`, `Tokens`,
+  `StepNumber`, `resolveRequest`, `estimateTokens`, `requestsOf`) and
+  `LOOP_READER`; `contracts/memory` holds `Memory` and its kit, over the
+  loop's request; `contracts/inbox` holds `Inbox`, its ticket, refusals and
+  event. A contract imports core's kernel and other contracts, never a
+  plugin; a plugin imports contracts and core's kernel, never another
+  plugin's folder: the boundaries gate refuses both. The loop and memory
+  kits build their checks with `contracts/conformance.entity.functions.ts`,
+  a copy of core's kernel helpers, which core does not export. Service keys
+  are `@xandreed/sdk/kernel/<Name>`.
 - Every plugin is a plain Effect `Layer`, its type saying what it needs,
   and the host composes them with `Layer.provideMerge` over core's
-  `kernel({ system, capacity? })`, which provides `Core` and `Settings`.
+  `kernel({ capacity? })`, which provides `Core` alone; the system text is
+  the loop contract's `settings({ system })`, which the upper stack carries.
   There is no wiring here: no `Agent.define`, no plan of what plugins
   declare, no replacement API. A plugin's layer lives in an `.adapter.ts`;
   a `.usecase.ts` and an entity's functions hold no `Layer`.
@@ -69,9 +86,9 @@ it: `./kernel` is a `restricted` subpath.
   it resolved. `callModel` names every kind of stream part
   (`Match.discriminatorsExhaustive`): an `error` part fails with
   `ModelFailed`, and a new kind does not compile until it is decided.
-- The inbox (`plugins/inbox`) has its contract in its own folder
-  (`inbox.port.ts`, key `@xandreed/sdk/kernel/Inbox`): core does not know
-  it. Its state is one `InboxState` (`Open` with the next ticket and a
+- The inbox (`plugins/inbox`) implements the contract in
+  `contracts/inbox` (`inbox.port.ts`, key `@xandreed/sdk/kernel/Inbox`):
+  core does not know it. Its state is one `InboxState` (`Open` with the next ticket and a
   `SessionQueue` per session whose worker runs, in a `HashMap`, or
   `Closed`), moved by the pure transitions of `inbox.entity.functions.ts`
   (`enqueue`, `take`, `finish`, held to a table test) under one
@@ -119,7 +136,7 @@ it: `./kernel` is a `restricted` subpath.
   the document together.
 - The session plugin stores, then publishes, and the store is the truth.
   Every `begin` reads the journal for the phase and the last place, and the
-  append of `plugin.session.turn.started` there is the claim: a conflict is
+  append of `core.session.turn.started` there is the claim: a conflict is
   `SessionBusy`, not a storage failure, and a turn that did not open
   (failure or defect) holds nothing. A turn's start is announced inside the
   turn. Its writes take one lock per open turn (`Turn.writes`): the check
@@ -165,7 +182,9 @@ it: `./kernel` is a `restricted` subpath.
   table, and the inbox's rules), `kits` (the four kits on the stock
   plugins and on careless ones: each careless plugin fails the checks of
   what it is careless about and no others, and between them every check),
-  `browser-bundle`, `guide`. A test whose claim is the compiler's says
+  `browser-bundle`, `guide`, and beside the contracts' files their own
+  (`contracts/loop/*.test.ts`: the conversation's events and the loop's
+  reader, the requests and the estimate, `settings`). A test whose claim is the compiler's says
   `type-level:` in its title. `testing.ts` composes the stock stack
   (`stack`, `base`) and opens a built one with a test's shorthand
   (`open`). `scripts/kernel-consumer.fixture.mjs` runs the four kits, one
@@ -181,7 +200,7 @@ it: `./kernel` is a `restricted` subpath.
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
-- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data, `InvalidBudget`), `stepLoop`, `callModel`, `EmptyMessage`, `ModelFailed`, `ToolsNotRun`, `scriptedModel` (`ScriptedCalls`), the model that follows a script, for the loop kit and for tests, and the inbox: `Inbox` (`Queued`), `inbox`, `inboxOf` (`InboxOptions`), `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data. A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (the loop's: `Loop`, `TurnInput`, `Reply`, `loopConformance`, `LoopScript`, `Settings`, `settings`, the conversation's events and their constructors, the request vocabulary, `requestsOf`, `LOOP_READER`; memory's: `Memory`, `memoryConformance`; the inbox's: `Inbox`, `Ticket`, its refusals and event), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data, `InvalidBudget`), `stepLoop`, `callModel`, `EmptyMessage`, `ModelFailed`, `ToolsNotRun`, `scriptedModel` (`ScriptedCalls`), the model that follows a script, for the loop kit and for tests, and the inbox: `Inbox` (`Queued`), `inbox`, `inboxOf` (`InboxOptions`), `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data. A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

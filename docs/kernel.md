@@ -2,8 +2,11 @@
 
 This is a direction document. It describes the kernel, a second and much
 smaller way to build an agent that ships beside the existing engine, and
-where it goes next. The entries are `@xandreed/core/kernel` (what every part
-agrees on) and `@xandreed/sdk/kernel` (the stock plugins).
+where it goes next. The entries are `@xandreed/core/kernel` (what every
+agent has, whatever its workflow) and `@xandreed/sdk/kernel` (the workflow
+contracts and the stock plugins). Why the line runs there is recorded in
+[ADR 0002](adr/0002-core-owns-state-plugins-own-workflows.md); how plugins
+compose, in [ADR 0001](adr/0001-kernel-plugin-composition.md).
 
 The existing engine (`Agent.define` of `@xandreed/sdk`, described in the
 [framework guide](framework.md)) is complete: tools, skills, tasks, durable
@@ -17,27 +20,37 @@ caught up.
 
 ## Core, and plugins as layers
 
-- **Core holds contracts, events and pure rules.** Ids, a message, an
-  event's envelope, four contracts with a conformance kit each, a handful of
-  pure rules, and `Core`: publish, on, events. Core stores nothing and runs
-  no turn.
-- **Every other part is a plugin, and a plugin is an Effect `Layer`**, the
-  loop included. What a plugin needs is in its layer's type, and a host
-  composes the layers with `Layer.provideMerge`. There is no plugin runtime
-  and no wiring of the kernel's own.
+- **Core holds what every agent has, whatever its workflow.** Ids, the
+  message vocabulary, an event's envelope, sessions and their journal (two
+  contracts with a conformance kit each), reading a journal, and `Core`:
+  publish, on, events. Core stores nothing, runs no turn, and names no
+  loop, memory, system text or request to a model.
+- **Every workflow is a plugin's.** A contract a workflow needs lives in a
+  contract folder of the sdk (`contracts/<name>`: its entities, events,
+  pure rules and kit), and its stock plugin in a plugin folder
+  (`plugins/<name>`). A plugin imports contracts and core, never another
+  plugin; a contract imports core and other contracts, never a plugin. The
+  boundaries gate refuses either import.
+- **Every part is an Effect `Layer`**, the loop included. What a plugin
+  needs is in its layer's type, and a host composes the layers with
+  `Layer.provideMerge`. There is no plugin runtime and no wiring of the
+  kernel's own.
 
 | Part | Where | What it is |
 |---|---|---|
-| Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `StepNumber`, `Tokens`; `Message`; `StoredEvent` and `KernelEvent` |
-| Event definitions | core, and each plugin's own folder | a name, the schema of the data, stored or live, and for a stored one whether it may be skipped |
-| Contracts | core | `JournalStorage`, `Sessions`, `Memory`, `Loop`, each with a kit; `Settings`, the system text, and `settings({ system })`, its layer |
-| Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal, resolving a request, the estimate |
+| Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`; `Message`; `StoredEvent` and `KernelEvent` |
+| Event definitions | core for its own, and the folder of each contract or plugin for theirs | a name, the schema of the data, stored or live, and for a stored one whether it may be skipped |
+| Contracts | core | `JournalStorage`, `Sessions`, each with a kit |
+| Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal |
 | `kernel({ capacity? })` | core | the layer that provides `Core`, and nothing of a workflow |
+| The loop contract | sdk, `contracts/loop` | `Loop` with its kit; `Settings`, the system text, and `settings({ system })`, its layer; the conversation's events; the request (`ModelRequest`, `StepNumber`, `Tokens`), resolving it, the estimate, `requestsOf` |
+| The memory contract | sdk, `contracts/memory` | `Memory` with its kit, over the loop's request |
+| The inbox contract | sdk, `contracts/inbox` | `Inbox`, its ticket, refusals and event |
 | `inProcessJournal()` | sdk, `plugins/journal-in-process` | keeps journals in the process; knows nothing else |
 | `sessions()` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | decides what the model is sent; owns the budget |
 | `stepLoop` | sdk, `plugins/loop` | the main function; the model call lives with it |
-| `inbox` | sdk, `plugins/inbox` | queues messages per session and answers them in order, over `Loop`; its contract, `Inbox`, is its own |
+| `inbox` | sdk, `plugins/inbox` | queues messages per session and answers them in order, over `Loop` |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
 is data, `.entity.functions.ts` the pure rules of that data, `.port.ts` a
@@ -45,7 +58,7 @@ contract, `.usecase.ts` a main flow, `.adapter.ts` an implementation and its
 layer.
 
 This is the whole of the window memory, quoted from its source. What it
-needs, `Core` and `Settings`, is in its type, and a budget that is no finite
+needs, core's `Core` and the loop contract's `Settings`, is in its type, and a budget that is no finite
 number of at least one token fails the layer with `InvalidBudget`:
 
 <!-- pinned: packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts -->
@@ -346,8 +359,9 @@ turn: (id, body) => Effect.acquireUseRelease(
 ## The inbox: queueing messages
 
 The inbox is a plugin over the loop, and the proof that a plugin can be
-added without touching core: its contract, `Inbox`, lives in its own
-folder, under a key named after its package.
+added without touching core: its contract, `Inbox`, lives in a contract
+folder of the sdk (`contracts/inbox`), under a key named after its
+package, and its plugin in `plugins/inbox`.
 
 <!-- pinned: packages/sdk/src/kernel/contracts/inbox/inbox.port.ts -->
 
@@ -523,8 +537,9 @@ const after  = yield* ask(agentB, session, "What's my name?")   // the same sess
 
 - The base (`Base`: the kernel, the journal and the session plugin) is
   built once in a scope, so there is one journal and one `Core`.
-- Each upper stack (`Upper`: the inbox, the loop, a memory and whatever
-  else listens) is built in a child scope of its own.
+- Each upper stack (`Upper`: the inbox, the loop, a memory, the system
+  text they read and whatever else listens) is built in a child scope of
+  its own.
 - The old stack's scope is closed before the new one takes a turn, so no
   event reaches the listeners of both: the test checks that the old
   memory's listener hears nothing after the swap, and that the session goes
@@ -534,9 +549,10 @@ const after  = yield* ask(agentB, session, "What's my name?")   // the same sess
 long-lived one is what a host that edits its configuration while sessions
 go on needs.
 
-Each contract ships with its kit: `journalStorageConformance`,
-`sessionsConformance`, `memoryConformance` and `loopConformance` are the
-contracts as runnable checks, each check with an id that its failures name.
+Each contract ships with its kit: core's `journalStorageConformance` and
+`sessionsConformance`, and the sdk's `memoryConformance` and
+`loopConformance`, are the contracts as runnable checks, each check with an
+id that its failures name.
 The loop kit hands every check a script for the model, and `scriptedModel`
 follows one, so a host proves its own loop with what the sdk ships.
 
