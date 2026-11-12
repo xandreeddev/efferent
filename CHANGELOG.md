@@ -73,6 +73,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- `docs/adr/0001-kernel-plugin-composition.md` records how the kernel's
+  plugins compose (replace, wrap, an event, or an entry in the journal; no
+  hooks), and the skill `kernel-architecture` loads it before an
+  architectural change of the kernel.
 - The boundaries gate refuses a `restricted` subpath to the layer of the
   package's own entry too, unless that layer is granted it: a file of
   `core` can no longer reach `@xandreed/core/kernel` by its package name,

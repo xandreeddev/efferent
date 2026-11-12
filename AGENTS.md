@@ -5,7 +5,8 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 `packages/<name>/AGENTS.md`. `CLAUDE.md` links here. Skills, in
 `.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
 `commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
-`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`.
+`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`,
+`kernel-architecture`. Architecture decisions: `docs/adr/`.
 
 ## Task map
 
@@ -22,6 +23,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
 | Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
+| Add or change a kernel contract, a stock kernel plugin, the loop or memory, or a way for plugins to extend each other | skill `kernel-architecture`, `docs/adr/0001-kernel-plugin-composition.md` |
 
 ## Architecture
 
