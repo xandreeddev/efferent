@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
-import { Core, definePlugin, Memory, readJournal, requestSentEvent, Settings, Tokens } from "@xandreed/core/kernel"
-import { fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
+import { Core, definePlugin, Memory, readJournal, requestSentEvent, Settings } from "@xandreed/core/kernel"
+import { budgetOf, fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
 import type { WindowOptions } from "./window.entity.js"
 
 /**
@@ -19,7 +19,7 @@ export const windowMemory = (options: WindowOptions) => definePlugin({
   make: Effect.gen(function* () {
     const core = yield* Core
     const settings = yield* Settings
-    const budgetTokens = Tokens.make(Math.max(0, Math.floor(options.budgetTokens)))
+    const budgetTokens = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // a budget that is none fails the agent's definition
 
     // react: announce pressure so any plugin can act on it
     yield* core.on(requestSentEvent, (sent) =>

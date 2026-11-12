@@ -52,6 +52,7 @@ const FIVE = [turnStartedEvent.name, userMessageEvent.name, requestSentEvent.nam
 export const loopConformance = (subject: LoopSubject): ReadonlyArray<ConformanceCheck> => {
   type Parts = Effect.Success<ReturnType<LoopSubject["open"]>> & { readonly core: CoreShape }
   const check = (name: string, id: string, script: LoopScript, body: (parts: Parts) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>): ConformanceCheck => ({
+    id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const core = yield* makeCore()
@@ -89,7 +90,9 @@ export const loopConformance = (subject: LoopSubject): ReadonlyArray<Conformance
       const journal = yield* sessions.read(session)
       const requests = journal.events.flatMap((event) => Option.toArray(dataOf(requestSentEvent, event)))
       yield* expect("request", requests.length === 2, `two turns stored ${requests.length} requests`)
-      yield* Effect.forEach(requests, (request) => expect("request", resolveRequest(journal.events, request)._tag === "Success", `the stored request ${show(request)} does not resolve`), { concurrency: 1, discard: true })
+      const stored = journal.events.filter((event) => event.name === requestSentEvent.name)
+      yield* Effect.forEach(stored, (event) => expect("request", Option.exists(dataOf(requestSentEvent, event), (request) => resolveRequest(journal.events, request, event.seq)._tag === "Success"),
+        `the request stored at ${event.seq} does not resolve to earlier messages: ${show(event.data)}`), { concurrency: 1, discard: true })
       yield* expect("request", Option.exists(turnMessageOf(journal.events), (seq) => requests.at(-1)?.messages.includes(seq) === true),
         `the last request ${show(requests.at(-1)?.messages)} leaves out the message its turn answers`)
       const text = show(journal.events)

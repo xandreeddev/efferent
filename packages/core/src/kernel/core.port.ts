@@ -35,6 +35,10 @@ export const CurrentPlugin = Context.Reference<PluginName>("@xandreed/core/kerne
  * Background delivery is bounded and sliding: a listener or a host that
  * reads slower than events arrive loses the oldest ones it has not read.
  * The journal is what is complete.
+ *
+ * `core.listener.failed` is never waited for: a listener registered on it
+ * with `{ wait: true }` is delivered in the background like any other, so
+ * the report of a failure cannot be held by a listener.
  */
 export class Core extends Context.Service<Core, {
   /** Tell every listener; stores nothing. */
@@ -43,7 +47,8 @@ export class Core extends Context.Service<Core, {
    * React to the events of one definition, for as long as the scope it is
    * called in stays open. In the background by default: a failure there is
    * published as `core.listener.failed`. With `{ wait: true }` the
-   * publisher waits, and the failure is the publisher's.
+   * publisher waits, and the failure is the publisher's; a listener whose
+   * scope closed while a publish was under way is not run.
    */
   readonly on: <D extends Schema.Json, E>(
     event: EventDefinition<D>,

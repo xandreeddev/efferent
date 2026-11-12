@@ -8,7 +8,11 @@ import { JOURNAL_FORMAT, SessionRefused } from "./session.entity.js"
 import type { Free, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
 import { KERNEL_READER, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
-/** The state of a session nothing happened in yet. */
+/**
+ * The state of a session nothing happened in yet.
+ *
+ * @public
+ */
 export const newSession: SessionState = { _tag: "Free", turns: 0 }
 
 /** Open the next turn of a free session; a session with a turn open refuses with `SessionBusy`. */
@@ -18,7 +22,11 @@ export const beginTurn = (state: SessionState): Result.Result<TurnOpen, SessionR
     TurnOpen: ({ turn }) => Result.fail(new SessionRefused({ reason: "SessionBusy", message: `turn ${turn} is still open` })),
   })
 
-/** Close the open turn; a free session refuses with `NoOpenTurn`. */
+/**
+ * Close the open turn; a free session refuses with `NoOpenTurn`.
+ *
+ * @public
+ */
 export const endTurn = (state: SessionState): Result.Result<Free, SessionRefused> =>
   Match.valueTags(state, {
     Free: () => Result.fail(new SessionRefused({ reason: "NoOpenTurn", message: "no turn is open" })),

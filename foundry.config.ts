@@ -542,7 +542,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // nothing else of the workspace: not core's root, not the runtime, not
       // the rest of the sdk. `./kernel` is a restricted subpath of the sdk's
       // layer below, which no layer is granted.
-      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
+      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "node:", "bun:test"] },
       { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/testing.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
       { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the

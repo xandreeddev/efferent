@@ -130,7 +130,7 @@ const kindsAreTypes = (core: Context.Service.Shape<typeof Core>, session: OpenSe
 ]
 
 describe("a plugin adds an event on a compression check and another plugin reacts", () => {
-  test("whether its events are stored or live is checked by the compiler", () => {
+  test("type-level: whether its events are stored or live is checked by the compiler", () => {
     expect(kindsAreTypes).toBeFunction()
   })
 

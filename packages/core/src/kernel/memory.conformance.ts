@@ -1,6 +1,7 @@
 import { Effect, Option, Predicate, Ref, Result, Schema } from "effect"
 import type { Context, Scope } from "effect"
 import { expect, fail, refuses, show, unexpected } from "./conformance.entity.functions.js"
+import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
 import { makeCore } from "./core.adapter.js"
 import type { Core } from "./core.port.js"
@@ -93,6 +94,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     id: string,
     body: (memory: MemoryShape, kit: Kit) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>,
   ): ConformanceCheck => ({
+    id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const memory = yield* subject.open(yield* makeCore())
@@ -103,9 +105,9 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
   const build = (memory: MemoryShape, session: OpenSession) => Effect.flatMap(memory.open(session), (opened) => opened.build(firstStep))
   /** The request, resolved against the journal as it is after the build. */
   const resolved = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
-    Result.match(resolveRequest(journal, { system: subject.system, ...request }), {
+    Result.match(resolveRequest(journal, request), {
       onFailure: (refusal) => fail(id, `the request does not resolve: ${refusal.message}`),
-      onSuccess: (sent) => Effect.succeed(sent),
+      onSuccess: (messages) => Effect.succeed({ messages }),
     }))
   const answersTurn = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
     expect(id, Option.exists(turnMessageOf(journal), (seq) => request.messages.includes(seq)), `the request ${show(request.messages)} leaves out the message the turn answers`))
@@ -172,7 +174,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       yield* kit.append(unknown(true))
       const session = yield* kit.openTurn("And a scope?")
-      yield* answersTurn("unknown-skipped", kit, yield* build(memory, session))
+      yield* Effect.mapError(build(memory, session), (error) => new ConformanceFailure({ check: "unknown-skipped", message: `a build over a record that may be skipped failed with ${error._tag}: ${error.message}` }))
     })),
     check("an unknown record of its own that may not be skipped is refused", "unknown-refused", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
@@ -184,7 +186,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       yield* kit.append(stored(storedEvent("kit-stranger", "noted", { data: Schema.Struct({}), skippable: false }), {}))
       const session = yield* kit.openTurn("And a scope?")
-      yield* answersTurn("foreign", kit, yield* build(memory, session))
+      yield* Effect.mapError(build(memory, session), (error) => new ConformanceFailure({ check: "foreign", message: `a build over another plugin's record failed with ${error._tag}: ${error.message}` }))
     })),
   ]
 }

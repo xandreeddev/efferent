@@ -41,7 +41,11 @@ export type Free = typeof Free.Type
 export const TurnOpen = Schema.TaggedStruct("TurnOpen", { turn: TurnNumber })
 export type TurnOpen = typeof TurnOpen.Type
 
-/** A session's state: one phase, moved by `beginTurn` and `endTurn`, and the fold of its journal. */
+/**
+ * A session's state: one phase, moved by `beginTurn` and `endTurn`, and the fold of its journal.
+ *
+ * @public
+ */
 export const SessionState = Schema.Union([Free, TurnOpen])
 export type SessionState = typeof SessionState.Type
 

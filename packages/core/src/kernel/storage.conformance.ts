@@ -62,6 +62,7 @@ const refused = (id: string, what: string, reason: StorageError["reason"], call:
 export const storageConformance = (subject: StorageSubject): ReadonlyArray<ConformanceCheck> => {
   /** One check over a fresh store. A `StorageError` the check did not expect fails it. */
   const check = (name: string, id: string, body: (storage: StorageShape) => Effect.Effect<void, ConformanceFailure | StorageError>): ConformanceCheck => ({
+    id,
     name,
     run: Effect.scoped(Effect.flatMap(subject.open, body)).pipe(
       Effect.catchTag("StorageError", (error) => fail(id, `unexpected ${error.reason}: ${error.message}`)),

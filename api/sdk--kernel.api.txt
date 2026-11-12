@@ -1,4 +1,6 @@
 class AgentRefused
+class InvalidBudget
+class ModelFailed
 class OverBudget
 class ToolsNotRun
 const Agent
@@ -7,6 +9,7 @@ const WindowPressureData
 const callModel
 const inMemoryStorage
 const isOverBudget
+const scriptedModel
 const sessions
 const stepLoop
 const windowDroppedEvent
@@ -18,5 +21,6 @@ interface NewSessionInput
 interface SessionsOptions
 interface WindowOptions
 type AgentChanges
+type ScriptedCalls
 type WindowDroppedData
 type WindowPressureData

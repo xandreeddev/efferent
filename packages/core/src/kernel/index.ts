@@ -40,7 +40,7 @@ export { Journal, Reader, StorageError, UnknownRecord } from "./journal.entity.j
 export { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
 export { Free, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnInput, TurnOpen } from "./session.entity.js"
 export { beginTurn, endTurn, headerOf, newSession, sessionStateOf } from "./session.entity.functions.js"
-export { Inspection, ModelRequest, RequestRefused, ResolvedRequest, SentRequest } from "./request.entity.js"
+export { Inspection, ModelRequest, PointedMessage, RequestRefused, ResolvedRequest, SentRequest } from "./request.entity.js"
 export { estimateRequest, estimateTokens, inspectionOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
 export { Core, CurrentPlugin } from "./core.port.js"
 export type { ListenOptions } from "./core.port.js"

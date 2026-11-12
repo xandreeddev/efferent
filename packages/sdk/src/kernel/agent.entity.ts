@@ -10,6 +10,7 @@ import type {
   LoopFailure,
   Memory,
   Plugin,
+  PluginFailure,
   Reply,
   RequestRefused,
   SessionId,
@@ -37,14 +38,14 @@ export interface AgentConfig {
   readonly model: Layer.Layer<LanguageModel.LanguageModel>
   /** The system text, fixed for the agent. */
   readonly system: string
-  readonly storage: Plugin<Storage, never, Core>
+  readonly storage: Plugin<Storage, PluginFailure, Core>
   /** The stock session plugin when left out. */
-  readonly sessions?: Plugin<Sessions, never, Core | Storage>
-  readonly memory: Plugin<Memory, never, SharedParts | Settings | LanguageModel.LanguageModel>
+  readonly sessions?: Plugin<Sessions, PluginFailure, Core | Storage>
+  readonly memory: Plugin<Memory, PluginFailure, SharedParts | Settings | LanguageModel.LanguageModel>
   /** The stock loop plugin when left out. */
-  readonly loop?: Plugin<Loop, never, SharedParts | Settings | LanguageModel.LanguageModel | Memory>
+  readonly loop?: Plugin<Loop, PluginFailure, SharedParts | Settings | LanguageModel.LanguageModel | Memory>
   /** Anything extra, built after the rest, in this order. */
-  readonly plugins?: ReadonlyArray<Plugin<never, never, SharedParts | RebuiltParts>>
+  readonly plugins?: ReadonlyArray<Plugin<never, PluginFailure, SharedParts | RebuiltParts>>
   /** How `Core` is set up: the capacity of background delivery. */
   readonly core?: CoreOptions
 }
@@ -68,13 +69,15 @@ export interface NewSessionInput {
 
 /**
  * An agent refused a call: the handle was replaced by `with`
- * (`Replaced`), or a session was asked for with an owner or a parent that
- * is no valid one (`InvalidSession`).
+ * (`Replaced`); a session was asked for with an owner or a parent that is
+ * no valid one (`InvalidSession`); a turn was asked for with no message
+ * (`EmptyMessage`); or `with` was called from inside a turn of the handle
+ * it would replace (`InsideTurn`).
  *
  * @public
  */
 export class AgentRefused extends Schema.TaggedError<AgentRefused>()("AgentRefused", {
-  reason: Schema.Literals(["Replaced", "InvalidSession"]),
+  reason: Schema.Literals(["Replaced", "InvalidSession", "EmptyMessage", "InsideTurn"]),
   message: Schema.String,
 }) {}
 
@@ -86,7 +89,7 @@ export class AgentRefused extends Schema.TaggedError<AgentRefused>()("AgentRefus
 export interface AgentHandle {
   /** Create a session and return its id: plain data, kept by the host. */
   readonly createSession: (input: NewSessionInput) => Effect.Effect<SessionId, AgentRefused | StorageError>
-  /** Run one turn of the session and return its reply. Refused with `Replaced` once `with` replaced this handle. */
+  /** Run one turn of the session and return its reply. Refused with `Replaced` once `with` replaced this handle, and with `EmptyMessage` for a message of no text. */
   readonly send: (session: SessionId, message: string) => Effect.Effect<Reply, AgentRefused | LoopFailure>
   /** The session as its journal tells it: its state, its events, and every request it sent, resolved. */
   readonly inspect: (session: SessionId) => Effect.Effect<Inspection, StorageError | UnknownRecord | SessionRefused | RequestRefused>
@@ -95,12 +98,17 @@ export interface AgentHandle {
   /**
    * Replace this agent by one with the changes, over the same events,
    * storage and sessions. The settings, the model, memory, the loop and the
-   * extra plugins are built again, in the scope `with` is called in. This
-   * handle refuses `send` from then on; `with` returns once the turns it
-   * was running have finished and its own parts are closed, their
-   * listeners removed.
+   * extra plugins are built again, in the scope `with` is called in, and
+   * then the two agents switch in one step: this handle refuses `send` from
+   * then on, and the one returned takes over. Until the switch this handle
+   * is fully usable: if `with` fails or is interrupted before it, what was
+   * built is released and nothing changed. A turn this handle is running
+   * finishes on its own parts, which close after it, their listeners
+   * removed; with no turn running they are closed when `with` returns.
+   * Called from inside a turn of this handle, `with` is refused
+   * (`InsideTurn`).
    */
-  readonly with: (changes: AgentChanges) => Effect.Effect<AgentHandle, AgentRefused, Scope.Scope>
+  readonly with: (changes: AgentChanges) => Effect.Effect<AgentHandle, AgentRefused | PluginFailure, Scope.Scope>
 }
 
 /** Whether a handle still takes turns, and how many it is running. */

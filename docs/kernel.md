@@ -84,7 +84,12 @@ const reply = yield* agent.send(session, "Hello")
 `sessions`, `loop` and `plugins` may be left out: the stock session and loop
 plugins are the defaults. A session is plain data, an id the host keeps. The
 handle has five members: `createSession`, `send`, `inspect`, `events` and
-`with`.
+`with`. `send` refuses a message of no text (`AgentRefused`, reason
+`EmptyMessage`) before anything is stored.
+
+`model` is any layer of Effect AI's `LanguageModel`. For a test or an
+example, `scriptedModel(script)` of `@xandreed/sdk/kernel` is a model that
+follows a script and calls no provider.
 
 ## The loop's main function
 
@@ -111,9 +116,10 @@ export const makeStepLoop = Effect.gen(function* () {
 
       let step = firstStep
       while (true) {
-        const request = yield* context.build(step)
+        const request  = yield* context.build(step)
+        const messages = yield* resolve(session, request)                      // pointers → the exact messages; refused if one points nowhere
         yield* session.append(requestSent(step, settings.system, request))
-        const message = yield* callModel(model, session, settings.system, request,
+        const message  = yield* callModel(model, settings.system, messages,
           (delta) => core.publish(assistantDelta(session, delta)))
         yield* session.append(assistantMessage(step, message))
         if (!wantsTools(message)) return replyOf(message)
@@ -133,21 +139,34 @@ agent.send(session, "Hello")
    ├─ sessions.turn opens                plugin.session.turn.started      stored
    ├─ session.append(user message)       plugin.loop.user.message         stored
    ├─ memory.open, context.build         memory plugin
+   ├─ resolve(request)                   pointers → messages, or refused
    ├─ session.append(request)            plugin.loop.request.sent         stored
    ├─ model call                         plugin.loop.assistant.delta ×n   live only
    ├─ session.append(assistant message)  plugin.loop.assistant.message    stored
    └─ sessions.turn closes               plugin.session.turn.ended        stored
 ```
 
-Two rules are visible in it.
+Three rules are visible in it.
 
 - A stored fact is `session.append(...)` on the session plugin, which
   stores it through `Storage` and then publishes the stored event. A live
   fact is `Core.publish(...)`, which stores nothing.
 - "A turn always closes" belongs to the session plugin's `turn`. A loop
   plugin that uses it gets that for every exit: the model's error, an
-  interrupt, a request over the budget. A loop that does not use it can
-  leave a turn open, and core does not prevent it.
+  interrupt, a request over the budget. The one exit it cannot close is its
+  own store failing: a turn whose end cannot be stored stays open, as the
+  journal says it is. A loop that does not use `turn` can leave a turn
+  open, and core does not prevent it.
+- A request is resolved before it is stored, and the model is sent what was
+  resolved. A request that points at a record bearing no message is refused
+  (`RequestRefused`) with nothing of it in the journal, so no stored request
+  points nowhere, and `agent.inspect` shows of each request the messages the
+  model was sent.
+
+A model that fails fails the turn: with the model's own error when the call
+fails, and with `ModelFailed` when its stream reports an error part-way
+through an answer. The pieces that had streamed were published live; no
+assistant message is stored for an answer that was cut.
 
 ## Events
 
@@ -190,14 +209,18 @@ that bears one, whichever plugin wrote it.
 2. It hands the event to the background listeners and to the host's stream
    (`agent.events`). It does not wait for them.
 
-A stored event reaches `publish` after it is in the journal, so a listener
-never hears of a fact the journal does not hold.
+The session plugin publishes a stored event after it stored it, so a
+listener never hears of a fact the journal does not hold. A listener whose
+plugin was closed while a publish was under way is passed over.
 
 Background delivery is bounded and sliding: a listener or a host that reads
 slower than events arrive loses the oldest ones it has not read. The
 journal is what is complete. The capacity is `core: { capacity }` in the
 agent's config, 256 when left out. A background listener that fails is
-reported as `core.listener.failed`.
+reported as `core.listener.failed`. That report is never waited for: a
+listener registered for it with `{ wait: true }` is delivered in the
+background like any other, so a report cannot hold up the publisher it
+reports on.
 
 `Core.on(definition, handler, options)` registers a listener for one
 definition, in the scope of the plugin that calls it: when that plugin is
@@ -206,12 +229,17 @@ receives the event with its data decoded by the definition's schema. It may
 publish live events. It cannot append to the journal in this cut: a plugin
 writes to the journal through its contract, inside a turn.
 
-The end of a turn is the one place where the order differs. The session
-plugin stores `plugin.session.turn.ended`, frees the session, and only then
-publishes. A listener that fails there, or that has not returned after
-`closeWait` (5 seconds unless the session plugin is given another), cannot
-keep the session busy or fail the caller: it is cut short and reported as
-`core.listener.failed`.
+The end of a turn is the one publish whose listeners cannot fail the
+publisher. The session plugin stores `plugin.session.turn.ended`, announces
+it on a fiber of its own, and frees the session only when the announcement
+is done. So the events of one session reach listeners and the host's stream
+in journal order: a turn's end is never heard after the next turn's start.
+A listener that fails there does not fail the caller, and one that has not
+returned after `closeWait` (5 seconds unless the session plugin is given
+another) is cut short; either is reported as `core.listener.failed`. Until
+the announcement is done or cut short the session is busy, and a `send` for
+it is refused with `SessionBusy`: for at most `closeWait` after the end was
+stored. A caller that is interrupted does not wait for those listeners.
 
 A host follows events by running the stream. The stream has no replay, so
 the host starts reading before the turn it wants to see:
@@ -237,8 +265,13 @@ A plugin defines its events in its own folder, with `liveEvent` or
 `storedEvent`. The helper puts the plugin's name in front
 (`plugin.<plugin name>.<event>`). `live(definition, origin, data)` makes an
 event for `Core.publish`; `stored(definition, data)` makes a draft for
-`session.append`. The kind is in the type: a live definition cannot be
-appended, and a stored one cannot be published without being stored.
+`session.append`. The kind is in the type: `session.append` takes a draft
+and `Core.publish` an event, so a live event cannot be appended and a draft
+cannot be published. The stored event a listener hears is published by the
+session plugin after it stored the draft; `announced(origin, stored)` is the
+helper a session plugin uses for that. Core does not check who calls it:
+that a stored event is announced once, after it is stored, is the sessions
+contract, and its kit checks it.
 
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#own-event -->
 
@@ -274,19 +307,33 @@ A session has one phase, moved by two transitions.
 | `endTurn` | refused: `NoOpenTurn` | to `Free` |
 
 They are pure functions, tested as a table. The state is also the fold of
-the journal (`sessionStateOf`), so it can be rebuilt from storage alone: a
-session plugin that meets a session it did not run reads its phase and its
-last place from the journal. That is the seam for crash recovery and for
-several processes over one store.
+the journal (`sessionStateOf`), and the store is the truth. The session
+plugin begins every turn by reading the journal: it folds it to the phase,
+takes its last place, and appends `plugin.session.turn.started` at the next
+one. That append is its claim on the turn. Storage refuses an append at a
+place that is taken, so of two writers that begin a turn of one session at
+once, one stores its start and the other is refused with `SessionBusy`.
+
+What holds now: two session plugins over one store take turns on one
+session, each from what the journal holds, and one refuses a turn while the
+other's is open. What waits for a durable store: this cut's storage lives
+in one process, so nothing here runs across processes yet. Each turn reads
+the whole journal to begin. A turn whose end was never stored, because the
+process stopped or the store failed, stays open in the journal and the
+session refuses turns from then on; closing such a turn is crash recovery,
+which returns with the durable stores. And the order of announcements (a
+turn's end before the next turn's start) is kept by one session plugin, not
+between two of them over one store.
 
 The session plugin's two functions, quoted from its source:
 
 <!-- pinned: packages/sdk/src/kernel/plugins/session/sessions.adapter.ts -->
 
 ```ts
-const append = (session: Origin) => (event: StoredDraft) => Effect.gen(function* () {
-  const stored = yield* store(session.id, event)                  // in the journal first
-  yield* core.publish(announced(session, stored))                 // then announced, same name
+const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+  if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
+  const stored = yield* store(open, event)                        // in the journal first
+  yield* core.publish(announced(open, stored))                    // then announced, same name
   return stored
 })
 ```
@@ -297,9 +344,14 @@ const append = (session: Origin) => (event: StoredDraft) => Effect.gen(function*
 turn: (id, body) => Effect.acquireUseRelease(
   begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started
   (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
-  (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, frees the session, announces it; always runs
+  (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, announces it, frees the session; always runs
 ),
 ```
+
+A turn's `append` refuses once the turn has closed (`SessionRefused`, reason
+`NoOpenTurn`), so an open session kept past its turn writes nothing. When the
+end of a turn cannot be stored, the caller gets the storage failure and the
+turn stays open, as the journal says it is.
 
 ### What the model is sent
 
@@ -315,7 +367,9 @@ and points at it.
 estimate and the budget. One pure function, `resolveRequest(journal, request)`,
 turns the pointers back into the messages, for the model call and for
 `agent.inspect` alike, so what a reader sees of a past request is what the
-model was sent. The estimate is one pure function too, `estimateTokens`, a
+model was sent. A pointer names a record that bears a message, once, and for
+a stored request a record before it; any other is refused with
+`RequestRefused`. The estimate is one pure function too, `estimateTokens`, a
 quarter of the characters rounded up, and everything counts with it.
 
 `windowMemory({ budgetTokens })` sends every message, and reads the system
@@ -323,7 +377,8 @@ text from the agent's settings so that its estimate covers what is really
 sent. Over the budget it drops whole turns, oldest first, and records
 `plugin.window.dropped`. When the current turn alone does not fit, it fails
 with its own error, `OverBudget`, which carries `estimatedTokens` and
-`budgetTokens` (`isOverBudget` tells it).
+`budgetTokens` (`isOverBudget` tells it). A budget that is no finite number
+of at least one token fails `Agent.define` with `InvalidBudget`.
 
 ### Records a reader does not know
 
@@ -350,9 +405,19 @@ const later = yield* next.send(session, "And now?")
 
 `with` takes `model`, `system`, `memory`, `loop` and `plugins`. It builds
 the settings, the model, memory, the loop and the extra plugins again,
-because the loop holds the memory and the model it was built with. It
-replaces: the old handle refuses `send` from then on, a turn it was running
-finishes, and then its parts are closed and their listeners removed.
+because the loop holds the memory and the model it was built with. Then the
+two agents switch in one step: the old handle refuses `send` from then on
+(`AgentRefused`, reason `Replaced`) and the new one takes turns at once.
+
+- `with` does not wait for a turn the old handle is running. That turn
+  finishes on the old parts, which are closed after it, their listeners
+  removed. While it runs, the extra plugins of both agents hear its events.
+- Until the switch the old handle is fully usable. If `with` fails, with
+  the error of a plugin that could not be built, or is interrupted, what
+  was built is released and nothing has changed.
+- Called from inside a turn of the handle it would replace, in a waiting
+  listener for instance, `with` is refused at once with reason `InsideTurn`.
+
 Storage and sessions are not `with`'s to change. Nothing is loaded or
 unloaded inside a live agent.
 
@@ -389,7 +454,11 @@ Each contract ships with its kit: `storageConformance`,
 `sessionsConformance`, `memoryConformance` and `loopConformance` are the
 contracts as runnable checks, and a plugin is proved by running its kit.
 The example above would not pass the memory kit as it stands: it keeps to
-no budget and reads no record's flag. The kits say so, check by check.
+no budget and reads no record's flag. The kits say so, check by check: each
+check has an id, and a failure names the check it came from. The loop kit
+hands every check a script for the model, and `scriptedModel` is the model
+that follows one, so a host proves its own loop plugin with what the sdk
+ships.
 
 ## What the first cut leaves out, and the order it returns
 
@@ -415,7 +484,9 @@ request must not disturb what came before. Three rules keep it so, and each
 later feature has to hold to them.
 
 - What a turn's tailoring adds, it adds at the end.
-- The system text is fixed for the session.
+- The system text is fixed for the agent. `agent.with({ system })` changes
+  it, and with it the prefix a provider cached: the next request of every
+  session starts a new one.
 - Nothing earlier is rewritten until memory compacts.
 
 The memory kit checks the last one as it applies to this cut: while nothing

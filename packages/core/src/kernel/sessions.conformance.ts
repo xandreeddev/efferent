@@ -35,7 +35,7 @@ class KitFailure extends Schema.TaggedError<KitFailure>()("KitFailure", { messag
 
 const STARTED = turnStartedEvent.name
 const ENDED = turnEndedEvent.name
-const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, noted, turnEndedEvent, listenerFailedEvent]
+const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, noted, turnEndedEvent]
 
 /**
  * The sessions contract as checks, each over a fresh session plugin: a
@@ -46,14 +46,18 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * (`turn`); every stored event is announced on `Core` after it is in the
  * journal, under the same name, with its session and turn (`announce`); a
  * turn asked for while one is open is refused and stores nothing (`busy`);
+ * a turn of one session does not hold another (`isolated`);
  * a body that fails still closes the turn, with the failure as its outcome
  * and the caller's own error, and the next turn runs (`closes`); so does a
  * body that is interrupted (`interrupt`); a waiting listener that fails on
  * an appended event fails the append after the event is stored, and the
  * turn closes (`listener`); a listener that fails on the turn's end fails
  * nothing, leaves the session free and is reported as
- * `core.listener.failed` (`close-listener`); a session never created is
- * refused before any body runs (`missing`).
+ * `core.listener.failed` (`close-listener`); the session stays busy until
+ * the end of its turn was announced, so its events reach listeners in
+ * journal order (`ordered`); an open session kept after its turn closed
+ * appends nothing (`closed-append`); a session never created is refused
+ * before any body runs (`missing`).
  *
  * @public
  */
@@ -64,6 +68,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     id: string,
     body: (parts: { readonly core: CoreShape; readonly sessions: SessionsShape; readonly seen: Effect.Effect<ReadonlyArray<KernelEvent>> }) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>,
   ): ConformanceCheck => ({
+    id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const core = yield* makeCore()
@@ -75,6 +80,11 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     })).pipe(unexpected(id)),
   })
   const names = (events: ReadonlyArray<{ readonly name: string }>) => events.map((event) => event.name)
+  /** Run a turn once the session is free: after an interrupt the end of the turn before is still being announced. */
+  const onceFree = <A, E extends { readonly _tag: string }>(turn: Effect.Effect<A, E>, tries = 600): Effect.Effect<A, E> =>
+    Effect.catchIf(turn, (error) => error._tag === "SessionRefused" && tries > 0, () => Effect.andThen(Effect.sleep("10 millis"), Effect.suspend(() => onceFree(turn, tries - 1))))
+  /** Wait for a signal a careless subject may never give: none after two seconds. */
+  const within = <A>(signal: Deferred.Deferred<A>) => Effect.timeoutOption(Deferred.await(signal), "2 seconds")
   const outcomeOf = (event: Option.Option<{ readonly name: KernelEvent["name"]; readonly data: Schema.Json }>) =>
     Option.match(Option.flatMap(event, (ended) => dataOf(turnEndedEvent, ended)), { onNone: () => "none", onSome: (data) => data.outcome._tag })
 
@@ -132,6 +142,15 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const journal = yield* sessions.read(id)
       yield* expect("busy", show(names(journal.events)) === show([STARTED, ENDED]), `a refused turn left the journal as ${show(names(journal.events))}`)
     })),
+    check("a turn of one session does not hold another session", "isolated", ({ sessions }) => Effect.gen(function* () {
+      const first = yield* sessions.create({ owner })
+      const second = yield* sessions.create({ owner })
+      const inside = yield* sessions.turn(first, () => sessions.turn(second, (session) => Effect.as(session.append(note("in the other session")), session.turn)))
+      yield* expect("isolated", inside === 1, `a turn of another session, run inside a turn, was turn ${inside}`)
+      const [one, other] = [yield* sessions.read(first), yield* sessions.read(second)]
+      yield* expect("isolated", show(names(one.events)) === show([STARTED, ENDED]) && show(names(other.events)) === show([STARTED, noted.name, ENDED]),
+        `two sessions hold ${show(names(one.events))} and ${show(names(other.events))}`)
+    })),
     check("a body that fails still closes the turn, and the next turn runs", "closes", ({ sessions }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
       yield* refuses("closes", "a turn whose body failed", sessions.turn(id, () => Effect.fail(new KitFailure({ message: "the body failed" }))), (error) => error._tag === "KitFailure")
@@ -151,7 +170,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const journal = yield* sessions.read(id)
       yield* expect("interrupt", show(names(journal.events)) === show([STARTED, ENDED]) && outcomeOf(Option.fromNullishOr(journal.events.at(-1))) === "Interrupted",
         `an interrupted turn left ${show(journal.events)}`)
-      const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
+      const next = yield* onceFree(sessions.turn(id, (session) => Effect.succeed(session.turn)))
       yield* expect("interrupt", next === 2, `the turn after an interrupted one was ${next}`)
     })),
     check("a waiting listener that fails on an appended event fails the append, and the turn closes", "listener", ({ core, sessions }) => Effect.gen(function* () {
@@ -165,15 +184,43 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
       yield* expect("listener", next === 2, `the turn after one a listener failed was ${next}`)
     })),
-    check("a listener that fails on the turn's end fails nothing and is reported", "close-listener", ({ core, sessions, seen }) => Effect.gen(function* () {
+    check("a listener that fails on the turn's end fails nothing and is reported", "close-listener", ({ core, sessions }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
+      const reported = yield* Deferred.make<{ readonly listener: string; readonly event: string }>()
+      yield* core.on(listenerFailedEvent, (failure) => Deferred.succeed(reported, failure.data), { name: "kit-watch" })
       yield* core.on(turnEndedEvent, () => Effect.fail(new KitFailure({ message: "the listener failed" })), { wait: true, name: "kit-failing" })
       const value = yield* sessions.turn(id, () => Effect.succeed("done"))
       yield* expect("close-listener", value === "done", `a turn whose end a listener failed returned ${show(value)}`)
-      const reported = (yield* seen).flatMap((event) => Option.toArray(dataOf(listenerFailedEvent, event)))
-      yield* expect("close-listener", reported.some((failure) => failure.listener === "kit-failing" && failure.event === ENDED), `the failure was reported as ${show(reported)}`)
+      const failure = yield* within(reported)
+      yield* expect("close-listener", Option.exists(failure, (data) => data.listener === "kit-failing" && data.event === ENDED), `the failure was reported as ${show(Option.getOrNull(failure))}`)
       const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
       yield* expect("close-listener", next === 2, `the turn after one whose end a listener failed was ${next}`)
+    })),
+    check("the session stays busy until its turn's end was announced, so its events are announced in journal order", "ordered", ({ core, sessions, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      const ends = yield* Ref.make(0)
+      // The first end is held by a listener the publisher waits for; the ones after it are not.
+      yield* core.on(turnEndedEvent, () => Effect.flatMap(Ref.updateAndGet(ends, (count) => count + 1), (count) =>
+        count === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void), { wait: true, name: "kit-slow" })
+      const first = yield* Effect.forkChild(sessions.turn(id, (session) => session.append(note("one"))))
+      yield* expect("ordered", Option.isSome(yield* within(entered)), "the end of a turn never reached a listener that waits for it")
+      yield* refuses("ordered", "a turn asked for while the end of the turn before is being announced", sessions.turn(id, () => Effect.void),
+        (error) => error._tag === "SessionRefused" && error.reason === "SessionBusy")
+      yield* Deferred.succeed(go, undefined)
+      yield* Fiber.join(first)
+      yield* sessions.turn(id, (session) => session.append(note("two")))
+      const announced = (yield* seen).map((event) => event._tag === "Stored" ? event.seq : 0)
+      const journal = yield* sessions.read(id)
+      yield* expect("ordered", show(announced) === show(journal.events.map((event) => event.seq)), `the events were announced at ${show(announced)}, stored at ${show(journal.events.map((event) => event.seq))}`)
+    })),
+    check("an open session kept after its turn closed appends nothing", "closed-append", ({ sessions }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      const kept = yield* sessions.turn(id, (session) => Effect.succeed(session))
+      yield* refuses("closed-append", "an append to a session whose turn closed", kept.append(note("late")), (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn")
+      const journal = yield* sessions.read(id)
+      yield* expect("closed-append", show(names(journal.events)) === show([STARTED, ENDED]), `an append after the turn closed left ${show(names(journal.events))}`)
     })),
     check("a session never created is refused before any body runs", "missing", ({ sessions }) => Effect.gen(function* () {
       const ran = yield* Ref.make(false)

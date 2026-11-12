@@ -32,6 +32,7 @@ const ModelRequest
 const NewSession
 const Owner
 const PluginName
+const PointedMessage
 const Reader
 const Reply
 const ResolvedRequest
@@ -133,6 +134,7 @@ type ModelRequest
 type NewSession
 type Owner
 type PluginName
+type PointedMessage
 type Reader
 type Reply
 type ResolvedRequest

@@ -1,10 +1,16 @@
 import { Option, Predicate, Result } from "effect"
 import { dataOf, estimateTokens, live, originOf, readerFor, stored, Tokens, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Delivered, LiveEvent, ModelRequest, Reader, SentRequest, Seq, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import { OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
+import { InvalidBudget, OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
 /** What the window memory reads of a journal: the session and loop records, and its own. */
 export const WINDOW_READER: Reader = readerFor("window", [windowDroppedEvent])
+
+/** The budget a window memory was given, as whole tokens; a number that is no budget is refused. */
+export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBudget> =>
+  Number.isFinite(budgetTokens) && budgetTokens >= 1
+    ? Result.succeed(Tokens.make(Math.floor(budgetTokens)))
+    : Result.fail(new InvalidBudget({ message: `a window memory needs a budget of at least one token; it was given ${budgetTokens}` }))
 
 /**
  * Whether an error is the window memory's `OverBudget`, whichever copy of the plugin raised it.

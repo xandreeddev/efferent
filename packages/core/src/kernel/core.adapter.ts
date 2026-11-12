@@ -35,18 +35,23 @@ export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) 
   const waiting = yield* Ref.make<ReadonlyArray<Waiting>>([])
   const keys = yield* Ref.make(0)
 
+  /** Run a waiting listener, unless its scope closed since the publish began. */
+  const stillWaiting = (listener: Waiting, event: KernelEvent) =>
+    Effect.flatMap(Ref.get(waiting), (now) => now.some((entry) => entry.key === listener.key) ? listener.run(event) : Effect.void)
+
   // Waiting listeners first, in registration order; then the hub, whatever they did, so the stream shows what the journal holds.
   const publish = (event: KernelEvent): Effect.Effect<void, ListenerFailed> =>
     Ref.get(waiting).pipe(
-      Effect.flatMap((listeners) => Effect.forEach(listeners.filter((listener) => listener.event === event.name), (listener) => listener.run(event), { concurrency: 1, discard: true })),
+      Effect.flatMap((listeners) => Effect.forEach(listeners.filter((listener) => listener.event === event.name), (listener) => stillWaiting(listener, event), { concurrency: 1, discard: true })),
       Effect.ensuring(PubSub.publish(hub, event)),
     )
 
-  // A failure nobody can fail for becomes `core.listener.failed`. A listener of that event that fails is logged, never reported again.
+  // A failure nobody can fail for becomes `core.listener.failed`, handed to the hub and waited for by nobody: no
+  // listener can hold the report. A listener of that event that fails is logged, never reported again.
   const report = (event: KernelEvent, failure: ListenerFailed): Effect.Effect<void> =>
     event.name === listenerFailedEvent.name
       ? Effect.logWarning(`a listener of ${event.name} failed`, failure.listener, failure.message)
-      : publish(listenerFailed(event, failure)).pipe(Effect.catchTag("ListenerFailed", (again) => Effect.logWarning(`a listener of ${listenerFailedEvent.name} failed`, again.listener, again.message)))
+      : Effect.asVoid(PubSub.publish(hub, listenerFailed(event, failure)))
 
   const on = Effect.fnUntraced(function* <D extends Schema.Json, E>(definition: EventDefinition<D>, handler: (event: Delivered<D>) => Effect.Effect<void, E>, options?: ListenOptions) {
     const listener = options?.name ?? (yield* CurrentPlugin)
@@ -60,7 +65,8 @@ export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) 
             Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.fail(failed(event, reasonOf(cause), Cause.squash(cause)))),
         ),
       })
-    if (options?.wait === true) {
+    // `core.listener.failed` is never waited for: a report must not be held by the listeners it is for.
+    if (options?.wait === true && definition.name !== listenerFailedEvent.name) {
       const key = yield* Ref.getAndUpdate(keys, (next) => next + 1)
       // A waiting listener cut short is reported by name: its publisher was interrupted, or stopped waiting.
       const waited = (event: KernelEvent) => run(event).pipe(Effect.onInterrupt(() => report(event, failed(event, "interrupted before it finished"))))

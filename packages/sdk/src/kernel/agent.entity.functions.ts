@@ -23,3 +23,7 @@ export const replaceAgent = (phase: AgentPhase): Result.Result<AgentPhase, Agent
 
 /** Whether a replaced handle has finished its last turn, so its parts can close. */
 export const isDrained = (phase: AgentPhase): boolean => phase._tag === "Replaced" && phase.running === 0
+
+/** A handle that is still the agent passes; one that was replaced refuses. */
+export const stillLive = (phase: AgentPhase): Result.Result<AgentPhase, AgentRefused> =>
+  phase._tag === "Live" ? Result.succeed(phase) : Result.fail(replaced())

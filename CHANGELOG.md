@@ -37,8 +37,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     each message's text is stored once; `agent.inspect` resolves every
     stored request back into what the model was sent.
   - `agent.with({ memory })` (also `model`, `system`, `loop`, `plugins`)
-    replaces an agent by one over the same events, storage and sessions,
-    from the next turn.
+    replaces an agent by one over the same events, storage and sessions.
+    The successor is built first and the two switch in one step: a turn
+    the old handle is running finishes on its own parts, and a `with` that
+    fails or is interrupted changes nothing.
+  - One session's events reach listeners in journal order. A session is
+    busy until its turn's end was announced, for at most `closeWait` (5
+    seconds) after it was stored. Every turn begins from what the journal
+    holds, so two session plugins over one store take turns on a session.
+  - `scriptedModel(script)` is a model that follows a script and calls no
+    provider: what a host hands the loop kit, and what a test runs an
+    agent on.
   - Nothing in either entry imports a `node:` or `bun:` module.
 
 ### Repository
@@ -47,6 +56,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   package's own entry too, unless that layer is granted it: a file of
   `core` can no longer reach `@xandreed/core/kernel` by its package name,
   nor one of the sdk `@xandreed/sdk/kernel`.
+- `bun run verify:packages` runs the kernel from the packed packages, on
+  Node and on Bun: the four contracts' kits on the stock plugins and one
+  turn on the scripted model (`scripts/kernel-consumer.fixture.mjs`).
 
 ## 0.22.0 — 2026-11-12
 

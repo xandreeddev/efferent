@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Stream } from "effect"
-import { assistantDeltaEvent } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, definePlugin, Memory, Seq, Tokens } from "@xandreed/core/kernel"
+import type { Response } from "effect/ai"
 import type { AgentHandle } from "./index.js"
 import { Agent, inMemoryStorage, isOverBudget, windowMemory } from "./index.js"
 import { answer, answering, counting, modelDown, recording, scripted } from "./testing.js"
@@ -133,5 +134,92 @@ describe("every exit closes the turn with its outcome, and the next send works",
     expect(result.refused).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.journal.names).toEqual(FIVE)
+  })
+})
+
+describe("a model that fails part-way through its answer", () => {
+  test("fails the turn with a typed error: no partial reply, no assistant message, and the next send works", async () => {
+    const result = await run(Effect.scoped(Effect.gen(function* () {
+      // The first call streams half an answer and then an error part; the second answers.
+      const broken = Stream.fromIterable<Response.StreamPartEncoded>([
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta: "Half an ans" },
+        { type: "error", error: { status: 529, body: "overloaded" } },
+      ])
+      const { model } = yield* scripted((call) => call === 0 ? broken : answer("Whole."))
+      const deltas = yield* recording([assistantDeltaEvent])
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [deltas.plugin] })
+      const session = yield* agent.createSession({ owner: "learner" })
+      const failed = yield* Effect.result(agent.send(session, "Hello"))
+      const afterFailure = yield* journalOf(agent, session)
+      const reply = yield* agent.send(session, "Again")
+      return { failed, afterFailure, reply, deltas: (yield* deltas.seen).map((event) => event.data), journal: yield* journalOf(agent, session) }
+    })))
+    expect(result.failed).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelFailed", cause: { status: 529, body: "overloaded" } } })
+    // What streamed before the error was shown live; none of it is stored as an answer.
+    expect(result.deltas[0]).toEqual({ text: "Half an ans" })
+    expect(result.afterFailure.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.session.turn.ended"])
+    expect(result.afterFailure.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("ModelFailed") } }])
+    expect(JSON.stringify(result.afterFailure.events)).not.toContain("Half an ans")
+    expect(result.reply).toEqual({ text: "Whole." })
+    expect(result.journal.names.slice(4)).toEqual(FIVE)
+  })
+})
+
+describe("a request memory builds badly", () => {
+  /** A memory whose request points at the turn's start, a record that bears no message. */
+  const misdirected = definePlugin({
+    name: "misdirected",
+    provides: Memory,
+    make: Effect.succeed(Memory.of({
+      open: () => Effect.succeed({ build: () => Effect.succeed({ messages: [Seq.make(1)], estimatedTokens: Tokens.make(1), budgetTokens: Tokens.make(3000) }) }),
+    })),
+  })
+
+  test("is refused before anything of it is stored, so the session stays readable", async () => {
+    const result = await run(Effect.scoped(Effect.gen(function* () {
+      const { model, received } = yield* answering("Hi.")
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: misdirected })
+      const session = yield* agent.createSession({ owner: "learner" })
+      const refused = yield* Effect.flip(agent.send(session, "Hello"))
+      // Inspecting resolves every stored request: a bad pointer stored for good would fail it from here on.
+      const journal = yield* journalOf(agent, session)
+      const next = yield* agent.with({ memory: windowMemory({ budgetTokens: 3000 }) })
+      return { refused, journal, calls: (yield* received).length, reply: yield* next.send(session, "Again") }
+    })))
+    expect(result.refused).toMatchObject({ _tag: "RequestRefused", reason: "UnknownMessage", seq: 1 })
+    expect(result.calls).toBe(0)
+    expect(result.journal.names).toEqual(["plugin.session.turn.started", "plugin.loop.user.message", "plugin.session.turn.ended"])
+    expect(result.journal.requests).toEqual([])
+    expect(result.reply).toEqual({ text: "Hi." })
+  })
+})
+
+describe("what an agent refuses before it starts", () => {
+  test("a message of no text, with a reason of its own, and nothing is stored for it", async () => {
+    const result = await run(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const session = yield* agent.createSession({ owner: "learner" })
+      return {
+        empty: yield* Effect.flip(agent.send(session, "")),
+        blank: yield* Effect.flip(agent.send(session, " \n\t ")),
+        names: (yield* journalOf(agent, session)).names,
+        reply: yield* agent.send(session, " Hello "),
+      }
+    })))
+    expect(result.empty).toMatchObject({ _tag: "AgentRefused", reason: "EmptyMessage" })
+    expect(result.blank).toMatchObject({ _tag: "AgentRefused", reason: "EmptyMessage" })
+    expect(result.names).toEqual([])
+    expect(result.reply).toEqual({ text: "Hi." })
+  })
+
+  test("a window memory with a budget that is none fails the agent's definition with a typed error, not a crash", async () => {
+    const defined = (budgetTokens: number) => run(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      return yield* Effect.result(Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens }) }))
+    })).pipe(Effect.map((result) => result._tag === "Failure" ? result.failure._tag : "defined")))
+    expect(await Promise.all([Number.NaN, Number.POSITIVE_INFINITY, 0, -5, 0.5].map(defined))).toEqual(["InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget"])
+    expect(await Promise.all([1, 8.9, 3000].map(defined))).toEqual(["defined", "defined", "defined"])
   })
 })

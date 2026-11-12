@@ -15,9 +15,10 @@ export interface OpenSession {
   /**
    * Store the event at the next place of the journal, then announce it on
    * `Core` under the same name, and return it as stored. A waiting listener
-   * that fails fails the append, after the event is stored.
+   * that fails fails the append, after the event is stored. Once the turn
+   * closed, an append is refused (`SessionRefused`, `NoOpenTurn`).
    */
-  readonly append: (event: StoredDraft) => Effect.Effect<StoredEvent, StorageError | ListenerFailed>
+  readonly append: (event: StoredDraft) => Effect.Effect<StoredEvent, StorageError | ListenerFailed | SessionRefused>
 }
 
 /**
@@ -29,9 +30,12 @@ export type TurnFailure = SessionRefused | StorageError | UnknownRecord | Listen
 
 /**
  * The rules for running sessions: one turn at a time, every stored event in
- * order, and a turn that always closes. A session with a turn open refuses
- * another (`SessionRefused`, `SessionBusy`); storage failures are
- * `StorageError`s. `sessionsConformance` is the contract as runnable checks.
+ * order, and a turn that closes on every exit of its body. A session with
+ * a turn open refuses another (`SessionRefused`, `SessionBusy`), and stays
+ * busy until its end was announced; storage failures are `StorageError`s,
+ * and a turn whose end cannot be stored stays open, as the journal says it
+ * is.
+ * `sessionsConformance` is the contract as runnable checks.
  */
 export class Sessions extends Context.Service<Sessions, {
   /** Create a session and return its id. */

@@ -17,6 +17,8 @@ export class ConformanceFailure extends Schema.TaggedError<ConformanceFailure>()
  * @public
  */
 export interface ConformanceCheck {
+  /** The check's id: the word its kit's doc comment lists it under, and the `check` of its failures. */
+  readonly id: string
   readonly name: string
   readonly run: Effect.Effect<void, ConformanceFailure>
 }

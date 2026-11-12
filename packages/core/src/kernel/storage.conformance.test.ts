@@ -74,14 +74,15 @@ const unnumbering: StorageSubject = {
   })),
 }
 
+/** The ids of the checks that fail; a failure that names another check than the one it came from is told apart. */
 const failedChecks = (subject: StorageSubject) => Effect.runPromise(Effect.forEach(storageConformance(subject), (check) =>
-  Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])))).then((failed) => failed.flat().toSorted())
+  Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check === check.id ? check.id : `${check.id} reported as ${result.failure.check}`] : [])))).then((failed) => failed.flat().toSorted())
 
 const everyCheck = ["append", "conflict", "create", "missing", "read-from"]
 
 describe("the storage kit", () => {
-  test("its checks have the ids its doc comment lists", () => {
-    expect(storageConformance(honest).length).toBe(everyCheck.length)
+  test("its checks have the ids its doc comment lists, in that order", () => {
+    expect(storageConformance(honest).map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing"])
   })
 
   test("a store that keeps its promises passes every check", async () => {

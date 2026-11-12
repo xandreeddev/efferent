@@ -59,8 +59,8 @@ describe("one turn of the kernel", () => {
     // The request is stored as pointers; resolved, it is what the model received.
     expect(stored[2]?.data).toEqual({ step: 1, system: "You are a friendly tutor.", messages: [2], estimatedTokens: 9, budgetTokens: 3000 })
     const sent = run.inspection.requests[0]
-    const resolved = Result.getOrThrow(resolveRequest(stored, { system: "You are a friendly tutor.", messages: [Seq.make(2)], estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000) }))
-    expect(sent).toEqual({ seq: Seq.make(3), step: StepNumber.make(1), ...resolved })
+    const messages = Result.getOrThrow(resolveRequest(stored, { messages: [Seq.make(2)] }, Seq.make(3)))
+    expect(sent).toEqual({ seq: Seq.make(3), step: StepNumber.make(1), system: "You are a friendly tutor.", messages, estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000) })
     expect(run.received).toEqual([[{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "Hello" }]])
     expect(sent?.messages.map(({ message }) => ({ role: message._tag.toLowerCase(), text: message.text }))).toEqual(run.received[0]?.slice(1))
     expect(stored[4]?.data).toEqual({ turn: 1, outcome: { _tag: "Completed" } })

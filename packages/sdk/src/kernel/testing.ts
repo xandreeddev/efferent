@@ -1,9 +1,9 @@
-import { Effect, Layer, Match, Ref, Stream } from "effect"
+import { Effect, Layer, Ref, Stream } from "effect"
 import type { Schema } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
 import { Core, definePlugin } from "@xandreed/core/kernel"
-import type { EventDefinition, KernelEvent, LoopScript } from "@xandreed/core/kernel"
+import type { EventDefinition, KernelEvent } from "@xandreed/core/kernel"
 
 /*
  * Scaffolding for the kernel's tests: scripted models (no provider, no
@@ -47,15 +47,6 @@ export const counting = scripted((call) => answer(`Reply ${call + 1}.`))
 
 /** The error of a model that is down. */
 export const modelDown = AiError.make({ module: "Scripted", method: "streamText", reason: new AiError.UnknownError({ description: "the scripted model is down" }) })
-
-/** A model that does what a kit's script says, call by call; calls past the script's end repeat its last answer. */
-export const following = (script: LoopScript) => scripted((call) => {
-  const step = script[Math.min(call, script.length - 1)]
-  return step === undefined ? Stream.fail(modelDown) : Match.valueTags(step, {
-    Answers: ({ pieces }): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => answer(...pieces),
-    Fails: () => Stream.fail(modelDown),
-  })
-})
 
 /**
  * An extra plugin that writes down, in order, every event of the given

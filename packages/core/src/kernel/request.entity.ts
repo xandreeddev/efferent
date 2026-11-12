@@ -16,10 +16,18 @@ export type ModelRequest = typeof ModelRequest.Type
 export const SentRequest = Schema.Struct({ step: StepNumber, system: Schema.String, ...ModelRequest.fields })
 export type SentRequest = typeof SentRequest.Type
 
-/** A request with its pointers turned back into messages: exactly what the model is sent. */
+/** A pointer turned back into the message it points at. */
+export const PointedMessage = Schema.Struct({ seq: Seq, message: Message })
+export type PointedMessage = typeof PointedMessage.Type
+
+/**
+ * A request with its pointers turned back into messages: exactly what the model is sent.
+ *
+ * @public
+ */
 export const ResolvedRequest = Schema.Struct({
   system: Schema.String,
-  messages: Schema.Array(Schema.Struct({ seq: Seq, message: Message })),
+  messages: Schema.Array(PointedMessage),
   estimatedTokens: Tokens,
   budgetTokens: Tokens,
 })
@@ -27,10 +35,11 @@ export type ResolvedRequest = typeof ResolvedRequest.Type
 
 /**
  * A request that cannot be sent: it points at a place that holds no message
- * (`UnknownMessage`), or at the same place twice (`RepeatedMessage`).
+ * (`UnknownMessage`), at the same place twice (`RepeatedMessage`), or at a
+ * place that is not before the request's own (`LaterMessage`).
  */
 export class RequestRefused extends Schema.TaggedError<RequestRefused>()("RequestRefused", {
-  reason: Schema.Literals(["UnknownMessage", "RepeatedMessage"]),
+  reason: Schema.Literals(["UnknownMessage", "RepeatedMessage", "LaterMessage"]),
   seq: Seq,
   message: Schema.String,
 }) {}

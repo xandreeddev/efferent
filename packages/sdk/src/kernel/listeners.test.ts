@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Ref, Schema } from "effect"
+import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
 import { Core, definePlugin, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Plugin } from "@xandreed/core/kernel"
 import { Agent, inMemoryStorage, sessions, windowMemory } from "./index.js"
@@ -11,14 +11,21 @@ const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin
 
 class AuditFailed extends Schema.TaggedError<AuditFailed>()("AuditFailed", { message: Schema.String }) {}
 
-/** An agent with one extra plugin beside a recorder of `core.listener.failed`. */
+/**
+ * An agent with one extra plugin, and beside it: the reports of failed
+ * listeners as they arrive (they are never waited for, so a test takes them
+ * from a queue), and the session's starts and ends as their listeners saw them.
+ */
 const agentWith = (extra: Plugin<never, never, Core>, options: SessionsOptions = {}) => Effect.gen(function* () {
   const { model, received } = yield* answering("Hi.")
-  const failures = yield* recording([listenerFailedEvent])
-  const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions(options), memory: windowMemory({ budgetTokens: 3000 }), plugins: [extra, failures.plugin] })
+  const reports = yield* Queue.unbounded<unknown>()
+  const reporter = definePlugin({ name: "reports", make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
+  const turns = yield* recording([turnStartedEvent, turnEndedEvent])
+  const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions(options), memory: windowMemory({ budgetTokens: 3000 }), plugins: [turns.plugin, extra, reporter] })
   const session = yield* agent.createSession({ owner: "learner" })
   const names = Effect.map(agent.inspect(session), (inspection) => inspection.events.map((event): string => event.name))
-  return { agent, session, received, failures: failures.seen, names }
+  const announced = Effect.map(turns.seen, (seen) => seen.map((event) => event._tag === "Stored" ? Number(event.seq) : 0))
+  return { agent, session, received, report: Queue.take(reports), names, announced }
 })
 
 describe("a listener the publisher waits for", () => {
@@ -103,7 +110,7 @@ describe("a listener the publisher waits for, on the turn's start", () => {
 })
 
 describe("a listener on the turn's end", () => {
-  test("that fails leaves the session free, the caller with its reply, and is reported as core.listener.failed", async () => {
+  test("that fails leaves the caller with its reply and the session free, and is reported as core.listener.failed", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const audit = definePlugin({
         name: "audit",
@@ -112,60 +119,67 @@ describe("a listener on the turn's end", () => {
       const kernel = yield* agentWith(audit)
       const reply = yield* kernel.agent.send(kernel.session, "Hello")
       const state = (yield* kernel.agent.inspect(kernel.session)).state
-      const failures = yield* kernel.failures
+      const report = yield* kernel.report
       const again = yield* kernel.agent.send(kernel.session, "Again")
-      return { reply, state, failures, again, names: yield* kernel.names }
+      return { reply, state, report, again, names: yield* kernel.names }
     })))
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.state).toEqual({ _tag: "Free", turns: 1 })
-    expect(result.failures.map((event) => [event._tag, event.name, event.turn, event.data])).toEqual([
-      ["Live", "core.listener.failed", 1, { listener: "audit", event: "plugin.session.turn.ended", reason: "AuditFailed: the audit log is full" }],
-    ])
+    expect(result.report).toEqual({ listener: "audit", event: "plugin.session.turn.ended", reason: "AuditFailed: the audit log is full" })
     expect(result.again).toEqual({ text: "Hi." })
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })
 
-  test("that never returns is cut short and reported: the caller gets its reply and the session takes the next turn", async () => {
+  test("that never returns is cut short after closeWait and reported: the caller gets its reply and the session takes the next turn", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const stuck = definePlugin({ name: "stuck", make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.never, { wait: true })) })
       const kernel = yield* agentWith(stuck, { closeWait: "20 millis" })
       const reply = yield* kernel.agent.send(kernel.session, "Hello")
       const state = (yield* kernel.agent.inspect(kernel.session)).state
       const again = yield* kernel.agent.send(kernel.session, "Again")
-      return { reply, state, again, failures: yield* kernel.failures, names: yield* kernel.names }
+      return { reply, state, again, reports: [yield* kernel.report, yield* kernel.report], names: yield* kernel.names }
     })))
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.again).toEqual({ text: "Hi." })
-    expect(result.failures.map((event) => event.data)).toEqual([
+    expect(result.reports).toEqual([
       { listener: "stuck", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
       { listener: "stuck", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
     ])
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })
 
-  test("that hangs does not keep the session busy while it hangs", async () => {
+  test("holds the session, not an interrupted caller: the next turn waits for the end to be announced, so events arrive in journal order", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
       const ends = yield* Ref.make(0)
-      // The listener hangs on the first turn's end only.
-      const stuck = definePlugin({
-        name: "stuck",
+      // The listener holds the first turn's end until it is let go.
+      const slow = definePlugin({
+        name: "slow",
         make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.flatMap(Ref.updateAndGet(ends, (count) => count + 1), (count) =>
-          count === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Effect.never) : Effect.void), { wait: true })),
+          count === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void), { wait: true })),
       })
-      const kernel = yield* agentWith(stuck, { closeWait: "1 minute" })
+      const kernel = yield* agentWith(slow, { closeWait: "1 minute" })
       const first = yield* Effect.forkChild(kernel.agent.send(kernel.session, "Hello"))
       yield* Deferred.await(entered)
-      // The first send is still waiting for the listener; the session is free already, and takes a whole turn.
-      const state = (yield* kernel.agent.inspect(kernel.session)).state
-      const again = yield* kernel.agent.send(kernel.session, "Again")
-      // An interrupted caller stops waiting at once.
+      // The end is stored and being announced: the journal says the turn is over, and the session is still busy.
+      const stored = (yield* kernel.agent.inspect(kernel.session)).state
+      const refused = yield* Effect.flip(kernel.agent.send(kernel.session, "Too soon"))
+      // A caller that is interrupted stops waiting at once; the announcement goes on without it.
       yield* Fiber.interrupt(first)
-      return { state, again, names: yield* kernel.names }
+      const stillBusy = yield* Effect.flip(kernel.agent.send(kernel.session, "Still too soon"))
+      yield* Deferred.succeed(go, undefined)
+      // Once the listener is done the session is free: the retry below is refused only while that is being wound up.
+      const again = yield* kernel.agent.send(kernel.session, "Again").pipe(Effect.retry({ times: 1000, while: (error) => error._tag === "SessionRefused" }))
+      return { stored, refused, stillBusy, again, names: yield* kernel.names, announced: yield* kernel.announced }
     })))
+    expect(result.stored).toEqual({ _tag: "Free", turns: 1 })
+    expect(result.refused).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
+    expect(result.stillBusy).toMatchObject({ _tag: "SessionRefused", reason: "SessionBusy" })
     expect(result.again).toEqual({ text: "Hi." })
-    expect(result.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.names).toEqual([...FIVE, ...FIVE])
+    // The first turn's end reached the listeners before the second turn's start: the places are in journal order.
+    expect(result.announced).toEqual([1, 5, 6, 10])
   })
 })

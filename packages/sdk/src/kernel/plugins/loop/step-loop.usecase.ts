@@ -3,7 +3,7 @@ import { LanguageModel } from "effect/ai"
 import { assistantDelta, assistantMessage, Core, firstStep, Memory, replyOf, requestSent, Sessions, Settings, userMessage, wantsTools } from "@xandreed/core/kernel"
 import type { TurnInput } from "@xandreed/core/kernel"
 import { callModel } from "./call-model.adapter.js"
-import { toolsNotInThisCut } from "./step-loop.usecase.functions.js"
+import { resolve, toolsNotInThisCut } from "./step-loop.usecase.functions.js"
 
 /**
  * The loop plugin's main function: one turn, from the user's message to
@@ -24,9 +24,10 @@ export const makeStepLoop = Effect.gen(function* () {
 
       let step = firstStep
       while (true) {
-        const request = yield* context.build(step)
+        const request  = yield* context.build(step)
+        const messages = yield* resolve(session, request)                      // pointers → the exact messages; refused if one points nowhere
         yield* session.append(requestSent(step, settings.system, request))
-        const message = yield* callModel(model, session, settings.system, request,
+        const message  = yield* callModel(model, settings.system, messages,
           (delta) => core.publish(assistantDelta(session, delta)))
         yield* session.append(assistantMessage(step, message))
         if (!wantsTools(message)) return replyOf(message)
