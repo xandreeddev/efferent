@@ -8,6 +8,11 @@ scope and activates session plugins per turn. Finalizers release resources in
 reverse dependency order; a failed activation closes its partially acquired
 scope. See [Composable agents](#composable-agents-the-host-composes-the-turn).
 
+A second, much smaller way to build an agent ships beside this engine as a
+first cut: a core that only carries events, and storage, sessions, memory
+and the loop as plugins. It is described in [The kernel](kernel.md), with
+what it leaves out for now; this guide describes the engine.
+
 Each plugin has a stable `id`, `version`, `apiVersion`, `scope`, Effect Schema,
 default options, required service tags, provided service tags, and Layer factory.
 A plugin receives only its declared dependencies (and the fiber's settings:

@@ -100,10 +100,11 @@ const noRuntimeImportsCore = {
 const contractsContainNoBehavior = {
   id: "architecture/contracts-contain-no-behavior",
   defaultSeverity: "error",
-  description: ".entity.ts and .usecase.ts files contain schemas and derived types, not behavior",
-  fixHint: "move exported behavior to the adjacent qualified .functions.ts file",
+  description: ".entity.ts files contain schemas and derived types, not behavior",
+  fixHint:
+    "move exported behavior to the paired .entity.functions.ts file; a use case's main flow belongs in a .usecase.ts file, with its input and output types as entities",
   check: ({ sourceFile }: Context): ReadonlyArray<Match> => {
-    if (!/\.(?:entity|usecase)\.ts$/.test(nameOf(sourceFile))) return []
+    if (!/\.entity\.ts$/.test(nameOf(sourceFile))) return []
     return sourceFile.statements.flatMap((statement): ReadonlyArray<Match> => {
       if (ts.isFunctionDeclaration(statement) && isExported(statement)) return [{ node: statement, message: "exported behavior in a schema contract file" }]
       if (ts.isVariableStatement(statement) && isExported(statement)) {

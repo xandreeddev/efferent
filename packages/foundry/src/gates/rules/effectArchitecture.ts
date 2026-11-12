@@ -90,10 +90,11 @@ export const noRuntimeImportsCore: IdiomRule = {
 export const contractsContainNoBehavior: IdiomRule = {
   id: RuleId.make("architecture/contracts-contain-no-behavior"),
   defaultSeverity: "error",
-  description: ".entity.ts and .usecase.ts files contain schemas and derived types, not behavior",
-  fixHint: "move exported behavior to the adjacent qualified .functions.ts file",
+  description: ".entity.ts files contain schemas and derived types, not behavior",
+  fixHint:
+    "move exported behavior to the paired .entity.functions.ts file; a use case's main flow belongs in a .usecase.ts file, with its input and output types as entities",
   check: ({ sourceFile }) => {
-    if (!/\.(?:entity|usecase)\.ts$/.test(fileName(sourceFile))) return []
+    if (!/\.entity\.ts$/.test(fileName(sourceFile))) return []
     return sourceFile.statements.flatMap((statement): ReadonlyArray<RuleMatch> => {
       if (ts.isFunctionDeclaration(statement) && isExported(statement)) {
         return [{ node: statement, message: "exported behavior in a schema contract file" }]

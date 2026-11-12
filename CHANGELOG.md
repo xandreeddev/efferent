@@ -8,6 +8,152 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
+  every other part a plain Effect layer, as two new entries beside the
+  existing engine, which neither imports nor is imported by it. It is a
+  first cut, with journals kept in the process and no tool execution, and
+  it will change as the parts it leaves out return. `docs/kernel.md` is its
+  direction document.
+  - `@xandreed/core/kernel` holds what every agent has, whatever its
+    workflow: ids, `Message`, the event envelope, the `JournalStorage` and
+    `Sessions` contracts with a conformance kit each, the session's two
+    transitions and the fold of a journal to its state, reading a journal
+    (`readJournal`, `readerFor`, `KERNEL_READER`), `inspectionOf` (a
+    session's header, state and events), and `Core`, which is events only:
+    `publish`, `on` (named, in the background or with `{ wait: true }`) and
+    `events`. `kernel({ capacity? })` is the layer that provides `Core`
+    alone. It imports `effect` alone, and names no loop, memory, system
+    text or request to a model.
+  - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
+    folder with its entities, events, pure rules and kit: the loop's
+    (`Loop`, `TurnInput`, `Reply`, `loopConformance`, `Settings` and
+    `settings({ system })`, the conversation's events, the request a model
+    is sent with `resolveRequest`, `estimateTokens`, `requestsOf` and
+    `LOOP_READER`), memory's (`Memory`, `memoryConformance`) and the
+    inbox's (`Inbox`). A plugin imports contracts and core, never another
+    plugin's folder, and a contract never imports a plugin: the boundaries
+    gate refuses both.
+  - An event is named by the owner of the contract that defines it: the
+    session's are core's (`core.session.turn.started`,
+    `core.session.turn.ended`), the loop's `plugin.loop.*`. The set is
+    open: a plugin defines its own with `storedEvent` and `liveEvent`, each
+    with a schema for its data. A stored record says whether a reader that
+    does not know it may skip it, and a reader of another plugin's records
+    extends that plugin's reader (`readerFor(name, own, LOOP_READER)`). A
+    live event names its turn only when it happens inside one.
+  - The stock plugins, each a layer whose type says what it needs:
+    `inProcessJournal()`, `sessions()`, `windowMemory({ budgetTokens })`,
+    `stepLoop` and `inbox`. A host composes them with `Layer.provideMerge`
+    over `kernel()`, the upper stack carrying `settings({ system })`; a
+    stack whose type is written out does not compile when a part is
+    missing. A
+    turn stores five events (its start, the user's message, the request,
+    the assistant's message, its end) and publishes the answer's pieces
+    live. `sessions.create` decodes its input (`InvalidSession`), and the
+    loop refuses a message of no text (`EmptyMessage`).
+  - `Memory` is one function, `build(session, step)`: it keeps nothing,
+    builds each request from the journal, and compacts by appending a
+    record of its own.
+  - The inbox queues messages per session and answers them in order, each
+    in a turn of its own: `enqueue(session, message)` returns at once with
+    the message's ticket and its reply, whatever becomes of the message's
+    `plugin.inbox.queued` announcement, which reaches the listeners its
+    publisher waits for before the message's turn starts. A ticket is the
+    inbox's own number, never given twice in one inbox. A failed turn fails
+    only its own reply, a full queue refuses (`InboxRefused`), and every
+    reply not given when the inbox's scope closes fails with `InboxClosed`.
+    The inbox keeps nothing of a session it is not serving. Queued messages
+    live in the process. Its contract, `Inbox`, is the plugin's own.
+  - A request is stored as pointers into the journal, never as copies, so
+    each message's text is stored once; `requestsOf` resolves every stored
+    request back into what the model was sent.
+  - A part is replaced by providing a different layer; a host that keeps
+    sessions going across the change builds the kernel, the journal and
+    the session plugin once and swaps the stack above them, its system
+    text with it.
+  - `api/core--kernel.api.txt` is core's kernel API: a later change that
+    removes or changes a name there says in this file what a plugin must
+    change.
+  - The writes of one open turn are stored one at a time: appends made at
+    once both succeed, and the end waits for an append still being stored.
+    A write whose store did not report success (its caller interrupted
+    while the store had not answered, or a store that failed after it kept
+    the event) leaves the turn's place unknown, and the next write, the
+    end's included, reads the last place from the store: the end is still
+    stored after it, and the session takes its next turn. A turn stays open
+    in the journal only when its end could not be stored, or when the store
+    kept its start and reported a failure. A turn's body that appends a
+    record named under `core.` is refused (`SessionRefused`, `ReservedName`)
+    and nothing is stored: core's records are the session plugin's.
+    A session's events appended one after another reach listeners in
+    journal order. A session is
+    busy until its turn's end was announced, for at most `closeWait` (5
+    seconds) after it was stored, and is free by the time the end reaches
+    a background listener or the stream. Every turn begins from what the
+    journal holds, so two session plugins over one store take turns on a
+    session. Session ids are version 4 UUIDs from the platform's
+    cryptographic random source.
+  - A limit on a wait for a listener holds whatever the listener does: a
+    listener that cannot be interrupted does not keep a turn from
+    returning or a session busy, nor a stack from closing. It is reported
+    as `core.listener.failed`. A handler that ends with an interrupt it
+    was not sent fails as any other (`ListenerFailed`): a background
+    listener is reported and goes on listening, and a turn it is inside
+    ends `Failed`, not `Interrupted`.
+  - `Core.publish(event, { listenerFailures: "report" })` runs every
+    waiting listener, whatever the others did, and reports each failure as
+    `core.listener.failed` once the event was handed over; it cannot fail.
+    The default is unchanged: the first failure stops the waiting listeners
+    after it and fails the publisher. The end of a turn and the inbox's
+    `plugin.inbox.queued` are announced this way, so a waiting listener
+    placed after a failing one still hears them. A turn interrupted as it
+    opened has its start announced before its end, within a `closeWait` of
+    its own, so the session is busy for at most twice `closeWait` then.
+  - The inbox's worker takes a message in one transition, then waits for
+    that message's own announcement before its turn starts, and each
+    announcement follows the session's announcement before it, whether
+    that message waits, was taken or runs.
+  - The memory kit checks that a memory refuses an unknown record of the
+    loop's that may not be skipped (`unknown-loop-refused`): a memory reads
+    the loop's records with the loop's reader, not its own prefix alone.
+  - Core's event envelope holds no `replaces`, and `SeqRange` is gone: a
+    plugin whose record stands for a run of the journal keeps that run in
+    its record's own data. `listenerFailed` is no longer exported: a
+    publisher that must report its listeners' failures publishes with
+    `{ listenerFailures: "report" }`.
+  - `scriptedModel(script)` is a model that follows a script and calls no
+    provider: what a host hands the loop kit, and what a test runs an
+    agent on.
+  - Nothing in either entry imports a `node:` or `bun:` module.
+
+### Repository
+
+- `docs/adr/0001-kernel-plugin-composition.md` records how the kernel's
+  plugins compose (replace, wrap, an event, or an entry in the journal; no
+  hooks), and `docs/adr/0002-core-owns-state-plugins-own-workflows.md`
+  what core owns (sessions, their journal, events, the message vocabulary)
+  and what it leaves to plugins' contracts, with the import graph and
+  core's API. The skill `kernel-architecture` loads both before an
+  architectural change of the kernel.
+- The boundaries gate holds the kernel's import graph: the sdk's kernel
+  contracts are a layer that imports core's kernel and no plugin, and
+  each plugin folder a layer that imports the contracts and core's kernel
+  and no other plugin's folder. Test code anywhere under the sdk's kernel
+  (every test glob the build leaves out, inside a contract or a plugin
+  folder too) is its test layer, not that folder's.
+- The boundaries gate refuses a `restricted` subpath to the layer of the
+  package's own entry too, unless that layer is granted it: a file of
+  `core` can no longer reach `@xandreed/core/kernel` by its package name,
+  nor one of the sdk `@xandreed/sdk/kernel`.
+- `bun run verify:packages` runs the kernel from the packed packages, on
+  Node and on Bun: the four contracts' kits (two of core's, two of the
+  sdk's) on the stock plugins, one turn
+  of a stack of layers on the scripted model, two messages queued with the
+  inbox, and a consumer's own contract composed as a layer
+  (`scripts/kernel-consumer.fixture.mjs`).
+
 ## 0.22.0 — 2026-11-12
 
 ### Added

@@ -132,9 +132,9 @@ const workspace: Workspace = { rootDir: path.resolve(import.meta.dir, "../../fix
 
 /** Three packages: `app` may import `base`, whose `internal` subpath is restricted; `other` is not
  *  granted. No layer lists a `@fixture/*` external: a workspace package is reached by its layer. */
-const workspaceLayers = (appCanImport: ReadonlyArray<string>) => Schema.decodeUnknownSync(LayerConfig)({
+const workspaceLayers = (appCanImport: ReadonlyArray<string>, baseCanImport: ReadonlyArray<string> = []) => Schema.decodeUnknownSync(LayerConfig)({
   layers: [
-    { name: "base", path: "packages/base/src/**", canImport: [], externals: [], restricted: ["internal"] },
+    { name: "base", path: "packages/base/src/**", canImport: baseCanImport, externals: [], restricted: ["internal"] },
     { name: "other", path: "packages/other/src/**", canImport: [], externals: [] },
     { name: "app-tests", path: "packages/app/src/checks/**", canImport: ["app", "base"], externals: [] },
     { name: "app", path: "packages/app/src/**", canImport: appCanImport, externals: [] },
@@ -145,8 +145,8 @@ const workspaceLayers = (appCanImport: ReadonlyArray<string>) => Schema.decodeUn
 const workspaceRuntime = ManagedRuntime.make(TsProjectCachedLive)
 afterAll(() => workspaceRuntime.dispose())
 
-const runWorkspace = (appCanImport: ReadonlyArray<string>) =>
-  workspaceRuntime.runPromise(makeBoundariesGate(workspaceLayers(appCanImport), "tsconfig.json").run(workspace))
+const runWorkspace = (appCanImport: ReadonlyArray<string>, baseCanImport: ReadonlyArray<string> = []) =>
+  workspaceRuntime.runPromise(makeBoundariesGate(workspaceLayers(appCanImport, baseCanImport), "tsconfig.json").run(workspace))
 
 const findingsIn = async (appCanImport: ReadonlyArray<string>, file: string) =>
   (await runWorkspace(appCanImport)).filter((finding) => where(finding).startsWith(`packages/app/src/${file}:`))
@@ -160,6 +160,7 @@ describe("boundaries gate over workspace packages", () => {
       "packages/app/src/scaffolding.ts:1 boundaries/illegal-import",
       "packages/app/src/undeclared.ts:1 boundaries/illegal-import",
       "packages/app/src/unexported.ts:1 boundaries/illegal-import",
+      "packages/base/src/own.ts:1 boundaries/illegal-import",
     ])
   })
 
@@ -185,6 +186,14 @@ describe("boundaries gate over workspace packages", () => {
     )
     expect(Option.getOrElse(restricted!.fixHint, () => "")).toContain('grant "base/internal"')
     expect(await findingsIn(["base", "base/internal"], "restricted.ts")).toEqual([])
+  })
+
+  test("a package's own layer reaches its restricted subpath by name only with the grant", async () => {
+    const own = (findings: Awaited<ReturnType<typeof runWorkspace>>) => findings.filter((finding) => where(finding).startsWith("packages/base/src/own.ts:"))
+    const [refused, ...rest] = own(await runWorkspace(["base"]))
+    expect(rest).toEqual([])
+    expect(refused!.message).toBe('layer "base" must not import "@fixture/base/internal": "internal" is a restricted subpath of layer "base"')
+    expect(own(await runWorkspace(["base"], ["base/internal"]))).toEqual([])
   })
 
   test("a relative import that leaves its package fails, whatever its layers allow", async () => {

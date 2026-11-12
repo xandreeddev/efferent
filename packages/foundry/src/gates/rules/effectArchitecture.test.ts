@@ -75,6 +75,18 @@ describe("the Effect architecture pack", () => {
     ).toEqual([])
   })
 
+  test("a use case file holds its flow, under the bans of a functions file", () => {
+    const flow = "export const close = (id: string) => Effect.succeed(id)\nexport function reopen(id: string) { return Effect.succeed(id) }"
+    expect(run(contractsContainNoBehavior, "/src/close.usecase.ts", flow)).toEqual([])
+    expect(run(contractsContainNoBehavior, "/src/close.usecase.functions.ts", flow)).toEqual([])
+    expect(run(contractsContainNoBehavior, "/src/close.entity.ts", flow)).toHaveLength(2)
+    expect(run(noRawPromiseCore, "/src/close.usecase.ts", "export const close = async (): Promise<number> => await Promise.resolve(1)").length).toBeGreaterThan(0)
+    expect(run(noRawPromiseCore, "/src/close.usecase.ts", "export const started = Effect.runFork(p)")).toEqual(["Effect.runFork belongs at a runtime edge"])
+    expect(run(noRuntimeImportsCore, "/src/close.usecase.ts", 'import { readFile } from "node:fs/promises"')).toEqual(['runtime import "node:fs/promises" in the inner core'])
+    expect(run(noRuntimeImportsCore, "/src/close.usecase.ts", 'import { Database } from "bun:sqlite"')).toEqual(['runtime import "bun:sqlite" in the inner core'])
+    expect(run(layersLiveAtEdges, "/src/close.usecase.ts", "const Live = Layer.succeed(Tag, impl)")).toEqual(["Layer.succeed constructed inside the Effect core"])
+  })
+
   test("every file names its role; a bare name or a functions file without its entity does not", () => {
     const roled = [
       "/src/issue.entity.ts", "/src/issue.entity.functions.ts", "/src/close.usecase.ts", "/src/close.usecase.functions.ts",

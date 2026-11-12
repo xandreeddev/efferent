@@ -25,13 +25,14 @@ kit runs a loop with, and `harnessDefectsAsFailures`, which the sessions
 plugin and the agent loop use), and the memory, journal and model-request
 functions the engine reads, which `./internal` exports to the sdk.
 
-The package has three entries, each an `index.ts` of explicit named exports:
+The package has four entries, each an `index.ts` of explicit named exports:
 
 | Entry | Holds | Semver | Who imports it (boundaries) |
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`): what every agent has whatever its workflow. Ids, `Message`, the event envelope, core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: those are the sdk's kernel contracts | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -46,7 +47,7 @@ keys they were declared with here (`@xandreed/core/AuthStore`,
 it lists every package's. Core's own model ports, `ModelCatalog` and
 `UtilityLlm`, need nothing of theirs.
 
-`quality/exports-have-consumers` runs on all three entries (`CURATED_ENTRIES`
+`quality/exports-have-consumers` runs on all four entries (`CURATED_ENTRIES`
 in `foundry.config.ts`): each export is imported, by its entry's name, from
 another package, a script or a doc code block, or is tagged `@public`.
 `@public`, on the declaration, marks host API: what the README, the guides
@@ -74,10 +75,120 @@ file is in the first layer whose glob matches it:
 | `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
 | `core` | everything else: adapters (the turn's bus among them), harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
 | `core-kits` | `*.conformance.ts` | model, ports, logic, core: the step-loop kit runs a loop over the turn's bus |
+| `core-kernel` | `kernel/**`, before every layer above; `core-kernel-tests` holds its `*.test.ts` | nothing of core |
 | `core-tests` | test code: `*.test.ts`, `*.bench.ts`, `testing` modules and folders | every layer, and the test libraries `bun:test`, `fast-check` and `effect/testing`, which no other layer imports |
 
 Of the third-party modules, the model and `core` import `effect` alone; the
 ports, the logic and the kits also `effect/ai`.
+
+`src/kernel` is apart from all of that. Its files are one layer,
+`core-kernel`, placed before the layers above, with its tests in
+`core-kernel-tests`: it imports nothing else of core, and `effect` alone,
+so no model type and no runtime module (`node:`, `bun:`) enters it; the
+model call is the sdk's loop plugin's. No other layer of core may import
+it, by a relative path or as `@xandreed/core/kernel`: `./kernel` is a
+`restricted` subpath, granted to the sdk's kernel alone. The rest of this
+file describes the existing engine's side of core, not the kernel. The
+kernel's rules:
+
+- Core owns what every agent has, whatever its workflow: sessions and
+  their journal, journal storage, events and the message vocabulary
+  (ADR 0002). It never owns a loop, a memory, a prompt, a system text or a
+  request to a model: those are contracts of the sdk's kernel
+  (`packages/sdk/src/kernel/contracts`), and no code here defines or
+  imports them; a comment names them only to say where they live.
+  Core stores nothing and runs no turn. `Core` is `publish`, `on` and
+  `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
+  vocabulary, pure rules, the two contracts and their kits.
+- Core's API is a product. `api/core--kernel.api.txt` lists it, and
+  `verify:packages` fails when it differs from the build (`bun run
+  api:update` rewrites it). A change that removes or changes a name there
+  comes with a CHANGELOG line saying what a plugin must change. There is no
+  API version constant: the package version is the version, and nothing
+  would read a second one; one comes when remote plugins need a handshake.
+- A limit on a wait for a listener holds whatever the listener does. A
+  publisher waits for its waiting listeners while it is not interrupted
+  itself, which is the contract inside a turn; every limit put on such a
+  wait (the session plugin's `closeWait`, a caller's interrupt, the close
+  of a scope) returns at its own time, over a listener that cannot be
+  interrupted too. That holds because a listener is called on a fiber of
+  its own (`call` in `core.adapter.ts`): the one who waits joins it, and
+  when its own wait is interrupted it reports the listener, interrupts it
+  behind itself and returns. Never join or
+  interrupt a listener's fiber in a way that waits for it, and never issue
+  the report from the listener's own interruption: an uninterruptible one
+  never gets there. Whatever a handler ends with is its own failure,
+  `ListenerFailed`, an interrupt it was not sent included (`Effect.interrupt`,
+  a join of an interrupted fiber, an await of an interrupted deferred):
+  only the interruption of whoever waits is the cut, so a handler's own
+  interrupt neither silences a background listener nor passes for its
+  publisher's interruption. A waiting listener is started at once
+  (`startImmediately`), so one that does not suspend runs before any other
+  fiber, as if it were called in place. `core.listener.failed` is never
+  waited for: a listener registered for it with `{ wait: true }` is
+  delivered in the background, and a report only hands the event over. A
+  listener removed while a publish is under way is passed over. By
+  default the first waiting listener that fails stops those after it and
+  fails the publish; `PublishOptions.listenerFailures: "report"` runs
+  every one, reports each failure after the hand-over, in the order the
+  listeners ran, and its overload of `publish` cannot fail (the session
+  plugin's end of a turn and the inbox's `plugin.inbox.queued` use it). The
+  waiting listeners run, then the publisher's own step
+  (`PublishOptions.beforeHandOver`), then the event is handed to the
+  background ones and the stream, which hear of it on fibers of their own,
+  whenever they are scheduled, possibly before the publisher's next step:
+  what must hold when the background hears of an event is done in the
+  publisher's own step (`core.adapter.test.ts` holds each; the session
+  plugin's test of its `beforeHandOver` runs under a scheduler that makes
+  every fiber yield after a few operations).
+- A listener is named by its registrant: `Core.on` takes `{ name, wait? }`,
+  and `name` is how a failure of it is reported. There is no ambient
+  plugin name: a plugin is a layer, and nothing sets one around it.
+- `kernel({ capacity? })` (`core.adapter.ts`) is the layer of `Core`
+  and nothing else; every other part is a plugin's layer, composed
+  over it by the host. Core has no wiring of its own: no plan, no
+  declaration of what a plugin needs beside its layer's type, no wait for
+  `Core` to fall quiet. A plugin's listeners go with its layer's scope.
+- The event type is open. An event is named after the owner of the
+  contract that defines it: `vocabulary.entity.ts` defines core's own,
+  the session's `core.session.turn.started` and `core.session.turn.ended`
+  and `core.listener.failed`, and nothing else. A plugin contract's events
+  (the loop's `plugin.loop.*`) and a plugin's own are defined in its
+  folder with `storedEvent` and `liveEvent`. `KERNEL_READER` answers for
+  `core.` records only; a plugin's reader adds its prefix over it, or over
+  the reader of the plugin whose records it reads
+  (`readerFor(name, own, over)`). Never type `Core.publish`, `Core.on`, `OpenSession.append`
+  or `JournalStorage.append` with a list of names: the sdk's
+  `plugins.test.ts` defines two events of its own and must keep compiling.
+  A stored event is always announced with its turn (`announced`); a live
+  one names a turn only when it happens inside one (`LiveEvent.turn` is an
+  optional key), so an event about a session and no turn of it, such as
+  the inbox's `plugin.inbox.queued`, is made with `live(definition, { id })`.
+  `core.` records are the session plugin's to write: `OpenSession.append`
+  refuses one (`SessionRefused`, `ReservedName`) and stores nothing, which
+  the sessions kit checks (`reserved-name`).
+- A message sits once, on the envelope (`StoredEvent.message`), and
+  `messageOf` reads it from any record, whichever plugin wrote it. What it
+  stands for (the run of the journal a summary replaces) is the writing
+  plugin's own data: the envelope has no field for it. What a
+  request is (pointers, `resolveRequest`, the estimate) is the loop
+  contract's, not core's.
+- A contract carries a plugin's own tagged error as it was raised
+  (`PluginFailure`), so core names no plugin's error.
+- `Sessions.create` takes the input as a host writes it
+  (`NewSessionInput`, the encoded side of `NewSession`) and decodes it: an
+  empty owner, or a parent that is no id, is `InvalidSession`. The kit
+  checks it (`invalid-session`).
+- Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
+  kernel's own helpers (`conformance.entity.ts` and its functions, which
+  are not exported), not core's `src/conformance.functions.ts`. A check
+  has an `id`, the one its kit's doc comment lists, and a failure names
+  the check it came from. `journalStorageConformance` has its self-test
+  here; `sessionsConformance` runs, with its careless plugins, where the
+  stock plugins live (`packages/sdk/src/kernel/kits.test.ts`). A new check comes with a
+  careless plugin that fails it and no other check it is not careless
+  about. A check never counts scheduler turns to show that something did
+  not happen: it waits on a latch or publishes a probe after.
 
 A port that needs a type from a functions file gets it from the entity file
 (`LogQuery` is in `memory-log.entity.ts`); what code beneath the sdk's

@@ -5,7 +5,8 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 `packages/<name>/AGENTS.md`. `CLAUDE.md` links here. Skills, in
 `.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
 `commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
-`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`.
+`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`,
+`kernel-architecture`. Architecture decisions: `docs/adr/`.
 
 ## Task map
 
@@ -22,6 +23,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
 | Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
+| Add or change a kernel contract, a stock kernel plugin, the loop or memory, or a way for plugins to extend each other | skill `kernel-architecture`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0001-kernel-plugin-composition.md` |
 
 ## Architecture
 
@@ -102,11 +104,11 @@ nothing fails.
 | `quality/exports-have-consumers` | every published entry (`CURATED_ENTRIES` lists each file, and the registration gate requires each package's root entry there): an export of a package entry that no other package, script or doc code block imports and that has no `@public` tag; `export *` in an entry; a `@deprecated` export that first-party code still imports | import it where it is used, tag documented host API `@public`, or stop exporting it; name each export; move a deprecated export's importers to its replacement |
 | `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` (called, passed as a value or imported by name from `effect/Effect`) in entity and use-case files | Effect values; promises belong in an adapter |
 | `architecture/no-runtime-imports-core` | `node:`, `bun` and host imports in entity and use-case files | a port, implemented in a `.adapter.ts` |
-| `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
+| `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` | the paired `.entity.functions.ts` file; a use case's flow goes in its `.usecase.ts` |
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
 | `architecture/layers-live-at-edges` | `Layer.*` in entity and use-case files | build the Layer in a `.adapter.ts` |
 | `architecture/role-suffix-required` | a file under `packages/*/src` (foundry aside) whose name has none of the roles below and is not on the frozen `ROLELESS_FILES` | name it for its role; a renamed or split file leaves the list in the same change |
-| `boundaries/illegal-import` | an import into a layer that `canImport` does not list, relative or by package name (`@xandreed/<pkg>[/<sub>]` reaches the layer of the package's entry); a subpath the package's `exports` lacks (a `-tests` layer may reach a `testing` module); a `restricted` subpath not granted as `<layer>/<sub>`; a relative import that leaves its package | invert the dependency or move the code; import what the package exports |
+| `boundaries/illegal-import` | an import into a layer that `canImport` does not list, relative or by package name (`@xandreed/<pkg>[/<sub>]` reaches the layer of the package's entry); a subpath the package's `exports` lacks (a `-tests` layer may reach a `testing` module); a `restricted` subpath not granted as `<layer>/<sub>`, to the layer of the package's own entry too; a relative import that leaves its package | invert the dependency or move the code; import what the package exports |
 | `boundaries/illegal-external` | a bare import (an import clause, or `import("…")`: dynamic or a type) that names no workspace package, missing from the layer's `externals`, where `effect` admits Effect's core modules only and each barrel (`effect/ai`, `effect/http`, `effect/testing`…) is listed by name; an external a layer lists that none of its files imports (the list only shrinks) | depend downward, or name the barrel; a test library goes in the package's `-tests` layer; widening `externals` is a reviewed change; remove an entry nothing imports |
 | `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
 | `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
@@ -121,12 +123,15 @@ cancellation, isolation and whether tests can reject incorrect behavior.
 
 "Base" is every rule above except the four that look only at entity and
 use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
-`contracts-contain-no-behavior` and `layers-live-at-edges`.
+`layers-live-at-edges` and, for entity files alone,
+`contracts-contain-no-behavior`.
 
 | File | Holds | Gates that see it |
 |---|---|---|
-| `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
-| `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
+| `x.entity.ts` | schemas, brands, tagged errors, derived types; a use case's input and output types are entities | base + those four |
+| `x.entity.functions.ts` | the pure behaviour of that entity | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
+| `x.usecase.ts` | the main flow of a use case | as `x.entity.functions.ts` |
+| `x.usecase.functions.ts` | the flow's supporting logic that is no entity's rule | as `x.entity.functions.ts` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
 | `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-option-unwrap`; `no-ambient-time-random` flags the wall clock only |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |

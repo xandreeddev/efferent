@@ -391,7 +391,7 @@ console.log("The packed models plugin sent a model call through its proxy option
  */
 const websiteDocs = join(root, "packages/website/src/content/docs")
 const documented = [
-  ...["README.md", "docs/framework.md", "docs/events.md", "docs/composable-evaluations.md"].map((file) => join(root, file)).filter((file) => existsSync(file)),
+  ...["README.md", "docs/framework.md", "docs/events.md", "docs/composable-evaluations.md", "docs/kernel.md"].map((file) => join(root, file)).filter((file) => existsSync(file)),
   ...(await readdir(websiteDocs, { recursive: true })).filter((file) => /\.mdx?$/.test(file)).sort().map((file) => join(websiteDocs, file)),
 ]
 const docImports = (await Promise.all(documented.map(async (file) => {
@@ -984,6 +984,8 @@ const protocolFixtures: ReadonlyArray<PackedFixture> = [
   { file: "helper-executor-consumer.fixture.mjs", marker: "helper-executor", required: ["durableWitness", "liveHolderPreserved", "bookkeepingWithoutExecutor", "repeatedKillRepair", "uniqueRecoveryKeys", "abandonedTurnKeysVerified", "exactOutboxRepaired", "answerOnce", "borrowedTaskRoute", "lostEndAckRecovered", "terminalResultOnce", "sigkillRecoveryVerified"] },
   { file: "process-host-consumer.fixture.mjs", marker: "process-host", required: ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "steerReachesRunningTurn", "closedStdoutExitDocumented", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"] },
   { file: "regex-search-consumer.fixture.mjs", marker: "regex-search", required: ["bounded", "literal", "ordinary"], timeoutMs: 15_000 },
+  // The kernel's two entries: the four contracts' kits on the stock plugins, one turn of a stack of layers on the scripted model, two messages queued with the inbox, and a consumer's own contract composed as a layer.
+  { file: "kernel-consumer.fixture.mjs", marker: "kernel", required: ["storageKit", "sessionsKit", "memoryKit", "loopKit", "scriptedTurn", "inboxQueued", "layersComposed"] },
 ]
 for (const fixture of protocolFixtures) await runPackedFixture(fixture)
 // Native memory, RAG and temporal graph conformance through the packed public API.
