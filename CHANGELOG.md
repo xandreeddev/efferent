@@ -107,8 +107,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   limit would split a surrogate pair), so that stride is between 999 and
   1,333.
 
-### Changes
+### Repository
 
+- The release versioner accepts the Changesets plan again now that the docs
+  site depends on framework packages (the Learn track runs the real agent in
+  the page). The CLI lists such an ignored workspace with no release of its
+  own, and the plan check had required the list to be exactly the 24
+  distribution packages, so no release could be prepared. An ignored
+  workspace listed that way is now left out of the check; listed with a
+  release, with a version that moves, or under any other name, it is refused
+  as before.
 - Docs site: a new interactive "Learn" track at `/learn`. Lesson 1, "Your
   first agent", is a full-screen, paged workbench that runs the real
   `Agent.define` and `agent.turn` in the page over a model on the learner's

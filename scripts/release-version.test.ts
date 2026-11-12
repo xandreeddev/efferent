@@ -7,6 +7,9 @@ import { releaseDirectories, versionOutputs } from "./release-version-plan.js"
 import { runReleaseVersion } from "./release-version.js"
 
 const previous = "0.16.0"
+// The site depends on distribution packages, as the real one does for its Learn track: Changesets then lists it in its plan, with no release of its own.
+const siteDependencies = (directory: string) => directory === "website" ? { dependencies: { "@xandreed/core": "workspace:*", "@xandreed/sdk": "workspace:*" } } : {}
+const ignoredManifest = (directory: string) => JSON.stringify({ name: `@xandreed/${directory}`, private: true, version: "0.0.0", ...siteDependencies(directory) })
 const fixture = async (use: (root: string, env: NodeJS.ProcessEnv) => Promise<void>) => {
   const root = await mkdtemp(join(tmpdir(), "efferent-release-version-"))
   const put = async (name: string, text: string) => { const path = join(root, name); await mkdir(dirname(path), { recursive: true }); await writeFile(path, text) }
@@ -27,8 +30,8 @@ const fixture = async (use: (root: string, env: NodeJS.ProcessEnv) => Promise<vo
       await put(`packages/${directory}/src/plugin.adapter.ts`, `const protocol = { version: "1" }; export const plugin = definePlugin({ version: "${previous}" });\n`)
       await put(`packages/${directory}/src/plugin.adapter.test.ts`, `const historical = "${previous}";\n`)
     }
-    for (const directory of ["foundry", "website"]) await put(`packages/${directory}/package.json`, JSON.stringify({ name: `@xandreed/${directory}`, private: true, version: "0.0.0" }))
-    const workspaces = Object.fromEntries([["", { name: "release-fixture" }], ...releaseDirectories.map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }] as const), ...["foundry", "website"].map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: "0.0.0" }] as const)])
+    for (const directory of ["foundry", "website"]) await put(`packages/${directory}/package.json`, ignoredManifest(directory))
+    const workspaces = Object.fromEntries([["", { name: "release-fixture" }], ...releaseDirectories.map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }] as const), ...["foundry", "website"].map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: "0.0.0", ...siteDependencies(directory) }] as const)])
     await put("bun.lock", JSON.stringify({ lockfileVersion: 1, workspaces, packages: {} }, null, 2))
     await put("packages/sdk/fixtures/journal-0.16.0.json", "old journal bytes\n")
     await put("packages/evals/fixtures/run-0.16.0.json", "old run bytes\n")
@@ -64,6 +67,8 @@ test("actual Changesets versions mixed-visibility packages and the wrapper synch
     expect(await readFile(join(root, `packages/${directory}/src/plugin.adapter.test.ts`), "utf8")).toContain(previous)
   }
   expect((await Bun.file(join(root, "packages/foundry/package.json")).json()).version).toBe("0.0.0")
+  // An ignored workspace that depends on the released packages is left as it was, byte for byte.
+  expect(await readFile(join(root, "packages/website/package.json"), "utf8")).toBe(ignoredManifest("website"))
   expect((await Bun.file(join(root, "packages/core/package.json")).json()).private).toBe(true)
   expect((await Bun.file(join(root, "packages/runtime/package.json")).json()).private).toBe(false)
   expect(Object.hasOwn(await Bun.file(join(root, "packages/sdk/package.json")).json(), "private")).toBe(false)
@@ -94,6 +99,8 @@ test("notes for unpublished tooling are rejected without consuming them", () => 
   await writeFile(join(root, ".changeset/foundry-change.md"), '---\n"@xandreed/foundry": patch\n---\n\nTooling only.\n')
   await expect(runReleaseVersion(root, "2026-11-04", env)).rejects.toThrow("outside the distribution group")
   expect((await Bun.file(join(root, "packages/foundry/package.json")).json()).version).toBe("0.0.0")
+  // An ignored workspace that depends on the released packages is left as it was, byte for byte.
+  expect(await readFile(join(root, "packages/website/package.json"), "utf8")).toBe(ignoredManifest("website"))
   expect(await readFile(join(root, ".changeset/foundry-change.md"), "utf8")).toContain("Tooling only.")
 }))
 
