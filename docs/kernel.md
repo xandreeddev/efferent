@@ -512,7 +512,11 @@ memory or the store, the rest of the stack as it was. The kernel's tests
 run a loop written in a few lines over the stock journal, session and
 memory layers, and a memory of their own that announces an event of its
 own on a compression check, which another plugin reacts to, with nothing
-under core changed (`packages/sdk/src/kernel/plugins.test.ts`).
+under core changed (`packages/sdk/src/kernel/plugins.test.ts`). Core needs
+no workflow at all: a stack of the kernel, the journal, the session plugin
+and one plugin that opens a turn and appends its own records runs and
+stores the turn, with no loop, memory or model in it
+(`packages/sdk/src/kernel/no-loop.test.ts`).
 
 There is no API for replacing a part while an agent runs. A host that keeps
 sessions going across the change builds the base once and swaps the stack

@@ -166,7 +166,10 @@ it: `./kernel` is a `restricted` subpath.
   probe. A test of a listener that may hang gives itself an
   `Effect.timeout`, so the code it guards fails there and does not hang
   the run.
-- Tests: `one-turn`, `turns` (twenty turns, every exit, a second turn, a
+- Tests: `no-loop` (core with no workflow: the kernel, the journal, the
+  session plugin and one plugin that opens a turn and appends its own
+  records, typed as needing nothing and providing only `Sessions`,
+  `JournalStorage` and `Core`, run and store the turn), `one-turn`, `turns` (twenty turns, every exit, a second turn, a
   model that fails part-way, a request built badly, what the loop and the
   window memory refuse), `plugins` (a different loop layer; a plugin's own
   event and a reaction to it), `listeners` (also a listener that cannot be
