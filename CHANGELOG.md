@@ -109,7 +109,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     after it and fails the publisher. The end of a turn and the inbox's
     `plugin.inbox.queued` are announced this way, so a waiting listener
     placed after a failing one still hears them. A turn interrupted as it
-    opened has its start announced before its end.
+    opened has its start announced before its end, within a `closeWait` of
+    its own, so the session is busy for at most twice `closeWait` then.
   - The inbox's worker takes a message in one transition, then waits for
     that message's own announcement before its turn starts, and each
     announcement follows the session's announcement before it, whether

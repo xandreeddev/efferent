@@ -149,8 +149,9 @@ it: `./kernel` is a `restricted` subpath.
   `SessionBusy`, not a storage failure, and a turn that did not open
   (failure or defect) holds nothing. A turn's start is announced inside the
   turn; a turn interrupted as it opened, whose body never began, has its
-  start announced by the end, before the end (`Opened.announcing`, set in
-  the start's `beforeHandOver`). A body's append of a record named under
+  start announced by the end, before the end and within a `closeWait` of
+  its own (`Opened.announcing`, set in the start's `beforeHandOver`), so
+  a listener that holds that start cannot keep the end from the stream. A body's append of a record named under
   `core.` is refused (`ReservedName`) before anything is stored. Its
   writes take one lock per open turn (`Turn.writes`): the check
   that the turn is open, the read of the last place and the store are one
@@ -203,7 +204,7 @@ it: `./kernel` is a `restricted` subpath.
   waiting or reports a failure, on request; a turn's writes one at a
   time; an append whose store did not report success followed by the
   end; a body's append of a `core.` record; a turn interrupted as it
-  opens; every waiting listener of the end hearing it; the end's
+  opens, also with a listener that never lets its start go; every waiting listener of the end hearing it; the end's
   hand-over to a background listener that opens the next turn; two
   session plugins over one store; the ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
   when, how often, with what), `plugins/inbox/*` (the transitions as a

@@ -30,7 +30,9 @@ export interface SessionsOptions {
    * How long the close of a turn gives the listeners of
    * `core.session.turn.ended`. The session stays busy while they run and
    * is free when they are done or, at the latest, after this long, when a
-   * listener still running is cut short. 5 seconds when left out.
+   * listener still running is cut short. A turn interrupted as it opened
+   * has its start announced there first, with as long again for its
+   * listeners. 5 seconds when left out.
    */
   readonly closeWait?: Duration.Input
   /**
@@ -170,14 +172,16 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
    * stream, so whoever hears of the end there finds the session free. A
    * start whose announcement never began, the turn interrupted as it
    * opened, is announced first, so no listener hears an end without its
-   * start.
+   * start; it has a `closeWait` of its own, so a listener that holds it
+   * cannot keep the end from being announced.
    */
   const announceEnd = (open: Opened, ended: AnnouncedEvent) => Effect.gen(function* () {
-    if (!(yield* Ref.get(open.announcing))) yield* core.publish(open.started, { listenerFailures: "report" })
-    yield* core.publish(ended, { beforeHandOver: release(open.turn.id), listenerFailures: "report" })
+    const bounded = (event: AnnouncedEvent, step: Effect.Effect<void>) =>
+      Effect.timeoutOption(core.publish(event, { beforeHandOver: step, listenerFailures: "report" }), options.closeWait ?? "5 seconds")
+    if (!(yield* Ref.get(open.announcing))) yield* bounded(open.started, Effect.void)
+    yield* bounded(ended, release(open.turn.id))
   }).pipe(
     Effect.ensuring(release(open.turn.id)),                         // whatever became of the announcement
-    Effect.timeoutOption(options.closeWait ?? "5 seconds"),
   )
 
   const end = Effect.fn("kernel.session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {

@@ -272,7 +272,9 @@ it, and frees the session once the listeners the announcement waits for are
 done or cut short after `closeWait` (5 seconds when left out), just before
 the end is handed to the background and the stream. A turn interrupted as
 it opened, its start stored but its body never begun, has its start
-announced there first, so no listener hears an end without its start. So the events of one
+announced there first, so no listener hears an end without its start; that
+announcement has a `closeWait` of its own, so a listener that holds it
+cannot keep the end from being announced. So the events of one
 session, appended one after another, arrive in journal order, and whoever
 hears of the end in the background finds the session free. Until then the session is busy, and a
 turn asked for it is refused with `SessionBusy`.

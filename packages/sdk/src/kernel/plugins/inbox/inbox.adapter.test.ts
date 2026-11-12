@@ -293,6 +293,28 @@ describe("the inbox", () => {
     expect(results).toEqual(budgets.map((budget) => ({ budget, before: true, order: tickets.map((ticket) => `queued ${ticket}`) })))
   })
 
+  test("announces a message after the session's message before it, though that one was taken and its announcement is still held", async () => {
+    const result = await run(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      const heard = yield* Ref.make<ReadonlyArray<number>>([])
+      // The first announcement is held; the worker takes its message and waits for it, so the first message no longer waits.
+      const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), {
+        capacity: 1,
+        extras: onQueued((ticket) => Effect.andThen(ticket === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void, Ref.update(heard, (all) => [...all, ticket]))),
+      })
+      const first = yield* kit.inbox.enqueue(kit.session, "One")
+      yield* Deferred.await(entered)
+      // With a queue of one, the second message is taken in only once the first has left the queue.
+      const second = yield* kit.inbox.enqueue(kit.session, "Two").pipe(Effect.retry({ while: (refused) => refused.reason === "Full" }))
+      const before = yield* Ref.get(heard)
+      yield* Deferred.succeed(go, undefined)
+      const replies = [yield* first.reply, yield* second.reply]
+      return { before, replies, heard: yield* Ref.get(heard) }
+    }))
+    expect(result).toEqual({ before: [], replies: [{ text: "Reply 1." }, { text: "Reply 2." }], heard: [1, 2] })
+  })
+
   test("a waiting listener of plugin.inbox.queued that does not suspend has heard of the message when enqueue returns", async () => {
     const result = await run(Effect.gen(function* () {
       const heard = yield* Ref.make<ReadonlyArray<number>>([])

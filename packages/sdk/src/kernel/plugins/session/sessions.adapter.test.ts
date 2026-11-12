@@ -5,6 +5,7 @@ import { Core, EventName, kernel, listenerFailedEvent, Owner, SessionId, Session
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
+import type { SessionsOptions } from "./sessions.adapter.js"
 
 const owner = Owner.make("learner")
 const STARTED = "core.session.turn.started"
@@ -36,7 +37,7 @@ const acknowledged: After = () => Effect.void
  * to suspend before they go through, and as many session plugins over that
  * one store as asked for.
  */
-const over = (count: number) => Effect.gen(function* () {
+const over = (count: number, options: SessionsOptions = {}) => Effect.gen(function* () {
   const below = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel()))
   const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
@@ -50,7 +51,7 @@ const over = (count: number) => Effect.gen(function* () {
   })
   const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
-    Effect.map(Layer.build(Layer.provide(sessions(), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
+    Effect.map(Layer.build(Layer.provide(sessions(options), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
   return { plugins, core: Context.get(below, Core), fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), after: (next: After) => Ref.set(after, next), names }
 })
@@ -239,6 +240,30 @@ describe("a turn interrupted while it opens", () => {
     expect(result.ran).toBe(false)
     expect(result.names).toEqual([STARTED, ENDED])
     expect(result.heard).toEqual([STARTED, ENDED])
+  })
+})
+
+describe("a turn interrupted while it opens, whose start a waiting listener never lets go", () => {
+  test("still has its end handed to the stream: the start's wait is cut after closeWait, and the end's publish runs", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core, pause, names } = yield* over(1, { closeWait: "50 millis" })
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      // The listener holds the start for as long as it is let: only the late announcement reaches it, the body never running.
+      yield* core.on(turnStartedEvent, () => Effect.never, { name: "stuck", wait: true })
+      const handed = yield* Effect.forkScoped(Stream.runHead(Stream.filter(core.events, (event) => event.name === ENDED)), { startImmediately: true })
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      yield* pause((event) => event.name === STARTED ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void)
+      const running = yield* Effect.forkChild(turns.turn(id, () => Effect.void))
+      yield* Deferred.await(entered)
+      const stopping = yield* Effect.forkChild(Fiber.interrupt(running), { startImmediately: true })
+      yield* Deferred.succeed(go, undefined)
+      yield* Fiber.join(stopping)
+      const ended = yield* Effect.timeoutOption(Fiber.join(handed), "1 second")
+      return { names: yield* names(id), ended: Option.isSome(Option.flatten(ended)) }
+    }))
+    expect(result).toEqual({ names: [STARTED, ENDED], ended: true })
   })
 })
 
