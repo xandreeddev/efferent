@@ -92,7 +92,7 @@ Too low and memory refuses. It always sends the system text and the message the 
 
 <Step n={7} id="tiny" title="Write a memory" focus="code" file="tiny" view="inspector">
 
-A memory is a layer that provides `Memory`. Its one function, `build`, reads the journal and returns pointers to the messages to send, with an estimate and the budget. The **tiny-memory.ts** file is a whole one in under 50 lines (the **Format** button tidies whatever you change): `lastMessages` sends the last *n* messages, fewer if they do not fit the budget.
+A memory is a layer that provides `Memory`. Its one function, `build`, reads the journal and returns pointers to the messages to send, with an estimate and the budget. The function you edit in **tiny-memory.ts** is a whole one in under 50 lines (the **Format** button tidies whatever you change): `lastMessages` sends the last *n* messages, fewer if they do not fit the budget.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-memory">Swap in lastMessages</button> <button class="btn" type="button" data-exp="window-memory">Swap the window back</button></p>
 
@@ -100,7 +100,7 @@ The swap sets `n: 1`: the model sees only your newest message. Ask "What did I j
 
 Change `n` to 3 in agent.ts and rebuild: the model sees the last three messages, yours and its answers.
 
-The kit that checks the stock memory checks yours too (`memoryConformance`). It passes every check but one: `prefix`. While nothing presses, a request should start with the one before it, so a provider can reuse its cache. A sliding memory moves the start of every request, so nothing after the system text can be reused. The green bar shows it. Use ⤢ on the Context pane for the full picture.
+The kit that checks the stock memory checks yours too (`memoryConformance`). It passes every check but one: `prefix`. While nothing presses, a request should start with the one before it, so a provider can reuse its cache. Once it starts leaving messages out, a sliding memory moves the start of each request, so nothing after the system text can be reused. The green bar shows it. Use ⤢ on the Context pane for the full picture.
 
 </Step>
 

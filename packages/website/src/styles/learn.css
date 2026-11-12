@@ -658,7 +658,8 @@ body.app {
   padding-inline: 1.1rem;
 }
 @media (max-height: 800px) and (min-width: 1101px) {
-  .chips {
+  /* Short screens keep the one chip a lesson step asks for. */
+  .chips .chip:not(.chip-three) {
     display: none;
   }
   .compose textarea {

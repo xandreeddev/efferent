@@ -84,6 +84,21 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
     expect(sentOf(await runtime.journal()).map((request) => request.system)).toEqual(["You are a friendly tutor. Keep answers short.", "Latest edit."])
   })
 
+  test("two rebuilds asked for at once run one after the other, and only the latest agent takes messages", async () => {
+    const { runtime } = await start()
+    const pressured: Array<number> = []
+    runtime.onEvent((event) => { if (event._tag === "WindowPressure") pressured.push(event.budgetTokens) })
+    const first = runtime.rebuild(set(set(DEFAULT_AGENT, "system", "First."), "budgetTokens", 8), DEFAULT_TINY)
+    const latest = runtime.rebuild(set(set(DEFAULT_AGENT, "system", "Latest."), "budgetTokens", 7), DEFAULT_TINY)
+    expect([await first, await latest]).toEqual([{ _tag: "Built" }, { _tag: "Built" }])
+    // 2 tokens of system text and 4 of message: over 80% of the budget of 7, so the window announces pressure.
+    await (await runtime.send(["hi there friend"]))[0]?.outcome
+    expect(sentOf(await runtime.journal()).map((request) => [request.system, Number(request.estimatedTokens)])).toEqual([["Latest.", 6]])
+    // Only one window memory is listening: the first agent's was closed, so one pressure event is published, not two.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(pressured).toEqual([7])
+  })
+
   test("stop: the running turn ends Interrupted, waiting messages are stopped, and the session takes the next message", async () => {
     const { runtime } = await start()
     const answering = heardOnce(runtime, "Delta")

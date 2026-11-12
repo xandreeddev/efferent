@@ -117,6 +117,7 @@ export class LessonRuntime {
   /** A rebuild asked for while replies were unsettled: the latest source, and whoever waits for its result. */
   private deferred: Option.Option<{ agent: string; tiny: string; readonly waiters: Array<(result: BuildResult) => void> }> = Option.none()
   private last = { agent: "", tiny: "" }
+  private building: Promise<void> = Promise.resolve()
 
   private constructor(
     private readonly root: Scope.Closeable,
@@ -221,7 +222,18 @@ export class LessonRuntime {
     if (Option.isSome(upper)) await Effect.runPromise(Scope.close(upper.value.scope, Exit.void))
   }
 
-  private async build(agent: string, tiny: string): Promise<BuildResult> {
+  /**
+   * Builds run one at a time, in the order asked: a control's rebuild that
+   * lands while another build runs waits for it, so no agent is left open
+   * behind the one the page holds.
+   */
+  private build(agent: string, tiny: string): Promise<BuildResult> {
+    const next = this.building.then(() => this.buildNow(agent, tiny))
+    this.building = next.then(() => undefined, () => undefined)
+    return next
+  }
+
+  private async buildNow(agent: string, tiny: string): Promise<BuildResult> {
     this.last = { agent, tiny }
     await this.closeUpper()
     if (Option.isNone(this.model)) return { _tag: "Refused", message: "Pick a model first." }

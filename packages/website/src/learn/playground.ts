@@ -241,7 +241,9 @@ function boot(root: HTMLElement) {
     buildBox.replaceChildren()
     if (result._tag === "Built") {
       buildBox.dataset.state = "ok"
-      buildBox.textContent = "Built: the agent runs over the base. The conversation is kept."
+      buildBox.textContent = keep.checked
+        ? "Built: the agent runs over the base, and the conversation is kept."
+        : "Built: the agent runs over the base, in a new conversation (Keep chat on rebuild is off)."
     } else {
       buildBox.dataset.state = "error"
       buildBox.textContent = `The agent did not build: ${result.message}`
