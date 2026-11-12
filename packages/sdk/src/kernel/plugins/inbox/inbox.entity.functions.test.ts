@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Array as Arr, HashMap, Match, Option, Order, Result } from "effect"
 import { SessionId } from "@xandreed/core/kernel"
-import { enqueue, finish, openInbox, take } from "./inbox.entity.functions.js"
+import { enqueue, finish, openInbox, take, waitingFor } from "./inbox.entity.functions.js"
 import { Ticket } from "./inbox.entity.js"
 import type { InboxState, Pending, SessionQueue } from "./inbox.entity.js"
 
@@ -98,6 +98,18 @@ describe("take", () => {
       return take(take(queued.state, session).state, session).state
     }, openInbox)
     expect(plain(after)).toEqual({ _tag: "Open", next: 1001, queues: [] })
+  })
+})
+
+describe("waitingFor", () => {
+  const table: ReadonlyArray<readonly [string, InboxState, ReadonlyArray<number>]> = [
+    ["the messages waiting, first queued first", open(4, [[ana, working([2, "two"], [3, "three"])], [ben, working([1, "x"])]]), [2, 3]],
+    ["a session whose worker runs with nothing waiting: none", open(4, [[ana, working()]]), []],
+    ["a session with no queue: none", open(4, [[ben, working([1, "x"])]]), []],
+    ["a closed inbox: none", { _tag: "Closed" }, []],
+  ]
+  test.each(table)("%s", (_name, state, tickets) => {
+    expect(waitingFor(state, ana).map((pending) => Number(pending.ticket))).toEqual([...tickets])
   })
 })
 

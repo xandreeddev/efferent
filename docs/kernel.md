@@ -401,7 +401,9 @@ stream starts reading only when it is scheduled. The inbox's rules:
   ticket is given twice in one inbox; a session's tickets grow, with gaps
   where another session's messages came between.
 - **One worker per session**, forked in the plugin's scope, runs one
-  `loop.run` at a time and stops when nothing waits. Starting and stopping
+  `loop.run` at a time and stops when nothing waits. It takes a message
+  only once the message was announced, so the message's turn starts after
+  the listeners its announcement waits for heard of it. Starting and stopping
   are decided in the same transitions as queueing and taking, so no message
   is ever left without a worker. A session has a queue only while its
   worker runs: the transition that stops the worker removes it, so the
@@ -427,7 +429,8 @@ stream starts reading only when it is scheduled. The inbox's rules:
   session's message before it is still being announced. One session's
   announcements are published in ticket order, and each reaches the
   listeners the publisher waits for before its message's turn starts; one
-  that fails is reported (`core.listener.failed`) and the turn runs.
+  that fails is reported (`core.listener.failed`) and the turn runs. An
+  announcement cut short by the close of the inbox's scope starts no turn.
 - **Do not mix the inbox and direct calls on one session.** A queued
   message whose turn is refused because a direct `loop.run` holds the
   session fails with `SessionBusy`.

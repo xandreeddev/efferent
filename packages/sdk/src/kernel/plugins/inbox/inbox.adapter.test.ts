@@ -206,12 +206,12 @@ describe("the inbox", () => {
     expect(result).toEqual({ ticket: 1, reply: { text: "Reply 1." }, report: { listener: "queued", event: inboxQueuedEvent.name, reason: "Refused: not now" }, names: FIVE })
   })
 
-  test("settles the reply of a message the worker took when the scope closes before its turn starts", async () => {
+  test("fails the reply of a message whose announcement is held when the scope closes, and starts no turn for it", async () => {
     const result = await run(Effect.gen(function* () {
       const enteredTwo = yield* Deferred.make<void>()
       const never = yield* Deferred.make<void>()
       const scope = yield* Scope.make()
-      // The second message's announcement never ends: the worker takes it after the first turn and waits there.
+      // The second message's announcement never ends: after the first turn, the worker waits for it.
       const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), { extras: onQueued((ticket) => ticket === 2 ? Effect.andThen(Deferred.succeed(enteredTwo, undefined), Deferred.await(never)) : Effect.void) }).pipe(Scope.provide(scope))
       const first = yield* kit.inbox.enqueue(kit.session, "One")
       const second = yield* Effect.forkChild(kit.inbox.enqueue(kit.session, "Two"))
@@ -220,9 +220,39 @@ describe("the inbox", () => {
       yield* Scope.close(scope, Exit.void)
       const queued = yield* Fiber.await(second)
       const late = Exit.isSuccess(queued) ? yield* Effect.flip(queued.value.reply) : undefined
-      return { reply, late: late?._tag, calls: (yield* kit.received).length }
+      return { reply, late: late?._tag, calls: (yield* kit.received).length, names: yield* kit.names }
     }))
-    expect(result).toEqual({ reply: { text: "Reply 1." }, late: "InboxClosed", calls: 1 })
+    expect(result).toEqual({ reply: { text: "Reply 1." }, late: "InboxClosed", calls: 1, names: FIVE })
+  })
+
+  test("announces one session's messages in ticket order, whichever announcement a waiting listener holds", async () => {
+    const result = await run(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      const heard = yield* Ref.make<ReadonlyArray<number>>([])
+      // The first announcement is held; the second's listener would write down its ticket at once.
+      const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), {
+        extras: onQueued((ticket) => Effect.andThen(ticket === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void, Ref.update(heard, (all) => [...all, ticket]))),
+      })
+      const queued = yield* Effect.forEach(["One", "Two"], (message) => kit.inbox.enqueue(kit.session, message), { concurrency: 1 })
+      yield* Deferred.await(entered)
+      yield* Deferred.succeed(go, undefined)
+      const replies = yield* Effect.forEach(queued, (entry) => entry.reply, { concurrency: 1 })
+      return { replies, heard: yield* Ref.get(heard) }
+    }))
+    expect(result).toEqual({ replies: [{ text: "Reply 1." }, { text: "Reply 2." }], heard: [1, 2] })
+  })
+
+  test("a waiting listener of plugin.inbox.queued that does not suspend has heard of the message when enqueue returns", async () => {
+    const result = await run(Effect.gen(function* () {
+      const heard = yield* Ref.make<ReadonlyArray<number>>([])
+      const kit = yield* inboxOver((call) => answer(`Reply ${call + 1}.`), { extras: onQueued((ticket) => Ref.update(heard, (all) => [...all, ticket])) })
+      const queued = yield* kit.inbox.enqueue(kit.session, "One")
+      const now = yield* Ref.get(heard)
+      yield* queued.reply
+      return now
+    }))
+    expect(result).toEqual([1])
   })
 
   test("a slow turn.ended listener delays the next message, and does not fail it with SessionBusy", async () => {

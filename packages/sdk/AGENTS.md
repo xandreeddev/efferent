@@ -84,26 +84,33 @@ it: `./kernel` is a `restricted` subpath.
   inbox keeps nothing of a session it is not serving. `enqueue` is one
   uninterruptible step that waits for nothing: the transition, a fiber of
   the plugin that publishes `plugin.inbox.queued` (live, about the session
-  and no turn) after the session's previous announcement, and the worker
-  it planned; the caller gets its ticket and reply whatever becomes of the
-  announcement, and a failing waiting listener is reported rather than
-  failing the queueing. The worker takes a message and puts its reply in
-  the hands of what runs next in one uninterruptible step; it then waits
-  for the message's announcement, failed or not, and runs its turn, both
-  interruptible and under the step that settles the reply, so the
-  announcement reaches the listeners the publisher waits for before the
-  message's `turn.started`, and a close finds every reply either waiting
-  or with a worker that settles it. A failed turn fails its own reply; an
-  interrupted wait for a reply does not cancel the turn; the close of the
-  plugin's scope fails every reply not given with `InboxClosed`, the
-  running turn's and that of a message taken whose turn has not started
+  and no turn), and the worker it planned. The announcement is started at
+  once (a waiting listener that does not suspend has heard it when
+  `enqueue` returns) and follows the announcement of the session's
+  message before it while that one waits, so one session's announcements
+  are published in ticket order. The caller gets its ticket and reply
+  whatever becomes of the announcement; a failing waiting listener is
+  reported rather than failing the queueing, and an announcement cut short
+  by the scope's close interrupts its signal, so its message starts no
+  turn. The worker waits for the announcement of the first message
+  waiting before it takes it, so a message's `turn.started` follows its
+  `plugin.inbox.queued` reaching the listeners the publisher waits for.
+  Taking a message and putting its reply in its turn's hands is one
+  uninterruptible step, the turn itself interruptible, so a close finds
+  every reply either waiting, which the finalizer fails, or with a turn
+  that settles it. A failed turn fails its own reply; an interrupted wait
+  for a reply does not cancel the turn; the close of the plugin's scope
+  fails every reply not given with `InboxClosed`, the running turn's
   included, and refuses later messages (`InboxRefused`, `Closed`); a full
   queue refuses with `Full`. `plugins/inbox/inbox.adapter.test.ts` holds
   each, and a slow `turn.ended` listener that delays the next message
   without failing it. No test there can tell the worker's mask from its
   absence: Effect delivers an interrupt only where a fiber suspends or
   yields to the scheduler, and nothing suspends between the take and the
-  settling step, so the mask guards against a scheduler yield there.
+  step that settles the reply, so the mask guards against a scheduler
+  yield there. Nor can one tell the interrupted signal from one that
+  succeeds: the scope's close interrupts the announcer, which settles at
+  once, then the worker, before the worker can run.
 - `step-loop.usecase.ts`, the window memory's layer, the session plugin's
   `append` and `turn`, the inbox's contract, and regions of
   `lesson.test.ts`, `guide.test.ts` and `swap.test.ts` are quoted in

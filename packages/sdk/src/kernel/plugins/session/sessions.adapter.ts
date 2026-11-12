@@ -164,8 +164,8 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     const ended = yield* open.turn.writes.withPermits(1)(store(open.turn, turnEnded(turn, outcomeOf(exit)))).pipe(
       Effect.onExit((stored) => Exit.isFailure(stored) ? release(id) : Effect.void),
     )
-    // Then announced, on a fiber of the plugin, and only then is the session free: its events reach listeners in
-    // journal order. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
+    // Then announced, on a fiber of the plugin, and only then is the session free: the next turn's events reach
+    // listeners after this end. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
     const delivery = yield* Effect.forkIn(announceEnd(id, announced(open.turn, ended)), scope, { startImmediately: true })
     yield* Effect.interruptible(Fiber.await(delivery))
   })

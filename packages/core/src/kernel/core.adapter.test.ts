@@ -371,7 +371,7 @@ describe("a listener that cannot be interrupted", () => {
     expect(result).toBe("returned")
   })
 
-  test("does not hold the close of its scope, in the background or waited for", async () => {
+  test("does not hold the close of its scope, in the background", async () => {
     const result = await run(Effect.gen(function* () {
       const core = yield* makeCore()
       const scope = yield* Scope.make()

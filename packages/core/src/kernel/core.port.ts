@@ -52,7 +52,9 @@ export interface PublishOptions {
  * publish, it returns at once, whether or not the listener can be
  * interrupted: the listener is reported as `core.listener.failed` and
  * interrupted behind it. The close of a listener's scope does not wait for
- * a call of the listener that is under way either.
+ * a call of the listener that is under way either. Whatever a handler ends
+ * with is its own failure, an interrupt it was not sent included: only the
+ * interruption of whoever waits cuts a listener short.
  */
 export class Core extends Context.Service<Core, {
   /** Tell every listener; stores nothing. */
