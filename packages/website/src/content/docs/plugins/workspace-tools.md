@@ -112,7 +112,7 @@ returned matches and refuse multiline patterns.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-workspace/tools` · Version **0.21.2** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-workspace/tools` · Version **0.22.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
