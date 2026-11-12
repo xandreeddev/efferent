@@ -15,10 +15,10 @@
   <label>
     <span>Memory</span>
     <select data-control="memory">
-      <option value="window">windowMemory: whole turns, oldest dropped first</option>
-      <option value="last">lastMessages: your memory, in tiny-memory.ts</option>
+      <option value="window">windowMemory</option>
+      <option value="last">lastMessages (yours)</option>
     </select>
-    <small>Which layer provides Memory. Picking lastMessages sets n: 1. The conversation goes on either way.</small>
+    <small>Which layer provides Memory: the window drops whole turns, oldest first; lastMessages, in tiny-memory.ts, keeps the last n messages (n: 1 when picked here). The conversation goes on either way.</small>
   </label>
 </div>
 <p class="learn-note" data-controls-note hidden>

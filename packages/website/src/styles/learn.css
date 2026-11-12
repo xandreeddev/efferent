@@ -873,6 +873,7 @@ body.app {
 .learn-controls label {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
   font-size: 0.86rem;
   color: var(--text-dim);
 }
@@ -889,6 +890,9 @@ body.app {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .learn-controls .check {
   display: flex;
