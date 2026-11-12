@@ -22,7 +22,7 @@ export const AssistantMessage = Schema.TaggedStruct("Assistant", { text: Schema.
 export type AssistantMessage = typeof AssistantMessage.Type
 
 /**
- * A message of a conversation, as the journal keeps it and a request sends it.
+ * A message of a conversation, as a stored event bears it and a request sends it.
  *
  * @public
  */
@@ -32,10 +32,3 @@ export type Message = typeof Message.Type
 /** What a turn answers its user with. */
 export const Reply = Schema.Struct({ text: Schema.String })
 export type Reply = typeof Reply.Type
-
-/** The model asked for tools and nothing ran them. */
-export class ToolsNotRun extends Schema.TaggedError<ToolsNotRun>()("ToolsNotRun", {
-  reason: Schema.Literals(["ToolsNotInThisCut"]),
-  tools: Schema.Array(Schema.String),
-  message: Schema.String,
-}) {}

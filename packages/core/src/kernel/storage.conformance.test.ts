@@ -1,37 +1,40 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Ref } from "effect"
+import type { StoredEvent } from "./event.entity.js"
+import { Owner, Seq } from "./ids.entity.js"
 import type { SessionId } from "./ids.entity.js"
 import { StorageError } from "./journal.entity.js"
 import type { Journal } from "./journal.entity.js"
+import { JOURNAL_FORMAT } from "./session.entity.js"
 import { storageConformance } from "./storage.conformance.js"
 import type { StorageSubject } from "./storage.conformance.js"
 import { Storage } from "./storage.port.js"
 
 /*
- * The kernel ships no storage yet. Here the kit runs over a store written
- * in the test, which passes it, and over careless ones, to show that no
- * check passes on a store that keeps nothing and that each refusal is
- * checked.
+ * Core ships no storage. Here the kit runs over a store written in the
+ * test, which passes it, and over careless ones, to show that no check
+ * passes on a store that keeps nothing and that each refusal is checked.
+ * The kit runs over the stock storage plugin where that plugin lives.
  */
 
 type Journals = ReadonlyMap<SessionId, Journal>
 /** What a write decided: its answer, and the journals after it. */
-type Written = readonly [Effect.Effect<void, StorageError>, Journals]
+type Decided<A> = readonly [Effect.Effect<A, StorageError>, Journals]
 
 const missing = (id: SessionId) => new StorageError({ reason: "SessionMissing", message: `no session ${id}` })
 
 /** A store that keeps its promises, in a map. */
 const honest: StorageSubject = {
   open: Effect.map(Ref.make<Journals>(new Map()), (journals) => Storage.of({
-    create: (header) => Ref.modify(journals, (all): Written => all.has(header.id)
+    create: (header) => Ref.modify(journals, (all): Decided<void> => all.has(header.id)
       ? [Effect.fail(new StorageError({ reason: "SessionExists", message: `session ${header.id} exists` })), all]
       : [Effect.void, new Map([...all, [header.id, { header, events: [] }]])]).pipe(Effect.flatten),
-    append: (id, expectedSeq, events) => Ref.modify(journals, (all): Written => {
+    append: (id, expectedSeq, event) => Ref.modify(journals, (all): Decided<StoredEvent> => {
       const journal = all.get(id)
       if (journal === undefined) return [Effect.fail(missing(id)), all]
-      return journal.events.length === expectedSeq
-        ? [Effect.void, new Map([...all, [id, { header: journal.header, events: [...journal.events, ...events] }]])]
-        : [Effect.fail(new StorageError({ reason: "SeqConflict", message: `the journal is at ${journal.events.length}, not ${expectedSeq}` })), all]
+      if (journal.events.length !== expectedSeq) return [Effect.fail(new StorageError({ reason: "SeqConflict", message: `the journal is at ${journal.events.length}, not ${expectedSeq}` })), all]
+      const stored: StoredEvent = { seq: Seq.make(expectedSeq + 1), at: 1_767_225_600_000, ...event }
+      return [Effect.succeed(stored), new Map([...all, [id, { header: journal.header, events: [...journal.events, stored] }]])]
     }).pipe(Effect.flatten),
     read: (id, from) => Effect.flatMap(Ref.get(journals), (all) => {
       const journal = all.get(id)
@@ -41,11 +44,11 @@ const honest: StorageSubject = {
   })),
 }
 
-/** A store that accepts every write and keeps none of it. */
+/** A store that accepts every write, stamps it as asked and keeps none of it. */
 const forgetful: StorageSubject = {
   open: Effect.succeed(Storage.of({
     create: () => Effect.void,
-    append: () => Effect.void,
+    append: (_id, expectedSeq, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, ...event }),
     read: (id) => Effect.fail(missing(id)),
   })),
 }
@@ -54,14 +57,20 @@ const forgetful: StorageSubject = {
 const trusting: StorageSubject = {
   open: Effect.map(Ref.make<Journals>(new Map()), (journals) => Storage.of({
     create: (header) => Ref.update(journals, (all) => new Map([...all, [header.id, { header, events: [] }]])),
-    append: (id, _expectedSeq, events) => Ref.update(journals, (all) => {
-      const journal = all.get(id)
-      return journal === undefined ? all : new Map([...all, [id, { header: journal.header, events: [...journal.events, ...events] }]])
+    append: (id, _expectedSeq, event) => Ref.modify(journals, (all) => {
+      const journal = all.get(id) ?? { header: { id, owner: Owner.make("nobody"), format: JOURNAL_FORMAT }, events: [] }
+      const stored: StoredEvent = { seq: Seq.make(journal.events.length + 1), at: 0, ...event }
+      return [stored, new Map([...all, [id, { header: journal.header, events: [...journal.events, stored] }]])] as const
     }),
-    read: (id) => Effect.flatMap(Ref.get(journals), (all) => {
-      const any = all.get(id) ?? Array.from(all.values())[0]
-      return any === undefined ? Effect.fail(missing(id)) : Effect.succeed(all.get(id) ?? { header: any.header, events: [] })
-    }),
+    read: (id) => Effect.map(Ref.get(journals), (all) => all.get(id) ?? { header: { id, owner: Owner.make("nobody"), format: JOURNAL_FORMAT }, events: [] }),
+  })),
+}
+
+/** A store that stamps every event with the same place. */
+const unnumbering: StorageSubject = {
+  open: Effect.map(honest.open, (storage) => Storage.of({
+    ...storage,
+    append: (id, expectedSeq, event) => Effect.map(storage.append(id, expectedSeq, event), (stored) => ({ ...stored, seq: Seq.make(1) })),
   })),
 }
 
@@ -85,5 +94,9 @@ describe("the storage kit", () => {
 
   test("a store that never refuses fails every check of a refusal or a place", async () => {
     expect(await failedChecks(trusting)).toEqual(["conflict", "create", "missing", "read-from"])
+  })
+
+  test("a store that does not stamp the next place fails the check of an append", async () => {
+    expect(await failedChecks(unnumbering)).toEqual(["append"])
   })
 })

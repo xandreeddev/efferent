@@ -1,59 +1,67 @@
-import { Cause, Exit, Option, Predicate } from "effect"
-import type { TurnInput } from "./agent.entity.js"
-import { CORE_EVENTS } from "./event.entity.js"
-import type { EventDraft, LiveEvent, TurnOutcome } from "./event.entity.js"
-import type { StepNumber } from "./ids.entity.js"
-import type { StoredEvent } from "./journal.entity.js"
-import type { AssistantMessage, Reply } from "./message.entity.js"
-import type { ModelRequest } from "./request.entity.js"
-import type { OpenSession } from "./sessions.port.js"
+import { Cause, Option, Predicate, Schema } from "effect"
+import type { AnnouncedEvent, EventDefinition, LiveDefinition, LiveEvent, SeqRange, StoredDefinition, StoredDraft, StoredEvent } from "./event.entity.js"
+import { EventName, PluginName } from "./ids.entity.js"
+import type { SessionId, TurnNumber } from "./ids.entity.js"
+import type { Message } from "./message.entity.js"
 
-/** `core.turn.started`: a turn began on the session. */
-export const turnStarted = (input: TurnInput): EventDraft => ({ name: CORE_EVENTS.turnStarted, data: { session: input.session } })
+const nameOf = (plugin: string, event: string): EventName => EventName.make(`plugin.${PluginName.make(plugin)}.${event}`)
 
-/** `core.user.message`: what the user sent. */
-export const userMessage = (text: string): EventDraft => ({ name: CORE_EVENTS.userMessage, data: { _tag: "User", text } })
+/**
+ * Define an event the journal keeps, named `plugin.<plugin>.<event>`. Its
+ * data is plain JSON: a schema whose decoded value is its own encoding.
+ * `skippable` says whether a reader that does not know the record may pass
+ * over it.
+ */
+export const storedEvent = <D extends E, E extends Schema.Json>(
+  plugin: string,
+  event: string,
+  spec: { readonly data: Schema.Codec<D, E>; readonly skippable: boolean },
+): StoredDefinition<D> => ({ kind: "stored", name: nameOf(plugin, event), data: spec.data, skippable: spec.skippable })
 
-/** `core.request.sent`: what the model is sent in this step, its messages as their places in the journal. */
-export const requestSent = (step: StepNumber, request: ModelRequest): EventDraft => ({
-  name: CORE_EVENTS.requestSent,
-  data: {
-    step,
-    system: request.system,
-    messages: request.messages.map((sent) => sent.seq),
-    estimatedTokens: request.estimatedTokens,
-    budgetTokens: request.budgetTokens,
-  },
-})
+/** Define an event that is published and never stored, named `plugin.<plugin>.<event>`. Its data is plain JSON. */
+export const liveEvent = <D extends E, E extends Schema.Json>(
+  plugin: string,
+  event: string,
+  spec: { readonly data: Schema.Codec<D, E> },
+): LiveDefinition<D> => ({ kind: "live", name: nameOf(plugin, event), data: spec.data })
 
-/** `core.assistant.delta`: a piece of the answer as it arrives. Live only. */
-export const assistantDelta = (delta: string): EventDraft => ({ name: CORE_EVENTS.assistantDelta, data: { text: delta } })
+/**
+ * An event of a stored definition, ready for `session.append`. A record that
+ * bears a message names it here, and the run of the journal it replaces, if any.
+ */
+export const stored = <D extends Schema.Json>(
+  definition: StoredDefinition<D>,
+  data: D,
+  bears: { readonly message?: Message; readonly replaces?: SeqRange } = {},
+): StoredDraft => ({ name: definition.name, data, skippable: definition.skippable, ...bears })
 
-/** `core.assistant.message`: the model's whole answer in this step. */
-export const assistantMessage = (step: StepNumber, message: AssistantMessage): EventDraft => ({ name: CORE_EVENTS.assistantMessage, data: { step, message } })
+/** Where an event happened: a session and its open turn. An open session is one. */
+interface Origin {
+  readonly id: SessionId
+  readonly turn: TurnNumber
+}
 
-/** A failure as the journal words it: its tag, then its message. */
-const reasonOf = (cause: Cause.Cause<unknown>): string =>
-  Option.match(Cause.findErrorOption(cause), {
+/** An event of a live definition, ready for `core.publish`. */
+export const live = <D extends Schema.Json>(definition: LiveDefinition<D>, origin: Origin, data: D): LiveEvent =>
+  ({ _tag: "Live", session: origin.id, turn: origin.turn, name: definition.name, data })
+
+/** A stored event as `Core` carries it: the same record, with its session and turn. */
+export const announced = (origin: Origin, event: StoredEvent): AnnouncedEvent =>
+  ({ _tag: "Stored", session: origin.id, turn: origin.turn, ...event })
+
+/** The session and turn an event is about, as the origin of another: a listener publishes its own event about the one it received. */
+export const originOf = (event: { readonly session: SessionId; readonly turn: TurnNumber }): Origin => ({ id: event.session, turn: event.turn })
+
+/** The data of an event, read as `definition` describes it; none when the event is not one of that definition. */
+export const dataOf = <D extends Schema.Json>(definition: EventDefinition<D>, event: { readonly name: EventName; readonly data: Schema.Json }): Option.Option<D> =>
+  event.name === definition.name ? Schema.decodeUnknownOption(definition.data)(event.data) : Option.none()
+
+/** A failure as an event words it: its tag, then its message. No stack. */
+export const reasonOf = (cause: Cause.Cause<unknown>): string =>
+  Cause.hasInterruptsOnly(cause) ? "interrupted" : Option.match(Cause.findErrorOption(cause), {
     onNone: () => "defect",
     onSome: (error) => [
       ...(Predicate.hasProperty(error, "_tag") && Predicate.isString(error._tag) ? [error._tag] : []),
       ...(Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? [error.message] : []),
     ].join(": "),
   })
-
-/** How a turn that exited this way ended. */
-export const outcomeOf = <E>(exit: Exit.Exit<Reply, E>): TurnOutcome =>
-  Exit.match(exit, {
-    onSuccess: (reply): TurnOutcome => ({ _tag: "Completed", reply }),
-    onFailure: (cause): TurnOutcome => Cause.hasInterruptsOnly(cause) ? { _tag: "Interrupted" } : { _tag: "Failed", reason: reasonOf(cause) },
-  })
-
-/** `core.turn.ended`: the turn is over, with its outcome. */
-export const turnEnded = (outcome: TurnOutcome): EventDraft => ({ name: CORE_EVENTS.turnEnded, data: { outcome } })
-
-/** A stored event as the live stream carries it. */
-export const recordedEvent = (session: OpenSession, stored: StoredEvent): LiveEvent => ({ _tag: "Recorded", session: session.id, turn: session.turn, ...stored })
-
-/** An event nothing stores, as the live stream carries it. */
-export const liveEvent = (session: OpenSession, event: EventDraft): LiveEvent => ({ _tag: "Emitted", session: session.id, turn: session.turn, ...event })

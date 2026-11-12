@@ -1,37 +1,69 @@
-// `@xandreed/core/kernel`: the kernel's vocabulary. Its value objects and
-// entities, the pure rules over them, the four ports and their kits. It
-// imports nothing of the rest of core, and no runtime module.
-export { EventName, Owner, Seq, SessionId, StepNumber, Tokens, ToolCallId, TurnNumber } from "./ids.entity.js"
+// `@xandreed/core/kernel`: what every part of the kernel agrees on. Its
+// value objects and entities, the event definitions and the helpers a
+// plugin defines its own with, the pure rules, the four contracts and their
+// kits, `definePlugin`, and `Core`: publish, on, events. It imports nothing
+// of the rest of core, no model type and no runtime module.
+export { EventName, Owner, PluginName, Seq, SessionId, StepNumber, Tokens, ToolCallId, TurnNumber } from "./ids.entity.js"
 export { firstStep } from "./ids.entity.functions.js"
-export { AssistantMessage, Message, Reply, ToolCall, ToolsNotRun, UserMessage } from "./message.entity.js"
+export { AssistantMessage, Message, Reply, ToolCall, UserMessage } from "./message.entity.js"
 export { replyOf, wantsTools } from "./message.entity.functions.js"
-export { CORE_EVENTS, EventDraft, LiveEvent, TurnOutcome } from "./event.entity.js"
+export { AnnouncedEvent, KernelEvent, ListenerFailed, LiveEvent, SeqRange, StoredDraft, StoredEvent } from "./event.entity.js"
+export type { Delivered, EventDefinition, LiveDefinition, PluginFailure, StoredDefinition } from "./event.entity.js"
+export { announced, dataOf, live, liveEvent, originOf, stored, storedEvent } from "./event.entity.functions.js"
+export {
+  AssistantDeltaData,
+  AssistantMessageData,
+  KERNEL_READER,
+  ListenerFailedData,
+  TurnEndedData,
+  TurnOutcome,
+  TurnStartedData,
+  assistantDeltaEvent,
+  assistantMessageEvent,
+  listenerFailedEvent,
+  requestSentEvent,
+  turnEndedEvent,
+  turnStartedEvent,
+  userMessageEvent,
+} from "./vocabulary.entity.js"
 export {
   assistantDelta,
   assistantMessage,
-  liveEvent,
+  listenerFailed,
   outcomeOf,
-  recordedEvent,
   requestSent,
   turnEnded,
   turnStarted,
   userMessage,
-} from "./event.entity.functions.js"
-export { Journal, StorageError, StoredEvent } from "./journal.entity.js"
-export { messageOf } from "./journal.entity.functions.js"
-export { Free, JOURNAL_FORMAT, SessionHeader, SessionRefused, SessionState, TurnOpen } from "./session.entity.js"
-export { beginTurn, endTurn } from "./session.entity.functions.js"
-export { BuildInput, BuiltContext, ContextError, Limits, ModelRequest, RequestRefused } from "./request.entity.js"
-export { checkRequest, writtenBy } from "./request.entity.functions.js"
-export { TurnInput } from "./agent.entity.js"
-export type { Agent, LoopError, StepLoop } from "./agent.entity.js"
+} from "./vocabulary.entity.functions.js"
+export { Journal, Reader, StorageError, UnknownRecord } from "./journal.entity.js"
+export { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
+export { Free, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnInput, TurnOpen } from "./session.entity.js"
+export { beginTurn, endTurn, headerOf, newSession, sessionStateOf } from "./session.entity.functions.js"
+export { Inspection, ModelRequest, RequestRefused, ResolvedRequest, SentRequest } from "./request.entity.js"
+export { estimateRequest, estimateTokens, inspectionOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
+export { Core, CurrentPlugin } from "./core.port.js"
+export type { ListenOptions } from "./core.port.js"
+export { CoreLive, makeCore } from "./core.adapter.js"
+export type { CoreOptions } from "./core.adapter.js"
 export { Storage } from "./storage.port.js"
 export { Sessions } from "./sessions.port.js"
-export type { OpenSession } from "./sessions.port.js"
-export { ContextManager } from "./context-manager.port.js"
-export type { OpenContext } from "./context-manager.port.js"
-export { Events } from "./events.port.js"
+export type { OpenSession, TurnFailure } from "./sessions.port.js"
+export { Memory } from "./memory.port.js"
+export type { MemoryFailure, OpenMemory } from "./memory.port.js"
+export { Loop } from "./loop.port.js"
+export type { LoopFailure } from "./loop.port.js"
+export { Settings } from "./settings.port.js"
+export { definePlugin } from "./plugin.adapter.js"
+export type { Plugin } from "./plugin.adapter.js"
 export { ConformanceFailure } from "./conformance.entity.js"
 export type { ConformanceCheck } from "./conformance.entity.js"
 export { storageConformance } from "./storage.conformance.js"
 export type { StorageSubject } from "./storage.conformance.js"
+export { sessionsConformance } from "./sessions.conformance.js"
+export type { SessionsSubject } from "./sessions.conformance.js"
+export { memoryConformance } from "./memory.conformance.js"
+export type { MemorySubject } from "./memory.conformance.js"
+export { LoopScript, ModelAnswer } from "./loop.entity.js"
+export { loopConformance } from "./loop.conformance.js"
+export type { LoopSubject } from "./loop.conformance.js"

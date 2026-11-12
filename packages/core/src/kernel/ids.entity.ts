@@ -4,19 +4,11 @@ import { Schema } from "effect"
 export const SessionId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SessionId"))
 export type SessionId = typeof SessionId.Type
 
-/**
- * Who a session belongs to.
- *
- * @public
- */
+/** Who a session belongs to. */
 export const Owner = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("Owner"))
 export type Owner = typeof Owner.Type
 
-/**
- * A turn's place in its session, from 1.
- *
- * @public
- */
+/** A turn's place in its session, from 1. */
 export const TurnNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("TurnNumber"))
 export type TurnNumber = typeof TurnNumber.Type
 
@@ -28,16 +20,24 @@ export type StepNumber = typeof StepNumber.Type
 export const Seq = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("Seq"))
 export type Seq = typeof Seq.Type
 
-/** A count of tokens: an estimate, a budget or a usage. */
+/** A count of tokens: an estimate or a budget. */
 export const Tokens = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("Tokens"))
 export type Tokens = typeof Tokens.Type
 
 /**
- * An event's name, under the prefix of who writes it: `core.` or `plugin.<kind>.`.
+ * A plugin's name, which is also the prefix of the events it writes: `plugin.<name>.`.
  *
  * @public
  */
-export const EventName = Schema.String.check(Schema.isPattern(/^(?:core|plugin)(?:\.[a-z0-9][a-z0-9-]*)+$/)).pipe(Schema.brand("EventName"))
+export const PluginName = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/)).pipe(Schema.brand("PluginName"))
+export type PluginName = typeof PluginName.Type
+
+/**
+ * An event's name, under the prefix of who writes it: `core.` or `plugin.<plugin name>.`.
+ *
+ * @public
+ */
+export const EventName = Schema.String.check(Schema.isPattern(/^(?:core|plugin\.[a-z0-9][a-z0-9-]*)(?:\.[a-z0-9][a-z0-9-]*)+$/)).pipe(Schema.brand("EventName"))
 export type EventName = typeof EventName.Type
 
 /**

@@ -438,7 +438,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // layer below, reached only by a layer that names `core/kernel`: the
       // sdk's kernel.
       { name: "core-kernel-tests", path: "packages/core/src/kernel/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
-      { name: "core-kernel", path: "packages/core/src/kernel/**", canImport: [], externals: ["effect", "effect/ai"] },
+      { name: "core-kernel", path: "packages/core/src/kernel/**", canImport: [], externals: ["effect"] },
       // Core's layers, by a file's role rather than its folder; a glob takes no
       // alternatives, so a layer may need several entries. Its test code comes
       // first, then from the bottom: the model (entities, and the References
@@ -543,6 +543,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // the rest of the sdk. `./kernel` is a restricted subpath of the sdk's
       // layer below, which no layer is granted.
       { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
+      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/testing.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
       { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md

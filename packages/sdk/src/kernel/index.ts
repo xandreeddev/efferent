@@ -1,7 +1,16 @@
-// `@xandreed/sdk/kernel`: the kernel's flow over the ports of
-// `@xandreed/core/kernel`. The turn's frame, the default step loop and what
-// another loop is written with.
-export { runTurn } from "./run-turn.usecase.js"
-export { runSteps } from "./step-loop.usecase.js"
-export { emit, record } from "./run-turn.usecase.functions.js"
-export { callModel } from "./call-model.adapter.js"
+// `@xandreed/sdk/kernel`: the kernel's wiring and its four stock plugins,
+// over the contracts of `@xandreed/core/kernel`. Nothing here imports the
+// rest of the sdk, the runtime or a runtime module.
+export { Agent } from "./agent.adapter.js"
+export { AgentRefused } from "./agent.entity.js"
+export type { AgentChanges, AgentConfig, AgentHandle, NewSessionInput } from "./agent.entity.js"
+export { inMemoryStorage } from "./plugins/storage-memory/storage.adapter.js"
+export { sessions } from "./plugins/session/sessions.adapter.js"
+export type { SessionsOptions } from "./plugins/session/sessions.adapter.js"
+export { windowMemory } from "./plugins/memory-window/window.adapter.js"
+export { OverBudget, WindowDroppedData, WindowPressureData, windowDroppedEvent, windowPressureEvent } from "./plugins/memory-window/window.entity.js"
+export type { WindowOptions } from "./plugins/memory-window/window.entity.js"
+export { isOverBudget } from "./plugins/memory-window/window.entity.functions.js"
+export { stepLoop } from "./plugins/loop/step-loop.adapter.js"
+export { callModel } from "./plugins/loop/call-model.adapter.js"
+export { ToolsNotRun } from "./plugins/loop/loop.entity.js"
