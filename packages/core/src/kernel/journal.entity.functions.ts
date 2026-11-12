@@ -14,8 +14,7 @@ export const messageOf = (event: { readonly message?: Message }): Option.Option<
  * The reader of plugin `plugin`: it answers for what `over` answers for
  * (core's own records when left out) and for the records under its own
  * prefix, and knows, of its own, the definitions in `own`. A plugin that
- * reads another plugin's records extends that plugin's reader: a memory
- * extends the loop's.
+ * reads another plugin's records extends that plugin's reader.
  */
 export const readerFor = (plugin: string, own: ReadonlyArray<{ readonly name: EventName }>, over: Reader = KERNEL_READER): Reader => ({
   reads: [...over.reads, `plugin.${PluginName.make(plugin)}.`],

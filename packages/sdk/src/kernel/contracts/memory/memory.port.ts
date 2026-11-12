@@ -27,4 +27,4 @@ export class Memory extends Context.Service<Memory, {
    * message, and pointed at.
    */
   readonly build: (session: OpenSession, step: StepNumber) => Effect.Effect<ModelRequest, MemoryFailure>
-}>()("@xandreed/sdk/kernel/Memory") {}
+}>()("@xandreed/core/kernel/Memory") {}

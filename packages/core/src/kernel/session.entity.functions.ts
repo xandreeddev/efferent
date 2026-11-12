@@ -63,8 +63,8 @@ export const headerOf = (id: SessionId, input: NewSession): SessionHeader => ({
 
 /**
  * A session as a host inspects it: its header, the state its journal
- * folds to, and its journal. A plugin's inspection reads more of the same
- * journal: the loop contract's `requestsOf` resolves every request it sent.
+ * folds to, and its journal. What a workflow recorded in it, its plugins'
+ * contracts read from the same journal.
  */
 export const inspectionOf = (journal: Journal): Result.Result<Inspection, UnknownRecord | SessionRefused> =>
   Result.map(sessionStateOf(journal.events), (state) => ({ header: journal.header, state, events: journal.events }))

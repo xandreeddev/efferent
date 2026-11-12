@@ -10,8 +10,8 @@ import { listenerFailed } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent } from "./vocabulary.entity.js"
 
 /**
- * How an agent's kernel is set up: how `Core` delivers events. Nothing of
- * a workflow: a system text is the loop contract's (`settings`).
+ * How an agent's kernel is set up: how `Core` delivers events, and
+ * nothing of a workflow.
  *
  * @public
  */

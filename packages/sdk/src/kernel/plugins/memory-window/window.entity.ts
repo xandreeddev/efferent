@@ -8,7 +8,7 @@ import { Tokens } from "../../contracts/loop/request.entity.js"
  * @public
  */
 export interface WindowOptions {
-  /** What one request may cost, system text included, by core's estimate. */
+  /** What one request may cost, system text included, by the loop contract's estimate (`estimateRequest`). */
   readonly budgetTokens: number
   /** The share of the budget from which a request counts as pressure. 0.8 when left out. */
   readonly pressureAt?: number

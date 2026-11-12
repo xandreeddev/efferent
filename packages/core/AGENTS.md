@@ -95,7 +95,8 @@ kernel's rules:
   their journal, journal storage, events and the message vocabulary
   (ADR 0002). It never owns a loop, a memory, a prompt, a system text or a
   request to a model: those are contracts of the sdk's kernel
-  (`packages/sdk/src/kernel/contracts`), and nothing here may name them.
+  (`packages/sdk/src/kernel/contracts`), and no code here defines or
+  imports them; a comment names them only to say where they live.
   Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
   vocabulary, pure rules, the two contracts and their kits.

@@ -20,9 +20,9 @@ export interface Queued {
 
 /**
  * Messages queued per session and answered in order, each in a turn of its
- * own, every turn seeing the turns before it. A contract of the inbox
- * plugin's own, declared in its folder: core does not know it. Queued
- * messages live in the process and do not survive it.
+ * own, every turn seeing the turns before it. A workflow contract, in a
+ * contract folder of the sdk, over the loop's: core does not know it.
+ * Queued messages live in the process and do not survive it.
  */
 export class Inbox extends Context.Service<Inbox, {
   /** Queue a message for the session. Returns at once, in call order, with its ticket and its reply. */

@@ -65,8 +65,10 @@ it: `./kernel` is a `restricted` subpath.
   plugin; a plugin imports contracts and core's kernel, never another
   plugin's folder: the boundaries gate refuses both. The loop and memory
   kits build their checks with `contracts/conformance.entity.functions.ts`,
-  a copy of core's kernel helpers, which core does not export. Service keys
-  are `@xandreed/sdk/kernel/<Name>`.
+  a copy of core's kernel helpers, which core does not export. A port that
+  moved keeps its key: `Loop`, `Memory` and `Settings` are still
+  `@xandreed/core/kernel/<Name>`, as they were declared; a new one is
+  `@xandreed/sdk/kernel/<Name>`, as `Inbox` is.
 - Every plugin is a plain Effect `Layer`, its type saying what it needs,
   and the host composes them with `Layer.provideMerge` over core's
   `kernel({ capacity? })`, which provides `Core` alone; the system text is

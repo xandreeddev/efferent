@@ -19,4 +19,4 @@ export type LoopFailure = TurnFailure | RequestRefused | PluginFailure
 export class Loop extends Context.Service<Loop, {
   /** Run one turn of the session and return its reply. */
   readonly run: (input: TurnInput) => Effect.Effect<Reply, LoopFailure>
-}>()("@xandreed/sdk/kernel/Loop") {}
+}>()("@xandreed/core/kernel/Loop") {}
