@@ -58,7 +58,9 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * the end of its turn was announced, so its events reach listeners in
  * journal order (`ordered`); an open session kept after its turn closed
  * appends nothing (`closed-append`); a session never created is refused
- * before any body runs (`missing`).
+ * before any body runs (`missing`); a session asked for with an empty
+ * owner, or a parent that is no id, is refused with `InvalidSession`
+ * (`invalid-session`).
  *
  * @public
  */
@@ -239,6 +241,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         (error) => error._tag === "JournalStorageError" && error.reason === "SessionMissing")
       yield* refuses("missing", "a read of a session never created", sessions.read(SessionId.make("kit-stranger")), (error) => error.reason === "SessionMissing")
       yield* expect("missing", !(yield* Ref.get(ran)), "the body of a turn of a missing session ran")
+    })),
+    check("a session asked for with an empty owner, or a parent that is no id, is refused", "invalid-session", ({ sessions }) => Effect.gen(function* () {
+      const invalid = (error: { readonly _tag: string }) => error._tag === "InvalidSession"
+      yield* refuses("invalid-session", "a session with an empty owner", sessions.create({ owner: "" }), invalid)
+      yield* refuses("invalid-session", "a session with an owner of blanks", sessions.create({ owner: "   " }), invalid)
+      yield* refuses("invalid-session", "a session with an empty parent", sessions.create({ owner, parent: "" }), invalid)
     })),
   ]
 }

@@ -1,18 +1,17 @@
 import { Context } from "effect"
 import type { Effect, Schema, Scope, Stream } from "effect"
 import type { Delivered, EventDefinition, KernelEvent, ListenerFailed } from "./event.entity.js"
-import { PluginName } from "./ids.entity.js"
 
 /**
- * How a listener takes part: in the background, or with the publisher waiting for it.
+ * How a listener takes part: its name, and whether the publisher waits for it.
  *
  * @public
  */
 export interface ListenOptions {
+  /** The listener's name, as a failure of it is reported: the plugin's own name, as a rule. */
+  readonly name: string
   /** The publisher waits for this listener, and fails if it fails. */
   readonly wait?: boolean
-  /** The listener's name in a failure; the registering plugin's name when left out. */
-  readonly name?: string
 }
 
 /**
@@ -30,32 +29,6 @@ export interface PublishOptions {
    */
   readonly beforeHandOver?: Effect.Effect<void>
 }
-
-/**
- * The plugin whose setup is running: `definePlugin` sets it around a
- * plugin's `make`, and `Core.on` names a listener after it.
- *
- * @public
- */
-export const CurrentPlugin = Context.Reference<PluginName>("@xandreed/core/kernel/CurrentPlugin", { defaultValue: () => PluginName.make("host") })
-
-/**
- * The wait for `Core` to fall quiet: no publish under way, and every
- * background listener done with what was published, the events those
- * listeners published in turn included. It is bounded (`idleWait`, 5
- * seconds unless `Core` is set up with another): a listener still running
- * at the limit is reported as `core.listener.failed` and waited for no
- * longer.
- *
- * It belongs to the wiring that builds `Core`, which uses it to replace an
- * agent only when its listeners have handled everything. No plugin is
- * handed it: it is not a contract a plugin can require.
- *
- * @public
- */
-export class CoreIdle extends Context.Service<CoreIdle, {
-  readonly wait: Effect.Effect<void>
-}>()("@xandreed/core/kernel/CoreIdle") {}
 
 /**
  * Events, and nothing else: core stores nothing and runs no turn.
@@ -86,15 +59,18 @@ export class Core extends Context.Service<Core, {
   readonly publish: (event: KernelEvent, options?: PublishOptions) => Effect.Effect<void, ListenerFailed>
   /**
    * React to the events of one definition, for as long as the scope it is
-   * called in stays open. In the background by default: a failure there is
-   * published as `core.listener.failed`. With `{ wait: true }` the
-   * publisher waits, and the failure is the publisher's; a listener whose
-   * scope closed while a publish was under way is not run.
+   * called in stays open: a plugin calls it in its layer's scope, so its
+   * listeners go with the layer. The listener is registered before `on`
+   * returns, so it misses nothing published after. In the background by
+   * default: a failure there is published as `core.listener.failed`, under
+   * the listener's `name`. With `{ wait: true }` the publisher waits, and
+   * the failure is the publisher's; a listener whose scope closed while a
+   * publish was under way is not run.
    */
   readonly on: <D extends Schema.Json, E>(
     event: EventDefinition<D>,
     handler: (event: Delivered<D>) => Effect.Effect<void, E>,
-    options?: ListenOptions,
+    options: ListenOptions,
   ) => Effect.Effect<void, never, Scope.Scope>
   /** Every event, live, from the moment the stream is run. */
   readonly events: Stream.Stream<KernelEvent>

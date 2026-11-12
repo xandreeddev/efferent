@@ -37,6 +37,8 @@ export type ResolvedRequest = typeof ResolvedRequest.Type
  * A request that cannot be sent: it points at a place that holds no message
  * (`UnknownMessage`), at the same place twice (`RepeatedMessage`), or at a
  * place that is not before the request's own (`LaterMessage`).
+ *
+ * @public
  */
 export class RequestRefused extends Schema.TaggedError<RequestRefused>()("RequestRefused", {
   reason: Schema.Literals(["UnknownMessage", "RepeatedMessage", "LaterMessage"]),
@@ -44,7 +46,11 @@ export class RequestRefused extends Schema.TaggedError<RequestRefused>()("Reques
   message: Schema.String,
 }) {}
 
-/** A session as a host inspects it: its header, its state, its journal, and every request it sent, resolved. */
+/**
+ * A session as a host inspects it (`inspectionOf`): its header, its state, its journal, and every request it sent, resolved.
+ *
+ * @public
+ */
 export const Inspection = Schema.Struct({
   header: SessionHeader,
   state: SessionState,

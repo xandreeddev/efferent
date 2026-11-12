@@ -1,8 +1,8 @@
-import { Effect, Option } from "effect"
-import { Core, definePlugin, Memory, readJournal, requestSentEvent, Settings } from "@xandreed/core/kernel"
+import { Effect, Layer, Option } from "effect"
+import { Core, Memory, readJournal, requestSentEvent, Settings } from "@xandreed/core/kernel"
 import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf, fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
-import type { WindowOptions } from "./window.entity.js"
+import type { InvalidBudget, WindowOptions } from "./window.entity.js"
 
 /**
  * The window memory: every message of the journal, whole turns leaving
@@ -10,34 +10,28 @@ import type { WindowOptions } from "./window.entity.js"
  * and its estimate covers the system text the settings hold, so it counts
  * what is really sent. What it drops it records as `plugin.window.dropped`;
  * a request sent close to the budget it announces as `plugin.window.pressure`.
+ * A budget that is no finite number of at least one token fails the layer
+ * with `InvalidBudget`.
  *
  * @public
  */
-export const windowMemory = (options: WindowOptions) => definePlugin({
-  name: "window",
-  version: "0.22.0",
-  requires: [Core, Settings],
-  provides: Memory,
-  make: Effect.gen(function* () {
-    const core = yield* Core
-    const settings = yield* Settings
-    const budgetTokens = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // a budget that is none fails the agent's definition
+export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget, Core | Settings> => Layer.effect(Memory, Effect.gen(function* () {
+  const core     = yield* Core
+  const settings = yield* Settings
+  const budget   = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
 
-    // react: announce pressure so any plugin can act on it
-    yield* core.on(requestSentEvent, (sent) =>
-      nearlyFull(sent.data, options.pressureAt) ? core.publish(windowPressure(sent)) : Effect.void)
+  // React: announce pressure, so any plugin can act on it.
+  yield* core.on(requestSentEvent, (sent) =>
+    nearlyFull(sent.data, options.pressureAt) ? core.publish(windowPressure(sent)) : Effect.void,
+    { name: "window" })
 
-    return Memory.of({
-      // Nothing is kept between requests: each is built from the journal as it stands.
-      build: Effect.fn("kernel.window.build")(function* (session: OpenSession) {
-        const known = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
-        const fitted = yield* Effect.fromResult(fitToBudget(settings.system, known, budgetTokens))
-        yield* Option.match(fitted.dropped, {
-          onNone: () => Effect.void,
-          onSome: (through) => session.append(windowDropped(through)),    // its own record, stored before the request that leaves the turns out
-        })
-        return fitted.request
-      }),
-    })
-  }),
-})
+  return Memory.of({
+    // Nothing is kept between requests: each is built from the journal as it stands.
+    build: Effect.fn("kernel.window.build")(function* (session: OpenSession) {
+      const journal = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
+      const fitted  = yield* Effect.fromResult(fitToBudget(settings.system, journal, budget))   // whole turns, oldest dropped first
+      if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
+      return fitted.request                                                      // pointers into the journal
+    }),
+  })
+}))

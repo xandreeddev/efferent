@@ -1,17 +1,13 @@
-import { LanguageModel } from "effect/ai"
-import { Core, definePlugin, Loop, Memory, Sessions, Settings } from "@xandreed/core/kernel"
+import { Layer } from "effect"
+import { Loop } from "@xandreed/core/kernel"
 import { makeStepLoop } from "./step-loop.usecase.js"
 
 /**
  * The stock loop plugin: steps until the model asks for no tool, then the
- * reply. Its flow is `makeStepLoop`; the model call lives beside it.
+ * reply. Its flow is `makeStepLoop`; the model call lives beside it. It
+ * needs `Core`, `Sessions`, `Memory`, the model and `Settings`, and its
+ * type says so.
  *
  * @public
  */
-export const stepLoop = () => definePlugin({
-  name: "loop",
-  version: "0.22.0",
-  requires: [Core, Sessions, Memory, LanguageModel.LanguageModel, Settings],
-  provides: Loop,
-  make: makeStepLoop,
-})
+export const stepLoop = Layer.effect(Loop, makeStepLoop)

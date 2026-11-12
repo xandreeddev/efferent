@@ -6,7 +6,11 @@ import type { RequestRefused } from "./request.entity.js"
 import type { TurnInput } from "./session.entity.js"
 import type { TurnFailure } from "./sessions.port.js"
 
-/** What a turn can fail with: the session's refusals, a request that cannot be sent, or a plugin's own error (memory's, the model's, the loop's). */
+/**
+ * What a turn can fail with: the session's refusals, a request that cannot be sent, or a plugin's own error (memory's, the model's, the loop's).
+ *
+ * @public
+ */
 export type LoopFailure = TurnFailure | RequestRefused | PluginFailure
 
 /**

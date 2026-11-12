@@ -544,8 +544,6 @@ const config: typeof GateSuiteConfig.Encoded = {
       // layer below, which no layer is granted.
       { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "node:", "bun:test"] },
       { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/testing.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
-      // A contract of a plugin's own, for the kernel's tests and its guide (`Summaries`): the build leaves it out.
-      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/testing.port.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
       { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md

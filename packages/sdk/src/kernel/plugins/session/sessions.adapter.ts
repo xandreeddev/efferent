@@ -1,12 +1,13 @@
-import { Array as Arr, Effect, Exit, Fiber, Option, Ref } from "effect"
+import { Array as Arr, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from "effect"
 import type { Duration } from "effect"
 import {
   announced,
   beginTurn,
   Core,
-  definePlugin,
   headerOf,
+  InvalidSession,
   listenerFailed,
+  NewSession,
   outcomeOf,
   Seq,
   SessionId,
@@ -68,6 +69,8 @@ const mintUuid = Effect.sync(() => {
   return SessionId.make(`${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`)
 })
 
+const decodeSession = Schema.decodeUnknownEffect(NewSession)
+
 const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "SessionBusy", message: `session ${id} is busy: ${why}` })
 
 /**
@@ -80,98 +83,95 @@ const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "Sessi
  *
  * @public
  */
-export const sessions = (options: SessionsOptions = {}) => definePlugin({
-  name: "session",
-  version: "0.22.0",
-  requires: [Core, JournalStorage],
-  provides: Sessions,
-  make: Effect.gen(function* () {
-    const core    = yield* Core
-    const storage = yield* JournalStorage
-    const scope   = yield* Effect.scope
-    /** The sessions with a turn open or closing in this process: the journal cannot say that an end is still being announced. */
-    const held    = yield* Ref.make<ReadonlySet<SessionId>>(new Set())
+export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, never, Core | JournalStorage> => Layer.effect(Sessions, Effect.gen(function* () {
+  const core    = yield* Core
+  const storage = yield* JournalStorage
+  const scope   = yield* Effect.scope
+  /** The sessions with a turn open or closing in this process: the journal cannot say that an end is still being announced. */
+  const held    = yield* Ref.make<ReadonlySet<SessionId>>(new Set())
 
-    const claim = (id: SessionId) => Ref.modify(held, (now): readonly [Effect.Effect<void, SessionRefused>, ReadonlySet<SessionId>] => now.has(id)
-      ? [Effect.fail(busy(id, "a turn is open, or its end is being announced")), now]
-      : [Effect.void, new Set([...now, id])]).pipe(Effect.flatten)
-    const release = (id: SessionId) => Ref.update(held, (now) => new Set(Array.from(now).filter((other) => other !== id)))
+  const claim = (id: SessionId) => Ref.modify(held, (now): readonly [Effect.Effect<void, SessionRefused>, ReadonlySet<SessionId>] => now.has(id)
+    ? [Effect.fail(busy(id, "a turn is open, or its end is being announced")), now]
+    : [Effect.void, new Set([...now, id])]).pipe(Effect.flatten)
+  const release = (id: SessionId) => Ref.update(held, (now) => new Set(Array.from(now).filter((other) => other !== id)))
 
-    /** Put an event at the next place of the turn's journal. */
-    const store = Effect.fnUntraced(function* (open: Turn, event: StoredDraft) {
-      const stored = yield* storage.append(open.id, yield* Ref.get(open.place), event)
-      yield* Ref.set(open.place, stored.seq)
-      return stored
-    })
+  /** Put an event at the next place of the turn's journal. */
+  const store = Effect.fnUntraced(function* (open: Turn, event: StoredDraft) {
+    const stored = yield* storage.append(open.id, yield* Ref.get(open.place), event)
+    yield* Ref.set(open.place, stored.seq)
+    return stored
+  })
 
-    const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
-      if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
-      const stored = yield* store(open, event)                        // in the journal first
-      yield* core.publish(announced(open, stored))                    // then announced, same name
-      return stored
-    })
+  const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+    if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
+    const stored = yield* store(open, event)                        // in the journal first
+    yield* core.publish(announced(open, stored))                    // then announced, same name
+    return stored
+  })
 
-    const begin = Effect.fn("kernel.session.begin")(function* (id: SessionId) {
-      yield* claim(id)                                                // one turn at a time here, until its end was announced
-      return yield* Effect.gen(function* () {
-        const journal = yield* storage.read(id)                       // the store is the truth: the phase and the last place, read now
-        const state = yield* Effect.fromResult(sessionStateOf(journal.events))
-        const { turn } = yield* Effect.fromResult(beginTurn(state))   // Free → TurnOpen, or SessionBusy
-        const open: Turn = {
-          id,
-          turn,
-          place: yield* Ref.make(Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq })),
-          closed: yield* Ref.make(false),
-        }
-        // The first append is the claim on the journal: a conflict there is another writer's turn, not a storage failure.
-        const started = yield* store(open, turnStarted(turn)).pipe(
-          Effect.catchTag("JournalStorageError", (error): Effect.Effect<never, SessionRefused | JournalStorageError> =>
-            error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer opened a turn")) : Effect.fail(error)),
-        )
-        const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open) }
-        const opened: Opened = { turn: open, session, started: announced(open, started) }
-        return opened
-      }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? release(id) : Effect.void))   // a turn that did not open, for whatever reason, holds nothing
-    })
-
-    /**
-     * Announce the end of a turn, and free its session. No listener can
-     * fail it or hold it past `closeWait`, whether or not it can be
-     * interrupted: a failure, or a listener cut short, is
-     * `core.listener.failed`. The session is freed after the listeners the
-     * announcement waits for and before the end is handed to the background
-     * listeners and the host's stream, so whoever hears of the end there
-     * finds the session free.
-     */
-    const announceEnd = (id: SessionId, ended: AnnouncedEvent) => core.publish(ended, { beforeHandOver: release(id) }).pipe(
-      Effect.catchTag("ListenerFailed", (failure) => core.publish(listenerFailed(ended, failure)).pipe(
-        Effect.ignore({ log: "Warn", message: "the report of a failed listener could not be published" }),
-      )),
-      Effect.ensuring(release(id)),                                   // whatever became of the announcement
-      Effect.timeoutOption(options.closeWait ?? "5 seconds"),
-    )
-
-    const end = Effect.fn("kernel.session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {
-      const { id, turn } = open.turn
-      yield* Ref.set(open.turn.closed, true)                          // nothing is appended to this turn from here on
-      // In the journal first. A turn whose end cannot be stored stays open, as the journal says it is: the caller gets the failure.
-      const ended = yield* store(open.turn, turnEnded(turn, outcomeOf(exit))).pipe(
-        Effect.onExit((stored) => Exit.isFailure(stored) ? release(id) : Effect.void),
+  const begin = Effect.fn("kernel.session.begin")(function* (id: SessionId) {
+    yield* claim(id)                                                // one turn at a time here, until its end was announced
+    return yield* Effect.gen(function* () {
+      const journal = yield* storage.read(id)                       // the store is the truth: the phase and the last place, read now
+      const state = yield* Effect.fromResult(sessionStateOf(journal.events))
+      const { turn } = yield* Effect.fromResult(beginTurn(state))   // Free → TurnOpen, or SessionBusy
+      const open: Turn = {
+        id,
+        turn,
+        place: yield* Ref.make(Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq })),
+        closed: yield* Ref.make(false),
+      }
+      // The first append is the claim on the journal: a conflict there is another writer's turn, not a storage failure.
+      const started = yield* store(open, turnStarted(turn)).pipe(
+        Effect.catchTag("JournalStorageError", (error): Effect.Effect<never, SessionRefused | JournalStorageError> =>
+          error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer opened a turn")) : Effect.fail(error)),
       )
-      // Then announced, on a fiber of the plugin, and only then is the session free: its events reach listeners in
-      // journal order. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
-      const delivery = yield* Effect.forkIn(announceEnd(id, announced(open.turn, ended)), scope, { startImmediately: true })
-      yield* Effect.interruptible(Fiber.await(delivery))
-    })
+      const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open) }
+      const opened: Opened = { turn: open, session, started: announced(open, started) }
+      return opened
+    }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? release(id) : Effect.void))   // a turn that did not open, for whatever reason, holds nothing
+  })
 
-    return Sessions.of({
-      create: (input) => Effect.tap(options.mintId ?? mintUuid, (id) => storage.create(headerOf(id, input))),
-      read: (id) => storage.read(id),
-      turn: (id, body) => Effect.acquireUseRelease(
-        begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started
-        (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
-        (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, announces it, frees the session; always runs
-      ),
-    })
-  }),
-})
+  /**
+   * Announce the end of a turn, and free its session. No listener can
+   * fail it or hold it past `closeWait`, whether or not it can be
+   * interrupted: a failure, or a listener cut short, is
+   * `core.listener.failed`. The session is freed after the listeners the
+   * announcement waits for and before the end is handed to the background
+   * listeners and the host's stream, so whoever hears of the end there
+   * finds the session free.
+   */
+  const announceEnd = (id: SessionId, ended: AnnouncedEvent) => core.publish(ended, { beforeHandOver: release(id) }).pipe(
+    Effect.catchTag("ListenerFailed", (failure) => core.publish(listenerFailed(ended, failure)).pipe(
+      Effect.ignore({ log: "Warn", message: "the report of a failed listener could not be published" }),
+    )),
+    Effect.ensuring(release(id)),                                   // whatever became of the announcement
+    Effect.timeoutOption(options.closeWait ?? "5 seconds"),
+  )
+
+  const end = Effect.fn("kernel.session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {
+    const { id, turn } = open.turn
+    yield* Ref.set(open.turn.closed, true)                          // nothing is appended to this turn from here on
+    // In the journal first. A turn whose end cannot be stored stays open, as the journal says it is: the caller gets the failure.
+    const ended = yield* store(open.turn, turnEnded(turn, outcomeOf(exit))).pipe(
+      Effect.onExit((stored) => Exit.isFailure(stored) ? release(id) : Effect.void),
+    )
+    // Then announced, on a fiber of the plugin, and only then is the session free: its events reach listeners in
+    // journal order. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
+    const delivery = yield* Effect.forkIn(announceEnd(id, announced(open.turn, ended)), scope, { startImmediately: true })
+    yield* Effect.interruptible(Fiber.await(delivery))
+  })
+
+  return Sessions.of({
+    create: (input) => decodeSession(input).pipe(
+      Effect.mapError(() => new InvalidSession({ message: "a session needs an owner that is not empty, and a parent that is a session id" })),
+      Effect.flatMap((decoded) => Effect.tap(options.mintId ?? mintUuid, (id) => storage.create(headerOf(id, decoded)))),
+    ),
+    read: (id) => storage.read(id),
+    turn: (id, body) => Effect.acquireUseRelease(
+      begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started
+      (open) => Effect.andThen(core.publish(open.started), body(open.session)),   // announced inside the turn, so a listener that fails it still closes it
+      (open, exit) => end(open, exit),                              // stores plugin.session.turn.ended with the outcome, announces it, frees the session; always runs
+    ),
+  })
+}))

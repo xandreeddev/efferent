@@ -1,16 +1,22 @@
-import { Effect, Layer, Ref, Stream } from "effect"
+import { Context, Effect, Layer, Ref, Stream } from "effect"
 import type { Schema } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Core, definePlugin } from "@xandreed/core/kernel"
-import type { EventDefinition, KernelEvent } from "@xandreed/core/kernel"
+import { Core, inspectionOf, kernel, Loop, Sessions } from "@xandreed/core/kernel"
+import type { EventDefinition, JournalStorage, KernelEvent, Memory, NewSessionInput, SessionId, Settings } from "@xandreed/core/kernel"
+import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
+import type { InvalidBudget, SessionsOptions } from "./index.js"
 
 /*
  * Scaffolding for the kernel's tests: scripted models (no provider, no
- * network) and a plugin that writes down what `Core` publishes.
+ * network), the stock stack composed as a host composes it, a handle on a
+ * built stack, and a listener that writes down what `Core` publishes.
  */
 
 const usage = { inputTokens: { total: 12, uncached: 12, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 3, text: 3, reasoning: 0 } }
+
+/** The system text the tests' agents are set up with. */
+export const SYSTEM = "You are a friendly tutor."
 
 /** A model's whole answer as a stream of parts: `pieces`, one text delta each. */
 export const answer = (...pieces: ReadonlyArray<string>): Stream.Stream<Response.StreamPartEncoded> => Stream.fromIterable<Response.StreamPartEncoded>([
@@ -48,21 +54,77 @@ export const counting = scripted((call) => answer(`Reply ${call + 1}.`))
 /** The error of a model that is down. */
 export const modelDown = AiError.make({ module: "Scripted", method: "streamText", reason: new AiError.UnknownError({ description: "the scripted model is down" }) })
 
+/** What the parts of a test agent may need: everything below memory and the loop. */
+type Below = Core | Settings | Sessions | JournalStorage | LanguageModel.LanguageModel
+
+/** The parts of a test agent a test may replace; the stock ones where it leaves them out. */
+export interface Parts<EM, EL, EX> {
+  readonly system?: string
+  readonly sessions?: SessionsOptions
+  readonly memory?: Layer.Layer<Memory, EM, Below>
+  readonly loop?: Layer.Layer<Loop, EL, Below | Memory>
+  /** Plugins that only listen, built right after the kernel and before every other part: `inOrder` sequences several. */
+  readonly extras?: Layer.Layer<never, EX, Core | Settings>
+}
+
+/** Several layers that only listen, built one after another in the order given, so their listeners register in that order. */
+export const inOrder = <E>(...layers: ReadonlyArray<Layer.Layer<never, E, Core | Settings>>): Layer.Layer<never, E, Core | Settings> =>
+  layers.reduce<Layer.Layer<never, E, Core | Settings>>((built, next) => next.pipe(Layer.provideMerge(built)), Layer.empty)
+
+/** The parts built once and shared by the stacks above them: the kernel, a journal kept in the process, and the session plugin, over the model. */
+export const base = (model: Layer.Layer<LanguageModel.LanguageModel>, parts: { readonly system?: string; readonly sessions?: SessionsOptions } = {}) =>
+  sessions(parts.sessions).pipe(
+    Layer.provideMerge(inProcessJournal()),
+    Layer.provideMerge(kernel({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(model),
+  )
+
+/** The stock agent, composed as a host composes it, with the parts a test replaces. */
+export const stack = <EM = never, EL = never, EX = never>(model: Layer.Layer<LanguageModel.LanguageModel>, parts: Parts<EM, EL, EX> = {}) => {
+  const loop: Layer.Layer<Loop, EL, Below | Memory> = parts.loop ?? stepLoop
+  const memory: Layer.Layer<Memory, EM | InvalidBudget, Below> = parts.memory ?? windowMemory({ budgetTokens: 3000 })
+  const extras: Layer.Layer<never, EX, Core | Settings> = parts.extras ?? Layer.empty
+  return loop.pipe(
+    Layer.provideMerge(memory),
+    Layer.provideMerge(sessions(parts.sessions)),
+    Layer.provideMerge(inProcessJournal()),
+    Layer.provideMerge(extras),
+    Layer.provideMerge(kernel({ system: parts.system ?? SYSTEM })),
+    Layer.provideMerge(model),
+  )
+}
+
 /**
- * An extra plugin that writes down, in order, every event of the given
- * definitions as `Core` publishes it. It waits, so what it has seen when
- * `send` returns is everything published during the turn.
+ * A stack built in the scope, with what a test calls on it: a test's own
+ * shorthand, not a handle the kernel ships. `send` is the loop's `run`,
+ * `inspect` the session read and resolved (`inspectionOf`), `events` the
+ * host's stream of `Core`.
+ */
+export const open = <E>(layer: Layer.Layer<Core | Sessions | Loop, E>) => Effect.map(Layer.build(layer), (built) => {
+  const core = Context.get(built, Core)
+  const sessionsOf = Context.get(built, Sessions)
+  const loop = Context.get(built, Loop)
+  return {
+    core,
+    loop,
+    createSession: (input: NewSessionInput) => sessionsOf.create(input),
+    send: (session: SessionId, message: string) => loop.run({ session, message }),
+    inspect: (session: SessionId) => Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(inspectionOf(journal))),
+    events: core.events,
+  }
+})
+
+/**
+ * A plugin that writes down, in order, every event of the given
+ * definitions as `Core` publishes it. It waits, so what it has seen when a
+ * turn returns is everything published during the turn.
  */
 export const recording = (definitions: ReadonlyArray<EventDefinition<Schema.Json>>) => Effect.gen(function* () {
   const seen = yield* Ref.make<ReadonlyArray<KernelEvent>>([])
-  const plugin = definePlugin({
-    name: "recorder",
-    requires: [Core],
-    make: Effect.gen(function* () {
-      const core = yield* Core
-      yield* Effect.forEach(definitions, (definition) =>
-        core.on(definition, (event) => Ref.update(seen, (all) => [...all, event]), { wait: true }), { concurrency: 1, discard: true })
-    }),
-  })
-  return { plugin, seen: Ref.get(seen), names: Effect.map(Ref.get(seen), (all) => all.map((event): string => event.name)) }
+  const layer = Layer.effectDiscard(Effect.gen(function* () {
+    const core = yield* Core
+    yield* Effect.forEach(definitions, (definition) =>
+      core.on(definition, (event) => Ref.update(seen, (all) => [...all, event]), { wait: true, name: "recorder" }), { concurrency: 1, discard: true })
+  }))
+  return { layer, seen: Ref.get(seen), names: Effect.map(Ref.get(seen), (all) => all.map((event): string => event.name)) }
 })

@@ -1,11 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Layer, Schema } from "effect"
-import { Core, CoreLive, definePlugin, estimateRequest, Memory, Sessions, Settings, Owner, JournalStorage, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
-import type { Plugin } from "@xandreed/core/kernel"
-import { Agent, inProcessJournal, sessions, windowMemory } from "./index.js"
-import { answering } from "./testing.js"
-
-const system = "You are a friendly tutor."
+import { Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
+import { Core, estimateRequest, JournalStorage, kernel, Memory, Owner, Sessions, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
+import { answering, base, open, SYSTEM as system } from "./testing.js"
 
 /*
  * Records a later release of a plugin might write, which this one does not
@@ -18,27 +15,25 @@ const sessionFuture = (skippable: boolean) => stored(storedEvent("session", "fut
 const stranger = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct({}), skippable: false }), {})
 
 /** A memory that sends nothing but the turn's message and, before that, writes `records` into the journal. */
-const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Plugin<Memory, never, Settings> => definePlugin({
-  name: "scribe",
-  requires: [Settings],
-  provides: Memory,
-  make: Effect.map(Settings, (settings) => Memory.of({
-    build: (session) => Effect.gen(function* () {
-      yield* Effect.forEach(records, (record) => session.append(record), { concurrency: 1, discard: true })
-      const journal = yield* session.journal
-      const asked = journal.filter((event) => event.name === "plugin.loop.user.message").slice(-1)
-      return { messages: asked.map((event) => event.seq), estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => event.message === undefined ? [] : [event.message])), budgetTokens: Tokens.make(3000) }
-    }),
-  })),
-})
+const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Layer.Layer<Memory, never, Settings> => Layer.effect(Memory, Effect.map(Settings, (settings) => Memory.of({
+  build: (session) => Effect.gen(function* () {
+    yield* Effect.forEach(records, (record) => session.append(record), { concurrency: 1, discard: true })
+    const journal = yield* session.journal
+    const asked = journal.filter((event) => event.name === "plugin.loop.user.message").slice(-1)
+    return { messages: asked.map((event) => event.seq), estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => event.message === undefined ? [] : [event.message])), budgetTokens: Tokens.make(3000) }
+  }),
+})))
 
-/** One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal. */
+/** One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal: the same base, a stack above it each. */
 const windowAfter = (records: ReadonlyArray<ReturnType<typeof windowFuture>>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model } = yield* answering("Fine.")
-  const first = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: scribe(records) })
+  const shared = Layer.succeedContext(yield* Layer.build(base(model)))
+  const before = yield* Scope.make()
+  const first = yield* open(stepLoop.pipe(Layer.provideMerge(scribe(records)), Layer.provideMerge(shared))).pipe(Scope.provide(before))
   const session = yield* first.createSession({ owner: "learner" })
   yield* first.send(session, "One")
-  const agent = yield* first.with({ memory: windowMemory({ budgetTokens: 3000 }) })
+  yield* Scope.close(before, Exit.void)
+  const agent = yield* open(stepLoop.pipe(Layer.provideMerge(windowMemory({ budgetTokens: 3000 })), Layer.provideMerge(shared)))
   const sent = yield* Effect.result(agent.send(session, "Two"))
   const inspected = yield* Effect.result(agent.inspect(session))
   return { sent, inspected }
@@ -83,10 +78,10 @@ describe("a stored plugin record a reader does not know", () => {
 describe("a session plugin that meets a session it did not run", () => {
   /** Two session plugins over one storage. */
   const twoOverOneStore = Effect.gen(function* () {
-    const shared = yield* Layer.build(Layer.provideMerge(inProcessJournal().layer, CoreLive()))
+    const shared = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel({ system })))
     const over = Layer.succeedContext(shared)
-    const first = Context.get(yield* Layer.build(Layer.provide(Layer.fresh(sessions().layer), over)), Sessions)
-    const second = Context.get(yield* Layer.build(Layer.provide(Layer.fresh(sessions().layer), over)), Sessions)
+    const first = Context.get(yield* Layer.build(Layer.provide(sessions(), over)), Sessions)
+    const second = Context.get(yield* Layer.build(Layer.provide(sessions(), over)), Sessions)
     return { first, second, storage: Context.get(shared, JournalStorage), core: Context.get(shared, Core) }
   })
   const owner = Owner.make("learner")

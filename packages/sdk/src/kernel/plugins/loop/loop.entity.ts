@@ -21,3 +21,13 @@ export class ModelFailed extends Schema.TaggedError<ModelFailed>()("ModelFailed"
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
+
+/**
+ * A turn was asked for with a message of no text. The loop refuses it
+ * before the turn opens, so nothing is stored.
+ *
+ * @public
+ */
+export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()("EmptyMessage", {
+  message: Schema.String,
+}) {}

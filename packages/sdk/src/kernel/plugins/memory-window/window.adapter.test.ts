@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Stream } from "effect"
-import { Agent, inProcessJournal, windowMemory, windowPressureEvent } from "../../index.js"
-import { answering, recording } from "../../testing.js"
+import { Deferred, Effect, Fiber, Layer, Ref, Stream } from "effect"
+import { Core, requestSentEvent, StepNumber, Tokens, TurnNumber } from "@xandreed/core/kernel"
+import type { KernelEvent } from "@xandreed/core/kernel"
+import { windowMemory, windowPressureEvent } from "../../index.js"
+import { answering, open, stack } from "../../testing.js"
 
-const system = "You are a friendly tutor."
+/** The estimate of a probe request, which no turn of these tests reaches. */
+const PROBE = 39
 
 /*
  * `plugin.window.pressure`: the window memory says, live, that a request
@@ -14,25 +17,37 @@ describe("plugin.window.pressure", () => {
   /**
    * Turns under a budget of 40 tokens, whose requests cost 11, 22 and 33,
    * and every pressure event a listener heard of them. The listener is one
-   * the publisher waits for, and the agent is replaced before it is asked:
-   * `with` returns when every listener has handled what was published, so
-   * no pressure is still on its way.
+   * the publisher waits for. After the turns a probe goes the same way: a
+   * request of 39 tokens announced on `Core`, which the window's listener
+   * reads after every request before it and announces as pressure. Once the
+   * probe's pressure is heard, no pressure of the turns is still on its way.
    */
   const pressed = (pressureAt: number | undefined, turns: number) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const { model } = yield* answering("An answer of some length.")
-    const heard = yield* recording([windowPressureEvent])
-    const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory(pressureAt === undefined ? { budgetTokens: 40 } : { budgetTokens: 40, pressureAt }), plugins: [heard.plugin] })
+    const heard = yield* Ref.make<ReadonlyArray<KernelEvent>>([])
+    const probed = yield* Deferred.make<void>()
+    const listener = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(windowPressureEvent, (event) =>
+      event.data.estimatedTokens === PROBE ? Deferred.succeed(probed, undefined) : Ref.update(heard, (all) => [...all, event]), { wait: true, name: "heard" })))
+    const agent = yield* open(stack(model, { memory: windowMemory(pressureAt === undefined ? { budgetTokens: 40 } : { budgetTokens: 40, pressureAt }), extras: listener }))
     const session = yield* agent.createSession({ owner: "learner" })
     yield* Effect.forEach(Array.from({ length: turns }), (_, index) => agent.send(session, `Message number ${index + 1}`), { concurrency: 1 })
     const requests = (yield* agent.inspect(session)).requests.map((request) => Number(request.estimatedTokens))
-    yield* agent.with({})
-    return { published: yield* heard.seen, requests }
+    const probe: KernelEvent = {
+      _tag: "Live",
+      session,
+      turn: TurnNumber.make(turns + 1),
+      name: requestSentEvent.name,
+      data: { step: StepNumber.make(1), system: "", messages: [], estimatedTokens: Tokens.make(PROBE), budgetTokens: Tokens.make(40) },
+    }
+    yield* agent.core.publish(probe)
+    yield* Deferred.await(probed)
+    return { published: yield* Ref.get(heard), requests }
   })).pipe(Effect.timeout("5 seconds")))
 
   test("is not published for a request under the share of the budget it was told, and is published once for each one at or over it, with that request's estimate and the budget", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("An answer of some length.")
-      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 40, pressureAt: 0.5 }) })
+      const agent = yield* open(stack(model, { memory: windowMemory({ budgetTokens: 40, pressureAt: 0.5 }) }))
       const session = yield* agent.createSession({ owner: "learner" })
       // Read from before the first turn: the stream has no replay. Two are expected, from the second and third turn.
       const live = yield* Effect.forkScoped(Stream.runCollect(Stream.take(Stream.filter(agent.events, (event) => event.name === windowPressureEvent.name), 2)), { startImmediately: true })

@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { resolveRequest } from "@xandreed/core/kernel"
 import type { AssistantMessage, ModelRequest, OpenSession } from "@xandreed/core/kernel"
-import { ToolsNotRun } from "./loop.entity.js"
+import { EmptyMessage, ToolsNotRun } from "./loop.entity.js"
 
 /**
  * The request memory built, with its pointers turned back into the exact
@@ -17,3 +17,9 @@ export const toolsNotInThisCut = (message: AssistantMessage) =>
     tools: message.toolCalls.map((call) => call.name),
     message: "the model asked for tools, and this loop runs none",
   }))
+
+/** Whether a message holds no text: a turn needs some. */
+export const isEmpty = (message: string): boolean => message.trim().length === 0
+
+/** A message of no text is refused before the turn opens. */
+export const emptyMessage = Effect.fail(new EmptyMessage({ message: "a turn needs a message that is not empty" }))

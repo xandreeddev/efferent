@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
-import { Core, CoreLive, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, kernel, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -24,7 +24,7 @@ const dying = (name: string): Fault => (event) => event.name === name ? Option.s
  * as many session plugins over that one store as asked for.
  */
 const over = (count: number) => Effect.gen(function* () {
-  const below = yield* Layer.build(Layer.provideMerge(inProcessJournal().layer, CoreLive()))
+  const below = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel({ system: "You are a kit." })))
   const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
   const storage = JournalStorage.of({
@@ -33,7 +33,7 @@ const over = (count: number) => Effect.gen(function* () {
   })
   const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
-    Effect.map(Layer.build(Layer.provide(Layer.fresh(sessions().layer), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
+    Effect.map(Layer.build(Layer.provide(sessions(), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
   return { plugins, fault: (next: Fault) => Ref.set(fault, next), names }
 })
@@ -144,7 +144,7 @@ describe("a session's id", () => {
     const result = await run(Effect.gen(function* () {
       const minted = yield* Ref.make(0)
       const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`session-${count}`))
-      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }).layer, Layer.provideMerge(inProcessJournal().layer, CoreLive())))
+      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }), Layer.provideMerge(inProcessJournal(), kernel({ system: "You are a kit." }))))
       const turns = Context.get(below, Sessions)
       const ids = [yield* turns.create({ owner }), yield* turns.create({ owner })]
       return { ids: ids.map(String), turn: yield* turns.turn(SessionId.make("session-2"), (session) => Effect.succeed(Number(session.turn))) }

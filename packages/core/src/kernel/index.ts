@@ -1,8 +1,8 @@
 // `@xandreed/core/kernel`: what every part of the kernel agrees on. Its
 // value objects and entities, the event definitions and the helpers a
 // plugin defines its own with, the pure rules, the four contracts and their
-// kits, `definePlugin`, and `Core`: publish, on, events. It imports nothing
-// of the rest of core, no model type and no runtime module.
+// kits, and `Core`: publish, on, events, built with `Settings` by `kernel`.
+// It imports nothing of the rest of core, no model type and no runtime module.
 export { EventName, Owner, PluginName, Seq, SessionId, StepNumber, Tokens, ToolCallId, TurnNumber } from "./ids.entity.js"
 export { firstStep } from "./ids.entity.functions.js"
 export { AssistantMessage, Message, Reply, ToolCall, UserMessage } from "./message.entity.js"
@@ -38,14 +38,15 @@ export {
 } from "./vocabulary.entity.functions.js"
 export { Journal, Reader, JournalStorageError, UnknownRecord } from "./journal.entity.js"
 export { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
-export { Free, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnInput, TurnOpen } from "./session.entity.js"
+export { Free, InvalidSession, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnInput, TurnOpen } from "./session.entity.js"
+export type { NewSessionInput } from "./session.entity.js"
 export { beginTurn, endTurn, headerOf, newSession, sessionStateOf } from "./session.entity.functions.js"
 export { Inspection, ModelRequest, PointedMessage, RequestRefused, ResolvedRequest, SentRequest } from "./request.entity.js"
-export { estimateRequest, estimateTokens, inspectionOf, resolveRequest, turnMessageOf } from "./request.entity.functions.js"
-export { Core, CoreIdle, CurrentPlugin } from "./core.port.js"
+export { estimateRequest, estimateTokens, inspectionOf, resolveRequest } from "./request.entity.functions.js"
+export { Core } from "./core.port.js"
 export type { ListenOptions, PublishOptions } from "./core.port.js"
-export { CoreLive, makeCore } from "./core.adapter.js"
-export type { CoreOptions } from "./core.adapter.js"
+export { kernel, makeCore } from "./core.adapter.js"
+export type { KernelOptions } from "./core.adapter.js"
 export { JournalStorage } from "./journal-storage.port.js"
 export { Sessions } from "./sessions.port.js"
 export type { OpenSession, TurnFailure } from "./sessions.port.js"
@@ -54,10 +55,6 @@ export type { MemoryFailure } from "./memory.port.js"
 export { Loop } from "./loop.port.js"
 export type { LoopFailure } from "./loop.port.js"
 export { Settings } from "./settings.port.js"
-export { definePlugin } from "./plugin.adapter.js"
-export type { Contracts, Plugin, PluginOf } from "./plugin.adapter.js"
-export { PluginNode, PluginRefused, PluginStage } from "./plugin.entity.js"
-export { planPlugins } from "./plugin.entity.functions.js"
 export { ConformanceFailure } from "./conformance.entity.js"
 export type { ConformanceCheck } from "./conformance.entity.js"
 export { journalStorageConformance } from "./journal-storage.conformance.js"

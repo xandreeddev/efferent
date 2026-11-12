@@ -29,6 +29,10 @@ export type AssistantMessage = typeof AssistantMessage.Type
 export const Message = Schema.Union([UserMessage, AssistantMessage])
 export type Message = typeof Message.Type
 
-/** What a turn answers its user with. */
+/**
+ * What a turn answers its user with.
+ *
+ * @public
+ */
 export const Reply = Schema.Struct({ text: Schema.String })
 export type Reply = typeof Reply.Type

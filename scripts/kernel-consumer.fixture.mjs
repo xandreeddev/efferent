@@ -1,24 +1,25 @@
 // The kernel through its packed entries, as a consumer installs them: the four
-// contracts' kits on the four stock plugins, one turn of an agent on the
-// scripted model, and a plugin that requires a contract another provides.
+// contracts' kits on the stock plugins, one turn of an agent composed of
+// layers on the scripted model, and a consumer's own contract, provided by
+// one layer and required by another.
 // Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
-import { Core, definePlugin, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings, JournalStorage, journalStorageConformance } from "@xandreed/core/kernel"
-import { Agent, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings } from "@xandreed/core/kernel"
+import { inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
 const onCore = (core) => Layer.succeed(Core, core)
-/** Build a plugin over the services given and take the contract it provides. */
-const built = (key, plugin, over) =>
-  Effect.map(Effect.orDie(Layer.build(Layer.provide(Layer.fresh(plugin.layer), over))), (services) => Context.get(services, key))
+/** Build a plugin's layer over the services given and take the contract it provides. */
+const built = (key, layer, over) =>
+  Effect.map(Effect.orDie(Layer.build(Layer.provide(layer, over))), (services) => Context.get(services, key))
 
 const kits = {
   storage: journalStorageConformance({ open: built(JournalStorage, inProcessJournal(), Layer.empty) }),
-  sessions: sessionsConformance({ open: (core) => built(Sessions, sessions(), Layer.provideMerge(inProcessJournal().layer, onCore(core))) }),
+  sessions: sessionsConformance({ open: (core) => built(Sessions, sessions(), Layer.provideMerge(inProcessJournal(), onCore(core))) }),
   memory: memoryConformance({
-    name: windowMemory({ budgetTokens }).name,
+    name: "window",
     system,
     budgetTokens,
     open: (core) => built(Memory, windowMemory({ budgetTokens }), Layer.merge(onCore(core), Layer.succeed(Settings, { system }))),
@@ -26,14 +27,13 @@ const kits = {
   loop: loopConformance({
     open: (core, script) => Effect.gen(function* () {
       const { model } = yield* scriptedModel(script)
-      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inProcessJournal().layer, onCore(core)))
-      const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }).layer, Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
-      const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(Layer.fresh(stepLoop().layer), parts)))
+      const below = Layer.provideMerge(sessions(), Layer.provideMerge(inProcessJournal(), onCore(core)))
+      const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }), Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
+      const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(stepLoop, parts)))
       return { loop: Context.get(services, Loop), sessions: Context.get(services, Sessions) }
     }),
   }),
 }
-
 /** Run a kit's checks one after another: how many ran, and what each failure said. */
 const run = (checks) => Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) =>
   result._tag === "Failure" ? [`${check.id}: ${result.failure.message}`] : []), { concurrency: 1 }).pipe(
@@ -48,18 +48,31 @@ for (const [name, checks] of Object.entries(kits)) {
   assert.ok(ran[name].checks >= 5, `the ${name} kit ran ${ran[name].checks} checks`)
 }
 
+/** The stock agent over a model, composed as a host composes it. */
+const agentOf = (model) => stepLoop.pipe(
+  Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+  Layer.provideMerge(sessions()),
+  Layer.provideMerge(inProcessJournal()),
+  Layer.provideMerge(kernel({ system })),
+  Layer.provideMerge(model),
+)
+
 const turn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const { model, calls } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Hel", "lo!"] }])
-  const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
-  const session = yield* agent.createSession({ owner: "consumer" })
-  const reply = yield* agent.send(session, "Hello")
-  const inspection = yield* agent.inspect(session)
-  const refused = yield* Effect.flip(agent.send(session, "  "))
-  return { reply, refused, state: inspection.state._tag, names: inspection.events.map((event) => event.name), requests: inspection.requests.length, calls: yield* calls }
+  return yield* Effect.gen(function* () {
+    const sessionsOf = yield* Sessions
+    const loop = yield* Loop
+    const session = yield* sessionsOf.create({ owner: "consumer" })
+    const reply = yield* loop.run({ session, message: "Hello" })
+    const inspection = yield* Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(inspectionOf(journal)))
+    const refused = yield* Effect.flip(loop.run({ session, message: "  " }))
+    const invalid = yield* Effect.flip(sessionsOf.create({ owner: "" }))
+    return { reply, refused, invalid, state: inspection.state._tag, names: inspection.events.map((event) => event.name), requests: inspection.requests.length, calls: yield* calls }
+  }).pipe(Effect.provide(agentOf(model)))
 })).pipe(Effect.timeout("20 seconds")))
 assert.deepEqual(turn.reply, { text: "Hello!" })
-assert.equal(turn.refused._tag, "AgentRefused")
-assert.equal(turn.refused.reason, "EmptyMessage")
+assert.equal(turn.refused._tag, "EmptyMessage")
+assert.equal(turn.invalid._tag, "InvalidSession")
 assert.equal(turn.state, "Free")
 assert.deepEqual(turn.names, [
   "plugin.session.turn.started",
@@ -71,20 +84,16 @@ assert.deepEqual(turn.names, [
 assert.equal(turn.requests, 1)
 assert.deepEqual(turn.calls, [[{ role: "system", text: system }, { role: "user", text: "Hello" }]])
 
-// A contract of the consumer's own: one extra plugin provides it, and one listed before it requires it.
+// A contract of the consumer's own: one layer provides it, and one composed above it requires it.
 class Notes extends Context.Service()("consumer/Notes") {}
-const notes = () => definePlugin({ name: "notes", requires: [], provides: Notes, make: Effect.succeed({ of: (text) => `noted: ${text}` }) })
-const planned = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-  const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Hi."] }])
+const notes = Layer.succeed(Notes, { of: (text) => `noted: ${text}` })
+const composed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const seen = []
-  const reads = () => definePlugin({ name: "reads", requires: [Notes], make: Effect.map(Notes, (provided) => { seen.push(provided.of("built")) }) })
-  const config = { model, system, storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) }
-  yield* Agent.define({ ...config, plugins: [reads(), notes()] })
-  const refused = yield* Effect.flip(Agent.define({ ...config, plugins: [reads()] }))
-  return { seen, refused: { tag: refused._tag, reason: refused.reason, plugin: refused.plugin, contract: refused.contract } }
+  const reads = Layer.effectDiscard(Effect.map(Notes, (provided) => { seen.push(provided.of("built")) }))
+  yield* Layer.build(reads.pipe(Layer.provideMerge(notes)))
+  return { seen }
 })).pipe(Effect.timeout("20 seconds")))
-assert.deepEqual(planned.seen, ["noted: built"])
-assert.deepEqual(planned.refused, { tag: "PluginRefused", reason: "MissingProvider", plugin: "reads", contract: "consumer/Notes" })
+assert.deepEqual(composed.seen, ["noted: built"])
 
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",
@@ -93,6 +102,6 @@ console.log(`kernel ${JSON.stringify({
   memoryKit: true,
   loopKit: true,
   scriptedTurn: true,
-  pluginsPlanned: true,
+  layersComposed: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)

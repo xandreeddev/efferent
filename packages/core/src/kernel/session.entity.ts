@@ -13,6 +13,23 @@ export const NewSession = Schema.Struct({ owner: Owner, parent: Schema.optionalK
 export type NewSession = typeof NewSession.Type
 
 /**
+ * A new session as a host writes it, before it is decoded: an owner and,
+ * for a session that continues another, the parent's id, as plain strings.
+ *
+ * @public
+ */
+export type NewSessionInput = typeof NewSession.Encoded
+
+/**
+ * A session was asked for with an owner that is empty, or a parent that is no session id.
+ *
+ * @public
+ */
+export class InvalidSession extends Schema.TaggedError<InvalidSession>()("InvalidSession", {
+  message: Schema.String,
+}) {}
+
+/**
  * A session's header, stored once and never changed.
  *
  * @public

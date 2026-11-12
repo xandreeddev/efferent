@@ -6,7 +6,6 @@ import {
   assistantDelta,
   assistantMessage,
   Core,
-  definePlugin,
   estimateRequest,
   firstStep,
   KERNEL_READER,
@@ -32,7 +31,7 @@ import {
   UnknownRecord,
   userMessage,
 } from "@xandreed/core/kernel"
-import type { AssistantMessage, ConformanceCheck, LoopScript, LoopSubject, MemorySubject, Plugin, PluginFailure, SessionsSubject, JournalStorageSubject } from "@xandreed/core/kernel"
+import type { AssistantMessage, ConformanceCheck, JournalStorageSubject, LoopScript, LoopSubject, MemorySubject, PluginFailure, SessionsSubject } from "@xandreed/core/kernel"
 import { callModel, inProcessJournal, scriptedModel, sessions, stepLoop, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
@@ -54,9 +53,9 @@ const ids = (checks: ReadonlyArray<ConformanceCheck>) => checks.map((check) => c
 const sorted = (names: ReadonlyArray<string>) => Arr.sort(Arr.dedupe(names), Order.String)
 
 const onCore = (core: CoreShape) => Layer.succeed(Core, core)
-/** Build a plugin over the services given and take the contract it provides. */
-const built = <I, S, R>(key: Context.Key<I, S>, plugin: Plugin<I, PluginFailure, R>, over: Layer.Layer<R>) =>
-  Effect.map(Effect.orDie(Layer.build(Layer.provide(Layer.fresh(plugin.layer), over))), (services) => Context.get(services, key))
+/** Build a plugin's layer over the services given and take the contract it provides. */
+const built = <I, S, E, R>(key: Context.Key<I, S>, layer: Layer.Layer<I, E, R>, over: Layer.Layer<R>) =>
+  Effect.map(Effect.orDie(Layer.build(Layer.provide(layer, over))), (services) => Context.get(services, key))
 
 describe("the storage kit", () => {
   const stock: JournalStorageSubject = { open: built(JournalStorage, inProcessJournal(), Layer.empty) }
@@ -80,9 +79,9 @@ describe("the storage kit", () => {
 })
 
 describe("the sessions kit", () => {
-  const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal().layer, onCore(core))
+  const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal(), onCore(core))
   const stock: SessionsSubject = { open: (core) => built(Sessions, sessions(), over(core)) }
-  const every = ["create", "turn", "announce", "busy", "isolated", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "missing"]
+  const every = ["create", "turn", "announce", "busy", "isolated", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "missing", "invalid-session"]
 
   test("has the checks its doc comment lists, and passes on the stock session plugin", async () => {
     expect(ids(sessionsConformance(stock))).toEqual(every)
@@ -118,6 +117,13 @@ describe("the sessions kit", () => {
         const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool") }))
         return Sessions.of({ create: (input) => Effect.flatMap(next, (one) => one.create(input)), read: (id) => Effect.flatMap(next, (one) => one.read(id)), turn: (id, body) => Effect.flatMap(next, (one) => one.turn(id, body)) })
       }),
+    }),
+    // A session asked for with an input that is no valid one is "helpfully" created for somebody.
+    trusting: (): SessionsSubject => ({
+      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+        ...inner,
+        create: (input) => Effect.catchTag(inner.create(input), "InvalidSession", () => inner.create({ owner: "somebody" })),
+      })),
     }),
     // An append after the turn closed is "helpfully" stored in a turn of its own.
     reopening: (): SessionsSubject => ({
@@ -156,12 +162,14 @@ describe("the sessions kit", () => {
       oneFlag: await failedChecks(sessionsConformance(careless.oneFlag())),
       pooled: await failedChecks(sessionsConformance(careless.pooled())),
       reopening: await failedChecks(sessionsConformance(careless.reopening())),
+      trusting: await failedChecks(sessionsConformance(careless.trusting())),
       turnless: await failedChecks(sessionsConformance(careless.turnless())),
     }
     expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered"])
     expect(failed.oneFlag).toEqual(["isolated"])
     expect(failed.pooled).toEqual(["ordered"])
     expect(failed.reopening).toEqual(["closed-append"])
+    expect(failed.trusting).toEqual(["invalid-session"])
     expect(failed.turnless).toEqual(sorted(every))
   }, 60_000)
 })
@@ -170,49 +178,39 @@ describe("the memory kit", () => {
   const system = "You are a kit."
   const budgetTokens = 200
   const settings = Layer.succeed(Settings, { system })
-  const subject = (plugin: Plugin<Memory, PluginFailure, Core | Settings>): MemorySubject =>
-    ({ name: plugin.name, system, budgetTokens, open: (core) => built(Memory, plugin, Layer.merge(onCore(core), settings)) })
+  const subject = (name: string, layer: Layer.Layer<Memory, PluginFailure, Core | Settings>): MemorySubject =>
+    ({ name, system, budgetTokens, open: (core) => built(Memory, layer, Layer.merge(onCore(core), settings)) })
   const every = ["turn-message", "pointers", "estimate", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "foreign"]
 
   test("has the checks its doc comment lists, and passes on the window memory plugin", async () => {
-    expect(ids(memoryConformance(subject(windowMemory({ budgetTokens }))))).toEqual(every)
-    expect(await failedChecks(memoryConformance(subject(windowMemory({ budgetTokens }))))).toEqual([])
+    expect(ids(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual(every)
+    expect(await failedChecks(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual([])
   })
 
   /** A careless memory: what it points at, what it says the request costs, and what it writes while it builds. */
   const careless = (name: string, pick: (journal: ReadonlyArray<{ readonly seq: Seq; readonly name: string; readonly message?: { readonly text: string } }>) => ReadonlyArray<Seq>, options: { readonly count?: boolean; readonly writes?: boolean } = {}) =>
-    subject(definePlugin({
-      name,
-      requires: [],
-      provides: Memory,
-      make: Effect.succeed(Memory.of({
-        build: (session) => Effect.gen(function* () {
-          if (options.writes === true) yield* session.append(userMessage("a note in another plugin's name"))
-          const journal = yield* session.journal
-          const messages = pick(journal)
-          const estimatedTokens = options.count === false ? Tokens.make(0)
-            : estimateRequest(system, journal.filter((event) => messages.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
-          return { messages, estimatedTokens, budgetTokens: Tokens.make(budgetTokens) }
-        }),
-      })),
-    }))
+    subject(name, Layer.succeed(Memory, Memory.of({
+      build: (session) => Effect.gen(function* () {
+        if (options.writes === true) yield* session.append(userMessage("a note in another plugin's name"))
+        const journal = yield* session.journal
+        const messages = pick(journal)
+        const estimatedTokens = options.count === false ? Tokens.make(0)
+          : estimateRequest(system, journal.filter((event) => messages.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
+        return { messages, estimatedTokens, budgetTokens: Tokens.make(budgetTokens) }
+      }),
+    })))
 
   /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
-  const strict = () => subject(definePlugin({
-    name: "window",
-    requires: [Core],
-    provides: Memory,
-    make: Effect.gen(function* () {
-      const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(Layer.fresh(windowMemory({ budgetTokens }).layer), Layer.merge(onCore(yield* Core), settings)))), Memory)
-      const known: ReadonlyArray<string> = [...KERNEL_READER.knows, windowDroppedEvent.name]
-      return Memory.of({
-        build: (session, step) => Effect.flatMap(session.journal, (journal) => {
-          const stranger = journal.find((event) => !known.includes(event.name))
-          return stranger === undefined ? inner.build(session, step) : Effect.fail(new UnknownRecord({ name: stranger.name, seq: stranger.seq, message: "this memory reads nothing it does not know" }))
-        }),
-      })
-    }),
-  }))
+  const strict = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
+    const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), Layer.merge(onCore(yield* Core), settings)))), Memory)
+    const known: ReadonlyArray<string> = [...KERNEL_READER.knows, windowDroppedEvent.name]
+    return Memory.of({
+      build: (session, step) => Effect.flatMap(session.journal, (journal) => {
+        const stranger = journal.find((event) => !known.includes(event.name))
+        return stranger === undefined ? inner.build(session, step) : Effect.fail(new UnknownRecord({ name: stranger.name, seq: stranger.seq, message: "this memory reads nothing it does not know" }))
+      }),
+    })
+  })))
 
   test("each careless memory fails the checks of what it is careless about, and between them every check", async () => {
     // It sends every message, reads no flag and keeps to no budget.
@@ -232,14 +230,14 @@ describe("the memory kit", () => {
 
 describe("the loop kit", () => {
   const system = "You are a kit."
-  type LoopPlugin = Plugin<Loop, PluginFailure, Core | Sessions | Memory | Settings | LanguageModel.LanguageModel>
+  type LoopLayer = Layer.Layer<Loop, PluginFailure, Core | Sessions | Memory | Settings | LanguageModel.LanguageModel>
   /** A loop with everything it runs over, on the kit's core, its model the shipped scripted one. */
-  const subject = (loop: () => LoopPlugin): LoopSubject => ({
+  const subject = (loop: LoopLayer): LoopSubject => ({
     open: (core: CoreShape, script: LoopScript) => Effect.gen(function* () {
       const { model } = yield* scriptedModel(script)
-      const below = Layer.provideMerge(sessions().layer, Layer.provideMerge(inProcessJournal().layer, onCore(core)))
-      const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }).layer, Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
-      const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(Layer.fresh(loop().layer), parts)))
+      const below = Layer.provideMerge(sessions(), Layer.provideMerge(inProcessJournal(), onCore(core)))
+      const parts = Layer.provideMerge(windowMemory({ budgetTokens: 3000 }), Layer.mergeAll(below, model, Layer.succeed(Settings, { system })))
+      const services = yield* Effect.orDie(Layer.build(Layer.provideMerge(loop, parts)))
       return { loop: Context.get(services, Loop), sessions: Context.get(services, Sessions) }
     }),
   })
@@ -251,34 +249,29 @@ describe("the loop kit", () => {
   })
 
   /** The stock loop's steps with one flaw: each of these asks the model, as a loop does. */
-  const flawed = (flaw: "copies" | "silent" | "forgiving") => (): LoopPlugin => definePlugin({
-    name: "loop",
-    requires: [Core, Sessions, Memory, LanguageModel.LanguageModel, Settings],
-    provides: Loop,
-    make: Effect.gen(function* () {
-      const core = yield* Core
-      const turns = yield* Sessions
-      const memory = yield* Memory
-      const model = yield* LanguageModel.LanguageModel
-      const settings = yield* Settings
-      const sorry: AssistantMessage = { _tag: "Assistant", text: "Sorry.", toolCalls: [] }
-      return Loop.of({
-        run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
-          yield* session.append(userMessage(input.message))
-          const request = yield* memory.build(session, firstStep)
-          const messages = yield* Effect.fromResult(resolveRequest(yield* session.journal, request))
-          // "copies": what the user said is written into the stored request as well as into its own record.
-          yield* session.append(requestSent(firstStep, flaw === "copies" ? `${settings.system} The user said: ${input.message}` : settings.system, request))
-          // "silent": the answer's pieces are not published.
-          const asked = callModel(model, settings.system, messages, (delta) => flaw === "silent" ? Effect.void : core.publish(assistantDelta(session, delta)))
-          // "forgiving": a model that fails is answered for, so the turn ends as if nothing happened.
-          const message = yield* (flaw === "forgiving" ? Effect.catch(asked, () => Effect.succeed(sorry)) : asked)
-          yield* session.append(assistantMessage(firstStep, message))
-          return replyOf(message)
-        })),
-      })
-    }),
-  })
+  const flawed = (flaw: "copies" | "silent" | "forgiving"): LoopLayer => Layer.effect(Loop, Effect.gen(function* () {
+    const core = yield* Core
+    const turns = yield* Sessions
+    const memory = yield* Memory
+    const model = yield* LanguageModel.LanguageModel
+    const settings = yield* Settings
+    const sorry: AssistantMessage = { _tag: "Assistant", text: "Sorry.", toolCalls: [] }
+    return Loop.of({
+      run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
+        yield* session.append(userMessage(input.message))
+        const request = yield* memory.build(session, firstStep)
+        const messages = yield* Effect.fromResult(resolveRequest(yield* session.journal, request))
+        // "copies": what the user said is written into the stored request as well as into its own record.
+        yield* session.append(requestSent(firstStep, flaw === "copies" ? `${settings.system} The user said: ${input.message}` : settings.system, request))
+        // "silent": the answer's pieces are not published.
+        const asked = callModel(model, settings.system, messages, (delta) => flaw === "silent" ? Effect.void : core.publish(assistantDelta(session, delta)))
+        // "forgiving": a model that fails is answered for, so the turn ends as if nothing happened.
+        const message = yield* (flaw === "forgiving" ? Effect.catch(asked, () => Effect.succeed(sorry)) : asked)
+        yield* session.append(assistantMessage(firstStep, message))
+        return replyOf(message)
+      })),
+    })
+  }))
 
   test("each careless loop fails the checks of what it is careless about, and between them every check", async () => {
     const failed = {
@@ -286,7 +279,7 @@ describe("the loop kit", () => {
       silent: await failedChecks(loopConformance(subject(flawed("silent")))),
       forgiving: await failedChecks(loopConformance(subject(flawed("forgiving")))),
       // It answers without a turn: nothing is stored, nothing is published, nothing is refused.
-      turnless: await failedChecks(loopConformance(subject(() => definePlugin({ name: "loop", requires: [], provides: Loop, make: Effect.succeed(Loop.of({ run: (input) => Effect.succeed({ text: input.message }) })) })))),
+      turnless: await failedChecks(loopConformance(subject(Layer.succeed(Loop, Loop.of({ run: (input) => Effect.succeed({ text: input.message }) }))))),
     }
     expect(failed.copies).toEqual(["request"])
     expect(failed.silent).toEqual(["busy", "deltas"])

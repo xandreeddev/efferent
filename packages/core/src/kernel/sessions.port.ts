@@ -3,7 +3,7 @@ import type { Effect } from "effect"
 import type { ListenerFailed, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { SessionId, TurnNumber } from "./ids.entity.js"
 import type { Journal, JournalStorageError, UnknownRecord } from "./journal.entity.js"
-import type { NewSession, SessionRefused } from "./session.entity.js"
+import type { InvalidSession, NewSessionInput, SessionRefused } from "./session.entity.js"
 
 /** A session with its turn open: what a turn reads and writes. */
 export interface OpenSession {
@@ -40,8 +40,8 @@ export type TurnFailure = SessionRefused | JournalStorageError | UnknownRecord |
  * `sessionsConformance` is the contract as runnable checks.
  */
 export class Sessions extends Context.Service<Sessions, {
-  /** Create a session and return its id. */
-  readonly create: (input: NewSession) => Effect.Effect<SessionId, JournalStorageError>
+  /** Create a session and return its id. The input is decoded first: an empty owner, or a parent that is no id, is refused (`InvalidSession`) and stores nothing. */
+  readonly create: (input: NewSessionInput) => Effect.Effect<SessionId, InvalidSession | JournalStorageError>
   /** The session's header and stored events. */
   readonly read: (id: SessionId) => Effect.Effect<Journal, JournalStorageError>
   /**

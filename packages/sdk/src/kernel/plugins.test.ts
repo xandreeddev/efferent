@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Ref, Schema } from "effect"
+import { Effect, Layer, Option, Ref, Schema } from "effect"
 import type { Context } from "effect"
 import {
   assistantMessage,
   Core,
-  definePlugin,
   estimateRequest,
   firstStep,
   live,
@@ -12,6 +11,7 @@ import {
   Loop,
   Memory,
   messageOf,
+  originOf,
   replyOf,
   requestSent,
   Sessions,
@@ -22,51 +22,43 @@ import {
   userMessage,
 } from "@xandreed/core/kernel"
 import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
-import { Agent, inProcessJournal, sessions, windowMemory } from "./index.js"
-import { answering, recording } from "./testing.js"
-
-const system = "You are a friendly tutor."
+import { answering, inOrder, open, recording, stack, SYSTEM as system } from "./testing.js"
 const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
 
 /*
  * A different loop plugin, written here on the same contracts: it asks no
- * model and answers in capitals. The storage, session and memory plugins
+ * model and answers in capitals. The journal, session and memory layers
  * are the stock ones, untouched.
  */
-const shoutLoop = () => definePlugin({
-  name: "loop",
-  requires: [Sessions, Memory, Settings],
-  provides: Loop,
-  make: Effect.gen(function* () {
-    const turns = yield* Sessions
-    const memory = yield* Memory
-    const settings = yield* Settings
-    return Loop.of({
-      run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
-        yield* session.append(userMessage(input.message))
-        const request = yield* memory.build(session, firstStep)
-        yield* session.append(requestSent(firstStep, settings.system, request))
-        const message: AssistantMessage = { _tag: "Assistant", text: input.message.toUpperCase(), toolCalls: [] }
-        yield* session.append(assistantMessage(firstStep, message))
-        return replyOf(message)
-      })),
-    })
-  }),
-})
+const shoutLoop = Layer.effect(Loop, Effect.gen(function* () {
+  const turns = yield* Sessions
+  const memory = yield* Memory
+  const settings = yield* Settings
+  return Loop.of({
+    run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
+      yield* session.append(userMessage(input.message))
+      const request = yield* memory.build(session, firstStep)
+      yield* session.append(requestSent(firstStep, settings.system, request))
+      const message: AssistantMessage = { _tag: "Assistant", text: input.message.toUpperCase(), toolCalls: [] }
+      yield* session.append(assistantMessage(firstStep, message))
+      return replyOf(message)
+    })),
+  })
+}))
 
-describe("a different loop plugin", () => {
-  test("runs with the storage, session and memory plugins untouched", async () => {
+/** What the other loop needs, as its layer's type says: no model and no `Core`, unlike the stock one. */
+const shoutNeeds: Layer.Layer<Loop, never, Sessions | Memory | Settings> = shoutLoop
+
+describe("a different loop layer", () => {
+  test("runs with the journal, session and memory layers untouched", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("never asked")
-      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), sessions: sessions(), memory: windowMemory({ budgetTokens: 3000 }), loop: shoutLoop() })
+      const agent = yield* open(stack(model, { loop: shoutNeeds }))
       const session = yield* agent.createSession({ owner: "learner" })
       const replies = [yield* agent.send(session, "hello"), yield* agent.send(session, "again")]
       return { replies, inspection: yield* agent.inspect(session), received: yield* received }
     })))
     expect(result.replies).toEqual([{ text: "HELLO" }, { text: "AGAIN" }])
-    // What this loop declared that it needs: no model and no `Core`, unlike the stock one.
-    expect(shoutLoop().requires).toEqual([Sessions.key, Memory.key, Settings.key])
-    expect(shoutLoop().provides).toBe(Loop.key)
     expect(result.received).toEqual([])
     expect(result.inspection.events.map((event): string => event.name)).toEqual([...FIVE, ...FIVE])
     expect(result.inspection.state).toEqual({ _tag: "Free", turns: 2 })
@@ -88,39 +80,34 @@ const summaryWritten = storedEvent("compact", "summary", { data: Schema.Struct({
 const swept = liveEvent("janitor", "swept", { data: Schema.Struct({ after: Schema.Int }) })
 
 /** A memory that sends every message until there are more than `keep`, then says so, writes a summary of its own and sends that with the turn's message. */
-const compactingMemory = (keep: number) => definePlugin({
-  name: "compact",
-  requires: [Core, Settings],
-  provides: Memory,
-  make: Effect.gen(function* () {
-    const core = yield* Core
-    const settings = yield* Settings
-    const budgetTokens = Tokens.make(3000)
-    return Memory.of({
-      build: (session) => Effect.gen(function* () {
-        const journal = yield* session.journal
-        const bearing = journal.filter((event) => event.message !== undefined && event.name !== summaryWritten.name)
-        const estimate = (seqs: ReadonlyArray<number>) => estimateRequest(settings.system, journal.filter((event) => seqs.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
-        const all = bearing.map((event) => event.seq)
-        if (bearing.length <= keep) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-        // The compression check tripped: announce it, live, under this plugin's own name.
-        yield* core.publish(live(compactionDue, session, { messages: bearing.length, estimatedTokens: estimate(all) }))
-        const older = bearing.slice(0, -1)
-        const last = bearing.at(-1)
-        const first = older[0]
-        const through = older.at(-1)
-        if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-        // Text memory writes for the model is its own record first, bearing the message and naming what it replaces; the request points at it.
-        const summary = yield* session.append(stored(summaryWritten, { of: older.length }, {
-          message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
-          replaces: { from: first.seq, through: through.seq },
-        }))
-        const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
-        return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
-      }),
-    })
-  }),
-})
+const compactingMemory = (keep: number) => Layer.effect(Memory, Effect.gen(function* () {
+  const core = yield* Core
+  const settings = yield* Settings
+  const budgetTokens = Tokens.make(3000)
+  return Memory.of({
+    build: (session) => Effect.gen(function* () {
+      const journal = yield* session.journal
+      const bearing = journal.filter((event) => event.message !== undefined && event.name !== summaryWritten.name)
+      const estimate = (seqs: ReadonlyArray<number>) => estimateRequest(settings.system, journal.filter((event) => seqs.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
+      const all = bearing.map((event) => event.seq)
+      if (bearing.length <= keep) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
+      // The compression check tripped: announce it, live, under this plugin's own name.
+      yield* core.publish(live(compactionDue, session, { messages: bearing.length, estimatedTokens: estimate(all) }))
+      const older = bearing.slice(0, -1)
+      const last = bearing.at(-1)
+      const first = older[0]
+      const through = older.at(-1)
+      if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
+      // Text memory writes for the model is its own record first, bearing the message and naming what it replaces; the request points at it.
+      const summary = yield* session.append(stored(summaryWritten, { of: older.length }, {
+        message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
+        replaces: { from: first.seq, through: through.seq },
+      }))
+      const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
+      return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
+    }),
+  })
+}))
 
 /** Whether an event is stored or only published is in its type: this compiles only because the two wrong calls are marked as errors. */
 const kindsAreTypes = (core: Context.Service.Shape<typeof Core>, session: OpenSession) => [
@@ -143,19 +130,15 @@ describe("a plugin adds an event on a compression check and another plugin react
       const { model, received } = yield* answering("Fine.")
       const sweeps = yield* Ref.make<ReadonlyArray<number>>([])
       // The second plugin: it listens for the first one's event and acts, here by counting and by publishing an event of its own.
-      const janitor = definePlugin({
-        name: "janitor",
-        requires: [Core],
-        make: Effect.gen(function* () {
-          const core = yield* Core
-          yield* core.on(compactionDue, (due) => Effect.andThen(
-            Ref.update(sweeps, (all) => [...all, due.data.messages]),
-            core.publish(live(swept, { id: due.session, turn: due.turn }, { after: due.data.messages })),
-          ), { wait: true })
-        }),
-      })
+      const janitor = Layer.effectDiscard(Effect.gen(function* () {
+        const core = yield* Core
+        yield* core.on(compactionDue, (due) => Effect.andThen(
+          Ref.update(sweeps, (all) => [...all, due.data.messages]),
+          core.publish(live(swept, originOf(due), { after: due.data.messages })),
+        ), { wait: true, name: "janitor" })
+      }))
       const record = yield* recording([compactionDue, swept, summaryWritten])
-      const agent = yield* Agent.define({ model, system, storage: inProcessJournal(), memory: compactingMemory(3), plugins: [record.plugin, janitor] })
+      const agent = yield* open(stack(model, { memory: compactingMemory(3), extras: inOrder(record.layer, janitor) }))
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "One")
       const quiet = yield* record.names

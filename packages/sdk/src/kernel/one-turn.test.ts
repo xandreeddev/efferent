@@ -12,8 +12,7 @@ import {
   turnStartedEvent,
   userMessageEvent,
 } from "@xandreed/core/kernel"
-import { Agent, inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
-import { answering, recording } from "./testing.js"
+import { answering, open, recording, stack } from "./testing.js"
 
 const everyDefinition = [turnStartedEvent, userMessageEvent, requestSentEvent, assistantDeltaEvent, assistantMessageEvent, turnEndedEvent]
 
@@ -22,15 +21,7 @@ describe("one turn of the kernel", () => {
     const run = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hel", "lo!")
       const record = yield* recording(everyDefinition)
-      const agent = yield* Agent.define({
-        model,
-        system: "You are a friendly tutor.",
-        storage: inProcessJournal(),
-        sessions: sessions(),
-        memory: windowMemory({ budgetTokens: 3000 }),
-        loop: stepLoop(),
-        plugins: [record.plugin],
-      })
+      const agent = yield* open(stack(model, { extras: record.layer }))
       const session = yield* agent.createSession({ owner: "learner" })
       const reply = yield* agent.send(session, "Hello")
       return { reply, session, inspection: yield* agent.inspect(session), seen: yield* record.seen, received: yield* received }
@@ -67,10 +58,10 @@ describe("one turn of the kernel", () => {
     expect(run.inspection.state).toEqual({ _tag: "Free", turns: 1 })
   })
 
-  test("a session asked for with no owner, or a parent that is no id, is refused before anything is stored", async () => {
+  test("a session asked for with no owner, or a parent that is no id, is refused by the session plugin", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
-      const agent = yield* Agent.define({ model, system: "You are a friendly tutor.", storage: inProcessJournal(), memory: windowMemory({ budgetTokens: 3000 }) })
+      const agent = yield* open(stack(model))
       return {
         noOwner: yield* Effect.flip(agent.createSession({ owner: "" })),
         blankOwner: yield* Effect.flip(agent.createSession({ owner: "   " })),
@@ -79,9 +70,9 @@ describe("one turn of the kernel", () => {
           Effect.flatMap(agent.createSession({ owner: "learner", parent }), (child) => Effect.map(agent.inspect(child), (inspection) => inspection.header.parent === parent))),
       }
     })))
-    expect(result.noOwner).toMatchObject({ _tag: "AgentRefused", reason: "InvalidSession" })
-    expect(result.blankOwner).toMatchObject({ _tag: "AgentRefused", reason: "InvalidSession" })
-    expect(result.noParent).toMatchObject({ _tag: "AgentRefused", reason: "InvalidSession" })
+    expect(result.noOwner).toMatchObject({ _tag: "InvalidSession" })
+    expect(result.blankOwner).toMatchObject({ _tag: "InvalidSession" })
+    expect(result.noParent).toMatchObject({ _tag: "InvalidSession" })
     expect(result.child).toBe(true)
   })
 })
