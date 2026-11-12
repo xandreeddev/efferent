@@ -105,15 +105,25 @@ kernel's rules:
   behind itself and returns. Never join or
   interrupt a listener's fiber in a way that waits for it, and never issue
   the report from the listener's own interruption: an uninterruptible one
-  never gets there. `core.listener.failed` is never waited for: a listener
-  registered for it with `{ wait: true }` is delivered in the background,
-  and a report only hands the event over. A listener removed while a
-  publish is under way is passed over. The waiting listeners run, then the
-  publisher's own step (`PublishOptions.beforeHandOver`), then the event is
-  handed to the background ones and the stream; a reader of the hub runs
-  as the event is handed to it, before the publish returns, so what must
-  hold when the background hears of an event is done in that step
-  (`core.adapter.test.ts` holds each).
+  never gets there. Whatever a handler ends with is its own failure,
+  `ListenerFailed`, an interrupt it was not sent included (`Effect.interrupt`,
+  a join of an interrupted fiber, an await of an interrupted deferred):
+  only the interruption of whoever waits is the cut, so a handler's own
+  interrupt neither silences a background listener nor passes for its
+  publisher's interruption. A waiting listener is started at once
+  (`startImmediately`), so one that does not suspend runs before any other
+  fiber, as if it were called in place. `core.listener.failed` is never
+  waited for: a listener registered for it with `{ wait: true }` is
+  delivered in the background, and a report only hands the event over. A
+  listener removed while a publish is under way is passed over. The
+  waiting listeners run, then the publisher's own step
+  (`PublishOptions.beforeHandOver`), then the event is handed to the
+  background ones and the stream, which hear of it on fibers of their own,
+  whenever they are scheduled, possibly before the publisher's next step:
+  what must hold when the background hears of an event is done in the
+  publisher's own step (`core.adapter.test.ts` holds each; the session
+  plugin's test of its `beforeHandOver` runs under a scheduler that makes
+  every fiber yield after a few operations).
 - A listener is named by its registrant: `Core.on` takes `{ name, wait? }`,
   and `name` is how a failure of it is reported. There is no ambient
   plugin name: a plugin is a layer, and nothing sets one around it.

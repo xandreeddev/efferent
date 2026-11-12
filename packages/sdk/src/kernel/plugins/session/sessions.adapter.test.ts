@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema } from "effect"
 import type { Scope } from "effect"
-import { Core, kernel, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, kernel, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEndedEvent } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -19,26 +19,98 @@ const failing = (name: string, reason: JournalStorageError["reason"]): Fault => 
   event.name === name ? Option.some(Effect.fail(new JournalStorageError({ reason, message: `the store was told to refuse ${name}` }))) : Option.none()
 const dying = (name: string): Fault => (event) => event.name === name ? Option.some(Effect.die("the store broke")) : Option.none()
 
+/** What a storage double does before an append goes through: nothing, or suspend for a while. */
+type Pause = (event: StoredDraft) => Effect.Effect<void>
+const atOnce: Pause = () => Effect.void
+
 /**
- * The stock storage behind a double whose appends can be told to fail, and
- * as many session plugins over that one store as asked for.
+ * The stock storage behind a double whose appends can be told to fail or
+ * to suspend before they go through, and as many session plugins over that
+ * one store as asked for.
  */
 const over = (count: number) => Effect.gen(function* () {
   const below = yield* Layer.build(Layer.provideMerge(inProcessJournal(), kernel({ system: "You are a kit." })))
   const real = Context.get(below, JournalStorage)
   const fault = yield* Ref.make<Fault>(through)
+  const pause = yield* Ref.make<Pause>(atOnce)
   const storage = JournalStorage.of({
     ...real,
-    append: (id, expectedSeq, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () => real.append(id, expectedSeq, event))),
+    append: (id, expectedSeq, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () =>
+      Effect.andThen(Effect.flatMap(Ref.get(pause), (wait) => wait(event)), real.append(id, expectedSeq, event)))),
   })
   const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
     Effect.map(Layer.build(Layer.provide(sessions(), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
-  return { plugins, fault: (next: Fault) => Ref.set(fault, next), names }
+  return { plugins, core: Context.get(below, Core), fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), names }
 })
 
-const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(effect))
+/** Every test gives itself five seconds: code that waits on what never comes fails here and does not hang the run. */
+const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(effect).pipe(Effect.timeout("5 seconds")))
+
+describe("the writes of one open turn", () => {
+  test("are stored one after another: two appends made at once both succeed, in the order they were made", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], pause, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      // Every append suspends before it goes through, so the second is made while the first is under way.
+      yield* pause(() => Effect.sleep("1 millis"))
+      const seqs = yield* turns.turn(id, (session) => Effect.all([session.append(stored(noted, {})), session.append(stored(noted, {}))], { concurrency: "unbounded" }).pipe(
+        Effect.map((all) => all.map((event): number => event.seq))))
+      const next = yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn)))
+      return { seqs, next, names: yield* names(id) }
+    }))
+    expect(result.seqs).toEqual([2, 3])
+    expect(result.names).toEqual([STARTED, noted.name, noted.name, ENDED, STARTED, ENDED])
+    expect(result.next).toBe(2)
+  })
+
+  test("an append the body forked and left under way is stored before the turn's end, and the next turn opens", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], pause, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const entered = yield* Deferred.make<void>()
+      // The noted append says it is under way, then suspends; so does the end's.
+      yield* pause((event) => Effect.andThen(event.name === noted.name ? Deferred.succeed(entered, undefined) : Effect.void, Effect.sleep("1 millis")))
+      // The body forks the append and returns as soon as it is under way, without waiting for it.
+      yield* turns.turn(id, (session) => Effect.andThen(Effect.forkDetach(session.append(stored(noted, {}))), Deferred.await(entered)))
+      yield* pause(atOnce)
+      const next = yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn)))
+      return { next, names: yield* names(id) }
+    }))
+    expect(result.names).toEqual([STARTED, noted.name, ENDED, STARTED, ENDED])
+    expect(result.next).toBe(2)
+  })
+})
+
+describe("the end of a turn", () => {
+  /*
+   * A background listener hears of the end on its own fiber, once the end was
+   * handed over. Under the default scheduler the publisher frees the session
+   * before that fiber runs, whatever the order of its steps; a scheduler that
+   * makes every fiber yield after a few operations lets the listener run at
+   * any point after the hand-over, so the session must be free by then.
+   */
+  const budgets = Array.from({ length: 61 }, (_, index) => index + 4)
+
+  test("finds the session free for a background listener of plugin.session.turn.ended that opens the next turn in its handler, wherever the publisher is preempted", async () => {
+    const results = await run(Effect.forEach(budgets, (budget) => Effect.scoped(Effect.gen(function* () {
+      const { plugins: [turns], core } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const next = yield* Deferred.make<number, unknown>()
+      // A background listener: it hears of the end after the end was handed over, and opens the next turn at once.
+      yield* core.on(turnEndedEvent, (ended) => ended.data.turn === 1
+        ? Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn)))).pipe(Effect.flatMap((exit) => Deferred.done(next, exit)))
+        : Effect.void, { name: "follower" })
+      yield* turns.turn(id, () => Effect.void)
+      return yield* Effect.match(Deferred.await(next), { onSuccess: (turn) => ({ budget, turn }), onFailure: (failure) => ({ budget, failure }) })
+    }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
+    expect(results).toEqual(budgets.map((budget) => ({ budget, turn: 2 })))
+  })
+})
 
 describe("a turn whose end cannot be stored", () => {
   test("stays open, as the journal says it is: the caller gets the failure, no second start is written, and the session still reads", async () => {

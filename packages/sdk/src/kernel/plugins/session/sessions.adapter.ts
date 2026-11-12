@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from "effect"
+import { Array as Arr, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Semaphore } from "effect"
 import type { Duration } from "effect"
 import {
   announced,
@@ -41,12 +41,16 @@ export interface SessionsOptions {
   readonly mintId?: Effect.Effect<SessionId>
 }
 
-/** A turn this process opened: where it is, the last place it wrote at, and whether it closed. */
+/**
+ * A turn this process opened: where it is, the last place it wrote at,
+ * whether it closed, and the lock its writes take one at a time.
+ */
 interface Turn {
   readonly id: SessionId
   readonly turn: TurnNumber
   readonly place: Ref.Ref<Seq>
   readonly closed: Ref.Ref<boolean>
+  readonly writes: Semaphore.Semaphore
 }
 /** A turn as `begin` opened it: the open session a body is given, and its stored start, not announced yet. */
 interface Opened {
@@ -95,7 +99,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     : [Effect.void, new Set([...now, id])]).pipe(Effect.flatten)
   const release = (id: SessionId) => Ref.update(held, (now) => new Set(Array.from(now).filter((other) => other !== id)))
 
-  /** Put an event at the next place of the turn's journal. */
+  /** Put an event at the next place of the turn's journal. The caller holds the turn's lock: one write at a time. */
   const store = Effect.fnUntraced(function* (open: Turn, event: StoredDraft) {
     const stored = yield* storage.append(open.id, yield* Ref.get(open.place), event)
     yield* Ref.set(open.place, stored.seq)
@@ -103,8 +107,10 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
   })
 
   const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
-    if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
-    const stored = yield* store(open, event)                        // in the journal first
+    const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
+      if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
+      return yield* store(open, event)                              // in the journal first
+    }))
     yield* core.publish(announced(open, stored))                    // then announced, same name
     return stored
   })
@@ -120,6 +126,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
         turn,
         place: yield* Ref.make(Option.match(Arr.last(journal.events), { onNone: () => Seq.make(0), onSome: (event) => event.seq })),
         closed: yield* Ref.make(false),
+        writes: yield* Semaphore.make(1),
       }
       // The first append is the claim on the journal: a conflict there is another writer's turn, not a storage failure.
       const started = yield* store(open, turnStarted(turn)).pipe(
@@ -152,8 +159,9 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
   const end = Effect.fn("kernel.session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {
     const { id, turn } = open.turn
     yield* Ref.set(open.turn.closed, true)                          // nothing is appended to this turn from here on
-    // In the journal first. A turn whose end cannot be stored stays open, as the journal says it is: the caller gets the failure.
-    const ended = yield* store(open.turn, turnEnded(turn, outcomeOf(exit))).pipe(
+    // In the journal first, after a write still under way. A turn whose end cannot be stored stays open, as the journal
+    // says it is: the caller gets the failure.
+    const ended = yield* open.turn.writes.withPermits(1)(store(open.turn, turnEnded(turn, outcomeOf(exit)))).pipe(
       Effect.onExit((stored) => Exit.isFailure(stored) ? release(id) : Effect.void),
     )
     // Then announced, on a fiber of the plugin, and only then is the session free: its events reach listeners in

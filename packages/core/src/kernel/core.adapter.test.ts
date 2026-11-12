@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { kernel, makeCore } from "./core.adapter.js"
 import { Core } from "./core.port.js"
 import { live, liveEvent } from "./event.entity.functions.js"
@@ -100,6 +100,38 @@ describe("Core.publish", () => {
     expect(failure).toMatchObject({ _tag: "ListenerFailed", listener: "buggy", message: "defect" })
   })
 
+  test("a waiting listener that ends with an interrupt it was not sent fails the publish with ListenerFailed, not an interrupt", async () => {
+    const result = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const reported = yield* Ref.make<ReadonlyArray<unknown>>([])
+      yield* core.on(listenerFailedEvent, (event) => Ref.update(reported, (all) => [...all, event.data]), { wait: true, name: "host" })
+      // Joining a fiber that was interrupted ends the handler with an interrupt it was not sent.
+      yield* core.on(ticked, () => Effect.flatMap(Effect.forkChild(Effect.never), (fiber) => Effect.andThen(Fiber.interrupt(fiber), Fiber.join(fiber))), { wait: true, name: "joiner" })
+      const exit = yield* Effect.exit(core.publish(tick(1)))
+      yield* core.publish(probe)
+      return { exit, reported: yield* Ref.get(reported) }
+    }).pipe(Effect.timeout("2 seconds")))
+    expect(Exit.hasInterrupts(result.exit)).toBe(false)
+    expect(Exit.isFailure(result.exit) ? Cause.squash(result.exit.cause) : result.exit).toMatchObject({ _tag: "ListenerFailed", listener: "joiner", event: "plugin.clock.ticked", message: "interrupted" })
+    // Nothing reports the listener as cut short: its publisher was never interrupted.
+    expect(result.reported).toEqual([])
+  })
+
+  test("a waiting listener that does not suspend runs before any other fiber, as if it were called in place", async () => {
+    const order = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const order = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (line: string) => Ref.update(order, (all) => [...all, line])
+      yield* core.on(ticked, () => note("the listener"), { wait: true, name: "host" })
+      // A fiber ready to run before the publish begins.
+      const other = yield* Effect.forkChild(note("another fiber"))
+      yield* core.publish(tick(1))
+      yield* Fiber.join(other)
+      return yield* Ref.get(order)
+    }))
+    expect(order).toEqual(["the listener", "another fiber"])
+  })
+
   test("an event whose data is not what a listener's definition describes is that listener's failure", async () => {
     const failure = await run(Effect.gen(function* () {
       const core = yield* makeCore()
@@ -139,6 +171,25 @@ describe("a background listener", () => {
     }))
     expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "Broken: no room" } })
     expect(result.second).toBe(2)
+  })
+
+  test("that ends with an interrupt it was not sent is reported as core.listener.failed, and goes on listening", async () => {
+    const result = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const reported = yield* Deferred.make<KernelEvent>()
+      const heard = yield* Ref.make<ReadonlyArray<number>>([])
+      const third = yield* Deferred.make<void>()
+      yield* core.on(listenerFailedEvent, (event) => Deferred.succeed(reported, event), { name: "host" })
+      // On the first event the handler interrupts itself; nobody interrupted the one who waits for it.
+      yield* core.on(ticked, (event) => event.data.n === 1
+        ? Effect.interrupt
+        : Effect.andThen(Ref.update(heard, (all) => [...all, event.data.n]), event.data.n === 3 ? Deferred.succeed(third, undefined) : Effect.void), { name: "ledger" })
+      yield* Effect.forEach([1, 2, 3], (n) => core.publish(tick(n)), { concurrency: 1, discard: true })
+      yield* Deferred.await(third)
+      return { reported: yield* Deferred.await(reported), heard: yield* Ref.get(heard) }
+    }).pipe(Effect.timeout("2 seconds")))
+    expect(result.heard).toEqual([2, 3])
+    expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "interrupted" } })
   })
 
   test("that reads slower than events arrive loses the oldest ones: delivery is bounded and sliding", async () => {
@@ -336,6 +387,28 @@ describe("a listener that cannot be interrupted", () => {
       return yield* Deferred.await(heard)
     }).pipe(Effect.timeout("2 seconds")))
     expect(result).toBe(2)
+  })
+
+  test("does not hold the close of the scope of the one who waits for it", async () => {
+    const result = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const scope = yield* Scope.make()
+      const entered = yield* Deferred.make<void>()
+      const reported = yield* Deferred.make<unknown>()
+      yield* core.on(listenerFailedEvent, (event) => Deferred.succeed(reported, event.data), { name: "host" })
+      // Registered and waited for in the same scope: the publish is a fiber of that scope, held by the listener.
+      yield* core.on(ticked, () => Effect.andThen(Deferred.succeed(entered, undefined), deaf), { wait: true, name: "deaf" }).pipe(Scope.provide(scope))
+      yield* Effect.forkIn(core.publish(tick(1)), scope)
+      yield* Deferred.await(entered)
+      yield* Scope.close(scope, Exit.void)
+      const report = yield* Deferred.await(reported)
+      // The bus goes on without it: the waiting listener left with its scope.
+      const heard = yield* Deferred.make<number>()
+      yield* core.on(ticked, (event) => Deferred.succeed(heard, event.data.n), { wait: true, name: "host" })
+      yield* core.publish(tick(2))
+      return { report, heard: yield* Deferred.await(heard) }
+    }).pipe(Effect.timeout("2 seconds")))
+    expect(result).toEqual({ report: { listener: "deaf", event: "plugin.clock.ticked", reason: "interrupted before it finished" }, heard: 2 })
   })
 })
 

@@ -71,26 +71,39 @@ it: `./kernel` is a `restricted` subpath.
   `ModelFailed`, and a new kind does not compile until it is decided.
 - The inbox (`plugins/inbox`) has its contract in its own folder
   (`inbox.port.ts`, key `@xandreed/sdk/kernel/Inbox`): core does not know
-  it. Its state is one `InboxState` (`Open` with a `SessionQueue` per
-  session, `Idle` or `Working`, or `Closed`), moved by the pure transitions
-  of `inbox.entity.functions.ts` (`enqueue`, `take`, `finish`, held to a
-  table test) under one `Ref.modify` that also registers the reply. The
-  ticket is taken in the step that queues the message; a worker per
-  session is started by the transition that queues onto an idle queue and
-  stops in the one that finds nothing to take, so no message is left
-  without one. The worker takes a message and puts its reply in the
-  turn's hands in one uninterruptible step, the turn itself interruptible,
-  so a close finds every reply either waiting or with a turn that settles
-  it. `enqueue` runs its transition and the start of the worker it planned
-  uninterruptibly, and publishes `plugin.inbox.queued` (live,
-  about the session and no turn) between them, a failing waiting listener
-  reported rather than failing the queueing. A failed turn fails its own
-  reply; an interrupted wait for a reply does not cancel the turn; the
-  close of the plugin's scope fails every reply not given with
-  `InboxClosed`, the running turn's included, and refuses later messages
-  (`InboxRefused`, `Closed`); a full queue refuses with `Full`.
-  `plugins/inbox/inbox.adapter.test.ts` holds each, and a slow
-  `turn.ended` listener that delays the next message without failing it.
+  it. Its state is one `InboxState` (`Open` with the next ticket and a
+  `SessionQueue` per session whose worker runs, in a `HashMap`, or
+  `Closed`), moved by the pure transitions of `inbox.entity.functions.ts`
+  (`enqueue`, `take`, `finish`, held to a table test) under one
+  `Ref.modify` that also registers the reply. The ticket is the inbox's
+  one counter, taken in the step that queues the message: never given
+  twice in one inbox, so a session's queue need not outlive its worker. A
+  worker per session is started by the transition that queues for a
+  session with no queue and stops in the one that finds nothing to take,
+  which removes the queue, so no message is left without a worker and the
+  inbox keeps nothing of a session it is not serving. `enqueue` is one
+  uninterruptible step that waits for nothing: the transition, a fiber of
+  the plugin that publishes `plugin.inbox.queued` (live, about the session
+  and no turn) after the session's previous announcement, and the worker
+  it planned; the caller gets its ticket and reply whatever becomes of the
+  announcement, and a failing waiting listener is reported rather than
+  failing the queueing. The worker takes a message and puts its reply in
+  the hands of what runs next in one uninterruptible step; it then waits
+  for the message's announcement, failed or not, and runs its turn, both
+  interruptible and under the step that settles the reply, so the
+  announcement reaches the listeners the publisher waits for before the
+  message's `turn.started`, and a close finds every reply either waiting
+  or with a worker that settles it. A failed turn fails its own reply; an
+  interrupted wait for a reply does not cancel the turn; the close of the
+  plugin's scope fails every reply not given with `InboxClosed`, the
+  running turn's and that of a message taken whose turn has not started
+  included, and refuses later messages (`InboxRefused`, `Closed`); a full
+  queue refuses with `Full`. `plugins/inbox/inbox.adapter.test.ts` holds
+  each, and a slow `turn.ended` listener that delays the next message
+  without failing it. No test there can tell the worker's mask from its
+  absence: Effect delivers an interrupt only where a fiber suspends or
+  yields to the scheduler, and nothing suspends between the take and the
+  settling step, so the mask guards against a scheduler yield there.
 - `step-loop.usecase.ts`, the window memory's layer, the session plugin's
   `append` and `turn`, the inbox's contract, and regions of
   `lesson.test.ts`, `guide.test.ts` and `swap.test.ts` are quoted in
@@ -102,14 +115,23 @@ it: `./kernel` is a `restricted` subpath.
   append of `plugin.session.turn.started` there is the claim: a conflict is
   `SessionBusy`, not a storage failure, and a turn that did not open
   (failure or defect) holds nothing. A turn's start is announced inside the
-  turn. Its end is stored, then announced on a fiber of the plugin bounded
+  turn. Its writes take one lock per open turn (`Turn.writes`): the check
+  that the turn is open, the read of the last place and the store are one
+  step, so two appends made at once are stored one after the other, and
+  the end, once the body has returned, waits for an append still being
+  stored and is stored after it; an append made after the end began is
+  `NoOpenTurn`. The lock holds the store and not the announcement, so no
+  listener holds the end; each event is announced after its own store.
+  Its end is stored, then announced on a fiber of the plugin bounded
   by `closeWait`, whatever its listeners do, and the session is freed in
-  the publish's own step before the hand-over (`beforeHandOver`): one
-  session's events reach listeners in journal order, whoever hears of the
-  end in the background finds the session free, and an interrupted caller
-  does not wait. A turn whose end cannot be stored stays open and the
-  caller gets the storage failure. `append` after the close is
-  `NoOpenTurn`. `create` decodes its input (`InvalidSession`). Ids are
+  the publish's own step before the hand-over (`beforeHandOver`): events
+  appended one after another reach listeners in journal order, whoever
+  hears of the end in the background finds the session free (held by a
+  test under a scheduler that makes every fiber yield after a few
+  operations, the only way the background runs between the hand-over and
+  the publisher's next step), and an interrupted caller does not wait. A
+  turn whose end cannot be stored stays open and the caller gets the
+  storage failure. `append` after the close is `NoOpenTurn`. `create` decodes its input (`InvalidSession`). Ids are
   version 4 UUIDs from `crypto.getRandomValues` (which needs no secure
   context, unlike `crypto.randomUUID`), or what `SessionsOptions.mintId`
   mints. `plugins/session/sessions.adapter.test.ts` and
@@ -129,8 +151,9 @@ it: `./kernel` is a `restricted` subpath.
   example), `swap` (a session going on over a shared base under another
   memory), `composition` (`type-level:` a stack missing a part does not
   compile where its type is annotated), `plugins/session/sessions.adapter`
-  (a store that fails on request, two session plugins over one store, the
-  ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
+  (a store that fails or suspends on request, a turn's writes one at a
+  time, the end's hand-over to a background listener that opens the next
+  turn, two session plugins over one store, the ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
   when, how often, with what), `plugins/inbox/*` (the transitions as a
   table, and the inbox's rules), `kits` (the four kits on the stock
   plugins and on careless ones: each careless plugin fails the checks of

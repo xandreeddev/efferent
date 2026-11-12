@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Layer, Option, Ref, Result } from "effect"
+import { Deferred, Effect, Exit, HashMap, Layer, Option, Ref, Result } from "effect"
 import { Core, listenerFailed, Loop } from "@xandreed/core/kernel"
 import type { LoopFailure, Reply, SessionId } from "@xandreed/core/kernel"
 import { enqueue as queue, finish, inboxQueued, openInbox, take } from "./inbox.entity.functions.js"
@@ -9,15 +9,23 @@ import { Inbox } from "./inbox.port.js"
 
 const DEFAULT_CAPACITY = 64
 
-type Answer = Deferred.Deferred<Reply, LoopFailure | InboxClosed>
-
-/** The inbox's state, and beside it the replies of the messages still waiting, by session and ticket: plumbing, no rule. */
-interface Held {
-  readonly state: InboxState
-  readonly replies: ReadonlyMap<string, Answer>
+/** A queued message's reply, and the signal that its announcement is done, whatever became of it. */
+interface Waiting {
+  readonly answer: Deferred.Deferred<Reply, LoopFailure | InboxClosed>
+  readonly announced: Deferred.Deferred<void>
 }
 
-const keyOf = (session: SessionId, ticket: Ticket) => `${session}#${ticket}`
+/**
+ * The inbox's state, and beside it plumbing, no rule: what the messages not
+ * taken yet wait with, by ticket, and the announcement of the last message
+ * queued for each session whose worker runs, which the next one's follows.
+ */
+interface Held {
+  readonly state: InboxState
+  readonly waiting: HashMap.HashMap<Ticket, Waiting>
+  readonly announcing: HashMap.HashMap<SessionId, Deferred.Deferred<void>>
+}
+
 const closed = () => new InboxClosed({ message: "the inbox closed before this message's turn ended" })
 
 /**
@@ -33,41 +41,45 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
   const loop     = yield* Loop
   const scope    = yield* Effect.scope
   const capacity = options.capacity ?? DEFAULT_CAPACITY
-  const held     = yield* Ref.make<Held>({ state: openInbox, replies: new Map() })
+  const held     = yield* Ref.make<Held>({ state: openInbox, waiting: HashMap.empty(), announcing: HashMap.empty() })
 
   // The scope closes: what still waits is dropped, and its replies fail. A turn under way is the worker's to settle.
-  yield* Effect.addFinalizer(() => Ref.modify(held, (now): readonly [ReadonlyArray<Answer>, Held] => {
+  yield* Effect.addFinalizer(() => Ref.modify(held, (now): readonly [ReadonlyArray<Waiting>, Held] => {
     const { state, dropped } = finish(now.state)
-    return [dropped.flatMap(({ session, ticket }) => Option.toArray(Option.fromNullishOr(now.replies.get(keyOf(session, ticket))))), { state, replies: new Map() }]
-  }).pipe(Effect.flatMap((answers) => Effect.forEach(answers, (answer) => Deferred.fail(answer, closed()), { concurrency: 1, discard: true }))))
+    return [dropped.flatMap(({ ticket }) => Option.toArray(HashMap.get(now.waiting, ticket))), { state, waiting: HashMap.empty(), announcing: HashMap.empty() }]
+  }).pipe(Effect.flatMap((all) => Effect.forEach(all, ({ answer }) => Deferred.fail(answer, closed()), { concurrency: 1, discard: true }))))
 
   /**
-   * The worker of one session: it takes the next message, runs its turn,
-   * gives its reply, and stops when nothing waits. Taking a message and
-   * putting its reply in the turn's hands is one uninterruptible step, so
-   * the close of the scope finds every reply either still waiting, which
-   * the finalizer fails, or with a turn that settles it.
+   * The worker of one session: it takes the next message, waits for its
+   * announcement, runs its turn, gives its reply, and stops when nothing
+   * waits. Taking a message and putting its reply in the hands of what
+   * runs next is one uninterruptible step, so the close of the scope finds
+   * every reply either still waiting, which the finalizer fails, or with a
+   * worker that settles it.
    */
   const worker = (session: SessionId): Effect.Effect<void> => Effect.gen(function* () {
     while (true) {
       const ran = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-        const next = yield* Ref.modify(held, (now): readonly [Option.Option<{ readonly message: string; readonly answer: Option.Option<Answer> }>, Held] => {
+        const next = yield* Ref.modify(held, (now): readonly [Option.Option<{ readonly message: string; readonly waiting: Option.Option<Waiting> }>, Held] => {
           const taken = take(now.state, session)
           return Option.match(taken.next, {
-            onNone: () => [Option.none(), { ...now, state: taken.state }],
+            // The worker stops: every message it took was announced, so the session's last announcement is done.
+            onNone: () => [Option.none(), { ...now, state: taken.state, announcing: HashMap.remove(now.announcing, session) }],
             onSome: (pending) => [
-              Option.some({ message: pending.message, answer: Option.fromNullishOr(now.replies.get(keyOf(session, pending.ticket))) }),
-              { state: taken.state, replies: new Map(Array.from(now.replies).filter(([key]) => key !== keyOf(session, pending.ticket))) },
+              Option.some({ message: pending.message, waiting: HashMap.get(now.waiting, pending.ticket) }),
+              { ...now, state: taken.state, waiting: HashMap.remove(now.waiting, pending.ticket) },
             ],
           })
         })
         if (Option.isNone(next)) return false
-        const { message, answer } = next.value
-        // A failed turn fails its own reply, and the next message runs. A turn cut short by the scope's close fails its reply with `InboxClosed`.
-        yield* restore(loop.run({ session, message })).pipe(
-          Effect.onExit((exit) => Option.match(answer, {
+        const { message, waiting } = next.value
+        // The message's announcement reaches its listeners before its turn starts. A failed turn fails its own reply, and
+        // the next message runs; one cut short by the scope's close, before or after it started, fails it with `InboxClosed`.
+        const announced = Option.match(waiting, { onNone: () => Effect.void, onSome: (entry) => Deferred.await(entry.announced) })
+        yield* restore(Effect.andThen(announced, loop.run({ session, message }))).pipe(
+          Effect.onExit((exit) => Option.match(waiting, {
             onNone: () => Effect.void,
-            onSome: (waiting) => Deferred.done(waiting, Exit.hasInterrupts(exit) ? Exit.fail(closed()) : exit),
+            onSome: ({ answer }) => Deferred.done(answer, Exit.hasInterrupts(exit) ? Exit.fail(closed()) : exit),
           })),
           Effect.exit,
         )
@@ -90,17 +102,26 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
   return Inbox.of({
     enqueue: Effect.fn("kernel.inbox.enqueue")(function* (session: SessionId, message: string) {
       const answer = yield* Deferred.make<Reply, LoopFailure | InboxClosed>()
-      return yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+      const announced = yield* Deferred.make<void>()
+      // One uninterruptible step, which waits for nothing: the queueing, the announcement and the worker it planned are
+      // started, and the caller has its ticket and reply whatever becomes of them.
+      return yield* Effect.uninterruptible(Effect.gen(function* () {
         // The ticket, the queueing and whether a worker starts: one transition, with the reply registered in the same step.
-        const decided = yield* Ref.modify(held, (now): readonly [Result.Result<Enqueued, InboxRefused>, Held] => Result.match(queue(now.state, session, message, capacity), {
-          onFailure: (refused) => [Result.fail(refused), now],
-          onSuccess: (queued) => [Result.succeed(queued), { state: queued.state, replies: new Map([...now.replies, [keyOf(session, queued.ticket), answer]]) }],
-        }))
-        const queued = yield* Effect.fromResult(decided)
-        // Then announced, and then the worker it planned starts, whatever became of the announcement: no message is left with no worker.
-        yield* restore(announceQueued(session, queued.ticket)).pipe(
-          Effect.ensuring(queued.start ? Effect.asVoid(Effect.forkIn(worker(session), scope)) : Effect.void),
-        )
+        const decided = yield* Ref.modify(held, (now): readonly [Result.Result<{ readonly queued: Enqueued; readonly after: Option.Option<Deferred.Deferred<void>> }, InboxRefused>, Held] =>
+          Result.match(queue(now.state, session, message, capacity), {
+            onFailure: (refused) => [Result.fail(refused), now],
+            onSuccess: (queued) => [Result.succeed({ queued, after: HashMap.get(now.announcing, session) }), {
+              state: queued.state,
+              waiting: HashMap.set(now.waiting, queued.ticket, { answer, announced }),
+              announcing: HashMap.set(now.announcing, session, announced),
+            }],
+          }))
+        const { queued, after } = yield* Effect.fromResult(decided)
+        // Announced on a fiber of the plugin, after the session's message before it, so no caller holds it and none is held
+        // by it. Its turn waits for it; whatever becomes of it, failed or cut short, that turn runs.
+        const previous = Option.match(after, { onNone: () => Effect.void, onSome: (before) => Deferred.await(before) })
+        yield* Effect.forkIn(Effect.andThen(previous, announceQueued(session, queued.ticket)).pipe(Effect.ensuring(Deferred.succeed(announced, undefined))), scope, { startImmediately: true })
+        if (queued.start) yield* Effect.forkIn(worker(session), scope)
         return { ticket: queued.ticket, reply: Deferred.await(answer) }
       }))
     }),

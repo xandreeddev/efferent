@@ -45,7 +45,7 @@ export { Inspection, ModelRequest, PointedMessage, RequestRefused, ResolvedReque
 export { estimateRequest, estimateTokens, inspectionOf, resolveRequest } from "./request.entity.functions.js"
 export { Core } from "./core.port.js"
 export type { ListenOptions, PublishOptions } from "./core.port.js"
-export { kernel, makeCore } from "./core.adapter.js"
+export { kernel } from "./core.adapter.js"
 export type { KernelOptions } from "./core.adapter.js"
 export { JournalStorage } from "./journal-storage.port.js"
 export { Sessions } from "./sessions.port.js"

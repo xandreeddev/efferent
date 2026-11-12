@@ -228,15 +228,22 @@ definition, in the scope it is called in, before it returns, so it misses
 nothing published after. `name` is how a failure of it is reported. A
 publisher waits for its listeners for as long as it is not interrupted
 itself; each listener runs on a fiber of its own, so a limit on the wait,
-or the close of a scope, holds whatever the listener does.
+or the close of a scope, holds whatever the listener does. Whatever a
+handler ends with is its own failure, an interrupt it was not sent
+included (`Effect.interrupt`, a join of a fiber that was interrupted): it
+fails the publish with `ListenerFailed`, or, in the background, is
+reported and the listener goes on. Only the interruption of whoever waits
+cuts a listener short. A background listener and the stream hear of an
+event only once it was handed over, on fibers of their own, after the
+waiting listeners and the publisher's own step.
 
 The end of a turn is the one publish whose listeners cannot fail the
 publisher. The session plugin stores `plugin.session.turn.ended`, announces
 it, and frees the session once the listeners the announcement waits for are
 done or cut short after `closeWait` (5 seconds when left out), just before
 the end is handed to the background and the stream. So the events of one
-session arrive in journal order, and whoever hears of the end in the
-background finds the session free. Until then the session is busy, and a
+session, appended one after another, arrive in journal order, and whoever
+hears of the end in the background finds the session free. Until then the session is busy, and a
 turn asked for it is refused with `SessionBusy`.
 
 A host follows events by running the stream, which has no replay, so it
@@ -298,14 +305,23 @@ next place. That append is its claim: the store refuses an append at a
 place that is taken, so of two writers that begin a turn of one session at
 once, one is refused with `SessionBusy`. A turn whose end was never stored
 stays open in the journal; closing such a turn is crash recovery, which
-returns with the durable stores. The session plugin's two functions:
+returns with the durable stores. Inside a turn, the writes take one lock
+in turn: two appends made at once are stored one after the other, and the
+end, once the body has returned, waits for an append still being stored
+and is stored after it. An append made after the end began is refused
+with `NoOpenTurn`. The lock holds the store, not the announcement: each
+event is announced after its own store, so the announcements of appends
+made at once can reach a listener that suspends in another order than the
+journal's. The session plugin's two functions:
 
 <!-- pinned: packages/sdk/src/kernel/plugins/session/sessions.adapter.ts -->
 
 ```ts
 const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
-  if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
-  const stored = yield* store(open, event)                        // in the journal first
+  const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
+    if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
+    return yield* store(open, event)                              // in the journal first
+  }))
   yield* core.publish(announced(open, stored))                    // then announced, same name
   return stored
 })
@@ -374,17 +390,24 @@ It follows events with `on` of `Core`, not with the stream: a listener is
 registered before `on` returns, so it cannot miss the first turn, while a
 stream starts reading only when it is scheduled. The inbox's rules:
 
-- **One state, pure transitions.** Per session, the messages waiting, the
-  next ticket and whether a worker runs are one phase (`Idle` or
-  `Working`), in one `Ref` with the replies waiting to be given. Three pure
-  functions move it (`enqueue`, `take`, `finish`), tested as a table.
-- **The ticket** is a number per session that only grows, 1, 2, 3, taken in
-  the step that queues the message: call order is queue order, whatever the
-  worker has done meanwhile.
+- **One state, pure transitions.** The next ticket, and per session
+  whether a worker runs and the messages waiting behind it, are one state
+  (`Open` or `Closed`), in one `Ref` with the replies waiting to be given.
+  Three pure functions move it (`enqueue`, `take`, `finish`), tested as a
+  table.
+- **The ticket** is the inbox's: one number that only grows, 1, 2, 3,
+  whatever the session, taken in the step that queues the message. Call
+  order is queue order, whatever the workers have done meanwhile, and no
+  ticket is given twice in one inbox; a session's tickets grow, with gaps
+  where another session's messages came between.
 - **One worker per session**, forked in the plugin's scope, runs one
   `loop.run` at a time and stops when nothing waits. Starting and stopping
   are decided in the same transitions as queueing and taking, so no message
-  is ever left without a worker.
+  is ever left without a worker. A session has a queue only while its
+  worker runs: the transition that stops the worker removes it, so the
+  inbox keeps nothing of a session it is not serving. The queues are a
+  persistent map (`HashMap`), so a transition copies no other session's
+  queue.
 - **A failed turn** fails that message's reply only; the next message runs.
   Interrupting whoever waits on a reply does not cancel the turn.
 - **When the inbox's scope closes**, every reply not given yet fails with
@@ -397,8 +420,14 @@ stream starts reading only when it is scheduled. The inbox's rules:
 - **Capacity:** a session's queue holds 64 waiting messages unless
   `inboxOf({ capacity })` says otherwise; a full one refuses with
   `InboxRefused` (`Full`), and nothing of the message is stored.
-- **`plugin.inbox.queued`** is published as a message is queued, live,
-  about the session and no turn.
+- **`plugin.inbox.queued`** is published for each message queued, live,
+  about the session and no turn, on a fiber of the plugin: `enqueue`
+  returns its ticket and reply whatever becomes of the announcement, and a
+  listener of it that does not suspend has heard it by then, unless the
+  session's message before it is still being announced. One session's
+  announcements are published in ticket order, and each reaches the
+  listeners the publisher waits for before its message's turn starts; one
+  that fails is reported (`core.listener.failed`) and the turn runs.
 - **Do not mix the inbox and direct calls on one session.** A queued
   message whose turn is refused because a direct `loop.run` holds the
   session fails with `SessionBusy`.

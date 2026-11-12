@@ -74,7 +74,6 @@ const listenerFailedEvent
 const live
 const liveEvent
 const loopConformance
-const makeCore
 const memoryConformance
 const messageOf
 const newSession

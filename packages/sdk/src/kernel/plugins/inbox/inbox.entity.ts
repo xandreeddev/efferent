@@ -12,8 +12,10 @@ export interface InboxOptions {
 }
 
 /**
- * A queued message's place in its session's queue: 1, 2, 3… in the order
- * the messages were queued, and never given twice in one inbox.
+ * A queued message's number: 1, 2, 3… in the order the inbox queued its
+ * messages, whatever their sessions. One inbox never gives a ticket twice,
+ * and a session's tickets grow in the order its messages were queued, with
+ * gaps where another session's messages came between.
  *
  * @public
  */
@@ -25,19 +27,20 @@ export const Pending = Schema.Struct({ ticket: Ticket, message: Schema.String })
 export type Pending = typeof Pending.Type
 
 /**
- * One session's queue. `Idle`: no worker runs and nothing waits. `Working`:
- * a worker runs the session's turns one at a time, and `pending` wait
- * behind the one it runs. `next` is the ticket the next message is given.
+ * One session's queue, which exists while a worker runs the session's
+ * turns, one at a time: `pending` wait behind the one it runs. A session
+ * with no queue has no worker and nothing waiting.
  */
-export const SessionQueue = Schema.Union([
-  Schema.TaggedStruct("Idle", { next: Ticket }),
-  Schema.TaggedStruct("Working", { next: Ticket, pending: Schema.Array(Pending) }),
-]).pipe(Schema.toTaggedUnion("_tag"))
+export const SessionQueue = Schema.Struct({ pending: Schema.Array(Pending) })
 export type SessionQueue = typeof SessionQueue.Type
 
-/** The inbox: open, with a queue for every session it was given a message for; or closed with its scope. */
+/**
+ * The inbox: open, with the ticket the next message is given and a queue
+ * for every session whose worker runs; or closed with its scope. The queues
+ * are a persistent map, so a transition copies no other session's queue.
+ */
 export const InboxState = Schema.Union([
-  Schema.TaggedStruct("Open", { queues: Schema.ReadonlyMap(SessionId, SessionQueue) }),
+  Schema.TaggedStruct("Open", { next: Ticket, queues: Schema.HashMap(SessionId, SessionQueue) }),
   Schema.TaggedStruct("Closed", {}),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type InboxState = typeof InboxState.Type

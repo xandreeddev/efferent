@@ -82,7 +82,7 @@ export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) 
     Effect.flatMap(Ref.get(waiting), (now) => now.some((entry) => entry.key === listener.key) ? listener.run(event) : Effect.void)
 
   // Waiting listeners first, in registration order; then the publisher's own step; then the hub, whatever they did, so
-  // the stream shows what the journal holds. A reader of the hub runs as the event is handed to it, before this returns.
+  // the stream shows what the journal holds. A reader of the hub hears of the event only once it was handed over.
   const publish = (event: KernelEvent, options?: PublishOptions): Effect.Effect<void, ListenerFailed> =>
     Effect.uninterruptibleMask((restore) => restore(Ref.get(waiting).pipe(
       Effect.flatMap((listeners) => Effect.forEach(listeners.filter((listener) => listener.event === event.name), (listener) => stillWaiting(listener, event), { concurrency: 1, discard: true })),
@@ -98,9 +98,10 @@ export const makeCore = Effect.fnUntraced(function* (options: CoreOptions = {}) 
     const run = (event: KernelEvent): Effect.Effect<void, ListenerFailed> =>
       Option.match(dataOf(definition, event), {
         onNone: () => Effect.fail(failed(event, "the event's data is not what the listener's definition describes")),
+        // Whatever the handler ends with is its own failure, an interrupt it was not sent included (`Effect.interrupt`,
+        // a join of an interrupted fiber): only the interruption of whoever waits for it is the cut, and `call` sees that.
         onSome: (data): Effect.Effect<void, ListenerFailed> => handler({ ...event, data }).pipe(
-          Effect.catchCause((cause): Effect.Effect<never, ListenerFailed> =>
-            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.fail(failed(event, reasonOf(cause), Cause.squash(cause)))),
+          Effect.catchCause((cause) => Effect.fail(failed(event, reasonOf(cause), Cause.squash(cause)))),
         ),
       })
     const key = yield* nextKey

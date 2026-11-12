@@ -45,9 +45,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     record of its own.
   - The inbox queues messages per session and answers them in order, each
     in a turn of its own: `enqueue(session, message)` returns at once with
-    the message's ticket and its reply. A failed turn fails only its own
-    reply, a full queue refuses (`InboxRefused`), and every reply not given
-    when the inbox's scope closes fails with `InboxClosed`. Queued messages
+    the message's ticket and its reply, whatever becomes of the message's
+    `plugin.inbox.queued` announcement, which reaches the listeners its
+    publisher waits for before the message's turn starts. A ticket is the
+    inbox's own number, never given twice in one inbox. A failed turn fails
+    only its own reply, a full queue refuses (`InboxRefused`), and every
+    reply not given when the inbox's scope closes fails with `InboxClosed`.
+    The inbox keeps nothing of a session it is not serving. Queued messages
     live in the process. Its contract, `Inbox`, is the plugin's own.
   - A request is stored as pointers into the journal, never as copies, so
     each message's text is stored once; `inspectionOf` resolves every
@@ -55,7 +59,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - A part is replaced by providing a different layer; a host that keeps
     sessions going across the change builds the kernel, the journal and
     the session plugin once and swaps the stack above them.
-  - One session's events reach listeners in journal order. A session is
+  - The writes of one open turn are stored one at a time: appends made at
+    once both succeed, and the end waits for an append still being stored.
+    A session's events appended one after another reach listeners in
+    journal order. A session is
     busy until its turn's end was announced, for at most `closeWait` (5
     seconds) after it was stored, and is free by the time the end reaches
     a background listener or the stream. Every turn begins from what the
@@ -65,7 +72,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - A limit on a wait for a listener holds whatever the listener does: a
     listener that cannot be interrupted does not keep a turn from
     returning or a session busy, nor a stack from closing. It is reported
-    as `core.listener.failed`.
+    as `core.listener.failed`. A handler that ends with an interrupt it
+    was not sent fails as any other (`ListenerFailed`): a background
+    listener is reported and goes on listening, and a turn it is inside
+    ends `Failed`, not `Interrupted`.
   - `scriptedModel(script)` is a model that follows a script and calls no
     provider: what a host hands the loop kit, and what a test runs an
     agent on.

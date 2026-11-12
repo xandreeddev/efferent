@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Layer, Queue, Ref, Schema, Scope, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Ref, Schema, Scope, Stream } from "effect"
 import { Core, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Settings } from "@xandreed/core/kernel"
 import type { SessionsOptions } from "./index.js"
@@ -72,6 +72,25 @@ describe("a listener the publisher waits for", () => {
     expect(result.afterFailure.inspection.state).toEqual({ _tag: "Free", turns: 1 })
     expect(result.reply).toEqual({ text: "Hi." })
     expect(result.names.slice(4)).toEqual(FIVE)
+  })
+})
+
+describe("a listener the publisher waits for, that ends with an interrupt it was not sent", () => {
+  test("fails the turn with ListenerFailed, which ends Failed, not Interrupted, and the next send works", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      // On the first request, the handler awaits a deferred that was interrupted: nobody interrupted the turn.
+      const audit = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(requestSentEvent, () => Effect.flatMap(Ref.updateAndGet(calls, (count) => count + 1), (count) =>
+        count === 1 ? Effect.flatMap(Deferred.make<void>(), (gone) => Effect.andThen(Deferred.interrupt(gone), Deferred.await(gone))) : Effect.void), { wait: true, name: "audit" })))
+      const kernel = yield* agentWith(audit)
+      const failed = yield* Effect.exit(kernel.send(kernel.session, "Hello"))
+      const inspection = yield* kernel.inspect(kernel.session)
+      return { interrupted: Exit.hasInterrupts(failed), failed: Exit.isFailure(failed) ? Cause.squash(failed.cause) : failed, ended: inspection.events.at(-1)?.data, reply: yield* kernel.send(kernel.session, "Again") }
+    }).pipe(Effect.timeout("5 seconds"))))
+    expect(result.interrupted).toBe(false)
+    expect(result.failed).toMatchObject({ _tag: "ListenerFailed", listener: "audit", event: "plugin.loop.request.sent", message: "interrupted" })
+    expect(result.ended).toEqual({ turn: 1, outcome: { _tag: "Failed", reason: "ListenerFailed: interrupted" } })
+    expect(result.reply).toEqual({ text: "Hi." })
   })
 })
 

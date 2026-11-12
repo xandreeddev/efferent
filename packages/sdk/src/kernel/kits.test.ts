@@ -8,10 +8,10 @@ import {
   Core,
   estimateRequest,
   firstStep,
+  kernel,
   KERNEL_READER,
   Loop,
   loopConformance,
-  makeCore,
   Memory,
   memoryConformance,
   Owner,
@@ -91,7 +91,7 @@ describe("the sessions kit", () => {
   /** The checks each careless session plugin fails. */
   const careless = {
     // It announces on a bus of its own: nothing it stores reaches the listeners it was given.
-    private: (): SessionsSubject => ({ open: () => Effect.flatMap(makeCore(), (own) => built(Sessions, sessions(), over(own))) }),
+    private: (): SessionsSubject => ({ open: () => Effect.flatMap(Layer.build(kernel({ system: "A bus of its own." })), (own) => built(Sessions, sessions(), over(Context.get(own, Core)))) }),
     // One busy flag for every session.
     oneFlag: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
