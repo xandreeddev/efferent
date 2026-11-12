@@ -391,7 +391,7 @@ console.log("The packed models plugin sent a model call through its proxy option
  */
 const websiteDocs = join(root, "packages/website/src/content/docs")
 const documented = [
-  ...["README.md", "docs/framework.md", "docs/events.md", "docs/composable-evaluations.md"].map((file) => join(root, file)).filter((file) => existsSync(file)),
+  ...["README.md", "docs/framework.md", "docs/events.md", "docs/composable-evaluations.md", "docs/kernel.md"].map((file) => join(root, file)).filter((file) => existsSync(file)),
   ...(await readdir(websiteDocs, { recursive: true })).filter((file) => /\.mdx?$/.test(file)).sort().map((file) => join(websiteDocs, file)),
 ]
 const docImports = (await Promise.all(documented.map(async (file) => {

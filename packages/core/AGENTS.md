@@ -25,13 +25,15 @@ kit runs a loop with, and `harnessDefectsAsFailures`, which the sessions
 plugin and the agent loop use), and the memory, journal and model-request
 functions the engine reads, which `./internal` exports to the sdk.
 
-The package has three entries, each an `index.ts` of explicit named exports:
+The package has four entries, each an `index.ts` of explicit named exports:
 
 | Entry | Holds | Semver | Who imports it (boundaries) |
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
+
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`): ids, `Message`, the event envelope, the event definitions and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), the pure rules, the `Storage`, `Sessions`, `Memory` and `Loop` contracts with their kits, `definePlugin`, and `Core` (publish, on, events) with `CoreLive` | a first cut: it changes as the parts it leaves out return | the sdk's kernel only (`core/kernel`) |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -46,7 +48,7 @@ keys they were declared with here (`@xandreed/core/AuthStore`,
 it lists every package's. Core's own model ports, `ModelCatalog` and
 `UtilityLlm`, need nothing of theirs.
 
-`quality/exports-have-consumers` runs on all three entries (`CURATED_ENTRIES`
+`quality/exports-have-consumers` runs on all four entries (`CURATED_ENTRIES`
 in `foundry.config.ts`): each export is imported, by its entry's name, from
 another package, a script or a doc code block, or is tagged `@public`.
 `@public`, on the declaration, marks host API: what the README, the guides
@@ -74,10 +76,44 @@ file is in the first layer whose glob matches it:
 | `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
 | `core` | everything else: adapters (the turn's bus among them), harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
 | `core-kits` | `*.conformance.ts` | model, ports, logic, core: the step-loop kit runs a loop over the turn's bus |
+| `core-kernel` | `kernel/**`, before every layer above; `core-kernel-tests` holds its `*.test.ts` | nothing of core |
 | `core-tests` | test code: `*.test.ts`, `*.bench.ts`, `testing` modules and folders | every layer, and the test libraries `bun:test`, `fast-check` and `effect/testing`, which no other layer imports |
 
 Of the third-party modules, the model and `core` import `effect` alone; the
 ports, the logic and the kits also `effect/ai`.
+
+`src/kernel` is apart from all of that. Its files are one layer,
+`core-kernel`, placed before the layers above, with its tests in
+`core-kernel-tests`: it imports nothing else of core, and `effect` alone,
+so no model type and no runtime module (`node:`, `bun:`) enters it; the
+model call is the sdk's loop plugin's. No other layer of core may import
+it, by a relative path or as `@xandreed/core/kernel`: `./kernel` is a
+`restricted` subpath, granted to the sdk's kernel alone. The rest of this
+file describes the existing engine's side of core, not the kernel. The
+kernel's rules:
+
+- Core stores nothing and runs no turn. `Core` is `publish`, `on` and
+  `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
+  vocabulary, pure rules, contracts and kits.
+- The event type is open. `vocabulary.entity.ts` defines only the facts
+  other plugins rely on (`plugin.session.turn.started`,
+  `plugin.session.turn.ended`, `plugin.loop.user.message`,
+  `plugin.loop.request.sent`, `plugin.loop.assistant.message`,
+  `plugin.loop.assistant.delta`) and `core.listener.failed`. A plugin's own
+  events are defined in the plugin's folder with `storedEvent` and
+  `liveEvent`. Never type `Core.publish`, `Core.on`, `OpenSession.append`
+  or `Storage.append` with a list of names: the sdk's
+  `plugins.test.ts` defines two events of its own and must keep compiling.
+- A message sits once, on the envelope (`StoredEvent.message`); a request
+  is pointers (`ModelRequest.messages`), turned back into messages by
+  `resolveRequest` alone. The estimate is `estimateTokens` alone.
+- A contract carries a plugin's own tagged error as it was raised
+  (`PluginFailure`), so core names no memory's or model's error.
+- Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
+  kernel's own helpers (`conformance.entity.ts` and its functions), not
+  core's `src/conformance.functions.ts`. `storageConformance` has its
+  self-test here; the other three run, with their careless plugins, where
+  the stock plugins live (`packages/sdk/src/kernel/kits.test.ts`).
 
 A port that needs a type from a functions file gets it from the entity file
 (`LogQuery` is in `memory-log.entity.ts`); what code beneath the sdk's

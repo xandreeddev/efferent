@@ -37,6 +37,48 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 - The optional writer `memorySnapshot` capability enables a `LogHandle.checkpoint` bridge before `memory.open` can invoke it. Load resolves the selected publication's anchor and frontier through actual ordered memory rows, decoded once and shared with every save, with per-session cursors and publication visibility checks; malformed selected data fails `SessionLogError` with `session.decode`. Save copies the candidate before its gate, resolves durable cursors, verifies the shared core selection and appends and flushes `memory.snapshot` through the writer. Held closing facts without durable rows skip publication. Only ACK bookkeeping is masked; failed or interrupted publication keeps its original terminal outcome. The existing full archive, bootstrap readers, request snapshot, dispatch and historical replay remain unchanged. This accelerates rendering, with no claim of reduced initial archive or hydration I/O. Focused lifecycle/cursor/ACK tests are in `src/turn/memory-checkpoint.adapter.test.ts`.
 
+## The kernel (`src/kernel`)
+
+`@xandreed/sdk/kernel` is a second, much smaller agent beside the one this
+file describes, over the contracts of `@xandreed/core/kernel`
+(`docs/kernel.md`). It is its own layer, `sdk-kernel` (tests and
+`testing.ts` in `sdk-kernel-tests`), placed before the sdk's: it imports
+core's kernel and `effect/ai` and nothing else of the workspace, not core's
+root, not the runtime, not the rest of the sdk, and no runtime module
+(`browser-bundle.test.ts` builds its entry for a browser and finds no
+`node:` or `bun:` import). The rest of the sdk may not import it:
+`./kernel` is a `restricted` subpath.
+
+- `Agent.define` (`agent.adapter.ts`) builds `Core`, storage and sessions
+  once, and the settings, the model, memory, the loop and the extra
+  plugins in a scope of their own, each on a fresh memo map. `agent.with`
+  moves the handle's phase (`AgentPhase`, pure transitions in
+  `agent.entity.functions.ts`, under one `Ref.modify`), waits for its
+  running turns, closes that scope and builds the changed parts again.
+- A plugin is a folder under `plugins/`: `storage-memory`
+  (`inMemoryStorage`), `session` (`sessions`), `memory-window`
+  (`windowMemory`, with its own events and `OverBudget`), `loop`
+  (`stepLoop`; its flow is `step-loop.usecase.ts`, the model call
+  `call-model.adapter.ts`). A plugin's layer is built in an `.adapter.ts`;
+  a `.usecase.ts` holds no `Layer`. Each stock plugin states the shared
+  version in its `definePlugin` call, as every released `definePlugin` call
+  does: the release tooling synchronizes it and refuses a call without it
+  (`scripts/release-version-plan.ts`). A plugin written in a test states
+  none.
+- `step-loop.usecase.ts` and the session plugin's `append` and `turn` are
+  quoted in `docs/kernel.md`; `guide.test.ts` holds the document's other
+  code as running tests and fails when a quote and its source differ. Change
+  the source and the document together.
+- The session plugin stores, then publishes. A turn's start is announced
+  inside the turn, and its end after the session is free, on a fiber of the
+  plugin bounded by `closeWait`: keep that order, `listeners.test.ts` holds
+  it.
+- Tests: `one-turn`, `turns` (twenty turns, every exit, a second send),
+  `plugins` (another loop; a plugin's own event and a reaction to it),
+  `listeners`, `with`, `unknown-records` (also a second session plugin over
+  one store), `kits` (the four kits on the stock plugins and on careless
+  ones), `browser-bundle`, `guide`. Run: `bun test packages/sdk/src/kernel`.
+
 ## Public surface
 
 - `Agent` (`Agent.define`) and the types `AgentConfig`, `AgentPluginEntry` and `AgentTurn` (`src/agent.adapter.ts`; `Agent<S>`, `AgentConfig<S>`: the type of `services`, which `use` reads without the turn requiring it, while plugins and tools check theirs by key when they open), and `agentTaskExecutor(agent, { services, steering?, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns run with `services` and the calling `Tasks`, and are, by default, the turn's skills selected, then one run of the step loop, its text the reply.
@@ -44,6 +86,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): `Agent` (`Agent.define`), the types `AgentConfig`, `AgentChanges`, `AgentHandle` and `NewSessionInput`, `AgentRefused`, and the four stock plugins with what a host needs beside them: `inMemoryStorage`, `sessions` (`SessionsOptions`), `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data), `stepLoop`, `callModel` and `ToolsNotRun`. A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

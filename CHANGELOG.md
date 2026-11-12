@@ -8,6 +8,39 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
+  everything else a plugin, as two new entries beside the existing engine,
+  which neither imports nor is imported by it. It is a first cut, with in-memory
+  storage and no tool execution, and it will change as the parts it leaves
+  out return. `docs/kernel.md` is its direction document.
+  - `@xandreed/core/kernel` holds what every part agrees on: ids, `Message`,
+    the event envelope, the `Storage`, `Sessions`, `Memory` and `Loop`
+    contracts with a conformance kit each, the pure rules (a session's two
+    transitions and the fold of a journal to its state, `readJournal`,
+    `resolveRequest`, `estimateTokens`), `definePlugin`, and `Core`, which
+    is events only: `publish`, `on` (in the background, or with
+    `{ wait: true }`) and `events`. It imports `effect` alone.
+  - Events are named by the plugin that writes them
+    (`plugin.session.turn.started`, `plugin.loop.request.sent`, …) and the
+    set is open: a plugin defines its own with `storedEvent` and
+    `liveEvent`, each with a schema for its data. A stored record says
+    whether a reader that does not know it may skip it.
+  - `@xandreed/sdk/kernel` holds `Agent.define({ model, system, storage,
+    sessions?, memory, loop?, plugins? })`, which returns `createSession`,
+    `send`, `inspect`, `events` and `with`, and four stock plugins:
+    `inMemoryStorage`, `sessions`, `windowMemory` and `stepLoop`. A turn
+    stores five events (its start, the user's message, the request, the
+    assistant's message, its end) and publishes the answer's pieces live.
+  - A request is stored as pointers into the journal, never as copies, so
+    each message's text is stored once; `agent.inspect` resolves every
+    stored request back into what the model was sent.
+  - `agent.with({ memory })` (also `model`, `system`, `loop`, `plugins`)
+    replaces an agent by one over the same events, storage and sessions,
+    from the next turn.
+  - Nothing in either entry imports a `node:` or `bun:` module.
+
 ### Repository
 
 - The boundaries gate refuses a `restricted` subpath to the layer of the
