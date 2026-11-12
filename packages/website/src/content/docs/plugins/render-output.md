@@ -85,7 +85,7 @@ installs no browser renderer; Node 24 and Bun hosts choose their transports.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-render/output` · Version **0.21.2** · Plugin API **3** · Scope **session**
+Plugin: `@xandreed/plugin-render/output` · Version **0.22.0** · Plugin API **3** · Scope **session**
 
 | Contract | Services |
 | --- | --- |
