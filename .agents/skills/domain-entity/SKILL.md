@@ -16,8 +16,11 @@ see a file by its suffix, so the suffix decides which rules apply.
   no `node:` or `bun` import.
 - `<thing>.entity.functions.ts`: pure functions and Effects over those types.
   Same bans except functions.
-- Use cases: `<do-thing>.usecase.ts` + `<do-thing>.usecase.functions.ts`
-  (`packages/evals/src/usecases/`).
+- Use cases: `<do-thing>.usecase.ts` is the main flow of the use case, and
+  `<do-thing>.usecase.functions.ts` the flow's supporting logic that is no
+  entity's rule (`packages/evals/src/usecases/`). Both export functions,
+  under the other bans of a functions file. A use case's input and output
+  types are entities, in a `.entity.ts`.
 - Example pair: `core/src/domain/bash.entity.ts` (options, results,
   `BashError`) and `bash.entity.functions.ts` (`collectBashResult`).
 - Never write an `interface X` beside `const X = Schema.…`: derive the type

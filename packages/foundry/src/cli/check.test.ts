@@ -51,6 +51,8 @@ const seedArchitectureViolations = (dir: string): void => {
     ].join("\n"),
   )
   writeFileSync(path.join(dir, "src", "core.entity.ts"), ["export const close = () => true", ""].join("\n"))
+  // A use case holds its flow, so its exported function is no finding; its `async` still is.
+  writeFileSync(path.join(dir, "src", "flow.usecase.ts"), ["export const run = async () => 1", ""].join("\n"))
   writeFileSync(
     path.join(dir, "src", "store.service.ts"),
     ['import { Context } from "effect"', 'export class Store extends Context.Service<Store, {}>()("Store") {}', ""].join("\n"),
@@ -392,6 +394,7 @@ describe("vendored packs — plain twins of the library", () => {
       "Effect.runFork belongs at a runtime edge",
       "Effect.runFork belongs at a runtime edge",
     ])
+    expect(normalized(libraryFindings).filter((f) => f.file === "src/flow.usecase.ts").map((f) => f.rule)).toEqual(["architecture/no-raw-promise-core"])
     expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
   })
 

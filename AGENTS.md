@@ -102,7 +102,7 @@ nothing fails.
 | `quality/exports-have-consumers` | every published entry (`CURATED_ENTRIES` lists each file, and the registration gate requires each package's root entry there): an export of a package entry that no other package, script or doc code block imports and that has no `@public` tag; `export *` in an entry; a `@deprecated` export that first-party code still imports | import it where it is used, tag documented host API `@public`, or stop exporting it; name each export; move a deprecated export's importers to its replacement |
 | `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` (called, passed as a value or imported by name from `effect/Effect`) in entity and use-case files | Effect values; promises belong in an adapter |
 | `architecture/no-runtime-imports-core` | `node:`, `bun` and host imports in entity and use-case files | a port, implemented in a `.adapter.ts` |
-| `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
+| `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` | the paired `.entity.functions.ts` file; a use case's flow goes in its `.usecase.ts` |
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
 | `architecture/layers-live-at-edges` | `Layer.*` in entity and use-case files | build the Layer in a `.adapter.ts` |
 | `architecture/role-suffix-required` | a file under `packages/*/src` (foundry aside) whose name has none of the roles below and is not on the frozen `ROLELESS_FILES` | name it for its role; a renamed or split file leaves the list in the same change |
@@ -121,12 +121,15 @@ cancellation, isolation and whether tests can reject incorrect behavior.
 
 "Base" is every rule above except the four that look only at entity and
 use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
-`contracts-contain-no-behavior` and `layers-live-at-edges`.
+`layers-live-at-edges` and, for entity files alone,
+`contracts-contain-no-behavior`.
 
 | File | Holds | Gates that see it |
 |---|---|---|
-| `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
-| `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
+| `x.entity.ts` | schemas, brands, tagged errors, derived types; a use case's input and output types are entities | base + those four |
+| `x.entity.functions.ts` | the pure behaviour of that entity | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
+| `x.usecase.ts` | the main flow of a use case | as `x.entity.functions.ts` |
+| `x.usecase.functions.ts` | the flow's supporting logic that is no entity's rule | as `x.entity.functions.ts` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
 | `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-option-unwrap`; `no-ambient-time-random` flags the wall clock only |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |
