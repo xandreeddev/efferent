@@ -94,12 +94,34 @@ kernel's rules:
 - Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
   vocabulary, pure rules, contracts and kits.
-- No path waits without bound on a listener. `core.listener.failed` is
-  never waited for: a listener registered for it with `{ wait: true }` is
-  delivered in the background, and a report only hands the event over. A
-  listener removed while a publish is under way is passed over. The waiting
-  listeners run before the event is handed to the background ones and the
-  stream (`core.adapter.test.ts` holds each).
+- A limit on a wait for a listener holds whatever the listener does. A
+  publisher waits for its waiting listeners while it is not interrupted
+  itself, which is the contract inside a turn; every limit put on such a
+  wait (the session plugin's `closeWait`, `CoreIdle`'s `idleWait`, a
+  caller's interrupt, the close of a scope) returns at its own time, over a
+  listener that cannot be interrupted too. That holds because a listener is
+  called on a fiber of its own (`call` in `core.adapter.ts`): the one who
+  waits joins it, and when its own wait is interrupted it reports the
+  listener, interrupts it behind itself and returns. Never join or
+  interrupt a listener's fiber in a way that waits for it, and never issue
+  the report from the listener's own interruption: an uninterruptible one
+  never gets there. `core.listener.failed` is never waited for: a listener
+  registered for it with `{ wait: true }` is delivered in the background,
+  and a report only hands the event over. A listener removed while a
+  publish is under way is passed over. The waiting listeners run, then the
+  publisher's own step (`PublishOptions.beforeHandOver`), then the event is
+  handed to the background ones and the stream; a reader of the hub runs
+  as the event is handed to it, before the publish returns, so what must
+  hold when the background hears of an event is done in that step
+  (`core.adapter.test.ts` holds each).
+- `CoreIdle` (`core.port.ts`) is the wait for `Core` to fall quiet: no
+  publish under way and every background listener caught up, repeated
+  until a pass hands nothing new over, under one bound (`idleWait`). It
+  uses a mark in the hub that each background listener acknowledges; the
+  mark never reaches `events`, the host's stream is not waited for, and a
+  listener that leaves acknowledges as it goes. It is the wiring's own,
+  built with `Core` by `CoreLive`: it is never among the keys a plan is
+  given, so no plugin can require it.
 - The event type is open. `vocabulary.entity.ts` defines only the facts
   other plugins rely on (`plugin.session.turn.started`,
   `plugin.session.turn.ended`, `plugin.loop.user.message`,
@@ -125,14 +147,21 @@ kernel's rules:
   its typed `layer`, the keys it declared (`requires`, `provides`) and
   `build`, which hands the layer the declared contracts and no others from
   services found by key (`PluginRefused` when one is lacking) and gives back
-  what it provides. `PluginOf<Provides>` is that face without what the
+  what it provides. `build` replaces what its caller runs with, the fiber's
+  settings aside (`fiberSettings` in `plugin.adapter.ts`: Effect's
+  references and services with defaults): a service around the caller is
+  not the plugin's to find. The compile-time check reads the type of the
+  `requires` list as written in place; a list typed loosely checks nothing,
+  and the doc comment says so. `PluginOf<Provides>` is that face without what the
   plugin needs in its type, for a wiring that takes plugins whatever they
   need; it is typed by the context a build gives back, so it needs no
   `unknown` and no `any` as a layer's requirements.
 - `planPlugins` (`plugin.entity.functions.ts`) is the check and the order,
   a pure function over plain data (`PluginNode`: name, required keys,
-  provided key). It adds no plugin. The order it gives: each plugin at its
-  listed place, a provider it requires that is listed later just before it.
+  provided key). It adds no plugin, and refuses the same plugin listed
+  twice (`ListedTwice`) before anything else. The order it gives: each
+  plugin at its listed place, a provider it requires that is listed later
+  just before it.
   Change the rule and `docs/kernel.md` together; its table test holds the
   refusals, the order and the messages (`plugin.entity.functions.test.ts`).
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the

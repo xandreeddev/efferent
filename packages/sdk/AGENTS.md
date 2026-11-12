@@ -60,21 +60,27 @@ it: `./kernel` is a `restricted` subpath.
   their own: plugin by plugin in the order planned, each through its
   `build`, over what was there and what the plugins before it provided. A
   stage that fails part-way closes its scope, which releases what it had
-  built (`inOwnScope`). The config's slots are `PluginOf<Contract>`: a slot
-  says what its plugin provides, and what the plugin needs is checked by
-  the plan, not by the slot's type. Storage and sessions may not require
-  what `with` rebuilds (`LaterContract`). `with` plans the changed set the
-  same way before it builds anything. `agent.with`
-  builds the successor's parts first, then moves the handle's phase
-  (`AgentPhase`, pure transitions in `agent.entity.functions.ts`, under one
-  `Ref.modify`) and returns the successor in one uninterruptible step. It
-  waits for no turn: the old parts close when the last turn the old handle
-  was running leaves, or at once when there is none. If it fails or is
-  interrupted before the switch, what it built is released and the old
-  handle is as it was. `TurnsAround` (`agent.port.ts`) marks the fiber of a
-  turn with its handle, so `with` called inside a turn of the handle it
-  would replace is refused (`InsideTurn`) and never waits on itself.
-  `send` refuses a message of no text (`EmptyMessage`) before the loop runs.
+  built (`intoOwnScope`). The config's slots are `PluginOf<Contract>`: a
+  slot says what its plugin provides, and what the plugin needs is checked
+  by the plan, not by the slot's type. Storage and sessions may not require
+  what `with` rebuilds (`LaterContract`).
+- `agent.with` replaces an agent when it is idle. It moves the handle's
+  phase (`AgentPhase`: `Live`, `Replacing`, `Replaced`; pure transitions in
+  `agent.entity.functions.ts`, under one `Ref.modify`) to `Replacing`, so a
+  `send` and a second `with` are refused; plans the changed set; waits for
+  the handle's turns (a `sliding(1)` signal each turn offers as it leaves,
+  so a turn that leaves between the look and the wait is not missed) and
+  then for core's `CoreIdle`; builds the successor's parts; closes the old
+  ones; and moves the phase to `Replaced`. Every exit before the switch (a
+  refused plan, a failed build, an interrupt in either wait) puts the phase
+  back to `Live` and releases what was built. Keep that order: no event may
+  reach the listeners of both agents, and the old ones lose none of their
+  last turn (`with.test.ts` holds each, with a turn running, an interrupted
+  caller, an interrupted `with`). `TurnsAround` (`agent.port.ts`) marks the
+  fiber of a turn with its handle, so `with` called inside a turn of the
+  handle it would replace is refused (`InsideTurn`) and never waits on
+  itself. A change given as `undefined` is no change. `send` refuses a
+  message of no text (`EmptyMessage`) before the loop runs.
 - A plugin is a folder under `plugins/`: `storage-memory`
   (`inMemoryStorage`), `session` (`sessions`), `memory-window`
   (`windowMemory`, with its own events and `OverBudget`), `loop`
@@ -100,23 +106,34 @@ it: `./kernel` is a `restricted` subpath.
   `SessionBusy`, not a storage failure, and a turn that did not open
   (failure or defect) holds nothing. A turn's start is announced inside the
   turn. Its end is stored, then announced on a fiber of the plugin bounded
-  by `closeWait`, and the session is free only after that: one session's
-  events reach listeners in journal order, and an interrupted caller does
-  not wait. A turn whose end cannot be stored stays open and the caller
-  gets the storage failure. `append` after the close is `NoOpenTurn`. Ids
-  are version 4 UUIDs minted from Effect's `Random`.
+  by `closeWait`, whatever its listeners do, and the session is freed in
+  the publish's own step before the hand-over (`beforeHandOver`): one
+  session's events reach listeners in journal order, whoever hears of the
+  end in the background finds the session free, and an interrupted caller
+  does not wait. A turn whose end cannot be stored stays open and the
+  caller gets the storage failure. `append` after the close is
+  `NoOpenTurn`. Ids are version 4 UUIDs from `crypto.getRandomValues`
+  (which needs no secure context, unlike `crypto.randomUUID`), or what
+  `SessionsOptions.mintId` mints.
   `plugins/session/sessions.adapter.test.ts` and `listeners.test.ts` hold
   each of these.
 - `windowMemory` refuses a budget that is no finite number of at least one
   token with `InvalidBudget`, a typed failure of `Agent.define` and of
   `with`.
+- A test waits on a signal, never on a count of retries or sleeps. A
+  session is free when its turn's end is on `agent.events`; everything
+  published has been handled when `agent.with` returns. A test of a
+  listener that may hang gives itself an `Effect.timeout`, so the code it
+  guards fails there and does not hang the run.
 - Tests: `one-turn`, `turns` (twenty turns, every exit, a second send, a
   model that fails part-way, a request built badly, what `send` and
   `Agent.define` refuse), `plugins` (another loop; a plugin's own event and
-  a reaction to it), `listeners`, `with`, `unknown-records` (also a second
-  session plugin over one store), `plugins/session/sessions.adapter` (a
-  store that fails on request, two session plugins over one store, seeded
-  ids), `requires` (a consumer listed before its provider; the build order
+  a reaction to it), `listeners` (also a listener that cannot be
+  interrupted), `with`, `unknown-records` (also a second session plugin over
+  one store), `plugins/session/sessions.adapter` (a store that fails on
+  request, two session plugins over one store, the ids),
+  `plugins/memory-window/window.adapter` (`plugin.window.pressure`: when,
+  how often, with what), `requires` (a consumer listed before its provider; the build order
   and the order listeners hear in; every refusal of a set, with nothing
   built; `with` refused; a failed build released; a plugin handed only what
   it declared), `kits` (the four kits on the stock plugins and on careless ones:

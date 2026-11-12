@@ -32,9 +32,11 @@ export type TurnFailure = SessionRefused | StorageError | UnknownRecord | Listen
  * The rules for running sessions: one turn at a time, every stored event in
  * order, and a turn that closes on every exit of its body. A session with
  * a turn open refuses another (`SessionRefused`, `SessionBusy`), and stays
- * busy until its end was announced; storage failures are `StorageError`s,
- * and a turn whose end cannot be stored stays open, as the journal says it
- * is.
+ * busy until its end was announced: it is free by the time the end reaches
+ * a background listener or the host's stream, so whoever hears of
+ * `plugin.session.turn.ended` there may start the next turn. Storage
+ * failures are `StorageError`s, and a turn whose end cannot be stored stays
+ * open, as the journal says it is.
  * `sessionsConformance` is the contract as runnable checks.
  */
 export class Sessions extends Context.Service<Sessions, {

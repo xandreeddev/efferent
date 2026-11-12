@@ -42,11 +42,14 @@ export type PluginStage = typeof PluginStage.Type
  *   through others, what `plugin` provides.
  * - `LaterContract`: `plugin` needs `contract`, which exists only after
  *   `plugin` is built.
+ * - `ListedTwice`: `plugin` is in the list twice, the same plugin and not
+ *   two of a kind. `contract` is the one it provides, or empty when it
+ *   provides none.
  *
  * @public
  */
 export class PluginRefused extends Schema.TaggedError<PluginRefused>()("PluginRefused", {
-  reason: Schema.Literals(["MissingProvider", "DuplicateProvider", "Cycle", "LaterContract"]),
+  reason: Schema.Literals(["MissingProvider", "DuplicateProvider", "Cycle", "LaterContract", "ListedTwice"]),
   plugin: PluginName,
   contract: Schema.String,
   message: Schema.String,

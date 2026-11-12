@@ -39,22 +39,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `Agent.define` and `agent.with` read the declarations before they build
     anything: they build each plugin after the ones that provide what it
     requires, whatever order the host lists them in, and refuse a set with
-    a missing provider, two providers of one contract, a circle, or a
-    shared part that requires a rebuilt one (`PluginRefused`, which names
-    the plugin and the contract). `planPlugins` is that check as a pure
-    function.
+    a missing provider, two providers of one contract, a circle, the same
+    plugin listed twice, or a shared part that requires a rebuilt one
+    (`PluginRefused`, which names the plugin and the contract).
+    `planPlugins` is that check as a pure function. A plugin is handed the
+    contracts it declared and nothing else: a service the host has around
+    `Agent.define` does not reach it.
   - A request is stored as pointers into the journal, never as copies, so
     each message's text is stored once; `agent.inspect` resolves every
     stored request back into what the model was sent.
   - `agent.with({ memory })` (also `model`, `system`, `loop`, `plugins`)
-    replaces an agent by one over the same events, storage and sessions.
-    The successor is built first and the two switch in one step: a turn
-    the old handle is running finishes on its own parts, and a `with` that
-    fails or is interrupted changes nothing.
+    replaces an agent by one over the same events, storage and sessions,
+    once the agent is idle. It refuses a `send` on the old handle from the
+    moment it is called (`Replacing`), waits for the turns that handle is
+    running and for its listeners to have handled what was published (at
+    most `idleWait`, 5 seconds), then builds the successor, closes the old
+    parts and switches. No event reaches the listeners of both agents, the
+    old ones lose none of their last turn, and a `with` that fails or is
+    interrupted leaves the handle usable as before.
   - One session's events reach listeners in journal order. A session is
     busy until its turn's end was announced, for at most `closeWait` (5
-    seconds) after it was stored. Every turn begins from what the journal
-    holds, so two session plugins over one store take turns on a session.
+    seconds) after it was stored, and is free by the time the end reaches
+    a background listener or `agent.events`. Every turn begins from what
+    the journal holds, so two session plugins over one store take turns on
+    a session. Session ids are version 4 UUIDs from the platform's
+    cryptographic random source.
+  - A limit on a wait for a listener holds whatever the listener does: a
+    listener that cannot be interrupted does not keep `send` from
+    returning, a session busy or an agent from being replaced. It is
+    reported as `core.listener.failed`.
   - `scriptedModel(script)` is a model that follows a script and calls no
     provider: what a host hands the loop kit, and what a test runs an
     agent on.

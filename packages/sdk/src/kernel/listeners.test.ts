@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
+import { Deferred, Effect, Fiber, Queue, Ref, Schema, Stream } from "effect"
 import { Core, definePlugin, listenerFailedEvent, requestSentEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Plugin } from "@xandreed/core/kernel"
 import { Agent, inMemoryStorage, sessions, windowMemory } from "./index.js"
@@ -153,6 +153,42 @@ describe("a listener on the turn's end", () => {
     expect(result.names).toEqual([...FIVE, ...FIVE])
   })
 
+  test("that cannot be interrupted is cut short after closeWait all the same: send returns, the session takes the next turn, and it is reported", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const deaf = definePlugin({ name: "deaf", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.uninterruptible(Effect.never), { wait: true })) })
+      const kernel = yield* agentWith(deaf, { closeWait: "20 millis" })
+      const reply = yield* kernel.agent.send(kernel.session, "Hello")
+      const again = yield* kernel.agent.send(kernel.session, "Again")
+      return { reply, again, reports: [yield* kernel.report, yield* kernel.report], names: yield* kernel.names }
+      // Two seconds for the whole of it: code that waits on the listener fails here, and does not hang the run.
+    })).pipe(Effect.timeout("2 seconds")))
+    expect(result.reply).toEqual({ text: "Hi." })
+    expect(result.again).toEqual({ text: "Hi." })
+    expect(result.reports).toEqual([
+      { listener: "deaf", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
+      { listener: "deaf", event: "plugin.session.turn.ended", reason: "interrupted before it finished" },
+    ])
+    expect(result.names).toEqual([...FIVE, ...FIVE])
+  })
+
+  test("in the background that cannot be interrupted does not hold the agent's replacement past its limit, nor the close of the agent", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      const reports = yield* Queue.unbounded<unknown>()
+      const reporter = definePlugin({ name: "reports", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
+      const deaf = definePlugin({ name: "deaf", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.uninterruptible(Effect.never))) })
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [reporter, deaf], core: { idleWait: "20 millis" } })
+      const session = yield* agent.createSession({ owner: "learner" })
+      yield* agent.send(session, "Hello")
+      // The wait for the listeners gives up at its limit, and closing the old parts does not wait for the listener either.
+      const next = yield* agent.with({ plugins: [] })
+      return { report: yield* Queue.take(reports), reply: yield* next.send(session, "Again") }
+      // The scope of the whole agent closes as this returns.
+    })).pipe(Effect.timeout("2 seconds")))
+    expect(result.report).toEqual({ listener: "deaf", event: "plugin.session.turn.ended", reason: "still running when the wait for the listeners ended" })
+    expect(result.reply).toEqual({ text: "Hi." })
+  })
+
   test("holds the session, not an interrupted caller: the next turn waits for the end to be announced, so events arrive in journal order", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
@@ -166,6 +202,8 @@ describe("a listener on the turn's end", () => {
           count === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void), { wait: true })),
       })
       const kernel = yield* agentWith(slow, { closeWait: "1 minute" })
+      // The first turn's end as the host's stream hands it over: the session is free by then.
+      const handedOver = yield* Effect.forkScoped(Stream.runHead(Stream.filter(kernel.agent.events, (event) => event.name === turnEndedEvent.name)), { startImmediately: true })
       const first = yield* Effect.forkChild(kernel.agent.send(kernel.session, "Hello"))
       yield* Deferred.await(entered)
       // The end is stored and being announced: the journal says the turn is over, and the session is still busy.
@@ -175,8 +213,9 @@ describe("a listener on the turn's end", () => {
       yield* Fiber.interrupt(first)
       const stillBusy = yield* Effect.flip(kernel.agent.send(kernel.session, "Still too soon"))
       yield* Deferred.succeed(go, undefined)
-      // Once the listener is done the session is free: the retry below is refused only while that is being wound up.
-      const again = yield* kernel.agent.send(kernel.session, "Again").pipe(Effect.retry({ times: 1000, while: (error) => error._tag === "SessionRefused" }))
+      // Once the listener is done the end goes to the stream, and the session is free in the same step: no retry.
+      yield* Fiber.join(handedOver)
+      const again = yield* kernel.agent.send(kernel.session, "Again")
       return { stored, refused, stillBusy, again, names: yield* kernel.names, announced: yield* kernel.announced }
     })))
     expect(result.stored).toEqual({ _tag: "Free", turns: 1 })

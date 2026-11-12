@@ -1,4 +1,4 @@
-import { Deferred, Effect, Fiber, Option, Ref, Schema } from "effect"
+import { Deferred, Effect, Fiber, Option, Ref, Schema, Stream } from "effect"
 import type { Context, Scope } from "effect"
 import { expect, refuses, show, unexpected } from "./conformance.entity.functions.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
@@ -49,7 +49,8 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * a turn of one session does not hold another (`isolated`);
  * a body that fails still closes the turn, with the failure as its outcome
  * and the caller's own error, and the next turn runs (`closes`); so does a
- * body that is interrupted (`interrupt`); a waiting listener that fails on
+ * body that is interrupted, whose session is free once the end of its turn
+ * reached the stream (`interrupt`); a waiting listener that fails on
  * an appended event fails the append after the event is stored, and the
  * turn closes (`listener`); a listener that fails on the turn's end fails
  * nothing, leaves the session free and is reported as
@@ -80,9 +81,16 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     })).pipe(unexpected(id)),
   })
   const names = (events: ReadonlyArray<{ readonly name: string }>) => events.map((event) => event.name)
-  /** Run a turn once the session is free: after an interrupt the end of the turn before is still being announced. */
-  const onceFree = <A, E extends { readonly _tag: string }>(turn: Effect.Effect<A, E>, tries = 600): Effect.Effect<A, E> =>
-    Effect.catchIf(turn, (error) => error._tag === "SessionRefused" && tries > 0, () => Effect.andThen(Effect.sleep("10 millis"), Effect.suspend(() => onceFree(turn, tries - 1))))
+  /**
+   * The next end of a turn as the stream hands it over, read from now. A
+   * session is free by the time its end is there, so this is what to wait
+   * for before the turn after one whose caller did not wait. A careless
+   * subject may never hand it over: none after two seconds.
+   */
+  const endOnStream = (core: CoreShape) => Effect.map(
+    Effect.forkScoped(Stream.runHead(Stream.filter(core.events, (event) => event.name === ENDED)), { startImmediately: true }),
+    (reader) => Effect.timeoutOption(Fiber.join(reader), "2 seconds"),
+  )
   /** Wait for a signal a careless subject may never give: none after two seconds. */
   const within = <A>(signal: Deferred.Deferred<A>) => Effect.timeoutOption(Deferred.await(signal), "2 seconds")
   const outcomeOf = (event: Option.Option<{ readonly name: KernelEvent["name"]; readonly data: Schema.Json }>) =>
@@ -161,16 +169,19 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
       yield* expect("closes", next === 2, `the turn after a failed one was ${next}`)
     })),
-    check("a body that is interrupted still closes the turn, and the next turn runs", "interrupt", ({ sessions }) => Effect.gen(function* () {
+    check("a body that is interrupted still closes the turn, and the next turn runs once its end reached the stream", "interrupt", ({ core, sessions }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
       const running = yield* Deferred.make<void>()
+      const handedOver = yield* endOnStream(core)
       const fiber = yield* Effect.forkChild(sessions.turn(id, () => Effect.andThen(Deferred.succeed(running, undefined), Effect.never)))
       yield* Deferred.await(running)
       yield* Fiber.interrupt(fiber)
       const journal = yield* sessions.read(id)
       yield* expect("interrupt", show(names(journal.events)) === show([STARTED, ENDED]) && outcomeOf(Option.fromNullishOr(journal.events.at(-1))) === "Interrupted",
         `an interrupted turn left ${show(journal.events)}`)
-      const next = yield* onceFree(sessions.turn(id, (session) => Effect.succeed(session.turn)))
+      // The interrupted caller did not wait for the end to be announced. Once the stream has it, the session is free.
+      yield* handedOver
+      const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
       yield* expect("interrupt", next === 2, `the turn after an interrupted one was ${next}`)
     })),
     check("a waiting listener that fails on an appended event fails the append, and the turn closes", "listener", ({ core, sessions }) => Effect.gen(function* () {

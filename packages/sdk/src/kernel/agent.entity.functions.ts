@@ -53,27 +53,48 @@ export const planAgent = <P extends PluginNode>(parts: {
 }
 
 const replaced = () => new AgentRefused({ reason: "Replaced", message: "this agent was replaced by `with`; send to the agent it returned" })
+const replacing = () => new AgentRefused({ reason: "Replacing", message: "this agent is being replaced by `with`; send to the agent it returns, or to this one again if it is given up" })
 
-/** A turn starts on the handle: one more running, or refused once replaced. */
+/** A turn starts on the handle: one more running. Refused while the handle is being replaced, and once it was. */
 export const admitTurn = (phase: AgentPhase): Result.Result<AgentPhase, AgentRefused> =>
   Match.valueTags(phase, {
     Live: ({ running }): Result.Result<AgentPhase, AgentRefused> => Result.succeed({ _tag: "Live", running: running + 1 }),
+    Replacing: () => Result.fail(replacing()),
     Replaced: () => Result.fail(replaced()),
   })
 
 /** A turn of the handle ended: one fewer running. */
-export const leaveTurn = (phase: AgentPhase): AgentPhase => ({ ...phase, running: Math.max(0, phase.running - 1) })
-
-/** The handle is replaced: it keeps the turns it runs and takes no more. A handle replaced before refuses. */
-export const replaceAgent = (phase: AgentPhase): Result.Result<AgentPhase, AgentRefused> =>
+export const leaveTurn = (phase: AgentPhase): AgentPhase =>
   Match.valueTags(phase, {
-    Live: ({ running }): Result.Result<AgentPhase, AgentRefused> => Result.succeed({ _tag: "Replaced", running }),
+    Live: ({ running }): AgentPhase => ({ _tag: "Live", running: Math.max(0, running - 1) }),
+    Replacing: ({ running }): AgentPhase => ({ _tag: "Replacing", running: Math.max(0, running - 1) }),
+    Replaced: (same): AgentPhase => same,
+  })
+
+/** `with` starts to replace the handle: it keeps the turns it runs and takes no more. One `with` at a time, and none once replaced. */
+export const beginReplace = (phase: AgentPhase): Result.Result<AgentPhase, AgentRefused> =>
+  Match.valueTags(phase, {
+    Live: ({ running }): Result.Result<AgentPhase, AgentRefused> => Result.succeed({ _tag: "Replacing", running }),
+    Replacing: () => Result.fail(replacing()),
     Replaced: () => Result.fail(replaced()),
   })
 
-/** Whether a replaced handle has finished its last turn, so its parts can close. */
-export const isDrained = (phase: AgentPhase): boolean => phase._tag === "Replaced" && phase.running === 0
+/** `with` gave up before the switch: the handle is the agent again, as if it had not been called. */
+export const cancelReplace = (phase: AgentPhase): AgentPhase =>
+  Match.valueTags(phase, {
+    Live: (same): AgentPhase => same,
+    Replacing: ({ running }): AgentPhase => ({ _tag: "Live", running }),
+    Replaced: (same): AgentPhase => same,
+  })
 
-/** A handle that is still the agent passes; one that was replaced refuses. */
-export const stillLive = (phase: AgentPhase): Result.Result<AgentPhase, AgentRefused> =>
-  phase._tag === "Live" ? Result.succeed(phase) : Result.fail(replaced())
+/** The switch: a handle that was being replaced is replaced. */
+export const finishReplace = (phase: AgentPhase): AgentPhase =>
+  Match.valueTags(phase, {
+    Live: (same): AgentPhase => same,
+    Replacing: (): AgentPhase => ({ _tag: "Replaced" }),
+    Replaced: (same): AgentPhase => same,
+  })
+
+/** Whether the handle runs no turn. */
+export const isIdle = (phase: AgentPhase): boolean =>
+  Match.valueTags(phase, { Live: ({ running }) => running === 0, Replacing: ({ running }) => running === 0, Replaced: () => true })

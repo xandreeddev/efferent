@@ -215,6 +215,19 @@ The session plugin publishes a stored event after it stored it, so a
 listener never hears of a fact the journal does not hold. A listener whose
 plugin was closed while a publish was under way is passed over.
 
+A publisher waits for its listeners for as long as it is not interrupted
+itself. When it is, by its caller or by a limit put on the publish, it
+returns at once, whether or not the listener can be interrupted: the
+listener runs on a fiber of its own, is reported as `core.listener.failed`
+and is interrupted behind the publisher. The close of a plugin does not
+wait for a call of its listeners that is under way either. So a limit on a
+wait for a listener holds whatever the listener does.
+
+A publisher may put a step of its own between the two halves
+(`publish(event, { beforeHandOver })`): it runs after the listeners that
+are waited for and before the event is handed to the background. The
+session plugin frees a session there.
+
 Background delivery is bounded and sliding: a listener or a host that reads
 slower than events arrive loses the oldest ones it has not read. The
 journal is what is complete. The capacity is `core: { capacity }` in the
@@ -233,15 +246,21 @@ writes to the journal through its contract, inside a turn.
 
 The end of a turn is the one publish whose listeners cannot fail the
 publisher. The session plugin stores `plugin.session.turn.ended`, announces
-it on a fiber of its own, and frees the session only when the announcement
-is done. So the events of one session reach listeners and the host's stream
-in journal order: a turn's end is never heard after the next turn's start.
+it on a fiber of its own, and frees the session when the listeners the
+announcement waits for are done, just before the end is handed to the
+background listeners and the stream. So the events of one session reach
+listeners and the host's stream in journal order: a turn's end is never
+heard after the next turn's start. And a host, or a background listener,
+that hears of `plugin.session.turn.ended` may start the next turn: the
+session is free by then.
+
 A listener that fails there does not fail the caller, and one that has not
 returned after `closeWait` (5 seconds unless the session plugin is given
-another) is cut short; either is reported as `core.listener.failed`. Until
-the announcement is done or cut short the session is busy, and a `send` for
-it is refused with `SessionBusy`: for at most `closeWait` after the end was
-stored. A caller that is interrupted does not wait for those listeners.
+another) is cut short, whether or not it can be interrupted; either is
+reported as `core.listener.failed`. Until the listeners are done or cut
+short the session is busy, and a `send` for it is refused with
+`SessionBusy`: for at most `closeWait` after the end was stored. A caller
+that is interrupted does not wait for those listeners.
 
 A host follows events by running the stream. The stream has no replay, so
 the host starts reading before the turn it wants to see:
@@ -406,20 +425,39 @@ const next = yield* agent.with({ memory: goldfish() })
 const later = yield* next.send(session, "And now?")
 ```
 
-`with` takes `model`, `system`, `memory`, `loop` and `plugins`. It builds
+`with` takes `model`, `system`, `memory`, `loop` and `plugins`, and builds
 the settings, the model, memory, the loop and the extra plugins again,
-because the loop holds the memory and the model it was built with. Then the
-two agents switch in one step: the old handle refuses `send` from then on
-(`AgentRefused`, reason `Replaced`) and the new one takes turns at once.
+because the loop holds the memory and the model it was built with. A change
+given as `undefined` is no change. It replaces an agent when the agent is
+idle, in four steps.
 
-- `with` does not wait for a turn the old handle is running. That turn
-  finishes on the old parts, which are closed after it, their listeners
-  removed. While it runs, the extra plugins of both agents hear its events.
-- Until the switch the old handle is fully usable. If `with` fails, with
-  the error of a plugin that could not be built, or is interrupted, what
-  was built is released and nothing has changed.
-- Called from inside a turn of the handle it would replace, in a waiting
-  listener for instance, `with` is refused at once with reason `InsideTurn`.
+1. It marks the handle as being replaced. From then on a `send` on it, and
+   a second `with`, are refused (`AgentRefused`, reason `Replacing`).
+   Called from inside a turn of the handle it would replace, in a waiting
+   listener for instance, `with` is refused at once with reason
+   `InsideTurn`.
+2. It waits for the turns the handle is running to finish, and then for
+   every listener to have handled what was published: no publish under
+   way, the background listeners caught up, the events they published in
+   turn included. That second wait is bounded (`core: { idleWait }` in the
+   agent's config, 5 seconds when left out); a listener still running at
+   the limit is reported as `core.listener.failed` and waited for no
+   longer.
+3. Only then, with nothing running, it builds the successor's parts, closes
+   the old ones, their listeners removed, and switches: the old handle
+   refuses from then on with reason `Replaced`, and `with` returns the
+   agent that takes over. No event of a turn reaches the listeners of both
+   agents, and the old ones lose none of their last turn.
+4. If `with` fails, because what the changed plugins declare does not fit
+   or a plugin cannot be built, or is interrupted at any point before the
+   switch, what was built is released and the handle is usable again, as
+   if `with` had not been called.
+
+Three limits. A listener that is cut at the bound of step 2 does lose what
+it had not handled. An event a plugin of the successor publishes while it
+is being built, before any turn, is heard by the old agent's listeners too.
+And `with` is the host's to call: a background listener of the agent that
+calls it waits for itself until the bound.
 
 Storage and sessions are not `with`'s to change. Nothing is loaded or
 unloaded inside a live agent.
@@ -567,6 +605,11 @@ and acquire what its scope releases. Neither is a `Context.Reference`,
 which has a default. A contract that is declared and never used compiles,
 since the list says what `make` may use.
 
+Write the list in place, as above. The compiler checks `make` against the
+list's own type, so a list built somewhere else and typed loosely, as an
+array of any contracts, checks nothing: a `make` that uses a contract such
+a list lacks compiles, and dies when the agent is defined.
+
 **When the agent is defined.** `Agent.define` reads every plugin's
 `requires` and `provides` before it builds anything, and refuses the set
 with `PluginRefused`, which names the plugin and the contract, when
@@ -580,7 +623,9 @@ with `PluginRefused`, which names the plugin and the contract, when
 - plugins require each other in a circle (`Cycle`);
 - storage or sessions requires a part that `with` builds again: the
   settings, the model, memory, the loop or an extra plugin's contract
-  (`LaterContract`).
+  (`LaterContract`);
+- the same plugin is in the list twice (`ListedTwice`). Two plugins of one
+  kind, each made by its own call, are two plugins.
 
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#refused -->
 
@@ -608,15 +653,17 @@ they are listed. So a plugin is always built after the plugins that provide
 what it requires, wherever the host lists them, plugins that are not moved
 for one another are built in the order listed, and the order a plugin
 writes its `requires` in changes nothing. Listeners register as plugins are
-built, and the
-listeners a publisher waits for run in the order they registered: the order
+built, and the listeners a publisher waits for run in the order they
+registered: the order
 of `plugins` is the order the extras hear an event in, but for a provider
 that was built ahead of its consumer.
 
 The check and the order are one pure function over plain data
 (`planPlugins`: each plugin's name, the keys it requires, the key it
 provides). Underneath, a plugin is still an Effect layer, built by Effect in
-the agent's scope and handed the contracts it declared and no others. The
+the agent's scope and handed the contracts it declared and no others: a
+service the host has around `Agent.define` does not reach a plugin, only
+Effect's own settings do (the clock, the tracer, the logger). The
 `sessions` and `loop` slots take the stock plugins when a config leaves them
 out; that is the config's default, and the check adds nothing to it.
 
@@ -672,5 +719,6 @@ One idea was not adopted: a runtime that loads and unloads plugins inside a
 live process. A plugin here is an Effect layer, and what the kernel puts in
 front of the layers is one pure check of what they declare, made when an
 agent is defined. There is no separate plugin runtime, and replacing a part
-is `agent.with(...)`: a new agent over the same storage and sessions,
-effective from the next turn.
+is `agent.with(...)`: a new agent over the same storage and sessions, which
+takes over once the old one is idle and its listeners have heard everything
+it published.

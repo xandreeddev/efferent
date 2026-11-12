@@ -1,5 +1,6 @@
 class ConformanceFailure
 class Core
+class CoreIdle
 class ListenerFailed
 class Loop
 class Memory
@@ -114,6 +115,7 @@ interface OpenSession
 interface Plugin
 interface PluginFailure
 interface PluginOf
+interface PublishOptions
 interface SessionsSubject
 interface StorageSubject
 interface StoredDefinition

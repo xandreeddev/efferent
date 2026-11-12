@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Ref } from "effect"
+import { Cause, Context, Effect, Option, Ref, References } from "effect"
+import type { Contracts } from "@xandreed/core/kernel"
 import { LanguageModel } from "effect/ai"
-import { Core, CurrentPlugin, definePlugin, Loop, Memory, Sessions, Settings, Storage, userMessageEvent } from "@xandreed/core/kernel"
+import { Core, CoreIdle, CurrentPlugin, definePlugin, Loop, Memory, Sessions, Settings, Storage, userMessageEvent } from "@xandreed/core/kernel"
 import type { PluginOf } from "@xandreed/core/kernel"
 import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "./index.js"
 import { Glossary, Summaries } from "./testing.port.js"
@@ -157,6 +158,45 @@ describe("plugins that declare what they need", () => {
     expect(result.made).toBe(1)
   })
 
+  test("a service the host has around `define` does not reach a plugin that did not declare it; the fiber's settings do", async () => {
+    const result = await run(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const curious = definePlugin({
+        name: "curious",
+        requires: [],
+        make: Effect.gen(function* () {
+          // Asked for by a way the compiler does not see.
+          const service = yield* Effect.serviceOption(Summaries)
+          const contract = yield* Effect.serviceOption(Core)
+          yield* Ref.set(seen, [`the host's service: ${Option.isSome(service)}`, `a contract not declared: ${Option.isSome(contract)}`, `the log level: ${yield* References.MinimumLogLevel}`])
+        }),
+      })
+      // The host runs `define` with a service of its own around it, and a setting of Effect's that it changed.
+      yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [curious] }).pipe(
+        Effect.provideService(Summaries, Summaries.of({ of: () => Effect.succeed("the host's") })),
+        Effect.provideService(References.MinimumLogLevel, "Error"),
+      )
+      return yield* Ref.get(seen)
+    })))
+    expect(result).toEqual(["the host's service: false", "a contract not declared: false", "the log level: Error"])
+  })
+
+  test("the wait the wiring replaces an agent with is not a plugin's: it cannot be required, and is not found", async () => {
+    const result = await run(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      const found = yield* Ref.make("not asked")
+      const config = { model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) }
+      const requiring = definePlugin({ name: "requiring", requires: [CoreIdle], make: Effect.asVoid(CoreIdle) })
+      const refused = yield* Effect.flip(Agent.define({ ...config, plugins: [requiring] }))
+      const looking = definePlugin({ name: "looking", requires: [Core], make: Effect.flatMap(Effect.serviceOption(CoreIdle), (idle) => Ref.set(found, Option.isSome(idle) ? "found" : "not there")) })
+      yield* Agent.define({ ...config, plugins: [looking] })
+      return { refused, found: yield* Ref.get(found) }
+    })))
+    expect(result.refused).toMatchObject({ _tag: "PluginRefused", reason: "MissingProvider", plugin: "requiring", contract: CoreIdle.key })
+    expect(result.found).toBe("not there")
+  })
+
   test("what a plugin declared is kept as keys, in the order written; a Reference, which has a default, declares nothing", () => {
     expect(stepLoop().requires).toEqual([Core.key, Sessions.key, Memory.key, LanguageModel.LanguageModel.key, Settings.key])
     expect(stepLoop().provides).toBe(Loop.key)
@@ -175,8 +215,25 @@ describe("plugins that declare what they need", () => {
     const providingUndeclared = () => definePlugin({ name: "providing", requires: [], provides: Summaries, make: Effect.map(Sessions, () => Summaries.of({ of: () => Effect.succeed("") })) })
     // The scope is not declared: a plugin that needs nothing may still acquire and register.
     const scoped = () => definePlugin({ name: "scoped", requires: [], make: Effect.addFinalizer(() => Effect.void) })
+    // The documented limit: the check reads the list's own type, so a list typed loosely checks nothing. This compiles,
+    // though `Summaries` is not in the list; the next test shows what becomes of it when an agent is defined.
+    const loosely: Contracts = [Core]
+    const unchecked = () => definePlugin({ name: "unchecked", requires: loosely, make: Effect.gen(function* () { yield* Core; yield* Summaries }) })
     // Nothing runs here: the claims are the compiler's, held by the two directives above.
-    expect([declared, undeclared, providing, providingUndeclared, scoped]).toHaveLength(5)
+    expect([declared, undeclared, providing, providingUndeclared, scoped, unchecked]).toHaveLength(6)
+  })
+
+  test("a list of contracts typed loosely is not checked by the compiler: a make that uses one the list lacks dies when the agent is defined", async () => {
+    const exit = await run(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Hi.")
+      const loosely: Contracts = [Core]
+      const unchecked = definePlugin({ name: "unchecked", requires: loosely, make: Effect.gen(function* () { yield* Core; yield* Summaries }) })
+      return yield* Effect.exit(Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [unchecked, summaries(yield* Ref.make<ReadonlyArray<string>>([]))] }))
+    })))
+    // No typed failure names it: the plugin declared `Core` alone, was handed `Core` alone, and asked for more.
+    const died = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "defined"
+    expect(died).toContain(Summaries.key)
+    expect(died).not.toContain("PluginRefused")
   })
 })
 
@@ -223,6 +280,18 @@ describe("a set of plugins that does not fit is refused when the agent is define
     const shared = await defined(() => ({ storage: { ...inMemoryStorage(), provides: Settings.key } }))
     expect(shared.refusal).toMatchObject({ reason: "DuplicateProvider", plugin: "storage", contract: Settings.key })
     expect([...slot.log, ...given.log, ...shared.log]).toEqual([])
+  })
+
+  test("the same plugin listed twice is refused, and named: it would be built once, whatever the list says", async () => {
+    const result = await defined((log) => {
+      const once = witness(log, "once")
+      return { plugins: [once, reader(log), summaries(log), once] }
+    })
+    expect(result.refusal).toMatchObject({ _tag: "PluginRefused", reason: "ListedTwice", plugin: "once", contract: "", message: "plugin once is listed twice: list it once" })
+    expect(result.log).toEqual([])
+    // Two plugins of one kind are two plugins.
+    const twoOfAKind = await defined((log) => ({ plugins: [witness(log, "again"), witness(log, "again")] }))
+    expect(twoOfAKind.refusal).toBe("defined")
   })
 
   test("a slot whose plugin does not provide the slot's contract leaves the agent without it: refused in the host's name", async () => {

@@ -52,5 +52,5 @@ test("the same check catches an entry that imports one: the kernel's entry besid
 
 test("a runtime module is told by any of its names", () => {
   expect(["node:fs", "fs", "fs/promises", "node:fs/promises", "path", "bun:sqlite", "bun", "child_process"].map(isRuntimeModule)).toEqual([true, true, true, true, true, true, true, true])
-  expect(["effect", "effect/ai", "./index.js", "@xandreed/core/kernel", "pathe", "buffer-like"].map(isRuntimeModule)).toEqual([false, false, false, false, false, false])
+  expect(["effect", "effect/ai", "./index.js", "@xandreed/core/kernel", "pathways-of-ours", "buffers-of-ours"].map(isRuntimeModule)).toEqual([false, false, false, false, false, false])
 })

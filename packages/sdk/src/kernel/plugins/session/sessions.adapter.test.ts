@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Random, Ref, Schema } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
-import { Core, CoreLive, Owner, Sessions, Storage, StorageError, stored, storedEvent } from "@xandreed/core/kernel"
+import { Core, CoreLive, Owner, SessionId, Sessions, Storage, StorageError, stored, storedEvent } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inMemoryStorage } from "../storage-memory/storage.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -130,16 +130,26 @@ describe("two session plugins over one store", () => {
 })
 
 describe("a session's id", () => {
-  test("is a version 4 UUID minted from Effect's Random: a seeded run mints the same ids, and no secure context is asked for", async () => {
-    const mint = (seed: string) => run(Effect.gen(function* () {
+  test("is a version 4 UUID from the platform's random source, a new one each time", async () => {
+    const ids = await run(Effect.gen(function* () {
       const { plugins: [turns] } = yield* over(1)
       if (turns === undefined) return yield* Effect.die("no session plugin")
-      return [yield* turns.create({ owner }), yield* turns.create({ owner })].map(String)
-    }).pipe(Random.withSeed(seed)))
-    const [first, again, other] = [await mint("a seed"), await mint("a seed"), await mint("another seed")]
-    expect(first).toEqual(again)
-    expect(first).not.toEqual(other)
-    expect(new Set(first).size).toBe(2)
-    for (const id of [...first, ...other]) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+      return (yield* Effect.forEach(Array.from({ length: 8 }), () => turns.create({ owner }), { concurrency: 1 })).map(String)
+    }))
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(new Set(ids).size).toBe(8)
+  })
+
+  test("is the one the plugin was told to mint, when it was told how", async () => {
+    const result = await run(Effect.gen(function* () {
+      const minted = yield* Ref.make(0)
+      const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`session-${count}`))
+      const below = yield* Layer.build(Layer.provideMerge(sessions({ mintId }).layer, Layer.provideMerge(inMemoryStorage().layer, CoreLive())))
+      const turns = Context.get(below, Sessions)
+      const ids = [yield* turns.create({ owner }), yield* turns.create({ owner })]
+      return { ids: ids.map(String), turn: yield* turns.turn(SessionId.make("session-2"), (session) => Effect.succeed(Number(session.turn))) }
+    }))
+    expect(result.ids).toEqual(["session-1", "session-2"])
+    expect(result.turn).toBe(1)
   })
 })

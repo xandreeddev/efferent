@@ -8,6 +8,9 @@ import type { PluginNode } from "./plugin.entity.js"
 const plugin = (name: string, requires: ReadonlyArray<string> = [], provides?: string): PluginNode =>
   provides === undefined ? { name: PluginName.make(name), requires } : { name: PluginName.make(name), requires, provides }
 
+const once = plugin("once", [], "O")
+const twice = plugin("twice")
+
 /** The order planned, by name, or the refusal's reason, plugin and contract. */
 const planned = (plugins: ReadonlyArray<PluginNode>, given: ReadonlyArray<string> = [], later?: ReadonlyArray<string>) =>
   Result.match(planPlugins(later === undefined ? { plugins, given } : { plugins, given, later }), {
@@ -43,6 +46,11 @@ describe("planning plugins from what they declare", () => {
     expect(planned([b, a, c])).toEqual(planned([b, a, c]))
   })
 
+  test("two plugins of one name are two plugins: only the very same one listed twice is refused", () => {
+    expect(planned([plugin("counter"), plugin("counter")])).toEqual(["counter", "counter"])
+    expect(planned([twice, plugin("twice")])).toEqual(["twice", "twice"])
+  })
+
   test("a set that does not fit is refused, naming the plugin and the contract", () => {
     const cases: ReadonlyArray<readonly [string, ReadonlyArray<PluginNode>, ReadonlyArray<string>, ReadonlyArray<string> | undefined, { readonly reason: string; readonly plugin: string; readonly contract: string }]> = [
       ["nothing provides what a plugin requires", [plugin("a"), plugin("c", ["P"])], [], undefined, { reason: "MissingProvider", plugin: "c", contract: "P" }],
@@ -54,6 +62,8 @@ describe("planning plugins from what they declare", () => {
       ["two plugins require each other", [plugin("a", ["B"], "A"), plugin("b", ["A"], "B")], [], undefined, { reason: "Cycle", plugin: "b", contract: "A" }],
       ["three in a circle, behind one that is not in it", [plugin("free"), plugin("a", ["B"], "A"), plugin("b", ["C"], "B"), plugin("c", ["A"], "C")], [], undefined, { reason: "Cycle", plugin: "c", contract: "A" }],
       ["a plugin requires what exists only later", [plugin("store", ["Settings"], "Storage")], ["Core"], ["Settings"], { reason: "LaterContract", plugin: "store", contract: "Settings" }],
+      ["the same provider listed twice is told before a second provider", [once, plugin("a"), once], [], undefined, { reason: "ListedTwice", plugin: "once", contract: "O" }],
+      ["the same listener listed twice", [plugin("a"), twice, twice], [], undefined, { reason: "ListedTwice", plugin: "twice", contract: "" }],
       ["later is told apart from missing", [plugin("store", ["Nothing"], "Storage")], ["Core"], ["Settings"], { reason: "MissingProvider", plugin: "store", contract: "Nothing" }],
     ]
     for (const [title, plugins, given, later, refusal] of cases) expect([title, planned(plugins, given, later)]).toEqual([title, refusal])
@@ -65,6 +75,7 @@ describe("planning plugins from what they declare", () => {
     expect(message([plugin("one", [], "app/Summaries"), plugin("two", [], "app/Summaries")])).toBe("plugins one and two both provide app/Summaries: list one of them")
     expect(message([plugin("a", ["B"], "A"), plugin("b", ["C"], "B"), plugin("c", ["A"], "C")])).toBe("plugin c requires A, whose provider needs c in turn: a → b → c → a")
     expect(message([plugin("self", ["S"], "S")])).toBe("plugin self requires S, whose provider needs self in turn: self → self")
+    expect(message([twice, twice])).toBe("plugin twice is listed twice: list it once")
   })
 
   test("no plugin is added: the order holds the plugins listed and no other", () => {

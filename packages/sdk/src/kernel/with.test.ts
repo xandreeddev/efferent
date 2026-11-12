@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Option, Predicate, Ref, Stream } from "effect"
-import { assistantMessageEvent, Core, definePlugin, estimateRequest, Memory, messageOf, requestSentEvent, Settings, Tokens, turnMessageOf, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, Core, definePlugin, estimateRequest, Memory, messageOf, requestSentEvent, Settings, Tokens, turnEndedEvent, turnMessageOf, userMessageEvent } from "@xandreed/core/kernel"
 import type { AgentHandle } from "./index.js"
-import { Agent, inMemoryStorage, windowMemory } from "./index.js"
+import { Agent, inMemoryStorage, sessions, windowMemory, windowPressureEvent } from "./index.js"
 import { answer, answering, scripted } from "./testing.js"
 
 const system = "You are a friendly tutor."
@@ -109,33 +109,177 @@ describe("agent.with", () => {
     expect(result.heard).toBe(2)
   })
 
-  test("switches at once while a turn is running: that turn finishes on its own parts, which close after it", async () => {
+  test("waits for the turn the agent is running: it returns only after that turn ended, and refuses a send and a second with meanwhile", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const model = yield* gated
-      const oldHeard = yield* Ref.make(0)
-      const newHeard = yield* Ref.make(0)
-      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [counting(oldHeard, "old-counter")] })
+      const order = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (line: string) => Ref.update(order, (all) => [...all, line])
+      const watch = definePlugin({ name: "watch", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => note("the turn ended"), { wait: true })) })
+      // No part of this agent listens in the background: while the model thinks nothing is under way but the turn itself.
+      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: forgetful(yield* Ref.make(0)), plugins: [watch] })
       const session = yield* agent.createSession({ owner: "learner" })
       const other = yield* agent.createSession({ owner: "learner" })
       const running = yield* Effect.forkChild(agent.send(session, "One"))
       yield* model.asked
-      // `with` does not wait for the running turn: it returns the successor while the model is still thinking.
-      const next = yield* agent.with({ plugins: [counting(newHeard, "new-counter")] })
-      const refused = yield* Effect.flip(agent.send(other, "Too late"))
+      // Started at once: it has marked the handle and is waiting for the turn.
+      const replacing = yield* Effect.forkChild(Effect.tap(agent.with({ plugins: [] }), () => note("replaced")), { startImmediately: true })
+      const refusedSend = yield* Effect.flip(agent.send(other, "Too soon"))
+      const refusedWith = yield* Effect.flip(agent.with({ system: "Other." }))
+      yield* note("the model is let go")
       yield* model.go
       const first = yield* Fiber.join(running)
-      const afterOldTurn = [yield* Ref.get(oldHeard), yield* Ref.get(newHeard)]
-      const second = yield* next.send(session, "Two")
-      return { refused, first, second, afterOldTurn, atEnd: [yield* Ref.get(oldHeard), yield* Ref.get(newHeard)], names: (yield* next.inspect(session)).events.map((event): string => event.name) }
+      const next = yield* Fiber.join(replacing)
+      const second = yield* next.send(other, "Two")
+      const late = yield* Effect.flip(agent.send(other, "Too late"))
+      return { refusedSend, refusedWith, first, second, late, order: yield* Ref.get(order) }
     })))
-    expect(result.refused).toMatchObject({ _tag: "AgentRefused", reason: "Replaced" })
+    expect(result.refusedSend).toMatchObject({ _tag: "AgentRefused", reason: "Replacing" })
+    expect(result.refusedWith).toMatchObject({ _tag: "AgentRefused", reason: "Replacing" })
     expect(result.first).toEqual({ text: "First." })
     expect(result.second).toEqual({ text: "Later." })
-    // The running turn's answer was heard by its own agent's listener, still there, and by the successor's.
-    expect(result.afterOldTurn).toEqual([1, 1])
-    // After it, the replaced agent's parts are closed: only the successor's listener hears the next answer.
-    expect(result.atEnd).toEqual([1, 2])
-    expect(result.names).toEqual([...FIVE, ...FIVE])
+    expect(result.late).toMatchObject({ _tag: "AgentRefused", reason: "Replaced" })
+    // `with` returned after the old turn's end, and the successor's turn was not heard by the old agent's listener.
+    expect(result.order).toEqual(["the model is let go", "the turn ended", "replaced"])
+  })
+
+  test("no event reaches the listeners of both agents: with a turn running on one session and the extras kept, a request of the successor on another is counted once and presses once", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const model = yield* gated
+      const requests = yield* Ref.make(0)
+      const pressures = yield* Ref.make(0)
+      // Kept by `with`: the same two plugins before and after, each built again for the successor.
+      const extras = [
+        definePlugin({ name: "requests", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(requestSentEvent, () => Ref.update(requests, (count) => count + 1), { wait: true })) }),
+        definePlugin({ name: "pressures", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(windowPressureEvent, () => Ref.update(pressures, (count) => count + 1), { wait: true })) }),
+      ]
+      // Every request presses: the window memory announces it from a background listener of its own.
+      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000, pressureAt: 0.001 }), plugins: extras })
+      const sessionA = yield* agent.createSession({ owner: "learner" })
+      const sessionB = yield* agent.createSession({ owner: "learner" })
+      const running = yield* Effect.forkChild(agent.send(sessionA, "One"))
+      yield* model.asked
+      const replacing = yield* Effect.forkChild(agent.with({ system: "Second." }), { startImmediately: true })
+      yield* model.go
+      yield* Fiber.join(running)
+      const next = yield* Fiber.join(replacing)
+      // Everything the first turn published was handled before the old listeners went: its request, and its pressure.
+      const afterOld = [yield* Ref.get(requests), yield* Ref.get(pressures)]
+      yield* next.send(sessionB, "Two")
+      // Replacing again waits until every listener has handled what that turn published.
+      yield* next.with({})
+      return { afterOld, atEnd: [yield* Ref.get(requests), yield* Ref.get(pressures)] }
+    })))
+    expect(result.afterOld).toEqual([1, 1])
+    expect(result.atEnd).toEqual([2, 2])
+  })
+
+  test("the agent's listeners hear every event of its last turn, the end included, before they are removed", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Fine.")
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      const go = yield* Deferred.make<void>()
+      // Background listeners that are held: each takes up its event and writes it down only when the test lets it.
+      const held = definePlugin({
+        name: "held",
+        requires: [Core],
+        make: Effect.gen(function* () {
+          const core = yield* Core
+          const note = (line: string) => Effect.andThen(Deferred.await(go), Ref.update(heard, (all) => [...all, line]))
+          yield* core.on(userMessageEvent, () => note("the message"))
+          yield* core.on(assistantMessageEvent, () => note("the answer"))
+          yield* core.on(turnEndedEvent, () => note("the end"))
+        }),
+      })
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [held] })
+      const session = yield* agent.createSession({ owner: "learner" })
+      yield* agent.send(session, "One")
+      // The turn is over and its listeners have written nothing. `with` is started, and only then are they let go.
+      const atReturn = yield* Ref.get(heard)
+      const replacing = yield* Effect.forkChild(agent.with({ plugins: [] }), { startImmediately: true })
+      yield* Deferred.succeed(go, undefined)
+      const next = yield* Fiber.join(replacing)
+      const atSwitch = yield* Ref.get(heard)
+      yield* next.send(session, "Two")
+      yield* next.with({})
+      return { atReturn, atSwitch, atEnd: yield* Ref.get(heard) }
+    })))
+    expect(result.atReturn).toEqual([])
+    expect(result.atSwitch).toEqual(["the message", "the answer", "the end"])
+    // They were removed with their agent: the successor's turn reached none of them.
+    expect(result.atEnd).toEqual(["the message", "the answer", "the end"])
+  })
+
+  test("after a send whose caller was interrupted, the end of its turn still reaches the agent's listeners, waited for and in the background, before they are removed", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* answering("Fine.")
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      const entered = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      const ends = definePlugin({
+        name: "ends",
+        requires: [Core],
+        make: Effect.gen(function* () {
+          const core = yield* Core
+          // The announcement of the end waits here; the hub, and so the background listener, has it only after.
+          yield* core.on(turnEndedEvent, () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(go)), Effect.andThen(Ref.update(heard, (all) => [...all, "waited for"]))), { wait: true })
+          yield* core.on(turnEndedEvent, () => Effect.andThen(Effect.sleep("10 millis"), Ref.update(heard, (all) => [...all, "in the background"])))
+        }),
+      })
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions({ closeWait: "1 minute" }), memory: windowMemory({ budgetTokens: 3000 }), plugins: [ends] })
+      const session = yield* agent.createSession({ owner: "learner" })
+      const sending = yield* Effect.forkChild(agent.send(session, "One"))
+      yield* Deferred.await(entered)
+      // The caller stops waiting: its turn has left the handle, and the end is still being announced.
+      yield* Fiber.interrupt(sending)
+      const replacing = yield* Effect.forkChild(agent.with({ plugins: [] }), { startImmediately: true })
+      yield* Deferred.succeed(go, undefined)
+      const next = yield* Fiber.join(replacing)
+      return { heard: yield* Ref.get(heard), reply: yield* next.send(session, "Two") }
+    })))
+    expect(result.heard).toEqual(["waited for", "in the background"])
+    expect(result.reply).toEqual({ text: "Fine." })
+  })
+
+  test("interrupted while it waits for a turn, it changes nothing: a send that was refused during the wait works again", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const model = yield* gated
+      const agent = yield* Agent.define({ model: model.model, system, storage: inMemoryStorage(), memory: forgetful(yield* Ref.make(0)) })
+      const session = yield* agent.createSession({ owner: "learner" })
+      const other = yield* agent.createSession({ owner: "learner" })
+      const running = yield* Effect.forkChild(agent.send(session, "One"))
+      yield* model.asked
+      const replacing = yield* Effect.forkChild(agent.with({ system: "Other." }), { startImmediately: true })
+      const during = yield* Effect.flip(agent.send(other, "Too soon"))
+      yield* Fiber.interrupt(replacing)
+      const after = yield* agent.send(other, "Now")
+      yield* model.go
+      const first = yield* Fiber.join(running)
+      // And it can be replaced after all.
+      const next = yield* agent.with({ system: "Other." })
+      return { during, after, first, later: yield* next.send(other, "Again"), systems: (yield* next.inspect(other)).requests.map((request) => request.system) }
+    })))
+    expect(result.during).toMatchObject({ _tag: "AgentRefused", reason: "Replacing" })
+    expect(result.after).toEqual({ text: "Later." })
+    expect(result.first).toEqual({ text: "First." })
+    expect(result.later).toEqual({ text: "Later." })
+    expect(result.systems).toEqual([system, "Other."])
+  })
+
+  test("a change given as undefined is no change", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model, received } = yield* answering("Fine.")
+      const heard = yield* Ref.make(0)
+      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }), plugins: [counting(heard)] })
+      const session = yield* agent.createSession({ owner: "learner" })
+      // What a caller without the types can write: every key there, none with a value.
+      const nothing: Record<string, undefined> = { model: undefined, system: undefined, memory: undefined, loop: undefined, plugins: undefined }
+      const next = yield* agent.with(nothing)
+      const reply = yield* next.send(session, "One")
+      return { reply, heard: yield* Ref.get(heard), received: yield* received }
+    })))
+    expect(result.reply).toEqual({ text: "Fine." })
+    expect(result.heard).toBe(1)
+    expect(result.received).toEqual([[{ role: "system", text: system }, { role: "user", text: "One" }]])
   })
 
   test("interrupted before the switch, it changes nothing: the agent works on, and what was built for the successor is released", async () => {
@@ -180,45 +324,6 @@ describe("agent.with", () => {
     })))
     expect(result.failed._tag).toBe("InvalidBudget")
     expect(result.reply).toEqual({ text: "Fine." })
-  })
-
-  test("called twice at once on one handle: the first to switch is the agent, the other is refused and what it built is released", async () => {
-    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const { model } = yield* answering("Fine.")
-      const built = yield* Deferred.make<void>()
-      const finish = yield* Deferred.make<void>()
-      const released = yield* Ref.make(false)
-      const lateHeard = yield* Ref.make(0)
-      const winnerHeard = yield* Ref.make(0)
-      // The plugin of the `with` that loses: it registers a listener, acquires something, and finishes building only when told.
-      const late = definePlugin({
-        name: "late",
-        requires: [Core],
-        make: Effect.gen(function* () {
-          const core = yield* Core
-          yield* core.on(assistantMessageEvent, () => Ref.update(lateHeard, (count) => count + 1), { wait: true })
-          yield* Effect.addFinalizer(() => Ref.set(released, true))
-          yield* Deferred.succeed(built, undefined)
-          yield* Deferred.await(finish)
-        }),
-      })
-      const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
-      const session = yield* agent.createSession({ owner: "learner" })
-      // Both pass the check that the handle is live, and both build. Each builds in this test's scope, which stays open.
-      const losing = yield* Effect.forkChild(Effect.result(agent.with({ plugins: [late] })))
-      yield* Deferred.await(built)
-      const winner = yield* agent.with({ plugins: [counting(winnerHeard, "winner")] })
-      yield* Deferred.succeed(finish, undefined)
-      const lost = yield* Fiber.join(losing)
-      const releasedAtOnce = yield* Ref.get(released)
-      const reply = yield* winner.send(session, "Hello")
-      return { lost, releasedAtOnce, reply, heard: [yield* Ref.get(lateHeard), yield* Ref.get(winnerHeard)] }
-    })))
-    expect(result.lost).toMatchObject({ _tag: "Failure", failure: { _tag: "AgentRefused", reason: "Replaced" } })
-    expect(result.releasedAtOnce).toBe(true)
-    expect(result.reply).toEqual({ text: "Fine." })
-    // The successor that lost is no agent: its listener is gone, and only the winner's heard the turn.
-    expect(result.heard).toEqual([0, 1])
   })
 
   test("called from inside a turn of the agent it would replace, it is refused at once and the turn goes on", async () => {

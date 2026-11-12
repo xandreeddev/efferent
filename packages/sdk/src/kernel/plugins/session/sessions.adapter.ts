@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Exit, Fiber, Option, Random, Ref } from "effect"
+import { Array as Arr, Effect, Exit, Fiber, Option, Ref } from "effect"
 import type { Duration } from "effect"
 import {
   announced,
@@ -32,6 +32,12 @@ export interface SessionsOptions {
    * listener still running is cut short. 5 seconds when left out.
    */
   readonly closeWait?: Duration.Input
+  /**
+   * How a new session's id is minted. A version 4 UUID from the platform's
+   * cryptographic random source when left out; a test supplies its own to
+   * have ids it can name.
+   */
+  readonly mintId?: Effect.Effect<SessionId>
 }
 
 /** A turn this process opened: where it is, the last place it wrote at, and whether it closed. */
@@ -50,14 +56,17 @@ interface Opened {
 
 const hex = (byte: number) => byte.toString(16).padStart(2, "0")
 
-/** A version 4 UUID from Effect's `Random`: no secure context is needed for it, and a seeded run mints the same ids. */
-const mintId = Effect.map(
-  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255), { concurrency: 1 }),
-  (bytes) => {
-    const text = bytes.map((byte, index) => hex(index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte)).join("")
-    return SessionId.make(`${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`)
-  },
-)
+/**
+ * A version 4 UUID from the platform's cryptographic random source. It is
+ * built from `crypto.getRandomValues`, which a browser offers in every
+ * context, where `crypto.randomUUID` asks for a secure one.
+ */
+const mintUuid = Effect.sync(() => {
+  const text = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((byte, index) => hex(index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte))
+    .join("")
+  return SessionId.make(`${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`)
+})
 
 const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "SessionBusy", message: `session ${id} is busy: ${why}` })
 
@@ -125,11 +134,20 @@ export const sessions = (options: SessionsOptions = {}) => definePlugin({
       }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? release(id) : Effect.void))   // a turn that did not open, for whatever reason, holds nothing
     })
 
-    /** Announce the end of a turn. No listener can fail it or hold it past `closeWait`: a failure, or a listener cut short, is `core.listener.failed`. */
-    const announceEnd = (ended: AnnouncedEvent) => core.publish(ended).pipe(
+    /**
+     * Announce the end of a turn, and free its session. No listener can
+     * fail it or hold it past `closeWait`, whether or not it can be
+     * interrupted: a failure, or a listener cut short, is
+     * `core.listener.failed`. The session is freed after the listeners the
+     * announcement waits for and before the end is handed to the background
+     * listeners and the host's stream, so whoever hears of the end there
+     * finds the session free.
+     */
+    const announceEnd = (id: SessionId, ended: AnnouncedEvent) => core.publish(ended, { beforeHandOver: release(id) }).pipe(
       Effect.catchTag("ListenerFailed", (failure) => core.publish(listenerFailed(ended, failure)).pipe(
         Effect.ignore({ log: "Warn", message: "the report of a failed listener could not be published" }),
       )),
+      Effect.ensuring(release(id)),                                   // whatever became of the announcement
       Effect.timeoutOption(options.closeWait ?? "5 seconds"),
     )
 
@@ -142,12 +160,12 @@ export const sessions = (options: SessionsOptions = {}) => definePlugin({
       )
       // Then announced, on a fiber of the plugin, and only then is the session free: its events reach listeners in
       // journal order. The caller waits for the listeners while it is not interrupted; the session, at most `closeWait`.
-      const delivery = yield* Effect.forkIn(Effect.ensuring(announceEnd(announced(open.turn, ended)), release(id)), scope, { startImmediately: true })
+      const delivery = yield* Effect.forkIn(announceEnd(id, announced(open.turn, ended)), scope, { startImmediately: true })
       yield* Effect.interruptible(Fiber.await(delivery))
     })
 
     return Sessions.of({
-      create: (input) => Effect.tap(mintId, (id) => storage.create(headerOf(id, input))),
+      create: (input) => Effect.tap(options.mintId ?? mintUuid, (id) => storage.create(headerOf(id, input))),
       read: (id) => storage.read(id),
       turn: (id, body) => Effect.acquireUseRelease(
         begin(id),                                                    // Free → TurnOpen, or refused; stores plugin.session.turn.started

@@ -9,8 +9,9 @@ const refused = (reason: PluginRefused["reason"], plugin: PluginNode, contract: 
  * The order to build a stage's plugins in, or the refusal of the stage,
  * decided from what the plugins declare and before any of them is built.
  *
- * Refused: a plugin that provides a contract another plugin listed before
- * it, or the wiring, provides already (`DuplicateProvider`); then, plugin
+ * Refused: a plugin that is in the list twice, the very same one
+ * (`ListedTwice`); a plugin that provides a contract another plugin listed
+ * before it, or the wiring, provides already (`DuplicateProvider`); then, plugin
  * by plugin in the listed order and contract by contract as declared, the
  * first contract that nothing provides, which is `LaterContract` when it
  * exists only later and `MissingProvider` otherwise; then plugins that
@@ -30,6 +31,8 @@ const refused = (reason: PluginRefused["reason"], plugin: PluginNode, contract: 
 export const planPlugins = <P extends PluginNode>(stage: Omit<PluginStage, "plugins"> & { readonly plugins: ReadonlyArray<P> }): Result.Result<ReadonlyArray<P>, PluginRefused> => {
   const given = new Set(stage.given)
   const later = new Set(stage.later ?? [])
+  const again = stage.plugins.find((plugin, index) => stage.plugins.indexOf(plugin) !== index)
+  if (again !== undefined) return refused("ListedTwice", again, again.provides ?? "", `plugin ${again.name} is listed twice: list it once`)
   const providers = new Map<string, P>()
   for (const plugin of stage.plugins) {
     if (plugin.provides === undefined) continue
