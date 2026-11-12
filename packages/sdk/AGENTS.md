@@ -78,8 +78,11 @@ it: `./kernel` is a `restricted` subpath.
   ticket is taken in the step that queues the message; a worker per
   session is started by the transition that queues onto an idle queue and
   stops in the one that finds nothing to take, so no message is left
-  without one. `enqueue` runs its transition and the start of the worker
-  it planned uninterruptibly, and publishes `plugin.inbox.queued` (live,
+  without one. The worker takes a message and puts its reply in the
+  turn's hands in one uninterruptible step, the turn itself interruptible,
+  so a close finds every reply either waiting or with a turn that settles
+  it. `enqueue` runs its transition and the start of the worker it planned
+  uninterruptibly, and publishes `plugin.inbox.queued` (live,
   about the session and no turn) between them, a failing waiting listener
   reported rather than failing the queueing. A failed turn fails its own
   reply; an interrupted wait for a reply does not cancel the turn; the

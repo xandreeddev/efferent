@@ -41,29 +41,39 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
     return [dropped.flatMap(({ session, ticket }) => Option.toArray(Option.fromNullishOr(now.replies.get(keyOf(session, ticket))))), { state, replies: new Map() }]
   }).pipe(Effect.flatMap((answers) => Effect.forEach(answers, (answer) => Deferred.fail(answer, closed()), { concurrency: 1, discard: true }))))
 
-  /** The worker of one session: it takes the next message, runs its turn, gives its reply, and stops when nothing waits. */
+  /**
+   * The worker of one session: it takes the next message, runs its turn,
+   * gives its reply, and stops when nothing waits. Taking a message and
+   * putting its reply in the turn's hands is one uninterruptible step, so
+   * the close of the scope finds every reply either still waiting, which
+   * the finalizer fails, or with a turn that settles it.
+   */
   const worker = (session: SessionId): Effect.Effect<void> => Effect.gen(function* () {
     while (true) {
-      const next = yield* Ref.modify(held, (now): readonly [Option.Option<{ readonly message: string; readonly answer: Option.Option<Answer> }>, Held] => {
-        const taken = take(now.state, session)
-        return Option.match(taken.next, {
-          onNone: () => [Option.none(), { ...now, state: taken.state }],
-          onSome: (pending) => [
-            Option.some({ message: pending.message, answer: Option.fromNullishOr(now.replies.get(keyOf(session, pending.ticket))) }),
-            { state: taken.state, replies: new Map(Array.from(now.replies).filter(([key]) => key !== keyOf(session, pending.ticket))) },
-          ],
+      const ran = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+        const next = yield* Ref.modify(held, (now): readonly [Option.Option<{ readonly message: string; readonly answer: Option.Option<Answer> }>, Held] => {
+          const taken = take(now.state, session)
+          return Option.match(taken.next, {
+            onNone: () => [Option.none(), { ...now, state: taken.state }],
+            onSome: (pending) => [
+              Option.some({ message: pending.message, answer: Option.fromNullishOr(now.replies.get(keyOf(session, pending.ticket))) }),
+              { state: taken.state, replies: new Map(Array.from(now.replies).filter(([key]) => key !== keyOf(session, pending.ticket))) },
+            ],
+          })
         })
-      })
-      if (Option.isNone(next)) return
-      const { message, answer } = next.value
-      // A failed turn fails its own reply, and the next message runs. A turn cut short by the scope's close fails its reply with `InboxClosed`.
-      yield* loop.run({ session, message }).pipe(
-        Effect.onExit((exit) => Option.match(answer, {
-          onNone: () => Effect.void,
-          onSome: (waiting) => Deferred.done(waiting, Exit.hasInterrupts(exit) ? Exit.fail(closed()) : exit),
-        })),
-        Effect.exit,
-      )
+        if (Option.isNone(next)) return false
+        const { message, answer } = next.value
+        // A failed turn fails its own reply, and the next message runs. A turn cut short by the scope's close fails its reply with `InboxClosed`.
+        yield* restore(loop.run({ session, message })).pipe(
+          Effect.onExit((exit) => Option.match(answer, {
+            onNone: () => Effect.void,
+            onSome: (waiting) => Deferred.done(waiting, Exit.hasInterrupts(exit) ? Exit.fail(closed()) : exit),
+          })),
+          Effect.exit,
+        )
+        return true
+      }))
+      if (!ran) return
     }
   })
 

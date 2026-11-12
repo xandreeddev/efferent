@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Scope, Stream } from "effect"
 import type { AiError, Response } from "effect/ai"
 import { Core, inspectionOf, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { KernelEvent } from "@xandreed/core/kernel"
 import type { Settings } from "@xandreed/core/kernel"
 import type { SessionsOptions } from "../../index.js"
 import { answer, modelDown, scripted, stack } from "../../testing.js"
 import { inboxOf } from "./inbox.adapter.js"
+import { inboxQueuedEvent } from "./inbox.entity.js"
 import { Inbox } from "./inbox.port.js"
 
 const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "plugin.session.turn.ended"]
@@ -48,12 +50,16 @@ const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromis
 describe("the inbox", () => {
   test("answers in order, each message in a turn of its own, with tickets 1, 2, 3; a failed turn fails its own reply and the next runs", async () => {
     const result = await run(Effect.gen(function* () {
-      const kit = yield* inboxOver((call) => call === 1 ? Stream.fail(modelDown) : answer(`Reply ${call + 1}.`))
+      const announced = yield* Ref.make<ReadonlyArray<KernelEvent>>([])
+      const heard = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(inboxQueuedEvent, (event) => Ref.update(announced, (all) => [...all, event]), { name: "heard", wait: true })))
+      const kit = yield* inboxOver((call) => call === 1 ? Stream.fail(modelDown) : answer(`Reply ${call + 1}.`), { extras: heard })
       const queued = yield* Effect.forEach(["One", "Two", "Three"], (message) => kit.inbox.enqueue(kit.session, message), { concurrency: 1 })
       const replies = yield* Effect.forEach(queued, (entry) => Effect.result(entry.reply), { concurrency: "unbounded" })
-      return { tickets: queued.map((entry) => Number(entry.ticket)), replies, ends: yield* kit.ends, received: yield* kit.received }
+      return { session: kit.session, announced: yield* Ref.get(announced), tickets: queued.map((entry) => Number(entry.ticket)), replies, ends: yield* kit.ends, received: yield* kit.received }
     }))
     expect(result.tickets).toEqual([1, 2, 3])
+    // Each message was announced as it was queued, live, about the session and no turn of it.
+    expect(result.announced).toEqual([1, 2, 3].map((ticket) => ({ _tag: "Live", session: result.session, name: inboxQueuedEvent.name, data: { ticket } })))
     expect(result.replies.map((reply) => reply._tag === "Success" ? reply.success.text : reply.failure._tag)).toEqual(["Reply 1.", "AiError", "Reply 3."])
     expect(result.ends).toEqual([
       { turn: 1, outcome: { _tag: "Completed" } },
