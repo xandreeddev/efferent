@@ -300,7 +300,10 @@ const checkRelative = (site: ImportSite): ReadonlyArray<Finding> => {
 
 /** A workspace package's layer grants its root and its exported subpaths to
  *  `canImport: [layer]`; each of its `restricted` subpaths only to
- *  `canImport: ["<layer>/<subpath>"]`. */
+ *  `canImport: ["<layer>/<subpath>"]`, the layer that holds the entry
+ *  included: a file of the same layer that names the subpath needs the grant
+ *  like any other, so a restricted part of a package stays apart from the
+ *  rest of it. */
 const checkGrant = (site: ImportSite, name: string, target: LayerSpec, subpath: Option.Option<string>): ReadonlyArray<Finding> =>
   Option.match(
     Option.flatMap(subpath, (sub) => Arr.findFirst(target.restricted, (restricted) => sub === restricted || sub.startsWith(`${restricted}/`))),
@@ -308,7 +311,7 @@ const checkGrant = (site: ImportSite, name: string, target: LayerSpec, subpath: 
       onNone: () => (mayImport(site.layer, target) ? [] : [layerRefused(site, target)]),
       onSome: (restricted) => {
         const grant = `${target.name}/${restricted}`
-        return target.name === site.layer.name || site.layer.canImport.includes(grant)
+        return site.layer.canImport.includes(grant)
           ? []
           : [
               findingAt(

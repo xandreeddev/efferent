@@ -8,6 +8,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- The boundaries gate refuses a `restricted` subpath to the layer of the
+  package's own entry too, unless that layer is granted it: a file of
+  `core` can no longer reach `@xandreed/core/kernel` by its package name,
+  nor one of the sdk `@xandreed/sdk/kernel`.
+
 ## 0.22.0 — 2026-11-12
 
 ### Added
