@@ -15,6 +15,7 @@ import type { WindowOptions } from "./window.entity.js"
 export const windowMemory = (options: WindowOptions) => definePlugin({
   name: "window",
   version: "0.22.0",
+  requires: [Core, Settings],
   provides: Memory,
   make: Effect.gen(function* () {
     const core = yield* Core

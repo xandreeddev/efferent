@@ -33,6 +33,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `inMemoryStorage`, `sessions`, `windowMemory` and `stepLoop`. A turn
     stores five events (its start, the user's message, the request, the
     assistant's message, its end) and publishes the answer's pieces live.
+  - A plugin declares what it needs: `definePlugin` takes `requires`, the
+    contracts its `make` uses, and a `make` that uses another does not
+    compile. Any plugin may provide a contract of its own for another.
+    `Agent.define` and `agent.with` read the declarations before they build
+    anything: they build each plugin after the ones that provide what it
+    requires, whatever order the host lists them in, and refuse a set with
+    a missing provider, two providers of one contract, a circle, or a
+    shared part that requires a rebuilt one (`PluginRefused`, which names
+    the plugin and the contract). `planPlugins` is that check as a pure
+    function.
   - A request is stored as pointers into the journal, never as copies, so
     each message's text is stored once; `agent.inspect` resolves every
     stored request back into what the model was sent.
@@ -57,8 +67,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `core` can no longer reach `@xandreed/core/kernel` by its package name,
   nor one of the sdk `@xandreed/sdk/kernel`.
 - `bun run verify:packages` runs the kernel from the packed packages, on
-  Node and on Bun: the four contracts' kits on the stock plugins and one
-  turn on the scripted model (`scripts/kernel-consumer.fixture.mjs`).
+  Node and on Bun: the four contracts' kits on the stock plugins, one
+  turn on the scripted model, and plugins ordered and refused by what they
+  declare (`scripts/kernel-consumer.fixture.mjs`).
 
 ## 0.22.0 — 2026-11-12
 

@@ -259,6 +259,7 @@ describe("a listener's registration", () => {
       const core = yield* makeCore()
       const failing = definePlugin({
         name: "ledger",
+        requires: [Core],
         make: Effect.flatMap(Core, (bus) => bus.on(ticked, () => Effect.fail(new Broken({ message: "no room" })), { wait: true })),
       })
       yield* Layer.build(Layer.provide(failing.layer, Layer.succeed(Core, core)))

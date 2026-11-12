@@ -19,6 +19,7 @@ const missing = (id: SessionId) => new StorageError({ reason: "SessionMissing", 
 export const inMemoryStorage = () => definePlugin({
   name: "storage",
   version: "0.22.0",
+  requires: [],
   provides: Storage,
   make: Effect.gen(function* () {
     const journals = yield* Ref.make<Journals>(new Map())

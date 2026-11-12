@@ -1,9 +1,10 @@
 // The kernel through its packed entries, as a consumer installs them: the four
-// contracts' kits on the four stock plugins, and one turn of an agent on the
-// scripted model. Run by verify-packages on Node and on Bun.
+// contracts' kits on the four stock plugins, one turn of an agent on the
+// scripted model, and a plugin that requires a contract another provides.
+// Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
-import { Core, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings, Storage, storageConformance } from "@xandreed/core/kernel"
+import { Core, definePlugin, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings, Storage, storageConformance } from "@xandreed/core/kernel"
 import { Agent, inMemoryStorage, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
@@ -70,6 +71,21 @@ assert.deepEqual(turn.names, [
 assert.equal(turn.requests, 1)
 assert.deepEqual(turn.calls, [[{ role: "system", text: system }, { role: "user", text: "Hello" }]])
 
+// A contract of the consumer's own: one extra plugin provides it, and one listed before it requires it.
+class Notes extends Context.Service()("consumer/Notes") {}
+const notes = () => definePlugin({ name: "notes", requires: [], provides: Notes, make: Effect.succeed({ of: (text) => `noted: ${text}` }) })
+const planned = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Hi."] }])
+  const seen = []
+  const reads = () => definePlugin({ name: "reads", requires: [Notes], make: Effect.map(Notes, (provided) => { seen.push(provided.of("built")) }) })
+  const config = { model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) }
+  yield* Agent.define({ ...config, plugins: [reads(), notes()] })
+  const refused = yield* Effect.flip(Agent.define({ ...config, plugins: [reads()] }))
+  return { seen, refused: { tag: refused._tag, reason: refused.reason, plugin: refused.plugin, contract: refused.contract } }
+})).pipe(Effect.timeout("20 seconds")))
+assert.deepEqual(planned.seen, ["noted: built"])
+assert.deepEqual(planned.refused, { tag: "PluginRefused", reason: "MissingProvider", plugin: "reads", contract: "consumer/Notes" })
+
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",
   storageKit: true,
@@ -77,5 +93,6 @@ console.log(`kernel ${JSON.stringify({
   memoryKit: true,
   loopKit: true,
   scriptedTurn: true,
+  pluginsPlanned: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)

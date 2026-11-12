@@ -74,6 +74,7 @@ const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "Sessi
 export const sessions = (options: SessionsOptions = {}) => definePlugin({
   name: "session",
   version: "0.22.0",
+  requires: [Core, Storage],
   provides: Sessions,
   make: Effect.gen(function* () {
     const core    = yield* Core

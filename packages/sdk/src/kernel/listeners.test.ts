@@ -19,7 +19,7 @@ class AuditFailed extends Schema.TaggedError<AuditFailed>()("AuditFailed", { mes
 const agentWith = (extra: Plugin<never, never, Core>, options: SessionsOptions = {}) => Effect.gen(function* () {
   const { model, received } = yield* answering("Hi.")
   const reports = yield* Queue.unbounded<unknown>()
-  const reporter = definePlugin({ name: "reports", make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
+  const reporter = definePlugin({ name: "reports", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(listenerFailedEvent, (failure) => Queue.offer(reports, failure.data))) })
   const turns = yield* recording([turnStartedEvent, turnEndedEvent])
   const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), sessions: sessions(options), memory: windowMemory({ budgetTokens: 3000 }), plugins: [turns.plugin, extra, reporter] })
   const session = yield* agent.createSession({ owner: "learner" })
@@ -35,6 +35,7 @@ describe("a listener the publisher waits for", () => {
       const go = yield* Deferred.make<void>()
       const slow = definePlugin({
         name: "slow",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(userMessageEvent, () => Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)), { wait: true })),
       })
       const kernel = yield* agentWith(slow)
@@ -52,7 +53,7 @@ describe("a listener the publisher waits for", () => {
 
   test("a background listener that never returns holds nothing", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const stuck = definePlugin({ name: "stuck", make: Effect.flatMap(Core, (core) => core.on(userMessageEvent, () => Effect.never)) })
+      const stuck = definePlugin({ name: "stuck", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(userMessageEvent, () => Effect.never)) })
       const kernel = yield* agentWith(stuck)
       return { reply: yield* kernel.agent.send(kernel.session, "Hello"), again: yield* kernel.agent.send(kernel.session, "Again") }
     })))
@@ -64,6 +65,7 @@ describe("a listener the publisher waits for", () => {
       const calls = yield* Ref.make(0)
       const audit = definePlugin({
         name: "audit",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(requestSentEvent, () => Effect.flatMap(Ref.updateAndGet(calls, (count) => count + 1), (count) =>
           count === 1 ? Effect.fail(new AuditFailed({ message: "the audit log is full" })) : Effect.void), { wait: true })),
       })
@@ -90,6 +92,7 @@ describe("a listener the publisher waits for, on the turn's start", () => {
       const starts = yield* Ref.make(0)
       const gate = definePlugin({
         name: "gate",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(turnStartedEvent, () => Effect.flatMap(Ref.updateAndGet(starts, (count) => count + 1), (count) =>
           count === 1 ? Effect.fail(new AuditFailed({ message: "not now" })) : Effect.void), { wait: true })),
       })
@@ -114,6 +117,7 @@ describe("a listener on the turn's end", () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const audit = definePlugin({
         name: "audit",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.fail(new AuditFailed({ message: "the audit log is full" })), { wait: true })),
       })
       const kernel = yield* agentWith(audit)
@@ -132,7 +136,7 @@ describe("a listener on the turn's end", () => {
 
   test("that never returns is cut short after closeWait and reported: the caller gets its reply and the session takes the next turn", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const stuck = definePlugin({ name: "stuck", make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.never, { wait: true })) })
+      const stuck = definePlugin({ name: "stuck", requires: [Core], make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.never, { wait: true })) })
       const kernel = yield* agentWith(stuck, { closeWait: "20 millis" })
       const reply = yield* kernel.agent.send(kernel.session, "Hello")
       const state = (yield* kernel.agent.inspect(kernel.session)).state
@@ -157,6 +161,7 @@ describe("a listener on the turn's end", () => {
       // The listener holds the first turn's end until it is let go.
       const slow = definePlugin({
         name: "slow",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(turnEndedEvent, () => Effect.flatMap(Ref.updateAndGet(ends, (count) => count + 1), (count) =>
           count === 1 ? Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(go)) : Effect.void), { wait: true })),
       })

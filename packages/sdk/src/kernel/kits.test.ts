@@ -183,6 +183,7 @@ describe("the memory kit", () => {
   const careless = (name: string, pick: (journal: ReadonlyArray<{ readonly seq: Seq; readonly name: string; readonly message?: { readonly text: string } }>) => ReadonlyArray<Seq>, options: { readonly count?: boolean; readonly writes?: boolean } = {}) =>
     subject(definePlugin({
       name,
+      requires: [],
       provides: Memory,
       make: Effect.succeed(Memory.of({
         open: (session) => Effect.succeed({
@@ -201,6 +202,7 @@ describe("the memory kit", () => {
   /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
   const strict = () => subject(definePlugin({
     name: "window",
+    requires: [Core],
     provides: Memory,
     make: Effect.gen(function* () {
       const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(Layer.fresh(windowMemory({ budgetTokens }).layer), Layer.merge(onCore(yield* Core), settings)))), Memory)
@@ -255,6 +257,7 @@ describe("the loop kit", () => {
   /** The stock loop's steps with one flaw: each of these asks the model, as a loop does. */
   const flawed = (flaw: "copies" | "silent" | "forgiving") => (): LoopPlugin => definePlugin({
     name: "loop",
+    requires: [Core, Sessions, Memory, LanguageModel.LanguageModel, Settings],
     provides: Loop,
     make: Effect.gen(function* () {
       const core = yield* Core
@@ -287,7 +290,7 @@ describe("the loop kit", () => {
       silent: await failedChecks(loopConformance(subject(flawed("silent")))),
       forgiving: await failedChecks(loopConformance(subject(flawed("forgiving")))),
       // It answers without a turn: nothing is stored, nothing is published, nothing is refused.
-      turnless: await failedChecks(loopConformance(subject(() => definePlugin({ name: "loop", provides: Loop, make: Effect.succeed(Loop.of({ run: (input) => Effect.succeed({ text: input.message }) })) })))),
+      turnless: await failedChecks(loopConformance(subject(() => definePlugin({ name: "loop", requires: [], provides: Loop, make: Effect.succeed(Loop.of({ run: (input) => Effect.succeed({ text: input.message }) })) })))),
     }
     expect(failed.copies).toEqual(["request"])
     expect(failed.silent).toEqual(["busy", "deltas"])

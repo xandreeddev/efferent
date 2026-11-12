@@ -20,6 +20,7 @@ const stranger = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct(
 /** A memory that sends nothing but the turn's message and, before that, writes `records` into the journal. */
 const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Plugin<Memory, never, Settings> => definePlugin({
   name: "scribe",
+  requires: [Settings],
   provides: Memory,
   make: Effect.map(Settings, (settings) => Memory.of({
     open: (session) => Effect.succeed({

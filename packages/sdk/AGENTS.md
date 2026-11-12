@@ -51,9 +51,20 @@ specifier the bundler resolves, none of which may name one (`node:`,
 imports `node:path` and must be caught. The rest of the sdk may not import
 it: `./kernel` is a `restricted` subpath.
 
-- `Agent.define` (`agent.adapter.ts`) builds `Core`, storage and sessions
-  once, and the settings, the model, memory, the loop and the extra
-  plugins in a scope of their own, each on a fresh memo map. `agent.with`
+- `Agent.define` (`agent.adapter.ts`) plans before it builds: `planAgent`
+  (`agent.entity.functions.ts`, over core's `planPlugins`) reads what every
+  plugin declares and gives the order of the two stages, or the refusal of
+  the set (`PluginRefused`), and nothing is built for a set that is
+  refused. Then it builds `Core`, storage and sessions once, and the
+  settings, the model, memory, the loop and the extra plugins in a scope of
+  their own: plugin by plugin in the order planned, each through its
+  `build`, over what was there and what the plugins before it provided. A
+  stage that fails part-way closes its scope, which releases what it had
+  built (`inOwnScope`). The config's slots are `PluginOf<Contract>`: a slot
+  says what its plugin provides, and what the plugin needs is checked by
+  the plan, not by the slot's type. Storage and sessions may not require
+  what `with` rebuilds (`LaterContract`). `with` plans the changed set the
+  same way before it builds anything. `agent.with`
   builds the successor's parts first, then moves the handle's phase
   (`AgentPhase`, pure transitions in `agent.entity.functions.ts`, under one
   `Ref.modify`) and returns the successor in one uninterruptible step. It
@@ -79,9 +90,9 @@ it: `./kernel` is a `restricted` subpath.
   does: the release tooling synchronizes it and refuses a call without it
   (`scripts/release-version-plan.ts`). A plugin written in a test states
   none.
-- `step-loop.usecase.ts` and the session plugin's `append` and `turn` are
-  quoted in `docs/kernel.md`; `guide.test.ts` holds the document's other
-  code as running tests and fails when a quote and its source differ. Change
+- `step-loop.usecase.ts`, the session plugin's `append` and `turn` and the
+  `contract` region of `testing.port.ts` are quoted in `docs/kernel.md`;
+  `guide.test.ts` holds the document's other code as running tests and fails when a quote and its source differ. Change
   the source and the document together.
 - The session plugin stores, then publishes, and the store is the truth.
   Every `begin` reads the journal for the phase and the last place, and the
@@ -105,13 +116,20 @@ it: `./kernel` is a `restricted` subpath.
   a reaction to it), `listeners`, `with`, `unknown-records` (also a second
   session plugin over one store), `plugins/session/sessions.adapter` (a
   store that fails on request, two session plugins over one store, seeded
-  ids), `kits` (the four kits on the stock plugins and on careless ones:
+  ids), `requires` (a consumer listed before its provider; the build order
+  and the order listeners hear in; every refusal of a set, with nothing
+  built; `with` refused; a failed build released; a plugin handed only what
+  it declared), `kits` (the four kits on the stock plugins and on careless ones:
   each careless plugin fails the checks of what it is careless about and no
   others, and between them every check), `browser-bundle`, `guide`. A test
   whose claim is the compiler's says `type-level:` in its title.
-  `scripts/kernel-consumer.fixture.mjs` runs the four kits and one scripted
-  turn from the packed packages, on Node and on Bun
-  (`bun run verify:packages`). Run: `bun test packages/sdk/src/kernel`.
+  `scripts/kernel-consumer.fixture.mjs` runs the four kits, one scripted
+  turn and a pair of plugins that declare a contract of their own from the
+  packed packages, on Node and on Bun (`bun run verify:packages`).
+  `testing.port.ts` holds `Summaries`, a contract of a plugin's own for the
+  tests and the guide: a `Context.Service` goes in a `.port.ts` file in a
+  test too, and the build leaves this one out. Run:
+  `bun test packages/sdk/src/kernel`.
 
 ## Public surface
 

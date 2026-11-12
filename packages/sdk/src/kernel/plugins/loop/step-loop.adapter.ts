@@ -1,4 +1,5 @@
-import { definePlugin, Loop } from "@xandreed/core/kernel"
+import { LanguageModel } from "effect/ai"
+import { Core, definePlugin, Loop, Memory, Sessions, Settings } from "@xandreed/core/kernel"
 import { makeStepLoop } from "./step-loop.usecase.js"
 
 /**
@@ -7,4 +8,10 @@ import { makeStepLoop } from "./step-loop.usecase.js"
  *
  * @public
  */
-export const stepLoop = () => definePlugin({ name: "loop", version: "0.22.0", provides: Loop, make: makeStepLoop })
+export const stepLoop = () => definePlugin({
+  name: "loop",
+  version: "0.22.0",
+  requires: [Core, Sessions, Memory, LanguageModel.LanguageModel, Settings],
+  provides: Loop,
+  make: makeStepLoop,
+})

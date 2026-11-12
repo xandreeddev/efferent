@@ -2,34 +2,36 @@ import { Schema } from "effect"
 import type { Effect, Layer, Scope, Stream } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type {
-  Core,
   CoreOptions,
   Inspection,
   KernelEvent,
   Loop,
   LoopFailure,
   Memory,
-  Plugin,
   PluginFailure,
+  PluginOf,
+  PluginRefused,
   Reply,
   RequestRefused,
   SessionId,
   SessionRefused,
   Sessions,
-  Settings,
   Storage,
   StorageError,
   UnknownRecord,
 } from "@xandreed/core/kernel"
 
-/** What an agent keeps for its whole life, and a replaced agent hands on: the events, the journals, the sessions. */
-export type SharedParts = Core | Storage | Sessions
-
-/** What an agent rebuilds when it is replaced: the settings, the model, memory and the loop. */
-export type RebuiltParts = Settings | LanguageModel.LanguageModel | Memory | Loop
-
 /**
- * What an agent is defined with: the model, the system text, and a plugin per contract.
+ * What an agent is defined with: the model, the system text, and a plugin
+ * per contract. A plugin's slot says what it provides; what it needs it
+ * declares (`requires`), and `Agent.define` checks every declaration before
+ * it builds anything.
+ *
+ * The parts come in two stages. Storage and sessions are built once and
+ * shared by every agent `with` returns: they may need `Core` and each
+ * other. Memory, the loop and the extra plugins are built again by `with`:
+ * they may need `Core`, `Settings`, the model, the shared parts and each
+ * other.
  *
  * @public
  */
@@ -38,14 +40,19 @@ export interface AgentConfig {
   readonly model: Layer.Layer<LanguageModel.LanguageModel>
   /** The system text, fixed for the agent. */
   readonly system: string
-  readonly storage: Plugin<Storage, PluginFailure, Core>
+  readonly storage: PluginOf<Storage>
   /** The stock session plugin when left out. */
-  readonly sessions?: Plugin<Sessions, PluginFailure, Core | Storage>
-  readonly memory: Plugin<Memory, PluginFailure, SharedParts | Settings | LanguageModel.LanguageModel>
+  readonly sessions?: PluginOf<Sessions>
+  readonly memory: PluginOf<Memory>
   /** The stock loop plugin when left out. */
-  readonly loop?: Plugin<Loop, PluginFailure, SharedParts | Settings | LanguageModel.LanguageModel | Memory>
-  /** Anything extra, built after the rest, in this order. */
-  readonly plugins?: ReadonlyArray<Plugin<never, PluginFailure, SharedParts | RebuiltParts>>
+  readonly loop?: PluginOf<Loop>
+  /**
+   * Anything extra. One may provide a contract of its own, declared in its
+   * own folder, and another, or memory or the loop, may require it. They
+   * are built after memory and the loop, in this order, but that a plugin
+   * whose contract another part requires is built before that part.
+   */
+  readonly plugins?: ReadonlyArray<PluginOf>
   /** How `Core` is set up: the capacity of background delivery. */
   readonly core?: CoreOptions
 }
@@ -106,9 +113,11 @@ export interface AgentHandle {
    * finishes on its own parts, which close after it, their listeners
    * removed; with no turn running they are closed when `with` returns.
    * Called from inside a turn of this handle, `with` is refused
-   * (`InsideTurn`).
+   * (`InsideTurn`). What the changed plugins declare is checked first, as
+   * `Agent.define` checks it: a set that does not fit is refused
+   * (`PluginRefused`) with nothing built and nothing changed.
    */
-  readonly with: (changes: AgentChanges) => Effect.Effect<AgentHandle, AgentRefused | PluginFailure, Scope.Scope>
+  readonly with: (changes: AgentChanges) => Effect.Effect<AgentHandle, AgentRefused | PluginRefused | PluginFailure, Scope.Scope>
 }
 
 /** Whether a handle still takes turns, and how many it is running. */

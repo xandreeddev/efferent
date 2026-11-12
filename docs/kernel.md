@@ -21,8 +21,8 @@ tested apart:
   event's envelope, four contracts, a handful of pure rules, and `Core`:
   publish, on, events. Core stores nothing and runs no turn.
 - **Everything else is a plugin**, the loop included. A plugin is an Effect
-  layer with a name. What it needs and what it provides is the layer's
-  type, and its name is the prefix of the events it writes.
+  layer with a name. It declares the contracts it needs and the one it
+  provides, and its name is the prefix of the events it writes.
 - **The function you read from top to bottom is the loop plugin's.** It
   composes the other plugins through their contracts.
 
@@ -47,13 +47,13 @@ one to build on until the kernel has caught up.
 | Event definitions | core, and each plugin's own folder | a name, the schema of the data, stored or live, and for a stored one whether it may be skipped |
 | `Core` | core | `publish`, `on`, `events` |
 | Contracts | core | `Storage`, `Sessions`, `Memory`, `Loop`, each with a conformance kit |
-| Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal, resolving a request, the estimate |
-| `definePlugin` | core | a name, the contract provided, the effect that makes it; for a shipped plugin, its version |
+| Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal, resolving a request, the estimate, the order to build plugins in |
+| `definePlugin` | core | a name, the contracts required, the contract provided, the effect that makes it; for a shipped plugin, its version |
 | `inMemoryStorage` | sdk, `plugins/storage-memory` | keeps journals; knows nothing else |
 | `sessions` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `windowMemory` | sdk, `plugins/memory-window` | decides what the model is sent; owns the budget |
 | `stepLoop` | sdk, `plugins/loop` | the main function; the model call lives with it |
-| `Agent.define` | sdk | builds `Core` and every plugin in dependency order, and returns the handle |
+| `Agent.define` | sdk | checks what the plugins declare, builds `Core` and every plugin in dependency order, and returns the handle |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
 is data, `.entity.functions.ts` the pure rules of that data, `.port.ts` a
@@ -94,10 +94,12 @@ follows a script and calls no provider.
 ## The loop's main function
 
 This is the whole of the stock loop plugin's flow, quoted from its source.
-The plugin itself is one more line, in `step-loop.adapter.ts`: a
-`definePlugin` call with the name `loop`, the contract `Loop` and
-`make: makeStepLoop`. A plugin a package ships also states its version, the
-package's, which the release tooling keeps in step.
+The plugin itself is one more call, in `step-loop.adapter.ts`:
+`definePlugin` with the name `loop`, what it requires (`Core`, `Sessions`,
+`Memory`, the model and `Settings`, the five lines the function starts
+with), the contract `Loop` and `make: makeStepLoop`. A plugin a package
+ships also states its version, the package's, which the release tooling
+keeps in step.
 
 <!-- pinned: packages/sdk/src/kernel/plugins/loop/step-loop.usecase.ts -->
 
@@ -283,6 +285,7 @@ const requestCounted = liveEvent("meter", "request.counted", { data: Schema.Stru
 
 const meter = definePlugin({
   name: "meter",
+  requires: [Core],
   make: Effect.gen(function* () {
     const core = yield* Core
     const requests = yield* Ref.make(0)
@@ -421,7 +424,8 @@ two agents switch in one step: the old handle refuses `send` from then on
 Storage and sessions are not `with`'s to change. Nothing is loaded or
 unloaded inside a live agent.
 
-Writing a plugin is writing the effect that makes its contract:
+Writing a plugin is listing what it needs and writing the effect that makes
+its contract:
 
 <!-- pinned: packages/sdk/src/kernel/guide.test.ts#memory-plugin -->
 
@@ -431,6 +435,7 @@ import { definePlugin, estimateRequest, Memory, messageOf, Settings, Tokens, use
 /** A memory that sends the message the turn answers and nothing before it. */
 const goldfish = () => definePlugin({
   name: "goldfish",
+  requires: [Settings],
   provides: Memory,
   make: Effect.gen(function* () {
     const settings = yield* Settings
@@ -459,6 +464,161 @@ check has an id, and a failure names the check it came from. The loop kit
 hands every check a script for the model, and `scriptedModel` is the model
 that follows one, so a host proves its own loop plugin with what the sdk
 ships.
+
+## What a plugin needs, and what it provides
+
+Every plugin declares the contracts it needs, in `requires`, and the one it
+provides, in `provides`. A contract is a `Context.Service`: `Core`,
+`Storage`, `Sessions`, `Memory`, `Loop`, `Settings`, the model's
+(`LanguageModel.LanguageModel`), or one a plugin declares itself. A plugin
+that needs none writes an empty list. The stock plugins declare theirs the
+same way: storage needs nothing, sessions `Core` and `Storage`, the window
+memory `Core` and `Settings`, and the loop `Core`, `Sessions`, `Memory`,
+the model and `Settings`.
+
+Any plugin may provide a contract for another. The contract is declared in
+the providing plugin's own folder, in a `.port.ts` file, under a key named
+after its package:
+
+<!-- pinned: packages/sdk/src/kernel/testing.port.ts#contract -->
+
+```ts
+import { Context } from "effect"
+import type { Effect } from "effect"
+import type { Message } from "@xandreed/core/kernel"
+
+/** What a summaries plugin gives the plugins that require it: one line that stands for a run of messages. */
+export class Summaries extends Context.Service<Summaries, {
+  readonly of: (messages: ReadonlyArray<Message>) => Effect.Effect<string>
+}>()("@xandreed/sdk/kernel/testing/Summaries") {}
+```
+
+One plugin provides it, and another requires it. Here the one that requires
+it is the agent's memory, and the one that provides it is an extra plugin:
+
+<!-- pinned: packages/sdk/src/kernel/guide.test.ts#requires -->
+
+```ts
+import { definePlugin, estimateRequest, Memory, messageOf, Settings, stored, storedEvent, Tokens } from "@xandreed/core/kernel"
+import { Agent, inMemoryStorage } from "@xandreed/sdk/kernel"
+import { Summaries } from "./summaries.port.js"
+
+/** Provides `Summaries`. It needs no contract, and says so. */
+const summaries = () => definePlugin({
+  name: "summaries",
+  requires: [],
+  provides: Summaries,
+  make: Effect.succeed(Summaries.of({
+    of: (messages) => Effect.succeed(`Earlier: ${messages.map((message) => message.text).join(" / ")}`),
+  })),
+})
+
+const summarized = storedEvent("compress", "summarized", { data: Schema.Struct({ of: Schema.Int }), skippable: true })
+
+/** A memory that requires it: what was said before the turn's message reaches the model as one line. */
+const compress = () => definePlugin({
+  name: "compress",
+  requires: [Settings, Summaries],
+  provides: Memory,
+  make: Effect.gen(function* () {
+    const settings  = yield* Settings
+    const summaries = yield* Summaries                    // declared above; a contract that is not declared does not compile here
+    return Memory.of({
+      open: (session) => Effect.succeed({
+        build: () => Effect.gen(function* () {
+          const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
+          const asked = said.slice(-1)
+          const earlier = said.slice(0, -1)
+          const request = (records: typeof said) => ({
+            messages: records.map((event) => event.seq),
+            estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
+            budgetTokens: Tokens.make(1000),
+          })
+          const [first, last] = [earlier[0], earlier.at(-1)]
+          if (first === undefined || last === undefined) return request(asked)
+          const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
+          const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
+            message: { _tag: "User", text },
+            replaces: { from: first.seq, through: last.seq },
+          }))
+          return request([summary, ...asked])
+        }),
+      }),
+    })
+  }),
+})
+
+const agent = yield* Agent.define({
+  model,
+  system: "You are a friendly tutor.",
+  storage: inMemoryStorage(),
+  memory: compress(),                           // requires Summaries,
+  plugins: [summaries()],                       // which an extra plugin provides: it is built before the memory
+})
+```
+
+What a plugin declares is checked at two times.
+
+**When the plugin is compiled.** `make` may use the contracts `requires`
+lists, and no other: a `yield* Summaries` in a plugin whose list lacks
+`Summaries` is a type error on that plugin, and the error names the
+contract. The scope is not declared: a plugin may always register listeners
+and acquire what its scope releases. Neither is a `Context.Reference`,
+which has a default. A contract that is declared and never used compiles,
+since the list says what `make` may use.
+
+**When the agent is defined.** `Agent.define` reads every plugin's
+`requires` and `provides` before it builds anything, and refuses the set
+with `PluginRefused`, which names the plugin and the contract, when
+
+- a plugin requires a contract nothing provides (`MissingProvider`). No
+  plugin is added to fill the gap, a stock one neither: the message says
+  what to add;
+- two plugins provide the same contract, or a plugin provides what the
+  wiring provides itself, `Core`, `Settings` or the model
+  (`DuplicateProvider`);
+- plugins require each other in a circle (`Cycle`);
+- storage or sessions requires a part that `with` builds again: the
+  settings, the model, memory, the loop or an extra plugin's contract
+  (`LaterContract`).
+
+<!-- pinned: packages/sdk/src/kernel/guide.test.ts#refused -->
+
+```ts
+const refused = yield* Effect.flip(Agent.define({
+  model,
+  system: "You are a friendly tutor.",
+  storage: inMemoryStorage(),
+  memory: compress(),                           // nothing provides Summaries
+}))
+```
+
+That one fails with `plugin compress requires
+@xandreed/sdk/kernel/testing/Summaries, which no plugin provides: add a
+plugin that provides it`. A set that is refused builds nothing: no plugin's
+`make` has run, no listener is registered, and there is no agent to send
+to. `agent.with` checks the changed set the same way before it builds the
+successor, and a refusal leaves the agent as it was.
+
+**The order plugins are built in** comes from the declarations. The parts
+are listed: storage, sessions, memory, the loop, then the extras in the
+order of `plugins`. Each is built at its listed place, and the providers it
+requires that are listed after it are built just before it, in the order
+they are listed. So a plugin is always built after the plugins that provide
+what it requires, wherever the host lists them, plugins that are not moved
+for one another are built in the order listed, and the order a plugin
+writes its `requires` in changes nothing. Listeners register as plugins are
+built, and the
+listeners a publisher waits for run in the order they registered: the order
+of `plugins` is the order the extras hear an event in, but for a provider
+that was built ahead of its consumer.
+
+The check and the order are one pure function over plain data
+(`planPlugins`: each plugin's name, the keys it requires, the key it
+provides). Underneath, a plugin is still an Effect layer, built by Effect in
+the agent's scope and handed the contracts it declared and no others. The
+`sessions` and `loop` slots take the stock plugins when a config leaves them
+out; that is the config's default, and the check adds nothing to it.
 
 ## What the first cut leaves out, and the order it returns
 
@@ -509,6 +669,8 @@ Composability* (arXiv 2608.25512). Four ideas were adopted.
   that order.
 
 One idea was not adopted: a runtime that loads and unloads plugins inside a
-live process. The plugin graph here is Effect's own. There is no separate
-plugin runtime, and replacing a part is `agent.with(...)`: a new agent over
-the same storage and sessions, effective from the next turn.
+live process. A plugin here is an Effect layer, and what the kernel puts in
+front of the layers is one pure check of what they declare, made when an
+agent is defined. There is no separate plugin runtime, and replacing a part
+is `agent.with(...)`: a new agent over the same storage and sessions,
+effective from the next turn.

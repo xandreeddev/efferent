@@ -57,6 +57,7 @@ export const recording = (definitions: ReadonlyArray<EventDefinition<Schema.Json
   const seen = yield* Ref.make<ReadonlyArray<KernelEvent>>([])
   const plugin = definePlugin({
     name: "recorder",
+    requires: [Core],
     make: Effect.gen(function* () {
       const core = yield* Core
       yield* Effect.forEach(definitions, (definition) =>

@@ -12,10 +12,13 @@ import {
   originOf,
   requestSentEvent,
   Settings,
+  stored,
+  storedEvent,
   Tokens,
   userMessageEvent,
 } from "@xandreed/core/kernel"
 import { Agent, inMemoryStorage, sessions, stepLoop, windowMemory } from "./index.js"
+import { Summaries } from "./testing.port.js"
 import { answering, recording } from "./testing.js"
 
 /*
@@ -84,6 +87,7 @@ describe("the kernel guide's code", () => {
 
       const meter = definePlugin({
         name: "meter",
+        requires: [Core],
         make: Effect.gen(function* () {
           const core = yield* Core
           const requests = yield* Ref.make(0)
@@ -116,6 +120,7 @@ describe("the kernel guide's code", () => {
       /** A memory that sends the message the turn answers and nothing before it. */
       const goldfish = () => definePlugin({
         name: "goldfish",
+        requires: [Settings],
         provides: Memory,
         make: Effect.gen(function* () {
           const settings = yield* Settings
@@ -142,6 +147,90 @@ describe("the kernel guide's code", () => {
     })))
     expect(result.later).toEqual({ text: "Hi." })
     expect(result.received[1]).toEqual([{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "And now?" }])
+  })
+
+  test("a plugin provides a contract of its own, and a memory that requires it is built after it", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model, received } = yield* answering("Hi.")
+      // #region requires
+      /** Provides `Summaries`. It needs no contract, and says so. */
+      const summaries = () => definePlugin({
+        name: "summaries",
+        requires: [],
+        provides: Summaries,
+        make: Effect.succeed(Summaries.of({
+          of: (messages) => Effect.succeed(`Earlier: ${messages.map((message) => message.text).join(" / ")}`),
+        })),
+      })
+
+      const summarized = storedEvent("compress", "summarized", { data: Schema.Struct({ of: Schema.Int }), skippable: true })
+
+      /** A memory that requires it: what was said before the turn's message reaches the model as one line. */
+      const compress = () => definePlugin({
+        name: "compress",
+        requires: [Settings, Summaries],
+        provides: Memory,
+        make: Effect.gen(function* () {
+          const settings  = yield* Settings
+          const summaries = yield* Summaries                    // declared above; a contract that is not declared does not compile here
+          return Memory.of({
+            open: (session) => Effect.succeed({
+              build: () => Effect.gen(function* () {
+                const said = (yield* session.journal).filter((event) => event.message !== undefined && event.name !== summarized.name)
+                const asked = said.slice(-1)
+                const earlier = said.slice(0, -1)
+                const request = (records: typeof said) => ({
+                  messages: records.map((event) => event.seq),
+                  estimatedTokens: estimateRequest(settings.system, records.flatMap((event) => Option.toArray(messageOf(event)))),
+                  budgetTokens: Tokens.make(1000),
+                })
+                const [first, last] = [earlier[0], earlier.at(-1)]
+                if (first === undefined || last === undefined) return request(asked)
+                const text = yield* summaries.of(earlier.flatMap((event) => Option.toArray(messageOf(event))))
+                const summary = yield* session.append(stored(summarized, { of: earlier.length }, {
+                  message: { _tag: "User", text },
+                  replaces: { from: first.seq, through: last.seq },
+                }))
+                return request([summary, ...asked])
+              }),
+            }),
+          })
+        }),
+      })
+
+      const agent = yield* Agent.define({
+        model,
+        system: "You are a friendly tutor.",
+        storage: inMemoryStorage(),
+        memory: compress(),                           // requires Summaries,
+        plugins: [summaries()],                       // which an extra plugin provides: it is built before the memory
+      })
+      // #endregion requires
+      const session = yield* agent.createSession({ owner: "learner" })
+      yield* agent.send(session, "Hello")
+      yield* agent.send(session, "And now?")
+      // #region refused
+      const refused = yield* Effect.flip(Agent.define({
+        model,
+        system: "You are a friendly tutor.",
+        storage: inMemoryStorage(),
+        memory: compress(),                           // nothing provides Summaries
+      }))
+      // #endregion refused
+      return { received: yield* received, refused, names: (yield* agent.inspect(session)).events.map((event): string => event.name) }
+    })))
+    expect(result.received).toEqual([
+      [{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "Hello" }],
+      [{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "Earlier: Hello / Hi." }, { role: "user", text: "And now?" }],
+    ])
+    expect(result.names.filter((name) => name.startsWith("plugin.compress."))).toEqual(["plugin.compress.summarized"])
+    expect(result.refused).toMatchObject({
+      _tag: "PluginRefused",
+      reason: "MissingProvider",
+      plugin: "compress",
+      contract: "@xandreed/sdk/kernel/testing/Summaries",
+      message: "plugin compress requires @xandreed/sdk/kernel/testing/Summaries, which no plugin provides: add a plugin that provides it",
+    })
   })
 })
 
@@ -173,7 +262,7 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the boot code, the loop's main function, the session plugin's two functions and the plugin examples exactly as the source has them", async () => {
+  test("quotes the boot code, the loop's main function, the session plugin's two functions, the plugin examples and a plugin's own contract exactly as the source has them", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
@@ -185,6 +274,9 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/kernel/guide.test.ts#replace",
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
+      "packages/sdk/src/kernel/testing.port.ts#contract",
+      "packages/sdk/src/kernel/guide.test.ts#requires",
+      "packages/sdk/src/kernel/guide.test.ts#refused",
     ])
     for (const [, file, region, block] of pins) {
       const source = await Bun.file(`${root}/${file}`).text()

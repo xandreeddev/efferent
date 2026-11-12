@@ -11,6 +11,7 @@ const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin
 /** A memory that sends only the message the turn answers, and counts the requests it hears of. */
 const forgetful = (heard: Ref.Ref<number>) => definePlugin({
   name: "forgetful",
+  requires: [Core, Settings],
   provides: Memory,
   make: Effect.gen(function* () {
     const core = yield* Core
@@ -31,6 +32,7 @@ const forgetful = (heard: Ref.Ref<number>) => definePlugin({
 /** An extra plugin that counts, while the publisher waits, the assistant messages it hears: what it has counted when `send` returns is exact. */
 const counting = (heard: Ref.Ref<number>, name = "counter") => definePlugin({
   name,
+  requires: [Core],
   make: Effect.flatMap(Core, (core) => core.on(assistantMessageEvent, () => Ref.update(heard, (count) => count + 1), { wait: true })),
 })
 
@@ -145,6 +147,7 @@ describe("agent.with", () => {
       // A plugin of the successor that is built whole: it registers a listener and acquires something.
       const early = definePlugin({
         name: "early",
+        requires: [Core],
         make: Effect.gen(function* () {
           const core = yield* Core
           yield* core.on(userMessageEvent, () => Ref.update(strayHeard, (count) => count + 1), { wait: true })
@@ -152,7 +155,7 @@ describe("agent.with", () => {
         }),
       })
       // And one built after it, which never finishes building.
-      const slow = definePlugin({ name: "slow", make: Effect.andThen(Deferred.succeed(building, undefined), Effect.never) })
+      const slow = definePlugin({ name: "slow", requires: [], make: Effect.andThen(Deferred.succeed(building, undefined), Effect.never) })
       const agent = yield* Agent.define({ model, system, storage: inMemoryStorage(), memory: windowMemory({ budgetTokens: 3000 }) })
       const session = yield* agent.createSession({ owner: "learner" })
       // `with` builds in this test's scope, which stays open: only `with` itself can release what it built.
@@ -190,6 +193,7 @@ describe("agent.with", () => {
       // The plugin of the `with` that loses: it registers a listener, acquires something, and finishes building only when told.
       const late = definePlugin({
         name: "late",
+        requires: [Core],
         make: Effect.gen(function* () {
           const core = yield* Core
           yield* core.on(assistantMessageEvent, () => Ref.update(lateHeard, (count) => count + 1), { wait: true })
@@ -225,6 +229,7 @@ describe("agent.with", () => {
       // A listener the turn waits for tries to replace the agent the turn is running on.
       const meddler = definePlugin({
         name: "meddler",
+        requires: [Core],
         make: Effect.flatMap(Core, (core) => core.on(userMessageEvent, () => Effect.flatMap(Ref.get(self), Option.match({
           onNone: () => Effect.void,
           onSome: (agent) => Effect.matchEffect(Effect.scoped(agent.with({ system: "Mine now." })), {

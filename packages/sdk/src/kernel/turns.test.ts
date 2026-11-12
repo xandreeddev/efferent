@@ -170,6 +170,7 @@ describe("a request memory builds badly", () => {
   /** A memory whose request points at the turn's start, a record that bears no message. */
   const misdirected = definePlugin({
     name: "misdirected",
+    requires: [],
     provides: Memory,
     make: Effect.succeed(Memory.of({
       open: () => Effect.succeed({ build: () => Effect.succeed({ messages: [Seq.make(1)], estimatedTokens: Tokens.make(1), budgetTokens: Tokens.make(3000) }) }),

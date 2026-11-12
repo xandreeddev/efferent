@@ -35,6 +35,7 @@ const FIVE = ["plugin.session.turn.started", "plugin.loop.user.message", "plugin
  */
 const shoutLoop = () => definePlugin({
   name: "loop",
+  requires: [Sessions, Memory, Settings],
   provides: Loop,
   make: Effect.gen(function* () {
     const turns = yield* Sessions
@@ -63,6 +64,9 @@ describe("a different loop plugin", () => {
       return { replies, inspection: yield* agent.inspect(session), received: yield* received }
     })))
     expect(result.replies).toEqual([{ text: "HELLO" }, { text: "AGAIN" }])
+    // What this loop declared that it needs: no model and no `Core`, unlike the stock one.
+    expect(shoutLoop().requires).toEqual([Sessions.key, Memory.key, Settings.key])
+    expect(shoutLoop().provides).toBe(Loop.key)
     expect(result.received).toEqual([])
     expect(result.inspection.events.map((event): string => event.name)).toEqual([...FIVE, ...FIVE])
     expect(result.inspection.state).toEqual({ _tag: "Free", turns: 2 })
@@ -86,6 +90,7 @@ const swept = liveEvent("janitor", "swept", { data: Schema.Struct({ after: Schem
 /** A memory that sends every message until there are more than `keep`, then says so, writes a summary of its own and sends that with the turn's message. */
 const compactingMemory = (keep: number) => definePlugin({
   name: "compact",
+  requires: [Core, Settings],
   provides: Memory,
   make: Effect.gen(function* () {
     const core = yield* Core
@@ -142,6 +147,7 @@ describe("a plugin adds an event on a compression check and another plugin react
       // The second plugin: it listens for the first one's event and acts, here by counting and by publishing an event of its own.
       const janitor = definePlugin({
         name: "janitor",
+        requires: [Core],
         make: Effect.gen(function* () {
           const core = yield* Core
           yield* core.on(compactionDue, (due) => Effect.andThen(
