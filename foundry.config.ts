@@ -136,6 +136,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/index.ts",
   "packages/core/src/conformance/index.ts",
   "packages/core/src/internal/index.ts",
+  "packages/core/src/kernel/index.ts",
   "packages/runtime/src/index.ts",
   "packages/evals-langfuse/src/index.ts",
   "packages/evals-langsmith/src/index.ts",
@@ -165,6 +166,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/process-host/src/index.ts",
   "packages/sdk/src/index.ts",
   "packages/sdk/src/conformance/index.ts",
+  "packages/sdk/src/kernel/index.ts",
 ]
 
 /**
@@ -429,6 +431,14 @@ const config: typeof GateSuiteConfig.Encoded = {
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
       ...testLayer("evals", ["evals", "core"], ["effect", "effect/ai", "node:", "bun:test"]),
       { name: "evals", path: src("evals"), canImport: ["core"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
+      // Core's kernel (`packages/core/src/kernel`, the entry `./kernel`) comes
+      // before core's other layers: one layer for all its roles, which imports
+      // nothing else of core and no runtime module, and which no other core
+      // layer may import. `./kernel` is a restricted subpath of the core entry
+      // layer below, reached only by a layer that names `core/kernel`: the
+      // sdk's kernel.
+      { name: "core-kernel-tests", path: "packages/core/src/kernel/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
+      { name: "core-kernel", path: "packages/core/src/kernel/**", canImport: [], externals: ["effect", "effect/ai"] },
       // Core's layers, by a file's role rather than its folder; a glob takes no
       // alternatives, so a layer may need several entries. Its test code comes
       // first, then from the bottom: the model (entities, and the References
@@ -443,7 +453,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // model and `core` import `effect` alone; the ports, logic and kits also
       // `effect/ai`.
       ...testLayer("core", ["core-model", "core-ports", "core-logic", "core", "core-kits"], ["effect", "effect/ai", "effect/testing", "fast-check", "bun:test"]),
-      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect"], restricted: ["internal"] },
+      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect"], restricted: ["internal", "kernel"] },
       { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect"] },
       { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect"] },
       { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
@@ -527,6 +537,13 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-telemetry", path: src("plugin-telemetry"), canImport: ["core"], externals: ["effect", "effect/http", "effect/observability"] },
       ...testLayer("runtime", ["runtime", "core"], ["effect", "bun:test"]),
       { name: "runtime", path: src("runtime"), canImport: ["core"], externals: ["effect", "node:"] },
+      // The sdk's kernel (`packages/sdk/src/kernel`, the entry `./kernel`)
+      // comes before the sdk's other layers. It imports core's kernel and
+      // nothing else of the workspace: not core's root, not the runtime, not
+      // the rest of the sdk. `./kernel` is a restricted subpath of the sdk's
+      // layer below, which no layer is granted.
+      { name: "sdk-kernel-tests", path: "packages/sdk/src/kernel/**/*.test.ts", canImport: ["sdk-kernel", "core/kernel"], externals: ["effect", "effect/ai", "bun:test"] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can. They import evals too:
@@ -555,7 +572,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       ),
       ...testLayer("process-host", ["process-host", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-session-files", "plugin-sessions", "plugin-tasks", "plugin-tool-discovery"], ["effect", "effect/ai", "fast-check", "node:", "bun:test"]),
       { name: "process-host", path: src("process-host"), canImport: ["core"], externals: ["effect", "node:"] },
-      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"] },
+      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"], restricted: ["kernel"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
       ...testLayer("plugin-render", ["plugin-render", "core", "core/internal"], ["effect", "node:", "bun:test"]),
       { name: "plugin-render", path: src("plugin-render"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
