@@ -37,6 +37,7 @@ caught up.
 | `sessions()` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | decides what the model is sent; owns the budget |
 | `stepLoop` | sdk, `plugins/loop` | the main function; the model call lives with it |
+| `inbox` | sdk, `plugins/inbox` | queues messages per session and answers them in order, over `Loop`; its contract, `Inbox`, is its own |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
 is data, `.entity.functions.ts` the pure rules of that data, `.port.ts` a
@@ -77,40 +78,37 @@ layer's scope, and go when that scope closes.
 
 ## What the host writes
 
-<!-- pinned: packages/sdk/src/kernel/guide.test.ts#host -->
+<!-- pinned: packages/sdk/src/kernel/lesson.test.ts#agent -->
 
 ```ts
-import { Core, kernel, Loop, Memory, Sessions, Settings } from "@xandreed/core/kernel"
-import type { JournalStorage } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Core, kernel, Sessions } from "@xandreed/core/kernel"
+import type { JournalStorage, Loop, Memory, Settings } from "@xandreed/core/kernel"
+import { Inbox, inbox, inProcessJournal, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 import type { InvalidBudget } from "@xandreed/sdk/kernel"
 
-const AgentLive: Layer.Layer<Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = stepLoop.pipe(
+const AgentLive: Layer.Layer<Inbox | Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = inbox.pipe(
+  Layer.provideMerge(stepLoop),
   Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
   Layer.provideMerge(sessions()),
   Layer.provideMerge(inProcessJournal()),
   Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),   // Core + Settings
   Layer.provideMerge(model),                                             // any LanguageModel layer; scriptedModel(...) in tests
 )
-
-const turn = Effect.gen(function* () {
-  const session = yield* (yield* Sessions).create({ owner: "learner" })
-  const reply   = yield* (yield* Loop).run({ session, message: "Hello" })
-  const journal = yield* (yield* Sessions).read(session)
-  return { reply, journal }
-}).pipe(Effect.provide(AgentLive))
 ```
 
 `Layer.provideMerge` builds the layer it is given first and keeps what both
 provide, so the stack reads from the top down and builds from the bottom
-up: the kernel first, the loop last. `model` is any layer of Effect AI's
+up: the kernel first, the inbox last. A program run with
+`Effect.provide(AgentLive)` takes each part as a service: `yield* Loop`,
+`yield* Inbox`, `yield* Sessions`. `model` is any layer of Effect AI's
 `LanguageModel`; for a test or an example, `scriptedModel(script)` is a
 model that follows a script and calls no provider.
 
 The type written on `AgentLive` is what makes a missing part a compile
 error on that line: a stack that leaves out `sessions()` still needs
 `Sessions`, and a layer that needs something is not a
-`Layer<…, InvalidBudget>`. A stack whose type is left to inference
+`Layer<…, InvalidBudget>`; so is a part placed below what it needs
+(`packages/sdk/src/kernel/composition.test.ts`). A stack whose type is left to inference
 compiles as it is, with what it lacks among its requirements, and the error
 lands further away: where the program it is provided to is run, the first
 place its requirements must be `never`. What plain layers give up is the
@@ -200,11 +198,14 @@ Events are named by the plugin that writes them.
 | `plugin.loop.assistant.delta` | the loop plugin, as the answer streams | live only |
 | `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped |
 | `plugin.window.pressure` | the window memory, when a request came close to the budget | live only |
+| `plugin.inbox.queued` | the inbox, as it queues a message, with its ticket | live only; about the session, no turn |
 | `core.listener.failed` | core, when a listener fails where nothing can fail for it | live only |
 
 Core defines the first six and the last: the facts other plugins rely on,
 so a second loop plugin writes the same names. A plugin's own events are
-defined in its own folder. The type of an event is open: core holds no list
+defined in its own folder. A live event names its session, and its turn
+when it happens inside one: an event about the session and no turn of it,
+a message queued before its turn opens, names none. The type of an event is open: core holds no list
 of names. A stored event is an envelope: its place in the journal (`seq`),
 when it was stored, its name, its data as JSON, whether a reader that does
 not know it may skip it, and, when the record bears one, a message. A
@@ -320,6 +321,89 @@ turn: (id, body) => Effect.acquireUseRelease(
 ),
 ```
 
+## The inbox: queueing messages
+
+The inbox is a plugin over the loop, and the proof that a plugin can be
+added without touching core: its contract, `Inbox`, lives in its own
+folder, under a key named after its package.
+
+<!-- pinned: packages/sdk/src/kernel/plugins/inbox/inbox.port.ts -->
+
+```ts
+export class Inbox extends Context.Service<Inbox, {
+  /** Queue a message for the session. Returns at once, in call order, with its ticket and its reply. */
+  readonly enqueue: (session: SessionId, message: string) => Effect.Effect<Queued, InboxRefused>
+}>()("@xandreed/sdk/kernel/Inbox") {}
+```
+
+The first lesson's chat queues three messages at once, as a test does, with
+`AgentLive` as above and `show` whatever the host shows text with:
+
+<!-- pinned: packages/sdk/src/kernel/lesson.test.ts#program -->
+
+```ts
+import { assistantDeltaEvent, turnEndedEvent } from "@xandreed/core/kernel"
+import { inboxQueuedEvent } from "@xandreed/sdk/kernel"
+
+const program = Effect.gen(function* () {
+  const core     = yield* Core
+  const sessions = yield* Sessions
+  const inbox    = yield* Inbox
+
+  const session = yield* sessions.create({ owner: "learner" })
+
+  // Follow the session: answers as they stream, each turn as it ends, and each message as it is queued.
+  // A listener is registered before this line returns, so nothing is missed.
+  yield* core.on(assistantDeltaEvent, (delta) => show(delta.data.text), { name: "lesson" })
+  yield* core.on(turnEndedEvent, (ended) => show(`(turn ${ended.turn} done)`), { name: "lesson" })
+  yield* core.on(inboxQueuedEvent, (queued) => show(`(queued ${queued.data.ticket})`), { name: "lesson", wait: true })
+
+  // Queue three messages without waiting. Each is answered in a turn of its own, in order,
+  // and each turn sees the turns before it.
+  const queued = yield* Effect.forEach(
+    ["Hi, I'm Ana.", "What's my name?", "Spell it backwards."],
+    (message) => inbox.enqueue(session, message),
+    { concurrency: 1 },
+  )
+  const replies = yield* Effect.forEach(queued, (entry) => entry.reply, { concurrency: "unbounded" })
+  return { session, replies, journal: yield* sessions.read(session) }
+}).pipe(Effect.provide(AgentLive))
+```
+
+It follows events with `on` of `Core`, not with the stream: a listener is
+registered before `on` returns, so it cannot miss the first turn, while a
+stream starts reading only when it is scheduled. The inbox's rules:
+
+- **One state, pure transitions.** Per session, the messages waiting, the
+  next ticket and whether a worker runs are one phase (`Idle` or
+  `Working`), in one `Ref` with the replies waiting to be given. Three pure
+  functions move it (`enqueue`, `take`, `finish`), tested as a table.
+- **The ticket** is a number per session that only grows, 1, 2, 3, taken in
+  the step that queues the message: call order is queue order, whatever the
+  worker has done meanwhile.
+- **One worker per session**, forked in the plugin's scope, runs one
+  `loop.run` at a time and stops when nothing waits. Starting and stopping
+  are decided in the same transitions as queueing and taking, so no message
+  is ever left without a worker.
+- **A failed turn** fails that message's reply only; the next message runs.
+  Interrupting whoever waits on a reply does not cancel the turn.
+- **When the inbox's scope closes**, every reply not given yet fails with
+  `InboxClosed`, the running turn's included, and a message queued after is
+  refused (`InboxRefused`, `Closed`). None hangs.
+- **The next message waits for the session to be free.** `loop.run`
+  returns only once the session plugin has freed the session, so a slow
+  listener of `plugin.session.turn.ended`, bounded by `closeWait`, delays
+  the next queued message instead of failing it with `SessionBusy`.
+- **Capacity:** a session's queue holds 64 waiting messages unless
+  `inboxOf({ capacity })` says otherwise; a full one refuses with
+  `InboxRefused` (`Full`), and nothing of the message is stored.
+- **`plugin.inbox.queued`** is published as a message is queued, live,
+  about the session and no turn.
+- **Do not mix the inbox and direct calls on one session.** A queued
+  message whose turn is refused because a direct `loop.run` holds the
+  session fails with `SessionBusy`.
+- **In the process only.** Queued messages do not survive the process.
+
 ## What the model is sent
 
 Memory owns the budget and decides what the model is sent, and it keeps
@@ -374,6 +458,40 @@ run a loop written in a few lines over the stock journal, session and
 memory layers, and a memory of their own that announces an event of its
 own on a compression check, which another plugin reacts to, with nothing
 under core changed (`packages/sdk/src/kernel/plugins.test.ts`).
+
+There is no API for replacing a part while an agent runs. A host that keeps
+sessions going across the change builds the base once and swaps the stack
+above it, as this test does:
+
+<!-- pinned: packages/sdk/src/kernel/swap.test.ts#swap -->
+
+```ts
+const scope = yield* Effect.scope
+const base = yield* Layer.buildWithScope(Base, scope)        // kernel + journal + sessions, built once
+const session = yield* Context.get(base, Sessions).create({ owner: "learner" })
+
+const first  = yield* Scope.fork(scope)
+const agentA = yield* Layer.buildWithScope(Upper(noting("A", 200)), first).pipe(Effect.provide(base))
+const before = yield* ask(agentA, session, "Hi, I'm Ana.")
+
+yield* Scope.close(first, Exit.void)                           // the old stack's listeners are removed here
+const second = yield* Scope.fork(scope)
+const agentB = yield* Layer.buildWithScope(Upper(noting("B", 3000)), second).pipe(Effect.provide(base))
+const after  = yield* ask(agentB, session, "What's my name?")   // the same session goes on under the other memory
+```
+
+- The base (`Base`: the kernel, the journal and the session plugin) is
+  built once in a scope, so there is one journal and one `Core`.
+- Each upper stack (`Upper`: the inbox, the loop, a memory and whatever
+  else listens) is built in a child scope of its own.
+- The old stack's scope is closed before the new one takes a turn, so no
+  event reaches the listeners of both: the test checks that the old
+  memory's listener hears nothing after the swap, and that the session goes
+  on with its earlier messages.
+
+`Effect.provide(AgentLive)` around one program is the short form; this
+long-lived one is what a host that edits its configuration while sessions
+go on needs.
 
 Each contract ships with its kit: `journalStorageConformance`,
 `sessionsConformance`, `memoryConformance` and `loopConformance` are the

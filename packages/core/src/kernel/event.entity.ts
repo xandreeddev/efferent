@@ -62,8 +62,13 @@ export type StoredDraft = typeof StoredDraft.Type
 export const StoredEvent = Schema.Struct({ seq: Seq, at: Schema.Number, ...envelope }).check(replacesAMessage)
 export type StoredEvent = typeof StoredEvent.Type
 
-/** An event that is published and stored nowhere, with the session and turn it is about. Built with `live` from a live definition. */
-export const LiveEvent = Schema.TaggedStruct("Live", { session: SessionId, turn: TurnNumber, name: EventName, data: Schema.Json })
+/**
+ * An event that is published and stored nowhere, with the session it is
+ * about and, for an event inside a turn, the turn: an event about the
+ * session and no turn of it (a message queued before its turn opens) has
+ * none. Built with `live` from a live definition.
+ */
+export const LiveEvent = Schema.TaggedStruct("Live", { session: SessionId, turn: Schema.optionalKey(TurnNumber), name: EventName, data: Schema.Json })
 export type LiveEvent = typeof LiveEvent.Type
 
 /** A stored event as it is announced, with the session and turn it is about. */

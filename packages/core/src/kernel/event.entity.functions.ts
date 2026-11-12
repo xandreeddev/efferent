@@ -36,21 +36,28 @@ export const stored = <D extends Schema.Json>(
 ): StoredDraft => ({ name: definition.name, data, skippable: definition.skippable, ...bears })
 
 /** Where an event happened: a session and its open turn. An open session is one. */
-interface Origin {
+interface TurnOrigin {
   readonly id: SessionId
   readonly turn: TurnNumber
 }
 
-/** An event of a live definition, ready for `core.publish`. */
-export const live = <D extends Schema.Json>(definition: LiveDefinition<D>, origin: Origin, data: D): LiveEvent =>
-  ({ _tag: "Live", session: origin.id, turn: origin.turn, name: definition.name, data })
+/** What a live event is about: a session and, inside a turn, the turn. An open session is one; `{ id }` alone is a session and no turn of it. */
+interface Origin {
+  readonly id: SessionId
+  readonly turn?: TurnNumber
+}
 
-/** A stored event as `Core` carries it: the same record, with its session and turn. */
-export const announced = (origin: Origin, event: StoredEvent): AnnouncedEvent =>
+/** An event of a live definition, ready for `core.publish`: about a turn when its origin names one, about the session alone when it does not. */
+export const live = <D extends Schema.Json>(definition: LiveDefinition<D>, origin: Origin, data: D): LiveEvent =>
+  ({ _tag: "Live", session: origin.id, ...(origin.turn === undefined ? {} : { turn: origin.turn }), name: definition.name, data })
+
+/** A stored event as `Core` carries it: the same record, with its session and turn. Every stored event is stored inside a turn. */
+export const announced = (origin: TurnOrigin, event: StoredEvent): AnnouncedEvent =>
   ({ _tag: "Stored", session: origin.id, turn: origin.turn, ...event })
 
 /** The session and turn an event is about, as the origin of another: a listener publishes its own event about the one it received. */
-export const originOf = (event: { readonly session: SessionId; readonly turn: TurnNumber }): Origin => ({ id: event.session, turn: event.turn })
+export const originOf = (event: { readonly session: SessionId; readonly turn?: TurnNumber }): Origin =>
+  ({ id: event.session, ...(event.turn === undefined ? {} : { turn: event.turn }) })
 
 /** The data of an event, read as `definition` describes it; none when the event is not one of that definition. */
 export const dataOf = <D extends Schema.Json>(definition: EventDefinition<D>, event: { readonly name: EventName; readonly data: Schema.Json }): Option.Option<D> =>

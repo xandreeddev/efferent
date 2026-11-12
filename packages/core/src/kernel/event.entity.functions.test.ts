@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
-import { announced, dataOf, live, liveEvent, reasonOf, stored, storedEvent } from "./event.entity.functions.js"
-import { StoredDraft, StoredEvent } from "./event.entity.js"
+import { announced, dataOf, live, liveEvent, originOf, reasonOf, stored, storedEvent } from "./event.entity.functions.js"
+import { KernelEvent, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { StoredDefinition } from "./event.entity.js"
 import { firstStep } from "./ids.entity.functions.js"
 import { Seq, SessionId, Tokens, TurnNumber } from "./ids.entity.js"
@@ -80,6 +80,16 @@ describe("a plugin's own events", () => {
     expect(() => live(noted, origin, { text: "kept", at: Seq.make(4) })).not.toThrow()
     // @ts-expect-error the data is what the definition's schema describes
     expect(() => stored(noted, { text: 4 })).not.toThrow()
+  })
+
+  test("a live one about a session and no turn of it names no turn, and is a kernel event all the same", () => {
+    const aboutSession = live(glanced, { id: origin.id }, { text: "queued" })
+    expect(aboutSession).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, data: { text: "queued" } })
+    expect("turn" in aboutSession).toBe(false)
+    expect(Schema.is(KernelEvent)(aboutSession)).toBe(true)
+    // An event made about it keeps to the same origin: a session, and no turn.
+    expect(live(glanced, originOf(aboutSession), { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, data: { text: "seen" } })
+    expect(originOf(live(glanced, origin, { text: "seen" }))).toEqual(origin)
   })
 
   test("its data reads back only as its own definition describes it", () => {

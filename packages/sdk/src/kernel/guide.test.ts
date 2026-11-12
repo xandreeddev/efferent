@@ -1,27 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
-import type { LanguageModel } from "effect/ai"
 import {
   assistantDeltaEvent,
   Core,
   estimateRequest,
-  inspectionOf,
-  kernel,
   live,
   liveEvent,
-  Loop,
   Memory,
   messageOf,
   originOf,
   requestSentEvent,
-  Sessions,
   Settings,
   Tokens,
   userMessageEvent,
 } from "@xandreed/core/kernel"
-import type { JournalStorage } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
-import type { InvalidBudget } from "./index.js"
 import { answering, open, recording, stack } from "./testing.js"
 
 /*
@@ -31,39 +23,6 @@ import { answering, open, recording, stack } from "./testing.js"
  */
 
 describe("the kernel guide's code", () => {
-  test("the host's composition runs as written: one turn, five stored events", async () => {
-    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const { model, received } = yield* answering("Hello, ", "learner!")
-      // #region host
-      const AgentLive: Layer.Layer<Loop | Memory | Sessions | JournalStorage | Core | Settings | LanguageModel.LanguageModel, InvalidBudget> = stepLoop.pipe(
-        Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
-        Layer.provideMerge(sessions()),
-        Layer.provideMerge(inProcessJournal()),
-        Layer.provideMerge(kernel({ system: "You are a friendly tutor." })),   // Core + Settings
-        Layer.provideMerge(model),                                             // any LanguageModel layer; scriptedModel(...) in tests
-      )
-
-      const turn = Effect.gen(function* () {
-        const session = yield* (yield* Sessions).create({ owner: "learner" })
-        const reply   = yield* (yield* Loop).run({ session, message: "Hello" })
-        const journal = yield* (yield* Sessions).read(session)
-        return { reply, journal }
-      }).pipe(Effect.provide(AgentLive))
-      // #endregion host
-      const { reply, journal } = yield* turn
-      return { reply, inspection: yield* Effect.fromResult(inspectionOf(journal)), received: yield* received }
-    })))
-    expect(result.reply).toEqual({ text: "Hello, learner!" })
-    expect(result.received).toEqual([[{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "Hello" }]])
-    expect(result.inspection.events.map((event): string => event.name)).toEqual([
-      "plugin.session.turn.started",
-      "plugin.loop.user.message",
-      "plugin.loop.request.sent",
-      "plugin.loop.assistant.message",
-      "plugin.session.turn.ended",
-    ])
-  })
-
   test("a host follows the answer as it streams", async () => {
     const pieces = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hel", "lo!")
@@ -172,18 +131,21 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the window memory, the host's composition, the loop's main function, the session plugin's two functions and the plugin examples exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the window memory, the host's stack, the loop's main function, the session plugin's two functions, the queue example, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
       "packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts#",
-      "packages/sdk/src/kernel/guide.test.ts#host",
+      "packages/sdk/src/kernel/lesson.test.ts#agent",
       "packages/sdk/src/kernel/plugins/loop/step-loop.usecase.ts#",
       "packages/sdk/src/kernel/guide.test.ts#follow",
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
+      "packages/sdk/src/kernel/plugins/inbox/inbox.port.ts#",
+      "packages/sdk/src/kernel/lesson.test.ts#program",
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
+      "packages/sdk/src/kernel/swap.test.ts#swap",
     ])
     // Every fence of the document is one of the pinned quotes: two fence lines each.
     expect(Array.from(guide.matchAll(/^```/gm)).length).toBe(pins.length * 2)
@@ -199,6 +161,7 @@ describe("docs/kernel.md", () => {
     const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:session|loop|window|inbox)|core)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
     expect(named).toEqual([
       "core.listener.failed",
+      "plugin.inbox.queued",
       "plugin.loop.assistant.delta",
       "plugin.loop.assistant.message",
       "plugin.loop.request.sent",

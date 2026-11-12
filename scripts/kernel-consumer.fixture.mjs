@@ -1,12 +1,12 @@
 // The kernel through its packed entries, as a consumer installs them: the four
 // contracts' kits on the stock plugins, one turn of an agent composed of
-// layers on the scripted model, and a consumer's own contract, provided by
-// one layer and required by another.
+// layers on the scripted model, two messages queued with the inbox, and a
+// consumer's own contract, provided by one layer and required by another.
 // Run by verify-packages on Node and on Bun.
 import assert from "node:assert/strict"
 import { Context, Effect, Layer } from "effect"
 import { Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Loop, loopConformance, Memory, memoryConformance, Sessions, sessionsConformance, Settings } from "@xandreed/core/kernel"
-import { inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -84,6 +84,17 @@ assert.deepEqual(turn.names, [
 assert.equal(turn.requests, 1)
 assert.deepEqual(turn.calls, [[{ role: "system", text: system }, { role: "user", text: "Hello" }]])
 
+const queued = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: ["One."] }, { _tag: "Answers", pieces: ["Two."] }])
+  return yield* Effect.gen(function* () {
+    const session = yield* (yield* Sessions).create({ owner: "consumer" })
+    const entries = yield* Effect.forEach(["First", "Second"], (message) => Effect.flatMap(Inbox, (queue) => queue.enqueue(session, message)), { concurrency: 1 })
+    const replies = yield* Effect.forEach(entries, (entry) => entry.reply, { concurrency: 2 })
+    return { tickets: entries.map((entry) => entry.ticket), replies }
+  }).pipe(Effect.provide(inbox.pipe(Layer.provideMerge(agentOf(model)))))
+})).pipe(Effect.timeout("20 seconds")))
+assert.deepEqual(queued, { tickets: [1, 2], replies: [{ text: "One." }, { text: "Two." }] })
+
 // A contract of the consumer's own: one layer provides it, and one composed above it requires it.
 class Notes extends Context.Service()("consumer/Notes") {}
 const notes = Layer.succeed(Notes, { of: (text) => `noted: ${text}` })
@@ -102,6 +113,7 @@ console.log(`kernel ${JSON.stringify({
   memoryKit: true,
   loopKit: true,
   scriptedTurn: true,
+  inboxQueued: true,
   layersComposed: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)
