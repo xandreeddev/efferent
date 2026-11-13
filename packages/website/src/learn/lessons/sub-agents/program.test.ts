@@ -66,7 +66,7 @@ describe("lesson 4's displayed program", () => {
       { _tag: "Answers", pieces: ["The helper says 42."] },
     ]))
     expect(result.shown.replies).toEqual(["The helper says 42."])
-    expect(result.shown.status).toEqual(["turn 1", "step 1: delegate", "helper: step 1: calculator"])
+    expect(result.shown.status).toEqual(["turn 1", "step 1: delegate", "helper: step 1: calculator", "turn 1: answered"])
     // The helper's words never reach the chat's bubble.
     expect(result.shown.pieces.join("")).toBe("I'll ask a helper.The helper says 42.")
     const shown = result.calls.map((prompt) => prompt.map((message) => `${message.role}: ${message.text}`))

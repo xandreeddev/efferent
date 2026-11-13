@@ -83,19 +83,17 @@ const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×"
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note code added for this request is not a message to answer or a sum to work out.
   const prompt = { ...sent, content: sent.content.filter((message) => !(message.role === "user" && message.content.every((part) => part.type === "text" && CLOCK.test(part.text)))) }
-  const last = prompt.content.at(-1)
-  if (last?.role === "tool") {
-    const said = last.content.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
-    // Every result since the last call, in order.
-    const results = prompt.content.slice().reverse()
-    const since = results.findIndex((message) => message.role !== "tool")
-    const all = results.slice(0, since < 0 ? results.length : since).reverse().flatMap((message) =>
-      message.role === "tool" ? message.content.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : [])) : [])
-    // A helper's answer (lesson 4's delegate) is passed on as the helper's, not as a tool's JSON.
-    const helped = last.content.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
-    if (helped.length > 0) return { text: `The helper answered: ${helped.join(" ")}`, calls: [] }
-    return { text: `The ${all.length > 1 ? "tools" : "tool"} answered: ${(all.length > 0 ? all : said).join("; ")}.`, calls: [] }
+  /** What the tool results ending at `at` say, as Echo answers from them: a helper's answer passed on as the helper's. */
+  const answerFrom = (at: number): string => {
+    let first = at
+    while (first > 0 && prompt.content[first - 1]?.role === "tool") first--
+    const parts = prompt.content.slice(first, at + 1).flatMap((message) => (message.role === "tool" ? message.content : []))
+    const helped = parts.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
+    if (helped.length > 0) return `The helper answered: ${helped.join(" ")}`
+    const all = parts.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
+    return `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`
   }
+  if (prompt.content.at(-1)?.role === "tool") return { text: answerFrom(prompt.content.length - 1), calls: [] }
   // Every message sent since its last answer: the turn's own, and any that steered it.
   const since = prompt.content.length - 1 - prompt.content.slice().reverse().findIndex((message) => message.role === "assistant" || message.role === "tool")
   const pending = prompt.content.slice(since > prompt.content.length - 1 ? 0 : since + 1).flatMap((message) =>
@@ -113,6 +111,10 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   }
   const calls = pending.flatMap(callFor)
   if (calls.length > 0) return { text: calls.length > 1 ? `Let me use ${calls.length} tools.` : "Let me work that out.", calls }
+  // Messages that steered the turn after its tools answered: answer from the results, and say what was heard.
+  if (prompt.content[since]?.role === "tool" && pending.length > 0) {
+    return { text: `${answerFrom(since)} You also said: ${pending.map((text) => `"${clip(text, 40)}"`).join(", ")}.`, calls: [] }
+  }
   return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
 

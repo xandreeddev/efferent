@@ -44,10 +44,12 @@ export interface Board {
   readonly log: ReadonlyArray<LogEntry>
   /** How many entries were ever logged, those dropped included. */
   readonly logged: number
+  /** A helper's session (lesson 4), not the chat's: its turn is opened by its caller, and its words stay out of the chat. */
+  readonly helper: boolean
 }
 
-export const emptyBoard = (session: string): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), usage: new Map(), pieces: new Map(), log: [], logged: 0,
+export const emptyBoard = (session: string, helper = false): Board => ({
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), usage: new Map(), pieces: new Map(), log: [], logged: 0, helper,
 })
 
 export const LOG_LIMIT = 400
@@ -325,7 +327,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   const raw: Array<Raw> = []
   const first = Option.fromNullishOr(users[0])
   raw.push({
-    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
+    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: board.helper ? "sessions.open(session)" : "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
     detail: Option.match(started, { onNone: () => "Opening the turn.", onSome: (one) => `Record #${one.seq}, ${one.name}. The turn's scope is open; it closes when the scope ends.` }),
   })
   // The messages the turn took as it opened: its own, and every one waiting behind it.
@@ -377,7 +379,10 @@ export const viewOf = (board: Board, turn: number): TurnView => {
         : "The prompt is built fresh: the system text, then the context.",
     })
     const streamed = pieces[index] ?? 0
-    raw.push({
+    raw.push(board.helper ? {
+      id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "hooks.stream (quiet)", column: "prompt", happened: Option.isSome(answer), seqs: [],
+      detail: "A helper's hooks keep its words out of the chat: its answer goes back to its caller as delegate's result.",
+    } : {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt", happened: streamed > 0 || Option.isSome(answer), seqs: [],
       detail: streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : Option.isSome(answer) ? "The model streamed no text: it only called tools." : "Each piece goes to the chat as it arrives.",
     })

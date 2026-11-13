@@ -69,6 +69,21 @@ describe("lesson 4 on the page (the kernel, Echo)", () => {
     expect(heard.filter((trace) => trace._tag === "Prompt" && trace.session !== runtime.conversation)).toEqual([])
   })
 
+  test("a message sent while the helper works steers the chat, not the helper: one chat turn, and the helper never sees it", async () => {
+    const { runtime, heard } = await start({ ...SOURCES, tools: apply("slow-helper", DEFAULT_TOOLS) })
+    const helperAtWork = new Promise<void>((resolve) => { const stop = runtime.onTrace((trace) => { if (trace._tag === "Status" && trace.text.startsWith("helper:")) { stop(); resolve() } }) })
+    const done = replies(runtime)
+    runtime.send("Ask a helper: what is 6 * 7?")
+    await helperAtWork
+    runtime.send("Thanks!")
+    await done
+    expect(replyTexts(heard)).toEqual(["The helper answered: The tool answered: calculator says 42. You also said: \"Thanks!\"."])
+    expect((await runtime.journal()).filter((record) => record.name === "core.session.turn.started").length).toBe(1)
+    const helperPrompts = heard.flatMap((trace) => (trace._tag === "Prompt" && trace.session !== runtime.conversation ? [JSON.stringify(trace.messages)] : []))
+    expect(helperPrompts.length).toBe(2)
+    expect(helperPrompts.some((prompt) => prompt.includes("Thanks!"))).toBe(false)
+  }, 20_000)
+
   test("every experiment finds its line in the default code", () => {
     for (const [id, experiment] of Object.entries(subAgents.experiments)) {
       const source = { agent: DEFAULT_AGENT, tools: DEFAULT_TOOLS }[experiment.file] ?? ""

@@ -34,9 +34,12 @@ an ordinary tool call.
 
 ## Consequences
 
-- A helper that may itself delegate needs a limit: the host's loop bounds the steps of one turn, not the
-  depth of helpers calling helpers. A host reads the depth from the `parent` chain (`Sessions.read(id)`
-  up to a root) and refuses past its limit, as a failed tool result.
+- Helpers that delegate again are not built in this cut. They need two things: the loop's step limit
+  bounds one turn, not helpers calling helpers, so a depth limit; and a `delegate` handler that knows the
+  session it is called from, so a helper's helper is created under the helper and the `parent` chain,
+  read with `Sessions.read(id)` up to a root, gives the depth. A handler is given its parameters only, so
+  that means a handler built per caller (the sdk test's `ask(parent, task)` takes the parent for this
+  reason) or the caller's session carried in the fiber. The learn track's helper gets no `delegate`.
 - Running the helper in the caller's own session is refused: the caller's turn is open, so the helper's
   `open` fails `SessionBusy`.
 - Helpers run one at a time inside the caller's tool call. Helpers that run while the caller goes on,

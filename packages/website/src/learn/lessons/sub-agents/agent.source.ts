@@ -60,7 +60,9 @@ const program = Effect.gen(function* () {
         const session = yield* sessions.open(chat.session)
         yield* chat.status(\`turn \${session.turn}\`)
         const waiting = yield* chat.drain
-        return yield* agent(session, [message, ...waiting])
+        const answer = yield* agent(session, [message, ...waiting])
+        yield* chat.status(\`turn \${session.turn}: answered\`)
+        return answer
       }),
     ).pipe(
       Effect.flatMap((text) => chat.reply(text)),

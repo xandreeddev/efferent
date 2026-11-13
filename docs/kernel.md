@@ -464,9 +464,11 @@ const helperLive = Layer.effect(Helper, Effect.gen(function* () {
 The caller's journal holds the call and its result, which names the
 helper's session; the helper's journal holds its whole turn. The helper's
 first request holds its system text and the task, and the caller's next
-request holds the call and the result, nothing of the helper's work. A
-helper that may delegate again needs a depth limit, read from the `parent`
-chain: the loop's step limit bounds one turn, not helpers calling helpers.
+request holds the call and the result, nothing of the helper's work.
+Helpers that delegate again are not built: they need a depth limit, since
+the loop's step limit bounds one turn, and a `delegate` handler that knows
+the session it is called from, so the `parent` chain gives the depth (ADR
+0006).
 
 ## Records and tags
 
