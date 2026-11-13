@@ -1163,6 +1163,42 @@ body.app {
 .tr-body > * {
   flex-shrink: 0;
 }
+/* The sessions a program ran turns in: the chat's, and each helper's, under the call that made it. */
+.tr-sessions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+.tr-sessions::before {
+  content: "Session";
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-right: 0.2rem;
+}
+.tr-session {
+  font: inherit;
+  font-size: 0.76rem;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tr-session[data-child] {
+  border-style: dashed;
+}
+.tr-session[aria-pressed="true"] {
+  border-color: var(--accent-3);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-3);
+}
 .tr-bar {
   display: flex;
   align-items: center;

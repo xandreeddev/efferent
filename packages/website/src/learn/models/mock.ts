@@ -91,6 +91,9 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const since = results.findIndex((message) => message.role !== "tool")
     const all = results.slice(0, since < 0 ? results.length : since).reverse().flatMap((message) =>
       message.role === "tool" ? message.content.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : [])) : [])
+    // A helper's answer (lesson 4's delegate) is passed on as the helper's, not as a tool's JSON.
+    const helped = last.content.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
+    if (helped.length > 0) return { text: `The helper answered: ${helped.join(" ")}`, calls: [] }
     return { text: `The ${all.length > 1 ? "tools" : "tool"} answered: ${(all.length > 0 ? all : said).join("; ")}.`, calls: [] }
   }
   // Every message sent since its last answer: the turn's own, and any that steered it.
@@ -98,6 +101,9 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   const pending = prompt.content.slice(since > prompt.content.length - 1 ? 0 : since + 1).flatMap((message) =>
     message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
+    // "Ask a helper: …", "have a helper work out …": the rest is the helper's task.
+    const handed = /\b(?:ask|have|get) a helper\b[\s:,-]*(?:to\s+)?(.+)/i.exec(asked)
+    if (handed !== null && offered.includes("delegate")) return [{ name: "delegate", params: { task: handed[1]?.trim() ?? "" } }]
     if (/\b(notes?|what did i ask you to remember)\b/i.test(asked) && offered.includes("recall")) return [{ name: "recall", params: {} }]
     const sum = /(-?\d+(?:\.\d+)?)\s*([-+*x×/÷])\s*(-?\d+(?:\.\d+)?)/.exec(asked)
     if (sum !== null && offered.includes("calculator")) return [{ name: "calculator", params: { a: Number(sum[1]), op: OPS[sum[2] ?? "+"] ?? "+", b: Number(sum[3]) } }]

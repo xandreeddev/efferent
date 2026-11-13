@@ -52,6 +52,7 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
       </header>
       <div class="pane-body editor-host" data-editor></div>
       <div class="pane-body tr" data-trace hidden>
+        <div class="tr-sessions" data-tr-sessions role="group" aria-label="Sessions" hidden></div>
         <div class="tr-bar">
           <div class="tr-turns" data-tr-turns role="group" aria-label="Turns"></div>
           <label class="tr-follow"><input type="checkbox" data-tr-follow checked /> follow the latest</label>

@@ -1,0 +1,19 @@
+---
+const experiments = [
+  { id: "same-session", title: "One session for both", button: "Run the helper in the chat's session", text: "The helper now opens a turn in the chat's own session. The chat's turn is open, so the helper's is refused as busy: the failure comes back as delegate's result, and the chat's model reads it. A session holds one turn at a time; a helper needs one of its own." },
+  { id: "slow-helper", title: "Steer while a helper works", button: "Make the helper's calculator slow", text: "The helper's calculator takes four seconds. Ask a helper a sum, and while it works send the chat another message: it waits for the chat's next step, after the helper answers. The helper's hooks give it no steers: only the chat hears you." },
+  { id: "no-delegate", title: "No helper", button: "Give the chat the helper's tools only", text: "The chat's agent loses delegate and does the work itself, in its own session. Compare the Context tab: the calculator's call and result now sit in the chat's journal, and in every later request." },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

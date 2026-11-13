@@ -69,6 +69,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     return found
   }
   const turnsBox = q("[data-tr-turns]")
+  const sessionsBox = q("[data-tr-sessions]")
   const follow = q<HTMLInputElement>("[data-tr-follow]")
   const replay = q<HTMLButtonElement>("[data-tr-replay]")
   const empty = q("[data-tr-empty]")
@@ -86,7 +87,44 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const callsBox = q("[data-tr-calls]")
   const logCount = q("[data-tr-log-count]")
 
+  /**
+   * One board per session the program ran a turn in: the chat's, and each helper's (lesson 4), in the order they
+   * appeared. `board` is the one shown; a trace is filed under its own session's.
+   */
+  const boards = new Map<string, Board>()
+  let chatSession = ""
+  let shownSession = ""
   let board: Board = emptyBoard("")
+  const sessionOfTrace = (trace: Trace): string =>
+    trace._tag === "Event" ? trace.event.session
+      : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "Usage" ? trace.session
+        : chatSession
+  /** A helper's label: the task it was given, its first message. */
+  const labelOf = (session: string, index: number): string => {
+    if (session === chatSession) return "Chat"
+    const first = boards.get(session)?.records.find((one) => one.message?._tag === "User")
+    const task = first?.message?._tag === "User" ? first.message.text : ""
+    return `Helper ${index}${task.length > 0 ? `: ${task}` : ""}`
+  }
+  const renderSessions = () => {
+    const order = [...boards.keys()]
+    sessionsBox.hidden = order.length < 2
+    patch(sessionsBox, order.map((session, index): Item => [keyOf(session, labelOf(session, index), session === shownSession), () => {
+      const button = el("button", { type: "button", class: "tr-session", "data-child": session === chatSession ? undefined : "", "aria-pressed": String(session === shownSession), title: session === chatSession ? "The chat's session" : `A helper's session, a child of the chat's: ${session}` }, labelOf(session, index))
+      button.addEventListener("click", () => {
+        shownSession = session
+        board = boards.get(session) ?? emptyBoard(session)
+        selected = Option.none()
+        step = Option.none()
+        pickedCall = Option.none()
+        logShown = 0
+        logBox.replaceChildren()
+        renderSessions()
+        paint()
+      })
+      return button
+    }]))
+  }
   let t0 = performance.now()
   let selected: Option.Option<number> = Option.none()
   let step: Option.Option<StepView["id"]> = Option.none()
@@ -378,15 +416,26 @@ export const mountTrace = (root: HTMLElement): TracePane => {
 
   return {
     hear: (trace) => {
+      const session = sessionOfTrace(trace)
+      const known = boards.get(session)
+      const filed = record(known ?? emptyBoard(session), trace, performance.now() - t0)
+      boards.set(session, filed)
+      if (known === undefined || session !== chatSession) renderSessions()
+      if (session !== shownSession) return
       const before = turnsOf(board).length
-      board = record(board, trace, performance.now() - t0)
+      board = filed
       // A new turn: follow it, unless the reader picked one to look at.
       if (follow.checked && turnsOf(board).length !== before) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
       paintSoon()
     },
     reset: (session) => {
       stopReplay()
+      boards.clear()
+      chatSession = session
+      shownSession = session
       board = emptyBoard(session)
+      boards.set(session, board)
+      renderSessions()
       t0 = performance.now()
       selected = Option.none()
       step = Option.none()
@@ -401,6 +450,6 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       logCount.textContent = "0"
       paintSoon()
     },
-    hasTurns: () => turnsOf(board).length > 0,
+    hasTurns: () => turnsOf(boards.get(chatSession) ?? board).length > 0,
   }
 }

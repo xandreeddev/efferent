@@ -1,0 +1,80 @@
+---
+title: Sub-agents
+description: Hand a task to an agent of its own, in a session of its own. The helper does the work; your agent gets back only its answer, and its context stays small.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Controls from '../../components/learn/sub-agents/Controls.astro'
+import Experiments from '../../components/learn/sub-agents/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code">
+
+A coding agent hands work to helpers: read these files, try that fix. Each helper reads and writes far more than its caller needs back. Done in the caller's own conversation, all of it would sit in the caller's context, and every later request would carry it.
+
+So your agent gets a **helper**: an agent of its own, with its own system text and tools, working in a **session of its own**. Your agent hands it a task through a tool, `delegate`, and gets back only its answer.
+
+Nothing new is needed in the kernel. A helper's session is created with the chat's as its `parent`, and its turn runs while the chat's is open.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. "Ask a helper: …" or "Have a helper …" goes to `delegate`, with the rest as the task. In the helper's session Echo follows its usual rules, so a sum goes to the calculator.
+
+The small models on your machine rarely call a tool, as lesson 2 showed, so they will answer without a helper. Hosted models delegate when their system text tells them to.
+
+</Step>
+
+<Step n={3} id="loop" title="One loop, two agents" focus="code" file="loop">
+
+**loop.ts** is lesson 2's loop, now a function of the agent it runs: `runAgent({ system, toolkit, hooks })` returns a turn for any session.
+
+The **hooks** are where an agent's words go: `stream` for its answer as it comes, `status` for the line above the chat, `drain` for messages that steer it. The chat's agent is given the chat itself. The helper is given quiet ones: its words stay out of your chat, and nothing you type reaches it.
+
+</Step>
+
+<Step n={4} id="tools" title="delegate, and the Helper contract" focus="code" file="tools">
+
+**tools.ts** has the helper's tools (the calculator) and the chat's: those, plus `delegate`.
+
+`delegate` needs a helper, but tools.ts does not build one. It declares what it needs, a contract: `Helper`, with one method, `ask(task)`. Main provides it. That is the Neovim way again: tools.ts depends on an API, not on the code behind it.
+
+`delegate` returns `{ answer, session }`. The session id is the link from the call to the helper's session, stored with the result.
+
+</Step>
+
+<Step n={5} id="helper" title="The helper" focus="code" file="agent">
+
+In **agent.ts**, `helperLive` provides `Helper`. For each task it:
+
+1. creates a session, with `parent: chat.session`;
+2. opens a turn in it. The chat's turn is still open, waiting on `delegate`, and that is fine: a turn holds its own session, not others;
+3. runs `runAgent` with the helper's system text, tools and quiet hooks;
+4. returns the answer and the session id.
+
+Main provides the helper like any module, after `delegateLive`, which uses it.
+
+</Step>
+
+<Step n={6} id="watch" title="Watch two sessions" focus="context" wide={true}>
+
+Ask **"Ask a helper: what is 6 * 7?"** and open **Context**.
+
+A row of sessions appears above the turns: **Chat**, and **Helper 1** with its task. In the chat's turn there are two model calls. Pick the second: its prompt holds your message, the `delegate` call and its result. The helper's calculator is not there.
+
+Pick **Helper 1**. Its journal holds a whole turn of its own: the task, the calculator's call and result, and its answer. Its prompts start with the helper's system text and the task, and nothing of your chat.
+
+</Step>
+
+<Step n={7} id="experiments" title="Settings and experiments" focus="code">
+
+<Controls />
+
+<Experiments />
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** compaction. Your memory becomes a module with state of its own: it summarizes old turns and keeps the context small as a conversation grows. To see why a helper gets a session of its own, read [ADR 0006](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0006-a-sub-agent-is-a-session.md).
+
+</Step>
