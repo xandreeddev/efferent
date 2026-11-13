@@ -47,6 +47,7 @@ describe("lesson definitions", () => {
   test("the site's lessons are found by slug, and an unknown slug by none", () => {
     expect(Option.map(lessonOf("your-first-agent"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["agent", "chat", "memory"]))
     expect(Option.map(lessonOf("your-own-plugin"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["plugin", "agent", "tools", "chat", "memory"]))
+    expect(Option.map(lessonOf("sub-agents"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["agent", "tools", "loop", "chat", "memory"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
   })
 

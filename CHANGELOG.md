@@ -174,6 +174,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 4, "Sub-agents", at `/learn/sub-agents`. The chat's
+  agent hands a task to a helper through a `delegate` tool; the helper is
+  an agent of its own (its own system text, tools and quiet hooks) working
+  in a session of its own, a child of the chat's, and returns `{ answer,
+  session }`. `loop.ts` holds lesson 2's loop as `runAgent({ system,
+  toolkit, hooks })`, so both agents run it; `tools.ts` declares the
+  `Helper` contract `delegate` needs, and main provides it. The Context tab
+  gets a row of sessions (the chat, and each helper with its task), one
+  board each. Echo hands "Ask a helper: …" to `delegate` and passes the
+  helper's answer on. Experiments run the helper in the chat's own session
+  (refused as busy), make it slow while the chat is steered, and take
+  `delegate` away. ADR 0006 records the shape; `sub-agent.test.ts` holds
+  it and `docs/kernel.md` quotes it.
 - Docs site: the learn pages' runtime keeps a turn open per session and
   stamps what memory built, each prompt and its usage with the session they
   are for, so a program that runs a turn in a second session inside the

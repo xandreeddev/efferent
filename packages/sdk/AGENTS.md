@@ -218,7 +218,10 @@ it: `./kernel` is a `restricted` subpath.
   layers; a plugin's own event and a reaction to it), `listeners` (also a
   listener that cannot be interrupted), `unknown-records` (also a second
   session plugin over one store, and a memory swapped over one base),
-  `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
+  `sub-agent` (a helper in a session of its own, a child of the
+  caller's, reached through a `delegate` tool, quoted by `docs/kernel.md`:
+  the caller's journal holds the call and its result, which names the
+  child; the helper's prompt holds only its task), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
   clock, quoted by `docs/kernel.md`; the clock stored as a plugin's record
   never reaching flat memory, stored as a user message piling up; the
   wrapper kit on the clock and on careless wrappers, each failing only
@@ -255,7 +258,8 @@ it: `./kernel` is a `restricted` subpath.
   part with its own `ModelFailed`), composes the stock stack (`stack`,
   `base`) and opens a built one with a test's shorthand (`open`, whose
   `send` returns the reply's text); `testing.port.ts` holds `Label`, a
-  stand-in contract for `wrapping`. `scripts/kernel-consumer.fixture.mjs`
+  stand-in contract for `wrapping`, and `Helper`, the contract the
+  `delegate` tool of `sub-agent` needs, quoted by `docs/kernel.md`. `scripts/kernel-consumer.fixture.mjs`
   runs the three kits, one turn of a host's own over a stack of layers,
   two messages queued with the inbox, a host's turn with tools (`toolTurn`)
   and a consumer's own contract

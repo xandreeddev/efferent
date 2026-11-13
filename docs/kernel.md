@@ -413,6 +413,63 @@ as a user message instead, the time would be sent in every later request,
 one more copy each turn; stored as the plugin's own record, no memory sends
 it, since a memory reads the conversation's records only.
 
+## Sub-agents: a session of its own
+
+A turn can hand a task to an agent of its own, which works in a session of
+its own and returns only its answer (ADR 0006). Nothing in the contracts is
+new for it: the helper's session is created with the caller's as its
+`parent`, its turn opens while the caller's is open, and the caller's model
+reaches it through a tool. The tool's handler needs a helper, so the helper
+is a contract the host provides:
+
+<!-- pinned: packages/sdk/src/kernel/testing.port.ts#helper-contract -->
+
+```ts
+// What the delegate tool needs: a helper that takes a task and answers it. A contract, so the tool does not know how.
+export class Helper extends Context.Service<Helper, {
+  readonly ask: (parent: SessionId, task: string) => Effect.Effect<{ readonly answer: string; readonly session: string }, string>
+}>()("@xandreed/sdk/kernel/testing/Helper") {}
+```
+
+The tool, and the helper the host provides:
+
+<!-- pinned: packages/sdk/src/kernel/sub-agent.test.ts#helper -->
+
+```ts
+// The tool the parent's model calls. Its result names the helper's session: the stored link from the call to the child.
+const Delegate = Tool.make("delegate", {
+  description: "Hand a task to a helper. It works in a session of its own and returns only its answer.",
+  parameters: Schema.Struct({ task: Schema.String }),
+  success: Schema.Struct({ answer: Schema.String, session: Schema.String }),
+  failure: Schema.String,
+  failureMode: "return",
+})
+
+// The helper: an agent of its own, with its own system text and tools, in a session whose parent is the caller's.
+const helperLive = Layer.effect(Helper, Effect.gen(function* () {
+  const sessionsOf = yield* Sessions
+  const toolkit = yield* helperTools
+  const services = yield* Effect.context<Memory | LanguageModel.LanguageModel>()
+  const helper = agentTurn("You are a helper. Answer the task in one sentence.", toolkit)
+  return Helper.of({
+    ask: (parent, task) => Effect.scoped(Effect.gen(function* () {
+      const session = yield* sessionsOf.create({ owner: "helper", parent })
+      const answer = yield* helper(yield* sessionsOf.open(session), task) // a turn of its own, while the parent's is open
+      return { answer, session }
+    })).pipe(Effect.provide(services), Effect.mapError((error) => error.message)),
+  })
+}))
+```
+
+The caller's journal holds the call and its result, which names the
+helper's session; the helper's journal holds its whole turn. The helper's
+first request holds its system text and the task, and the caller's next
+request holds the call and the result, nothing of the helper's work.
+Helpers that delegate again are not built: they need a depth limit, since
+the loop's step limit bounds one turn, and a `delegate` handler that knows
+the session it is called from, so the `parent` chain gives the depth (ADR
+0006).
+
 ## Records and tags
 
 A stored event is an envelope: its place in the journal (`seq`), when it was
@@ -824,13 +881,11 @@ This cut keeps journals in the process, and has one session plugin and two
 memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
-1. **Sub-agents.** A turn that hands a task to an agent of its own, in a
-   child session.
-2. **Compaction memories.** A summary of old turns, results replaced by
+1. **Compaction memories.** A summary of old turns, results replaced by
    pointers with a tool that reads them back, behind `memory.context`.
-3. **A UI rendering plugin**, whose client applies patches from records and
+2. **A UI rendering plugin**, whose client applies patches from records and
    events tagged `ui`.
-4. **Durable stores and crash recovery**, on the seam the fold of the
+3. **Durable stores and crash recovery**, on the seam the fold of the
    journal already gives.
 
 ## Keeping a tailored context cache-stable
