@@ -16,9 +16,12 @@ import type { SummaryOptions } from "./summary.entity.js"
  * as `plugin.summary.summarized` (tagged `memory`, the summary its message).
  * Every later context starts with that summary's note, so the prefix a
  * provider cached holds from one compaction to the next. One summary at most
- * per context: still over the budget after it, or with only the open turn
- * left, the context fails with `OverBudget`. A budget that is no finite
- * number of at least one token fails the layer with `InvalidBudget`.
+ * per context: still over the budget after it, the context fails with
+ * `OverBudget`, and when even folding every closed turn could not fit, it
+ * fails so without asking for one. A summarizer that fails fails the
+ * context with its `SummaryFailed`, and nothing is stored. A budget that is
+ * no finite number of at least one token fails the layer with
+ * `InvalidBudget`.
  *
  * @public
  */

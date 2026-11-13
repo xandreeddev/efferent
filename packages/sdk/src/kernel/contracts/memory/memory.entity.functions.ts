@@ -5,6 +5,23 @@ import { InvalidBudget, Tokens } from "./memory.entity.js"
 import type { OverBudget } from "./memory.entity.js"
 
 /**
+ * Text the host, not the user, adds to a context as a user-role message: `[Host note: …]`.
+ *
+ * @public
+ */
+export const hostNote = (text: string): string => `[Host note: ${text}]`
+
+/**
+ * Untrusted text (a summary a model wrote, a tool's output) inside `<tag>` and `</tag>`, each on its own line, with
+ * every copy of the tag inside it, in any case or spacing, made inert (`</conversation-summary>` becomes
+ * `</conversation_summary>`), so it cannot close the frame early or open another. The tag is lowercase with a hyphen.
+ *
+ * @public
+ */
+export const framed = (tag: string, text: string): string =>
+  `<${tag}>\n${text.replace(new RegExp(`<\\s*/?\\s*${tag}(?![\\w-])[^>]*>`, "gi"), (found) => found.replaceAll("-", "_"))}\n</${tag}>`
+
+/**
  * The estimate of what a text costs, in tokens: a quarter of its
  * characters, rounded up. An approximation, and the only one: memory, the
  * kits and every reader count with this function.

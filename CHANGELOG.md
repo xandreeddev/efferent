@@ -54,7 +54,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     with a schema for its data and the tags that say what it is for
     (`conversation`, `turn`, `memory`, `ui`, `trace`, or a plugin's own
     `<plugin>.<tag>`; `taggedWith` tells a record by them). Only a record
-    tagged `conversation` bears a message (`messageOf`). Every stored
+    tagged `conversation` is read as a message (`messageOf`); a memory
+    may send the message of a record of its own, as the summary memory
+    sends its summary (`docs/adr/0008-a-memory-keeps-its-summary.md`). Every stored
     record carries its tags and the turn it was stored in. A stored record
     says whether a reader that does not know it may skip it, and a reader
     of the conversation or of another plugin's records extends that reader
@@ -84,9 +86,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     summary when the conversation passes its budget, stores it once as
     `plugin.summary.summarized` (tagged `memory`), and starts every later
     context with it as a host note, so the cached prefix holds from one
-    compaction to the next; it keeps the latest closed turn whole when
-    that fits and never folds the open one, and asks for one summary at
-    most per context. A budget's errors, `OverBudget`, `isOverBudget` and
+    compaction to the next; it folds every closed turn but the latest,
+    never the open one, frames the summary as data (`hostNote`,
+    `framed`), and asks for one summary at most per context. A budget's errors, `OverBudget`, `isOverBudget` and
     `InvalidBudget`, are the memory contract's, shared by every memory
     with a budget, no longer the window plugin's.
   - Tools: a turn that uses them is a loop the host writes over Effect

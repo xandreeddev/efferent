@@ -18,6 +18,8 @@ const WindowPressureData
 const estimateContext
 const estimateTokens
 const flatMemory
+const framed
+const hostNote
 const inProcessJournal
 const inbox
 const inboxOf

@@ -58,7 +58,8 @@ the system text, ready for a prompt. It reads the conversation's records and its
 through the conversation's reader (`readerFor(name, own, CONVERSATION_READER)`); what it
 stores of its own is tagged `memory` and is derived from the conversation, never a copy of
 it. A budget is the memory's own option and covers the history. The stock memories are
-`flatMemory`, everything, and `windowMemory`, whole turns dropped oldest first.
+`flatMemory`, everything, and `windowMemory`, whole turns dropped oldest first. (ADR 0008
+adds `summaryMemory`, whose own record carries the summary it sends.)
 
 **The kernel has no loop.** No loop contract, no stock loop and no `Settings`. A host's
 program writes its turn over the contracts: `sessions.open(id)` opens a turn in a scope and

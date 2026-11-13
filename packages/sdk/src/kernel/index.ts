@@ -6,7 +6,7 @@
 // the host's own program, which asks for the layers it uses. Nothing
 // here imports the rest of the sdk, the runtime or a runtime module.
 export { InvalidBudget, OverBudget, Tokens } from "./contracts/memory/memory.entity.js"
-export { estimateContext, estimateTokens, isOverBudget, messageText, paired, promptMessage } from "./contracts/memory/memory.entity.functions.js"
+export { estimateContext, estimateTokens, framed, hostNote, isOverBudget, messageText, paired, promptMessage } from "./contracts/memory/memory.entity.functions.js"
 export { Memory } from "./contracts/memory/memory.port.js"
 export type { MemoryFailure } from "./contracts/memory/memory.port.js"
 export { memoryConformance, memoryWrapperConformance } from "./contracts/memory/memory.conformance.js"

@@ -5,9 +5,10 @@ description: How the efferent kernel's parts compose — what core owns and what
 
 # Change the kernel's architecture
 
-Four records hold the decisions. Read them before you design; this skill is the
+These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0008-a-memory-keeps-its-summary.md`: a memory keeps what it derived (a summary) as a record of its own, tagged `memory`, whose message it sends; it gets a model's work through a contract the host provides (`Summarizer`)
 - `docs/adr/0006-a-sub-agent-is-a-session.md`: a sub-agent is a session created with the caller's as its parent, reached through a tool whose result `{ answer, session }` names it; no new contract; a helper is created under the turn its delegate call runs in (`CurrentTurn`), with a depth limit read from the parent chain
 - `docs/adr/0007-a-tool-reaches-its-turn.md`: a tool handler reaches the open turn its call runs in through `CurrentTurn`, which the host's loop provides around `toolkit.handle`; a tool declares it in `dependencies`
 - `docs/adr/0005-context-for-one-request.md`: what a wrapper of `Memory` adds for one request (the time, a chosen instruction, fetched data) comes after the memory's context, whole and in its order, and is never stored; `memoryWrapperConformance` checks it
@@ -41,7 +42,8 @@ checklist, the records have the reasons.
       another plugin's records extends that reader (`readerFor(name, own,
       CONVERSATION_READER)`).
 - [ ] An event's definition declares its tags (`conversation`, `turn`, `memory`, `ui`,
-      `trace`, `<plugin>.<tag>`). Only a record tagged `conversation` is sent to the model;
+      `trace`, `<plugin>.<tag>`). Only a record tagged `conversation` is read as a message
+      (`messageOf`); a memory may send the message of its own record (a summary, ADR 0008);
       a memory's own records are tagged `memory` and derived from the conversation, never a
       copy of it.
 - [ ] Nothing derived from configuration is stored: no system text, no request, no

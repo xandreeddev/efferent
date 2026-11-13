@@ -772,12 +772,15 @@ tagged `memory`, the summary its record's message and the place of the last
 message it replaces (`through`) its data. Every later context starts with
 that summary as a host note, then every message after `through`, so the
 prefix a provider cached holds from one compaction to the next. It folds
-whole turns only, never the open one, so a tool call stays with its result,
-and keeps the latest closed turn whole (`keepTurns`, a preference: it folds
-that too when it must). No kernel plugin calls a model: the summary comes
-from a `Summarizer` the host provides, over the model it picked or any
-other. One summary at most per context: still over the budget after it, or
-with only the open turn left, the context fails with `OverBudget`.
+whole turns only, never the open one, so a tool call stays with its result:
+every closed turn but the latest (`keepTurns`, a preference: it folds that
+too when it must), so the next compaction is as far off as it can be. The
+summary is framed as data in a host note, which a copy of its tag inside
+cannot close. No kernel plugin calls a model: the summary comes from a
+`Summarizer` the host provides, over the model it picked or any other
+(ADR 0008). One summary at most per context: still over the budget after
+it, the context fails with `OverBudget`, and when even folding every closed
+turn would not fit, it fails so without asking for one.
 
 <!-- pinned: packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts -->
 
