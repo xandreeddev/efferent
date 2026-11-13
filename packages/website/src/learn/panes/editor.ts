@@ -10,24 +10,22 @@ import { javascript } from "@codemirror/lang-javascript"
 import { bracketMatching, codeFolding, foldEffect, foldedRanges, indentOnInput, syntaxHighlighting, unfoldEffect } from "@codemirror/language"
 import { classHighlighter } from "@lezer/highlight"
 import { editableText, lockedExtension, regionField } from "../editor-locks.ts"
-import { DEFAULT_AGENT, RUN_START_MARK, SECTIONS, programOf } from "../lesson1.source.ts"
-import { DEFAULT_TINY, TINY_INTRO, tinyProgramOf } from "../tiny-memory.source.ts"
 import { formatRegion } from "../format.ts"
 import type { Formatted } from "../format.ts"
-
-export type FileName = "agent" | "tiny"
-export type Section = "imports" | "base" | "run"
+import type { LessonFile, LessonSection, Sources } from "../lesson.ts"
 
 export interface CodeEditor {
-  readonly file: () => FileName
-  readonly showFile: (file: FileName) => void
-  /** The agent expression the learner edits. */
-  readonly agentSource: () => string
-  readonly tinySource: () => string
-  readonly setAgentSource: (text: string) => void
-  readonly setTinySource: (text: string) => void
-  /** Fold exactly these read-only sections of agent.ts; the rest are open. */
-  readonly foldOnly: (folded: ReadonlyArray<Section>) => void
+  /** The id of the file shown. */
+  readonly file: () => string
+  /** Show a file of the lesson; an id it has not is ignored. */
+  readonly showFile: (file: string) => void
+  /** The editable text of one file. */
+  readonly source: (file: string) => string
+  /** The editable text of every file, by id. */
+  readonly sources: () => Sources
+  readonly setSource: (file: string, text: string) => void
+  /** Fold exactly these read-only sections of the file shown, by id; the rest are open. */
+  readonly foldOnly: (folded: ReadonlyArray<string>) => void
   /** Format the editable code of the open file (the part you can change), keeping the undo history. */
   readonly format: () => Promise<Formatted>
   readonly focus: () => void
@@ -54,25 +52,28 @@ const lockedLines = ViewPlugin.fromClass(class {
   }
 }, { decorations: (plugin) => plugin.decorations })
 
-const chipLabel = (start: string): string =>
-  start.startsWith("import") ? "imports"
-    : start.startsWith("// The base") ? "the base, built once"
-      : start.startsWith(RUN_START_MARK) ? "run: listen, then queue messages"
-        : "read-only"
+/** Where each section of a file is, in the state given. */
+const rangesOf = (state: EditorState, sections: ReadonlyArray<LessonSection>) => {
+  const doc = state.doc.toString()
+  const editable = state.field(regionField)
+  return sections.map((section) => ({ section, range: section.range(doc, editable) }))
+}
 
-const folding = codeFolding({
-  preparePlaceholder: (state, range) => state.doc.sliceString(range.from, Math.min(range.to, range.from + 24)),
+/** Folding for one file: a folded section shows as a chip with its label. */
+const folding = (sections: ReadonlyArray<LessonSection>) => codeFolding({
+  preparePlaceholder: (state, range) =>
+    rangesOf(state, sections).find((entry) => entry.range.from === range.from)?.section.label ?? "read-only",
   placeholderDOM: (_view, onclick, prepared) => {
     const chip = document.createElement("span")
     chip.className = "cm-fold-chip"
-    chip.textContent = `${chipLabel(String(prepared))}  ▸`
+    chip.textContent = `${String(prepared)}  ▸`
     chip.title = "Read-only. Click to show."
     chip.addEventListener("click", onclick)
     return chip
   },
 })
 
-const baseExtensions = (onRebuild: () => void, onEdit: () => void, onFormat: () => void): Extension[] => [
+const baseExtensions = (sections: ReadonlyArray<LessonSection>, onRebuild: () => void, onEdit: () => void, onFormat: () => void): Extension[] => [
   lineNumbers(),
   history(),
   drawSelection(),
@@ -81,7 +82,7 @@ const baseExtensions = (onRebuild: () => void, onEdit: () => void, onFormat: () 
   indentOnInput(),
   javascript(),
   syntaxHighlighting(classHighlighter),
-  folding,
+  folding(sections),
   lockedLines,
   EditorState.tabSize.of(2),
   EditorView.lineWrapping,
@@ -89,70 +90,72 @@ const baseExtensions = (onRebuild: () => void, onEdit: () => void, onFormat: () 
   EditorView.updateListener.of((update) => { if (update.docChanged) onEdit() }),
 ]
 
-export const mountEditor = (host: HTMLElement, hooks: { onRebuild: () => void; onEdit: () => void; onFormat: () => void }): CodeEditor => {
-  const agentDoc = programOf(DEFAULT_AGENT)
-  const agentFrom = SECTIONS.agentFrom
-  const make = (doc: string, region: { from: number; to: number }) =>
-    EditorState.create({ doc, extensions: [...baseExtensions(hooks.onRebuild, hooks.onEdit, hooks.onFormat), lockedExtension(region)] })
+export const mountEditor = (
+  host: HTMLElement,
+  files: ReadonlyArray<LessonFile>,
+  /** The file shown first. */
+  mainFile: string,
+  hooks: { onRebuild: () => void; onEdit: () => void; onFormat: () => void },
+): CodeEditor => {
+  const first = files.find((file) => file.id === mainFile)
+  if (first === undefined) throw new Error(`the lesson has no file ${mainFile}`)
+  const make = (file: LessonFile) => EditorState.create({
+    doc: file.documentOf(file.defaultText),
+    extensions: [
+      ...baseExtensions(file.sections, hooks.onRebuild, hooks.onEdit, hooks.onFormat),
+      lockedExtension({ from: file.editableFrom, to: file.editableFrom + file.defaultText.length }),
+    ],
+  })
 
-  const states: Record<FileName, EditorState> = {
-    agent: make(agentDoc, { from: agentFrom, to: agentFrom + DEFAULT_AGENT.length }),
-    tiny: make(tinyProgramOf(DEFAULT_TINY), { from: TINY_INTRO.length, to: TINY_INTRO.length + DEFAULT_TINY.length }),
+  const byId = new Map(files.map((file) => [file.id, file]))
+  const states = new Map(files.map((file) => [file.id, make(file)]))
+  let current = first.id
+  const view = new EditorView({ state: make(first), parent: host })
+  states.set(current, view.state)
+
+  const save = () => { states.set(current, view.state) }
+  const stateOf = (file: string): EditorState => {
+    const state = file === current ? view.state : states.get(file)
+    if (state === undefined) throw new Error(`the lesson has no file ${file}`)
+    return state
   }
-  let current: FileName = "agent"
-  const view = new EditorView({ state: states.agent, parent: host })
-
-  const save = () => { states[current] = view.state }
-  const stateOf = (file: FileName) => (file === current ? view.state : states[file])
-  const textOf = (file: FileName) => editableText(stateOf(file))
-  const replace = (file: FileName, text: string) => {
+  const textOf = (file: string) => editableText(stateOf(file))
+  const replace = (file: string, text: string) => {
     const state = stateOf(file)
     const { from, to } = state.field(regionField)
     // The program's own edit (a control, a reset): it bypasses the learner's lock.
     const spec = { changes: { from, to, insert: text }, filter: false }
     if (file === current) view.dispatch(spec)
-    else states[file] = state.update(spec).state
-  }
-
-  const sectionRanges = (state: EditorState): Record<Section, { from: number; to: number }> => {
-    const { to } = state.field(regionField)
-    const doc = state.doc.toString()
-    const runFrom = doc.indexOf(RUN_START_MARK, to)
-    return {
-      imports: SECTIONS.imports,
-      base: SECTIONS.base,
-      run: { from: runFrom < 0 ? doc.length : runFrom, to: doc.length },
-    }
+    else states.set(file, state.update(spec).state)
   }
 
   return {
     file: () => current,
     showFile: (file) => {
-      if (file === current) return
+      const next = states.get(file)
+      if (file === current || next === undefined) return
       save()
       current = file
-      view.setState(states[file])
+      view.setState(next)
     },
-    agentSource: () => textOf("agent"),
-    tinySource: () => textOf("tiny"),
-    setAgentSource: (text) => replace("agent", text),
-    setTinySource: (text) => replace("tiny", text),
+    source: textOf,
+    sources: () => Object.fromEntries(files.map((file) => [file.id, textOf(file.id)])),
+    setSource: replace,
     foldOnly: (folded) => {
-      if (current !== "agent") return
+      const sections = byId.get(current)?.sections ?? []
+      if (sections.length === 0) return
       const effects: StateEffect<unknown>[] = []
       const open = foldedRanges(view.state)
       open.between(0, view.state.doc.length, (from, to) => { effects.push(unfoldEffect.of({ from, to })) })
-      const ranges = sectionRanges(view.state)
-      for (const section of folded) {
-        const range = ranges[section]
-        if (range.to > range.from) effects.push(foldEffect.of(range))
+      for (const { section, range } of rangesOf(view.state, sections)) {
+        if (folded.includes(section.id) && range.to > range.from) effects.push(foldEffect.of(range))
       }
       view.dispatch({ effects })
     },
     format: async () => {
       const file = current
       const before = textOf(file)
-      const result = await formatRegion(before, file === "agent" ? "const Agent = " : "const lastMessages = ")
+      const result = await formatRegion(before, byId.get(file)?.formatPrefix ?? "")
       // Typing while Prettier loaded wins: formatting stale text would undo it.
       if (result.ok && result.text !== before && textOf(file) === before) replace(file, result.text)
       return result

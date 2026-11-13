@@ -3,10 +3,11 @@ import { Option, Result } from "effect"
 import { Seq, turnEnded, turnStarted, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { assistantMessage, firstStep, requestSent, Tokens, userMessage } from "@xandreed/sdk/kernel"
-import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { DEFAULT_TINY } from "./tiny-memory.source.ts"
+import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
+import { DEFAULT_TINY } from "./lessons/your-first-agent/tiny-memory.source.ts"
+import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { loadEcho } from "./models/mock.ts"
-import { setField } from "./config-edit.ts"
+import { setField } from "./lessons/your-first-agent/config-edit.ts"
 import { inspectorOf, recordsOf } from "./context-model.ts"
 import type { InspectorModel } from "./context-model.ts"
 import { LessonRuntime } from "./runtime.ts"
@@ -87,9 +88,9 @@ describe("inspectorOf, over a hand-written journal", () => {
 describe("inspectorOf, over a session the lesson runtime recorded", () => {
   const FILL = ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"]
   const recorded = async (steps: (runtime: LessonRuntime) => Promise<void>) => {
-    const runtime = await LessonRuntime.create()
+    const runtime = await LessonRuntime.create(yourFirstAgent.evaluate)
     runtime.setModel(loadEcho())
-    await runtime.rebuild(DEFAULT_AGENT, DEFAULT_TINY)
+    await runtime.rebuild({ agent: DEFAULT_AGENT, tiny: DEFAULT_TINY })
     await steps(runtime)
     const journal = await runtime.journal()
     await runtime.dispose()
@@ -100,7 +101,7 @@ describe("inspectorOf, over a session the lesson runtime recorded", () => {
   test("step 6: five messages fit in 3000 tokens, and at a budget of 80 the next request leaves out the three oldest turns", async () => {
     const inspected = await recorded(async (runtime) => {
       await sendAll(runtime, FILL)
-      await runtime.rebuild(Option.getOrThrow(setField(DEFAULT_AGENT, "budgetTokens", 80)), DEFAULT_TINY)
+      await runtime.rebuild({ agent: Option.getOrThrow(setField(DEFAULT_AGENT, "budgetTokens", 80)), tiny: DEFAULT_TINY })
       await sendAll(runtime, ["tell me about topic 6"])
     })
     // The figures the lesson's step 6 gives: each Echo turn costs about 24 tokens, the system text 12.
@@ -122,7 +123,7 @@ describe("inspectorOf, over a session the lesson runtime recorded", () => {
   test("the learner's memory: the stack holds only the current message, and the journal everything", async () => {
     const inspected = await recorded(async (runtime) => {
       await sendAll(runtime, FILL.slice(0, 2))
-      await runtime.rebuild(Option.getOrThrow(setField(DEFAULT_AGENT, "memory", "last")), DEFAULT_TINY)
+      await runtime.rebuild({ agent: Option.getOrThrow(setField(DEFAULT_AGENT, "memory", "last")), tiny: DEFAULT_TINY })
       await sendAll(runtime, FILL.slice(2, 4))
     })
     expect(inspected.requests.map((request) => request.layers.length)).toEqual([2, 4, 2, 2])
@@ -133,7 +134,7 @@ describe("inspectorOf, over a session the lesson runtime recorded", () => {
 
   test("every entry's label agrees with what the request resolved to", async () => {
     const inspected = await recorded(async (runtime) => {
-      await runtime.rebuild(Option.getOrThrow(setField(DEFAULT_AGENT, "budgetTokens", 80)), DEFAULT_TINY)
+      await runtime.rebuild({ agent: Option.getOrThrow(setField(DEFAULT_AGENT, "budgetTokens", 80)), tiny: DEFAULT_TINY })
       await sendAll(runtime, [...FILL, "tell me about topic 6"])
     })
     for (const request of inspected.requests) {

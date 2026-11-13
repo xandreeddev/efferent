@@ -1,11 +1,20 @@
 ---
 // The right-hand side of a lesson: everything visible at once, no tabs.
 // Behaviour lives in learn/playground.ts; markup carries `data-*` hooks.
-import { chips } from "../../learn/suggestions"
+// What it shows of a lesson (its files, its chips) comes from the lesson's definition.
+import { Option } from "effect"
+import { lessonOf } from "../../learn/lessons/index.ts"
 import LoopDiagram from "./LoopDiagram.astro"
+
+interface Props {
+  /** The lesson's slug, as in /learn/<slug>. */
+  lesson: string
+}
+const { lesson: slug } = Astro.props
+const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson definition for ${slug}: add it to learn/lessons/index.ts`))
 ---
 
-<section class="wb-bench" aria-label="Playground">
+<section class="wb-bench" aria-label="Playground" data-lesson={lesson.slug}>
   <div class="wb-modelbar">
     <button class="mb-toggle" type="button" data-model-toggle aria-expanded="false" aria-controls="model-panel">
       <span class="mb-label">Model</span>
@@ -27,8 +36,7 @@ import LoopDiagram from "./LoopDiagram.astro"
     <section class="pane pane-code" data-pane="code" aria-label="Code">
       <header class="pane-head">
         <div class="files" role="tablist" aria-label="Files">
-          <button role="tab" type="button" data-file="agent" aria-selected="true">agent.ts</button>
-          <button role="tab" type="button" data-file="tiny" aria-selected="false">tiny-memory.ts</button>
+          {lesson.files.map((file) => <button role="tab" type="button" data-file={file.id} aria-selected={String(file.id === lesson.mainFile)}>{file.label}</button>)}
         </div>
         <span class="syntax" data-syntax aria-live="polite"></span>
         <div class="pane-actions">
@@ -56,7 +64,7 @@ import LoopDiagram from "./LoopDiagram.astro"
         <p class="pg-empty" data-empty>Ask the agent something. Echo needs no download; pick another model from the bar above.</p>
       </div>
       <div class="chips" data-chips>
-        {chips.map((chip) => <button type="button" class="chip" data-chip-text={chip}>{chip}</button>)}
+        {lesson.chips.map((chip) => <button type="button" class="chip" data-chip-text={chip}>{chip}</button>)}
         <button type="button" class="chip chip-three" data-send-three title="Queue three messages at once: each is answered in a turn of its own, in order">Send three at once</button>
       </div>
       <form class="compose" data-compose>
