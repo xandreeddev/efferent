@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, kernel, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
-import type { OpenSession, SessionId } from "@xandreed/core/kernel"
-import { flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import type { JournalStorageError, OpenSession, SessionId } from "@xandreed/core/kernel"
+import { CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
 import { Helper } from "./testing.port.js"
 
 /*
@@ -32,6 +32,7 @@ const agentTurn = <Tools extends Record<string, Tool.Any>>(system: string, toolk
           Effect.flatMap(Stream.runLast),
           Effect.map(Option.match({ onNone: () => toolResult(call, null), onSome: (last) => toolResult(call, last.encodedResult, last.isFailure) })),
           Effect.catch((error) => Effect.succeed(toolResult(call, error instanceof Error ? error.message : String(error), true))),
+          Effect.provideService(CurrentTurn, session), // the call runs in this turn (ADR 0007)
         ))
       }
     }
@@ -50,7 +51,11 @@ const Delegate = Tool.make("delegate", {
   success: Schema.Struct({ answer: Schema.String, session: Schema.String }),
   failure: Schema.String,
   failureMode: "return",
+  dependencies: [CurrentTurn], // its handler reaches the turn the call runs in
 })
+
+// How deep helpers may go: the loop's step limit bounds one turn, not helpers calling helpers.
+const MAX_DEPTH = 2
 
 // The helper: an agent of its own, with its own system text and tools, in a session whose parent is the caller's.
 const helperLive = Layer.effect(Helper, Effect.gen(function* () {
@@ -58,12 +63,17 @@ const helperLive = Layer.effect(Helper, Effect.gen(function* () {
   const toolkit = yield* helperTools
   const services = yield* Effect.context<Memory | LanguageModel.LanguageModel>()
   const helper = agentTurn("You are a helper. Answer the task in one sentence.", toolkit)
+  // How many helpers deep a session is: its parents, read from the store, up to the root.
+  const depthOf = (id: SessionId): Effect.Effect<number, JournalStorageError> => Effect.flatMap(sessionsOf.read(id), (journal) =>
+    journal.header.parent === undefined ? Effect.succeed(0) : Effect.map(depthOf(journal.header.parent), (depth) => depth + 1))
   return Helper.of({
-    ask: (parent, task) => Effect.scoped(Effect.gen(function* () {
-      const session = yield* sessionsOf.create({ owner: "helper", parent })
-      const answer = yield* helper(yield* sessionsOf.open(session), task) // a turn of its own, while the parent's is open
+    ask: (task) => Effect.scoped(Effect.gen(function* () {
+      const caller = yield* CurrentTurn // the turn the delegate call runs in: the chat's, or a helper's
+      if ((yield* depthOf(caller.id)) >= MAX_DEPTH) return yield* Effect.fail("a helper this deep may not hand work further down")
+      const session = yield* sessionsOf.create({ owner: "helper", parent: caller.id })
+      const answer = yield* helper(yield* sessionsOf.open(session), task) // a turn of its own, while the caller's is open
       return { answer, session }
-    })).pipe(Effect.provide(services), Effect.mapError((error) => error.message)),
+    })).pipe(Effect.provide(services), Effect.mapError((error) => (typeof error === "string" ? error : error.message))),
   })
 }))
 // #endregion helper
@@ -89,7 +99,7 @@ describe("a sub-agent: a session of its own", () => {
         const sessionsOf = yield* Sessions
         const helper = yield* Helper
         const parent = yield* sessionsOf.create({ owner: "learner" })
-        const delegateLive = Toolkit.make(Delegate).toLayer({ delegate: ({ task }) => helper.ask(parent, task) })
+        const delegateLive = Toolkit.make(Delegate).toLayer({ delegate: ({ task }) => helper.ask(task) })
         const reply = yield* Effect.scoped(Effect.gen(function* () {
           const toolkit = yield* tools
           return yield* agentTurn("You are a helpful assistant.", toolkit)(yield* sessionsOf.open(parent), "Ask a helper: 2 + 3?")
@@ -132,5 +142,32 @@ describe("a sub-agent: a session of its own", () => {
     })
     const refused = await Effect.runPromise(Effect.scoped(caught).pipe(Effect.provide(base)))
     expect(refused._tag === "SessionRefused" && "reason" in refused ? refused.reason : refused._tag).toBe("SessionBusy")
+  })
+
+  test("a helper asked from a helper's turn works under that helper; the depth limit, read from the parent chain, refuses the next one down", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: ["Done."] }, { _tag: "Answers", pieces: ["Done too."] }])
+      const stack = Layer.mergeAll(helperToolsLive, helperLive.pipe(Layer.provide(helperToolsLive))).pipe(
+        Layer.provideMerge(flatMemory), Layer.provideMerge(sessions()), Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()), Layer.provideMerge(model),
+      )
+      return yield* Effect.gen(function* () {
+        const sessionsOf = yield* Sessions
+        const helper = yield* Helper
+        // Ask from inside a session's open turn, as a delegate call made in it would.
+        const askFrom = (id: SessionId, task: string) => Effect.scoped(Effect.flatMap(sessionsOf.open(id), (turn) => helper.ask(task).pipe(Effect.provideService(CurrentTurn, turn))))
+        const chat = yield* sessionsOf.create({ owner: "learner" })
+        const firstSession = (yield* askFrom(chat, "a task")).session as SessionId
+        const secondSession = (yield* askFrom(firstSession, "a smaller task")).session as SessionId
+        const third = yield* Effect.flip(askFrom(secondSession, "smaller still"))
+        return {
+          firstParent: (yield* sessionsOf.read(firstSession)).header.parent, chat,
+          secondParent: (yield* sessionsOf.read(secondSession)).header.parent, firstSession,
+          third,
+        }
+      }).pipe(Effect.provide(stack))
+    })))
+    expect(result.firstParent).toBe(result.chat)
+    expect(result.secondParent).toBe(result.firstSession)
+    expect(result.third).toBe("a helper this deep may not hand work further down")
   })
 })

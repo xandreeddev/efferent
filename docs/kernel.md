@@ -284,8 +284,9 @@ const turn = (conversation: SessionId, message: string) =>
         // Store the model's answer with the calls it made, then run each call and store its result.
         yield* session.append(assistantMessage(text, { toolCalls: calls }))
         if (calls.length === 0) return text
+        // Each call runs in this turn: a tool that declares CurrentTurn reaches the session from its handler.
         for (const call of calls) {
-          yield* session.append(yield* runTool(toolkit, call))
+          yield* session.append(yield* runTool(toolkit, call).pipe(Effect.provideService(CurrentTurn, session)))
         }
       }
       return `I stopped after ${MAX_STEPS} steps.`
@@ -324,6 +325,12 @@ kit holds a memory to it (`pairs`): an answered call is sent with its result
 right after it, and an unanswered one not at all. The window memory drops
 whole turns only, so one long tool turn can go over its budget: it fails
 with `OverBudget` like any turn that alone does not fit (ADR 0004).
+
+The loop runs each call in its turn: `CurrentTurn`, provided around the call,
+is the open session it runs in (ADR 0007). A tool whose handler must reach
+it (to append a record of its own, or to start a helper under it) declares
+it in `dependencies` and reads it with `yield* CurrentTurn`; the compiler
+refuses a loop that runs such a tool without providing it.
 
 Between steps a host may take messages that arrived meanwhile into the open
 turn, so a long run can be steered; the second lesson's chat does this
@@ -425,9 +432,10 @@ is a contract the host provides:
 <!-- pinned: packages/sdk/src/kernel/testing.port.ts#helper-contract -->
 
 ```ts
-// What the delegate tool needs: a helper that takes a task and answers it. A contract, so the tool does not know how.
+// What the delegate tool needs: a helper that takes a task and answers it, under the turn the call runs in.
+// A contract, so the tool does not know how.
 export class Helper extends Context.Service<Helper, {
-  readonly ask: (parent: SessionId, task: string) => Effect.Effect<{ readonly answer: string; readonly session: string }, string>
+  readonly ask: (task: string) => Effect.Effect<{ readonly answer: string; readonly session: string }, string, CurrentTurn>
 }>()("@xandreed/sdk/kernel/testing/Helper") {}
 ```
 
@@ -443,7 +451,11 @@ const Delegate = Tool.make("delegate", {
   success: Schema.Struct({ answer: Schema.String, session: Schema.String }),
   failure: Schema.String,
   failureMode: "return",
+  dependencies: [CurrentTurn], // its handler reaches the turn the call runs in
 })
+
+// How deep helpers may go: the loop's step limit bounds one turn, not helpers calling helpers.
+const MAX_DEPTH = 2
 
 // The helper: an agent of its own, with its own system text and tools, in a session whose parent is the caller's.
 const helperLive = Layer.effect(Helper, Effect.gen(function* () {
@@ -451,12 +463,17 @@ const helperLive = Layer.effect(Helper, Effect.gen(function* () {
   const toolkit = yield* helperTools
   const services = yield* Effect.context<Memory | LanguageModel.LanguageModel>()
   const helper = agentTurn("You are a helper. Answer the task in one sentence.", toolkit)
+  // How many helpers deep a session is: its parents, read from the store, up to the root.
+  const depthOf = (id: SessionId): Effect.Effect<number, JournalStorageError> => Effect.flatMap(sessionsOf.read(id), (journal) =>
+    journal.header.parent === undefined ? Effect.succeed(0) : Effect.map(depthOf(journal.header.parent), (depth) => depth + 1))
   return Helper.of({
-    ask: (parent, task) => Effect.scoped(Effect.gen(function* () {
-      const session = yield* sessionsOf.create({ owner: "helper", parent })
-      const answer = yield* helper(yield* sessionsOf.open(session), task) // a turn of its own, while the parent's is open
+    ask: (task) => Effect.scoped(Effect.gen(function* () {
+      const caller = yield* CurrentTurn // the turn the delegate call runs in: the chat's, or a helper's
+      if ((yield* depthOf(caller.id)) >= MAX_DEPTH) return yield* Effect.fail("a helper this deep may not hand work further down")
+      const session = yield* sessionsOf.create({ owner: "helper", parent: caller.id })
+      const answer = yield* helper(yield* sessionsOf.open(session), task) // a turn of its own, while the caller's is open
       return { answer, session }
-    })).pipe(Effect.provide(services), Effect.mapError((error) => error.message)),
+    })).pipe(Effect.provide(services), Effect.mapError((error) => (typeof error === "string" ? error : error.message))),
   })
 }))
 ```
@@ -465,10 +482,12 @@ The caller's journal holds the call and its result, which names the
 helper's session; the helper's journal holds its whole turn. The helper's
 first request holds its system text and the task, and the caller's next
 request holds the call and the result, nothing of the helper's work.
-Helpers that delegate again are not built: they need a depth limit, since
-the loop's step limit bounds one turn, and a `delegate` handler that knows
-the session it is called from, so the `parent` chain gives the depth (ADR
-0006).
+`delegate` declares `CurrentTurn`, the turn its call runs in, which the
+loop provides around each call (ADR 0007): the helper is created under
+whichever session called it, so a helper's helper is filed under the helper,
+and the depth, read from the `parent` chain, is bounded by the host
+(`MAX_DEPTH`): the loop's step limit bounds one turn, not helpers calling
+helpers.
 
 ## Records and tags
 

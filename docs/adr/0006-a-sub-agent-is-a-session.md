@@ -28,18 +28,17 @@ an ordinary tool call.
   the call to the helper's session: it survives a reload, needs no event, no index of children and no
   change to storage, and a host draws the tree from it. The model sees the session id as part of the
   result; it is the helper's address, and costs a few tokens.
-- **The handler does not hold the caller's session.** A tool handler is given its parameters only, so the
-  helper is given the caller's session id by the host (in the learn track, the chat's session), not by
-  the call.
+- **The handler reaches the caller's session through its turn.** A tool handler is given its parameters
+  only; the loop provides the turn the call runs in (`CurrentTurn`, ADR 0007), and the helper is created
+  under it.
 
 ## Consequences
 
-- Helpers that delegate again are not built in this cut. They need two things: the loop's step limit
-  bounds one turn, not helpers calling helpers, so a depth limit; and a `delegate` handler that knows the
-  session it is called from, so a helper's helper is created under the helper and the `parent` chain,
-  read with `Sessions.read(id)` up to a root, gives the depth. A handler is given its parameters only, so
-  that means a handler built per caller (the sdk test's `ask(parent, task)` takes the parent for this
-  reason) or the caller's session carried in the fiber. The learn track's helper gets no `delegate`.
+- Helpers that delegate again need two things: a depth limit, since the loop's step limit bounds one turn,
+  not helpers calling helpers; and a `delegate` handler that knows the session it is called from, so a
+  helper's helper is created under the helper and the `parent` chain, read with `Sessions.read(id)` up to
+  a root, gives the depth. ADR 0007 gives the handler its turn (`CurrentTurn`); `sub-agent.test.ts`
+  holds both. The learn track's helper gets no `delegate`.
 - Running the helper in the caller's own session is refused: the caller's turn is open, so the helper's
   `open` fails `SessionBusy`.
 - Helpers run one at a time inside the caller's tool call. Helpers that run while the caller goes on,

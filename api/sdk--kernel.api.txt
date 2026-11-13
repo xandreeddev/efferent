@@ -1,3 +1,4 @@
+class CurrentTurn
 class Inbox
 class InboxClosed
 class InboxRefused
