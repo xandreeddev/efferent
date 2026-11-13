@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { readControls, setField, withoutMemory } from "./config-edit.ts"
+import { raisedBudget, readControls, setField, withoutMemory } from "./config-edit.ts"
 
 const set = (source: string, key: Parameters<typeof setField>[1], value: string | number) => Option.getOrThrow(setField(source, key, value))
 
@@ -34,5 +34,15 @@ describe("agent controls", () => {
     expect(Option.isNone(setField("inbox", "budgetTokens", 3))).toBe(true)
     expect(Option.isNone(setField("inbox", "memory", "last"))).toBe(true)
     expect(Option.isNone(withoutMemory("inbox"))).toBe(true)
+  })
+})
+
+describe("the budget a refusal offers", () => {
+  test("is always above the budget that refused, and room for twice the estimate", () => {
+    expect(raisedBudget({ budgetTokens: 5, estimatedTokens: 13 })).toBe(100)
+    expect(raisedBudget({ budgetTokens: 80, estimatedTokens: 66 })).toBe(160)
+    // A pasted message over the default budget: never the budget it already has.
+    expect(raisedBudget({ budgetTokens: 3000, estimatedTokens: 3201 })).toBe(6410)
+    expect(raisedBudget({ budgetTokens: 5000, estimatedTokens: 40 })).toBe(10000)
   })
 })

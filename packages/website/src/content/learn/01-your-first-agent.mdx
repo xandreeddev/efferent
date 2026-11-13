@@ -86,7 +86,7 @@ Then drag **Budget** down to about 80 and **send another message**: the budget a
 
 The green bar marks what matches the previous request: all a provider's prompt cache could reuse. While nothing is dropped, each request starts with the one before it, so the bar grows. The request that drops turns starts elsewhere: only the system text matches the one before it.
 
-Too low and memory refuses. It always sends the system text and the message the turn answers, and drops only older turns. If those two alone are over the budget, the turn fails with `OverBudget` and no request is sent. The chat says so and offers to raise the budget. A real model's longer replies fill the budget sooner than Echo's short ones.
+Too low and memory refuses. It always sends the system text and the message the turn answers, and drops only older turns. If those two alone are over the budget, the turn fails with `OverBudget` and no request is sent. The chat says so and offers to raise the budget. Your message stays in the journal, so it goes with the next one you send: there is no need to send it again. A real model's longer replies fill the budget sooner than Echo's short ones.
 
 </Step>
 
@@ -96,7 +96,7 @@ A memory is a layer that provides `Memory`. Its one function, `build`, reads the
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-memory">Swap in lastMessages</button> <button class="btn" type="button" data-exp="window-memory">Swap the window back</button></p>
 
-The swap sets `n: 1`: the model sees only your newest message. Ask "What did I just say?" and Echo has nothing earlier to recall. The journal still holds everything, so with the window back the next request sends the conversation again, within its budget.
+The swap sets `n: 1`: the model sees only your newest message. Ask "What did I just say?" and Echo has nothing earlier to recall. The journal still holds everything, so with the window back the next request sends the conversation again, within its budget, except the turns the window dropped earlier: those stay dropped.
 
 Change `n` to 3 in agent.ts and rebuild: the model sees the last three messages, yours and its answers.
 

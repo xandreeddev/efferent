@@ -59,3 +59,7 @@ export const withoutMemory = (source: string): Option.Option<string> => {
   const line = /\n[ \t]*Layer\.provideMerge\((?:windowMemory|lastMessages)\([^\n]*/
   return line.test(source) ? Option.some(source.replace(line, "")) : Option.none()
 }
+
+/** The budget the "raise" button offers after a refusal: above the budget that refused and twice the estimate, at least 100, rounded up to tens. */
+export const raisedBudget = (refused: { readonly budgetTokens: number; readonly estimatedTokens: number }): number =>
+  Math.ceil(Math.max(100, refused.budgetTokens * 2, refused.estimatedTokens * 2) / 10) * 10

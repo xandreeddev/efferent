@@ -122,16 +122,37 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
   test("without a memory the stack does not build, and says what is missing", async () => {
     const { runtime } = await start()
     const refused = await runtime.rebuild(Option.getOrThrow(withoutMemory(DEFAULT_AGENT)), DEFAULT_TINY)
-    expect(refused).toMatchObject({ _tag: "Refused", message: expect.stringContaining("Memory") })
+    expect(refused).toMatchObject({ _tag: "Refused", message: expect.stringContaining("nothing in the stack provides Memory, and a part above it needs it") })
     expect(runtime.ready).toBe(false)
     expect(await (await runtime.send(["hi"]))[0]?.outcome).toEqual({ _tag: "Refused", message: "Build the agent first." })
   })
 
   test("text that is no layer, or no valid expression, is refused readably", async () => {
     const { runtime } = await start()
-    expect(await runtime.rebuild("inbox.pipe(", DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("not a valid expression") })
+    expect(await runtime.rebuild("inbox.pipe(", DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("agent.ts did not run") })
     expect(await runtime.rebuild("42", DEFAULT_TINY)).toEqual({ _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." })
     expect(await runtime.rebuild("stepLoop", DEFAULT_TINY)).toMatchObject({ _tag: "Refused" })
+  })
+
+  test("a part that is no layer, a forgotten call most often, is refused in words", async () => {
+    const { runtime } = await start()
+    const uncalled = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "windowMemory")
+    expect(await runtime.rebuild(uncalled, DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("Layer.provideMerge was given a function, not a layer. Call it") })
+    expect(await runtime.rebuild(DEFAULT_AGENT, DEFAULT_TINY)).toEqual({ _tag: "Built" })
+  })
+
+  test("lastMessages without n refuses when it is built, in words, not at the first message", async () => {
+    const { runtime } = await start()
+    const noN = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "lastMessages({ budgetTokens: 3000 })")
+    expect(await runtime.rebuild(noN, DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("lastMessages needs n and budgetTokens, each a number of 1 or more") })
+    expect(runtime.ready).toBe(false)
+  })
+
+  test("a name the learner's memory misspells is said to come from the learner's code", async () => {
+    const { runtime } = await start()
+    const typo = DEFAULT_TINY.replace("yield* Settings", "yield* Setings")
+    const agent = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "lastMessages({ n: 1, budgetTokens: 3000 })")
+    expect(await runtime.rebuild(agent, typo)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("your code threw a ReferenceError while the agent was built") })
   })
 
   test("a broken tiny-memory.ts is reported by file, only when the agent uses it", async () => {

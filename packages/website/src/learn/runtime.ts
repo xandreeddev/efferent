@@ -63,7 +63,12 @@ export interface Sent {
 /** The names the memory's code may use (see tiny-memory.source.ts). */
 const tinyNames = { Effect, Layer, Option, messageOf, readerFor, readJournal, estimateRequest, LOOP_READER, Memory, OverBudget, Settings, Tokens }
 
-/** Evaluate a JavaScript expression against a fixed set of names only. */
+/**
+ * Evaluate a JavaScript expression with the given names in scope. It is no
+ * sandbox (globals stay reachable); it only keeps the names the program
+ * imports the ones the learner's code sees, so a name it does not import
+ * fails as "not defined".
+ */
 const evaluate = (source: string, names: Record<string, unknown>): unknown => {
   const keys = Object.keys(names)
   return new Function(...keys, `"use strict"; return (${source}\n)`)(...keys.map((key) => names[key]))
@@ -79,15 +84,35 @@ export const evaluateTiny = (source: string): unknown => evaluate(source, tinyNa
 
 /** Evaluate the learner's agent expression; `lastMessages` is the learner's own memory, when the agent uses it. */
 export const evaluateAgent = (source: string, lastMessages: unknown = undefined): unknown =>
-  evaluate(source, { Layer, inbox, stepLoop, windowMemory, settings, lastMessages })
+  evaluate(source, { Layer: checkedLayer, inbox, stepLoop, windowMemory, settings, lastMessages })
 
-/** Why a build failed, in words: the error a part failed with, or the defect (a missing service is one). */
+/** A part handed to `Layer.provideMerge` that is no layer, said in words: most often a function not called. */
+const notALayer = (part: unknown): Error => new Error(Predicate.isFunction(part)
+  ? "Layer.provideMerge was given a function, not a layer. Call it: windowMemory({ budgetTokens: 3000 }), lastMessages({ n: 1, budgetTokens: 3000 })."
+  : `Layer.provideMerge was given ${part === undefined ? "undefined" : typeof part}, not a layer.`)
+
+/**
+ * Effect's `Layer`, as the learner's code sees it: the same module, but a
+ * part given to `provideMerge` that is no layer is refused when the
+ * expression is evaluated, in words, rather than deep inside the build.
+ */
+const checkedLayer = {
+  ...Layer,
+  provideMerge: (...parts: ReadonlyArray<unknown>) => {
+    const bad = parts.find((part) => !Layer.isLayer(part))
+    if (bad !== undefined || parts.length === 0) throw notALayer(bad)
+    return Reflect.apply(Layer.provideMerge, undefined, parts)
+  },
+}
+
+/** Why a build failed, in words: the error a part failed with, or the defect (a missing service, or an error thrown by the learner's code). */
 const buildFailure = (cause: Cause.Cause<unknown>): string => {
   const failure = Cause.findErrorOption(cause)
   const reason = Option.isSome(failure) ? textOf(failure.value) : Cause.prettyErrors(cause)[0]?.message ?? "the stack did not build"
   const missing = /Service not found: (\S+)/.exec(reason)?.[1]
-  return missing === undefined ? reason
-    : `nothing in the stack provides ${missing.split("/").at(-1)}, and a part above it needs it (${reason}).`
+  if (missing !== undefined) return `nothing in the stack provides ${missing.split("/").at(-1)}, and a part above it needs it (${reason}).`
+  const thrown = Option.isNone(failure) ? Cause.prettyErrors(cause)[0]?.name : undefined
+  return thrown !== undefined && /^(Reference|Type|Range)Error$/.test(thrown) ? `your code threw a ${thrown} while the agent was built: ${reason}` : reason
 }
 
 /** A reply's end as the page shows it. */
@@ -240,11 +265,11 @@ export class LessonRuntime {
     let lastMessages: unknown = undefined
     if (agent.includes("lastMessages")) {
       const made = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluateTiny(tiny), catch: textOf })))
-      if (Exit.isFailure(made)) return { _tag: "Refused", message: `tiny-memory.ts is not valid JavaScript: ${buildFailure(made.cause)}` }
+      if (Exit.isFailure(made)) return { _tag: "Refused", message: `tiny-memory.ts did not run: ${buildFailure(made.cause)}` }
       lastMessages = made.value
     }
     const evaluated = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluateAgent(agent, lastMessages), catch: textOf })))
-    if (Exit.isFailure(evaluated)) return { _tag: "Refused", message: `This is not a valid expression: ${buildFailure(evaluated.cause)}` }
+    if (Exit.isFailure(evaluated)) return { _tag: "Refused", message: `agent.ts did not run: ${buildFailure(evaluated.cause)}` }
     const stack = evaluated.value
     if (!isUpperStack(stack)) return { _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." }
     const services = Context.add(this.base, LanguageModel.LanguageModel, this.model.value.model)
@@ -266,6 +291,8 @@ export class LessonRuntime {
   /** Queue messages, in order, without waiting: each is answered in a turn of its own. */
   async send(texts: ReadonlyArray<string>): Promise<ReadonlyArray<Sent>> {
     const entries = texts.map((text) => ({ id: this.nextId++, text }))
+    // A build in flight has closed the old agent and not yet made the new one: wait for it.
+    await this.building
     if (Option.isNone(this.upper)) {
       return entries.map((entry) => ({ ...entry, outcome: Promise.resolve<SendOutcome>({ _tag: "Refused", message: "Build the agent first." }) }))
     }

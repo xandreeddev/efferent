@@ -2,7 +2,7 @@
 // lesson runtime, which runs the kernel in the page.
 import { Match, Option, Result } from "effect"
 import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { readControls, setField, withoutMemory } from "./config-edit.ts"
+import { raisedBudget, readControls, setField, withoutMemory } from "./config-edit.ts"
 import type { ControlKey } from "./config-edit.ts"
 import { echoChoice } from "./models/mock.ts"
 import { loadModel, probeDevice } from "./models/registry.ts"
@@ -348,10 +348,10 @@ function boot(root: HTMLElement) {
 
   /** Memory refused a request it cannot fit: say why from its own figures, and offer the way out. */
   const explainBudget = (outcome: Extract<SendOutcome, { _tag: "OverBudget" }>) => {
-    const item = chat.add("error", `This request does not fit the ${outcome.budgetTokens}-token budget. Memory always sends the system text and the message this turn answers, and leaves out only older messages; those two alone come to about ${outcome.estimatedTokens} tokens. Your message is in the journal, but no request was sent. Raise the budget, or shorten the system text, and send again.`)
+    const item = chat.add("error", `This request does not fit the ${outcome.budgetTokens}-token budget. Memory always sends the system text and the message this turn answers, and leaves out only older messages; those two alone come to about ${outcome.estimatedTokens} tokens. No request was sent. Your message stays in the journal, so once the budget is raised it goes with your next message: no need to send it again.`)
     const actions = document.createElement("div")
     actions.className = "msg-actions"
-    const raised = Math.min(3000, Math.max(100, outcome.estimatedTokens * 2))
+    const raised = raisedBudget(outcome)
     const raise = document.createElement("button")
     raise.type = "button"
     raise.className = "btn btn-quiet"

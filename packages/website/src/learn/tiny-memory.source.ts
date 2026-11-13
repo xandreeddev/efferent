@@ -24,6 +24,14 @@ export const DEFAULT_TINY = `({ n, budgetTokens }) =>
     Memory,
     Effect.gen(function* () {
       const settings = yield* Settings
+      // Refuse options that are no numbers here, in words, rather than at the first message.
+      if (!(n >= 1) || !(budgetTokens >= 1)) {
+        return yield* Effect.die(
+          new RangeError(
+            \`lastMessages needs n and budgetTokens, each a number of 1 or more: lastMessages({ n: 1, budgetTokens: 3000 })\`,
+          ),
+        )
+      }
       const budget = Tokens.make(Math.floor(budgetTokens))
       // It reads core's records, the loop's, and its own (it writes none).
       const reader = readerFor("last", [], LOOP_READER)
@@ -35,7 +43,7 @@ export const DEFAULT_TINY = `({ n, budgetTokens }) =>
             // Every record that bears a message. The last one is the message this turn answers.
             const said = journal.filter((record) => record.message !== undefined)
             // Start from the last n; while that is over the budget, leave out the oldest.
-            for (let from = Math.max(0, said.length - n); from < said.length; from++) {
+            for (let from = Math.max(0, said.length - Math.floor(n)); from < said.length; from++) {
               const kept = said.slice(from)
               const estimatedTokens = estimateRequest(
                 settings.system,
