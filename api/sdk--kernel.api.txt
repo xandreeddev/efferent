@@ -20,6 +20,7 @@ const inboxOf
 const inboxQueuedEvent
 const isOverBudget
 const memoryConformance
+const memoryWrapperConformance
 const messageText
 const paired
 const promptMessage
@@ -30,6 +31,7 @@ const windowMemory
 const windowPressureEvent
 interface InboxOptions
 interface MemorySubject
+interface MemoryWrapperSubject
 interface Queued
 interface SessionsOptions
 interface WindowOptions

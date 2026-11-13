@@ -1,6 +1,6 @@
 # ADR 0001: How the kernel's plugins compose
 
-- **Status:** accepted, 12 November 2026
+- **Status:** accepted, 12 November 2026; rule 2 of "Rules for wrappers" and the proposal "context that lives for a turn" superseded, for context of one request, by ADR 0005. The examples below name the memory contract's first method, `build`; today it is `context(session)` (ADR 0003)
 - **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every plugin written for them
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

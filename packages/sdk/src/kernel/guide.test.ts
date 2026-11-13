@@ -112,7 +112,7 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the lesson's program, a turn with tools, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the lesson's program, a turn with tools, a plugin of your own, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
@@ -120,6 +120,8 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/lesson.test.ts#program",
       "packages/sdk/src/kernel/tools.test.ts#tools",
       "packages/sdk/src/kernel/tools.test.ts#turn",
+    "packages/sdk/src/kernel/own-plugin.test.ts#meter",
+    "packages/sdk/src/kernel/own-plugin.test.ts#clock",
       "packages/sdk/src/kernel/guide.test.ts#follow",
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",

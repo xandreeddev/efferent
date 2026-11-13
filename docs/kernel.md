@@ -330,6 +330,86 @@ turn, so a long run can be steered; the second lesson's chat does this
 with the messages waiting in its queue (`chat.drain`). That is the host's choice, not the
 kernel's.
 
+## A plugin of your own
+
+A plugin takes part in the ways ADR 0001 lists: it replaces a contract, wraps
+one, hooks an event, or records a fact in the journal under its own name.
+Two of them are enough for most of what a host adds, and the third lesson
+of the learn pages builds both.
+
+An **event plugin** sets up on boot and hooks events with `Core.on`, as a
+Neovim autocmd does. It observes: it stores nothing, and changes no turn.
+This one counts what each answer cost and shows it when the turn ends:
+
+<!-- pinned: packages/sdk/src/kernel/own-plugin.test.ts#meter -->
+
+```ts
+/**
+ * An event plugin. On boot it hooks two events, as a Neovim autocmd does: each
+ * answer stored, and each turn's end. It stores nothing and changes no turn:
+ * it counts, and shows the count. Its listeners go with its layer's scope.
+ */
+const meter = (show: (line: string) => Effect.Effect<void>) =>
+  Layer.effectDiscard(Effect.gen(function* () {
+    const core = yield* Core
+    const spent = yield* Ref.make({ turn: 0, total: 0 })
+
+    // Each answer: what the provider says it cost, else an estimate of its text. `wait: true`, so the
+    // count is in before the turn goes on, and so before its end is announced.
+    yield* core.on(assistantMessageEvent, (event) => {
+      const said = "message" in event && event.message !== undefined ? messageText(event.message) : ""
+      const tokens = event.data.usage?.outputTokens ?? estimateTokens(said)
+      return Ref.update(spent, ({ turn, total }) => ({ turn: turn + tokens, total: total + tokens }))
+    }, { name: "meter", wait: true })
+
+    // Each turn's end: show what it cost, and start the next turn's count at zero.
+    yield* core.on(turnEndedEvent, (event) =>
+      Effect.flatMap(Ref.getAndUpdate(spent, (count) => ({ ...count, turn: 0 })), ({ turn, total }) =>
+        show(`turn ${event.data.turn}: ${turn} tok, ${total} in all`)), { name: "meter" })
+  }))
+```
+
+Its listeners belong to its layer's scope: a host that builds the stack again
+(the lesson's Rebuild) closes it, and the old meter hears nothing more.
+
+A **wrapper** is a higher-order plugin: given a plugin of a contract, it
+returns a plugin of the same contract, the inner one hidden. A wrapper of
+`Memory` asks the memory below for the context, then adds what this request
+needs after it (ADR 0005). What it adds is code's, like the system text:
+never stored, so it is not sent again in later requests, and the cached
+prefix up to the conversation's end still holds.
+
+<!-- pinned: packages/sdk/src/kernel/own-plugin.test.ts#clock -->
+
+```ts
+/**
+ * A wrapper of `Memory`, written as a higher-order plugin: given the memory it
+ * wraps, it returns a memory. It asks the one below for the context, then adds
+ * one message after it, for this request only. The time is computed here, like
+ * the system text, and never stored: the next request has its own, and the
+ * cached prefix up to the conversation's end still holds.
+ */
+const withClock = <E, R>(inner: Layer.Layer<Memory, E, R>): Layer.Layer<Memory, E, R> =>
+  Layer.effect(Memory, Effect.gen(function* () {
+    const memory = yield* Memory // the memory it wraps
+    return Memory.of({
+      context: (session) => Effect.gen(function* () {
+        const context = yield* memory.context(session)
+        const now = new Date(yield* Clock.currentTimeMillis).toISOString().slice(11, 16)
+        return [...context, { role: "user" as const, content: `[Host note: it is ${now} UTC.]` }]
+      }),
+    })
+  })).pipe(Layer.provide(inner))
+```
+
+`memoryWrapperConformance` holds a wrapper to that rule: the wrapped context
+starts with the inner memory's, whole and in its order
+(`starts-with-inner`), and what the wrapper appends while it builds is under
+its own prefix, never a record of the conversation (`own-records`). Stored
+as a user message instead, the time would be sent in every later request,
+one more copy each turn; stored as the plugin's own record, no memory sends
+it, since a memory reads the conversation's records only.
+
 ## Records and tags
 
 A stored event is an envelope: its place in the journal (`seq`), when it was
