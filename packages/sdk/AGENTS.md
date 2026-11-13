@@ -258,7 +258,8 @@ it: `./kernel` is a `restricted` subpath.
   part with its own `ModelFailed`), composes the stock stack (`stack`,
   `base`) and opens a built one with a test's shorthand (`open`, whose
   `send` returns the reply's text); `testing.port.ts` holds `Label`, a
-  stand-in contract for `wrapping`. `scripts/kernel-consumer.fixture.mjs`
+  stand-in contract for `wrapping`, and `Helper`, the contract the
+  `delegate` tool of `sub-agent` needs, quoted by `docs/kernel.md`. `scripts/kernel-consumer.fixture.mjs`
   runs the three kits, one turn of a host's own over a stack of layers,
   two messages queued with the inbox, a host's turn with tools (`toolTurn`)
   and a consumer's own contract

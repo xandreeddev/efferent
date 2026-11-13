@@ -84,6 +84,14 @@ describe("lesson 4 on the page (the kernel, Echo)", () => {
     expect(helperPrompts.some((prompt) => prompt.includes("Thanks!"))).toBe(false)
   }, 20_000)
 
+  test("the system-text control reads and writes the chat's line, never the helper's", () => {
+    const control = subAgents.controls.system!
+    expect(control.read(DEFAULT_AGENT)).toEqual(Option.some("You are a helpful assistant. Hand a task to a helper with delegate, then answer in one short sentence."))
+    const written = Option.getOrThrow(control.write(DEFAULT_AGENT, "You are a pirate."))
+    expect(written).toContain('const system = "You are a pirate."')
+    expect(written).toContain('const helperSystem = "You are a helper. Do the task you are given, then answer in one short sentence."')
+  })
+
   test("every experiment finds its line in the default code", () => {
     for (const [id, experiment] of Object.entries(subAgents.experiments)) {
       const source = { agent: DEFAULT_AGENT, tools: DEFAULT_TOOLS }[experiment.file] ?? ""
