@@ -8,7 +8,16 @@
 // read a Stop message until the whole answer was done. It therefore generates a
 // few tokens at a time (reusing the model's KV cache between chunks) and yields
 // to the event loop between chunks: a Stop lands within a chunk.
-import { AutoModelForCausalLM, AutoTokenizer, TextStreamer } from "@huggingface/transformers"
+import { AutoModelForCausalLM, AutoTokenizer, env, TextStreamer } from "@huggingface/transformers"
+import { indexedDbCache, needsIndexedDbCache } from "./idb-cache.ts"
+
+// Downloads are kept for the next visit. Transformers.js keeps them in the browser's Cache API, which a page
+// served over plain http from a LAN address does not have; there they go to IndexedDB instead.
+if (needsIndexedDbCache()) {
+  env.useBrowserCache = false
+  env.useCustomCache = true
+  env.customCache = indexedDbCache()
+}
 
 type Message = { role: string; content: string }
 type In =
