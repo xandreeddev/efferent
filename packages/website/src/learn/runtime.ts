@@ -46,12 +46,12 @@ export interface Reported {
 export type Trace =
   /** Every event on Core: a stored record as it is announced, or a live event. */
   | { readonly _tag: "Event"; readonly event: KernelEvent }
-  /** What memory built for a turn: the messages after the system text, from the journal as it was up to record `upTo`. */
-  | { readonly _tag: "Context"; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
-  /** A prompt the model received, in the turn open when it was sent, and the tools offered with it. */
-  | { readonly _tag: "Prompt"; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string> }
+  /** What memory built for a session's turn: the messages after the system text, from the journal as it was up to record `upTo`. */
+  | { readonly _tag: "Context"; readonly session: string; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
+  /** A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. */
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string> }
   /** What the provider reported the last prompt cost. */
-  | { readonly _tag: "Usage"; readonly turn: number; readonly usage: Reported }
+  | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported }
   /** What the program told the chat, after the turn it last opened. */
   | { readonly _tag: "Piece"; readonly turn: number; readonly text: string }
   | { readonly _tag: "Reply"; readonly turn: number; readonly text: string }
@@ -88,13 +88,25 @@ const usageOf = (part: unknown): Option.Option<Reported> => {
 
 const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> => Prompt.make(raw).content.map(saidOfMessage)
 
+/** The session a turn's start or end is about. */
+const sessionOf = (event: { readonly session?: unknown; readonly id?: unknown }): string =>
+  typeof event.session === "string" ? event.session : typeof event.id === "string" ? event.id : ""
+
 export class LessonRuntime {
   private model: Option.Option<LoadedModel> = Option.none()
   private program: Option.Option<{ readonly fiber: Fiber.Fiber<unknown, unknown>; readonly scope: Scope.Closeable }> = Option.none()
   private readonly listeners = new Set<(trace: Trace) => void>()
   private session: SessionId
-  private openTurn = 0
+  /** The turn open in each session, by its id: the chat's, and any other a program runs a turn in (a helper's). */
+  private readonly openTurns = new Map<string, number>()
+  /** The chat's last turn: what the chat's pieces, replies and status lines belong to. */
   private lastTurn = 0
+  /**
+   * The session memory was last asked about: a turn asks memory for the context and then calls the model, in one
+   * fiber, so the next prompt is that session's. This holds while a program runs one model call at a time; calls
+   * made at once in two sessions would be told apart by the fiber, which the page does not track.
+   */
+  private asked: string | undefined
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
 
@@ -135,13 +147,16 @@ export class LessonRuntime {
   /** The page's listeners on the base's Core: every event, in the order Core hands them over, and which turn is open. */
   private listen(): Effect.Effect<void, never, Scope.Scope> {
     const core = Context.get(this.base, Core)
-    const started = (turn: number) => { this.openTurn = turn; this.lastTurn = turn }
-    const ended = () => { this.openTurn = 0 }
+    const started = (session: string, turn: number) => {
+      this.openTurns.set(session, turn)
+      if (session === this.session) this.lastTurn = turn
+    }
+    const ended = (session: string) => { this.openTurns.delete(session) }
     const heard = (event: KernelEvent) => this.emit({ _tag: "Event", event })
     return Effect.gen(function* () {
       // Waited for, so a prompt sent in a turn finds that turn here.
-      yield* core.on(turnStartedEvent, (event) => Effect.sync(() => started(event.data.turn)), { name: "page-turns", wait: true })
-      yield* core.on(turnEndedEvent, () => Effect.sync(ended), { name: "page-turns", wait: true })
+      yield* core.on(turnStartedEvent, (event) => Effect.sync(() => started(sessionOf(event), event.data.turn)), { name: "page-turns", wait: true })
+      yield* core.on(turnEndedEvent, (event) => Effect.sync(() => ended(sessionOf(event))), { name: "page-turns", wait: true })
       yield* Effect.forkScoped(Stream.runForEach(core.events, (event) => Effect.sync(() => heard(event))), { startImmediately: true })
     })
   }
@@ -153,7 +168,7 @@ export class LessonRuntime {
 
   /** Whether a turn is open. */
   get busy(): boolean {
-    return this.openTurn > 0
+    return this.openTurns.has(this.session)
   }
 
   /** Whether a program runs. */
@@ -186,16 +201,19 @@ export class LessonRuntime {
       status: (text) => Effect.suspend(() => emit({ _tag: "Status", turn: this.lastTurn, text })),
     })
     const inner = model.model
-    const turnOf = () => this.openTurn
+    // The session the prompt is for: the one memory was last asked about, else the chat's.
+    const askedOf = () => this.asked ?? this.session
+    const turnOf = (session: string) => this.openTurns.get(session) ?? 0
     const watched = LanguageModel.LanguageModel.of({
       ...inner,
       streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => {
-        const turn = turnOf()
+        const session = askedOf()
+        const turn = turnOf(session)
         const kit = options.toolkit
         const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
-        this.emit({ _tag: "Prompt", turn, messages: saidOf(options.prompt), tools })
+        this.emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools })
         return Reflect.apply(inner.streamText, inner, [options]).pipe(
-          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", turn, usage }) })),
+          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage }) })),
         )
       }) as typeof inner.streamText,
     })
@@ -209,8 +227,10 @@ export class LessonRuntime {
       pane: {},
       watchMemory: (layer) => Layer.effect(Memory, Effect.map(Effect.gen(function* () { return yield* Memory }), (memory) => Memory.of({
         context: (session) => Effect.tap(memory.context(session), (messages) =>
-          Effect.flatMap(Effect.orElseSucceed(session.journal, () => []), (journal) =>
-            emit({ _tag: "Context", turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map(saidOfMessage) }))),
+          Effect.flatMap(Effect.orElseSucceed(session.journal, () => []), (journal) => {
+            this.asked = session.id
+            return emit({ _tag: "Context", session: session.id, turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map(saidOfMessage) })
+          })),
       }))).pipe(Layer.provide(layer)),
     }
   }
@@ -265,6 +285,7 @@ export class LessonRuntime {
   async clear(): Promise<BuildResult> {
     await Effect.runPromise(Queue.clear(this.queue))
     this.session = await Effect.runPromise(Context.get(this.base, Sessions).create({ owner: OWNER }))
+    this.asked = undefined
     return this.start(this.last)
   }
 
