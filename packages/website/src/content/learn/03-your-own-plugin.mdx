@@ -36,12 +36,13 @@ This lesson builds the two you will reach for most: an event plugin and a wrappe
 
 <Step n={3} id="meter" title="An event plugin: the meter" focus="code" file="plugin">
 
-`meter` is a layer. When main provides it, it **sets up**: it makes a counter and hooks two events with `core.on`.
+`meter` is a layer. When main provides it, it **sets up**: it makes a counter and hooks three events with `core.on`.
 
+- `core.session.turn.started`: each turn's start. It names the turn on the status line.
 - `conversation.assistant.message`: each answer stored. It adds what the provider says the answer cost, or an estimate of its text.
-- `core.session.turn.ended`: each turn's end. It shows the turn's count and the total on the status line.
+- `core.session.turn.ended`: each turn's end. It shows the turn's count and the total.
 
-It stores nothing and changes no turn: it observes. The first listener has `wait: true`, so the turn waits for it, and the count is in before the turn ends. The second runs in the background: nobody waits for a status line.
+It stores nothing and says nothing to the model: it observes. One listener has `wait: true`: the turn waits for it, so the count is in before the turn ends, and if it failed, the turn would fail. The others run in the background: nobody waits for a status line.
 
 Its listeners belong to its layer's scope. Rebuild closes the scope, and the old meter's listeners are gone with it: its count starts again at zero.
 
@@ -67,7 +68,9 @@ Ask **"What time is it?"** and open **Context**.
 - The **Memory** column is what the flat memory returned: your message, and no note. The clock wraps it, so the page watches the memory below the wrapper.
 - The **Prompt** column is what the model was sent. Its last row is the note, marked **added by your code · never stored**. Hover it: no journal record lights up, because there is none.
 
-Send another message. The new request starts with the same rows as the last one, and only the note at the end is new.
+Send another message. The new request starts with every row of the last one but its note: then come the last answer, your new message and a new note. The old note is not sent again.
+
+Small models read the note too: Qwen2.5 0.5B on the GPU answers "What time is it?" with the time it says.
 
 </Step>
 
@@ -77,7 +80,7 @@ Look at `main` in **agent.ts**. The meter is provided like any module: `Effect.p
 
 The clock is applied to the plugin it wraps: `withClock(flatMemory)`. That is why a wrapper cannot end up in the wrong place. It is not a line in a list that might come after the part that uses memory: it **is** the memory that main provides.
 
-The status line's `turn N` hook that lesson 2 had in `program` is gone. The meter does that job now, from its own file.
+The status line's `turn N` hook that lesson 2 had in `program` is gone: the meter does that job now, from its own file.
 
 </Step>
 

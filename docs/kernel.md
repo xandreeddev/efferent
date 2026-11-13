@@ -338,16 +338,19 @@ Two of them are enough for most of what a host adds, and the third lesson
 of the learn pages builds both.
 
 An **event plugin** sets up on boot and hooks events with `Core.on`, as a
-Neovim autocmd does. It observes: it stores nothing, and changes no turn.
-This one counts what each answer cost and shows it when the turn ends:
+Neovim autocmd does. It observes: it stores nothing and says nothing to the
+model, and only a listener registered with `wait: true` holds the turn. This
+one counts what each answer cost and shows it when the turn ends:
 
 <!-- pinned: packages/sdk/src/kernel/own-plugin.test.ts#meter -->
 
 ```ts
 /**
  * An event plugin. On boot it hooks two events, as a Neovim autocmd does: each
- * answer stored, and each turn's end. It stores nothing and changes no turn:
- * it counts, and shows the count. Its listeners go with its layer's scope.
+ * answer stored, and each turn's end. It stores nothing and says nothing to the
+ * model: it counts, and shows the count. The listener registered with
+ * `wait: true` holds the turn until it returns, and its failure would fail the
+ * turn; the other runs in the background. Its listeners go with its layer's scope.
  */
 const meter = (show: (line: string) => Effect.Effect<void>) =>
   Layer.effectDiscard(Effect.gen(function* () {

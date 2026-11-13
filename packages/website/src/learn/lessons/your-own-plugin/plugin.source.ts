@@ -5,7 +5,7 @@
 
 /** Read-only: what the plugins import. */
 export const PLUGIN_IMPORTS = `import { Clock, Effect, Layer, Ref } from "effect"
-import { assistantMessageEvent, Core, turnEndedEvent, userMessage } from "@xandreed/core/kernel"
+import { assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { estimateTokens, Memory, messageText } from "@xandreed/sdk/kernel"
 import { Chat } from "./chat.ts"`
 
@@ -13,16 +13,21 @@ import { Chat } from "./chat.ts"`
 export const PLUGIN_HEADER = `${PLUGIN_IMPORTS}\n\n`
 
 /** What the learner edits: the two plugins. Plain JavaScript, so the page runs it as written. */
-export const DEFAULT_PLUGIN = `// An event plugin. On boot it hooks two events, as a Neovim autocmd does.
-// It stores nothing and changes no turn: it counts what each answer cost, and shows it.
+export const DEFAULT_PLUGIN = `// An event plugin. On boot it hooks three events, as a Neovim autocmd does.
+// It stores nothing and says nothing to the model: it counts what each answer cost, and shows it.
 export const meter = Layer.effectDiscard(
   Effect.gen(function* () {
     const core = yield* Core
     const chat = yield* Chat
     const spent = yield* Ref.make({ turn: 0, total: 0 })
 
+    // Each turn's start: name it on the status line while it runs.
+    const named = (event) => chat.status(\`turn \${event.data.turn}\`)
+    yield* core.on(turnStartedEvent, named, { name: "meter" })
+
     // Each answer stored: what the provider says it cost, else an estimate of its text.
-    // wait: true, so the turn waits for it, and the count is in before the turn ends.
+    // wait: true: the turn waits for it, so the count is in before the turn ends.
+    // Its failure would fail the turn.
     yield* core.on(
       assistantMessageEvent,
       (event) => {
@@ -72,7 +77,8 @@ export const pluginDocumentOf = (plugin: string): string => `${PLUGIN_HEADER}${p
 /** The same file as a module a test can compile: what the page leaves untyped is typed. */
 export const pluginModuleOf = (plugin: string): string => `${PLUGIN_HEADER}${plugin
   .replace("export const withClock = (inner) =>", "export const withClock = <E, R>(inner: Layer.Layer<Memory, E, R>): Layer.Layer<Memory, E, R> =>")
-  .replace('{ role: "user", content:', '{ role: "user" as const, content:')}\n`
+  .replace('{ role: "user", content:', '{ role: "user" as const, content:')
+  .replace("const named = (event) =>", "const named = (event: { readonly data: { readonly turn: number } }) =>")}\n`
 
 /** The editable part as the page runs it: statements, without `export`. */
 export const pluginBodyOf = (plugin: string): string => plugin.replace(/^export /gm, "")

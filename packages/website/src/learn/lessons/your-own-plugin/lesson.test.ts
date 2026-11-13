@@ -33,7 +33,7 @@ const until = (runtime: LessonRuntime, match: (trace: Trace) => boolean) => new 
   const stop = runtime.onTrace((trace) => { if (match(trace)) { stop(); resolve() } })
 })
 /** Send one message and wait for its turn's end on the status line, which the meter writes last. */
-const say = async (runtime: LessonRuntime, text: string, ended: (status: string) => boolean = (status) => status.startsWith("turn ")) => {
+const say = async (runtime: LessonRuntime, text: string, ended: (status: string) => boolean = (status) => /^turn \d+: ~/.test(status)) => {
   const done = until(runtime, (trace) => trace._tag === "Status" && ended(trace.text))
   runtime.send(text)
   await done
@@ -95,6 +95,18 @@ describe("lesson 3 on the page (the kernel, Echo)", () => {
     runtime.send("Hi, I'm Ana.")
     await done
     expect(statuses(heard).some((status) => status.includes(" tok, "))).toBe(false)
+  })
+
+  test("Rebuild closes the meter's scope: a program built without it counts nothing", async () => {
+    const { runtime, heard } = await start()
+    await say(runtime, "Hi, I'm Ana.")
+    expect(await runtime.start({ ...SOURCES, agent: apply("unplug-meter", DEFAULT_AGENT) })).toEqual({ _tag: "Built" })
+    const before = statuses(heard).length
+    const done = until(runtime, (trace) => trace._tag === "Reply")
+    runtime.send("Hi again.")
+    await done
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(statuses(heard).slice(before).filter((status) => status.includes(" tok, "))).toEqual([])
   })
 
   test("every experiment finds its line in the default code", () => {

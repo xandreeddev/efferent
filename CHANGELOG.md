@@ -33,7 +33,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
     folder with its entities, events, pure rules and kit: memory's
     (`Memory`, `memoryConformance`, `Tokens`, `estimateTokens`,
-    `estimateContext`, `promptMessage`) and the inbox's (`Inbox`,
+    `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
+    the kit of a wrapper of memory: what it adds for one request comes
+    after the context, whole and in its order, and is never stored,
+    `docs/adr/0005-context-for-one-request.md`) and the inbox's (`Inbox`,
     `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
     gate refuses both. There is no loop contract and no stock loop: the

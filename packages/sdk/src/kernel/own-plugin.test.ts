@@ -16,8 +16,10 @@ const failedChecks = (checks: ReadonlyArray<{ readonly id: string; readonly run:
 // #region meter
 /**
  * An event plugin. On boot it hooks two events, as a Neovim autocmd does: each
- * answer stored, and each turn's end. It stores nothing and changes no turn:
- * it counts, and shows the count. Its listeners go with its layer's scope.
+ * answer stored, and each turn's end. It stores nothing and says nothing to the
+ * model: it counts, and shows the count. The listener registered with
+ * `wait: true` holds the turn until it returns, and its failure would fail the
+ * turn; the other runs in the background. Its listeners go with its layer's scope.
  */
 const meter = (show: (line: string) => Effect.Effect<void>) =>
   Layer.effectDiscard(Effect.gen(function* () {
@@ -75,13 +77,17 @@ describe("a plugin of your own", () => {
       yield* agent.send(session, "Hi again.")
       const second = yield* Queue.take(lines)
       const journal = yield* agent.inspect(session)
-      return { lines: [first, second], names: journal.events.map((event) => event.name) }
+      return { lines: [first, second], names: journal.events.map((event): string => event.name) }
     })))
     // The scripted model reports 3 output tokens for each answer: the meter takes what the provider says over its estimate.
     const each = 3
     expect(each).not.toBe(estimateTokens("Hello there, friend."))
     expect(shown.lines).toEqual([`turn 1: ${each} tok, ${each} in all`, `turn 2: ${each} tok, ${2 * each} in all`])
-    expect(shown.names.every((name) => !name.startsWith("plugin.meter."))).toBe(true)
+    // What the turns stored is the conversation and the turns' bounds: the meter stored nothing.
+    expect(shown.names).toEqual([
+      "core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "core.session.turn.ended",
+      "core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "core.session.turn.ended",
+    ])
   })
 
   test("a wrapper adds the time after the context, for each request, and stores nothing", async () => {
