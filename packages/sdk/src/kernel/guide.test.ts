@@ -131,6 +131,7 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/plugins/memory-flat/flat.adapter.ts#",
       "packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts#",
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
+      "packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts#",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/swap.test.ts#swap",
     ])

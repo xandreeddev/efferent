@@ -1,25 +1,12 @@
-import { Option, Predicate, Result } from "effect"
+import { Option, Result } from "effect"
 import { CONVERSATION_READER, dataOf, live, messageOf, readerFor, stored, turnStartedEvent } from "@xandreed/core/kernel"
 import type { LiveEvent, Message, Reader, Seq, SessionId, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { Tokens } from "../../contracts/memory/memory.entity.js"
+import { OverBudget, Tokens } from "../../contracts/memory/memory.entity.js"
 import { estimateTokens, messageText } from "../../contracts/memory/memory.entity.functions.js"
-import { InvalidBudget, OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
+import { windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
 /** What the window memory reads of a journal: core's records and the conversation's, whose reader it extends, and its own. */
 export const WINDOW_READER: Reader = readerFor("window", [windowDroppedEvent], CONVERSATION_READER)
-
-/** The budget a window memory was given, as whole tokens; a number that is no budget is refused. */
-export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBudget> =>
-  Number.isFinite(budgetTokens) && budgetTokens >= 1
-    ? Result.succeed(Tokens.make(Math.floor(budgetTokens)))
-    : Result.fail(new InvalidBudget({ message: `a window memory needs a budget of at least one token; it was given ${budgetTokens}` }))
-
-/**
- * Whether an error is the window memory's `OverBudget`, whichever copy of the plugin raised it.
- *
- * @public
- */
-export const isOverBudget = (error: unknown): error is OverBudget => Predicate.isTagged(error, "OverBudget")
 
 /** `plugin.window.dropped`: every message at or before `through` leaves the window. */
 export const windowDropped = (through: Seq): StoredDraft => stored(windowDroppedEvent, { through })

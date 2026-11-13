@@ -3,8 +3,10 @@ import { Core, readJournal } from "@xandreed/core/kernel"
 import { paired, promptMessage } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import type { OpenSession } from "@xandreed/core/kernel"
-import { budgetOf, fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
-import type { InvalidBudget, WindowOptions } from "./window.entity.js"
+import { budgetOf } from "../../contracts/memory/memory.entity.functions.js"
+import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
+import { fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
+import type { WindowOptions } from "./window.entity.js"
 
 /**
  * The window memory: every message of the conversation, whole turns

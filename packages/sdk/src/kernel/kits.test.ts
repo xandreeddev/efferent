@@ -25,7 +25,7 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, PluginFailure, SessionsSubject, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, windowDroppedEvent, windowMemory } from "./index.js"
+import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summaryMemory, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -212,6 +212,13 @@ describe("the memory kit", () => {
     const flat = subject("flat", flatMemory, null)
     expect(ids(memoryConformance(flat))).toEqual(every.filter((id) => id !== "fits" && id !== "over-budget"))
     expect(await failedChecks(memoryConformance(flat))).toEqual([])
+  })
+
+  test("passes on the summary memory plugin, over a summarizer that answers in a few words", async () => {
+    const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
+    const summary = subject("summary", Layer.provide(summaryMemory({ budgetTokens }), summarizer))
+    expect(ids(memoryConformance(summary))).toEqual(every)
+    expect(await failedChecks(memoryConformance(summary))).toEqual([])
   })
 
   /** A careless memory: what it sends, read from the journal as it stands, and what it writes while it builds. */

@@ -77,7 +77,11 @@ it: `./kernel` is a `restricted` subpath.
   `own-records`; ADR 0005); `contracts/turn` holds `CurrentTurn`, the
   `OpenSession` a tool call runs in: the host's loop provides it around
   `toolkit.handle`, and a tool that declares it in `dependencies` reads it
-  from its handler (ADR 0007); `contracts/inbox` holds `Inbox`, its turn function
+  from its handler (ADR 0007); `contracts/summary` holds `Summarizer`
+  (`summarize({ earlier, messages })`, the summary so far and the
+  messages to fold to a new summary's text, failing with `SummaryFailed`):
+  the host provides it, over the model it picked, since no kernel plugin
+  calls a model; `contracts/inbox` holds `Inbox`, its turn function
   (`InboxTurn`, failing with `InboxTurnFailure`), its ticket, refusals and
   event. A contract imports core's kernel and other contracts, never a
   plugin; a plugin imports contracts and core's kernel, never another
@@ -95,12 +99,25 @@ it: `./kernel` is a `restricted` subpath.
   a `.usecase.ts` and an entity's functions hold no `Layer`.
 - A plugin is a folder under `plugins/`: `journal-in-process`
   (`inProcessJournal`), `session` (`sessions`), `memory-window`
-  (`windowMemory`, with its own events and `OverBudget`; a budget that is
+  (`windowMemory`, with its own events; `OverBudget`, `isOverBudget`,
+  `InvalidBudget` and `budgetOf` are the memory contract's, shared by every
+  memory with a budget; a budget that is
   no finite number of at least one token fails the layer with
   `InvalidBudget`; its budget covers the history only, and it publishes
   `plugin.window.pressure` as it builds a context, tagged `memory` like
   `plugin.window.dropped`; it drops whole turns only, so one long tool
-  turn can go over its budget and fails with `OverBudget`), `memory-flat`
+  turn can go over its budget and fails with `OverBudget`), `memory-summary`
+  (`summaryMemory({ budgetTokens, keepTurns? })`, needing `Summarizer`:
+  every message while the conversation fits; over the budget, the oldest
+  closed turns, whole, with the summary so far, folded into a new summary
+  stored once as `plugin.summary.summarized` (tagged `memory`, not
+  skippable, the summary its record's message as a host note, `through`
+  the place of the last message it replaces); every later context starts
+  with that note, then every message after `through`; it keeps the latest
+  `keepTurns` closed turns whole (1 by default) when that fits beside a
+  note of the present size, and never folds the open turn; one summary
+  per context, then `OverBudget`; the plan is the pure `plan` of
+  `summary.entity.functions.ts`), `memory-flat`
   (`flatMemory`: every message of the conversation but a call no result
   answers, nothing stored, read through
   `readerFor("flat", [], CONVERSATION_READER)`), `model-scripted`
@@ -246,11 +263,18 @@ it: `./kernel` is a `restricted` subpath.
   opens, also with a listener that never lets its start go; every waiting listener of the end hearing it; the end's
   hand-over to a background listener that opens the next turn; two
   session plugins over one store; the ids), `plugins/memory-window/window.adapter` (`plugin.window.pressure`:
-  when, how often, with what), `plugins/inbox/*` (the transitions as a
+  when, how often, with what), `plugins/memory-summary/summary.adapter`
+  (nothing asked while the conversation fits; a compaction folding the
+  oldest whole turns and keeping the latest, stored once; each context
+  starting with the one before between compactions, the next compaction
+  folding the summary so far; a summary still over the budget failing
+  with `OverBudget` after one call; a failing summarizer; the note's
+  words), `plugins/inbox/*` (the transitions as a
   table, and the inbox's rules, among them an announcement before its turn
   and in ticket order under a scheduler that makes every fiber yield after
   a few operations), `kits` (the storage, sessions and memory kits on the
-  stock plugins, the memory kit on both memories, and on careless ones:
+  stock plugins, the memory kit on the three memories (the summary one
+  over a summarizer that answers in a few words), and on careless ones:
   each careless plugin fails the checks of what it is careless about and
   no others, and between them every check; the memory kit's `pairs` check
   has the careless `unpaired`, which sends a call no result answers), `browser-bundle`, `guide`, and
@@ -278,7 +302,7 @@ it: `./kernel` is a `restricted` subpath.
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
-- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`; the tool call's: `CurrentTurn`; the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data, `InvalidBudget`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `OverBudget`, `isOverBudget`, `InvalidBudget`; the tool call's: `CurrentTurn`; the summary's: `Summarizer`, `SummaryFailed`; the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text
@@ -291,6 +315,7 @@ The system prompt prefix is the host's (`AgentConfig.system`, a turn's `system`)
 | Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact tests `src/agent.golden.test.ts#Agent.turn reproduces the golden conversation byte for byte`; `src/agent.backends.test.ts#the model sees the same requests wherever the session is stored` |
 | Every model request of a streamed conversation: signed and redacted thinking sent back with its provider metadata, by the next request, the journal's rebuild of it and a second agent | `golden/agent-stream.model.json` | exact tests `src/agent.stream-golden.test.ts#a streamed turn keeps its reasoning's provider metadata` |
 | Every model and summarizer request of two compacting conversations: the window strategy's spill preview, the `recall_context` page that reads it back, and the host note and ledger of dropped turns; the summary strategy's summarizer prompt (default instructions, the data rule, the `<earlier-summary>` and `<conversation-transcript>` frames, a clipped tool result), its handoff, and the `recall_context` schema it contributes | `golden/agent-compaction.model.json` | exact tests `src/agent.compaction-golden.test.ts#a window and a summary conversation compact as the golden holds` |
+| The kernel summary memory's host note: `[Host note: earlier turns of this conversation, in short: <summary>]`, sent first in every context after a compaction | `src/kernel/plugins/memory-summary/summary.entity.functions.ts` (`summaryNote`) | exact tests `src/kernel/plugins/memory-summary/summary.adapter.test.ts#sends the summary as a host note whose words are fixed` |
 
 ## Erasure files
 

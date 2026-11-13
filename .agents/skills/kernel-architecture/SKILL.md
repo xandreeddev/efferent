@@ -50,6 +50,11 @@ checklist, the records have the reasons.
       result with `isFailure`, never as a failed turn.
 - [ ] A memory sends its messages through `paired`, so no call goes without its result;
       the memory kit's `pairs` check holds it to that.
+- [ ] A memory with state (a summary, a cut) stores it once as a record of its own,
+      tagged `memory`, and starts every later context from it, so the prefix changes only
+      when it compacts. It asks for a model's work through a contract the host provides
+      (`Summarizer`), never a model of its own; a budget's errors are the memory
+      contract's (`OverBudget`, `InvalidBudget`).
 
 ## Choose the way
 

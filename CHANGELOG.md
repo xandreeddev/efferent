@@ -36,7 +36,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
     after the context, whole and in its order, and is never stored,
-    `docs/adr/0005-context-for-one-request.md`), the tool call's
+    `docs/adr/0005-context-for-one-request.md`), the summary's
+    (`Summarizer`, which a host provides over its model, failing with
+    `SummaryFailed`), the tool call's
     (`CurrentTurn`: the open turn a call runs in, which the host's loop
     provides around `toolkit.handle` and a tool declares in its
     `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`) and the
@@ -76,7 +78,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `memory` and derived from the conversation. `flatMemory` sends every
     message; `windowMemory` drops whole turns oldest first, its budget
     covering the history, and publishes `plugin.window.pressure` as it
-    builds a context near the budget.
+    builds a context near the budget. `summaryMemory({ budgetTokens,
+    keepTurns? })`, over a `Summarizer` the host provides, folds the
+    oldest closed turns, whole, with the summary so far, into a new
+    summary when the conversation passes its budget, stores it once as
+    `plugin.summary.summarized` (tagged `memory`), and starts every later
+    context with it as a host note, so the cached prefix holds from one
+    compaction to the next; it keeps the latest closed turn whole when
+    that fits and never folds the open one, and asks for one summary at
+    most per context. A budget's errors, `OverBudget`, `isOverBudget` and
+    `InvalidBudget`, are the memory contract's, shared by every memory
+    with a budget, no longer the window plugin's.
   - Tools: a turn that uses them is a loop the host writes over Effect
     AI's `Toolkit`, and the kernel adds no tool service
     (`docs/adr/0004-tool-traffic-is-conversation.md`). The turn offers

@@ -763,9 +763,51 @@ const goldfish = Layer.succeed(Memory, Memory.of({
 }))
 ```
 
-The strategies to come sit behind the same call: a summary of old turns and
-the recent ones, results replaced by pointers with a tool that reads them
-back, or facts retrieved from an index built from the journal.
+### Compaction: a memory with state
+
+The window forgets what it drops. The summary memory keeps it, in short:
+over its budget, it folds the oldest closed turns, with the summary so far,
+into a new summary, and stores it once as `plugin.summary.summarized`,
+tagged `memory`, the summary its record's message and the place of the last
+message it replaces (`through`) its data. Every later context starts with
+that summary as a host note, then every message after `through`, so the
+prefix a provider cached holds from one compaction to the next. It folds
+whole turns only, never the open one, so a tool call stays with its result,
+and keeps the latest closed turn whole (`keepTurns`, a preference: it folds
+that too when it must). No kernel plugin calls a model: the summary comes
+from a `Summarizer` the host provides, over the model it picked or any
+other. One summary at most per context: still over the budget after it, or
+with only the open turn left, the context fails with `OverBudget`.
+
+<!-- pinned: packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts -->
+
+```ts
+return Memory.of({
+  context: Effect.fn("kernel.summary.context")(function* (session: OpenSession) {
+    const first = yield* planned(session)
+    const fitted = yield* Match.valueTags(first, {
+      Fits: (fits) => Effect.succeed(fits),
+      Over: (it) => Effect.fail(over(it.estimatedTokens)),
+      // Fold once: summarize, store the summary, and plan again from the journal as it now stands.
+      Fold: (fold) => Effect.gen(function* () {
+        const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
+        yield* session.append(summarized(fold.through, summary))
+        const again = yield* planned(session)
+        return yield* Match.valueTags(again, {
+          Fits: (fits) => Effect.succeed(fits),
+          Over: (it) => Effect.fail(over(it.estimatedTokens)),
+          Fold: (it) => Effect.fail(over(it.estimatedTokens)), // one summary per context, never a second
+        })
+      }),
+    })
+    return paired(fitted.messages).map(promptMessage)
+  }),
+})
+```
+
+The strategies still to come sit behind the same call: results replaced by
+pointers with a tool that reads them back, or facts retrieved from an index
+built from the journal.
 
 A journal outlives the code that wrote it. A reader answers for core's
 records (`core.`, `KERNEL_READER`) and for those under its own prefix
@@ -896,12 +938,13 @@ as runnable checks, each check with an id that its failures name.
 
 ## What the first cut leaves out, and the order it returns
 
-This cut keeps journals in the process, and has one session plugin and two
+This cut keeps journals in the process, and has one session plugin and three
 memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
-1. **Compaction memories.** A summary of old turns, results replaced by
-   pointers with a tool that reads them back, behind `memory.context`.
+1. **Pointer memories.** Results replaced by pointers with a tool that
+   reads them back, behind `memory.context`. (A summary of old turns has
+   returned: `summaryMemory`.)
 2. **A UI rendering plugin**, whose client applies patches from records and
    events tagged `ui`.
 3. **Durable stores and crash recovery**, on the seam the fold of the

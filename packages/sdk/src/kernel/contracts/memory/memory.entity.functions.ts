@@ -1,7 +1,8 @@
-import { Match } from "effect"
+import { Match, Predicate, Result } from "effect"
 import type { Prompt } from "effect/ai"
 import type { Message } from "@xandreed/core/kernel"
-import { Tokens } from "./memory.entity.js"
+import { InvalidBudget, Tokens } from "./memory.entity.js"
+import type { OverBudget } from "./memory.entity.js"
 
 /**
  * The estimate of what a text costs, in tokens: a quarter of its
@@ -92,3 +93,16 @@ export const paired = (messages: ReadonlyArray<Message>): ReadonlyArray<Message>
       ToolResult: (result) => (asked.has(result.id) ? [result] : []),
     }))
 }
+
+/** The budget a memory was given, as whole tokens; a number that is no budget is refused. */
+export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBudget> =>
+  Number.isFinite(budgetTokens) && budgetTokens >= 1
+    ? Result.succeed(Tokens.make(Math.floor(budgetTokens)))
+    : Result.fail(new InvalidBudget({ message: `a memory needs a budget of at least one token; it was given ${budgetTokens}` }))
+
+/**
+ * Whether an error is a memory's `OverBudget`, whichever memory or copy of the kernel raised it.
+ *
+ * @public
+ */
+export const isOverBudget = (error: unknown): error is OverBudget => Predicate.isTagged(error, "OverBudget")
