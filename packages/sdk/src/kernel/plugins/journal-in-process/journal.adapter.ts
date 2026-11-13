@@ -22,13 +22,13 @@ export const inProcessJournal = (): Layer.Layer<JournalStorage> => Layer.effect(
     create: (header) => Ref.modify(journals, (all): Decided<void> => all.has(header.id)
       ? [Effect.fail(new JournalStorageError({ reason: "SessionExists", message: `session ${header.id} exists` })), all]
       : [Effect.void, new Map([...all, [header.id, { header, events: [] }]])]).pipe(Effect.flatten),
-    append: (id, expectedSeq, event) => Effect.flatMap(Clock.currentTimeMillis, (at) => Ref.modify(journals, (all): Decided<StoredEvent> => {
+    append: (id, expectedSeq, turn, event) => Effect.flatMap(Clock.currentTimeMillis, (at) => Ref.modify(journals, (all): Decided<StoredEvent> => {
       const journal = all.get(id)
       if (journal === undefined) return [Effect.fail(missing(id)), all]
       if (journal.events.length !== expectedSeq) {
         return [Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: `the journal is at ${journal.events.length}, not ${expectedSeq}` })), all]
       }
-      const stored: StoredEvent = { seq: Seq.make(expectedSeq + 1), at, ...event }
+      const stored: StoredEvent = { seq: Seq.make(expectedSeq + 1), at, turn, ...event }
       return [Effect.succeed(stored), new Map([...all, [id, { header: journal.header, events: [...journal.events, stored] }]])]
     })).pipe(Effect.flatten),
     read: (id, from) => Effect.flatMap(Ref.get(journals), (all) => {

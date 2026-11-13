@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Ref } from "effect"
 import type { StoredEvent } from "./event.entity.js"
-import { Owner, Seq } from "./ids.entity.js"
+import { Owner, Seq, TurnNumber } from "./ids.entity.js"
 import type { SessionId } from "./ids.entity.js"
 import { JournalStorageError } from "./journal.entity.js"
 import type { Journal } from "./journal.entity.js"
@@ -29,11 +29,11 @@ const honest: JournalStorageSubject = {
     create: (header) => Ref.modify(journals, (all): Decided<void> => all.has(header.id)
       ? [Effect.fail(new JournalStorageError({ reason: "SessionExists", message: `session ${header.id} exists` })), all]
       : [Effect.void, new Map([...all, [header.id, { header, events: [] }]])]).pipe(Effect.flatten),
-    append: (id, expectedSeq, event) => Ref.modify(journals, (all): Decided<StoredEvent> => {
+    append: (id, expectedSeq, turn, event) => Ref.modify(journals, (all): Decided<StoredEvent> => {
       const journal = all.get(id)
       if (journal === undefined) return [Effect.fail(missing(id)), all]
       if (journal.events.length !== expectedSeq) return [Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: `the journal is at ${journal.events.length}, not ${expectedSeq}` })), all]
-      const stored: StoredEvent = { seq: Seq.make(expectedSeq + 1), at: 1_767_225_600_000, ...event }
+      const stored: StoredEvent = { seq: Seq.make(expectedSeq + 1), at: 1_767_225_600_000, turn, ...event }
       return [Effect.succeed(stored), new Map([...all, [id, { header: journal.header, events: [...journal.events, stored] }]])]
     }).pipe(Effect.flatten),
     read: (id, from) => Effect.flatMap(Ref.get(journals), (all) => {
@@ -48,7 +48,7 @@ const honest: JournalStorageSubject = {
 const forgetful: JournalStorageSubject = {
   open: Effect.succeed(JournalStorage.of({
     create: () => Effect.void,
-    append: (_id, expectedSeq, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, ...event }),
+    append: (_id, expectedSeq, turn, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, turn, ...event }),
     read: (id) => Effect.fail(missing(id)),
   })),
 }
@@ -57,12 +57,20 @@ const forgetful: JournalStorageSubject = {
 const trusting: JournalStorageSubject = {
   open: Effect.map(Ref.make<Journals>(new Map()), (journals) => JournalStorage.of({
     create: (header) => Ref.update(journals, (all) => new Map([...all, [header.id, { header, events: [] }]])),
-    append: (id, _expectedSeq, event) => Ref.modify(journals, (all) => {
+    append: (id, _expectedSeq, turn, event) => Ref.modify(journals, (all) => {
       const journal = all.get(id) ?? { header: { id, owner: Owner.make("nobody"), format: JOURNAL_FORMAT }, events: [] }
-      const stored: StoredEvent = { seq: Seq.make(journal.events.length + 1), at: 0, ...event }
+      const stored: StoredEvent = { seq: Seq.make(journal.events.length + 1), at: 0, turn, ...event }
       return [stored, new Map([...all, [id, { header: journal.header, events: [...journal.events, stored] }]])] as const
     }),
     read: (id) => Effect.map(Ref.get(journals), (all) => all.get(id) ?? { header: { id, owner: Owner.make("nobody"), format: JOURNAL_FORMAT }, events: [] }),
+  })),
+}
+
+/** A store that stamps every event with the first turn, whatever turn it was appended in. */
+const unturned: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    append: (id, expectedSeq, _turn, event) => storage.append(id, expectedSeq, TurnNumber.make(1), event),
   })),
 }
 
@@ -70,7 +78,7 @@ const trusting: JournalStorageSubject = {
 const unnumbering: JournalStorageSubject = {
   open: Effect.map(honest.open, (storage) => JournalStorage.of({
     ...storage,
-    append: (id, expectedSeq, event) => Effect.map(storage.append(id, expectedSeq, event), (stored) => ({ ...stored, seq: Seq.make(1) })),
+    append: (id, expectedSeq, turn, event) => Effect.map(storage.append(id, expectedSeq, turn, event), (stored) => ({ ...stored, seq: Seq.make(1) })),
   })),
 }
 
@@ -99,5 +107,9 @@ describe("the storage kit", () => {
 
   test("a store that does not stamp the next place fails the check of an append", async () => {
     expect(await failedChecks(unnumbering)).toEqual(["append"])
+  })
+
+  test("a store that stamps every event with the first turn fails the check of an append", async () => {
+    expect(await failedChecks(unturned)).toEqual(["append"])
   })
 })

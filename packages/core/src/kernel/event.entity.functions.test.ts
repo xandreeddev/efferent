@@ -31,32 +31,32 @@ describe("core's own events", () => {
       expect(draft.message).toBeUndefined()
     })
     const failure = new ListenerFailed({ listener: "audit", event: turnEndedEvent.name, message: "the audit log is full" })
-    const about = announced(origin, { seq: Seq.make(4), at: 0, ...turnEnded(TurnNumber.make(2), { _tag: "Completed" }) })
-    expect(listenerFailed(about, failure)).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "audit", event: turnEndedEvent.name, reason: "the audit log is full" } })
+    const about = announced(origin, { seq: Seq.make(4), at: 0, turn: origin.turn, ...turnEnded(TurnNumber.make(2), { _tag: "Completed" }) })
+    expect(listenerFailed(about, failure)).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, tags: listenerFailedEvent.tags, data: { listener: "audit", event: turnEndedEvent.name, reason: "the audit log is full" } })
   })
 })
 
 describe("a plugin's own events", () => {
   const Noted = Schema.Struct({ text: Schema.String, at: Seq })
-  const noted = storedEvent("notes", "noted", { data: Noted, skippable: true })
-  const glanced = liveEvent("notes", "glanced", { data: Schema.Struct({ text: Schema.String }) })
+  const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Noted, skippable: true })
+  const glanced = liveEvent("notes", "glanced", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }) })
 
   test("are named under the plugin's prefix, with what the definition says of them", () => {
     expect(noted).toMatchObject({ kind: "stored", name: "plugin.notes.noted", skippable: true })
     expect(glanced).toMatchObject({ kind: "live", name: "plugin.notes.glanced" })
-    expect(String(storedEvent("my-plugin", "a.b-c", { data: Noted, skippable: false }).name)).toBe("plugin.my-plugin.a.b-c")
+    expect(String(storedEvent("my-plugin", "a.b-c", { tags: ["trace"], data: Noted, skippable: false }).name)).toBe("plugin.my-plugin.a.b-c")
   })
 
   test("a name that is no plugin's or no event's is refused where the event is defined", () => {
-    expect(() => storedEvent("My Plugin", "noted", { data: Noted, skippable: true })).toThrow()
-    expect(() => storedEvent("notes", "Noted!", { data: Noted, skippable: true })).toThrow()
-    expect(() => liveEvent("", "noted", { data: Noted })).toThrow()
+    expect(() => storedEvent("My Plugin", "noted", { tags: ["trace"], data: Noted, skippable: true })).toThrow()
+    expect(() => storedEvent("notes", "Noted!", { tags: ["trace"], data: Noted, skippable: true })).toThrow()
+    expect(() => liveEvent("", "noted", { tags: ["trace"], data: Noted })).toThrow()
   })
 
   test("a stored one becomes a draft, a live one an event; neither passes for the other", () => {
     const draft = stored(noted, { text: "kept", at: Seq.make(4) })
-    expect(draft).toEqual({ name: noted.name, data: { text: "kept", at: 4 }, skippable: true })
-    expect(live(glanced, origin, { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: glanced.name, data: { text: "seen" } })
+    expect(draft).toEqual({ name: noted.name, data: { text: "kept", at: 4 }, skippable: true, tags: noted.tags })
+    expect(live(glanced, origin, { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: glanced.name, tags: glanced.tags, data: { text: "seen" } })
     // The kind is in the type: a live definition makes no draft, and a stored one no live event.
     // @ts-expect-error a live-only definition cannot be stored
     expect(() => stored(glanced, { text: "seen" })).not.toThrow()
@@ -68,29 +68,29 @@ describe("a plugin's own events", () => {
 
   test("a live one about a session and no turn of it names no turn, and is a kernel event all the same", () => {
     const aboutSession = live(glanced, { id: origin.id }, { text: "queued" })
-    expect(aboutSession).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, data: { text: "queued" } })
+    expect(aboutSession).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, tags: glanced.tags, data: { text: "queued" } })
     expect("turn" in aboutSession).toBe(false)
     expect(Schema.is(KernelEvent)(aboutSession)).toBe(true)
     // An event made about it keeps to the same origin: a session, and no turn.
-    expect(live(glanced, originOf(aboutSession), { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, data: { text: "seen" } })
+    expect(live(glanced, originOf(aboutSession), { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, name: glanced.name, tags: glanced.tags, data: { text: "seen" } })
     expect(originOf(live(glanced, origin, { text: "seen" }))).toEqual(origin)
   })
 
   test("its data reads back only as its own definition describes it", () => {
-    const kept = { seq: Seq.make(7), at: 0, ...stored(noted, { text: "kept", at: Seq.make(4) }) }
+    const kept = { seq: Seq.make(7), at: 0, turn: origin.turn, ...stored(noted, { text: "kept", at: Seq.make(4) }) }
     expect(dataOf(noted, kept)).toEqual(Option.some({ text: "kept", at: Seq.make(4) }))
     expect(dataOf(turnStartedEvent, kept)).toEqual(Option.none())
     expect(dataOf(noted, { ...kept, data: { text: 4 } })).toEqual(Option.none())
-    expect(announced(origin, kept)).toEqual({ _tag: "Stored", session: origin.id, turn: origin.turn, ...kept })
+    expect(announced(origin, kept)).toEqual({ _tag: "Stored", session: origin.id, ...kept })
   })
 
-  test("the envelope holds the name, the data, the skip flag and the message, and nothing of what a message stands for", () => {
+  test("the envelope holds the name, the data, the skip flag, the tags and the message, and nothing of what a message stands for", () => {
     // What a record's message replaces, or any other meaning a plugin gives it, is that plugin's own data.
-    expect(Object.keys(StoredDraft.fields)).toEqual(["name", "data", "skippable", "message"])
-    expect(Object.keys(StoredEvent.fields)).toEqual(["seq", "at", "name", "data", "skippable", "message"])
+    expect(Object.keys(StoredDraft.fields)).toEqual(["name", "data", "skippable", "tags", "message"])
+    expect(Object.keys(StoredEvent.fields)).toEqual(["seq", "at", "turn", "name", "data", "skippable", "tags", "message"])
     const summary = stored(noted, { text: "Summary.", at: Seq.make(9) }, { message: { _tag: "User", text: "Summary." } })
     expect(Schema.is(StoredDraft)(summary)).toBe(true)
-    expect(Schema.is(StoredEvent)({ seq: Seq.make(10), at: 0, ...summary })).toBe(true)
+    expect(Schema.is(StoredEvent)({ seq: Seq.make(10), at: 0, turn: origin.turn, ...summary })).toBe(true)
   })
 })
 

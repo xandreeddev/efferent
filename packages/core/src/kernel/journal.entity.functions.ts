@@ -1,5 +1,6 @@
 import { Option, Result } from "effect"
-import type { StoredEvent } from "./event.entity.js"
+import { taggedWith } from "./event.entity.functions.js"
+import type { StoredEvent, Tag } from "./event.entity.js"
 import { PluginName } from "./ids.entity.js"
 import type { EventName } from "./ids.entity.js"
 import { UnknownRecord } from "./journal.entity.js"
@@ -7,8 +8,12 @@ import type { Reader } from "./journal.entity.js"
 import type { Message } from "./message.entity.js"
 import { KERNEL_READER } from "./vocabulary.entity.js"
 
-/** The message a record bears, whatever record it is; none for a record that bears none. */
-export const messageOf = (event: { readonly message?: Message }): Option.Option<Message> => Option.fromNullishOr(event.message)
+/**
+ * The message a record bears when the record is the conversation's (tagged `conversation`), whichever definition
+ * it is of; none for any other record, so text a record of another use bears never reads as part of the conversation.
+ */
+export const messageOf = (event: { readonly message?: Message; readonly tags: ReadonlyArray<Tag> }): Option.Option<Message> =>
+  taggedWith("conversation")(event) ? Option.fromNullishOr(event.message) : Option.none()
 
 /**
  * The reader of plugin `plugin`: it answers for what `over` answers for

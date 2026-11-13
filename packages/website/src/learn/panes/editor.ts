@@ -104,6 +104,7 @@ export const mountEditor = (
     extensions: [
       ...baseExtensions(file.sections, hooks.onRebuild, hooks.onEdit, hooks.onFormat),
       lockedExtension({ from: file.editableFrom, to: file.editableFrom + file.defaultText.length }),
+      ...(file.readOnly ? [EditorState.readOnly.of(true)] : []),
     ],
   })
 
@@ -154,6 +155,7 @@ export const mountEditor = (
     },
     format: async () => {
       const file = current
+      if (byId.get(file)?.readOnly === true) return { ok: true, text: textOf(file) }
       const before = textOf(file)
       const result = await formatRegion(before, byId.get(file)?.formatPrefix ?? "")
       // Typing while Prettier loaded wins: formatting stale text would undo it.

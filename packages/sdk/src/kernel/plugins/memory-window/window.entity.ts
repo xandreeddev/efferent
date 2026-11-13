@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { liveEvent, Seq, storedEvent } from "@xandreed/core/kernel"
-import { Tokens } from "../../contracts/loop/request.entity.js"
+import { Tokens } from "../../contracts/memory/memory.entity.js"
 
 /**
  * How the window memory is set up.
@@ -8,9 +8,9 @@ import { Tokens } from "../../contracts/loop/request.entity.js"
  * @public
  */
 export interface WindowOptions {
-  /** What one request may cost, system text included, by the loop contract's estimate (`estimateRequest`). */
+  /** What the history may cost, the system text left out (the caller's), by memory's estimate (`estimateTokens`). */
   readonly budgetTokens: number
-  /** The share of the budget from which a request counts as pressure. 0.8 when left out. */
+  /** The share of the budget from which a context counts as pressure. 0.8 when left out. */
   readonly pressureAt?: number
 }
 
@@ -27,10 +27,10 @@ export type WindowDroppedData = typeof WindowDroppedData.Type
  *
  * @public
  */
-export const windowDroppedEvent = storedEvent("window", "dropped", { data: WindowDroppedData, skippable: true })
+export const windowDroppedEvent = storedEvent("window", "dropped", { data: WindowDroppedData, skippable: true, tags: ["memory"] })
 
 /**
- * The data of `plugin.window.pressure`: the request that came close to the budget.
+ * The data of `plugin.window.pressure`: the context that came close to the budget.
  *
  * @public
  */
@@ -38,11 +38,11 @@ export const WindowPressureData = Schema.Struct({ estimatedTokens: Tokens, budge
 export type WindowPressureData = typeof WindowPressureData.Type
 
 /**
- * `plugin.window.pressure`: a request was sent close to the budget. Live only.
+ * `plugin.window.pressure`: a context was built close to the budget. Live only.
  *
  * @public
  */
-export const windowPressureEvent = liveEvent("window", "pressure", { data: WindowPressureData })
+export const windowPressureEvent = liveEvent("window", "pressure", { data: WindowPressureData, tags: ["memory"] })
 
 /**
  * The window memory was given a budget that is no budget: not a finite number, or less than one token.

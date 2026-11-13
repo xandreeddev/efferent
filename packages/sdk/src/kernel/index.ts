@@ -1,40 +1,29 @@
 // `@xandreed/sdk/kernel`: the workflow contracts and the stock plugins.
-// A contract (`contracts/<name>`: the loop, memory, the inbox) holds its
+// A contract (`contracts/<name>`: memory, the inbox) holds its
 // entities, events, pure rules and kit over `@xandreed/core/kernel`; a
 // plugin (`plugins/<name>`) is a layer that implements one, over contracts
-// and core and never over another plugin. A host composes them with
-// `Layer.provideMerge` over core's `kernel` layer. Nothing here imports the
-// rest of the sdk, the runtime or a runtime module.
-export { InspectedRequest, ModelRequest, PointedMessage, RequestRefused, ResolvedRequest, SentRequest, StepNumber, Tokens } from "./contracts/loop/request.entity.js"
-export { estimateRequest, estimateTokens, firstStep, requestsOf, resolveRequest } from "./contracts/loop/request.entity.functions.js"
-export { AssistantDeltaData, AssistantMessageData, LOOP_READER, assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
-export { assistantDelta, assistantMessage, requestSent, userMessage } from "./contracts/loop/conversation.entity.functions.js"
-export { LoopScript, ModelAnswer, Reply, TurnInput } from "./contracts/loop/loop.entity.js"
-export { replyOf, wantsTools } from "./contracts/loop/loop.entity.functions.js"
-export { Loop } from "./contracts/loop/loop.port.js"
-export type { LoopFailure } from "./contracts/loop/loop.port.js"
-export { loopConformance } from "./contracts/loop/loop.conformance.js"
-export type { LoopSubject } from "./contracts/loop/loop.conformance.js"
-export { Settings } from "./contracts/loop/settings.port.js"
-export { settings } from "./contracts/loop/settings.adapter.js"
+// and core and never over another plugin. There is no loop: the loop is
+// the host's own program, which asks for the layers it uses. Nothing
+// here imports the rest of the sdk, the runtime or a runtime module.
+export { Tokens } from "./contracts/memory/memory.entity.js"
+export { estimateContext, estimateTokens, promptMessage } from "./contracts/memory/memory.entity.functions.js"
 export { Memory } from "./contracts/memory/memory.port.js"
 export type { MemoryFailure } from "./contracts/memory/memory.port.js"
 export { memoryConformance } from "./contracts/memory/memory.conformance.js"
 export type { MemorySubject } from "./contracts/memory/memory.conformance.js"
 export { Inbox } from "./contracts/inbox/inbox.port.js"
-export type { Queued } from "./contracts/inbox/inbox.port.js"
+export type { InboxTurn, InboxTurnFailure, Queued } from "./contracts/inbox/inbox.port.js"
 export { InboxClosed, InboxQueuedData, InboxRefused, Ticket, inboxQueuedEvent } from "./contracts/inbox/inbox.entity.js"
 export { inProcessJournal } from "./plugins/journal-in-process/journal.adapter.js"
 export { sessions } from "./plugins/session/sessions.adapter.js"
 export type { SessionsOptions } from "./plugins/session/sessions.adapter.js"
+export { flatMemory } from "./plugins/memory-flat/flat.adapter.js"
 export { windowMemory } from "./plugins/memory-window/window.adapter.js"
 export { InvalidBudget, OverBudget, WindowDroppedData, WindowPressureData, windowDroppedEvent, windowPressureEvent } from "./plugins/memory-window/window.entity.js"
 export type { WindowOptions } from "./plugins/memory-window/window.entity.js"
 export { isOverBudget } from "./plugins/memory-window/window.entity.functions.js"
-export { stepLoop } from "./plugins/loop/step-loop.adapter.js"
-export { callModel } from "./plugins/loop/call-model.adapter.js"
-export { EmptyMessage, ModelFailed, ToolsNotRun } from "./plugins/loop/loop.entity.js"
-export { scriptedModel } from "./plugins/loop/scripted-model.adapter.js"
+export { scriptedModel } from "./plugins/model-scripted/scripted-model.adapter.js"
+export { ModelAnswer, ModelScript } from "./plugins/model-scripted/scripted-model.entity.js"
 export { inbox, inboxOf } from "./plugins/inbox/inbox.adapter.js"
 export type { InboxOptions } from "./plugins/inbox/inbox.entity.js"
-export type { ScriptedCalls } from "./plugins/loop/scripted-model.adapter.js"
+export type { ScriptedCalls } from "./plugins/model-scripted/scripted-model.adapter.js"

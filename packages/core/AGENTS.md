@@ -32,7 +32,7 @@ The package has four entries, each an `index.ts` of explicit named exports:
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
-| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`): what every agent has whatever its workflow. Ids, `Message`, the event envelope, core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: those are the sdk's kernel contracts | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0003-journal-holds-the-conversation.md`): what every agent has whatever its workflow. Ids, `Message`, the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `userMessage`, `assistantMessage`, `CONVERSATION_READER`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: memory is the sdk's kernel contract, and the loop is the host's own program | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -92,11 +92,13 @@ file describes the existing engine's side of core, not the kernel. The
 kernel's rules:
 
 - Core owns what every agent has, whatever its workflow: sessions and
-  their journal, journal storage, events and the message vocabulary
-  (ADR 0002). It never owns a loop, a memory, a prompt, a system text or a
-  request to a model: those are contracts of the sdk's kernel
-  (`packages/sdk/src/kernel/contracts`), and no code here defines or
-  imports them; a comment names them only to say where they live.
+  their journal, journal storage, events, the message vocabulary and the
+  conversation's records (ADRs 0002 and 0003). It never owns a loop, a
+  memory, a prompt, a system text or a request to a model: memory is a
+  contract of the sdk's kernel (`packages/sdk/src/kernel/contracts`), the
+  loop and the system text are the host's program, and no code here
+  defines or imports them; a comment names them only to say where they
+  live.
   Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
   vocabulary, pure rules, the two contracts and their kits.
@@ -150,13 +152,16 @@ kernel's rules:
   declaration of what a plugin needs beside its layer's type, no wait for
   `Core` to fall quiet. A plugin's listeners go with its layer's scope.
 - The event type is open. An event is named after the owner of the
-  contract that defines it: `vocabulary.entity.ts` defines core's own,
+  vocabulary that defines it: `vocabulary.entity.ts` defines core's own,
   the session's `core.session.turn.started` and `core.session.turn.ended`
-  and `core.listener.failed`, and nothing else. A plugin contract's events
-  (the loop's `plugin.loop.*`) and a plugin's own are defined in its
-  folder with `storedEvent` and `liveEvent`. `KERNEL_READER` answers for
-  `core.` records only; a plugin's reader adds its prefix over it, or over
-  the reader of the plugin whose records it reads
+  and `core.listener.failed`; `conversation.entity.ts` the conversation's
+  records, `conversation.user.message` and `conversation.assistant.message`,
+  which whoever runs a turn writes (ADR 0003). A plugin contract's events
+  and a plugin's own are defined in its folder with `storedEvent` and
+  `liveEvent`, which take the definition's `tags`. `KERNEL_READER` answers
+  for `core.` records only, `CONVERSATION_READER` for those and the
+  conversation's; a plugin's reader adds its prefix over one of them, or
+  over the reader of the plugin whose records it reads
   (`readerFor(name, own, over)`). Never type `Core.publish`, `Core.on`, `OpenSession.append`
   or `JournalStorage.append` with a list of names: the sdk's
   `plugins.test.ts` defines two events of its own and must keep compiling.
@@ -168,11 +173,21 @@ kernel's rules:
   refuses one (`SessionRefused`, `ReservedName`) and stores nothing, which
   the sessions kit checks (`reserved-name`).
 - A message sits once, on the envelope (`StoredEvent.message`), and
-  `messageOf` reads it from any record, whichever plugin wrote it. What it
-  stands for (the run of the journal a summary replaces) is the writing
-  plugin's own data: the envelope has no field for it. What a
-  request is (pointers, `resolveRequest`, the estimate) is the loop
-  contract's, not core's.
+  `messageOf` reads it only from a record tagged `conversation`, whichever
+  plugin wrote it, so text a record of another use bears never reads as
+  the conversation. What it stands for (the run of the journal a summary
+  replaces) is the writing plugin's own data: the envelope has no field
+  for it. Every record carries the tags its definition declares and the
+  turn it was stored in: the session plugin passes the open turn to
+  `JournalStorage.append(id, expectedSeq, turn, event)`, and the store
+  stamps it with the place and the time. Nothing about a request is
+  stored, and core names none (ADR 0003): the system text is the host's
+  program's, and memory builds the context from the conversation.
+- `Sessions.open(id)` opens the next turn in the caller's scope and closes
+  it with the scope's exit; `turn(id, body)` runs a body in a scope of its
+  own. A scope's close cannot fail, so an end that cannot be stored is a
+  defect of the scope under `open` and the storage failure itself under
+  `turn`; the sessions kit checks `open` (`open`).
 - A contract carries a plugin's own tagged error as it was raised
   (`PluginFailure`), so core names no plugin's error.
 - `Sessions.create` takes the input as a host writes it

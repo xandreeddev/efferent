@@ -1,24 +1,17 @@
 ---
-// Step 8: controls bound to the agent's code in the playground (see learn/playground.ts, `data-control`).
+// Step 8: controls bound to the learner's code in the playground (see learn/playground.ts, `data-control`).
 ---
 
 <div class="learn-controls">
   <label class="wide">
     <span>System text</span>
     <textarea data-control="system" rows="2"></textarea>
+    <small>The <code>const system</code> line of agent.ts. Code, never stored: the next prompt starts with the new text.</small>
   </label>
   <label>
-    <span>Budget tokens</span>
-    <input type="number" min="1" step="10" data-control="budgetTokens" />
-    <small>What one request may cost, the system text included.</small>
-  </label>
-  <label>
-    <span>Memory</span>
-    <select data-control="memory">
-      <option value="window">windowMemory</option>
-      <option value="last">lastMessages (yours)</option>
-    </select>
-    <small>Which layer provides Memory: the window drops whole turns, oldest first; lastMessages, in tiny-memory.ts, keeps the last n messages (n: 1 when picked here). The conversation goes on either way.</small>
+    <span>Messages memory keeps</span>
+    <input type="number" min="0" step="1" data-control="lastN" />
+    <small>The last line of memory.ts: 0 keeps every message; 2 adds <code>.slice(-2)</code>.</small>
   </label>
 </div>
 <p class="learn-note" data-controls-note hidden>

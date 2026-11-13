@@ -21,42 +21,58 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `Sessions` contracts with a conformance kit each, the session's two
     transitions and the fold of a journal to its state, reading a journal
     (`readJournal`, `readerFor`, `KERNEL_READER`), `inspectionOf` (a
-    session's header, state and events), and `Core`, which is events only:
-    `publish`, `on` (named, in the background or with `{ wait: true }`) and
-    `events`. `kernel({ capacity? })` is the layer that provides `Core`
-    alone. It imports `effect` alone, and names no loop, memory, system
-    text or request to a model.
+    session's header, state and events), the conversation's records
+    (`conversation.user.message` and `conversation.assistant.message`,
+    written with `userMessage(text)` and `assistantMessage(text, meta?)`,
+    whose meta is the model, the `Usage` the provider reported and the
+    tool calls; `CONVERSATION_READER` reads them), and `Core`, which is
+    events only: `publish`, `on` (named, in the background or with
+    `{ wait: true }`) and `events`. `kernel({ capacity? })` is the layer
+    that provides `Core` alone. It imports `effect` alone, and names no
+    loop, memory, system text or request to a model.
   - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
-    folder with its entities, events, pure rules and kit: the loop's
-    (`Loop`, `TurnInput`, `Reply`, `loopConformance`, `Settings` and
-    `settings({ system })`, the conversation's events, the request a model
-    is sent with `resolveRequest`, `estimateTokens`, `requestsOf` and
-    `LOOP_READER`), memory's (`Memory`, `memoryConformance`) and the
-    inbox's (`Inbox`). A plugin imports contracts and core, never another
+    folder with its entities, events, pure rules and kit: memory's
+    (`Memory`, `memoryConformance`, `Tokens`, `estimateTokens`,
+    `estimateContext`, `promptMessage`) and the inbox's (`Inbox`,
+    `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
-    gate refuses both.
+    gate refuses both. There is no loop contract and no stock loop: the
+    loop is the host's program (`docs/adr/0003-journal-holds-the-conversation.md`).
   - An event is named by the owner of the contract that defines it: the
     session's are core's (`core.session.turn.started`,
-    `core.session.turn.ended`), the loop's `plugin.loop.*`. The set is
+    `core.session.turn.ended`), a plugin's `plugin.<name>.*`, and the
+    conversation's `conversation.*`, which a turn's body writes. The set is
     open: a plugin defines its own with `storedEvent` and `liveEvent`, each
-    with a schema for its data. A stored record says whether a reader that
-    does not know it may skip it, and a reader of another plugin's records
-    extends that plugin's reader (`readerFor(name, own, LOOP_READER)`). A
-    live event names its turn only when it happens inside one.
+    with a schema for its data and the tags that say what it is for
+    (`conversation`, `turn`, `memory`, `ui`, `trace`, or a plugin's own
+    `<plugin>.<tag>`; `taggedWith` tells a record by them). Only a record
+    tagged `conversation` bears a message (`messageOf`). Every stored
+    record carries its tags and the turn it was stored in. A stored record
+    says whether a reader that does not know it may skip it, and a reader
+    of the conversation or of another plugin's records extends that reader
+    (`readerFor(name, own, CONVERSATION_READER)`). A live event names its
+    turn only when it happens inside one.
   - The stock plugins, each a layer whose type says what it needs:
-    `inProcessJournal()`, `sessions()`, `windowMemory({ budgetTokens })`,
-    `stepLoop` and `inbox`. A host composes them with `Layer.provideMerge`
-    over `kernel()`, the upper stack carrying `settings({ system })`; a
-    stack whose type is written out does not compile when a part is
-    missing. A
-    turn stores five events (its start, the user's message, the request,
-    the assistant's message, its end) and publishes the answer's pieces
-    live. `sessions.create` decodes its input (`InvalidSession`), and the
-    loop refuses a message of no text (`EmptyMessage`).
-  - `Memory` is one function, `build(session, step)`: it keeps nothing,
-    builds each request from the journal, and compacts by appending a
-    record of its own.
-  - The inbox queues messages per session and answers them in order, each
+    `inProcessJournal()`, `sessions()`, `flatMemory`,
+    `windowMemory({ budgetTokens })` and `inbox(turn)`. A host provides
+    them to its program with `Effect.provide`, or composes them with
+    `Layer.provideMerge` over `kernel()`; a stack whose type is written out
+    does not compile when a part is missing. The host's turn opens a turn
+    with `sessions.open(id)`, which closes it with its scope's outcome,
+    stores the user's message, asks memory for the context, calls Effect
+    AI's `LanguageModel` with the system text first, and stores the
+    answer: a turn stores four events (its start, the user's message, the
+    assistant's message, its end). The system text is the program's code,
+    never stored. `sessions.create` decodes its input (`InvalidSession`).
+  - `Memory` is one function, `context(session)`: the messages that follow
+    the system text, ready for a prompt. It keeps nothing, builds each
+    context from the journal, and what it stores of its own is tagged
+    `memory` and derived from the conversation. `flatMemory` sends every
+    message; `windowMemory` drops whole turns oldest first, its budget
+    covering the history, and publishes `plugin.window.pressure` as it
+    builds a context near the budget.
+  - The inbox queues messages per session and answers each, in order, with
+    the host's turn function (`inbox(turn)`, `inboxOf(turn, options)`),
     in a turn of its own: `enqueue(session, message)` returns at once with
     the message's ticket and its reply, whatever becomes of the message's
     `plugin.inbox.queued` announcement, which reaches the listeners its
@@ -66,13 +82,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     reply not given when the inbox's scope closes fails with `InboxClosed`.
     The inbox keeps nothing of a session it is not serving. Queued messages
     live in the process. Its contract, `Inbox`, is the plugin's own.
-  - A request is stored as pointers into the journal, never as copies, so
-    each message's text is stored once; `requestsOf` resolves every stored
-    request back into what the model was sent.
+  - The journal holds the conversation and nothing derived from
+    configuration: no request, no system text, no pointers to what was
+    sent, so each message's text is stored once and a change to the system
+    text leaves nothing stored stale.
   - A part is replaced by providing a different layer; a host that keeps
     sessions going across the change builds the kernel, the journal and
-    the session plugin once and swaps the stack above them, its system
-    text with it.
+    the session plugin once and swaps the stack above them.
   - `api/core--kernel.api.txt` is core's kernel API: a later change that
     removes or changes a name there says in this file what a plugin must
     change.
@@ -116,27 +132,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     announcement follows the session's announcement before it, whether
     that message waits, was taken or runs.
   - The memory kit checks that a memory refuses an unknown record of the
-    loop's that may not be skipped (`unknown-loop-refused`): a memory reads
-    the loop's records with the loop's reader, not its own prefix alone.
+    conversation's that may not be skipped (`unknown-conversation-refused`):
+    a memory reads the conversation's records with the conversation's
+    reader, not its own prefix alone. It holds a memory to a budget only
+    when the subject has one (`MemorySubject.budgetTokens`).
   - Core's event envelope holds no `replaces`, and `SeqRange` is gone: a
     plugin whose record stands for a run of the journal keeps that run in
     its record's own data. `listenerFailed` is no longer exported: a
     publisher that must report its listeners' failures publishes with
     `{ listenerFailures: "report" }`.
-  - `scriptedModel(script)` is a model that follows a script and calls no
-    provider: what a host hands the loop kit, and what a test runs an
-    agent on.
+  - `scriptedModel(script)` is a `LanguageModel` that follows a
+    `ModelScript` and calls no provider, recording the prompts it was
+    sent: what a test runs an agent on.
+  - `Sessions.open(id)` opens a turn in the caller's scope and closes it
+    with the scope's outcome; `JournalStorage.append` takes the turn the
+    record was stored in.
   - Nothing in either entry imports a `node:` or `bun:` module.
 
 ### Repository
 
 - `docs/adr/0001-kernel-plugin-composition.md` records how the kernel's
   plugins compose (replace, wrap, an event, or an entry in the journal; no
-  hooks), and `docs/adr/0002-core-owns-state-plugins-own-workflows.md`
+  hooks), `docs/adr/0002-core-owns-state-plugins-own-workflows.md`
   what core owns (sessions, their journal, events, the message vocabulary)
   and what it leaves to plugins' contracts, with the import graph and
-  core's API. The skill `kernel-architecture` loads both before an
-  architectural change of the kernel.
+  core's API, and `docs/adr/0003-journal-holds-the-conversation.md` that
+  the journal holds the conversation, records carry tags, memory builds
+  the context and the kernel has no loop. The skill `kernel-architecture`
+  loads them before an architectural change of the kernel.
 - The boundaries gate holds the kernel's import graph: the sdk's kernel
   contracts are a layer that imports core's kernel and no plugin, and
   each plugin folder a layer that imports the contracts and core's kernel
@@ -148,27 +171,32 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `core` can no longer reach `@xandreed/core/kernel` by its package name,
   nor one of the sdk `@xandreed/sdk/kernel`.
 - `bun run verify:packages` runs the kernel from the packed packages, on
-  Node and on Bun: the four contracts' kits (two of core's, two of the
-  sdk's) on the stock plugins, one turn
-  of a stack of layers on the scripted model, two messages queued with the
+  Node and on Bun: the three contracts' kits (two of core's, memory's
+  from the sdk) on the stock plugins, one turn of a host's own over a
+  stack of layers on the scripted model, two messages queued with the
   inbox, and a consumer's own contract composed as a layer
   (`scripts/kernel-consumer.fixture.mjs`).
-- Docs site: Lesson 1, "Your first agent", runs on the kernel. The code
-  pane shows one program: the base (`sessions()` over `inProcessJournal()`
-  and `kernel()`), built once in the page, the agent the learner edits
-  (`inbox` over `stepLoop`, a memory and `settings({ system })`), built
-  again over the same base on every rebuild so the conversation stays, and
-  the run, which listens with `core.on` and queues messages with the inbox.
-  A test compiles, type-checks and runs that exact text on the scripted
-  model. The chat can send three messages at once and draws each queued
-  message from `plugin.inbox.queued`; Stop ends the running turn as
-  `Interrupted`. The context pane is read from the journal alone
-  (`requestsOf`), so it draws any memory; the Loop view lists the kernel's
-  events. The last step's memory is `lastMessages({ n, budgetTokens })`,
-  which the memory kit passes on every check but `prefix`, and the lesson
-  says why. The controls are the system text, the budget and a memory
-  picker. The page's Node module stand-ins are gone: nothing it runs
-  imports one. No published package changes.
+- Docs site: in Lesson 1, "Your first agent", the learner's program is the
+  agent, and it runs as written. agent.ts holds the system text, one
+  `turn` (open a scoped turn with `sessions.open`, store the message, ask
+  `memory.context`, stream the model's answer to the chat, store it), the
+  `program` (a boot hook with `core.on`, then one turn per message from
+  the chat), and `main`, which gives it its modules with `Effect.provide`.
+  chat.ts (read-only) is the chat it takes messages from, and memory.ts is
+  a flat memory the learner edits. A test compiles, type-checks and runs
+  the three files on the scripted model, and the memory through the
+  memory kit. The page runs `main` as one long-running fiber over a base
+  and a chat queue built once, so a rebuild keeps the conversation and
+  the waiting messages, and a turn it stops closes `Interrupted`. A
+  module removed from `main` stops the program at its first message, in
+  words. The Context tab replaces the editor: each turn's seven steps lit
+  as they run, the journal with its tags, what memory took and left out,
+  the prompt with each message's source, the part the prompt before
+  shares, and the provider's usage, linked by record, with an events log
+  under them. It reads the journal and what the page saw the model
+  receive; nothing derived is stored. Rebuild, Reset and Format say what
+  they did, and the model bar wraps on a phone. No published package
+  changes.
 - Docs site: the lesson workbench runs any lesson. A lesson's definition
   (`packages/website/src/learn/lessons/<slug>/`) holds its files, the
   names its code may use and how it is evaluated, its chips, its controls

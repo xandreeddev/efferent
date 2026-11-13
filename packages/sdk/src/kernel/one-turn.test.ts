@@ -1,15 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Result } from "effect"
-import { Seq, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import { assistantDeltaEvent, assistantMessageEvent, requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
-import { StepNumber, Tokens } from "./contracts/loop/request.entity.js"
-import { resolveRequest } from "./contracts/loop/request.entity.functions.js"
-import { answering, open, recording, stack } from "./testing.js"
+import { Effect } from "effect"
+import { assistantMessageEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { answering, open, recording, stack, pieceEvent } from "./testing.js"
 
-const everyDefinition = [turnStartedEvent, userMessageEvent, requestSentEvent, assistantDeltaEvent, assistantMessageEvent, turnEndedEvent]
+const everyDefinition = [turnStartedEvent, userMessageEvent, pieceEvent, assistantMessageEvent, turnEndedEvent]
 
 describe("one turn of the kernel", () => {
-  test("stores five events in order, streams the answer live, and sends the model what the stored request says", async () => {
+  test("stores four events in order, streams the answer live, and sends the model the system text and the conversation", async () => {
     const run = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hel", "lo!")
       const record = yield* recording(everyDefinition)
@@ -18,35 +15,33 @@ describe("one turn of the kernel", () => {
       const reply = yield* agent.send(session, "Hello")
       return { reply, session, inspection: yield* agent.inspect(session), seen: yield* record.seen, received: yield* received }
     })))
-    expect(run.reply).toEqual({ text: "Hello!" })
+    expect(run.reply).toEqual("Hello!")
     const stored = run.inspection.events
     expect(stored.map((event): string => event.name)).toEqual([
       "core.session.turn.started",
-      "plugin.loop.user.message",
-      "plugin.loop.request.sent",
-      "plugin.loop.assistant.message",
+      "conversation.user.message",
+      "conversation.assistant.message",
       "core.session.turn.ended",
     ])
-    expect(stored.map((event): number => event.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(stored.map((event): number => event.seq)).toEqual([1, 2, 3, 4])
+    // Every record names its turn, and says what it is for.
+    expect(stored.map((event) => `${event.turn} ${event.tags.join(",")}`)).toEqual(["1 turn", "1 conversation", "1 conversation", "1 turn"])
     // Published: each stored event after it was stored, and the deltas live only.
     expect(run.seen.map((event) => `${event._tag} ${event.name}`)).toEqual([
       "Stored core.session.turn.started",
-      "Stored plugin.loop.user.message",
-      "Stored plugin.loop.request.sent",
-      "Live plugin.loop.assistant.delta",
-      "Live plugin.loop.assistant.delta",
-      "Stored plugin.loop.assistant.message",
+      "Stored conversation.user.message",
+      "Live plugin.test.piece",
+      "Live plugin.test.piece",
+      "Stored conversation.assistant.message",
       "Stored core.session.turn.ended",
     ])
     expect(run.seen.every((event) => event.session === run.session && event.turn === 1)).toBe(true)
-    // The request is stored as pointers; resolved, it is what the model received.
-    expect(stored[2]?.data).toEqual({ step: 1, system: "You are a friendly tutor.", messages: [2], estimatedTokens: 9, budgetTokens: 3000 })
-    const sent = run.inspection.requests[0]
-    const messages = Result.getOrThrow(resolveRequest(stored, { messages: [Seq.make(2)] }, Seq.make(3)))
-    expect(sent).toEqual({ seq: Seq.make(3), step: StepNumber.make(1), system: "You are a friendly tutor.", messages, estimatedTokens: Tokens.make(9), budgetTokens: Tokens.make(3000) })
+    // Nothing about the request is stored: the system text is the loop's, and the model was sent it first, then the conversation.
     expect(run.received).toEqual([[{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "Hello" }]])
-    expect(sent?.messages.map(({ message }) => ({ role: message._tag.toLowerCase(), text: message.text }))).toEqual(run.received[0]?.slice(1))
-    expect(stored[4]?.data).toEqual({ turn: 1, outcome: { _tag: "Completed" } })
+    expect(JSON.stringify(stored)).not.toContain("You are a friendly tutor.")
+    // The answer's metadata: what the provider reported it cost.
+    expect(stored[2]?.data).toEqual({ usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 0 } })
+    expect(stored[3]?.data).toEqual({ turn: 1, outcome: { _tag: "Completed" } })
     expect(run.inspection.state).toEqual({ _tag: "Free", turns: 1 })
   })
 

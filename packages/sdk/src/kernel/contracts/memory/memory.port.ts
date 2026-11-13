@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
+import type { Prompt } from "effect/ai"
 import type { JournalStorageError, ListenerFailed, OpenSession, PluginFailure, UnknownRecord } from "@xandreed/core/kernel"
-import type { ModelRequest, StepNumber } from "../loop/request.entity.js"
 
 /**
  * What memory can fail with: storage, a record it may not skip, a waiting listener, or an error of its own (over budget is one).
@@ -11,20 +11,18 @@ import type { ModelRequest, StepNumber } from "../loop/request.entity.js"
 export type MemoryFailure = JournalStorageError | UnknownRecord | ListenerFailed | PluginFailure
 
 /**
- * What decides what the model is sent, and owns the budget. It is one
- * function and keeps nothing by contract: `build` reads the session's
- * journal, may append a record of its own through the open session it is
- * given, and returns pointers. A memory that wants a store or a state of
- * its own keeps it where its plugin is made. `memoryConformance` is the
+ * What decides what of the journal the model sees: the layer between what
+ * is stored and what goes into a prompt. It is one function and keeps
+ * nothing by contract: `context` reads the session's journal (the
+ * conversation's records, tagged `conversation`, and its own), may append
+ * a record of its own through the open session it is given (tagged
+ * `memory`, derived from the conversation, never a copy of it), and returns
+ * the messages that follow the system text, ready for the prompt. The
+ * system text is the caller's: memory never sees or stores it. A budget,
+ * when a memory has one, is its own option. `memoryConformance` is the
  * contract as runnable checks.
  */
 export class Memory extends Context.Service<Memory, {
-  /**
-   * The request of this step of the session's open turn: pointers at the
-   * records of the journal whose messages the model is sent, with the
-   * estimate and the budget. Text memory writes for the model itself is
-   * appended to the open session first, as memory's own record bearing a
-   * message, and pointed at.
-   */
-  readonly build: (session: OpenSession, step: StepNumber) => Effect.Effect<ModelRequest, MemoryFailure>
+  /** The messages of the context for the session's open turn, in the order the model reads them, the system text left to the caller. */
+  readonly context: (session: OpenSession) => Effect.Effect<ReadonlyArray<Prompt.MessageEncoded>, MemoryFailure>
 }>()("@xandreed/core/kernel/Memory") {}

@@ -1,18 +1,20 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result, Schema } from "effect"
-import { stored, storedEvent } from "./event.entity.functions.js"
+import { stored, storedEvent, taggedWith } from "./event.entity.functions.js"
+import { assistantMessageEvent, CONVERSATION_READER, userMessageEvent } from "./conversation.entity.js"
+import { assistantMessage, userMessage } from "./conversation.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, Seq, TurnNumber } from "./ids.entity.js"
 import { messageOf, readJournal, readerFor } from "./journal.entity.functions.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 import { KERNEL_READER } from "./vocabulary.entity.js"
 
-const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, ...draft }))
-const record = (plugin: string, event: string, skippable: boolean) => stored(storedEvent(plugin, event, { data: Schema.Struct({}), skippable }), {})
+const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, turn: TurnNumber.make(1), ...draft }))
+const record = (plugin: string, event: string, skippable: boolean) => stored(storedEvent(plugin, event, { tags: ["trace"], data: Schema.Struct({}), skippable }), {})
 /** A record under core's prefix that this release does not know: one a later core may write. */
 const future = (skippable: boolean): StoredDraft =>
-  stored({ ...storedEvent("any", "future", { data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
-const noted = storedEvent("notes", "noted", { data: Schema.Struct({}), skippable: true })
+  stored({ ...storedEvent("any", "future", { tags: ["trace"], data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
+const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: true })
 
 /** What a reader made of a journal: the places it kept, or the record it refused. */
 const read = (reader: Parameters<typeof readJournal>[0], ...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<number> | string =>
@@ -58,16 +60,43 @@ describe("reading a journal", () => {
 })
 
 describe("the message a record bears", () => {
-  test("is on the envelope, for any record", () => {
-    const [said, summary, started] = journal(
-      stored(noted, {}, { message: { _tag: "User", text: "Hello" } }),
-      stored(noted, {}, { message: { _tag: "Assistant", text: "Summary.", toolCalls: [] } }),
+  /** A plugin's own record of the conversation: a summary that stands for earlier turns, say. */
+  const summarised = storedEvent("notes", "summarised", { tags: ["conversation", "memory"], data: Schema.Struct({}), skippable: true })
+
+  test("is read from any record of the conversation, whichever definition it is of", () => {
+    const [said, answered, summary, started] = journal(
+      userMessage("Hello"),
+      assistantMessage("Hi."),
+      stored(summarised, {}, { message: { _tag: "Assistant", text: "Summary.", toolCalls: [] } }),
       turnStarted(TurnNumber.make(1)),
     )
-    expect(Option.map(Option.flatMap(Option.fromNullishOr(said), messageOf), (message) => message.text)).toEqual(Option.some("Hello"))
-    expect(Option.map(Option.flatMap(Option.fromNullishOr(summary), messageOf), (message) => message.text)).toEqual(Option.some("Summary."))
-    expect(Option.flatMap(Option.fromNullishOr(started), messageOf)).toEqual(Option.none())
+    const textOf = (event: StoredEvent | undefined) => Option.map(Option.flatMap(Option.fromNullishOr(event), messageOf), (message) => message.text)
+    expect(textOf(said)).toEqual(Option.some("Hello"))
+    expect(textOf(answered)).toEqual(Option.some("Hi."))
+    expect(textOf(summary)).toEqual(Option.some("Summary."))
+    expect(textOf(started)).toEqual(Option.none())
     // The data of a message-bearing record holds no copy of the text.
     expect(JSON.stringify(said?.data)).toBe("{}")
+  })
+
+  test("is never read from a record of another use, whatever text it bears", () => {
+    const [drawn] = journal(stored(noted, {}, { message: { _tag: "User", text: "a label a client draws" } }))
+    expect(Option.flatMap(Option.fromNullishOr(drawn), messageOf)).toEqual(Option.none())
+  })
+
+  test("the conversation's records are tagged conversation, and its reader knows them", () => {
+    expect([userMessageEvent, assistantMessageEvent].map((definition) => `${definition.name} ${definition.tags.join(",")}`)).toEqual([
+      "conversation.user.message conversation",
+      "conversation.assistant.message conversation",
+    ])
+    expect(read(CONVERSATION_READER, turnStarted(TurnNumber.make(1)), userMessage("Hello"), assistantMessage("Hi."), record("notes", "noted", false))).toEqual([1, 2, 3])
+    expect(taggedWith("conversation")({ tags: userMessageEvent.tags })).toBe(true)
+    expect(taggedWith("conversation")({ tags: noted.tags })).toBe(false)
+  })
+
+  test("an answer's metadata is its data, and the message is the record's", () => {
+    const answer = assistantMessage("Hi.", { model: "echo", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 8 } })
+    expect(answer.data).toEqual({ model: "echo", usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 8 } })
+    expect(answer.message).toEqual({ _tag: "Assistant", text: "Hi.", toolCalls: [] })
   })
 })

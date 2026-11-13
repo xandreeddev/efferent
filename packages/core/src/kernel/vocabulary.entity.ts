@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import type { LiveDefinition, StoredDefinition } from "./event.entity.js"
+import { tagsOf } from "./event.entity.functions.js"
 import { EventName, TurnNumber } from "./ids.entity.js"
 import type { Reader } from "./journal.entity.js"
 
@@ -24,6 +25,7 @@ export const turnStartedEvent: StoredDefinition<TurnStartedData> = {
   name: EventName.make("core.session.turn.started"),
   data: TurnStartedData,
   skippable: false,
+  tags: tagsOf(["turn"]),
 }
 
 /**
@@ -52,6 +54,7 @@ export const turnEndedEvent: StoredDefinition<TurnEndedData> = {
   name: EventName.make("core.session.turn.ended"),
   data: TurnEndedData,
   skippable: false,
+  tags: tagsOf(["turn"]),
 }
 
 /**
@@ -67,6 +70,7 @@ export const listenerFailedEvent: LiveDefinition<ListenerFailedData> = {
   kind: "live",
   name: EventName.make("core.listener.failed"),
   data: ListenerFailedData,
+  tags: tagsOf(["trace"]),
 }
 
 /**

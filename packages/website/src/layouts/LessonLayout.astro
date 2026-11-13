@@ -74,7 +74,7 @@ const { title, description, minutes, lesson } = Astro.props
       const step = steps[clamped]!
       if (updateHash) history.replaceState(null, "", `#${step.id}`)
       window.dispatchEvent(new CustomEvent("learn:focus", {
-        detail: { pane: step.dataset.focus, step: step.id, file: step.dataset.file, unfold: step.dataset.unfold, view: step.dataset.view, wide: step.dataset.wide },
+        detail: { pane: step.dataset.focus, step: step.id, file: step.dataset.file, unfold: step.dataset.unfold, wide: step.dataset.wide },
       }))
     }
     prev.addEventListener("click", () => show(current - 1))

@@ -9,6 +9,8 @@ class Sessions
 class UnknownRecord
 const AnnouncedEvent
 const AssistantMessage
+const AssistantMessageData
+const CONVERSATION_READER
 const EventName
 const Free
 const Inspection
@@ -29,6 +31,7 @@ const SessionId
 const SessionState
 const StoredDraft
 const StoredEvent
+const Tag
 const ToolCall
 const ToolCallId
 const TurnEndedData
@@ -36,8 +39,12 @@ const TurnNumber
 const TurnOpen
 const TurnOutcome
 const TurnStartedData
+const Usage
 const UserMessage
+const UserMessageData
 const announced
+const assistantMessage
+const assistantMessageEvent
 const beginTurn
 const dataOf
 const endTurn
@@ -58,10 +65,13 @@ const sessionStateOf
 const sessionsConformance
 const stored
 const storedEvent
+const taggedWith
 const turnEnded
 const turnEndedEvent
 const turnStarted
 const turnStartedEvent
+const userMessage
+const userMessageEvent
 interface ConformanceCheck
 interface JournalStorageSubject
 interface KernelOptions
@@ -74,6 +84,7 @@ interface SessionsSubject
 interface StoredDefinition
 type AnnouncedEvent
 type AssistantMessage
+type AssistantMessageData
 type Delivered
 type EventDefinition
 type EventName
@@ -95,6 +106,7 @@ type SessionId
 type SessionState
 type StoredDraft
 type StoredEvent
+type Tag
 type ToolCall
 type ToolCallId
 type TurnEndedData
@@ -103,4 +115,6 @@ type TurnNumber
 type TurnOpen
 type TurnOutcome
 type TurnStartedData
+type Usage
 type UserMessage
+type UserMessageData

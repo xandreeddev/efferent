@@ -12,6 +12,8 @@ export interface ModelsPane {
   /** A load failed: show why, and open the card's "how to make it work". */
   readonly fail: (id: string, text: string) => void
   readonly close: () => void
+  /** Show the list again: after a failed load, its card says why. */
+  readonly open: () => void
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, string> = {}, text?: string) => {
@@ -101,6 +103,7 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
       if (card.fix) card.fix.open = true
     },
     close: () => setOpen(false),
+    open: () => setOpen(true),
   }
 }
 

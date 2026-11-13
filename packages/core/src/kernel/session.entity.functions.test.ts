@@ -16,10 +16,10 @@ const told = (result: Result.Result<SessionState, { readonly _tag: string; reado
   Result.match(result, { onSuccess: (state): SessionState | string => state, onFailure: (refusal) => refusal.reason ?? refusal._tag })
 
 /** Drafts as a journal: each at the next place. */
-const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, ...draft }))
+const journal = (...drafts: ReadonlyArray<StoredDraft>): ReadonlyArray<StoredEvent> => drafts.map((draft, index) => ({ seq: Seq.make(index + 1), at: 0, turn: TurnNumber.make(1), ...draft }))
 
 /** A plugin's record bearing a message: whatever a workflow appends inside a turn, as far as core knows. */
-const noted = storedEvent("notes", "noted", { data: Schema.Struct({ text: Schema.String }), skippable: false })
+const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }), skippable: false })
 const note = (text: string) => stored(noted, { text }, { message: { _tag: "User", text } })
 
 describe("a session's state", () => {
@@ -50,8 +50,8 @@ describe("the fold of a journal to a session's state", () => {
   const completed = { _tag: "Completed" as const }
   /** A record under core's prefix that this release does not know: one a later core may write. */
   const future = (skippable: boolean) =>
-    stored({ ...storedEvent("any", "future", { data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
-  const elsewhere = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct({}), skippable: false }), {})
+    stored({ ...storedEvent("any", "future", { tags: ["trace"], data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
+  const elsewhere = stored(storedEvent("elsewhere", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: false }), {})
 
   const table: ReadonlyArray<readonly [string, ReadonlyArray<StoredDraft>, SessionState | string]> = [
     ["an empty journal", [], free(0)],

@@ -1,9 +1,7 @@
 import { Deferred, Effect, Exit, HashMap, Layer, Option, Ref, Result } from "effect"
 import { Core } from "@xandreed/core/kernel"
-import { Loop } from "../../contracts/loop/loop.port.js"
 import type { SessionId } from "@xandreed/core/kernel"
-import type { Reply } from "../../contracts/loop/loop.entity.js"
-import type { LoopFailure } from "../../contracts/loop/loop.port.js"
+import type { InboxTurn, InboxTurnFailure } from "../../contracts/inbox/inbox.port.js"
 import { enqueue as queue, finish, inboxQueued, openInbox, take } from "./inbox.entity.functions.js"
 import type { Enqueued } from "./inbox.entity.functions.js"
 import { InboxClosed } from "../../contracts/inbox/inbox.entity.js"
@@ -13,7 +11,7 @@ import { Inbox } from "../../contracts/inbox/inbox.port.js"
 
 const DEFAULT_CAPACITY = 64
 
-type Answer = Deferred.Deferred<Reply, LoopFailure | InboxClosed>
+type Answer = Deferred.Deferred<string, InboxTurnFailure | InboxClosed>
 
 /**
  * A queued message's reply, and the signal that its announcement is over:
@@ -42,13 +40,13 @@ const closed = () => new InboxClosed({ message: "the inbox closed before this me
  * The inbox plugin: a queue per session in the process, answered in
  * order, one turn at a time. Its state is one `Ref`, moved by the pure
  * transitions of `inbox.entity.functions.ts`; one worker per session,
- * forked in the plugin's scope, runs the session's turns through `Loop`
+ * forked in the plugin's scope, runs the session's turns through the host's `turn`
  * and stops when nothing waits. When the scope closes, every reply not
  * given yet fails with `InboxClosed`.
  */
-const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(function* () {
+const makeInbox = <R>(turn: InboxTurn<R>, options: InboxOptions) => Layer.effect(Inbox, Effect.gen(function* () {
   const core     = yield* Core
-  const loop     = yield* Loop
+  const services = yield* Effect.context<R>()
   const scope    = yield* Effect.scope
   const capacity = options.capacity ?? DEFAULT_CAPACITY
   const held     = yield* Ref.make<Held>({ state: openInbox, waiting: HashMap.empty(), announcing: HashMap.empty() })
@@ -91,7 +89,7 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
         // failed turn fails its own reply, and the next message runs. Either cut short by the close fails the reply with
         // `InboxClosed`.
         const heard = Option.match(waiting, { onNone: () => Effect.void, onSome: (entry) => Deferred.await(entry.announced) })
-        yield* restore(Effect.andThen(heard, loop.run({ session, message }))).pipe(
+        yield* restore(Effect.andThen(heard, Effect.provide(turn(session, message), services))).pipe(
           Effect.onExit((exit) => Option.match(waiting, {
             onNone: () => Effect.void,
             onSome: (entry) => Deferred.done(entry.answer, Exit.hasInterrupts(exit) ? Exit.fail(closed()) : exit),
@@ -113,7 +111,7 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
 
   return Inbox.of({
     enqueue: Effect.fn("kernel.inbox.enqueue")(function* (session: SessionId, message: string) {
-      const answer = yield* Deferred.make<Reply, LoopFailure | InboxClosed>()
+      const answer = yield* Deferred.make<string, InboxTurnFailure | InboxClosed>()
       const announced = yield* Deferred.make<void>()
       // One uninterruptible step, which waits for nothing: the queueing, the announcement and the worker it planned are
       // started, and the caller has its ticket and reply whatever becomes of them.
@@ -147,17 +145,17 @@ const makeInbox = (options: InboxOptions) => Layer.effect(Inbox, Effect.gen(func
 }))
 
 /**
- * The inbox with a queue of the given capacity per session.
+ * The inbox over the host's `turn`, with a queue of the given capacity per session.
  *
  * @public
  */
-export const inboxOf = (options: InboxOptions): Layer.Layer<Inbox, never, Core | Loop> => makeInbox(options)
+export const inboxOf = <R>(turn: InboxTurn<R>, options: InboxOptions): Layer.Layer<Inbox, never, Core | R> => makeInbox(turn, options)
 
 /**
  * The stock inbox plugin: messages queued per session and answered in
- * order, over `Loop`, with a queue of 64 per session. It needs `Core` and
- * `Loop`, and its type says so.
+ * order, each through the host's `turn`, with a queue of 64 per session. It
+ * needs `Core` and what the turn needs, and its type says so.
  *
  * @public
  */
-export const inbox: Layer.Layer<Inbox, never, Core | Loop> = makeInbox({})
+export const inbox = <R>(turn: InboxTurn<R>): Layer.Layer<Inbox, never, Core | R> => makeInbox(turn, {})

@@ -17,7 +17,11 @@ export type UserMessage = typeof UserMessage.Type
 export const ToolCall = Schema.Struct({ id: ToolCallId, name: Schema.String, input: Schema.Json })
 export type ToolCall = typeof ToolCall.Type
 
-/** What the model answered in one step: its text and the tools it asked for. */
+/**
+ * What the model answered in one step: its text and the tools it asked for.
+ *
+ * @public
+ */
 export const AssistantMessage = Schema.TaggedStruct("Assistant", { text: Schema.String, toolCalls: Schema.Array(ToolCall) })
 export type AssistantMessage = typeof AssistantMessage.Type
 

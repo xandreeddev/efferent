@@ -25,11 +25,11 @@ export const PluginName = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9
 export type PluginName = typeof PluginName.Type
 
 /**
- * An event's name, under the prefix of who writes it: `core.` or `plugin.<plugin name>.`.
+ * An event's name, under the prefix of who defines it: `core.` (the session's own), `conversation.` (the conversation's messages, core's vocabulary, written by whoever runs a turn) or `plugin.<plugin name>.`.
  *
  * @public
  */
-export const EventName = Schema.String.check(Schema.isPattern(/^(?:core|plugin\.[a-z0-9][a-z0-9-]*)(?:\.[a-z0-9][a-z0-9-]*)+$/)).pipe(Schema.brand("EventName"))
+export const EventName = Schema.String.check(Schema.isPattern(/^(?:core|conversation|plugin\.[a-z0-9][a-z0-9-]*)(?:\.[a-z0-9][a-z0-9-]*)+$/)).pipe(Schema.brand("EventName"))
 export type EventName = typeof EventName.Type
 
 /**

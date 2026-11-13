@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
-import { Core, live, liveEvent, messageOf, originOf } from "@xandreed/core/kernel"
-import { assistantDeltaEvent, requestSentEvent, userMessageEvent } from "./contracts/loop/conversation.entity.js"
-import { Tokens } from "./contracts/loop/request.entity.js"
-import { estimateRequest } from "./contracts/loop/request.entity.functions.js"
-import { Settings } from "./contracts/loop/settings.port.js"
+import { assistantMessageEvent, Core, live, liveEvent, messageOf, originOf, userMessageEvent } from "@xandreed/core/kernel"
+import { promptMessage } from "./contracts/memory/memory.entity.functions.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import { answering, open, recording, stack } from "./testing.js"
 
@@ -15,43 +12,43 @@ import { answering, open, recording, stack } from "./testing.js"
  */
 
 describe("the kernel guide's code", () => {
-  test("a host follows the answer as it streams", async () => {
-    const pieces = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  test("a host follows the conversation as it is stored", async () => {
+    const answers = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hel", "lo!")
-      const { core, loop, createSession } = yield* open(stack(model))
+      const { core, send, createSession } = yield* open(stack(model))
       const session = yield* createSession({ owner: "learner" })
       // #region follow
-      const answer = yield* core.events.pipe(
-        Stream.filter((event) => event.name === assistantDeltaEvent.name),
-        Stream.take(2),
+      const answered = yield* core.events.pipe(
+        Stream.filter((event) => event.name === assistantMessageEvent.name),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkScoped({ startImmediately: true }),      // reading before the turn starts: the stream has no replay
       )
-      yield* loop.run({ session, message: "Hello" })
-      const shown = yield* Fiber.join(answer)
+      yield* send(session, "Hello")
+      const shown = yield* Fiber.join(answered)
       // #endregion follow
-      return shown.map((event) => event.data)
+      return shown.flatMap((event) => Option.toArray(Option.map(messageOf(event), (message) => message.text)))
     })))
-    expect(pieces).toEqual([{ text: "Hel" }, { text: "lo!" }])
+    expect(answers).toEqual(["Hello!"])
   })
 
   test("a plugin defines an event of its own, and another reacts to it", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
       // #region own-event
-      // An event of the plugin's own, defined in the plugin's folder: its name, the schema of its data, live or stored.
-      const requestCounted = liveEvent("meter", "request.counted", { data: Schema.Struct({ requests: Schema.Int, tokens: Tokens }) })
+      // An event of the plugin's own, defined in the plugin's folder: its name, what it is for, the schema of its data, live or stored.
+      const answerCounted = liveEvent("meter", "answer.counted", { tags: ["trace"], data: Schema.Struct({ answers: Schema.Int, outputTokens: Schema.Int }) })
 
       // A plugin that provides no contract and only listens: a layer that registers its listener in its own scope.
       const meter = Layer.effectDiscard(Effect.gen(function* () {
         const core = yield* Core
-        const requests = yield* Ref.make(0)
-        // React to a fact the loop plugin stores, and publish one of its own about the same turn.
-        yield* core.on(requestSentEvent, (sent) => Effect.flatMap(Ref.updateAndGet(requests, (count) => count + 1), (count) =>
-          core.publish(live(requestCounted, originOf(sent), { requests: count, tokens: sent.data.estimatedTokens }))), { name: "meter", wait: true })
+        const answers = yield* Ref.make(0)
+        // React to a record of the conversation, and publish one of its own about the same turn.
+        yield* core.on(assistantMessageEvent, (answered) => Effect.flatMap(Ref.updateAndGet(answers, (count) => count + 1), (count) =>
+          core.publish(live(answerCounted, originOf(answered), { answers: count, outputTokens: answered.data.usage?.outputTokens ?? 0 }))), { name: "meter", wait: true })
       }))
       // #endregion own-event
-      const record = yield* recording([requestCounted])
+      const record = yield* recording([answerCounted])
       const agent = yield* open(stack(model, { extras: Layer.provideMerge(meter, record.layer) }))
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
@@ -59,8 +56,8 @@ describe("the kernel guide's code", () => {
       return yield* record.seen
     })))
     expect(result.map((event) => [event.name, event.turn, event.data])).toEqual([
-      ["plugin.meter.request.counted", 1, { requests: 1, tokens: 9 }],
-      ["plugin.meter.request.counted", 2, { requests: 2, tokens: 12 }],
+      ["plugin.meter.answer.counted", 1, { answers: 1, outputTokens: 3 }],
+      ["plugin.meter.answer.counted", 2, { answers: 2, outputTokens: 3 }],
     ])
   })
 
@@ -69,27 +66,19 @@ describe("the kernel guide's code", () => {
       const { model, received } = yield* answering("Hi.")
       // #region memory-plugin
       /** A memory that sends the message the turn answers and nothing before it. */
-      const goldfish = () => Layer.effect(Memory, Effect.gen(function* () {
-        const settings = yield* Settings
-        return Memory.of({
-          build: (session) => Effect.map(session.journal, (journal) => {
-            const asked = journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
-            return {
-              messages: asked.map((event) => event.seq),          // pointers into the journal, never copies
-              estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => Option.toArray(messageOf(event)))),
-              budgetTokens: Tokens.make(1000),
-            }
-          }),
-        })
+      const goldfish = Layer.succeed(Memory, Memory.of({
+        context: (session) => Effect.map(session.journal, (journal) =>
+          journal.filter((event) => event.name === userMessageEvent.name).slice(-1)
+            .flatMap((event) => Option.toArray(messageOf(event))).map(promptMessage)),
       }))
       // #endregion memory-plugin
-      const agent = yield* open(stack(model, { memory: goldfish() }))
+      const agent = yield* open(stack(model, { memory: goldfish }))
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
       const later = yield* agent.send(session, "And now?")
       return { later, received: yield* received }
     })))
-    expect(result.later).toEqual({ text: "Hi." })
+    expect(result.later).toEqual("Hi.")
     expect(result.received[1]).toEqual([{ role: "system", text: "You are a friendly tutor." }, { role: "user", text: "And now?" }])
   })
 })
@@ -123,20 +112,20 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the window memory, the host's stack, the loop's main function, the session plugin's two functions, the queue example, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the lesson's program, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
-      "packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts#",
-      "packages/sdk/src/kernel/lesson.test.ts#agent",
-      "packages/sdk/src/kernel/plugins/loop/step-loop.usecase.ts#",
+      "packages/sdk/src/kernel/lesson.test.ts#turn",
+      "packages/sdk/src/kernel/lesson.test.ts#program",
       "packages/sdk/src/kernel/guide.test.ts#follow",
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
-      "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
-      "packages/sdk/src/kernel/lesson.test.ts#program",
+      "packages/sdk/src/kernel/plugins/memory-flat/flat.adapter.ts#",
+      "packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts#",
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
+      "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/swap.test.ts#swap",
     ])
     // Every fence of the document is one of the pinned quotes: two fence lines each.
@@ -150,16 +139,14 @@ describe("docs/kernel.md", () => {
 
   test("names no stored event that the kernel does not write, and every one it does", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
-    const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:session|loop|window|inbox)|core)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
+    const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:session|loop|window|inbox)|core|conversation)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
     expect(named).toEqual([
+      "conversation.assistant.message",
+      "conversation.user.message",
       "core.listener.failed",
       "core.session.turn.ended",
       "core.session.turn.started",
       "plugin.inbox.queued",
-      "plugin.loop.assistant.delta",
-      "plugin.loop.assistant.message",
-      "plugin.loop.request.sent",
-      "plugin.loop.user.message",
       "plugin.window.dropped",
       "plugin.window.pressure",
     ])

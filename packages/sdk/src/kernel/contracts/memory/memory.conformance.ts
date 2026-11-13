@@ -1,13 +1,14 @@
-import { Effect, Option, Predicate, Ref, Result, Schema } from "effect"
+import { Effect, Option, Predicate, Ref, Schema } from "effect"
 import { Context, Layer } from "effect"
 import type { Scope } from "effect"
-import { expect, fail, refuses, show, unexpected } from "../conformance.entity.functions.js"
-import { ConformanceFailure, Core, kernel, Seq, SessionId, stored, storedEvent, turnEnded, TurnNumber, turnStarted } from "@xandreed/core/kernel"
+import type { Prompt } from "effect/ai"
+import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
+import {
+  assistantMessage, ConformanceFailure, Core, EventName, kernel, Seq, SessionId, stored, storedEvent, turnEnded, TurnNumber, turnStarted, userMessage,
+} from "@xandreed/core/kernel"
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { Memory } from "./memory.port.js"
-import { estimateRequest, estimateTokens, firstStep, resolveRequest, turnMessageOf } from "../loop/request.entity.functions.js"
-import type { ModelRequest } from "../loop/request.entity.js"
-import { assistantMessage, requestSent, userMessage } from "../loop/conversation.entity.functions.js"
+import { estimateContext } from "./memory.entity.functions.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type MemoryShape = Context.Service.Shape<typeof Memory>
@@ -15,15 +16,14 @@ type MemoryShape = Context.Service.Shape<typeof Memory>
 /**
  * A memory plugin as the kit opens it: a fresh one per check, on the
  * `Core` the kit hands it, released with its scope. The kit is told the
- * plugin's name (its records are under `plugin.<name>.`), the system text
- * its settings hold and its budget, so it can count what the plugin counts.
+ * plugin's name (its records are under `plugin.<name>.`) and, for a memory
+ * that keeps to a budget, the budget, so it can count what the plugin counts.
  *
  * @public
  */
 export interface MemorySubject {
   readonly name: string
-  readonly system: string
-  readonly budgetTokens: number
+  readonly budgetTokens?: number
   readonly open: (core: CoreShape) => Effect.Effect<MemoryShape, never, Scope.Scope>
 }
 
@@ -33,17 +33,16 @@ const sessionId = SessionId.make("kit-session")
 const kitSession = Effect.gen(function* () {
   const journal = yield* Ref.make<ReadonlyArray<StoredEvent>>([])
   const turns = yield* Ref.make(0)
-  const append = (event: StoredDraft) => Ref.modify(journal, (events) => {
-    const kept: StoredEvent = { seq: Seq.make(events.length + 1), at: 1_767_225_600_000, ...event }
+  const append = (event: StoredDraft) => Effect.flatMap(Ref.get(turns), (turn) => Ref.modify(journal, (events) => {
+    const kept: StoredEvent = { seq: Seq.make(events.length + 1), at: 1_767_225_600_000, turn: TurnNumber.make(Math.max(1, turn)), ...event }
     return [kept, [...events, kept]] as const
-  })
-  /** A whole earlier turn: its message, the request that sent it and the answer. */
+  }))
+  /** A whole earlier turn: its message and the answer. */
   const pastTurn = (asked: string, answered: string) => Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
     yield* append(turnStarted(turn))
-    const message = yield* append(userMessage(asked))
-    yield* append(requestSent(firstStep, "", { messages: [message.seq], estimatedTokens: estimateTokens(asked), budgetTokens: estimateTokens(asked) }))
-    yield* append(assistantMessage(firstStep, { _tag: "Assistant", text: answered, toolCalls: [] }))
+    yield* append(userMessage(asked))
+    yield* append(assistantMessage(answered))
     yield* append(turnEnded(turn, { _tag: "Completed" }))
   })
   /** The turn that is open: its start and its message, and the session a memory opens. */
@@ -56,31 +55,34 @@ const kitSession = Effect.gen(function* () {
   })
   /** Close the open turn with the model's answer. */
   const closeTurn = (session: OpenSession, answered: string) => Effect.gen(function* () {
-    yield* append(assistantMessage(firstStep, { _tag: "Assistant", text: answered, toolCalls: [] }))
+    yield* append(assistantMessage(answered))
     yield* append(turnEnded(session.turn, { _tag: "Completed" }))
   })
   return { journal: Ref.get(journal), append, pastTurn, openTurn, closeTurn }
 })
 
+/** The text of a prompt message, as the kit compares it. */
+const textOf = (message: Prompt.MessageEncoded): string => typeof message.content === "string" ? message.content : show(message.content)
+
 /**
  * The memory contract as checks, each over a journal the kit writes: the
- * request points at the message the turn answers (`turn-message`); every
- * pointer is the place of a record that bears a message, none twice
- * (`pointers`); the estimate is `estimateRequest` of the system text and the
- * messages pointed at, within the budget (`estimate`); what memory appends
- * while it builds is under its own prefix (`own-records`); while nothing
- * presses, the next turn's request starts with this turn's, so the prefix a
- * provider cached stays (`prefix`); over a journal longer than the budget
- * the request still fits and still answers the turn (`fits`); a turn that
- * alone is over the budget fails with an error carrying `estimatedTokens`
- * and `budgetTokens`, never a request over its budget (`over-budget`); an
- * unknown record under its own prefix is passed over when it may be
+ * context ends with the message the turn answers (`turn-message`); every
+ * message in it is the user's or the model's, with the text of a record of
+ * the conversation (`conversation`); a record of another use that bears
+ * text is never in it (`other-uses`); what memory appends while it builds
+ * is under its own prefix and tagged `memory` (`own-records`); while
+ * nothing presses, the next turn's context starts with this turn's, so the
+ * prefix a provider cached stays (`prefix`); for a memory with a budget,
+ * over a journal longer than the budget the context still fits and still
+ * answers the turn (`fits`), and a turn that alone is over the budget fails
+ * with an error carrying `estimatedTokens` and `budgetTokens` (`over-budget`);
+ * an unknown record under its own prefix is passed over when it may be
  * skipped (`unknown-skipped`) and refused with `UnknownRecord` when it may
- * not (`unknown-refused`); so is an unknown record under the loop's prefix
- * that may not be skipped, since a memory reads the loop's records with the
- * loop's reader (`readerFor(name, own, LOOP_READER)`), not its own prefix
- * alone (`unknown-loop-refused`); another plugin's record it does not know
- * is not its concern (`foreign`).
+ * not (`unknown-refused`); so is an unknown record of the conversation
+ * that may not be skipped, since a memory reads the conversation with its
+ * reader (`readerFor(name, own, CONVERSATION_READER)`), not its own prefix
+ * alone (`unknown-conversation-refused`); another plugin's record it does not
+ * know is not its concern (`foreign`).
  *
  * @public
  */
@@ -98,98 +100,96 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* body(memory, yield* kitSession)
     })).pipe(unexpected(id)),
   })
-  /** The first request of the session's open turn. */
-  const build = (memory: MemoryShape, session: OpenSession) => memory.build(session, firstStep)
-  /** The request, resolved against the journal as it is after the build. */
-  const resolved = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
-    Result.match(resolveRequest(journal, request), {
-      onFailure: (refusal) => fail(id, `the request does not resolve: ${refusal.message}`),
-      onSuccess: (messages) => Effect.succeed({ messages }),
-    }))
-  const answersTurn = (id: string, kit: Kit, request: ModelRequest) => Effect.flatMap(kit.journal, (journal) =>
-    expect(id, Option.exists(turnMessageOf(journal), (seq) => request.messages.includes(seq)), `the request ${show(request.messages)} leaves out the message the turn answers`))
+  const answersTurn = (id: string, context: ReadonlyArray<Prompt.MessageEncoded>, asked: string) => {
+    const last = context.at(-1)
+    return expect(id, last !== undefined && last.role === "user" && textOf(last) === asked, `the context ${show(context)} does not end with the message the turn answers`)
+  }
   const own = `plugin.${subject.name}.`
-  const unknown = (skippable: boolean, plugin: string = subject.name) => stored(storedEvent(plugin, "kit-unknown", { data: Schema.Struct({}), skippable }), {})
-  const long = "long ".repeat(Math.max(1, Math.ceil(subject.budgetTokens / 4)))
+  const unknown = (skippable: boolean, plugin: string = subject.name) => stored(storedEvent(plugin, "kit-unknown", { data: Schema.Struct({}), skippable, tags: ["memory"] }), {})
+  const unknownConversation = (skippable: boolean): StoredDraft =>
+    ({ name: EventName.make("conversation.kit.unknown"), data: {}, skippable, tags: userMessage("").tags, message: { _tag: "User", text: "an unknown record of the conversation" } })
+  const budget = Option.fromNullishOr(subject.budgetTokens)
+  const long = "long ".repeat(Math.max(1, Math.ceil(Option.getOrElse(budget, () => 400) / 4)))
+  /** The checks of a budget, for a memory that keeps to one. */
+  const budgeted = (checks: (budgetTokens: number) => ReadonlyArray<ConformanceCheck>) => Option.match(budget, { onNone: () => [], onSome: checks })
 
   return [
-    check("the request points at the message the turn answers", "turn-message", (memory, kit) => Effect.gen(function* () {
+    check("the context ends with the message the turn answers", "turn-message", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       const session = yield* kit.openTurn("And a scope?")
-      yield* answersTurn("turn-message", kit, yield* build(memory, session))
+      yield* answersTurn("turn-message", yield* memory.context(session), "And a scope?")
     })),
-    check("every pointer is the place of a record that bears a message", "pointers", (memory, kit) => Effect.gen(function* () {
+    check("every message of the context is the user's or the model's, from a record of the conversation", "conversation", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       const session = yield* kit.openTurn("And a scope?")
-      const request = yield* build(memory, session)
-      const sent = yield* resolved("pointers", kit, request)
-      yield* expect("pointers", sent.messages.length === request.messages.length && sent.messages.length > 0, `the request ${show(request.messages)} resolved to ${sent.messages.length} messages`)
+      const context = yield* memory.context(session)
+      const said = new Set((yield* kit.journal).flatMap((event) => event.message === undefined ? [] : [`${event.message._tag === "User" ? "user" : "assistant"} ${event.message.text}`]))
+      yield* expect("conversation", context.length > 0 && context.every((message) => said.has(`${message.role} ${textOf(message)}`)),
+        `the context ${show(context)} holds a message no record of the conversation bears`)
     })),
-    check("the estimate is `estimateRequest` of what is sent, within the budget", "estimate", (memory, kit) => Effect.gen(function* () {
+    check("a record of another use that bears text is never in the context", "other-uses", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
+      yield* kit.append(stored(storedEvent("kit-client", "drawn", { data: Schema.Struct({}), skippable: true, tags: ["ui"] }), {}, { message: { _tag: "User", text: "a label a client draws" } }))
       const session = yield* kit.openTurn("And a scope?")
-      const request = yield* build(memory, session)
-      const sent = yield* resolved("estimate", kit, request)
-      const counted = estimateRequest(subject.system, sent.messages.map((pointed) => pointed.message))
-      yield* expect("estimate", request.estimatedTokens === counted, `the request is estimated at ${request.estimatedTokens}; estimateRequest counts ${counted}`)
-      yield* expect("estimate", request.estimatedTokens <= request.budgetTokens && request.budgetTokens === subject.budgetTokens,
-        `the request is estimated at ${request.estimatedTokens} under a budget of ${request.budgetTokens}; the subject's is ${subject.budgetTokens}`)
+      const context = yield* memory.context(session)
+      yield* expect("other-uses", context.every((message) => textOf(message) !== "a label a client draws"), `a record tagged ui reached the context: ${show(context)}`)
     })),
-    check("what memory appends while it builds is under its own prefix", "own-records", (memory, kit) => Effect.gen(function* () {
+    check("what memory appends while it builds is under its own prefix, tagged memory", "own-records", (memory, kit) => Effect.gen(function* () {
       yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8], () => kit.pastTurn(long, long), { concurrency: 1, discard: true })
       const session = yield* kit.openTurn("And a scope?")
       const before = (yield* kit.journal).length
-      yield* build(memory, session)
+      yield* memory.context(session)
       const written = (yield* kit.journal).slice(before)
-      yield* expect("own-records", written.every((event) => event.name.startsWith(own)), `while it built, memory appended ${show(written.map((event) => event.name))}, not all under ${own}`)
+      yield* expect("own-records", written.every((event) => event.name.startsWith(own) && event.tags.some((tag) => tag === "memory")),
+        `while it built, memory appended ${show(written.map((event) => `${event.name} ${event.tags.join(",")}`))}, not all under ${own} and tagged memory`)
     })),
-    check("while nothing presses, the next request starts with this one", "prefix", (memory, kit) => Effect.gen(function* () {
+    check("while nothing presses, the next context starts with this one", "prefix", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       const first = yield* kit.openTurn("And a scope?")
-      const earlier = yield* build(memory, first)
+      const earlier = yield* memory.context(first)
       yield* kit.closeTurn(first, "What a resource lives in.")
       const second = yield* kit.openTurn("And a layer?")
-      const later = yield* build(memory, second)
-      yield* expect("prefix", show(later.messages.slice(0, earlier.messages.length)) === show(earlier.messages),
-        `the next turn's request ${show(later.messages)} does not start with ${show(earlier.messages)}`)
+      const later = yield* memory.context(second)
+      yield* expect("prefix", show(later.slice(0, earlier.length)) === show(earlier), `the next turn's context ${show(later)} does not start with ${show(earlier)}`)
     })),
-    check("over a journal longer than the budget, the request still fits and answers the turn", "fits", (memory, kit) => Effect.gen(function* () {
-      yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8], () => kit.pastTurn(long, long), { concurrency: 1, discard: true })
-      const session = yield* kit.openTurn("And a scope?")
-      const request = yield* build(memory, session)
-      yield* expect("fits", request.estimatedTokens <= request.budgetTokens, `the request is estimated at ${request.estimatedTokens}, over its budget of ${request.budgetTokens}`)
-      yield* answersTurn("fits", kit, request)
-      yield* resolved("fits", kit, request)
-    })),
-    check("a turn that alone is over the budget fails, with the estimate and the budget", "over-budget", (memory, kit) => Effect.gen(function* () {
-      const session = yield* kit.openTurn(long.repeat(8))
-      yield* refuses("over-budget", "a build whose turn alone is over the budget", build(memory, session), (error) =>
-        Predicate.hasProperty(error, "estimatedTokens") && Predicate.isNumber(error.estimatedTokens)
-        && Predicate.hasProperty(error, "budgetTokens") && error.budgetTokens === subject.budgetTokens && error.estimatedTokens > subject.budgetTokens)
-    })),
+    ...budgeted((budgetTokens) => [
+      check("over a journal longer than the budget, the context still fits and answers the turn", "fits", (memory, kit) => Effect.gen(function* () {
+        yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8], () => kit.pastTurn(long, long), { concurrency: 1, discard: true })
+        const session = yield* kit.openTurn("And a scope?")
+        const context = yield* memory.context(session)
+        yield* expect("fits", estimateContext(context) <= budgetTokens, `the context is estimated at ${estimateContext(context)}, over its budget of ${budgetTokens}`)
+        yield* answersTurn("fits", context, "And a scope?")
+      })),
+      check("a turn that alone is over the budget fails, with the estimate and the budget", "over-budget", (memory, kit) => Effect.gen(function* () {
+        const session = yield* kit.openTurn(long.repeat(8))
+        yield* refuses("over-budget", "a context whose turn alone is over the budget", memory.context(session), (error) =>
+          Predicate.hasProperty(error, "estimatedTokens") && Predicate.isNumber(error.estimatedTokens)
+          && Predicate.hasProperty(error, "budgetTokens") && error.budgetTokens === budgetTokens && error.estimatedTokens > budgetTokens)
+      })),
+    ]),
     check("an unknown record of its own that may be skipped is passed over", "unknown-skipped", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       yield* kit.append(unknown(true))
       const session = yield* kit.openTurn("And a scope?")
-      yield* Effect.mapError(build(memory, session), (error) => new ConformanceFailure({ check: "unknown-skipped", message: `a build over a record that may be skipped failed with ${error._tag}: ${error.message}` }))
+      yield* Effect.mapError(memory.context(session), (error) => new ConformanceFailure({ check: "unknown-skipped", message: `a context over a record that may be skipped failed with ${error._tag}: ${error.message}` }))
     })),
     check("an unknown record of its own that may not be skipped is refused", "unknown-refused", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       yield* kit.append(unknown(false))
       const session = yield* kit.openTurn("And a scope?")
-      yield* refuses("unknown-refused", "a build over a record that may not be skipped", build(memory, session), (error) => error._tag === "UnknownRecord")
+      yield* refuses("unknown-refused", "a context over a record that may not be skipped", memory.context(session), (error) => error._tag === "UnknownRecord")
     })),
-    check("an unknown record of the loop's that may not be skipped is refused", "unknown-loop-refused", (memory, kit) => Effect.gen(function* () {
+    check("an unknown record of the conversation that may not be skipped is refused", "unknown-conversation-refused", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
-      yield* kit.append(unknown(false, "loop"))
+      yield* kit.append(unknownConversation(false))
       const session = yield* kit.openTurn("And a scope?")
-      yield* refuses("unknown-loop-refused", "a build over a record of the loop's that may not be skipped", build(memory, session), (error) => error._tag === "UnknownRecord")
+      yield* refuses("unknown-conversation-refused", "a context over a record of the conversation that may not be skipped", memory.context(session), (error) => error._tag === "UnknownRecord")
     })),
     check("another plugin's record it does not know is not its concern", "foreign", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
-      yield* kit.append(stored(storedEvent("kit-stranger", "noted", { data: Schema.Struct({}), skippable: false }), {}))
+      yield* kit.append(stored(storedEvent("kit-stranger", "noted", { data: Schema.Struct({}), skippable: false, tags: ["trace"] }), {}))
       const session = yield* kit.openTurn("And a scope?")
-      yield* Effect.mapError(build(memory, session), (error) => new ConformanceFailure({ check: "foreign", message: `a build over another plugin's record failed with ${error._tag}: ${error.message}` }))
+      yield* Effect.mapError(memory.context(session), (error) => new ConformanceFailure({ check: "foreign", message: `a context over another plugin's record failed with ${error._tag}: ${error.message}` }))
     })),
   ]
 }
