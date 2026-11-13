@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, kernel, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import { CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -89,8 +89,9 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>) => Effect.gen
           // Store the model's answer with the calls it made, then run each call and store its result.
           yield* session.append(assistantMessage(text, { toolCalls: calls }))
           if (calls.length === 0) return text
+          // Each call runs in this turn: a tool that declares CurrentTurn reaches the session from its handler.
           for (const call of calls) {
-            yield* session.append(yield* runTool(toolkit, call))
+            yield* session.append(yield* runTool(toolkit, call).pipe(Effect.provideService(CurrentTurn, session)))
           }
         }
         return `I stopped after ${MAX_STEPS} steps.`

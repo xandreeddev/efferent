@@ -36,8 +36,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
     after the context, whole and in its order, and is never stored,
-    `docs/adr/0005-context-for-one-request.md`) and the inbox's (`Inbox`,
-    `InboxTurn`). A plugin imports contracts and core, never another
+    `docs/adr/0005-context-for-one-request.md`), the tool call's
+    (`CurrentTurn`: the open turn a call runs in, which the host's loop
+    provides around `toolkit.handle` and a tool declares in its
+    `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`) and the
+    inbox's (`Inbox`, `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
     gate refuses both. There is no loop contract and no stock loop: the
     loop is the host's program (`docs/adr/0003-journal-holds-the-conversation.md`).
