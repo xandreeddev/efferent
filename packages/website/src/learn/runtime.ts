@@ -1,309 +1,272 @@
-// The lesson runtime: the kernel, running in the page. The base (events, the
-// journal, sessions) is built once in a root scope, and the page listens on
-// its Core once. Each rebuild evaluates the learner's code (the lesson says
-// how) and builds it in a child scope over the base and the loaded model; the
-// previous child scope is closed first, so no event reaches two agents.
-import { Cause, Context, Effect, Exit, Layer, Option, Predicate, Result, Scope } from "effect"
-import { LanguageModel } from "effect/ai"
-import { Core, kernel, messageOf, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { Delivered, JournalStorage, SessionId, StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
-import {
-  assistantDeltaEvent, assistantMessageEvent, Inbox, inboxQueuedEvent, inProcessJournal, isOverBudget, requestSentEvent, sessions, userMessageEvent,
-  windowDroppedEvent, windowPressureEvent,
-} from "@xandreed/sdk/kernel"
-import type { Reply } from "@xandreed/sdk/kernel"
+// The lesson runtime: the kernel, running in the page, and the learner's
+// program over it. The base (events, the journal, sessions) and the chat's
+// queue and conversation are built once in a root scope; each build runs the
+// learner's program as one long-running fiber over them, its modules handed
+// stand-ins for the base layers it names, so the conversation outlives
+// every rebuild. What happens is traced for the page: every event on Core,
+// what memory built for each turn, every prompt the model received, and
+// what the program told the chat.
+import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Scope, Stream } from "effect"
+import { LanguageModel, Prompt } from "effect/ai"
+import { Core, JournalStorage, kernel, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
+import { inProcessJournal, Memory, sessions } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
-import type { Lesson, Sources } from "./lesson.ts"
+import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
+import { Chat } from "./page-chat.ts"
 
 const OWNER = "learner"
 
-type BaseServices = Sessions | JournalStorage | Core
-type InboxShape = Context.Service.Shape<typeof Inbox>
+/** A message as the page shows it: who it is from, and its text. */
+export interface Said {
+  readonly role: string
+  readonly text: string
+}
 
-/**
- * What the learner's expression must be: a layer over the base and the
- * model. Only that it is a layer is checked here; what it needs is checked
- * when it is built (a missing part fails the build with "Service not
- * found"), and that it provides an inbox after.
- */
-type UpperStack = Layer.Layer<unknown, unknown, BaseServices | LanguageModel.LanguageModel>
-const isUpperStack = (value: unknown): value is UpperStack => Layer.isLayer(value)
+/** What the provider said a call cost, when it said. */
+export interface Reported {
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly cachedInputTokens?: number
+}
 
-/** What the page hears of the agent, one entry per kernel event it listens to. `name` is the kernel's own event name. */
-export type LessonEvent =
-  | { readonly _tag: "Queued"; readonly name: string; readonly id: number; readonly ticket: number; readonly text: string }
-  | { readonly _tag: "TurnStarted"; readonly name: string; readonly turn: number }
-  | { readonly _tag: "UserMessage"; readonly name: string; readonly turn: number; readonly id: Option.Option<number>; readonly text: string }
-  | { readonly _tag: "RequestSent"; readonly name: string; readonly turn: number; readonly step: number; readonly messages: number; readonly estimatedTokens: number; readonly budgetTokens: number }
-  | { readonly _tag: "Delta"; readonly name: string; readonly turn: number; readonly text: string }
-  | { readonly _tag: "AssistantMessage"; readonly name: string; readonly turn: number; readonly step: number; readonly text: string }
-  | { readonly _tag: "TurnEnded"; readonly name: string; readonly turn: number; readonly outcome: TurnOutcome }
-  | { readonly _tag: "WindowDropped"; readonly name: string; readonly turn: number; readonly through: number }
-  | { readonly _tag: "WindowPressure"; readonly name: string; readonly turn: number; readonly estimatedTokens: number; readonly budgetTokens: number }
+/** What the page learns of the program as it runs. */
+export type Trace =
+  /** Every event on Core: a stored record as it is announced, or a live event. */
+  | { readonly _tag: "Event"; readonly event: KernelEvent }
+  /** What memory built for a turn: the messages after the system text, from the journal as it was up to record `upTo`. */
+  | { readonly _tag: "Context"; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
+  /** A prompt the model received, in the turn open when it was sent. */
+  | { readonly _tag: "Prompt"; readonly turn: number; readonly messages: ReadonlyArray<Said> }
+  /** What the provider reported the last prompt cost. */
+  | { readonly _tag: "Usage"; readonly turn: number; readonly usage: Reported }
+  /** What the program told the chat, after the turn it last opened. */
+  | { readonly _tag: "Piece"; readonly turn: number; readonly text: string }
+  | { readonly _tag: "Reply"; readonly turn: number; readonly text: string }
+  | { readonly _tag: "Failed"; readonly turn: number; readonly message: string }
+  | { readonly _tag: "Status"; readonly turn: number; readonly text: string }
+  /** The program stopped on its own: it ended, or failed. Never sent for a stop the page asked for. */
+  | { readonly _tag: "Ended"; readonly reason: string }
 
 export type BuildResult =
   | { readonly _tag: "Built" }
   | { readonly _tag: "Refused"; readonly message: string }
 
-/** How one queued message ended. Failures stay told apart: over the budget, stopped, refused, or anything else. */
-export type SendOutcome =
-  | { readonly _tag: "Replied"; readonly text: string }
-  | { readonly _tag: "OverBudget"; readonly estimatedTokens: number; readonly budgetTokens: number; readonly message: string }
-  | { readonly _tag: "Stopped" }
-  | { readonly _tag: "Refused"; readonly message: string }
-  | { readonly _tag: "Failed"; readonly message: string }
+type BaseServices = Core | JournalStorage | Sessions
 
-/** A message the page sent: its own id (tickets start again with each inbox), its text, and how it ends. */
-export interface Sent {
-  readonly id: number
-  readonly text: string
-  readonly outcome: Promise<SendOutcome>
+/** A prompt message's text, decoded or encoded: its string, or the text of its parts. */
+const textOfMessage = (message: { readonly content: string | ReadonlyArray<object> }): string =>
+  typeof message.content === "string" ? message.content
+    : message.content.map((part) => ("text" in part && typeof part.text === "string" ? part.text : "")).join("")
+
+const count = (value: unknown, key: string): Option.Option<number> =>
+  typeof value === "object" && value !== null && key in value && typeof (value as Record<string, unknown>)[key] === "number"
+    ? Option.some((value as Record<string, number>)[key]!)
+    : Option.none()
+
+/** What a stream's finish part says the call cost, when it says. */
+const usageOf = (part: unknown): Option.Option<Reported> => {
+  if (typeof part !== "object" || part === null || !("type" in part) || part.type !== "finish" || !("usage" in part)) return Option.none()
+  const usage = part.usage
+  if (typeof usage !== "object" || usage === null) return Option.none()
+  const input = "inputTokens" in usage ? usage.inputTokens : undefined
+  const output = "outputTokens" in usage ? usage.outputTokens : undefined
+  const fields = (name: string, option: Option.Option<number>) => Option.match(option, { onNone: () => ({}), onSome: (value) => ({ [name]: value }) })
+  return Option.some({
+    ...fields("inputTokens", count(input, "total")),
+    ...fields("outputTokens", count(output, "total")),
+    ...fields("cachedInputTokens", count(input, "cacheRead")),
+  })
 }
 
-/** A reply's end as the page shows it. */
-const outcomeOf = (reply: Effect.Effect<Reply, unknown>): Effect.Effect<SendOutcome> => Effect.matchCause(reply, {
-  onSuccess: (done): SendOutcome => ({ _tag: "Replied", text: done.text }),
-  onFailure: (cause): SendOutcome => {
-    if (Cause.hasInterruptsOnly(cause)) return { _tag: "Stopped" }
-    const failure = Cause.findErrorOption(cause)
-    if (Option.isNone(failure)) return { _tag: "Failed", message: Cause.prettyErrors(cause)[0]?.message ?? "the turn failed" }
-    const error = failure.value
-    if (isOverBudget(error)) return { _tag: "OverBudget", estimatedTokens: error.estimatedTokens, budgetTokens: error.budgetTokens, message: error.message }
-    if (Predicate.isTagged(error, "InboxClosed")) return { _tag: "Stopped" }
-    return { _tag: "Failed", message: textOf(error) }
-  },
-})
+const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> =>
+  Prompt.make(raw).content.map((message) => ({ role: message.role, text: textOfMessage(message) }))
 
 export class LessonRuntime {
-  private upper: Option.Option<{ readonly scope: Scope.Closeable; readonly inbox: InboxShape }> = Option.none()
   private model: Option.Option<LoadedModel> = Option.none()
-  private readonly listeners = new Set<(event: LessonEvent) => void>()
-  /** Messages handed to `enqueue` whose `plugin.inbox.queued` has not been heard yet, in call order. */
-  private announcing: Array<{ readonly id: number; readonly text: string }> = []
-  /** Messages queued whose turn has not stored the user's message yet, in ticket order. */
-  private waiting: Array<{ readonly id: number; readonly text: string; readonly ticket: number }> = []
-  private nextId = 1
-  private unsettled = 0
-  /** A rebuild asked for while replies were unsettled: the latest source, and whoever waits for its result. */
-  private deferred: Option.Option<{ sources: Sources; readonly waiters: Array<(result: BuildResult) => void> }> = Option.none()
+  private program: Option.Option<{ readonly fiber: Fiber.Fiber<unknown, unknown>; readonly scope: Scope.Closeable }> = Option.none()
+  private readonly listeners = new Set<(trace: Trace) => void>()
+  private session: SessionId
+  private openTurn = 0
+  private lastTurn = 0
   private last: Sources = {}
-  private building: Promise<void> = Promise.resolve()
+  private building: Promise<unknown> = Promise.resolve()
 
   private constructor(
-    private readonly evaluate: Lesson["evaluate"],
+    private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
     private readonly base: Context.Context<BaseServices>,
-    private session: SessionId,
-  ) {}
+    private readonly queue: Queue.Queue<string>,
+    session: SessionId,
+  ) {
+    this.session = session
+  }
 
-  /** A runtime for one lesson: `evaluate` turns the learner's files into the stack to build. */
-  static async create(evaluate: Lesson["evaluate"]): Promise<LessonRuntime> {
+  /** A runtime for one lesson: its base, its chat's queue and conversation, and the page listening on Core. */
+  static async create(lesson: Lesson): Promise<LessonRuntime> {
     const root = await Effect.runPromise(Scope.make())
     const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
     const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
+    const queue = await Effect.runPromise(Queue.bounded<string>(100))
     const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
-    const runtime = new LessonRuntime(evaluate, root, base, session)
+    const runtime = new LessonRuntime(lesson, root, base, queue, session)
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
   }
 
-  /** Hear what the agent does. Returns the unsubscribe. */
-  onEvent(listener: (event: LessonEvent) => void): () => void {
+  /** Hear what the program does. Returns the unsubscribe. */
+  onTrace(listener: (trace: Trace) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
 
-  private emit(event: LessonEvent): Effect.Effect<void> {
-    return Effect.forEach(this.listeners, (listener) => Effect.try({ try: () => listener(event), catch: (error) => error }).pipe(
-      Effect.ignore({ log: "Warn", message: "a lesson page listener failed" }),
-    ), { concurrency: 1, discard: true })
+  private emit(trace: Trace): void {
+    this.listeners.forEach((listener) => {
+      try { listener(trace) } catch (error) { console.warn("a lesson page listener failed", error) }
+    })
   }
 
-  /** The page's listeners, registered once on the base's Core. Each is waited for, so the page hears events in the order they were published. */
+  /** The page's listeners on the base's Core: every event, in the order Core hands them over, and which turn is open. */
   private listen(): Effect.Effect<void, never, Scope.Scope> {
     const core = Context.get(this.base, Core)
-    const options = { name: "page", wait: true } as const
-    const turnOf = (event: { readonly turn?: number }) => event.turn ?? 0
-    /** The text of the message a stored record bears; a live event bears none. */
-    const textOn = (event: Delivered<unknown>) => "message" in event ? Option.match(messageOf(event), { onNone: () => "", onSome: (message) => message.text }) : ""
-    return Effect.all([
-      core.on(inboxQueuedEvent, (event) => Effect.suspend(() => {
-        const next = this.announcing.shift()
-        if (next === undefined) return Effect.void
-        this.waiting.push({ ...next, ticket: event.data.ticket })
-        return this.emit({ _tag: "Queued", name: inboxQueuedEvent.name, id: next.id, ticket: event.data.ticket, text: next.text })
-      }), options),
-      core.on(turnStartedEvent, (event) => this.emit({ _tag: "TurnStarted", name: turnStartedEvent.name, turn: event.data.turn }), options),
-      core.on(userMessageEvent, (event) => Effect.suspend(() => {
-        const started = this.waiting.shift()
-        return this.emit({
-          _tag: "UserMessage", name: userMessageEvent.name, turn: turnOf(event), id: Option.map(Option.fromNullishOr(started), (entry) => entry.id),
-          text: textOn(event),
-        })
-      }), options),
-      core.on(requestSentEvent, (event) => this.emit({
-        _tag: "RequestSent", name: requestSentEvent.name, turn: turnOf(event), step: event.data.step, messages: event.data.messages.length,
-        estimatedTokens: event.data.estimatedTokens, budgetTokens: event.data.budgetTokens,
-      }), options),
-      core.on(assistantDeltaEvent, (event) => this.emit({ _tag: "Delta", name: assistantDeltaEvent.name, turn: turnOf(event), text: event.data.text }), options),
-      core.on(assistantMessageEvent, (event) => this.emit({
-        _tag: "AssistantMessage", name: assistantMessageEvent.name, turn: turnOf(event), step: event.data.step,
-        text: textOn(event),
-      }), options),
-      core.on(turnEndedEvent, (event) => this.emit({ _tag: "TurnEnded", name: turnEndedEvent.name, turn: event.data.turn, outcome: event.data.outcome }), options),
-      core.on(windowDroppedEvent, (event) => this.emit({ _tag: "WindowDropped", name: windowDroppedEvent.name, turn: turnOf(event), through: event.data.through }), options),
-      core.on(windowPressureEvent, (event) => this.emit({
-        _tag: "WindowPressure", name: windowPressureEvent.name, turn: turnOf(event), estimatedTokens: event.data.estimatedTokens, budgetTokens: event.data.budgetTokens,
-      }), options),
-    ], { concurrency: 1, discard: true })
+    const started = (turn: number) => { this.openTurn = turn; this.lastTurn = turn }
+    const ended = () => { this.openTurn = 0 }
+    const heard = (event: KernelEvent) => this.emit({ _tag: "Event", event })
+    return Effect.gen(function* () {
+      // Waited for, so a prompt sent in a turn finds that turn here.
+      yield* core.on(turnStartedEvent, (event) => Effect.sync(() => started(event.data.turn)), { name: "page-turns", wait: true })
+      yield* core.on(turnEndedEvent, () => Effect.sync(ended), { name: "page-turns", wait: true })
+      yield* Effect.forkScoped(Stream.runForEach(core.events, (event) => Effect.sync(() => heard(event))), { startImmediately: true })
+    })
   }
 
-  /** The model the next rebuild hands the agent. */
+  /** The model the next build hands the program. */
   setModel(model: LoadedModel): void {
     this.model = Option.some(model)
   }
 
-  /** Whether any queued message is still waiting for its reply. */
+  /** Whether a turn is open. */
   get busy(): boolean {
-    return this.unsettled > 0
+    return this.openTurn > 0
   }
 
-  /** Whether an agent is built and can take messages. */
-  get ready(): boolean {
-    return Option.isSome(this.upper) && Option.isSome(this.model)
+  /** Whether a program runs. */
+  get running(): boolean {
+    return Option.isSome(this.program)
   }
 
-  /**
-   * Build the learner's agent over the base. While a reply is unsettled the
-   * rebuild waits, and the latest source asked for is the one built once
-   * every reply has settled; the promise resolves then.
-   */
-  rebuild(sources: Sources): Promise<BuildResult> {
-    if (!this.busy) return this.build(sources)
-    return new Promise((resolve) => {
-      this.deferred = Option.some(Option.match(this.deferred, {
-        onNone: () => ({ sources, waiters: [resolve] }),
-        onSome: (pending) => ({ sources, waiters: [...pending.waiters, resolve] }),
-      }))
+  /** The conversation the chat shows. */
+  get conversation(): SessionId {
+    return this.session
+  }
+
+  /** What the page gives the learner's code under the hood: the base, the chat and the model, as the names the code uses. */
+  private parts(model: LoadedModel): PageParts {
+    const base = this.base
+    const core = Context.get(base, Core)
+    const storage = Context.get(base, JournalStorage)
+    const sessionsOf = Context.get(base, Sessions)
+    const emit = (trace: Trace) => Effect.sync(() => this.emit(trace))
+    const chat = Chat.of({
+      session: this.session,
+      // One message at a time: a message is taken off the queue only when a turn is ready for it,
+      // so what waits stays in the queue, where a rebuild keeps it and Stop drops it.
+      messages: Stream.fromEffectRepeat(Queue.take(this.queue)),
+      stream: (piece) => Effect.suspend(() => emit({ _tag: "Piece", turn: this.lastTurn, text: piece })),
+      reply: (text) => Effect.suspend(() => emit({ _tag: "Reply", turn: this.lastTurn, text })),
+      fail: (error) => Effect.suspend(() => emit({ _tag: "Failed", turn: this.lastTurn, message: textOf(error) })),
+      status: (text) => Effect.suspend(() => emit({ _tag: "Status", turn: this.lastTurn, text })),
     })
+    const inner = model.model
+    const turnOf = () => this.openTurn
+    const watched = LanguageModel.LanguageModel.of({
+      ...inner,
+      streamText: ((options: { readonly prompt: Prompt.RawInput }) => {
+        const turn = turnOf()
+        this.emit({ _tag: "Prompt", turn, messages: saidOf(options.prompt) })
+        return Reflect.apply(inner.streamText, inner, [options]).pipe(
+          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", turn, usage }) })),
+        )
+      }) as typeof inner.streamText,
+    })
+    return {
+      // Each requires what the real one requires, so a line removed from the stack fails as it would for real.
+      kernel: () => Layer.succeed(Core, core),
+      inProcessJournal: () => Layer.effect(JournalStorage, Effect.gen(function* () { yield* Core; return storage })),
+      sessions: () => Layer.effect(Sessions, Effect.gen(function* () { yield* JournalStorage; yield* Core; return sessionsOf })),
+      chatOn: () => Layer.effect(Chat, Effect.gen(function* () { yield* Sessions; return chat })),
+      model: Layer.succeed(LanguageModel.LanguageModel, watched),
+      pane: {},
+      watchMemory: (layer) => Layer.effect(Memory, Effect.map(Effect.gen(function* () { return yield* Memory }), (memory) => Memory.of({
+        context: (session) => Effect.tap(memory.context(session), (messages) =>
+          Effect.flatMap(Effect.orElseSucceed(session.journal, () => []), (journal) =>
+            emit({ _tag: "Context", turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map((message) => ({ role: message.role, text: textOfMessage(message) })) }))),
+      }))).pipe(Layer.provide(layer)),
+    }
   }
 
-  private async closeUpper(): Promise<void> {
-    const upper = this.upper
-    this.upper = Option.none()
-    if (Option.isSome(upper)) await Effect.runPromise(Scope.close(upper.value.scope, Exit.void))
+  private async stopProgram(): Promise<void> {
+    const program = this.program
+    this.program = Option.none()
+    if (Option.isNone(program)) return
+    await Effect.runPromise(Fiber.interrupt(program.value.fiber))
+    await Effect.runPromise(Scope.close(program.value.scope, Exit.void))
   }
 
-  /**
-   * Builds run one at a time, in the order asked: a control's rebuild that
-   * lands while another build runs waits for it, so no agent is left open
-   * behind the one the page holds.
-   */
-  private build(sources: Sources): Promise<BuildResult> {
-    const next = this.building.then(() => this.buildNow(sources))
+  /** Builds run one at a time, in the order asked: a build that lands while another runs waits for it. */
+  start(sources: Sources): Promise<BuildResult> {
+    const next = this.building.then(() => this.startNow(sources))
     this.building = next.then(() => undefined, () => undefined)
     return next
   }
 
-  private async buildNow(sources: Sources): Promise<BuildResult> {
+  private async startNow(sources: Sources): Promise<BuildResult> {
     this.last = sources
-    await this.closeUpper()
+    await this.stopProgram()
     if (Option.isNone(this.model)) return { _tag: "Refused", message: "Pick a model first." }
-    const evaluated = this.evaluate(sources)
-    if (Result.isFailure(evaluated)) return { _tag: "Refused", message: evaluated.failure }
-    const stack = evaluated.success
-    if (!isUpperStack(stack)) return { _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." }
-    const services = Context.add(this.base, LanguageModel.LanguageModel, this.model.value.model)
+    const evaluated = this.lesson.evaluate(sources, this.parts(this.model.value))
+    if (evaluated._tag === "Failure") return { _tag: "Refused", message: evaluated.failure }
+    const main = evaluated.success
     const scope = await Effect.runPromise(Scope.fork(this.root))
-    const built = await Effect.runPromiseExit(Layer.buildWithScope(stack, scope).pipe(Effect.provide(services)))
-    if (Exit.isFailure(built)) {
-      await Effect.runPromise(Scope.close(scope, Exit.void))
-      return { _tag: "Refused", message: buildFailure(built.cause) }
-    }
-    const provided = Context.getOption(built.value, Inbox)
-    if (Option.isNone(provided)) {
-      await Effect.runPromise(Scope.close(scope, Exit.void))
-      return { _tag: "Refused", message: "The stack provides no Inbox: start it with inbox.pipe(...)." }
-    }
-    this.upper = Option.some({ scope, inbox: provided.value })
+    const fiber = await Effect.runPromise(Effect.forkIn(main.pipe(
+      Effect.onExit((exit) => Effect.sync(() => {
+        // A stop the page asked for says nothing; an end of the program's own is said, in words.
+        if (Exit.isSuccess(exit)) this.emit({ _tag: "Ended", reason: "your program ended: it stopped taking messages." })
+        else if (!Cause.hasInterruptsOnly(exit.cause)) this.emit({ _tag: "Ended", reason: `your program stopped: ${buildFailure(exit.cause)}` })
+      })),
+    ), scope, { startImmediately: true }))
+    this.program = Option.some({ fiber, scope })
     return { _tag: "Built" }
   }
 
-  /** Queue messages, in order, without waiting: each is answered in a turn of its own. */
-  async send(texts: ReadonlyArray<string>): Promise<ReadonlyArray<Sent>> {
-    const entries = texts.map((text) => ({ id: this.nextId++, text }))
-    // A build in flight has closed the old agent and not yet made the new one: wait for it.
-    await this.building
-    if (Option.isNone(this.upper)) {
-      return entries.map((entry) => ({ ...entry, outcome: Promise.resolve<SendOutcome>({ _tag: "Refused", message: "Build the agent first." }) }))
-    }
-    const target = this.upper.value.inbox
-    const session = this.session
-    const queued = await Effect.runPromise(Effect.forEach(entries, (entry) => Effect.suspend(() => {
-      this.announcing.push(entry)
-      return target.enqueue(session, entry.text).pipe(
-        Effect.map((ticket) => ({ entry, outcome: outcomeOf(ticket.reply) })),
-        Effect.catchTag("InboxRefused", (refused) => Effect.sync(() => {
-          this.announcing = this.announcing.filter((pending) => pending !== entry)
-          return { entry, outcome: Effect.succeed<SendOutcome>({ _tag: "Refused", message: refused.message }) }
-        })),
-      )
-    }), { concurrency: 1 }))
-    return queued.map(({ entry, outcome }) => {
-      this.unsettled += 1
-      const settled = Effect.runPromise(outcome).then((result) => {
-        // A message that never reached its turn (stopped while it waited) leaves the queue the page draws.
-        this.waiting = this.waiting.filter((pending) => pending.id !== entry.id)
-        this.announcing = this.announcing.filter((pending) => pending.id !== entry.id)
-        this.unsettled -= 1
-        if (this.unsettled === 0) void this.runDeferred()
-        return result
-      })
-      return { ...entry, outcome: settled }
-    })
+  /** Send a message: it waits in the chat's queue until the program takes it. */
+  send(text: string): void {
+    Queue.offerUnsafe(this.queue, text)
   }
 
-  private async runDeferred(): Promise<void> {
-    const pending = this.deferred
-    this.deferred = Option.none()
-    if (Option.isNone(pending)) return
-    const result = await this.build(pending.value.sources)
-    pending.value.waiters.forEach((resolve) => resolve(result))
-  }
-
-  /**
-   * Stop: tell the model to stop, close the agent's scope (the running turn
-   * ends `Interrupted`, the session is free, and every waiting reply fails
-   * with `InboxClosed`), then build the agent again from the latest source.
-   */
-  async stop(): Promise<BuildResult> {
-    // Taken first: the replies the close settles must not start a rebuild of their own.
-    const pending = this.deferred
-    this.deferred = Option.none()
+  /** Stop: the messages still waiting are dropped, the model is told to stop, and the program starts again over the same code. Returns the dropped messages. */
+  async stop(): Promise<{ readonly dropped: ReadonlyArray<string>; readonly result: BuildResult }> {
+    const dropped = Array.from(await Effect.runPromise(Queue.clear(this.queue)))
     if (Option.isSome(this.model)) this.model.value.interrupt()
-    await this.closeUpper()
-    const sources = Option.match(pending, { onNone: () => this.last, onSome: (value) => value.sources })
-    const result = await this.build(sources)
-    if (Option.isSome(pending)) pending.value.waiters.forEach((resolve) => resolve(result))
-    return result
+    return { dropped, result: await this.start(this.last) }
   }
 
-  /** A new, empty session in the same base. The old one stays in the journal store. */
-  async clear(): Promise<void> {
+  /** A new, empty conversation in the same base, and the program started again. The old one stays in the journal store. */
+  async clear(): Promise<BuildResult> {
+    await Effect.runPromise(Queue.clear(this.queue))
     this.session = await Effect.runPromise(Context.get(this.base, Sessions).create({ owner: OWNER }))
-    this.announcing = []
-    this.waiting = []
+    return this.start(this.last)
   }
 
-  /** The session's journal, as stored. */
+  /** The conversation's journal, as stored. */
   async journal(): Promise<ReadonlyArray<StoredEvent>> {
     const journal = await Effect.runPromise(Context.get(this.base, Sessions).read(this.session))
     return journal.events
   }
 
   async dispose(): Promise<void> {
-    await this.closeUpper()
+    await this.stopProgram()
     await Effect.runPromise(Scope.close(this.root, Exit.void))
   }
 }

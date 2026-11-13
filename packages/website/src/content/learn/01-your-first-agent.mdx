@@ -1,6 +1,6 @@
 ---
 title: Your first agent
-description: Build a conversational agent from small layers over Efferent's kernel, watch its loop and its memory, then write a memory yourself.
+description: Write the program that is your agent, over Efferent's kernel, watch each turn land in the journal, memory and the prompt, then write a memory yourself.
 minutes: 25
 ---
 
@@ -10,11 +10,19 @@ import Experiments from '../../components/learn/your-first-agent/Experiments.ast
 
 <Step n={1} id="build" title="What you will build" focus="code">
 
-An Efferent agent is not one big class. It is a stack of small parts, each an Effect `Layer` with one job.
+An agent is a program: it takes your messages one by one and answers each in a **turn**. You write that program in **agent.ts**, on the right. It is the whole agent: no loop hides behind it.
 
-At the bottom is a small **kernel**: events, a journal that records the conversation, and sessions. On top you put the parts of an agent: an **inbox** that queues your messages, the **loop** that asks the model, a **memory** that decides what the model is sent, and the **system text**.
+It stands on a small **kernel**: events every part can hook, a **journal** that stores the conversation, and **sessions**, which open and close turns. Next to the kernel are **modules**, each with one job: the **chat** your messages come from, a **memory** that picks what the model sees, and the **model**.
 
-Everything here runs in your browser. The code on the right is the whole program.
+It works like Neovim. The kernel is the editor's core, the modules are plugins, and your program is `init.lua`, which sets them up and wires them together:
+
+| In Neovim | Here |
+|---|---|
+| plugins set up on start | modules given to `main` with `Effect.provide` |
+| an autocmd on an event | `core.on(turnStartedEvent, …)` on boot |
+| a key mapping that calls a plugin | a message arrives, and `turn` calls memory and the model |
+
+Everything runs in your browser.
 
 </Step>
 
@@ -29,78 +37,73 @@ For real answers use a model on your own machine; nothing you type leaves your b
 
 </Step>
 
-<Step n={3} id="code" title="The agent in a few lines" focus="code">
+<Step n={3} id="program" title="The program" focus="code">
 
-The **Code** pane is the whole program. The grey chips (imports, the base, run) are read-only; click one to open it.
+Read **agent.ts** from the bottom up.
 
-The **base** is built once: the kernel's events, a journal kept in memory, and sessions. The conversation lives there.
+**`main`** gives `program` the modules it asks for. Each `Effect.provide` adds one: `flatMemory` from memory.ts, the chat over this page's pane, sessions, the journal, the kernel and the model you picked. If one is missing, the program stops the first time it asks for it.
 
-You edit the **agent**, the layers above the base:
+**`program`** runs as long as the page is open. On boot it hooks an event: when a turn starts, it sets the chat's status line (above the chat). Then it takes each message from `chat.messages` and runs **`turn`** on it, one at a time, so a message sent mid-turn waits for its own. A failed turn is shown in the chat, and the program goes on.
 
-- **`inbox`**: queues each message and answers them in order, one turn each.
-- **`stepLoop`**: the loop. It stores your message, asks memory for a request, calls the model and stores the answer.
-- **`windowMemory({ budgetTokens })`**: decides what each request sends, within a budget of tokens.
-- **`settings({ system })`**: the system text the loop and memory read.
+**chat.ts** (read-only) is where messages come from: Send puts yours on a queue, and `chat.messages` hands them over.
 
-Each part says in its type what it needs. `Layer.provideMerge` puts a part under the one above it, so the stack reads from the top down and is built from the bottom up.
-
-Press **Rebuild** (Ctrl/Cmd + Enter). The page closes the old agent and builds yours over the same base, or says why it could not.
+**Rebuild** (Ctrl/Cmd + Enter) stops your program and runs the code again. The conversation stays: the journal and the chat's queue are built once, under your program. A turn that was running ends **Interrupted**. Messages still waiting are kept.
 
 </Step>
 
-<Step n={4} id="chat" title="Talk to it" focus="chat">
+<Step n={4} id="turn" title="One turn" focus="context">
 
-Say something in the **Chat** pane, then ask **"What did I just say?"**. The second turn can answer because memory sends the model the first one.
+Send a message and watch the **Context** tab. It has replaced the code: the tabs at the top of the Code pane switch back. The seven boxes are the lines of `turn`, lit as they run:
 
-Messages go through the inbox. Press **Send three at once**: all three are queued before the first is answered. Each gets a ticket, then a turn of its own, in order, and each turn sees the turns before it.
+1. **Open a turn**: `sessions.open(chat.session)`. The turn is a scope: it closes when the scope ends, answered, failed or stopped, and records how.
+2. **Store your message**: `session.append(userMessage(message))`. It is in the journal before the model sees anything.
+3. **Ask memory for the context**: `memory.context(session)` reads the journal and returns the messages the model will see.
+4. **Build the prompt and call the model**: the **system text** first, then the context. The system text is code: it is never stored, so changing it changes the next prompt and nothing goes stale.
+5. **Stream** each piece of the answer to the chat.
+6. **Store the answer**, so the next turn's context has it.
+7. **The turn closes.**
 
-**Stop** ends the turn that is running and drops the messages still waiting. The page then builds the agent again.
+Click a box: what it wrote or read lights up below. Hover a row in one column and the same record lights up in the others. **▶ Replay** walks through the steps again.
 
-**Clear context** starts a new, empty session. A rebuild keeps the conversation, because it lives in the base. Untick **Keep chat on rebuild** to start a new one on every rebuild.
-
-</Step>
-
-<Step n={5} id="loop" title="The loop, step by step" focus="context" view="loop">
-
-Send a message and watch the **Loop** view. Each row is a kernel event the page heard on `Core`; the pieces of one answer share a row.
-
-1. The inbox **queues** your message (`plugin.inbox.queued`).
-2. A **turn** opens (`core.session.turn.started`), and the loop stores your message (`plugin.loop.user.message`).
-3. Memory **builds the request**, and the loop stores it before the call (`plugin.loop.request.sent`). Its messages are pointers into the journal, not copies.
-4. The model **answers** piece by piece (`plugin.loop.assistant.delta`), and the loop stores the whole answer (`plugin.loop.assistant.message`).
-5. The turn **closes** (`core.session.turn.ended`), with how it ended.
-
-With tools, the loop would go around again after step 4. That is lesson 2.
+The **journal** holds the conversation and nothing derived: turn records, your messages and the answers, each with its sequence number, its turn and its **tags**. Memory reads only records tagged `conversation`. Click a record to see what is stored.
 
 </Step>
 
-<Step n={6} id="context" title="Context: the journal and memory" focus="context" view="inspector" unfold="base" wide="true">
+<Step n={5} id="queue" title="Many messages" focus="chat">
 
-Every message goes into the **journal**: an append-only record that is never edited. **Memory** then decides which of it the model sees on each request. The base in the Code pane is where the journal lives.
+Press **Send three at once**. All three wait in the queue (marked *waiting*), and the program takes them one by one: each gets a turn of its own, in order, and each turn's context has the turns before it.
+
+Send a message while an answer is streaming: it waits for its own turn. In later lessons a turn runs many steps, and a message sent mid-turn becomes a way to steer it.
+
+**Stop** stops the running turn, drops the waiting messages and runs your program again. **Clear context** starts a new, empty conversation; the old one stays in the journal store.
+
+</Step>
+
+<Step n={6} id="context" title="Context and the cache" focus="context" wide={true}>
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-fill>Send 5 short messages</button></p>
 
-They are queued at once and answered in order. With Echo, each turn costs about 24 tokens and the system text 12, so five turns fit easily in 3000.
+Pick a turn at the top. The **Prompt** column shows where each message came from: *your code* for the system text, *memory* with the record it came from. Every prompt is built fresh.
 
-Then drag **Budget** down to about 80 and **send another message**: the budget applies to the next request. Whole turns leave the **stack**, oldest first, until the request fits. The **journal** keeps them, and the window records what it dropped (`plugin.window.dropped`). A turn once dropped stays dropped.
+The green bar is the part of the prompt that is the same as the one before, from the start. That is what a hosted provider's **prompt cache** can reuse, so you pay less and wait less. With flat memory each prompt starts with the one before it, so the bar grows turn after turn. Local models have no cache, so the counts here are the kernel's estimate: a quarter of the characters.
 
-The green bar marks what matches the previous request: all a provider's prompt cache could reuse. While nothing is dropped, each request starts with the one before it, so the bar grows. The request that drops turns starts elsewhere: only the system text matches the one before it.
-
-Too low and memory refuses. It always sends the system text and the message the turn answers, and drops only older turns. If those two alone are over the budget, the turn fails with `OverBudget` and no request is sent. The chat says so and offers to raise the budget. Your message stays in the journal, so it goes with the next one you send: there is no need to send it again. A real model's longer replies fill the budget sooner than Echo's short ones.
+The **events log** at the bottom lists everything in order: each record as it is stored, what memory gave, each prompt, and what your program told the chat.
 
 </Step>
 
-<Step n={7} id="tiny" title="Write a memory" focus="code" file="tiny" view="inspector">
+<Step n={7} id="memory" title="Write a memory" focus="code" file="memory">
 
-A memory is a layer that provides `Memory`. Its one function, `build`, reads the journal and returns pointers to the messages to send, with an estimate and the budget. The function you edit in **tiny-memory.ts** is a whole one in under 50 lines (the **Format** button tidies whatever you change): `lastMessages` sends the last *n* messages, fewer if they do not fit the budget.
+A memory is a layer that provides `Memory`, with one function: `context(session)`, the messages the model sees after the system text. **memory.ts** is yours. This one is flat: every message of the conversation, oldest first.
 
-<p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-memory">Swap in lastMessages</button> <button class="btn" type="button" data-exp="window-memory">Swap the window back</button></p>
+It reads with a **reader**, which takes the records tagged `conversation`, refuses one it cannot read and may not skip, and passes over the rest. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
 
-The swap sets `n: 1`: the model sees only your newest message. Ask "What did I just say?" and Echo has nothing earlier to recall. The journal still holds everything, so with the window back the next request sends the conversation again, within its budget, except the turns the window dropped earlier: those stay dropped.
+<p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-two">Keep only the last two messages</button></p>
 
-Change `n` to 3 in agent.ts and rebuild: the model sees the last three messages, yours and its answers.
+That adds `.slice(-2)`. Send a few messages and open the **Context** tab: older records are now **left out by memory** (struck through), though the journal keeps them all. Ask "What did I just say?" a few turns later: Echo can no longer see it.
 
-The kit that checks the stock memory checks yours too (`memoryConformance`). It passes every check but one: `prefix`. While nothing presses, a request should start with the one before it, so a provider can reuse its cache. Once it starts leaving messages out, a sliding memory moves the start of each request, so nothing after the system text can be reused. The green bar shows it. Use ⤢ on the Context pane for the full picture.
+Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories (a window that drops whole turns rarely, a summary, pointers the model can recall) are the next lessons.
+
+The kit that checks the stock memories checks yours too (`memoryConformance`): flat memory passes every check.
 
 </Step>
 
@@ -112,6 +115,6 @@ The kit that checks the stock memory checks yours too (`memoryConformance`). It 
 
 After breaking it, press **Reset** in the Code pane.
 
-**Next:** tools. The loop gets interesting once the model can ask for something and use the answer. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
+**Next:** tools. Your turn becomes a loop: the model asks for a tool, your program runs it and calls the model again, and a message sent mid-turn steers it. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
 
 </Step>

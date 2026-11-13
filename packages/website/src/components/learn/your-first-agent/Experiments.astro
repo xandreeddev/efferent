@@ -1,10 +1,11 @@
 ---
-// Step 8: each button rewrites the agent's code and rebuilds (see learn/playground.ts, `data-exp`).
+// Step 8: each button rewrites one of the learner's files and runs it again (see learn/playground.ts, `data-exp`).
 const experiments = [
-  { id: "pirate", title: "Change the personality", button: "Make it a pirate", text: "Only the system text changes. Echo ignores it; try a real model. The stack shows the new text at the top, and nothing of the request can be reused from the one before." },
-  { id: "no-memory", title: "Break it on purpose", button: "Remove the memory line", text: "The loop needs a Memory, and now nothing provides one. The stack does not build, and the Code pane says what is missing." },
-  { id: "tiny-budget", title: "Starve the budget", button: "Set the budget to 5", text: "The system text alone is over 5 tokens. The turn fails with memory's own error, OverBudget, and the chat offers to raise the budget." },
-  { id: "swap-memory", title: "Swap the memory", button: "Swap windowMemory and lastMessages", text: "The other memory reads the same journal, so the conversation goes on. Send a message and compare what each one sends." },
+  { id: "pirate", title: "Change the personality", button: "Make it a pirate", text: "Only the system text changes. Echo ignores it; try a real model. In the Context tab, the next prompt shares nothing with the one before: the change is at its very start." },
+  { id: "reminder", title: "Remind it every time", button: "Add a reminder after the context", text: "turn adds a message after the context: sent every time, stored never. The Prompt column marks it added by your code, and the cache bar still grows, because the start of the prompt is unchanged." },
+  { id: "shout", title: "Show one thing, store another", button: "Shout the answer", text: "turn returns the answer in capitals. The chat shows them; the journal stores what the model wrote. Open a record to compare." },
+  { id: "last-two", title: "Forget", button: "Keep the last two messages", text: "memory.ts sends only the last two. Older records are left out, and the cache breaks on every prompt." },
+  { id: "no-memory", title: "Break it on purpose", button: "Remove the memory module", text: "main no longer provides Memory. The program starts, and stops at the first message, which asks for a Memory nothing provides. The foot of the Code pane says so." },
 ]
 ---
 

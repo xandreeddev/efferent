@@ -1,15 +1,17 @@
 // The chat pane: messages, a composer, suggestion chips. DOM only; the
-// orchestrator decides what sending does. Messages go through the agent's
-// inbox, so the composer stays open while the agent answers: what you send
-// then waits in the queue.
+// orchestrator decides what sending does. Messages go to the chat's queue,
+// where the learner's program takes them one at a time, so the composer
+// stays open while the agent answers: what you send then waits its turn.
 import { renderMarkdown } from "../markdown.ts"
 
 export interface ChatPane {
   readonly add: (kind: "user" | "agent" | "error" | "note", text: string) => HTMLElement
-  /** A user message the inbox queued, marked with its ticket until its turn starts. */
-  readonly queued: (ticket: number, text: string) => HTMLElement
-  /** The queued message's turn started: it is no longer waiting. */
+  /** A user message waiting in the queue, marked so until its turn takes it. */
+  readonly waiting: (text: string) => HTMLElement
+  /** The waiting message's turn took it: it is no longer waiting. */
   readonly started: (item: HTMLElement) => void
+  /** A waiting message that will never be taken: say why on it. */
+  readonly dropped: (item: HTMLElement, why: string) => void
   /** Show `text` (markdown) in an agent message; follows the bottom while the reader has not scrolled up. */
   readonly setReply: (item: HTMLElement, text: string) => void
   readonly clear: () => void
@@ -86,12 +88,12 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
 
   return {
     add,
-    queued: (ticket, text) => {
+    waiting: (text) => {
       const item = add("user", text)
-      item.dataset.queued = String(ticket)
+      item.dataset.queued = ""
       const badge = document.createElement("span")
       badge.className = "msg-queued"
-      badge.textContent = `queued #${ticket}`
+      badge.textContent = "waiting"
       item.append(badge)
       return item
     },
@@ -99,13 +101,18 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
       delete item.dataset.queued
       item.querySelector(".msg-queued")?.remove()
     },
+    dropped: (item, why) => {
+      const badge = item.querySelector(".msg-queued")
+      if (badge) badge.textContent = why
+      item.dataset.dropped = ""
+    },
     setReply: (item, text) => {
       pending.set(item, text)
       if (frame === 0) frame = requestAnimationFrame(paint)
     },
     clear: () => { messages.replaceChildren(); pending.clear(); empty.hidden = false; following = true },
     setState: ({ ready, running, hint: text }) => {
-      // While the agent answers, more messages may be sent: the inbox queues them.
+      // While the agent answers, more messages may be sent: they wait in the queue.
       input.disabled = !ready
       send.disabled = !ready
       stop.hidden = !running

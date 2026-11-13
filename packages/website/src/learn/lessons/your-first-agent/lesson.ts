@@ -1,36 +1,40 @@
-// Lesson 1, "Your first agent": the learner edits the layers above a shared
-// base (agent.ts) and writes a memory of their own (tiny-memory.ts).
-import { Effect, Layer, Option, Result } from "effect"
-import { messageOf, readerFor, readJournal } from "@xandreed/core/kernel"
-import { estimateRequest, inbox, LOOP_READER, Memory, OverBudget, settings, Settings, stepLoop, Tokens, windowMemory } from "@xandreed/sdk/kernel"
-import { checkedLayer, run } from "../../evaluate.ts"
-import type { Lesson } from "../../lesson.ts"
-import { BASE, DEFAULT_AGENT, HEADER, IMPORTS, programOf, RUN_START_MARK } from "./agent.source.ts"
-import { DEFAULT_TINY, TINY_INTRO, tinyProgramOf } from "./tiny-memory.source.ts"
-import { raisedBudget, readControls, setField, withoutMemory } from "./config-edit.ts"
+// Lesson 1, "Your first agent": the learner's program (agent.ts) is the
+// loop. It takes each message from the chat (chat.ts, read-only), opens a
+// turn, stores the message, asks memory (memory.ts, theirs to write) for the
+// context, calls the model and stores the answer.
+import { Effect, Layer, Option, Result, Stream } from "effect"
+import { LanguageModel, Prompt } from "effect/ai"
+import { assistantMessage, Core, CONVERSATION_READER, messageOf, readerFor, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { Memory, promptMessage } from "@xandreed/sdk/kernel"
+import { runStatements, run } from "../../evaluate.ts"
+import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
+import { Chat } from "../../page-chat.ts"
+import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
+import { CHAT } from "./chat.source.ts"
+import { DEFAULT_MEMORY, MEMORY_INTRO, memoryDocumentOf } from "./memory.source.ts"
+import { readLastN, readSystem, shouting, withoutMemory, withReminder, writeLastN, writeSystem } from "./config-edit.ts"
 
-/** The names tiny-memory.ts imports: all its code may use. */
-export const tinyNames = { Effect, Layer, Option, messageOf, readerFor, readJournal, estimateRequest, LOOP_READER, Memory, OverBudget, Settings, Tokens }
+/** The names memory.ts imports: all its code may use. */
+const memoryNames = { Effect, Layer, Option, CONVERSATION_READER, messageOf, readerFor, readJournal, Memory, promptMessage }
 
-/** The names agent.ts may use; `lastMessages` is the learner's own memory, when the agent uses it. */
-const agentNames = (lastMessages: unknown) => ({
-  Layer: checkedLayer("windowMemory({ budgetTokens: 3000 }), lastMessages({ n: 1, budgetTokens: 3000 })"),
-  inbox, stepLoop, windowMemory, settings, lastMessages,
+/** The names agent.ts imports, with the page's stand-ins for the modules it is given, and `pane` and `model`. */
+const agentNames = (parts: PageParts, flatMemory: unknown) => ({
+  Effect, Stream, LanguageModel, Prompt,
+  assistantMessage, Core, Sessions, turnStartedEvent, userMessage, Memory, Chat,
+  kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
+  flatMemory, pane: parts.pane, model: parts.model,
 })
 
-/** Evaluate the learner's memory file: a function that makes a memory layer. */
-export const evaluateTiny = (source: string): Result.Result<unknown, string> => run("tiny-memory.ts did not run: ", source, tinyNames)
+/** memory.ts and then agent.ts, as the page runs them: main, ready to run. */
+export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Result<Effect.Effect<unknown, unknown>, string> =>
+  Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) =>
+    Layer.isLayer(memory)
+      ? Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory as Layer.Layer<Memory>))), (main) =>
+        // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
+        Effect.isEffect(main) ? Result.succeed(main as Effect.Effect<unknown, unknown>) : Result.fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."))
+      : Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …)."))
 
-/** Evaluate agent.ts, and tiny-memory.ts first when the agent uses `lastMessages`, so a broken memory file never stops a window agent. */
-export const evaluateAgent = (agent: string, tiny: string): Result.Result<unknown, string> => {
-  const lastMessages = agent.includes("lastMessages") ? evaluateTiny(tiny) : Result.succeed(undefined)
-  return Result.flatMap(lastMessages, (made) => run("agent.ts did not run: ", agent, agentNames(made)))
-}
-
-const control = (key: "system" | "budgetTokens" | "memory") => ({
-  read: (source: string) => Option.fromNullishOr(readControls(source)[key]),
-  write: (source: string, value: string | number) => setField(source, key, value),
-})
+const control = (file: string, read: LessonControl["read"], write: LessonControl["write"]): LessonControl => ({ file, read, write })
 
 export const yourFirstAgent: Lesson = {
   slug: "your-first-agent",
@@ -39,47 +43,51 @@ export const yourFirstAgent: Lesson = {
       id: "agent",
       label: "agent.ts",
       defaultText: DEFAULT_AGENT,
-      documentOf: programOf,
+      documentOf,
       editableFrom: HEADER.length,
-      formatPrefix: "const Agent = ",
-      sections: [
-        { id: "imports", label: "imports", range: () => ({ from: 0, to: IMPORTS.length }) },
-        { id: "base", label: "the base, built once", range: () => ({ from: IMPORTS.length + 2, to: IMPORTS.length + 2 + BASE.length }) },
-        {
-          id: "run",
-          label: "run: listen, then queue messages",
-          range: (doc, editable) => {
-            const from = doc.indexOf(RUN_START_MARK, editable.to)
-            return { from: from < 0 ? doc.length : from, to: doc.length }
-          },
-        },
-      ],
+      formatPrefix: "",
+      sections: [{ id: "imports", label: "imports", range: () => ({ from: 0, to: IMPORTS.length }) }],
+      folded: ["imports"],
+      readOnly: false,
     },
     {
-      id: "tiny",
-      label: "tiny-memory.ts",
-      defaultText: DEFAULT_TINY,
-      documentOf: tinyProgramOf,
-      editableFrom: TINY_INTRO.length,
-      formatPrefix: "const lastMessages = ",
+      id: "chat",
+      label: "chat.ts",
+      defaultText: "",
+      documentOf: () => CHAT,
+      editableFrom: CHAT.length,
+      formatPrefix: "",
       sections: [],
+      folded: [],
+      readOnly: true,
+    },
+    {
+      id: "memory",
+      label: "memory.ts",
+      defaultText: DEFAULT_MEMORY,
+      documentOf: memoryDocumentOf,
+      editableFrom: MEMORY_INTRO.length,
+      formatPrefix: "const flatMemory = ",
+      sections: [],
+      folded: [],
+      readOnly: false,
     },
   ],
   mainFile: "agent",
   chips: ["Tell me about loops", "What did I just say?", "What is in your context?"],
   // The second and third turns can only answer from the turns before them.
   three: ["My name is Ana.", "What did I just say?", "What is in your context?"],
-  // Step 6's fill: five short messages, queued at once.
   fill: ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"],
-  controls: { system: control("system"), budgetTokens: control("budgetTokens"), memory: control("memory") },
-  experiments: {
-    pirate: (source) => setField(source, "system", "You are a pirate. Answer in at most two short sentences, and always say arr."),
-    "no-memory": withoutMemory,
-    "tiny-budget": (source) => setField(source, "budgetTokens", 5),
-    "swap-memory": (source) => setField(source, "memory", readControls(source).memory === "last" ? "window" : "last"),
-    "last-memory": (source) => setField(source, "memory", "last"),
-    "window-memory": (source) => setField(source, "memory", "window"),
+  controls: {
+    system: control("agent", readSystem, (source, value) => writeSystem(source, String(value))),
+    lastN: control("memory", readLastN, (source, value) => writeLastN(source, Number(value))),
   },
-  raisedBudget: (refused) => Option.some(raisedBudget(refused)),
-  evaluate: (sources) => evaluateAgent(sources.agent ?? "", sources.tiny ?? ""),
+  experiments: {
+    pirate: { file: "agent", apply: (source) => writeSystem(source, "You are a pirate. Answer in at most two short sentences, and always say arr.") },
+    reminder: { file: "agent", apply: withReminder },
+    shout: { file: "agent", apply: shouting },
+    "last-two": { file: "memory", apply: (source) => writeLastN(source, 2) },
+    "no-memory": { file: "agent", apply: withoutMemory },
+  },
+  evaluate: evaluateLesson,
 }

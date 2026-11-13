@@ -28,6 +28,21 @@ export const buildFailure = (cause: Cause.Cause<unknown>): string => {
   return thrown !== undefined && /^(Reference|Type|Range)Error$/.test(thrown) ? `your code threw a ${thrown} while the agent was built: ${reason}` : reason
 }
 
+/**
+ * Run statements with the given names in scope and return the value of the
+ * expression `result` names after them (`main`). No sandbox, as `evaluate`.
+ */
+export const evaluateStatements = (body: string, result: string, names: Record<string, unknown>): unknown => {
+  const keys = Object.keys(names)
+  return new Function(...keys, `"use strict";\n${body}\n;return ${result}`)(...keys.map((key) => names[key]))
+}
+
+/** Run one file's statements and return `result`; a failure is said in words, after `prefix`. */
+export const runStatements = (prefix: string, body: string, result: string, names: Record<string, unknown>): Result.Result<unknown, string> => {
+  const made = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluateStatements(body, result, names), catch: textOf })))
+  return Exit.isFailure(made) ? Result.fail(`${prefix}${buildFailure(made.cause)}`) : Result.succeed(made.value)
+}
+
 /** Evaluate one file's code; a failure is said in words, after `prefix` (such as "agent.ts did not run: "). */
 export const run = (prefix: string, source: string, names: Record<string, unknown>): Result.Result<unknown, string> => {
   const made = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluate(source, names), catch: textOf })))

@@ -176,22 +176,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   stack of layers on the scripted model, two messages queued with the
   inbox, and a consumer's own contract composed as a layer
   (`scripts/kernel-consumer.fixture.mjs`).
-- Docs site: Lesson 1, "Your first agent", runs on the kernel. The code
-  pane shows one program: the base (`sessions()` over `inProcessJournal()`
-  and `kernel()`), built once in the page, the agent the learner edits
-  (`inbox` over `stepLoop`, a memory and `settings({ system })`), built
-  again over the same base on every rebuild so the conversation stays, and
-  the run, which listens with `core.on` and queues messages with the inbox.
-  A test compiles, type-checks and runs that exact text on the scripted
-  model. The chat can send three messages at once and draws each queued
-  message from `plugin.inbox.queued`; Stop ends the running turn as
-  `Interrupted`. The context pane is read from the journal alone
-  (`requestsOf`), so it draws any memory; the Loop view lists the kernel's
-  events. The last step's memory is `lastMessages({ n, budgetTokens })`,
-  which the memory kit passes on every check but `prefix`, and the lesson
-  says why. The controls are the system text, the budget and a memory
-  picker. The page's Node module stand-ins are gone: nothing it runs
-  imports one. No published package changes.
+- Docs site: in Lesson 1, "Your first agent", the learner's program is the
+  agent, and it runs as written. agent.ts holds the system text, one
+  `turn` (open a scoped turn with `sessions.open`, store the message, ask
+  `memory.context`, stream the model's answer to the chat, store it), the
+  `program` (a boot hook with `core.on`, then one turn per message from
+  the chat), and `main`, which gives it its modules with `Effect.provide`.
+  chat.ts (read-only) is the chat it takes messages from, and memory.ts is
+  a flat memory the learner edits. A test compiles, type-checks and runs
+  the three files on the scripted model, and the memory through the
+  memory kit. The page runs `main` as one long-running fiber over a base
+  and a chat queue built once, so a rebuild keeps the conversation and
+  the waiting messages, and a turn it stops closes `Interrupted`. A
+  module removed from `main` stops the program at its first message, in
+  words. The Context tab replaces the editor: each turn's seven steps lit
+  as they run, the journal with its tags, what memory took and left out,
+  the prompt with each message's source, the part the prompt before
+  shares, and the provider's usage, linked by record, with an events log
+  under them. It reads the journal and what the page saw the model
+  receive; nothing derived is stored. Rebuild, Reset and Format say what
+  they did, and the model bar wraps on a phone. No published package
+  changes.
 - Docs site: the lesson workbench runs any lesson. A lesson's definition
   (`packages/website/src/learn/lessons/<slug>/`) holds its files, the
   names its code may use and how it is evaluated, its chips, its controls
