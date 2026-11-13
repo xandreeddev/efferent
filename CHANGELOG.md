@@ -174,6 +174,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn pages' runtime keeps a turn open per session and
+  stamps what memory built, each prompt and its usage with the session they
+  are for, so a program that runs a turn in a second session inside the
+  chat's (a sub-agent) no longer marks the chat idle when that turn ends,
+  and the Context tab shows the chat's turns only. A test runs such a
+  program and checks every trace's session.
 - Docs site: Lesson 3, "A plugin of your own", at `/learn/your-own-plugin`.
   The learner writes two plugins in `plugin.ts`: `meter`, an event plugin
   that hooks each stored answer and each turn's end with `core.on` and
@@ -187,6 +193,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   A test compiles the five files with tsc and holds the learner's clock to
   `memoryWrapperConformance`; Echo skips the note and answers "What time is
   it?" from it. ADR 0005 records the rule, and lesson 2 now points here.
+||||||| parent of 86cc89a9f4c (keep the learn page's turns per session, and show the chat's)
 - Docs site: the learn pages' Context tab keeps each list at its bottom as
   the conversation grows, also when the tab was hidden while it grew, and a
   list scrolled up stays where it is. A row under the pointer no longer

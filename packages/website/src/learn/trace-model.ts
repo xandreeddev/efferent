@@ -99,10 +99,13 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       return withEntry(board, { ...base, kind: "live", turn: event.turn ?? 0, tags: event.tags, title: `live ${event.name}`, detail: json(event.data) })
     }
     case "Context":
+      // Another session's (a helper's): this board shows the chat's.
+      if (trace.session !== board.session) return board
       return withEntry({ ...board, contexts: append(board.contexts, trace.turn, { upTo: trace.upTo, messages: trace.messages }) }, {
         ...base, kind: "memory", turn: trace.turn, title: `memory gave ${trace.messages.length} message${trace.messages.length === 1 ? "" : "s"}`, detail: json(trace.messages),
       })
     case "Prompt": {
+      if (trace.session !== board.session) return board
       const pieces = append(board.pieces, trace.turn, 0)
       return withEntry({ ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), pieces }, {
         ...base, kind: "prompt", turn: trace.turn,
@@ -111,6 +114,8 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       })
     }
     case "Usage":
+      // Another session's (a helper's): this board shows the chat's.
+      if (trace.session !== board.session) return board
       return withEntry({ ...board, usage: append(board.usage, trace.turn, trace.usage) }, {
         ...base, kind: "usage", turn: trace.turn, title: "the provider reported its usage", detail: json(trace.usage),
       })
