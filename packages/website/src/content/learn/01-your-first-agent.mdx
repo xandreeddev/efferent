@@ -103,7 +103,7 @@ That adds `.slice(-2)`. Send a few messages and open the **Context** tab: older 
 
 Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories (a window that drops whole turns rarely, a summary, pointers the model can recall) are the next lessons.
 
-The kit that checks the stock memories checks yours too (`memoryConformance`): flat memory passes every check.
+The kit that checks the stock memories checks yours too (`memoryConformance`). This flat memory passes every check but one, `pairs`, about tool calls and their results. This lesson has no tools: lesson 2 adds them, and the rule.
 
 </Step>
 
@@ -115,6 +115,6 @@ The kit that checks the stock memories checks yours too (`memoryConformance`): f
 
 After breaking it, press **Reset** in the Code pane.
 
-**Next:** tools. Your turn becomes a loop: the model asks for a tool, your program runs it and calls the model again, and a message sent mid-turn steers it. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
+**Next:** [tools](/learn/tools/). Your turn becomes a loop: the model asks for a tool, your program runs it and calls the model again, and a message sent mid-turn steers it. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
 
 </Step>

@@ -3,7 +3,7 @@
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition.
 import { Option } from "effect"
-import { assistantMessageEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import { lessonOf } from "./lessons/index.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
@@ -99,6 +99,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   // ── what the program does, as the page hears it ─────────────────────────
   /** Messages sent and not yet taken by a turn, oldest first. */
   const waiting: Array<HTMLElement> = []
+  /** The tool calls the model made, by id, as the chat shows them. */
+  const calls = new Map<string, string>()
   /** The answer being written, by turn. */
   const answers = new Map<number, { readonly item: HTMLElement; text: string }>()
   let unseen = false
@@ -143,6 +145,16 @@ function boot(root: HTMLElement, lesson: Lesson) {
             finish(record.turn)
           }
           window.dispatchEvent(new CustomEvent("learn:done"))
+        }
+        if (record.name === assistantMessageEvent.name && record.message?._tag === "Assistant" && record.message.toolCalls.length > 0) {
+          // The model asked for tools: this call's answer is done, and the next call streams into a bubble of its own.
+          record.message.toolCalls.forEach((call) => calls.set(call.id, `${call.name}(${JSON.stringify(call.input)})`))
+          finish(record.turn)
+        }
+        if (record.name === toolResultEvent.name && record.message?._tag === "ToolResult") {
+          const { id, isFailure, result } = record.message
+          const shown = chat.add("tool", `${calls.get(id) ?? record.message.name} ${isFailure ? "failed:" : "→"} ${JSON.stringify(result)}`)
+          if (isFailure) shown.dataset.failed = ""
         }
         if (record.name === assistantMessageEvent.name) refresh()
         break

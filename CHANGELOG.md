@@ -200,6 +200,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   stack of layers on the scripted model, two messages queued with the
   inbox, and a consumer's own contract composed as a layer
   (`scripts/kernel-consumer.fixture.mjs`).
+- Docs site: Lesson 2, "Tools", at `/learn/tools`. The learner's turn is a
+  loop over steps: the model answers or asks for tools, which tools.ts
+  declares with Effect AI's `Tool` and `Toolkit` and runs in the page; the
+  turn runs each call with `toolkit.handle`, stores the call and its result
+  (a failure as a failed result) and asks again, up to `MAX_STEPS`, and
+  takes the messages sent while it works between steps (`chat.drain`). Its
+  memory sends through `paired`. Echo calls the tools by rule; the browser's
+  small models are offered them in the system text and their
+  `<tool_call>` blocks are read back, held out of the chat. The Context tab
+  builds a turn's steps from what happened, call by call (steers and tool
+  runs included), links tool calls and results to their records by id, and
+  shows each model call's context and prompt. A test compiles, type-checks
+  and runs the four files on the scripted model. Lesson 1's memory now
+  passes every kit check but `pairs`, and its text says why. No published
+  package changes.
 - Docs site: in Lesson 1, "Your first agent", the learner's program is the
   agent, and it runs as written. agent.ts holds the system text, one
   `turn` (open a scoped turn with `sessions.open`, store the message, ask

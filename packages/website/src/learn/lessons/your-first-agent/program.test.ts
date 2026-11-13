@@ -100,7 +100,7 @@ describe("lesson 1's displayed program", () => {
     expect(result.calls[1]).toEqual([{ role: "system", text: "You are a friendly tutor. Keep answers short." }, { role: "user", text: "What's my name?" }])
   })
 
-  test("the memory as shown passes every check of the memory kit", async () => {
+  test("the memory as shown passes every check of the memory kit but pairs, which a conversation with tools needs", async () => {
     const file = new URL("./memory.ts", write("kit", DEFAULT_AGENT))
     const { flatMemory } = (await import(file.href)) as { flatMemory: Layer.Layer<Memory> }
     const checks: ReadonlyArray<ConformanceCheck> = memoryConformance({
@@ -108,7 +108,8 @@ describe("lesson 1's displayed program", () => {
       open: () => Effect.map(Layer.build(flatMemory), (built) => Context.get(built, Memory)),
     })
     const failed = await Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) => result._tag === "Failure" ? [check.id] : []), { concurrency: 1 }))
-    expect(failed.flat()).toEqual([])
+    // Lesson 1 has no tools; lesson 2's memory adds paired, and passes pairs too.
+    expect(failed.flat()).toEqual(["pairs"])
   })
 
   test("type-checks as TypeScript, all three files", () => {

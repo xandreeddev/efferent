@@ -1,0 +1,19 @@
+---
+// Step 8: controls bound to the learner's code in the playground (see learn/playground.ts, `data-control`).
+---
+
+<div class="learn-controls">
+  <label class="wide">
+    <span>System text</span>
+    <textarea data-control="system" rows="2"></textarea>
+    <small>The <code>const system</code> line of agent.ts. Code, never stored.</small>
+  </label>
+  <label>
+    <span>Step limit</span>
+    <input type="number" min="1" step="1" data-control="maxSteps" />
+    <small>The <code>MAX_STEPS</code> line of agent.ts: how many times one turn may call the model.</small>
+  </label>
+</div>
+<p class="learn-note" data-controls-note hidden>
+  A control is greyed out when its line is missing from your code. Press Reset in the Code pane to bring it back.
+</p>
