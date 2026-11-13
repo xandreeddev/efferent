@@ -33,6 +33,31 @@ const el = (tag: string, attrs: Record<string, string | undefined> = {}, ...chil
   return node
 }
 
+/** One item of a list: what it shows, as a key, and how to build it. */
+type Item = readonly [key: string, build: () => HTMLElement]
+const keyOf = (...parts: ReadonlyArray<unknown>) => JSON.stringify(parts)
+
+/**
+ * Bring `box`'s children to `items`, keeping every node whose key is unchanged.
+ * A trace arrives with every streamed piece; rebuilding each row then would
+ * replace the one under the pointer and drop its hover. Only a row whose
+ * content changed is built again, and nodes in place are not moved.
+ */
+const patch = (box: HTMLElement, items: ReadonlyArray<Item>) => {
+  const old = new Map<string, Array<HTMLElement>>()
+  for (const child of Array.from(box.children) as Array<HTMLElement>) {
+    const key = child.dataset.key ?? ""
+    old.set(key, [...(old.get(key) ?? []), child])
+  }
+  items.forEach(([key, build], index) => {
+    const kept = old.get(key)?.shift()
+    const node = kept ?? build()
+    if (kept === undefined) node.dataset.key = key
+    if (box.children[index] !== node) box.insertBefore(node, box.children[index] ?? null)
+  })
+  while (box.children.length > items.length) box.lastElementChild?.remove()
+}
+
 const roleLabel: Record<string, string> = { system: "system", user: "user", assistant: "assistant" }
 const tagChips = (tags: ReadonlyArray<string>) => tags.map((tag) => el("span", { class: "tr-tag", "data-tag": tag }, tag))
 const seqAttr = (seq: Option.Option<number>) => Option.match(seq, { onNone: () => undefined, onSome: String })
@@ -72,6 +97,9 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   let replayTimer: ReturnType<typeof setInterval> | undefined
   let frame = 0
   let logShown = 0
+  /** The tallest the step track has been, and whether a turn has called the model twice: the room both keep. */
+  let trackHeight = 0
+  let callsSeen = false
 
   const shownTurn = (): Option.Option<number> => {
     const turns = turnsOf(board)
@@ -80,9 +108,10 @@ export const mountTrace = (root: HTMLElement): TracePane => {
 
   // ── turns ────────────────────────────────────────────────────────────────
   const renderTurns = (current: number) => {
-    turnsBox.replaceChildren(...turnsOf(board).map((turn) => {
+    patch(turnsBox, turnsOf(board).map((turn): Item => {
       const view = viewOf(board, turn)
       const state = Option.match(view.closed, { onNone: () => "open", onSome: (text) => (text.startsWith("Completed") ? "done" : "failed") })
+      return [keyOf(turn, state, turn === current), () => {
       const button = el("button", { type: "button", class: "tr-turn", "data-turn": String(turn), "data-state": state, "aria-pressed": String(turn === current) },
         `Turn ${turn}`, el("span", { class: "tr-turn-mark", "aria-hidden": "true" }, state === "open" ? "…" : state === "done" ? "✓" : "✕"))
       button.addEventListener("click", () => {
@@ -93,12 +122,13 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         paint()
       })
       return button
+      }]
     }))
   }
 
   // ── step track ──────────────────────────────────────────────────────────
   const renderSteps = (view: TurnView) => {
-    track.replaceChildren(...view.steps.map((one, index) => {
+    patch(track, view.steps.map((one, index): Item => [keyOf(one, index, Option.contains(step, one.id)), () => {
       const item = el("li", { class: "tr-step", "data-state": one.state, "data-step": one.id, "aria-current": Option.contains(step, one.id) ? "step" : undefined },
         el("button", { type: "button", title: one.detail },
           el("span", { class: "tr-step-n" }, String(index + 1)),
@@ -110,7 +140,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         paint()
       })
       return item
-    }))
+    }]))
+    // The track wraps onto more rows as a turn adds steps. It never gives a row back, so the columns under it stay
+    // where they are while a turn runs and the reader can point at a row.
+    trackHeight = Math.max(trackHeight, track.offsetHeight)
+    track.style.minHeight = `${trackHeight}px`
     const lit = Option.flatMap(step, (id) => Option.fromNullishOr(view.steps.find((one) => one.id === id)))
     Option.match(lit, {
       onNone: () => {
@@ -133,16 +167,20 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     return view.calls[Math.min(Math.max(n, 1), view.calls.length) - 1] ?? view.calls[0]!
   }
   const renderCalls = (view: TurnView, shown: CallView) => {
-    callsBox.hidden = view.calls.length < 2
-    callsBox.replaceChildren(
-      el("span", { class: "tr-calls-label" }, "Model call"),
-      ...view.calls.map((call) => {
+    // Once a turn has called the model twice, the picker keeps its row, so the columns under it do not move as a
+    // later turn reaches its second call; it is only made invisible while the turn shown has one.
+    callsSeen ||= view.calls.length > 1
+    callsBox.hidden = !callsSeen
+    callsBox.style.visibility = view.calls.length < 2 ? "hidden" : ""
+    patch(callsBox, [
+      ["label", () => el("span", { class: "tr-calls-label" }, "Model call")],
+      ...view.calls.map((call): Item => [keyOf(call.call, call.call === shown.call), () => {
         const button = el("button", { type: "button", class: "tr-call", "aria-pressed": String(call.call === shown.call) }, String(call.call))
         button.addEventListener("click", () => { pickedCall = Option.some(call.call); step = Option.none(); paint() })
         return button
-      }),
-      el("span", { class: "tr-calls-note" }, "This turn called the model more than once: each call gets its own context and prompt."),
-    )
+      }]),
+      ["note", () => el("span", { class: "tr-calls-note" }, "This turn called the model more than once: each call gets its own context and prompt.")],
+    ])
   }
 
   // ── journal ─────────────────────────────────────────────────────────────
@@ -154,14 +192,14 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   }
   const renderJournal = (view: CallView, lit: ReadonlySet<number>) => {
     const tags = [...new Set(view.journal.flatMap((row) => row.tags))]
-    filters.replaceChildren(...["all", ...tags].map((tag) => {
+    patch(filters, ["all", ...tags].map((tag): Item => [keyOf(tag, filter === tag), () => {
       const button = el("button", { type: "button", class: "tr-filter", "data-tag": tag, "aria-pressed": String(filter === tag) }, tag)
       button.addEventListener("click", () => { filter = tag; paint() })
       return button
-    }))
+    }]))
     const rows = view.journal.filter((row) => filter === "all" || row.tags.includes(filter))
     journalHead.textContent = `${view.journal.length} record${view.journal.length === 1 ? "" : "s"}, every turn`
-    keepScroll(journalBox, () => journalBox.replaceChildren(...rows.map((row) => {
+    followBottom(journalBox, () => patch(journalBox, rows.map((row): Item => [keyOf(row, lit.has(row.seq)), () => {
       const details = el("details", { open: openPayloads.has(row.seq) ? "" : undefined },
         el("summary", {},
           el("span", { class: "tr-seq" }, `#${row.seq}`),
@@ -174,7 +212,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         el("pre", { class: "tr-payload" }, row.payload))
       details.addEventListener("toggle", () => { if ((details as HTMLDetailsElement).open) openPayloads.add(row.seq); else openPayloads.delete(row.seq) })
       return el("li", { class: "tr-row tr-record", "data-seq": String(row.seq), "data-use": row.use, "data-of-turn": row.ofTurn ? "" : undefined, "data-lit": lit.has(row.seq) ? "" : undefined }, details)
-    })))
+    }])))
   }
 
   // ── memory ──────────────────────────────────────────────────────────────
@@ -182,23 +220,24 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     Option.match(view.memory, {
       onNone: () => {
         memoryHead.textContent = "not asked yet"
-        memoryBox.replaceChildren(el("li", { class: "tr-none" }, "Memory has not been asked for this turn's context yet."))
+        patch(memoryBox, [["none", () => el("li", { class: "tr-none" }, "Memory has not been asked for this turn's context yet.")]])
       },
       onSome: (rows) => {
         const tokens = rows.reduce<number>((sum, row) => sum + row.tokens, 0)
         const leftOut = view.journal.filter((row) => row.use === "left-out")
+        const isLit = (seq: Option.Option<number>) => Option.match(seq, { onNone: () => false, onSome: (one) => lit.has(one) })
         memoryHead.textContent = `${rows.length} message${rows.length === 1 ? "" : "s"}, ~${tokens} tok`
-        keepScroll(memoryBox, () => memoryBox.replaceChildren(
-          ...rows.map((row: MemoryRow) => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-seq": seqAttr(row.seq), "data-lit": Option.match(row.seq, { onNone: () => undefined, onSome: (seq) => (lit.has(seq) ? "" : undefined) }) },
+        followBottom(memoryBox, () => patch(memoryBox, [
+          ...rows.map((row: MemoryRow): Item => [keyOf(row, isLit(row.seq)), () => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-seq": seqAttr(row.seq), "data-lit": isLit(row.seq) ? "" : undefined },
             el("span", { class: "tr-role" }, roleLabel[row.role] ?? row.role),
             el("span", { class: "tr-text" }, row.text),
-            el("span", { class: "tr-from" }, Option.match(row.seq, { onNone: () => "no record", onSome: (seq) => `from #${seq}` }), ` · ${row.tokens} tok`))),
-          ...(leftOut.length > 0 ? [el("li", { class: "tr-sep" }, `left out by memory: ${leftOut.length}`)] : []),
-          ...leftOut.map((row) => el("li", { class: "tr-row tr-msg", "data-left-out": "", "data-seq": String(row.seq) },
+            el("span", { class: "tr-from" }, Option.match(row.seq, { onNone: () => "no record", onSome: (seq) => `from #${seq}` }), ` · ${row.tokens} tok`))]),
+          ...(leftOut.length > 0 ? [[keyOf("left out", leftOut.length), () => el("li", { class: "tr-sep" }, `left out by memory: ${leftOut.length}`)] as const] : []),
+          ...leftOut.map((row): Item => [keyOf("left out", row.seq, row.role, row.summary), () => el("li", { class: "tr-row tr-msg", "data-left-out": "", "data-seq": String(row.seq) },
             el("span", { class: "tr-role" }, Option.getOrElse(row.role, () => "")),
             el("span", { class: "tr-text" }, row.summary),
-            el("span", { class: "tr-from" }, `#${row.seq} · not sent`))),
-        ))
+            el("span", { class: "tr-from" }, `#${row.seq} · not sent`))]),
+        ]))
       },
     })
   }
@@ -212,28 +251,29 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     Option.match(view.prompt, {
       onNone: () => {
         promptHead.textContent = "not sent yet"
-        promptBox.replaceChildren(el("li", { class: "tr-none" }, "No prompt has been sent in this turn yet."))
+        patch(promptBox, [["none", () => el("li", { class: "tr-none" }, "No prompt has been sent in this turn yet.")]])
       },
       onSome: (rows) => {
         const share = view.promptTokens === 0 ? 0 : Math.round((view.reusedTokens / view.promptTokens) * 100)
+        const isLit = (seq: Option.Option<number>) => Option.match(seq, { onNone: () => false, onSome: (one) => lit.has(one) })
         promptHead.textContent = `${rows.length} messages, ~${view.promptTokens} tok`
-        keepScroll(promptBox, () => promptBox.replaceChildren(
-          el("li", { class: "tr-cache", title: "The part of this prompt that is the same as the one before, from the start: what a provider's prompt cache can reuse." },
+        followBottom(promptBox, () => patch(promptBox, [
+          [keyOf("cache", view.reusedTokens, view.promptTokens), () => el("li", { class: "tr-cache", title: "The part of this prompt that is the same as the one before, from the start: what a provider's prompt cache can reuse." },
             el("span", { class: "tr-cache-bar" }, el("i", { style: `width:${share}%` })),
-            `${view.reusedTokens} of ${view.promptTokens} tok the same as the prompt before (${share}%)`),
-          ...(view.tools.length > 0 ? [el("li", { class: "tr-row tr-msg", "data-role": "tools", "data-source": "code" },
+            `${view.reusedTokens} of ${view.promptTokens} tok the same as the prompt before (${share}%)`)],
+          ...(view.tools.length > 0 ? [[keyOf("tools", view.tools), () => el("li", { class: "tr-row tr-msg", "data-role": "tools", "data-source": "code" },
             el("span", { class: "tr-role" }, "tools"),
             el("span", { class: "tr-text" }, view.tools.join(", ")),
-            el("span", { class: "tr-from" }, "your code · never stored · offered with the prompt"))] : []),
-          ...rows.map((row) => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-source": row.source, "data-reused": row.reused ? "" : undefined, "data-seq": seqAttr(row.seq), "data-lit": Option.match(row.seq, { onNone: () => undefined, onSome: (seq) => (lit.has(seq) ? "" : undefined) }) },
+            el("span", { class: "tr-from" }, "your code · never stored · offered with the prompt"))] as const] : []),
+          ...rows.map((row): Item => [keyOf(row, isLit(row.seq)), () => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-source": row.source, "data-reused": row.reused ? "" : undefined, "data-seq": seqAttr(row.seq), "data-lit": isLit(row.seq) ? "" : undefined },
             el("span", { class: "tr-role" }, roleLabel[row.role] ?? row.role),
             el("span", { class: "tr-text" }, row.text),
-            el("span", { class: "tr-from" }, `${sourceText(row)} · ${row.tokens} tok`))),
-          Option.match(view.usage, {
+            el("span", { class: "tr-from" }, `${sourceText(row)} · ${row.tokens} tok`))]),
+          [keyOf("usage", view.usage), () => Option.match(view.usage, {
             onNone: () => el("li", { class: "tr-usage" }, "Token counts are estimates: a quarter of the characters. This model reports no usage of its own."),
             onSome: (usage) => el("li", { class: "tr-usage" }, `The provider counted ${usage.inputTokens ?? "?"} tokens in, ${usage.outputTokens ?? "?"} out${usage.cachedInputTokens === undefined ? "" : `, ${usage.cachedInputTokens} read from its cache`}.`),
-          }),
-        ))
+          })],
+        ]))
       },
     })
   }
@@ -258,10 +298,30 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     if (atBottom) logBox.scrollTop = logBox.scrollHeight
   }
 
-  const keepScroll = (box: HTMLElement, draw: () => void) => {
+  /**
+   * Draw a list. One read at its bottom stays there as rows are added, one
+   * scrolled up stays where it is. Whether a list follows is kept from the
+   * reader's own scrolling, not measured at a paint: a list on a hidden tab
+   * has no height, and must still open at its bottom when the tab is shown.
+   */
+  const following = new WeakMap<HTMLElement, boolean>()
+  const toBottom = (box: HTMLElement) => { if (following.get(box) !== false) box.scrollTop = box.scrollHeight }
+  for (const box of [journalBox, memoryBox, promptBox]) {
+    box.addEventListener("scroll", () => { if (box.clientHeight > 0) following.set(box, box.scrollHeight - box.scrollTop - box.clientHeight < 24) })
+    new ResizeObserver(() => toBottom(box)).observe(box)
+  }
+  const followBottom = (box: HTMLElement, draw: () => void) => {
     const top = box.scrollTop
     draw()
-    box.scrollTop = top
+    if (following.get(box) === false) box.scrollTop = top
+    else toBottom(box)
+  }
+
+  /** The record under the pointer, lit in every column, and lit again in rows a paint builds anew. */
+  let hovered: string | undefined
+  const lightHovered = () => {
+    root.querySelectorAll("[data-linked]").forEach((one) => { if ((one as HTMLElement).dataset.seq !== hovered) one.removeAttribute("data-linked") })
+    if (hovered !== undefined) root.querySelectorAll(`[data-seq="${hovered}"]`).forEach((one) => one.setAttribute("data-linked", ""))
   }
 
   const paint = () => {
@@ -279,6 +339,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     renderJournal(call, lit)
     renderMemory(call, lit)
     renderPrompt(call, lit)
+    lightHovered()
     if (lit.size > 0) root.querySelector('[data-lit=""]')?.scrollIntoView({ block: "nearest" })
   }
   const paintSoon = () => { if (frame === 0) frame = requestAnimationFrame(paint) }
@@ -286,11 +347,10 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   // Hover a row: the same record lights in every column.
   root.addEventListener("pointerover", (event) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-seq]")
-    root.querySelectorAll("[data-linked]").forEach((one) => one.removeAttribute("data-linked"))
-    if (!row?.dataset.seq) return
-    root.querySelectorAll(`[data-seq="${row.dataset.seq}"]`).forEach((one) => one.setAttribute("data-linked", ""))
+    hovered = row?.dataset.seq || undefined
+    lightHovered()
   })
-  root.addEventListener("pointerleave", () => root.querySelectorAll("[data-linked]").forEach((one) => one.removeAttribute("data-linked")))
+  root.addEventListener("pointerleave", () => { hovered = undefined; lightHovered() })
 
   // Replay: walk the turn's steps one by one.
   const stopReplay = () => {
@@ -332,6 +392,10 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       step = Option.none()
       pickedCall = Option.none()
       openPayloads.clear()
+      for (const box of [journalBox, memoryBox, promptBox]) following.set(box, true)
+      trackHeight = 0
+      track.style.minHeight = ""
+      callsSeen = false
       logShown = 0
       logBox.replaceChildren()
       logCount.textContent = "0"
