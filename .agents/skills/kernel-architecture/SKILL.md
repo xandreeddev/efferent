@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 Four records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0006-a-sub-agent-is-a-session.md`: a sub-agent is a session created with the caller's as its parent, reached through a tool whose result `{ answer, session }` names it; no new contract, and a depth limit read from the parent chain
 - `docs/adr/0005-context-for-one-request.md`: what a wrapper of `Memory` adds for one request (the time, a chosen instruction, fetched data) comes after the memory's context, whole and in its order, and is never stored; `memoryWrapperConformance` checks it
 - `docs/adr/0004-tool-traffic-is-conversation.md`: the tools are Effect AI's `Toolkit`
   (no kernel service); tool definitions are code, never stored; a call and its result

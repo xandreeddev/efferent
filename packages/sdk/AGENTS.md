@@ -218,7 +218,10 @@ it: `./kernel` is a `restricted` subpath.
   layers; a plugin's own event and a reaction to it), `listeners` (also a
   listener that cannot be interrupted), `unknown-records` (also a second
   session plugin over one store, and a memory swapped over one base),
-  `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
+  `sub-agent` (a helper in a session of its own, a child of the
+  caller's, reached through a `delegate` tool, quoted by `docs/kernel.md`:
+  the caller's journal holds the call and its result, which names the
+  child; the helper's prompt holds only its task), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
   clock, quoted by `docs/kernel.md`; the clock stored as a plugin's record
   never reaching flat memory, stored as a user message piling up; the
   wrapper kit on the clock and on careless wrappers, each failing only
