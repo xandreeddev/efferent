@@ -136,14 +136,19 @@ describe("lesson 2 on the page (the kernel, Echo)", () => {
     expect(rows.map((row) => Option.isSome(row.seq))).toEqual([true, true, true])
   }, 20_000)
 
-  test("at the last step the messages waiting are left for turns of their own", async () => {
-    const { runtime, heard } = await start({ ...SOURCES, agent: apply("one-step", DEFAULT_AGENT) })
-    const done = replies(runtime, 3)
-    tools.three.forEach((text) => runtime.send(text))
+  test("at the last step the messages sent meanwhile are left for the next turn, which takes them all", async () => {
+    const { runtime, heard } = await start({ ...SOURCES, tools: apply("slow-calculator", DEFAULT_TOOLS), agent: apply("one-step", DEFAULT_AGENT) })
+    const running = until(runtime, (trace) => trace._tag === "Status" && trace.text.startsWith("step 1"))
+    const done = replies(runtime, 2)
+    runtime.send("What is 6 * 7?")
+    await running
+    runtime.send("Remember to buy milk.")
+    runtime.send("What are my notes?")
     await done
-    expect(await named(runtime, turnEndedEvent.name)).toHaveLength(3)
-    expect(replyTexts(heard)).toEqual(["I stopped after 1 steps.", "I stopped after 1 steps.", "I stopped after 1 steps."])
-  })
+    expect(await named(runtime, turnEndedEvent.name)).toHaveLength(2)
+    expect((await named(runtime, userMessageEvent.name)).map((record) => Number(record.turn))).toEqual([1, 2, 2])
+    expect(replyTexts(heard)).toEqual(["I stopped after 1 steps.", "I stopped after 1 steps."])
+  }, 20_000)
 
   test("a tool that throws is a failed result, and the program goes on", async () => {
     const throwing = DEFAULT_TOOLS.replace("notes.push(note)", "notes.push(note.missing.field)")

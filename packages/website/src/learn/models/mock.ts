@@ -35,6 +35,13 @@ export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   const ledger = turns.some(isLedger)
   const earlier = turns.length - 1
 
+  // Several messages since its last answer: a turn that took every message waiting. It answers them together.
+  const lastAnswer = turns.map((message) => message.role).lastIndexOf("assistant")
+  const together = turns.slice(lastAnswer + 1).filter((message) => message.role === "user" && !isLedger(message))
+  if (together.length > 1) {
+    const before = turns.length - together.length
+    return `You sent ${together.length} messages: ${together.map((message) => `"${clip(message.content, 40)}"`).join(", ")}. ${before > 0 ? `I can also see ${plural(before, "earlier message")}.` : "They start the conversation."}`
+  }
   if (/^\s*(hi|hello|hey|hola|howdy)\b/i.test(last)) {
     return "Hello! I'm Echo, a scripted stand-in model. Ask me what you said earlier and I'll answer from the messages I was sent."
   }

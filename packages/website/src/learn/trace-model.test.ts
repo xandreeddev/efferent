@@ -26,11 +26,16 @@ const boardAfter = async (messages: ReadonlyArray<string>, sources = { agent: DE
   const done = new Promise<void>((resolve) => {
     runtime.onTrace((trace) => {
       board = record(board, trace, 0)
-      if (trace._tag === "Reply" && ++replies === messages.length) resolve()
+      // One by one: each message is sent once the one before has its answer, so each is a turn of its own.
+      if (trace._tag === "Reply") {
+        replies++
+        if (replies === messages.length) resolve()
+        else runtime.send(messages[replies]!)
+      }
     })
   })
   await runtime.start(sources)
-  messages.forEach((text) => runtime.send(text))
+  runtime.send(messages[0]!)
   await done
   return board
 }

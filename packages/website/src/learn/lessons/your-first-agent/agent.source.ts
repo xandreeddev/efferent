@@ -29,8 +29,12 @@ const turn = (message) =>
       // Open a turn. It closes when this scope ends: answered, failed or stopped.
       const session = yield* sessions.open(chat.session)
 
-      // Store your message. The journal holds the conversation, and only that.
-      yield* session.append(userMessage(message))
+      // Store your message, and every one that waited behind it: this turn answers them all.
+      // The journal holds the conversation, and only that.
+      const waiting = yield* chat.drain
+      for (const text of [message, ...waiting]) {
+        yield* session.append(userMessage(text))
+      }
 
       // Ask memory for the context: what of the conversation the model sees.
       const history = yield* memory.context(session)
@@ -67,7 +71,7 @@ const program = Effect.scoped(
       wait: true,
     })
 
-    // Then, on each message you send: one turn, in order. One sent mid-turn waits for its own.
+    // Then, for each message you send: a turn, in order. Those sent meanwhile wait, and the next turn takes them all.
     yield* Stream.runForEach(chat.messages, (message) =>
       turn(message).pipe(
         Effect.flatMap((text) => chat.reply(text)),

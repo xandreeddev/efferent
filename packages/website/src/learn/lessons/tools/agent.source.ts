@@ -47,7 +47,11 @@ const turn = (message) =>
       const toolkit = yield* tools
 
       const session = yield* sessions.open(chat.session)
-      yield* session.append(userMessage(message))
+      // Store your message, and every one that waited behind it: this turn answers them all.
+      const waiting = yield* chat.drain
+      for (const text of [message, ...waiting]) {
+        yield* session.append(userMessage(text))
+      }
 
       for (let step = 1; step <= MAX_STEPS; step++) {
         const history = yield* memory.context(session)

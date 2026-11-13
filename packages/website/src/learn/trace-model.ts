@@ -323,9 +323,17 @@ export const viewOf = (board: Board, turn: number): TurnView => {
     id: "opened", kind: "opened", call: 0, label: "Turn opened", code: "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
     detail: Option.match(started, { onNone: () => "Opening the turn.", onSome: (one) => `Record #${one.seq}, ${one.name}. The turn's scope is open; it closes when the scope ends.` }),
   })
+  // The messages the turn took as it opened: its own, and every one waiting behind it.
+  const opening = users.filter((record) => record.seq < Option.match(Option.fromNullishOr(answers[0]), { onNone: () => Infinity, onSome: (one) => one.seq }))
   raw.push({
-    id: "stored-message", kind: "stored-message", call: 0, label: "Message stored", code: "session.append(userMessage(message))", column: "journal", happened: Option.isSome(first), seqs: seqOf(first),
-    detail: Option.match(first, { onNone: () => "Your message goes into the journal first.", onSome: (one) => `Record #${one.seq}, tagged ${one.tags.join(", ")}. It is in the journal before the model sees anything.` }),
+    id: "stored-message", kind: "stored-message", call: 0, label: opening.length > 1 ? `${opening.length} messages stored` : "Message stored", code: "session.append(userMessage(text))", column: "journal",
+    happened: Option.isSome(first), seqs: opening.map((record) => record.seq),
+    detail: Option.match(first, {
+      onNone: () => "Your message goes into the journal first.",
+      onSome: (one) => opening.length > 1
+        ? `Records ${opening.map((record) => `#${record.seq}`).join(", ")}: your message, and the ${opening.length - 1} that waited behind it. One answer replies to them all.`
+        : `Record #${one.seq}, tagged ${one.tags.join(", ")}. It is in the journal before the model sees anything.`,
+    }),
   })
   const pieces = board.pieces.get(turn) ?? []
   const many = callCount > 1

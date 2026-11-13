@@ -13,6 +13,8 @@ export class Chat extends Context.Service<Chat, {
   readonly session: SessionId
   // Every message you send, in order. It waits while you send nothing, and never ends.
   readonly messages: Stream.Stream<string>
+  // Every message waiting now, taken at once. A turn takes the ones sent while the turn before it ran.
+  readonly drain: Effect.Effect<ReadonlyArray<string>>
   // Draw a piece of the answer as it arrives.
   readonly stream: (piece: string) => Effect.Effect<void>
   // Show the whole answer: the turn is done.
@@ -46,6 +48,7 @@ export const chatOn = (pane: ChatPane) =>
         session,
         // One at a time: a message leaves the queue only when a turn is ready for it.
         messages: Stream.fromEffectRepeat(Queue.take(waiting)),
+        drain: Effect.map(Queue.clear(waiting), (taken) => Array.from(taken)),
         stream: (piece) => Effect.sync(() => pane.appendToAnswer(piece)),
         reply: (text) => Effect.sync(() => pane.finishAnswer(text)),
         fail: (error) => Effect.sync(() => pane.showError(error)),

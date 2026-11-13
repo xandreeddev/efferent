@@ -212,7 +212,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   builds a turn's steps from what happened, call by call (steers and tool
   runs included), links tool calls and results to their records by id, and
   shows each model call's context and prompt. A test compiles, type-checks
-  and runs the four files on the scripted model. Lesson 1's memory now
+  and runs the four files on the scripted model. In both lessons a turn
+  also takes every message waiting as it opens (`chat.drain`, now in
+  lesson 1's chat.ts too), stores them all and answers them together, so
+  messages sent while a turn runs are answered by the next one. Lesson 1's memory now
   passes every kit check but `pairs`, and its text says why. No published
   package changes.
 - Docs site: in Lesson 1, "Your first agent", the learner's program is the

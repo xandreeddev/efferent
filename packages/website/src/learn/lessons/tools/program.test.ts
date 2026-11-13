@@ -127,13 +127,13 @@ describe("lesson 2's displayed program", () => {
     expect(result.calls[1]?.slice(-2)).toEqual([{ role: "tool", text: "→ 42" }, { role: "user", text: "And double it." }])
   })
 
-  test("messages sent at once, while the first turn runs its tools, join that turn: one turn answers them all", async () => {
+  test("messages sent at once are taken by the first turn as it opens: one turn answers them all", async () => {
     const result = await Effect.runPromise(runMain(write("at-once"), ["What is 6 * 7?", "And remember it."], [
-      { _tag: "Calls", pieces: [], calls: [{ name: "calculator", params: { a: 6, op: "*", b: 7 } }] },
+      { _tag: "Calls", pieces: [], calls: [{ name: "calculator", params: { a: 6, op: "*", b: 7 } }, { name: "remember", params: { note: "42" } }] },
       { _tag: "Answers", pieces: ["42, and I will remember it."] },
     ], 1))
     expect(result.shown.replies).toEqual(["42, and I will remember it."])
-    expect(result.calls[1]?.slice(-2)).toEqual([{ role: "tool", text: "→ 42" }, { role: "user", text: "And remember it." }])
+    expect(result.calls[0]?.slice(1)).toEqual([{ role: "user", text: "What is 6 * 7?" }, { role: "user", text: "And remember it." }])
   })
 
   test("the memory as shown passes every check of the memory kit, pairs included", async () => {

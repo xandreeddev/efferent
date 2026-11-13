@@ -68,14 +68,29 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     expect(prompts(heard)[0]).toMatchObject({ turn: 1, messages: [{ role: "system", text: "You are a friendly tutor. Keep answers short." }, { role: "user", text: "tell me about loops" }] })
   })
 
-  test("three sent at once wait in the queue, and are answered in order, each turn seeing the ones before", async () => {
+  test("three sent at once: the first turn takes the two waiting behind it, stores all three, and answers them together", async () => {
     const { runtime, heard } = await start()
-    const done = replies(runtime, 3)
+    const done = replies(runtime)
     yourFirstAgent.three.forEach((text) => runtime.send(text))
     await done
-    expect(replyTexts(heard)).toHaveLength(3)
-    expect(replyTexts(heard)[1]).toBe("Earlier you said: \"My name is Ana.\".")
-    expect(prompts(heard).map((prompt) => [prompt.turn, prompt.messages.length])).toEqual([[1, 2], [2, 4], [3, 6]])
+    expect(replyTexts(heard)).toEqual(["You sent 3 messages: \"My name is Ana.\", \"What did I just say?\", \"What is in your context?\". They start the conversation."])
+    expect(prompts(heard).map((prompt) => [prompt.turn, prompt.messages.length])).toEqual([[1, 4]])
+  })
+
+  test("messages sent while a turn runs wait, and the next turn takes them all", async () => {
+    const { runtime, heard } = await start()
+    const streaming = until(runtime, (trace) => trace._tag === "Piece")
+    const done = replies(runtime, 2)
+    runtime.send("My name is Ana.")
+    await streaming
+    runtime.send("What did I just say?")
+    runtime.send("And now?")
+    await done
+    expect(prompts(heard).map((prompt) => [prompt.turn, prompt.messages.map((message) => message.role).join(",")])).toEqual([
+      [1, "system,user"],
+      [2, "system,user,assistant,user,user"],
+    ])
+    expect(replyTexts(heard)[1]).toStartWith("You sent 2 messages:")
   })
 
   test("a rebuild keeps the conversation, and the changed system text is in the next prompt only", async () => {
@@ -97,13 +112,14 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     const { runtime, heard } = await start()
     const streaming = until(runtime, (trace) => trace._tag === "Piece")
     runtime.send("a message that takes a little while to answer")
-    runtime.send("and one that waits")
     await streaming
+    runtime.send("and one that waits")
     const answered = replies(runtime)
     expect(await runtime.start(SOURCES)).toEqual({ _tag: "Built" })
     await answered
     expect(await endings(runtime)).toEqual(["Interrupted", "Completed"])
-    expect(replyTexts(heard)).toEqual(["You said: \"and one that waits\". I can also see 1 earlier message."])
+    // The stopped turn stored its message and no answer: the next turn's context holds both, and Echo answers both.
+    expect(replyTexts(heard)).toEqual(["You sent 2 messages: \"a message that takes a little while to …\", \"and one that waits\". They start the conversation."])
     expect(heard.some((trace) => trace._tag === "Ended")).toBe(false)
   })
 
@@ -111,9 +127,9 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     const { runtime, heard } = await start()
     const streaming = until(runtime, (trace) => trace._tag === "Piece")
     runtime.send("one")
+    await streaming
     runtime.send("two")
     runtime.send("three")
-    await streaming
     const stopped = await runtime.stop()
     expect(stopped).toEqual({ dropped: ["two", "three"], result: { _tag: "Built" } })
     const next = replies(runtime)
@@ -152,11 +168,12 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
 
   test("with memory.ts keeping the last two messages, the third prompt sends two after the system text", async () => {
     const { runtime, heard } = await start({ ...SOURCES, memory: Option.getOrThrow(writeLastN(DEFAULT_MEMORY, 2)) })
-    const done = replies(runtime, 3)
-    runtime.send("a")
-    runtime.send("b")
-    runtime.send("c")
-    await done
+    // One by one: each sent once the one before has its answer.
+    for (const text of ["a", "b", "c"]) {
+      const done = replies(runtime)
+      runtime.send(text)
+      await done
+    }
     expect(prompts(heard).map((prompt) => prompt.messages.length)).toEqual([2, 3, 3])
   })
 
