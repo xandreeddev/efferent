@@ -20,6 +20,8 @@ const inboxOf
 const inboxQueuedEvent
 const isOverBudget
 const memoryConformance
+const messageText
+const paired
 const promptMessage
 const scriptedModel
 const sessions

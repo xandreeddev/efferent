@@ -32,7 +32,7 @@ The package has four entries, each an `index.ts` of explicit named exports:
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
-| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0003-journal-holds-the-conversation.md`): what every agent has whatever its workflow. Ids, `Message`, the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `userMessage`, `assistantMessage`, `CONVERSATION_READER`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: memory is the sdk's kernel contract, and the loop is the host's own program | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0004-tool-traffic-is-conversation.md`): what every agent has whatever its workflow. Ids, `Message` (`UserMessage`, `AssistantMessage` with its `ToolCall`s, `ToolResult`), the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `conversation.tool.result`, `userMessage`, `assistantMessage`, `toolResult`, `toolResultEvent`, `ToolResultData`, `CONVERSATION_READER`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `readerFor`, `KERNEL_READER`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: memory is the sdk's kernel contract, and the loop is the host's own program | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -155,8 +155,13 @@ kernel's rules:
   vocabulary that defines it: `vocabulary.entity.ts` defines core's own,
   the session's `core.session.turn.started` and `core.session.turn.ended`
   and `core.listener.failed`; `conversation.entity.ts` the conversation's
-  records, `conversation.user.message` and `conversation.assistant.message`,
-  which whoever runs a turn writes (ADR 0003). A plugin contract's events
+  records, `conversation.user.message`, `conversation.assistant.message`
+  and `conversation.tool.result`, which whoever runs a turn writes (ADRs
+  0003 and 0004). `assistantMessage(text, { toolCalls })` takes the model's
+  `tool-call` stream parts as they came (`{ id, name, params }`) and
+  `toolResult(call, result, isFailure)` what a call came to; both brand the
+  call's id and keep a value that is not JSON as its text. Tools are never
+  stored: they are the host's code, like the system text. A plugin contract's events
   and a plugin's own are defined in its folder with `storedEvent` and
   `liveEvent`, which take the definition's `tags`. `KERNEL_READER` answers
   for `core.` records only, `CONVERSATION_READER` for those and the
@@ -182,7 +187,9 @@ kernel's rules:
   `JournalStorage.append(id, expectedSeq, turn, event)`, and the store
   stamps it with the place and the time. Nothing about a request is
   stored, and core names none (ADR 0003): the system text is the host's
-  program's, and memory builds the context from the conversation.
+  program's, and memory builds the context from the conversation. The
+  kernel writes no text the model reads: a failed tool result holds the
+  text of the tool's failure or of Effect AI's toolkit, as it came.
 - `Sessions.open(id)` opens the next turn in the caller's scope and closes
   it with the scope's exit; `turn(id, body)` runs a body in a scope of its
   own. A scope's close cannot fail, so an end that cannot be stored is a

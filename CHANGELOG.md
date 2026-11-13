@@ -13,7 +13,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
   every other part a plain Effect layer, as two new entries beside the
   existing engine, which neither imports nor is imported by it. It is a
-  first cut, with journals kept in the process and no tool execution, and
+  first cut, with journals kept in the process, and
   it will change as the parts it leaves out return. `docs/kernel.md` is its
   direction document.
   - `@xandreed/core/kernel` holds what every agent has, whatever its
@@ -71,6 +71,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     message; `windowMemory` drops whole turns oldest first, its budget
     covering the history, and publishes `plugin.window.pressure` as it
     builds a context near the budget.
+  - Tools: a turn that uses them is a loop the host writes over Effect
+    AI's `Toolkit`, and the kernel adds no tool service
+    (`docs/adr/0004-tool-traffic-is-conversation.md`). The turn offers
+    the toolkit to the model with `disableToolCallResolution: true` and
+    `toolCallValidation: "deferred"`, runs each call through the toolkit's
+    handlers, and stores the model's answer with its calls
+    (`assistantMessage(text, { toolCalls })`, from the stream's
+    `tool-call` parts) and each call's outcome as
+    `conversation.tool.result` (`toolResult(call, result, isFailure)`, a
+    new `Message` variant, `ToolResult`). A tool's failure, an unknown
+    tool and bad parameters are stored as failed results, and the turn
+    goes on. Tool definitions are code, never stored. `promptMessage`
+    sends a call as a part of the model's message and a result as a tool
+    message; `paired` keeps a call only with its result and a result only
+    with its call, so a turn stopped while a tool ran never sends a call
+    nothing answers. Both stock memories send through it, the memory
+    kit's new `pairs` check holds a memory to it, and the estimate counts
+    tool traffic (`messageText`). `scriptedModel` can ask for tools
+    (`ModelAnswer` `Calls`). The window memory drops whole turns only, so
+    one long tool turn can go over its budget and fails with `OverBudget`.
   - The inbox queues messages per session and answers each, in order, with
     the host's turn function (`inbox(turn)`, `inboxOf(turn, options)`),
     in a turn of its own: `enqueue(session, message)` returns at once with

@@ -42,6 +42,14 @@ export type Usage = typeof Usage.Type
 export const AssistantMessageData = Schema.Struct({ model: Schema.optionalKey(Schema.String), usage: Schema.optionalKey(Usage) })
 export type AssistantMessageData = typeof AssistantMessageData.Type
 
+/**
+ * The data of `conversation.tool.result`: none. The result is the record's message.
+ *
+ * @public
+ */
+export const ToolResultData = Schema.Struct({})
+export type ToolResultData = typeof ToolResultData.Type
+
 /** `conversation.user.message`: what the user sent, in the turn that answers it. Stored, tagged `conversation`. */
 export const userMessageEvent: StoredDefinition<UserMessageData> = {
   kind: "stored",
@@ -61,6 +69,21 @@ export const assistantMessageEvent: StoredDefinition<AssistantMessageData> = {
 }
 
 /**
+ * `conversation.tool.result`: what a tool call the model asked for came to, stored after the assistant message that
+ * asked for it. Stored, tagged `conversation`. The tools themselves are the program's code, like the system text,
+ * and never stored.
+ *
+ * @public
+ */
+export const toolResultEvent: StoredDefinition<ToolResultData> = {
+  kind: "stored",
+  name: EventName.make("conversation.tool.result"),
+  data: ToolResultData,
+  skippable: false,
+  tags: tagsOf(["conversation"]),
+}
+
+/**
  * The reader of a conversation: core's records and the conversation's. A
  * memory reads through it, or through its own reader over it
  * (`readerFor(name, own, CONVERSATION_READER)`), so a conversation record it
@@ -70,5 +93,5 @@ export const assistantMessageEvent: StoredDefinition<AssistantMessageData> = {
  */
 export const CONVERSATION_READER: Reader = {
   reads: ["core.", "conversation."],
-  knows: [turnStartedEvent.name, turnEndedEvent.name, userMessageEvent.name, assistantMessageEvent.name],
+  knows: [turnStartedEvent.name, turnEndedEvent.name, userMessageEvent.name, assistantMessageEvent.name, toolResultEvent.name],
 }

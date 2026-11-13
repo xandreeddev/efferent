@@ -2,7 +2,7 @@ import { Option, Predicate, Result } from "effect"
 import { CONVERSATION_READER, dataOf, live, messageOf, readerFor, stored, turnStartedEvent } from "@xandreed/core/kernel"
 import type { LiveEvent, Message, Reader, Seq, SessionId, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { Tokens } from "../../contracts/memory/memory.entity.js"
-import { estimateTokens } from "../../contracts/memory/memory.entity.functions.js"
+import { estimateTokens, messageText } from "../../contracts/memory/memory.entity.functions.js"
 import { InvalidBudget, OverBudget, windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
 /** What the window memory reads of a journal: core's records and the conversation's, whose reader it extends, and its own. */
@@ -65,7 +65,7 @@ export const fitToBudget = (known: ReadonlyArray<StoredEvent>, budgetTokens: Tok
     const turn = turns.at(-1) ?? turns[turns.push({ messages: [], tokens: 0 }) - 1]
     if (turn === undefined) continue
     turn.messages.push({ seq: event.seq, message: said.value })
-    turn.tokens += estimateTokens(said.value.text)
+    turn.tokens += estimateTokens(messageText(said.value))
   }
   const kept: ReadonlyArray<WindowTurn> = turns.filter((turn) => turn.messages.length > 0)
   let estimate = kept.reduce<number>((sum, turn) => sum + turn.tokens, 0)

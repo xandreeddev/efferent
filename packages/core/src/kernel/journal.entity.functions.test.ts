@@ -70,7 +70,7 @@ describe("the message a record bears", () => {
       stored(summarised, {}, { message: { _tag: "Assistant", text: "Summary.", toolCalls: [] } }),
       turnStarted(TurnNumber.make(1)),
     )
-    const textOf = (event: StoredEvent | undefined) => Option.map(Option.flatMap(Option.fromNullishOr(event), messageOf), (message) => message.text)
+    const textOf = (event: StoredEvent | undefined) => Option.map(Option.flatMap(Option.fromNullishOr(event), messageOf), (message) => ("text" in message ? message.text : ""))
     expect(textOf(said)).toEqual(Option.some("Hello"))
     expect(textOf(answered)).toEqual(Option.some("Hi."))
     expect(textOf(summary)).toEqual(Option.some("Summary."))

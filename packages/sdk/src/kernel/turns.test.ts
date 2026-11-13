@@ -4,7 +4,7 @@ import { Layer } from "effect"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { SessionId } from "@xandreed/core/kernel"
 import type { Response } from "effect/ai"
-import { isOverBudget, windowMemory } from "./index.js"
+import { isOverBudget, messageText, windowMemory } from "./index.js"
 import { answer, answering, counting, modelDown, open, recording, scripted, stack, SYSTEM as system, pieceEvent } from "./testing.js"
 
 type Agent = Effect.Success<ReturnType<typeof open>>
@@ -41,7 +41,7 @@ describe("twenty turns", () => {
     expect(result.deltas).toHaveLength(20)
     expect(result.journal.names).not.toContain("plugin.test.piece")
     // The last prompt is the system text and the 39 messages before the answer, rebuilt from the journal.
-    const conversation = result.journal.events.flatMap((event) => event.message === undefined ? [] : [{ role: event.message._tag.toLowerCase(), text: event.message.text }])
+    const conversation = result.journal.events.flatMap((event) => event.message === undefined ? [] : [{ role: event.message._tag.toLowerCase(), text: messageText(event.message) }])
     expect(result.received.at(-1)).toEqual([{ role: "system", text: system }, ...conversation.slice(0, 39)])
   })
 })

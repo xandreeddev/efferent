@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect"
 import { Core, readJournal } from "@xandreed/core/kernel"
-import { promptMessage } from "../../contracts/memory/memory.entity.functions.js"
+import { paired, promptMessage } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf, fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
@@ -30,7 +30,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.
       if (nearlyFull(fitted, options.pressureAt)) yield* core.publish(windowPressure(session, fitted))
-      return fitted.messages.map(promptMessage)
+      return paired(fitted.messages).map(promptMessage)
     }),
   })
 }))
