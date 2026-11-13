@@ -171,6 +171,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 3, "A plugin of your own", at `/learn/your-own-plugin`.
+  The learner writes two plugins in `plugin.ts`: `meter`, an event plugin
+  that hooks each stored answer and each turn's end with `core.on` and
+  shows what the turn cost on the status line, and `withClock`, a wrapper
+  of memory (a higher-order plugin) that adds the time after the context
+  for each request and stores none of it. The Context tab shows the note as
+  code's, with no record behind it. Experiments store the clock the wrong
+  way (every request then carries every earlier note), drop the first
+  message (the wrapper kit's `starts-with-inner` fails on it), make the
+  meter slow (the turn waits for a `wait: true` listener) and unplug it.
+  A test compiles the five files with tsc and holds the learner's clock to
+  `memoryWrapperConformance`; Echo skips the note and answers "What time is
+  it?" from it. ADR 0005 records the rule, and lesson 2 now points here.
 - Docs site: the learn pages' Context tab keeps each list at its bottom as
   the conversation grows, also when the tab was hidden while it grew, and a
   list scrolled up stays where it is. A row under the pointer no longer

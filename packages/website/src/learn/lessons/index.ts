@@ -2,8 +2,9 @@
 import { Option } from "effect"
 import type { Lesson } from "../lesson.ts"
 import { tools } from "./tools/lesson.ts"
+import { yourOwnPlugin } from "./your-own-plugin/lesson.ts"
 import { yourFirstAgent } from "./your-first-agent/lesson.ts"
 
-const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools]
+const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin]
 
 export const lessonOf = (slug: string): Option.Option<Lesson> => Option.fromNullishOr(lessons.find((lesson) => lesson.slug === slug))
