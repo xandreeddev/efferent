@@ -512,6 +512,16 @@ body.app {
   border-bottom-right-radius: 4px;
 }
 /* The reply is plain text on the page, not a bubble; it is markdown, so blocks carry their own spacing. */
+/* A message the inbox queued: its ticket shows until its turn starts. */
+.pg-msg.user[data-queued] {
+  opacity: 0.75;
+}
+.pg-msg .msg-queued {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
 .pg-msg.agent {
   justify-self: stretch;
   max-width: none;
@@ -648,7 +658,8 @@ body.app {
   padding-inline: 1.1rem;
 }
 @media (max-height: 800px) and (min-width: 1101px) {
-  .chips {
+  /* Short screens keep the one chip a lesson step asks for. */
+  .chips .chip:not(.chip-three) {
     display: none;
   }
   .compose textarea {
@@ -730,6 +741,9 @@ body.app {
 }
 .pg-events .tag[data-kind="assistant"] {
   color: var(--accent-3);
+}
+.pg-events .tag[data-kind="window"] {
+  color: var(--accent-2);
 }
 .pg-events .detail {
   color: var(--text-dim);
@@ -859,6 +873,7 @@ body.app {
 .learn-controls label {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
   font-size: 0.86rem;
   color: var(--text-dim);
 }
@@ -875,6 +890,9 @@ body.app {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .learn-controls .check {
   display: flex;
@@ -1212,10 +1230,6 @@ body.app {
 }
 .layer[data-kind="system"] {
   border-color: color-mix(in srgb, var(--accent-2) 50%, var(--border));
-}
-.layer[data-kind="ledger"] {
-  border-style: dashed;
-  border-color: color-mix(in srgb, #e8b27a 60%, var(--border));
 }
 .layer[data-kind="current"] {
   border-color: var(--accent);

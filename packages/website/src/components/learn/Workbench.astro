@@ -47,7 +47,7 @@ import LoopDiagram from "./LoopDiagram.astro"
         <h2>Chat</h2>
         <label class="keep"><input type="checkbox" data-keep checked /> Keep chat on rebuild</label>
         <div class="pane-actions">
-          <button class="btn btn-quiet" type="button" data-new-chat title="Start over: wipes the chat, the journal behind it and the context stack">Clear context</button>
+          <button class="btn btn-quiet" type="button" data-new-chat title="Start over: a new, empty session, so the chat and the context stack start again">Clear context</button>
           <button class="icon-btn" type="button" data-max aria-label="Maximise Chat pane" title="Maximise">⤢</button>
         </div>
       </header>
@@ -57,9 +57,10 @@ import LoopDiagram from "./LoopDiagram.astro"
       </div>
       <div class="chips" data-chips>
         {chips.map((chip) => <button type="button" class="chip" data-chip-text={chip}>{chip}</button>)}
+        <button type="button" class="chip chip-three" data-send-three title="Queue three messages at once: each is answered in a turn of its own, in order">Send three at once</button>
       </div>
       <form class="compose" data-compose>
-        <textarea data-input rows="2" placeholder="Message the agent. Enter sends, Shift+Enter adds a line." aria-label="Message" disabled></textarea>
+        <textarea data-input rows="2" placeholder="Message the agent. Enter sends, Shift+Enter adds a line. Messages sent while it answers wait in its queue." aria-label="Message" disabled></textarea>
         <button class="btn btn-primary" type="submit" data-send disabled>Send</button>
         <button class="btn" type="button" data-stop hidden>Stop</button>
       </form>
@@ -85,7 +86,7 @@ import LoopDiagram from "./LoopDiagram.astro"
           </div>
           <label class="insp-budget">
             <span>Budget</span>
-            <input type="range" min="250" max="3000" step="50" value="3000" data-control="budgetTokens" aria-label="Context budget in tokens" />
+            <input type="range" min="40" max="3000" step="10" value="3000" data-control="budgetTokens" aria-label="Context budget in tokens" />
             <output data-insp-budget>3000</output>
           </label>
         </div>
@@ -105,19 +106,19 @@ import LoopDiagram from "./LoopDiagram.astro"
           </div>
           <details class="insp-events"><summary>Journal records of this turn, with payloads</summary><ol data-insp-kinds></ol></details>
         </div>
-        <p class="insp-foot">Token counts are estimates (about 3 characters per token). Local models have no prompt cache: "reusable" shows what a hosted provider's cache could reuse.</p>
+        <p class="insp-foot">Token counts are the kernel's estimate: a quarter of the characters, rounded up. Local models have no prompt cache: "reusable" shows what a hosted provider's cache could reuse.</p>
       </div>
       <div class="pane-body view" data-view="loop" hidden>
         <LoopDiagram />
         <dl class="stats">
           <div><dt>steps</dt><dd data-stat="steps">0</dd></div>
-          <div><dt>tokens in</dt><dd data-stat="in">0</dd></div>
-          <div><dt>tokens out</dt><dd data-stat="out">0</dd></div>
+          <div><dt>tokens sent</dt><dd data-stat="sent">0</dd></div>
+          <div><dt>tokens answered</dt><dd data-stat="answered">0</dd></div>
           <div><dt>time</dt><dd data-stat="time">0.0s</dd></div>
         </dl>
-        <p class="pg-events-note">The step loop plugin publishes these events on the turn's event stream while <code>agent.turn</code> runs; the page subscribes to that stream. Open one to see its payload.</p>
+        <p class="pg-events-note">The page listens on the kernel's <code>Core</code> with <code>core.on</code>, and lists each event it hears: a message queued, a turn opened and closed, a request sent, the answer as it streams. The figures are for the last turn, read from the journal; tokens are estimates. Open an event to see its data.</p>
         <ol class="pg-events" data-events></ol>
-        <p class="pg-empty" data-events-empty>Events from your agent's last turn appear here.</p>
+        <p class="pg-empty" data-events-empty>Events from your agent's turns appear here.</p>
       </div>
     </section>
   </div>

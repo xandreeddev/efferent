@@ -1,88 +1,88 @@
-// The one source of truth for Lesson 1's code. The page shows IMPORTS, SETUP,
-// the editable CONFIG and DEFINE as one program; the runtime evaluates the
-// config the learner edits; lesson1.program.test.ts compiles and runs this
-// exact text through the real framework, so what is shown cannot drift.
+// The one source of truth for Lesson 1's code. The page shows IMPORTS, BASE,
+// the editable AGENT and RUN as one program; the runtime evaluates the agent
+// expression the learner edits; lesson1.program.test.ts compiles and runs
+// this exact text on the kernel, so what is shown cannot drift.
 
 /** Read-only: what the program imports. */
-export const IMPORTS = `import { Context, Effect, Layer, Option } from "effect"
-import { LanguageModel } from "effect/ai"
-import { Agent, RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/sdk"
-import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
-import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"`
+export const IMPORTS = `import { Effect, Layer } from "effect"
+import { Core, kernel, Sessions, turnEndedEvent } from "@xandreed/core/kernel"
+import { assistantDeltaEvent, Inbox, inbox, inboxQueuedEvent, inProcessJournal, sessions, settings, stepLoop, windowMemory } from "@xandreed/sdk/kernel"
+import { lastMessages } from "./tiny-memory.ts"`
 
-/** Read-only: the session (the journal's home). It stays visible in the journal step. */
-export const SESSION = `// Conversations live in memory. This page keeps them across rebuilds.
-const sessionsLayer = SessionsLive(sessionsDefaults).pipe(
-  Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)),
-)
-const sessions = Context.get(yield* Layer.build(sessionsLayer), Sessions)`
-
-/** Read-only: the line before the editable object. */
-export const AGENT_INTRO = `// The agent: three plugins and a system prompt. Edit this object.
-const config = `
-
-export const SETUP = `${SESSION}\n\n${AGENT_INTRO}`
-
-/** What the learner edits: the agent's configuration, as a plain object. */
-export const DEFAULT_CONFIG = `{
-  system: "You are a friendly tutor. Keep answers short.",
-  plugins: [
-    memoryWindowPlugin, // remembers the chat
-    {
-      plugin: toolDiscoveryPlugin,
-      options: { loadSkill: false }, // offer no tools
-    },
-    stepLoopPlugin, // the loop itself
-  ],
-  limits: { maxSteps: 10, streaming: true },
-  budgetTokens: 3000, // small models, small windows
-}`
-
-/** Read-only: define the agent, then run one turn. \`model\` and \`text\` come from the page. */
-export const DEFINE = `
-const agent = yield* Agent.define({ ...config, turnServices: [LanguageModel.LanguageModel] })
-
-// One message in, one reply out. The loop runs inside agent.turn.
-const view = yield* sessions.create({ owner: "learner" })
-const outcome = yield* agent.turn(
-  {
-    turn: {
-      session: { id: view.header.id, owner: "learner" },
-      userMessage: new UserMessage({ text }),
-      runId: RunId.make(crypto.randomUUID()),
-    },
-    services: Context.merge(
-      Context.make(LanguageModel.LanguageModel, model),
-      Context.make(Sessions, sessions),
-    ),
-  },
-  (turn) =>
-    turn.run({}).pipe(
-      Effect.map((result) => ({
-        outcome: result.outcome,
-        reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text),
-      })),
-    ),
+/** Read-only: the base, built once. The conversation lives here. */
+export const BASE = `// The base: events, a journal kept in memory, and sessions.
+// This page builds it once, so the conversation outlives every rebuild.
+const Base = sessions().pipe(
+  Layer.provideMerge(inProcessJournal()),
+  Layer.provideMerge(kernel()),
 )`
 
-/** Everything before the editable object. */
-export const HEADER = `${IMPORTS}\n\n${SETUP}`
+/** Read-only: the line before the editable expression. */
+export const AGENT_INTRO = `// The agent: the inbox over the loop, a memory and the system text. Edit it.
+const Agent = `
 
-/** Where each foldable, read-only section starts and ends in `programOf(...)` (offsets are the same for any config). */
+/** What the learner edits: the layers above the base, as one expression. */
+export const DEFAULT_AGENT = `inbox.pipe(
+  Layer.provideMerge(stepLoop),
+  Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+  Layer.provideMerge(settings({ system: "You are a friendly tutor. Keep answers short." })),
+)`
+
+/** Read-only: follow the session, then queue the messages. `model`, `messages` and `show` come from the page. */
+export const RUN = `// Run it. On this page Rebuild builds Agent again over the same Base.
+// \`model\`, \`messages\` and \`show\` come from the page.
+const program = Effect.gen(function* () {
+  const core     = yield* Core
+  const sessions = yield* Sessions
+  const inbox    = yield* Inbox
+  const session  = yield* sessions.create({ owner: "learner" })
+
+  // Draw the chat from events. A listener is registered before \`on\` returns.
+  yield* core.on(inboxQueuedEvent, (queued) => show(\`queued #\${queued.data.ticket}\`), { name: "page", wait: true })
+  yield* core.on(assistantDeltaEvent, (delta) => show(delta.data.text), { name: "page", wait: true })
+  yield* core.on(turnEndedEvent, (ended) => show(\`turn \${ended.data.turn} ended\`), { name: "page", wait: true })
+
+  // Queue every message at once. Each is answered in a turn of its own, in order.
+  const queued = yield* Effect.forEach(messages, (message) => inbox.enqueue(session, message), { concurrency: 1 })
+  return yield* Effect.forEach(queued, (entry) => entry.reply, { concurrency: "unbounded" })
+}).pipe(
+  Effect.scoped,
+  Effect.provide(Agent.pipe(Layer.provideMerge(Base), Layer.provideMerge(model))),
+)`
+
+/** Everything before the editable expression. */
+export const HEADER = `${IMPORTS}\n\n${BASE}\n\n${AGENT_INTRO}`
+
+/** Where each foldable, read-only section starts and ends in `programOf(...)` (offsets before the agent are the same for any agent). */
 export const SECTIONS = {
   imports: { from: 0, to: IMPORTS.length },
-  session: { from: IMPORTS.length + 2, to: IMPORTS.length + 2 + SESSION.length },
-  configFrom: HEADER.length,
+  base: { from: IMPORTS.length + 2, to: IMPORTS.length + 2 + BASE.length },
+  agentFrom: HEADER.length,
 }
 
-/** The first text of the read-only define-and-run section (the editor finds the section by it). */
-export const DEFINE_START_MARK = "const agent = yield* Agent.define"
+/** The first text of the read-only run section (the editor finds the section by it). */
+export const RUN_START_MARK = "// Run it."
 
 /** The whole program as the learner reads it. */
-export const programOf = (config: string): string => `${HEADER}${config}\n${DEFINE}`
+export const programOf = (agent: string): string => `${HEADER}${agent}\n\n${RUN}`
 
-/** The same program as a module the test can run: `model` and `text` become parameters. */
-export const moduleOf = (config: string): string =>
-  `${IMPORTS}\nexport const program = (model: LanguageModel.LanguageModel, text: string) =>\n  Effect.scoped(Effect.gen(function* () {\n${SETUP}${config}\n${DEFINE}\n  return outcome\n}))\n`
+/**
+ * The same program as a module a test can compile and run: `model`,
+ * `messages` and `show` become parameters, and `program` is returned.
+ */
+export const moduleOf = (agent: string): string => `${IMPORTS}
+import type { LanguageModel } from "effect/ai"
+
+export const run = (
+  model: Layer.Layer<LanguageModel.LanguageModel>,
+  messages: ReadonlyArray<string>,
+  show: (text: string) => Effect.Effect<void>,
+) => {
+${BASE}
+
+${AGENT_INTRO}${agent}
+
+${RUN}
+  return program
+}
+`

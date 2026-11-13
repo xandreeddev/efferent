@@ -1,27 +1,26 @@
 ---
-// Step 6: controls bound to the code in the playground (see learn/playground.ts, `data-control`).
+// Step 8: controls bound to the agent's code in the playground (see learn/playground.ts, `data-control`).
 ---
 
 <div class="learn-controls">
   <label class="wide">
-    <span>System prompt</span>
+    <span>System text</span>
     <textarea data-control="system" rows="2"></textarea>
   </label>
   <label>
-    <span>Max steps</span>
-    <input type="number" min="1" max="50" data-control="maxSteps" />
-    <small>Model calls allowed per run. Without tools you only ever use one.</small>
+    <span>Budget tokens</span>
+    <input type="number" min="1" step="10" data-control="budgetTokens" />
+    <small>What one request may cost, the system text included.</small>
   </label>
   <label>
-    <span>Budget tokens</span>
-    <input type="number" min="1" step="100" data-control="budgetTokens" />
-    <small>How much context memory may send per request.</small>
-  </label>
-  <label class="check">
-    <input type="checkbox" data-control="streaming" />
-    <span>Stream the reply</span>
+    <span>Memory</span>
+    <select data-control="memory">
+      <option value="window">windowMemory</option>
+      <option value="last">lastMessages (yours)</option>
+    </select>
+    <small>Which layer provides Memory: the window drops whole turns, oldest first; lastMessages, in tiny-memory.ts, keeps the last n messages (n: 1 when picked here). The conversation goes on either way.</small>
   </label>
 </div>
 <p class="learn-note" data-controls-note hidden>
-  A control is greyed out when its line is missing from your code. Press Reset code in the Code tab to bring it back.
+  A control is greyed out when its line is missing from your code. Press Reset in the Code pane to bring it back.
 </p>

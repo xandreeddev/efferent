@@ -1,10 +1,14 @@
-// The Loop view: the turn's events as the agent publishes them, each with its payload.
+// The Loop view: the kernel events of the agent's turns, as the page heard
+// them on Core, each with its data. Pieces of one answer share a row.
+import { Match } from "effect"
 import { payloadText } from "../payload.ts"
+import type { LessonEvent } from "../runtime.ts"
+
 export interface ContextPane {
   readonly showView: (view: string) => void
   readonly resetTurn: () => void
-  readonly event: (event: Record<string, unknown>, t0: number) => void
-  readonly stat: (name: "steps" | "in" | "out" | "time", value: string) => void
+  readonly event: (event: LessonEvent, t0: number) => void
+  readonly stat: (name: "steps" | "sent" | "answered" | "time", value: string) => void
 }
 
 const el = (tag: string, className: string, text: string) => {
@@ -14,22 +18,27 @@ const el = (tag: string, className: string, text: string) => {
   return node
 }
 
-const detailOf = (e: Record<string, unknown>): string => {
-  switch (e._tag) {
-    case "step.started": return `step ${e.step} · tools offered: ${(e.activeTools as unknown[]).length}`
-    case "context.built": return `~${e.estimatedTokens} tokens of ${e.budgetTokens} budget · ${e.strategy}`
-    case "assistant.message": return `finish: ${String(e.finishReason)}`
-    case "step.ended": return `step ${e.step} · ${String(e.status)}`
-    case "completion.evaluated": return `step ${e.step}`
-    case "stream.fallback": return String(e.message)
-    default: return ""
-  }
-}
+/** One line about the event, from its own data. */
+const detailOf = (event: LessonEvent): string => Match.valueTags(event, {
+  Queued: (queued) => `ticket ${queued.ticket}: "${queued.text.slice(0, 40)}"`,
+  TurnStarted: (started) => `turn ${started.turn}`,
+  UserMessage: (message) => `turn ${message.turn}: stored`,
+  RequestSent: (sent) => `step ${sent.step} · ${sent.messages} message${sent.messages === 1 ? "" : "s"} · ~${sent.estimatedTokens} of ${sent.budgetTokens} tokens`,
+  Delta: () => "× 1",
+  AssistantMessage: (answer) => `step ${answer.step}: stored`,
+  TurnEnded: (ended) => `turn ${ended.turn} · ${ended.outcome._tag}`,
+  WindowDropped: (dropped) => `messages through #${dropped.through} leave the window`,
+  WindowPressure: (pressure) => `~${pressure.estimatedTokens} of ${pressure.budgetTokens} tokens`,
+})
+
+/** Which colour a row's tag takes: the model's answer, the window's own events, or the rest of the loop. */
+const kindOf = (event: LessonEvent): string =>
+  event._tag === "Delta" || event._tag === "AssistantMessage" ? "assistant" : event._tag.startsWith("Window") ? "window" : "loop"
 
 export const mountContext = (root: HTMLElement): ContextPane => {
   const list = root.querySelector<HTMLElement>("[data-events]")!
   const empty = root.querySelector<HTMLElement>("[data-events-empty]")!
-  let deltaRow: { count: number; deltas: string[]; payload: HTMLElement } | undefined
+  let deltaRow: { turn: number; pieces: string[]; payload: HTMLElement; detail: HTMLElement } | undefined
 
   const stat = (name: string, value: string) => {
     const node = root.querySelector(`[data-stat="${name}"]`)
@@ -47,32 +56,33 @@ export const mountContext = (root: HTMLElement): ContextPane => {
     showView,
     resetTurn: () => {
       list.replaceChildren()
-      empty.hidden = true
+      empty.hidden = false
       deltaRow = undefined
-      ;["steps", "in", "out"].forEach((name) => stat(name, "0"))
+      ;["steps", "sent", "answered"].forEach((name) => stat(name, "0"))
       stat("time", "0.0s")
     },
-    event: (e, t0) => {
-      const tag = String(e._tag)
-      if (tag === "assistant.delta" && deltaRow) {
-        deltaRow.count += 1
-        deltaRow.deltas.push(String(e.delta))
-        deltaRow.payload.textContent = payloadText({ ...e, delta: undefined, deltas: deltaRow.deltas })
-        deltaRow.payload.parentElement!.querySelector(".detail")!.textContent = `× ${deltaRow.count}`
+    event: (event, t0) => {
+      empty.hidden = true
+      if (event._tag === "Delta" && deltaRow?.turn === event.turn) {
+        deltaRow.pieces.push(event.text)
+        deltaRow.payload.textContent = payloadText({ turn: event.turn, pieces: deltaRow.pieces })
+        deltaRow.detail.textContent = `× ${deltaRow.pieces.length}`
         return
       }
-      if (tag !== "assistant.delta") deltaRow = undefined
+      if (event._tag !== "Delta") deltaRow = undefined
       const row = document.createElement("li")
       const details = document.createElement("details")
       const summary = document.createElement("summary")
-      const tagNode = el("span", "tag", tag)
-      tagNode.dataset.kind = tag.startsWith("assistant") ? "assistant" : "loop"
-      summary.append(tagNode, el("span", "detail", tag === "assistant.delta" ? "× 1" : detailOf(e)))
-      const payload = el("pre", "payload", payloadText(e))
+      const tag = el("span", "tag", event.name)
+      tag.dataset.kind = kindOf(event)
+      const detail = el("span", "detail", detailOf(event))
+      summary.append(tag, detail)
+      const { _tag, name, ...data } = event
+      const payload = el("pre", "payload", payloadText(event._tag === "Delta" ? { turn: event.turn, pieces: [event.text] } : data))
       details.append(summary, payload)
       row.append(el("span", "t", `${((performance.now() - t0) / 1000).toFixed(2)}s`), details)
       list.append(row)
-      if (tag === "assistant.delta") deltaRow = { count: 1, deltas: [String(e.delta)], payload }
+      if (event._tag === "Delta") deltaRow = { turn: event.turn, pieces: [event.text], payload, detail }
     },
     stat: (name, value) => stat(name, value),
   }

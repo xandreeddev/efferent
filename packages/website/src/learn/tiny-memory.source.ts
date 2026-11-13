@@ -1,90 +1,88 @@
-// Lesson 1's last step: a memory strategy written by the learner. The editable
-// part is the arrow function `tinyMemory(n)`, which returns a real plugin that
-// provides ConversationMemory. The lesson's test runs this exact text.
+// Lesson 1's last step: a memory written by the learner. The editable part is
+// the arrow function `lastMessages`, which returns a layer that provides
+// Memory. The page evaluates this exact text; the lesson's tests run it
+// through the memory kit and compile it as TypeScript.
 
-/** Read-only: where each name the plugin uses comes from. */
-export const TINY_IMPORTS = `import { Effect, Layer, Option, Schema } from "effect"
-import { ConversationMemory, definePlugin, ledgerOf, openLogSession } from "@xandreed/core"
+/** Read-only: where each name the memory uses comes from. */
+export const TINY_IMPORTS = `import { Effect, Layer, Option } from "effect"
+import { messageOf, readerFor, readJournal } from "@xandreed/core/kernel"
+import { estimateRequest, LOOP_READER, Memory, OverBudget, Settings, Tokens } from "@xandreed/sdk/kernel"
 
 `
 
-export const TINY_INTRO = `${TINY_IMPORTS}// tiny-memory.ts: a memory strategy is just a plugin.
-// It decides what the model sees of the journal. This one keeps the last n turns
-// (the current one included) and replaces older ones with a short ledger note.
+/** Read-only: what the editable function must be. */
+export const TINY_TYPE = `(options: { readonly n: number; readonly budgetTokens: number }) => Layer.Layer<Memory, never, Settings>`
+
+export const TINY_INTRO = `${TINY_IMPORTS}// tiny-memory.ts: a memory is a layer that provides Memory.
+// This one sends the last n messages, fewer when they do not fit the budget.
 // The journal keeps everything.
-const tinyMemory = `
+export const lastMessages: ${TINY_TYPE} = `
 
-/** The editable plugin factory, as plain JavaScript. */
-export const DEFAULT_TINY = `(n) => {
-  const strategy = { id: "keep-last", version: "1" }
+/** The editable memory, as plain JavaScript. */
+export const DEFAULT_TINY = `({ n, budgetTokens }) =>
+  Layer.effect(
+    Memory,
+    Effect.gen(function* () {
+      const settings = yield* Settings
+      // Refuse options that are no numbers here, in words, rather than at the first message.
+      if (!(n >= 1) || !(budgetTokens >= 1)) {
+        return yield* Effect.die(
+          new RangeError(
+            \`lastMessages needs n and budgetTokens, each a number of 1 or more: lastMessages({ n: 1, budgetTokens: 3000 })\`,
+          ),
+        )
+      }
+      const budget = Tokens.make(Math.floor(budgetTokens))
+      // It reads core's records, the loop's, and its own (it writes none).
+      const reader = readerFor("last", [], LOOP_READER)
 
-  // The newest turn an earlier compaction of this strategy already dropped.
-  const droppedThrough = (entries) =>
-    Math.max(
-      0,
-      ...entries.flatMap(({ body }) =>
-        body._tag === "Compaction" &&
-        body.strategy === strategy.id &&
-        body.action._tag === "DropTurns"
-          ? [body.action.throughTurn]
-          : [],
-      ),
-    )
-
-  // After each turn: keep the last n turns; older ones become one ledger note.
-  const maintain = ({ entries, turn }) =>
-    Effect.sync(() => {
-      const dropThrough = turn - n
-      return dropThrough > droppedThrough(entries)
-        ? {
-            actions: [
-              {
-                _tag: "DropTurns",
-                throughTurn: dropThrough,
-                ledger: ledgerOf(entries, dropThrough, 40),
-              },
-            ],
-            digest: [],
-          }
-        : { actions: [], digest: [] }
-    })
-
-  const policy = {
-    strategy,
-    render: {
-      turnContext: "current",
-      replies: true,
-      digests: false,
-      media: { mode: "none", maxImages: 0, maxChars: 0 },
-    },
-    digestOnWrite: Option.none(),
-    maintain,
-  }
-
-  return definePlugin({
-    id: "tiny-memory",
-    version: "1",
-    scope: "runtime",
-    config: Schema.Struct({}),
-    defaults: {},
-    provides: [ConversationMemory],
-    layer: () =>
-      Layer.sync(ConversationMemory, () =>
-        ConversationMemory.of({
-          strategy,
-          open: ({ runId, log }) => openLogSession(log, policy, { runId }),
-        }),
-      ),
-  })
-}`
+      return Memory.of({
+        build: (session) =>
+          Effect.gen(function* () {
+            const journal = yield* Effect.fromResult(readJournal(reader)(yield* session.journal))
+            // Every record that bears a message. The last one is the message this turn answers.
+            const said = journal.filter((record) => record.message !== undefined)
+            // Start from the last n; while that is over the budget, leave out the oldest.
+            for (let from = Math.max(0, said.length - Math.floor(n)); from < said.length; from++) {
+              const kept = said.slice(from)
+              const estimatedTokens = estimateRequest(
+                settings.system,
+                kept.flatMap((record) => Option.toArray(messageOf(record))),
+              )
+              if (estimatedTokens <= budget) {
+                // Pointers into the journal, never copies.
+                return {
+                  messages: kept.map((record) => record.seq),
+                  estimatedTokens,
+                  budgetTokens: budget,
+                }
+              }
+            }
+            // Even the current message alone does not fit.
+            const estimatedTokens = estimateRequest(
+              settings.system,
+              said.slice(-1).flatMap((record) => Option.toArray(messageOf(record))),
+            )
+            return yield* Effect.fail(
+              new OverBudget({
+                estimatedTokens,
+                budgetTokens: budget,
+                message: \`the current message is estimated at \${estimatedTokens} tokens, over the budget of \${budget}\`,
+              }),
+            )
+          }),
+      })
+    }),
+  )`
 
 export const TINY_FOOTER = `
-// Use it in agent.ts:  plugins: [tinyMemory(2), ...]`
+
+// Use it in agent.ts: Layer.provideMerge(lastMessages({ n: 3, budgetTokens: 3000 }))`
 
 export const tinyProgramOf = (tiny: string): string => `${TINY_INTRO}${tiny}${TINY_FOOTER}`
 
-/** The same file as a module the test can run. */
-export const tinyModuleOf = (tiny: string): string => `${TINY_IMPORTS}export const tinyMemory = ${tiny}\n`
+/** The same file as a module a test can compile: the editable text is typed by `TINY_TYPE`. */
+export const tinyModuleOf = (tiny: string): string => `${TINY_IMPORTS}export const lastMessages: ${TINY_TYPE} = ${tiny}\n`
 
-/** The names the tiny plugin's code may use (the framework pieces a memory plugin is made of). */
-export const TINY_NAMES = ["Schema", "definePlugin", "ConversationMemory", "openLogSession", "ledgerOf", "Layer", "Effect", "Option"] as const
+/** The names the memory's code may use (the page evaluates it against these only). */
+export const TINY_NAMES = ["Effect", "Layer", "Option", "messageOf", "readerFor", "readJournal", "estimateRequest", "LOOP_READER", "Memory", "OverBudget", "Settings", "Tokens"] as const
