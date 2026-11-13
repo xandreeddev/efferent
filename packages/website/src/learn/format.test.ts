@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { formatRegion } from "./format.ts"
-import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { DEFAULT_TINY } from "./tiny-memory.source.ts"
+import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
+import { DEFAULT_TINY } from "./lessons/your-first-agent/tiny-memory.source.ts"
 
 describe("formatRegion", () => {
   test("the starter code of both files is already formatted", async () => {

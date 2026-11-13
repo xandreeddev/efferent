@@ -9,5 +9,5 @@ node_modules/
 .playwright-mcp/
 *.log
 
-# Written and removed by src/learn/lesson1.program.test.ts
-src/learn/generated-program-check/
+# Written and removed by each lesson's program.test.ts
+src/learn/lessons/*/generated-program-check/

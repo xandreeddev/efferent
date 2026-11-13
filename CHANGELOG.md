@@ -169,6 +169,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   says why. The controls are the system text, the budget and a memory
   picker. The page's Node module stand-ins are gone: nothing it runs
   imports one. No published package changes.
+- Docs site: the lesson workbench runs any lesson. A lesson's definition
+  (`packages/website/src/learn/lessons/<slug>/`) holds its files, the
+  names its code may use and how it is evaluated, its chips, its controls
+  and experiments, and the page passes the lesson's slug to the workbench.
+  The runtime, the editor and the playground name no lesson; Lesson 1 moved
+  into its own folder unchanged, and a test runs a second definition
+  through the same runtime. No published package changes.
 
 ## 0.22.0 — 2026-11-12
 

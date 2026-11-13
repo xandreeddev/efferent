@@ -83,6 +83,3 @@ export const tinyProgramOf = (tiny: string): string => `${TINY_INTRO}${tiny}${TI
 
 /** The same file as a module a test can compile: the editable text is typed by `TINY_TYPE`. */
 export const tinyModuleOf = (tiny: string): string => `${TINY_IMPORTS}export const lastMessages: ${TINY_TYPE} = ${tiny}\n`
-
-/** The names the memory's code may use (the page evaluates it against these only). */
-export const TINY_NAMES = ["Effect", "Layer", "Option", "messageOf", "readerFor", "readJournal", "estimateRequest", "LOOP_READER", "Memory", "OverBudget", "Settings", "Tokens"] as const

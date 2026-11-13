@@ -4,9 +4,10 @@ import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
 import { requestSentEvent } from "@xandreed/sdk/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { loadEcho } from "./models/mock.ts"
-import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { DEFAULT_TINY } from "./tiny-memory.source.ts"
-import { setField, withoutMemory } from "./config-edit.ts"
+import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
+import { DEFAULT_TINY } from "./lessons/your-first-agent/tiny-memory.source.ts"
+import { setField, withoutMemory } from "./lessons/your-first-agent/config-edit.ts"
+import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { LessonRuntime } from "./runtime.ts"
 import type { LessonEvent } from "./runtime.ts"
 
@@ -14,12 +15,12 @@ const opened: Array<LessonRuntime> = []
 afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runtime.dispose())) })
 
 const start = async (agent = DEFAULT_AGENT) => {
-  const runtime = await LessonRuntime.create()
+  const runtime = await LessonRuntime.create(yourFirstAgent.evaluate)
   opened.push(runtime)
   runtime.setModel(loadEcho())
   const heard: Array<LessonEvent> = []
   runtime.onEvent((event) => heard.push(event))
-  const built = await runtime.rebuild(agent, DEFAULT_TINY)
+  const built = await runtime.rebuild({ agent, tiny: DEFAULT_TINY })
   return { runtime, heard, built }
 }
 
@@ -60,7 +61,7 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
     const { runtime } = await start()
     await (await runtime.send(["first"]))[0]?.outcome
     const edited = set(set(DEFAULT_AGENT, "system", "You are a pirate."), "budgetTokens", 900)
-    expect(await runtime.rebuild(edited, DEFAULT_TINY)).toEqual({ _tag: "Built" })
+    expect(await runtime.rebuild({ agent: edited, tiny: DEFAULT_TINY })).toEqual({ _tag: "Built" })
     expect(await (await runtime.send(["second"]))[0]?.outcome).toEqual({ _tag: "Replied", text: "You said: \"second\". I can also see 2 earlier messages." })
     const sent = sentOf(await runtime.journal())
     expect(sent.map((request) => [request.system, Number(request.budgetTokens), request.messages.length])).toEqual([
@@ -75,8 +76,8 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
     expect(runtime.busy).toBe(true)
     let settled = false
     void sent?.outcome.then(() => { settled = true })
-    const first = runtime.rebuild(set(DEFAULT_AGENT, "system", "First edit."), DEFAULT_TINY)
-    const latest = runtime.rebuild(set(DEFAULT_AGENT, "system", "Latest edit."), DEFAULT_TINY)
+    const first = runtime.rebuild({ agent: set(DEFAULT_AGENT, "system", "First edit."), tiny: DEFAULT_TINY })
+    const latest = runtime.rebuild({ agent: set(DEFAULT_AGENT, "system", "Latest edit."), tiny: DEFAULT_TINY })
     expect(await first).toEqual({ _tag: "Built" })
     expect(settled).toBe(true)
     expect(await latest).toEqual({ _tag: "Built" })
@@ -88,8 +89,8 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
     const { runtime } = await start()
     const pressured: Array<number> = []
     runtime.onEvent((event) => { if (event._tag === "WindowPressure") pressured.push(event.budgetTokens) })
-    const first = runtime.rebuild(set(set(DEFAULT_AGENT, "system", "First."), "budgetTokens", 8), DEFAULT_TINY)
-    const latest = runtime.rebuild(set(set(DEFAULT_AGENT, "system", "Latest."), "budgetTokens", 7), DEFAULT_TINY)
+    const first = runtime.rebuild({ agent: set(set(DEFAULT_AGENT, "system", "First."), "budgetTokens", 8), tiny: DEFAULT_TINY })
+    const latest = runtime.rebuild({ agent: set(set(DEFAULT_AGENT, "system", "Latest."), "budgetTokens", 7), tiny: DEFAULT_TINY })
     expect([await first, await latest]).toEqual([{ _tag: "Built" }, { _tag: "Built" }])
     // 2 tokens of system text and 4 of message: over 80% of the budget of 7, so the window announces pressure.
     await (await runtime.send(["hi there friend"]))[0]?.outcome
@@ -121,7 +122,7 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
 
   test("without a memory the stack does not build, and says what is missing", async () => {
     const { runtime } = await start()
-    const refused = await runtime.rebuild(Option.getOrThrow(withoutMemory(DEFAULT_AGENT)), DEFAULT_TINY)
+    const refused = await runtime.rebuild({ agent: Option.getOrThrow(withoutMemory(DEFAULT_AGENT)), tiny: DEFAULT_TINY })
     expect(refused).toMatchObject({ _tag: "Refused", message: expect.stringContaining("nothing in the stack provides Memory, and a part above it needs it") })
     expect(runtime.ready).toBe(false)
     expect(await (await runtime.send(["hi"]))[0]?.outcome).toEqual({ _tag: "Refused", message: "Build the agent first." })
@@ -129,22 +130,22 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
 
   test("text that is no layer, or no valid expression, is refused readably", async () => {
     const { runtime } = await start()
-    expect(await runtime.rebuild("inbox.pipe(", DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("agent.ts did not run") })
-    expect(await runtime.rebuild("42", DEFAULT_TINY)).toEqual({ _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." })
-    expect(await runtime.rebuild("stepLoop", DEFAULT_TINY)).toMatchObject({ _tag: "Refused" })
+    expect(await runtime.rebuild({ agent: "inbox.pipe(", tiny: DEFAULT_TINY })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("agent.ts did not run") })
+    expect(await runtime.rebuild({ agent: "42", tiny: DEFAULT_TINY })).toEqual({ _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." })
+    expect(await runtime.rebuild({ agent: "stepLoop", tiny: DEFAULT_TINY })).toMatchObject({ _tag: "Refused" })
   })
 
   test("a part that is no layer, a forgotten call most often, is refused in words", async () => {
     const { runtime } = await start()
     const uncalled = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "windowMemory")
-    expect(await runtime.rebuild(uncalled, DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("Layer.provideMerge was given a function, not a layer. Call it") })
-    expect(await runtime.rebuild(DEFAULT_AGENT, DEFAULT_TINY)).toEqual({ _tag: "Built" })
+    expect(await runtime.rebuild({ agent: uncalled, tiny: DEFAULT_TINY })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("Layer.provideMerge was given a function, not a layer. Call it") })
+    expect(await runtime.rebuild({ agent: DEFAULT_AGENT, tiny: DEFAULT_TINY })).toEqual({ _tag: "Built" })
   })
 
   test("lastMessages without n refuses when it is built, in words, not at the first message", async () => {
     const { runtime } = await start()
     const noN = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "lastMessages({ budgetTokens: 3000 })")
-    expect(await runtime.rebuild(noN, DEFAULT_TINY)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("lastMessages needs n and budgetTokens, each a number of 1 or more") })
+    expect(await runtime.rebuild({ agent: noN, tiny: DEFAULT_TINY })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("lastMessages needs n and budgetTokens, each a number of 1 or more") })
     expect(runtime.ready).toBe(false)
   })
 
@@ -152,20 +153,20 @@ describe("lesson 1 runtime (the kernel, Echo model)", () => {
     const { runtime } = await start()
     const typo = DEFAULT_TINY.replace("yield* Settings", "yield* Setings")
     const agent = DEFAULT_AGENT.replace("windowMemory({ budgetTokens: 3000 })", "lastMessages({ n: 1, budgetTokens: 3000 })")
-    expect(await runtime.rebuild(agent, typo)).toMatchObject({ _tag: "Refused", message: expect.stringContaining("your code threw a ReferenceError while the agent was built") })
+    expect(await runtime.rebuild({ agent, tiny: typo })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("your code threw a ReferenceError while the agent was built") })
   })
 
   test("a broken tiny-memory.ts is reported by file, only when the agent uses it", async () => {
     const { runtime } = await start()
-    expect(await runtime.rebuild(DEFAULT_AGENT, "this is not (valid")).toEqual({ _tag: "Built" })
-    const used = await runtime.rebuild(set(DEFAULT_AGENT, "memory", "last"), "this is not (valid")
+    expect(await runtime.rebuild({ agent: DEFAULT_AGENT, tiny: "this is not (valid" })).toEqual({ _tag: "Built" })
+    const used = await runtime.rebuild({ agent: set(DEFAULT_AGENT, "memory", "last"), tiny: "this is not (valid" })
     expect(used).toMatchObject({ _tag: "Refused", message: expect.stringContaining("tiny-memory.ts") })
   })
 
   test("the learner's memory swapped in over the same session sends only the last message", async () => {
     const { runtime } = await start()
     await (await runtime.send(["My name is Ana."]))[0]?.outcome
-    expect(await runtime.rebuild(set(DEFAULT_AGENT, "memory", "last"), DEFAULT_TINY)).toEqual({ _tag: "Built" })
+    expect(await runtime.rebuild({ agent: set(DEFAULT_AGENT, "memory", "last"), tiny: DEFAULT_TINY })).toEqual({ _tag: "Built" })
     expect(await (await runtime.send(["What did I just say?"]))[0]?.outcome).toEqual({ _tag: "Replied", text: "This is the first message, so I have nothing earlier to recall." })
     expect(sentOf(await runtime.journal()).map((request) => request.messages.length)).toEqual([1, 1])
   })

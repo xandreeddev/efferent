@@ -1,6 +1,6 @@
 // The one source of truth for Lesson 1's code. The page shows IMPORTS, BASE,
-// the editable AGENT and RUN as one program; the runtime evaluates the agent
-// expression the learner edits; lesson1.program.test.ts compiles and runs
+// the editable AGENT and RUN as one program; the lesson evaluates the agent
+// expression the learner edits; program.test.ts compiles and runs
 // this exact text on the kernel, so what is shown cannot drift.
 
 /** Read-only: what the program imports. */
@@ -52,13 +52,6 @@ const program = Effect.gen(function* () {
 
 /** Everything before the editable expression. */
 export const HEADER = `${IMPORTS}\n\n${BASE}\n\n${AGENT_INTRO}`
-
-/** Where each foldable, read-only section starts and ends in `programOf(...)` (offsets before the agent are the same for any agent). */
-export const SECTIONS = {
-  imports: { from: 0, to: IMPORTS.length },
-  base: { from: IMPORTS.length + 2, to: IMPORTS.length + 2 + BASE.length },
-  agentFrom: HEADER.length,
-}
 
 /** The first text of the read-only run section (the editor finds the section by it). */
 export const RUN_START_MARK = "// Run it."

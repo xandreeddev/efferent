@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { DEFAULT_AGENT } from "./lesson1.source.ts"
+import { DEFAULT_AGENT } from "./agent.source.ts"
 import { raisedBudget, readControls, setField, withoutMemory } from "./config-edit.ts"
 
 const set = (source: string, key: Parameters<typeof setField>[1], value: string | number) => Option.getOrThrow(setField(source, key, value))

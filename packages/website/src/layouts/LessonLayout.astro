@@ -9,8 +9,10 @@ interface Props {
   title: string
   description: string
   minutes: number
+  /** The lesson's slug: which lesson the workbench runs. */
+  lesson: string
 }
-const { title, description, minutes } = Astro.props
+const { title, description, minutes, lesson } = Astro.props
 ---
 
 <BaseLayout title={title} description={description} app>
@@ -31,7 +33,7 @@ const { title, description, minutes } = Astro.props
         <button class="btn btn-primary" type="button" data-next>Next</button>
       </footer>
     </aside>
-    <Workbench />
+    <Workbench lesson={lesson} />
   </div>
 
   <script>

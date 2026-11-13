@@ -8,7 +8,7 @@ import { Effect, Layer, Ref } from "effect"
 import type { LanguageModel } from "effect/ai"
 import { scriptedModel } from "@xandreed/sdk/kernel"
 import type { Reply } from "@xandreed/sdk/kernel"
-import { DEFAULT_AGENT, moduleOf } from "./lesson1.source.ts"
+import { DEFAULT_AGENT, moduleOf } from "./agent.source.ts"
 import { DEFAULT_TINY, tinyModuleOf } from "./tiny-memory.source.ts"
 
 const dir = new URL("./generated-program-check/", import.meta.url)
@@ -76,8 +76,8 @@ describe("lesson 1's displayed program", () => {
 
   test("type-checks as TypeScript, the learner's memory included", () => {
     write(DEFAULT_AGENT)
-    writeFileSync(tsconfig, JSON.stringify({ extends: "../../../tsconfig.learn.json", include: ["./*.ts"], exclude: [] }))
-    const checked = Bun.spawnSync(["bunx", "tsc", "-p", fileURLToPath(tsconfig)], { cwd: fileURLToPath(new URL("../../", import.meta.url)) })
+    writeFileSync(tsconfig, JSON.stringify({ extends: "../../../../../tsconfig.learn.json", include: ["./*.ts"], exclude: [] }))
+    const checked = Bun.spawnSync(["bunx", "tsc", "-p", fileURLToPath(tsconfig)], { cwd: fileURLToPath(new URL("../../../../", import.meta.url)) })
     expect(`${checked.stdout.toString()}${checked.stderr.toString()}`).toBe("")
     expect(checked.exitCode).toBe(0)
   }, 120_000)

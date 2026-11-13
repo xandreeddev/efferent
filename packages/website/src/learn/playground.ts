@@ -1,32 +1,30 @@
 // The playground: wires the panes (model bar, code, chat, context) to the
-// lesson runtime, which runs the kernel in the page.
+// lesson runtime, which runs the kernel in the page. What it runs, and what
+// the controls and experiments change, comes from the lesson's definition.
 import { Match, Option, Result } from "effect"
-import { DEFAULT_AGENT } from "./lesson1.source.ts"
-import { raisedBudget, readControls, setField, withoutMemory } from "./config-edit.ts"
-import type { ControlKey } from "./config-edit.ts"
+import { lessonOf } from "./lessons/index.ts"
+import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
 import { loadModel, probeDevice } from "./models/registry.ts"
 import type { Device } from "./models/registry.ts"
 import type { LoadedModel, ModelChoice } from "./models/types.ts"
-import { DEFAULT_TINY } from "./tiny-memory.source.ts"
 import { mountChat } from "./panes/chat.ts"
 import { mountContext } from "./panes/context.ts"
 import { inspectorOf } from "./context-model.ts"
 import { mountEditor } from "./panes/editor.ts"
 import { mountInspector } from "./panes/inspector.ts"
-import type { Section } from "./panes/editor.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import type { BuildResult, LessonEvent, LessonRuntime, Sent, SendOutcome } from "./runtime.ts"
 
 const root = document.querySelector<HTMLElement>(".wb-bench")
-if (root) boot(root)
+if (root) {
+  Option.match(lessonOf(root.dataset.lesson ?? ""), {
+    onNone: () => { throw new Error(`the workbench has no lesson named ${JSON.stringify(root.dataset.lesson)}`) },
+    onSome: (lesson) => boot(root, lesson),
+  })
+}
 
-/** "Send three at once": the second and third turns can only answer from the turns before them. */
-const THREE = ["My name is Ana.", "What did I just say?", "What is in your context?"]
-/** Step 6's fill: five short messages, queued at once. */
-const FILL = ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"]
-
-function boot(root: HTMLElement) {
+function boot(root: HTMLElement, lesson: Lesson) {
   const q = <T extends HTMLElement>(selector: string): T => {
     const found = root.querySelector<T>(selector)
     if (!found) throw new Error(`playground markup is missing ${selector}`)
@@ -53,10 +51,10 @@ function boot(root: HTMLElement) {
   const ctx = mountContext(q('[data-pane="context"]'))
   const inspector = mountInspector(q('[data-view="inspector"]'))
   const models = mountModels(q(".wb-modelbar"), { choose: (choice) => void chooseModel(choice) })
-  const editor = mountEditor(q("[data-editor]"), { onRebuild: () => void rebuild(), onEdit: () => checkSyntaxSoon(), onFormat: () => void formatCode() })
+  const editor = mountEditor(q("[data-editor]"), lesson.files, lesson.mainFile, { onRebuild: () => void rebuild(), onEdit: () => checkSyntaxSoon(), onFormat: () => void formatCode() })
   const chat = mountChat(q('[data-pane="chat"]'), {
     send: (text) => void send([text]),
-    sendThree: () => void send(THREE),
+    sendThree: () => void send(lesson.three),
     stop: () => void stop(),
     newChat: () => { if (!busy()) void newConversation() },
   })
@@ -80,7 +78,7 @@ function boot(root: HTMLElement) {
 
   const ensureRuntime = (): Promise<LessonRuntime> => {
     state.runtimeReady ??= import("./runtime.ts").then(async ({ LessonRuntime }) => {
-      const runtime = await LessonRuntime.create()
+      const runtime = await LessonRuntime.create(lesson.evaluate)
       runtime.onEvent(heard)
       state.runtime = runtime
       return runtime
@@ -258,7 +256,7 @@ function boot(root: HTMLElement) {
     }
     state.building = !runtime.busy
     refresh()
-    const result = await runtime.rebuild(editor.agentSource(), editor.tinySource())
+    const result = await runtime.rebuild(editor.sources())
     state.building = false
     state.built = result._tag === "Built"
     showBuild(result)
@@ -283,8 +281,7 @@ function boot(root: HTMLElement) {
   }
   formatButton.addEventListener("click", () => void formatCode())
   q("[data-reset-code]").addEventListener("click", () => {
-    editor.setAgentSource(DEFAULT_AGENT)
-    editor.setTinySource(DEFAULT_TINY)
+    lesson.files.forEach((file) => editor.setSource(file.id, file.defaultText))
     void rebuild()
   })
 
@@ -293,7 +290,7 @@ function boot(root: HTMLElement) {
     clearTimeout(syntaxTimer)
     syntaxTimer = setTimeout(() => {
       try {
-        new Function(`return (${editor.file() === "agent" ? editor.agentSource() : editor.tinySource()}\n)`)
+        new Function(`return (${editor.source(editor.file())}\n)`)
         syntaxBox.textContent = ""
       } catch (error) {
         syntaxBox.textContent = error instanceof Error ? error.message : String(error)
@@ -301,8 +298,10 @@ function boot(root: HTMLElement) {
       syncControls()
     }, 350)
   }
-  root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showFile(tab.dataset.file === "tiny" ? "tiny" : "agent")))
-  const showFile = (file: "agent" | "tiny") => {
+  /** A file the lesson has, or its main file. */
+  const fileOf = (id: string | undefined): string => lesson.files.find((file) => file.id === id)?.id ?? lesson.mainFile
+  root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showFile(fileOf(tab.dataset.file))))
+  const showFile = (file: string) => {
     editor.showFile(file)
     root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.file === file)))
     checkSyntaxSoon()
@@ -351,20 +350,25 @@ function boot(root: HTMLElement) {
     const item = chat.add("error", `This request does not fit the ${outcome.budgetTokens}-token budget. Memory always sends the system text and the message this turn answers, and leaves out only older messages; those two alone come to about ${outcome.estimatedTokens} tokens. No request was sent. Your message stays in the journal, so once the budget is raised it goes with your next message: no need to send it again.`)
     const actions = document.createElement("div")
     actions.className = "msg-actions"
-    const raised = raisedBudget(outcome)
-    const raise = document.createElement("button")
-    raise.type = "button"
-    raise.className = "btn btn-quiet"
-    raise.textContent = `Raise budget to ${raised}`
-    raise.addEventListener("click", async () => {
-      const next = setField(editor.agentSource(), "budgetTokens", raised)
-      if (Option.isNone(next)) return
-      editor.setAgentSource(next.value)
-      await rebuild()
-      actions.remove()
+    Option.match(lesson.raisedBudget(outcome), {
+      onNone: () => {},
+      onSome: (raised) => {
+        const raise = document.createElement("button")
+        raise.type = "button"
+        raise.className = "btn btn-quiet"
+        raise.textContent = `Raise budget to ${raised}`
+        raise.addEventListener("click", async () => {
+          // Written into the code as it is when clicked; a budget line the learner removed is left alone.
+          const next = Option.flatMap(Option.fromNullishOr(lesson.controls.budgetTokens), (control) => control.write(editor.source(lesson.mainFile), raised))
+          if (Option.isNone(next)) return
+          editor.setSource(lesson.mainFile, next.value)
+          await rebuild()
+          actions.remove()
+        })
+        actions.append(raise)
+        item.append(actions)
+      },
     })
-    actions.append(raise)
-    item.append(actions)
   }
 
   // ── panes: maximise, focus ──────────────────────────────────────────────
@@ -374,15 +378,16 @@ function boot(root: HTMLElement) {
     if (grid.dataset.max === pane) { delete grid.dataset.max; button.textContent = "⤢" } else { grid.dataset.max = pane; button.textContent = "⤡" }
   }))
 
-  const ALL_SECTIONS: ReadonlyArray<Section> = ["imports", "base", "run"]
   type Focus = { pane?: string | undefined; file?: string | undefined; unfold?: string | undefined; view?: string | undefined; wide?: string | undefined }
   const applyFocus = (detail: Focus) => {
     ctx.showView(detail.view ?? "inspector")
     if (detail.wide === "true") grid.dataset.wide = "true"; else delete grid.dataset.wide
     if (detail.pane) { grid.dataset.focus = detail.pane; root.dataset.focus = detail.pane } else { delete grid.dataset.focus; delete root.dataset.focus }
-    showFile(detail.file === "tiny" ? "tiny" : "agent")
+    const file = fileOf(detail.file)
+    showFile(file)
     const open = new Set((detail.unfold ?? "").split(",").map((s) => s.trim()))
-    if (detail.file !== "tiny") editor.foldOnly(ALL_SECTIONS.filter((section) => !open.has(section)))
+    const sections = lesson.files.find((entry) => entry.id === file)?.sections ?? []
+    editor.foldOnly(sections.map((section) => section.id).filter((section) => !open.has(section)))
   }
   window.addEventListener("learn:focus", (event) => applyFocus((event as CustomEvent<Focus>).detail))
   const active = document.querySelector<HTMLElement>("[data-step][data-active]")
@@ -390,61 +395,54 @@ function boot(root: HTMLElement) {
 
   // ── lesson controls and experiments ─────────────────────────────────────
   const controlEls = [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[data-control]")]
-  const keyOf = (control: HTMLElement): ControlKey | undefined => {
-    const key = control.dataset.control
-    return key === "system" || key === "budgetTokens" || key === "memory" ? key : undefined
-  }
+  const controlOf = (control: HTMLElement) => Option.fromNullishOr(lesson.controls[control.dataset.control ?? ""])
+  const readControl = (key: string) => Option.flatMap(Option.fromNullishOr(lesson.controls[key]), (control) => control.read(editor.source(lesson.mainFile)))
   function syncControls() {
-    const values = readControls(editor.agentSource())
     controlEls.forEach((control) => {
-      const key = keyOf(control)
-      const value = key === undefined ? undefined : values[key]
-      control.disabled = value === undefined
-      if (value !== undefined && document.activeElement !== control) control.value = String(value)
+      const value = readControl(control.dataset.control ?? "")
+      control.disabled = Option.isNone(value)
+      if (Option.isSome(value) && document.activeElement !== control) control.value = String(value.value)
     })
     // The inspector's budget readout follows the code, not the other way round.
-    if (values.budgetTokens !== undefined) document.querySelectorAll<HTMLElement>("[data-insp-budget]").forEach((out) => { out.textContent = String(values.budgetTokens) })
+    Option.match(readControl("budgetTokens"), {
+      onNone: () => {},
+      onSome: (budget) => document.querySelectorAll<HTMLElement>("[data-insp-budget]").forEach((out) => { out.textContent = String(budget) }),
+    })
     document.querySelectorAll<HTMLElement>("[data-controls-note]").forEach((note) => { note.hidden = controlEls.every((control) => !control.disabled) })
   }
   let pending: ReturnType<typeof setTimeout> | undefined
   controlEls.forEach((control) => control.addEventListener("input", () => {
-    const key = keyOf(control)
-    if (key === undefined) return
-    const raw = key === "budgetTokens" ? Number(control.value) : control.value
+    const bound = controlOf(control)
+    if (Option.isNone(bound)) return
+    // A number field or a slider writes a number; text and a choice write text.
+    const numeric = control instanceof HTMLInputElement && (control.type === "number" || control.type === "range")
+    const raw = numeric ? Number(control.value) : control.value
     if (typeof raw === "number" && !Number.isFinite(raw)) return
-    Option.match(setField(editor.agentSource(), key, raw), {
+    Option.match(bound.value.write(editor.source(lesson.mainFile), raw), {
       onNone: () => {},
       onSome: (next) => {
-        editor.setAgentSource(next)
+        editor.setSource(lesson.mainFile, next)
         clearTimeout(pending)
         pending = setTimeout(() => void rebuild(), 400)
       },
     })
   }))
 
-  const experiments: Record<string, () => Option.Option<string>> = {
-    pirate: () => setField(editor.agentSource(), "system", "You are a pirate. Answer in at most two short sentences, and always say arr."),
-    "no-memory": () => withoutMemory(editor.agentSource()),
-    "tiny-budget": () => setField(editor.agentSource(), "budgetTokens", 5),
-    "swap-memory": () => setField(editor.agentSource(), "memory", readControls(editor.agentSource()).memory === "last" ? "window" : "last"),
-    "last-memory": () => setField(editor.agentSource(), "memory", "last"),
-    "window-memory": () => setField(editor.agentSource(), "memory", "window"),
-  }
   document.querySelectorAll<HTMLElement>("[data-exp]").forEach((button) => button.addEventListener("click", async () => {
-    const make = experiments[button.dataset.exp ?? ""]
+    const make = lesson.experiments[button.dataset.exp ?? ""]
     if (!make) return
-    const next = make()
+    const next = make(editor.source(lesson.mainFile))
     if (Option.isNone(next)) {
       buildBox.dataset.state = "error"
       buildBox.textContent = "This experiment could not find its line in your code. Press Reset in the Code pane to bring it back."
       return
     }
-    editor.setAgentSource(next.value)
+    editor.setSource(lesson.mainFile, next.value)
     await rebuild()
   }))
 
   // "Send 5 short messages": queued at once through the inbox, to build up a conversation to look at.
-  document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => void send(FILL)))
+  document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => void send(lesson.fill)))
 
   // ── start ───────────────────────────────────────────────────────────────
   // Echo and the agent come up at once; the device probe (a GPU lookup that can

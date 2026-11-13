@@ -1,11 +1,11 @@
 // The learner's memory, as the page evaluates it, held to the memory kit.
 import { describe, expect, test } from "bun:test"
-import { Array as Arr, Context, Effect, Layer, Order } from "effect"
+import { Array as Arr, Context, Effect, Layer, Order, Result } from "effect"
 import { Core } from "@xandreed/core/kernel"
 import type { ConformanceCheck } from "@xandreed/core/kernel"
 import { Memory, memoryConformance, Settings, windowMemory } from "@xandreed/sdk/kernel"
 import type { MemorySubject } from "@xandreed/sdk/kernel"
-import { evaluateTiny } from "./runtime.ts"
+import { evaluateTiny } from "./lesson.ts"
 import { DEFAULT_TINY } from "./tiny-memory.source.ts"
 
 const system = "You are a friendly tutor. Keep answers short."
@@ -17,7 +17,7 @@ const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) =>
     .then((failed) => Arr.sort(failed.flat(), Order.String))
 
 /** `lastMessages` exactly as the page evaluates the default text. */
-const lastMessages = evaluateTiny(DEFAULT_TINY) as (options: { readonly n: number; readonly budgetTokens: number }) => Layer.Layer<Memory, never, Settings>
+const lastMessages = Result.getOrThrow(evaluateTiny(DEFAULT_TINY)) as (options: { readonly n: number; readonly budgetTokens: number }) => Layer.Layer<Memory, never, Settings>
 
 const subject = (n: number): MemorySubject => ({
   name: "last",

@@ -5,12 +5,12 @@ interface Props {
   id: string
   /** The pane this step is about: it is outlined while the step is shown. */
   focus?: "model" | "code" | "chat" | "context"
-  /** Code pane: which file to show. */
-  file?: "agent" | "tiny"
+  /** Code pane: which of the lesson's files to show, by id; its main file when left out. */
+  file?: string
   /** Code pane: which read-only sections to unfold. */
   unfold?: string
   /** Context pane: which view to show. */
-  view?: "loop" | "inspector"
+  view?: string
   /** Give the Context pane the full width of the workbench while this step is shown. */
   wide?: boolean
 }

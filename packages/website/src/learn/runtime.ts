@@ -1,18 +1,19 @@
 // The lesson runtime: the kernel, running in the page. The base (events, the
 // journal, sessions) is built once in a root scope, and the page listens on
-// its Core once. Each rebuild evaluates the learner's agent expression and
-// builds it in a child scope over the base and the loaded model; the previous
-// child scope is closed first, so no event reaches two agents.
-import { Cause, Context, Effect, Exit, Layer, Option, Predicate, Scope } from "effect"
+// its Core once. Each rebuild evaluates the learner's code (the lesson says
+// how) and builds it in a child scope over the base and the loaded model; the
+// previous child scope is closed first, so no event reaches two agents.
+import { Cause, Context, Effect, Exit, Layer, Option, Predicate, Result, Scope } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Core, kernel, messageOf, readerFor, readJournal, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import { Core, kernel, messageOf, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Delivered, JournalStorage, SessionId, StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
 import {
-  assistantDeltaEvent, assistantMessageEvent, estimateRequest, Inbox, inbox, inboxQueuedEvent, inProcessJournal, isOverBudget, LOOP_READER,
-  Memory, OverBudget, requestSentEvent, sessions, settings, Settings, stepLoop, Tokens, userMessageEvent, windowDroppedEvent, windowMemory,
-  windowPressureEvent,
+  assistantDeltaEvent, assistantMessageEvent, Inbox, inboxQueuedEvent, inProcessJournal, isOverBudget, requestSentEvent, sessions, userMessageEvent,
+  windowDroppedEvent, windowPressureEvent,
 } from "@xandreed/sdk/kernel"
 import type { Reply } from "@xandreed/sdk/kernel"
+import { buildFailure, textOf } from "./evaluate.ts"
+import type { Lesson, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
 
 const OWNER = "learner"
@@ -60,61 +61,6 @@ export interface Sent {
   readonly outcome: Promise<SendOutcome>
 }
 
-/** The names the memory's code may use (see tiny-memory.source.ts). */
-const tinyNames = { Effect, Layer, Option, messageOf, readerFor, readJournal, estimateRequest, LOOP_READER, Memory, OverBudget, Settings, Tokens }
-
-/**
- * Evaluate a JavaScript expression with the given names in scope. It is no
- * sandbox (globals stay reachable); it only keeps the names the program
- * imports the ones the learner's code sees, so a name it does not import
- * fails as "not defined".
- */
-const evaluate = (source: string, names: Record<string, unknown>): unknown => {
-  const keys = Object.keys(names)
-  return new Function(...keys, `"use strict"; return (${source}\n)`)(...keys.map((key) => names[key]))
-}
-
-const textOf = (error: unknown): string =>
-  error instanceof Error ? error.message
-    : Predicate.hasProperty(error, "message") && Predicate.isString(error.message) ? error.message
-      : String(error)
-
-/** Evaluate the learner's memory file: a function that makes a memory layer. */
-export const evaluateTiny = (source: string): unknown => evaluate(source, tinyNames)
-
-/** Evaluate the learner's agent expression; `lastMessages` is the learner's own memory, when the agent uses it. */
-export const evaluateAgent = (source: string, lastMessages: unknown = undefined): unknown =>
-  evaluate(source, { Layer: checkedLayer, inbox, stepLoop, windowMemory, settings, lastMessages })
-
-/** A part handed to `Layer.provideMerge` that is no layer, said in words: most often a function not called. */
-const notALayer = (part: unknown): Error => new Error(Predicate.isFunction(part)
-  ? "Layer.provideMerge was given a function, not a layer. Call it: windowMemory({ budgetTokens: 3000 }), lastMessages({ n: 1, budgetTokens: 3000 })."
-  : `Layer.provideMerge was given ${part === undefined ? "undefined" : typeof part}, not a layer.`)
-
-/**
- * Effect's `Layer`, as the learner's code sees it: the same module, but a
- * part given to `provideMerge` that is no layer is refused when the
- * expression is evaluated, in words, rather than deep inside the build.
- */
-const checkedLayer = {
-  ...Layer,
-  provideMerge: (...parts: ReadonlyArray<unknown>) => {
-    const bad = parts.find((part) => !Layer.isLayer(part))
-    if (bad !== undefined || parts.length === 0) throw notALayer(bad)
-    return Reflect.apply(Layer.provideMerge, undefined, parts)
-  },
-}
-
-/** Why a build failed, in words: the error a part failed with, or the defect (a missing service, or an error thrown by the learner's code). */
-const buildFailure = (cause: Cause.Cause<unknown>): string => {
-  const failure = Cause.findErrorOption(cause)
-  const reason = Option.isSome(failure) ? textOf(failure.value) : Cause.prettyErrors(cause)[0]?.message ?? "the stack did not build"
-  const missing = /Service not found: (\S+)/.exec(reason)?.[1]
-  if (missing !== undefined) return `nothing in the stack provides ${missing.split("/").at(-1)}, and a part above it needs it (${reason}).`
-  const thrown = Option.isNone(failure) ? Cause.prettyErrors(cause)[0]?.name : undefined
-  return thrown !== undefined && /^(Reference|Type|Range)Error$/.test(thrown) ? `your code threw a ${thrown} while the agent was built: ${reason}` : reason
-}
-
 /** A reply's end as the page shows it. */
 const outcomeOf = (reply: Effect.Effect<Reply, unknown>): Effect.Effect<SendOutcome> => Effect.matchCause(reply, {
   onSuccess: (done): SendOutcome => ({ _tag: "Replied", text: done.text }),
@@ -140,22 +86,24 @@ export class LessonRuntime {
   private nextId = 1
   private unsettled = 0
   /** A rebuild asked for while replies were unsettled: the latest source, and whoever waits for its result. */
-  private deferred: Option.Option<{ agent: string; tiny: string; readonly waiters: Array<(result: BuildResult) => void> }> = Option.none()
-  private last = { agent: "", tiny: "" }
+  private deferred: Option.Option<{ sources: Sources; readonly waiters: Array<(result: BuildResult) => void> }> = Option.none()
+  private last: Sources = {}
   private building: Promise<void> = Promise.resolve()
 
   private constructor(
+    private readonly evaluate: Lesson["evaluate"],
     private readonly root: Scope.Closeable,
     private readonly base: Context.Context<BaseServices>,
     private session: SessionId,
   ) {}
 
-  static async create(): Promise<LessonRuntime> {
+  /** A runtime for one lesson: `evaluate` turns the learner's files into the stack to build. */
+  static async create(evaluate: Lesson["evaluate"]): Promise<LessonRuntime> {
     const root = await Effect.runPromise(Scope.make())
     const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
     const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
     const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
-    const runtime = new LessonRuntime(root, base, session)
+    const runtime = new LessonRuntime(evaluate, root, base, session)
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
   }
@@ -231,12 +179,12 @@ export class LessonRuntime {
    * rebuild waits, and the latest source asked for is the one built once
    * every reply has settled; the promise resolves then.
    */
-  rebuild(agent: string, tiny: string): Promise<BuildResult> {
-    if (!this.busy) return this.build(agent, tiny)
+  rebuild(sources: Sources): Promise<BuildResult> {
+    if (!this.busy) return this.build(sources)
     return new Promise((resolve) => {
       this.deferred = Option.some(Option.match(this.deferred, {
-        onNone: () => ({ agent, tiny, waiters: [resolve] }),
-        onSome: (pending) => ({ agent, tiny, waiters: [...pending.waiters, resolve] }),
+        onNone: () => ({ sources, waiters: [resolve] }),
+        onSome: (pending) => ({ sources, waiters: [...pending.waiters, resolve] }),
       }))
     })
   }
@@ -252,25 +200,19 @@ export class LessonRuntime {
    * lands while another build runs waits for it, so no agent is left open
    * behind the one the page holds.
    */
-  private build(agent: string, tiny: string): Promise<BuildResult> {
-    const next = this.building.then(() => this.buildNow(agent, tiny))
+  private build(sources: Sources): Promise<BuildResult> {
+    const next = this.building.then(() => this.buildNow(sources))
     this.building = next.then(() => undefined, () => undefined)
     return next
   }
 
-  private async buildNow(agent: string, tiny: string): Promise<BuildResult> {
-    this.last = { agent, tiny }
+  private async buildNow(sources: Sources): Promise<BuildResult> {
+    this.last = sources
     await this.closeUpper()
     if (Option.isNone(this.model)) return { _tag: "Refused", message: "Pick a model first." }
-    let lastMessages: unknown = undefined
-    if (agent.includes("lastMessages")) {
-      const made = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluateTiny(tiny), catch: textOf })))
-      if (Exit.isFailure(made)) return { _tag: "Refused", message: `tiny-memory.ts did not run: ${buildFailure(made.cause)}` }
-      lastMessages = made.value
-    }
-    const evaluated = Effect.runSync(Effect.exit(Effect.try({ try: () => evaluateAgent(agent, lastMessages), catch: textOf })))
-    if (Exit.isFailure(evaluated)) return { _tag: "Refused", message: `agent.ts did not run: ${buildFailure(evaluated.cause)}` }
-    const stack = evaluated.value
+    const evaluated = this.evaluate(sources)
+    if (Result.isFailure(evaluated)) return { _tag: "Refused", message: evaluated.failure }
+    const stack = evaluated.success
     if (!isUpperStack(stack)) return { _tag: "Refused", message: "The agent must be a layer, such as inbox.pipe(...)." }
     const services = Context.add(this.base, LanguageModel.LanguageModel, this.model.value.model)
     const scope = await Effect.runPromise(Scope.fork(this.root))
@@ -326,7 +268,7 @@ export class LessonRuntime {
     const pending = this.deferred
     this.deferred = Option.none()
     if (Option.isNone(pending)) return
-    const result = await this.build(pending.value.agent, pending.value.tiny)
+    const result = await this.build(pending.value.sources)
     pending.value.waiters.forEach((resolve) => resolve(result))
   }
 
@@ -341,8 +283,8 @@ export class LessonRuntime {
     this.deferred = Option.none()
     if (Option.isSome(this.model)) this.model.value.interrupt()
     await this.closeUpper()
-    const source = Option.match(pending, { onNone: () => this.last, onSome: (value) => ({ agent: value.agent, tiny: value.tiny }) })
-    const result = await this.build(source.agent, source.tiny)
+    const sources = Option.match(pending, { onNone: () => this.last, onSome: (value) => value.sources })
+    const result = await this.build(sources)
     if (Option.isSome(pending)) pending.value.waiters.forEach((resolve) => resolve(result))
     return result
   }
