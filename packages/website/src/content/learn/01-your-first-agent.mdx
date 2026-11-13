@@ -43,7 +43,7 @@ Read **agent.ts** from the bottom up.
 
 **`main`** gives `program` the modules it asks for. Each `Effect.provide` adds one: `flatMemory` from memory.ts, the chat over this page's pane, sessions, the journal, the kernel and the model you picked. If one is missing, the program stops the first time it asks for it.
 
-**`program`** runs as long as the page is open. On boot it hooks an event: when a turn starts, it sets the chat's status line (above the chat). Then it takes each message from `chat.messages` and runs **`turn`** on it, one at a time, so a message sent mid-turn waits for its own. A failed turn is shown in the chat, and the program goes on.
+**`program`** runs as long as the page is open. On boot it hooks an event: when a turn starts, it sets the chat's status line (above the chat). Then it takes a message from `chat.messages` and runs **`turn`** on it. The turn also takes every message that waited behind it (`chat.drain`), stores them all, and answers them together. So messages sent while a turn runs are answered by the next one. A failed turn is shown in the chat, and the program goes on.
 
 **chat.ts** (read-only) is where messages come from: Send puts yours on a queue, and `chat.messages` hands them over.
 
@@ -71,9 +71,9 @@ The **journal** holds the conversation and nothing derived: turn records, your m
 
 <Step n={5} id="queue" title="Many messages" focus="chat">
 
-Press **Send three at once**. All three wait in the queue (marked *waiting*), and the program takes them one by one: each gets a turn of its own, in order, and each turn's context has the turns before it.
+Press **Send three at once**. The first starts a turn, and the turn takes the other two with it: all three are stored, in order, and one answer replies to them together.
 
-Send a message while an answer is streaming: it waits for its own turn. In later lessons a turn runs many steps, and a message sent mid-turn becomes a way to steer it.
+Send two messages while an answer is streaming. They wait (marked *waiting*), and the next turn takes both. In lesson 2 a turn runs many steps, and a message sent mid-turn joins the turn that is running, to steer it.
 
 **Stop** stops the running turn, drops the waiting messages and runs your program again. **Clear context** starts a new, empty conversation; the old one stays in the journal store.
 
@@ -103,7 +103,7 @@ That adds `.slice(-2)`. Send a few messages and open the **Context** tab: older 
 
 Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories (a window that drops whole turns rarely, a summary, pointers the model can recall) are the next lessons.
 
-The kit that checks the stock memories checks yours too (`memoryConformance`): flat memory passes every check.
+The kit that checks the stock memories checks yours too (`memoryConformance`). This flat memory passes every check but one, `pairs`, about tool calls and their results. This lesson has no tools: lesson 2 adds them, and the rule.
 
 </Step>
 
@@ -115,6 +115,6 @@ The kit that checks the stock memories checks yours too (`memoryConformance`): f
 
 After breaking it, press **Reset** in the Code pane.
 
-**Next:** tools. Your turn becomes a loop: the model asks for a tool, your program runs it and calls the model again, and a message sent mid-turn steers it. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
+**Next:** [tools](/learn/tools/). Your turn becomes a loop: the model asks for a tool, your program runs it and calls the model again, and a message sent mid-turn steers it. To see how the kernel is put together, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
 
 </Step>

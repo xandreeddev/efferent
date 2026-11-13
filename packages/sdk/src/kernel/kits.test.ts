@@ -23,9 +23,9 @@ import {
 } from "@xandreed/core/kernel"
 import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import type { ConformanceCheck, JournalStorageSubject, PluginFailure, SessionsSubject, StoredEvent } from "@xandreed/core/kernel"
+import type { ConformanceCheck, JournalStorageSubject, Message, PluginFailure, SessionsSubject, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import { flatMemory, inProcessJournal, sessions, windowDroppedEvent, windowMemory } from "./index.js"
+import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -201,7 +201,7 @@ describe("the memory kit", () => {
   const budgetTokens = 200
   const subject = (name: string, layer: Layer.Layer<Memory, PluginFailure, Core>, budget: number | null = budgetTokens): MemorySubject =>
     ({ name, ...(budget === null ? {} : { budgetTokens: budget }), open: (core) => built(Memory, layer, onCore(core)) })
-  const every = ["turn-message", "conversation", "other-uses", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "unknown-conversation-refused", "foreign"]
+  const every = ["turn-message", "conversation", "pairs", "other-uses", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "unknown-conversation-refused", "foreign"]
 
   test("has the checks its doc comment lists, and passes on the window memory plugin", async () => {
     expect(ids(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual(every)
@@ -223,8 +223,8 @@ describe("the memory kit", () => {
       }),
     })))
   /** Every message a record bears, whatever the record is for. */
-  const bearing = (journal: ReadonlyArray<{ readonly message?: { readonly _tag: "User" | "Assistant"; readonly text: string } }>) =>
-    journal.flatMap((event) => event.message === undefined ? [] : [{ role: event.message._tag === "User" ? "user" as const : "assistant" as const, content: event.message.text }])
+  const bearing = (journal: ReadonlyArray<{ readonly message?: Message }>) =>
+    journal.flatMap((event) => event.message === undefined ? [] : [{ role: event.message._tag === "User" ? "user" as const : "assistant" as const, content: messageText(event.message) }])
 
   /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
   const strict = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
@@ -258,18 +258,25 @@ describe("the memory kit", () => {
   test("each careless memory fails the checks of what it is careless about, and between them every check", async () => {
     // It sends every message any record bears, reads no flag and keeps to no budget.
     const everything = await failedChecks(memoryConformance(careless("everything", bearing)))
-    expect(everything).toEqual(["fits", "other-uses", "over-budget", "unknown-conversation-refused", "unknown-refused"])
+    expect(everything).toEqual(["fits", "other-uses", "over-budget", "pairs", "unknown-conversation-refused", "unknown-refused"])
     // It sends nothing.
     const nothing = await failedChecks(memoryConformance(careless("nothing", () => [])))
-    expect(nothing).toEqual(["conversation", "fits", "over-budget", "turn-message", "unknown-conversation-refused", "unknown-refused"])
+    expect(nothing).toEqual(["conversation", "fits", "over-budget", "pairs", "turn-message", "unknown-conversation-refused", "unknown-refused"])
     // It writes a record in the conversation's name, then sends the last three messages of the conversation, each as the user's.
-    const sloppy = await failedChecks(memoryConformance(careless("sloppy", (journal) => journal.flatMap((event) => Option.toArray(messageOf(event))).slice(-3).map((message) => ({ role: "user" as const, content: message.text })), { writes: true })))
-    expect(sloppy).toEqual(["conversation", "fits", "over-budget", "own-records", "prefix", "turn-message", "unknown-conversation-refused", "unknown-refused"])
+    const sloppy = await failedChecks(memoryConformance(careless("sloppy", (journal) => journal.flatMap((event) => Option.toArray(messageOf(event))).slice(-3).map((message) => ({ role: "user" as const, content: messageText(message) })), { writes: true })))
+    expect(sloppy).toEqual(["conversation", "fits", "over-budget", "own-records", "pairs", "prefix", "turn-message", "unknown-conversation-refused", "unknown-refused"])
+    // It reads as the flat memory does, but sends every tool call, a call no result answers too.
+    const unpairedReader = readerFor("unpaired", [], CONVERSATION_READER)
+    const unpaired = await failedChecks(memoryConformance(subject("unpaired", Layer.succeed(Memory, Memory.of({
+      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(unpairedReader)(journal)), (records) =>
+        records.flatMap((record) => Option.toArray(messageOf(record))).map(promptMessage))),
+    })), null)))
+    expect(unpaired).toEqual(["pairs"])
     // It refuses records it should pass over: another plugin's, a record of another use, and its own that may be skipped.
     const refusing = await failedChecks(memoryConformance(strict()))
     expect(refusing).toEqual(["foreign", "other-uses", "unknown-skipped"])
     // It reads its own prefix and not the conversation's: an unknown record of the conversation passes.
     expect(await failedChecks(memoryConformance(ownPrefixOnly()))).toEqual(["unknown-conversation-refused"])
-    expect(sorted([...everything, ...nothing, ...sloppy, ...refusing])).toEqual(sorted(every))
+    expect(sorted([...new Set([...everything, ...nothing, ...sloppy, ...refusing, ...unpaired])])).toEqual(sorted(every))
   })
 })

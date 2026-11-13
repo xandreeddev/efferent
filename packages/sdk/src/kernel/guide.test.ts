@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import { assistantMessageEvent, Core, live, liveEvent, messageOf, originOf, userMessageEvent } from "@xandreed/core/kernel"
-import { promptMessage } from "./contracts/memory/memory.entity.functions.js"
+import { messageText, promptMessage } from "./contracts/memory/memory.entity.functions.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import { answering, open, recording, stack } from "./testing.js"
 
@@ -27,7 +27,7 @@ describe("the kernel guide's code", () => {
       yield* send(session, "Hello")
       const shown = yield* Fiber.join(answered)
       // #endregion follow
-      return shown.flatMap((event) => Option.toArray(Option.map(messageOf(event), (message) => message.text)))
+      return shown.flatMap((event) => Option.toArray(Option.map(messageOf(event), messageText)))
     })))
     expect(answers).toEqual(["Hello!"])
   })
@@ -112,12 +112,14 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the lesson's program, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the lesson's program, a turn with tools, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
       "packages/sdk/src/kernel/lesson.test.ts#turn",
       "packages/sdk/src/kernel/lesson.test.ts#program",
+      "packages/sdk/src/kernel/tools.test.ts#tools",
+      "packages/sdk/src/kernel/tools.test.ts#turn",
       "packages/sdk/src/kernel/guide.test.ts#follow",
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",
@@ -142,6 +144,7 @@ describe("docs/kernel.md", () => {
     const named = Array.from(new Set(Array.from(guide.matchAll(/`((?:plugin\.(?:session|loop|window|inbox)|core|conversation)\.[a-z.]+[a-z])`/g)).map((match) => match[1] ?? ""))).toSorted()
     expect(named).toEqual([
       "conversation.assistant.message",
+      "conversation.tool.result",
       "conversation.user.message",
       "core.listener.failed",
       "core.session.turn.ended",

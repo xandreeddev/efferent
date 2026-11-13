@@ -1,0 +1,21 @@
+---
+// Step 8: each button rewrites one of the learner's files and runs it again (see learn/playground.ts, `data-exp`).
+const experiments = [
+  { id: "broken-calculator", title: "Break a tool", button: "Break the calculator", text: "Every call now fails. The failure is stored as the tool's answer, and the model reads it: the turn does not fail." },
+  { id: "slow-calculator", title: "Steer a long run", button: "Make the calculator slow", text: "The calculator takes four seconds. Ask a sum, then, while it works, send another message: it joins the same turn before the model is asked again." },
+  { id: "no-steering", title: "Turn steering off", button: "Remove the drain", text: "With the calculator slow, a message sent while it works now waits for a turn of its own." },
+  { id: "one-step", title: "Cut the loop short", button: "Allow one step", text: "The turn stops after the model's first call. Its tool calls ran and their results are stored, but no answer was written from them." },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

@@ -6,7 +6,9 @@ where it goes next. The entries are `@xandreed/core/kernel` (what every
 agent has, whatever its workflow) and `@xandreed/sdk/kernel` (the workflow
 contracts and the stock plugins). What the journal holds, why records carry
 tags and why the kernel has no loop are recorded in
-[ADR 0003](adr/0003-journal-holds-the-conversation.md); why the line between
+[ADR 0003](adr/0003-journal-holds-the-conversation.md); how tool calls and
+their results are stored and sent, in
+[ADR 0004](adr/0004-tool-traffic-is-conversation.md); why the line between
 core and plugins runs where it does, in
 [ADR 0002](adr/0002-core-owns-state-plugins-own-workflows.md); how plugins
 compose, in [ADR 0001](adr/0001-kernel-plugin-composition.md).
@@ -190,6 +192,144 @@ id, with `InvalidSession`. A host that wants to see a session as its journal
 tells it reads it and calls `inspectionOf(journal)`: its header, state and
 events.
 
+## Tools: the turn becomes a loop
+
+A turn that uses tools is a loop over steps: the model answers, or asks for
+tools; the turn runs each call, stores the call and its result, and asks
+again, until the model answers without a call or a step limit is reached.
+The kernel adds no tool runtime. The tools are Effect AI's own `Toolkit`,
+declared in code like the system text, offered in every call and never
+stored, and the turn calls them through their handlers as it calls the
+model. The tools, quoted from the test that runs them:
+
+<!-- pinned: packages/sdk/src/kernel/tools.test.ts#tools -->
+
+```ts
+import { Effect, Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+
+// The tools: what each does, what it takes, and what it returns. Code, offered in every call, never stored.
+const Add = Tool.make("add", {
+  description: "Add two numbers.",
+  parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
+  success: Schema.Number,
+})
+const Divide = Tool.make("divide", {
+  description: "Divide a by b.",
+  parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
+  success: Schema.Number,
+  failure: Schema.String,
+  // A failure is returned to the model as the tool's answer, not raised.
+  failureMode: "return",
+})
+const tools = Toolkit.make(Add, Divide)
+
+// What each tool does when it is called.
+const toolsLive = tools.toLayer({
+  add: ({ a, b }) => Effect.succeed(a + b),
+  divide: ({ a, b }) => (b === 0 ? Effect.fail("cannot divide by zero") : Effect.succeed(a / b)),
+})
+```
+
+And the turn:
+
+<!-- pinned: packages/sdk/src/kernel/tools.test.ts#turn -->
+
+```ts
+import { Effect, Option, Stream } from "effect"
+import { LanguageModel, Prompt, Toolkit } from "effect/ai"
+import { assistantMessage, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
+import type { SessionId } from "@xandreed/core/kernel"
+import { Memory } from "@xandreed/sdk/kernel"
+
+// Run one call. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
+// The call is what the model sent, untyped: its name and parameters are checked by the toolkit, not here.
+const runTool = (toolkit: Toolkit.WithHandler<typeof tools.tools>, call: { readonly id: string; readonly name: string; readonly params: unknown }) =>
+  toolkit.handle(call.name as keyof typeof tools.tools, call.params as never).pipe(
+    Effect.flatMap(Stream.runLast),
+    Effect.map(Option.match({
+      onNone: () => toolResult(call, null),
+      onSome: (last) => toolResult(call, last.encodedResult, last.isFailure),
+    })),
+    // A failure (the tool's own, an unknown tool, wrong parameters), or a bug in a tool: an answer marked failed.
+    Effect.catch((error) => Effect.succeed(toolResult(call, error.message, true))),
+    Effect.catchDefect((defect) => Effect.succeed(toolResult(call, String(defect), true))),
+  )
+
+// One turn: the model answers, or asks for tools; their results are stored, and the model is asked again.
+const turn = (conversation: SessionId, message: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sessions = yield* Sessions
+      const memory = yield* Memory
+      const model = yield* LanguageModel.LanguageModel
+      const toolkit = yield* tools
+
+      const session = yield* sessions.open(conversation)
+      yield* session.append(userMessage(message))
+
+      for (let step = 1; step <= MAX_STEPS; step++) {
+        const history = yield* memory.context(session)
+        const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...history])
+
+        // Offer the tools, but run none: the turn runs the calls itself. A call the model got wrong comes through
+        // as it is ("deferred"), so it can be answered as a failure.
+        const parts = yield* model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
+          Stream.tap((part) => (part.type === "error" ? Effect.fail(part.error) : Effect.void)),
+          Stream.runCollect,
+        )
+        const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
+        const calls = parts.flatMap((part) => (part.type === "tool-call" ? [part] : []))
+
+        // Store the model's answer with the calls it made, then run each call and store its result.
+        yield* session.append(assistantMessage(text, { toolCalls: calls }))
+        if (calls.length === 0) return text
+        for (const call of calls) {
+          yield* session.append(yield* runTool(toolkit, call))
+        }
+      }
+      return `I stopped after ${MAX_STEPS} steps.`
+    }),
+  )
+```
+
+- **The turn runs the calls, not the model.** `streamText` is given the
+  toolkit with `disableToolCallResolution: true`: the model sees the tools,
+  and its `tool-call` parts come back unrun. With `toolCallValidation:
+  "deferred"` a call the model got wrong (a tool that does not exist,
+  parameters that do not decode) comes through as it is; the default would
+  fail the stream, and with it the turn.
+- **Failures are data.** A tool that fails with `failureMode: "return"`
+  answers with its failure; an unknown tool or bad parameters fail
+  `toolkit.handle`, and the turn stores that as a failed result. Either way
+  the model reads the failure as the answer to its call, and the turn goes
+  on. The failure text comes from Effect AI's toolkit, not from the kernel.
+- **Every call and result is a record.** The model's answer is stored with
+  the calls it made (`assistantMessage(text, { toolCalls })`, which takes the
+  stream's `tool-call` parts as they came), and each result as
+  `conversation.tool.result` (`toolResult(call, result, isFailure)`), both
+  tagged `conversation`. `promptMessage` sends a call as a part of the
+  model's message and a result as a tool message that answers it.
+- **A step limit ends a model that keeps asking.** Its last results are
+  stored; what the turn returns then is the program's own words, not the
+  model's, and is not stored.
+
+A turn stopped while a tool ran leaves a call with no result in the journal,
+and a memory that cuts the conversation can split a call from its result. A
+provider refuses a call nothing answers, so every memory sends its messages
+through `paired`: a call goes only with its result, a result only with its
+call, and an answer left with neither text nor a call is dropped. The
+journal keeps every record; `paired` decides only what is sent. The memory
+kit holds a memory to it (`pairs`): an answered call is sent with its result
+right after it, and an unanswered one not at all. The window memory drops
+whole turns only, so one long tool turn can go over its budget: it fails
+with `OverBudget` like any turn that alone does not fit (ADR 0004).
+
+Between steps a host may take messages that arrived meanwhile into the open
+turn, so a long run can be steered; the second lesson's chat does this
+with the messages waiting in its queue (`chat.drain`). That is the host's choice, not the
+kernel's.
+
 ## Records and tags
 
 A stored event is an envelope: its place in the journal (`seq`), when it was
@@ -205,7 +345,7 @@ reserved tags:
 
 | Tag | What it marks |
 |---|---|
-| `conversation` | what memory builds the context from: the user's and the model's messages, and a memory's own record that stands for some of them |
+| `conversation` | what memory builds the context from: the user's and the model's messages, the tools' results, and a memory's own record that stands for some of them |
 | `turn` | the session's own structure: a turn's start and end |
 | `memory` | a memory's own state, derived from the conversation and rebuildable from it |
 | `ui` | what a client draws |
@@ -223,7 +363,8 @@ when its writer has them.
 | `core.session.turn.started` | the session plugin, as a turn opens | stored | `turn` |
 | `core.session.turn.ended` | the session plugin, as a turn closes, with its outcome | stored | `turn` |
 | `conversation.user.message` | whoever runs the turn | stored; bears the message | `conversation` |
-| `conversation.assistant.message` | whoever runs the turn | stored; bears the message, its data the model and the usage | `conversation` |
+| `conversation.assistant.message` | whoever runs the turn | stored; bears the message (its text and the tool calls it made), its data the model and the usage | `conversation` |
+| `conversation.tool.result` | whoever runs the turn, after running a call | stored; bears the result, or the failure, and the call it answers | `conversation` |
 | `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped | `memory` |
 | `plugin.window.pressure` | the window memory, when a context came close to the budget | live only | `memory` |
 | `plugin.inbox.queued` | the inbox, as it queues a message, with its ticket | live only; about the session, no turn | `ui` |
@@ -410,7 +551,8 @@ export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
     context: Effect.fn("kernel.flat.context")(function* (session: OpenSession) {
       // Only the conversation's records and its own; a record it cannot read and may not skip is refused.
       const conversation = yield* Effect.fromResult(readJournal(FLAT_READER)(yield* session.journal))
-      return conversation.flatMap((record) => Option.toArray(messageOf(record))).map(promptMessage)
+      // A tool call goes only with its result: a turn stopped while a tool ran leaves a call nothing answers.
+      return paired(conversation.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage)
     }),
   }),
 )
@@ -440,7 +582,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.
       if (nearlyFull(fitted, options.pressureAt)) yield* core.publish(windowPressure(session, fitted))
-      return fitted.messages.map(promptMessage)
+      return paired(fitted.messages).map(promptMessage)
     }),
   })
 }))
@@ -595,20 +737,17 @@ as runnable checks, each check with an id that its failures name.
 
 ## What the first cut leaves out, and the order it returns
 
-This cut keeps journals in the process, and has one session plugin, two
-memories and no tool execution. What follows returns in this order.
+This cut keeps journals in the process, and has one session plugin and two
+memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
+(see "Tools: the turn becomes a loop"). What follows returns in this order.
 
-1. **Tools.** The program's turn becomes a loop over steps: it runs the tools
-   the model asked for, stores their calls and results, and asks again. A
-   message that arrives while a turn runs is drained between steps into the
-   open turn, so a long run can be steered.
-2. **Sub-agents.** A turn that hands a task to an agent of its own, in a
+1. **Sub-agents.** A turn that hands a task to an agent of its own, in a
    child session.
-3. **Compaction memories.** A summary of old turns, results replaced by
+2. **Compaction memories.** A summary of old turns, results replaced by
    pointers with a tool that reads them back, behind `memory.context`.
-4. **A UI rendering plugin**, whose client applies patches from records and
+3. **A UI rendering plugin**, whose client applies patches from records and
    events tagged `ui`.
-5. **Durable stores and crash recovery**, on the seam the fold of the
+4. **Durable stores and crash recovery**, on the seam the fold of the
    journal already gives.
 
 ## Keeping a tailored context cache-stable

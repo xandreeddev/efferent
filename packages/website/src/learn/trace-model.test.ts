@@ -26,11 +26,16 @@ const boardAfter = async (messages: ReadonlyArray<string>, sources = { agent: DE
   const done = new Promise<void>((resolve) => {
     runtime.onTrace((trace) => {
       board = record(board, trace, 0)
-      if (trace._tag === "Reply" && ++replies === messages.length) resolve()
+      // One by one: each message is sent once the one before has its answer, so each is a turn of its own.
+      if (trace._tag === "Reply") {
+        replies++
+        if (replies === messages.length) resolve()
+        else runtime.send(messages[replies]!)
+      }
     })
   })
   await runtime.start(sources)
-  messages.forEach((text) => runtime.send(text))
+  runtime.send(messages[0]!)
   await done
   return board
 }
@@ -41,11 +46,11 @@ describe("the Context tab's model", () => {
     expect(turnsOf(board)).toEqual([1])
     const view = viewOf(board, 1)
     expect(view.steps.map((step) => [step.id, step.state])).toEqual([
-      ["opened", "done"], ["stored-message", "done"], ["context", "done"], ["prompt", "done"], ["streamed", "done"], ["stored-answer", "done"], ["closed", "done"],
+      ["opened", "done"], ["stored-message", "done"], ["context-1", "done"], ["prompt-1", "done"], ["streamed-1", "done"], ["stored-answer-1", "done"], ["closed", "done"],
     ])
     expect(view.steps.find((step) => step.id === "stored-message")?.seqs).toEqual([2])
     expect(view.closed).toEqual(Option.some("Completed"))
-    expect(view.journal.map((row) => [row.seq, row.name, row.tags, row.use])).toEqual([
+    expect(view.calls.at(-1)!.journal.map((row) => [row.seq, row.name, row.tags, row.use])).toEqual([
       [1, "core.session.turn.started", ["turn"], "not-conversation"],
       [2, "conversation.user.message", ["conversation"], "in-context"],
       [3, "conversation.assistant.message", ["conversation"], "later"],
@@ -55,28 +60,28 @@ describe("the Context tab's model", () => {
 
   test("the second prompt's messages come from the records of turn 1 and its own, and its start is the first prompt", async () => {
     const view = viewOf(await boardAfter(["hello", "again"]), 2)
-    expect(Option.getOrThrow(view.prompt).map((row) => [row.role, row.source, Option.getOrNull(row.seq), row.reused])).toEqual([
+    expect(Option.getOrThrow(view.calls.at(-1)!.prompt).map((row) => [row.role, row.source, Option.getOrNull(row.seq), row.reused])).toEqual([
       ["system", "code", null, true],
       ["user", "memory", 2, true],
       ["assistant", "memory", 3, false],
       ["user", "memory", 6, false],
     ])
-    expect(view.reusedTokens).toBeGreaterThan(0)
-    expect(view.reusedTokens).toBeLessThan(view.promptTokens)
+    expect(view.calls.at(-1)!.reusedTokens).toBeGreaterThan(0)
+    expect(view.calls.at(-1)!.reusedTokens).toBeLessThan(view.calls.at(-1)!.promptTokens)
   })
 
   test("with memory keeping the last message, the older ones are left out, and only the system text is shared", async () => {
     const board = await boardAfter(["one", "two", "three"], { agent: DEFAULT_AGENT, memory: Option.getOrThrow(writeLastN(DEFAULT_MEMORY, 1)) })
     const view = viewOf(board, 3)
-    expect(Option.getOrThrow(view.memory).map((row) => [row.text, Option.getOrNull(row.seq)])).toEqual([["three", 10]])
-    expect(view.journal.filter((row) => row.use === "left-out").map((row) => row.seq)).toEqual([2, 3, 6, 7])
-    expect(Option.getOrThrow(view.prompt).map((row) => row.reused)).toEqual([true, false])
-    expect(view.steps.find((step) => step.id === "context")?.detail).toContain("4 left out by memory")
+    expect(Option.getOrThrow(view.calls.at(-1)!.memory).map((row) => [row.text, Option.getOrNull(row.seq)])).toEqual([["three", 10]])
+    expect(view.calls.at(-1)!.journal.filter((row) => row.use === "left-out").map((row) => row.seq)).toEqual([2, 3, 6, 7])
+    expect(Option.getOrThrow(view.calls.at(-1)!.prompt).map((row) => row.reused)).toEqual([true, false])
+    expect(view.steps.find((step) => step.id === "context-1")?.detail).toContain("4 left out by memory")
   })
 
   test("a message the code adds after the context is shown as added, never stored", async () => {
     const view = viewOf(await boardAfter(["hi"], { agent: Option.getOrThrow(withReminder(DEFAULT_AGENT)), memory: DEFAULT_MEMORY }), 1)
-    expect(Option.getOrThrow(view.prompt).map((row) => row.source)).toEqual(["code", "memory", "added"])
+    expect(Option.getOrThrow(view.calls.at(-1)!.prompt).map((row) => row.source)).toEqual(["code", "memory", "added"])
   })
 
   test("events of another conversation are not on the board", () => {

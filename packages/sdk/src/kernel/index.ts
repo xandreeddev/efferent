@@ -6,7 +6,7 @@
 // the host's own program, which asks for the layers it uses. Nothing
 // here imports the rest of the sdk, the runtime or a runtime module.
 export { Tokens } from "./contracts/memory/memory.entity.js"
-export { estimateContext, estimateTokens, promptMessage } from "./contracts/memory/memory.entity.functions.js"
+export { estimateContext, estimateTokens, messageText, paired, promptMessage } from "./contracts/memory/memory.entity.functions.js"
 export { Memory } from "./contracts/memory/memory.port.js"
 export type { MemoryFailure } from "./contracts/memory/memory.port.js"
 export { memoryConformance } from "./contracts/memory/memory.conformance.js"

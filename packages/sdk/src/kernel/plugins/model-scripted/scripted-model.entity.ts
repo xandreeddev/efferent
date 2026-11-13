@@ -1,12 +1,14 @@
 import { Schema } from "effect"
 
 /**
- * What a scripted model does with one call: stream these pieces as its answer, or fail.
+ * What a scripted model does with one call: stream these pieces as its answer, ask for tools, or fail.
  *
  * @public
  */
 export const ModelAnswer = Schema.Union([
   Schema.TaggedStruct("Answers", { pieces: Schema.Array(Schema.String) }),
+  // Streams its pieces, if any, then asks for these tools, in order.
+  Schema.TaggedStruct("Calls", { pieces: Schema.Array(Schema.String), calls: Schema.Array(Schema.Struct({ name: Schema.String, params: Schema.Json })) }),
   Schema.TaggedStruct("Fails", {}),
 ])
 export type ModelAnswer = typeof ModelAnswer.Type

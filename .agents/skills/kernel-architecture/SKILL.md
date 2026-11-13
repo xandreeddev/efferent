@@ -5,9 +5,14 @@ description: How the efferent kernel's parts compose — what core owns and what
 
 # Change the kernel's architecture
 
-Three records hold the decisions. Read them before you design; this skill is the
+Four records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0004-tool-traffic-is-conversation.md`: the tools are Effect AI's `Toolkit`
+  (no kernel service); tool definitions are code, never stored; a call and its result
+  are conversation records (`assistantMessage(text, { toolCalls })`,
+  `conversation.tool.result` from `toolResult`); a tool's failure is a stored result and
+  the turn goes on; every memory sends through `paired`.
 - `docs/adr/0003-journal-holds-the-conversation.md`: the journal holds the conversation
   and nothing derived from configuration; the conversation's records
   (`conversation.user.message`, `conversation.assistant.message`) are core's; records carry
@@ -37,7 +42,11 @@ checklist, the records have the reasons.
       a memory's own records are tagged `memory` and derived from the conversation, never a
       copy of it.
 - [ ] Nothing derived from configuration is stored: no system text, no request, no
-      pointers to what was sent.
+      pointers to what was sent, no tool definitions.
+- [ ] Tool calls and their results are stored as conversation records, a failure as a
+      result with `isFailure`, never as a failed turn.
+- [ ] A memory sends its messages through `paired`, so no call goes without its result;
+      the memory kit's `pairs` check holds it to that.
 
 ## Choose the way
 

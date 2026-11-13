@@ -15,13 +15,24 @@ import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
 import { Chat } from "./page-chat.ts"
+import { saidOfMessage } from "./said.ts"
 
 const OWNER = "learner"
 
-/** A message as the page shows it: who it is from, and its text. */
+/**
+ * A message as the page shows it: who it is from, its text, and the key that matches it to the record it came
+ * from (a tool call and a result have no text of their own to match by: they match by the call's id).
+ */
 export interface Said {
   readonly role: string
   readonly text: string
+  readonly key: string
+  /** The tool calls a model's message makes, by id. */
+  readonly callIds?: ReadonlyArray<string>
+  /** The call a tool's result answers. */
+  readonly resultId?: string
+  /** A model's message's own text, without its calls. */
+  readonly body?: string
 }
 
 /** What the provider said a call cost, when it said. */
@@ -37,8 +48,8 @@ export type Trace =
   | { readonly _tag: "Event"; readonly event: KernelEvent }
   /** What memory built for a turn: the messages after the system text, from the journal as it was up to record `upTo`. */
   | { readonly _tag: "Context"; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
-  /** A prompt the model received, in the turn open when it was sent. */
-  | { readonly _tag: "Prompt"; readonly turn: number; readonly messages: ReadonlyArray<Said> }
+  /** A prompt the model received, in the turn open when it was sent, and the tools offered with it. */
+  | { readonly _tag: "Prompt"; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string> }
   /** What the provider reported the last prompt cost. */
   | { readonly _tag: "Usage"; readonly turn: number; readonly usage: Reported }
   /** What the program told the chat, after the turn it last opened. */
@@ -54,11 +65,6 @@ export type BuildResult =
   | { readonly _tag: "Refused"; readonly message: string }
 
 type BaseServices = Core | JournalStorage | Sessions
-
-/** A prompt message's text, decoded or encoded: its string, or the text of its parts. */
-const textOfMessage = (message: { readonly content: string | ReadonlyArray<object> }): string =>
-  typeof message.content === "string" ? message.content
-    : message.content.map((part) => ("text" in part && typeof part.text === "string" ? part.text : "")).join("")
 
 const count = (value: unknown, key: string): Option.Option<number> =>
   typeof value === "object" && value !== null && key in value && typeof (value as Record<string, unknown>)[key] === "number"
@@ -80,8 +86,7 @@ const usageOf = (part: unknown): Option.Option<Reported> => {
   })
 }
 
-const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> =>
-  Prompt.make(raw).content.map((message) => ({ role: message.role, text: textOfMessage(message) }))
+const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> => Prompt.make(raw).content.map(saidOfMessage)
 
 export class LessonRuntime {
   private model: Option.Option<LoadedModel> = Option.none()
@@ -173,6 +178,8 @@ export class LessonRuntime {
       // One message at a time: a message is taken off the queue only when a turn is ready for it,
       // so what waits stays in the queue, where a rebuild keeps it and Stop drops it.
       messages: Stream.fromEffectRepeat(Queue.take(this.queue)),
+      // Every message waiting now, taken at once: a turn that runs many steps takes them between steps.
+      drain: Effect.map(Queue.clear(this.queue), (taken) => Array.from(taken)),
       stream: (piece) => Effect.suspend(() => emit({ _tag: "Piece", turn: this.lastTurn, text: piece })),
       reply: (text) => Effect.suspend(() => emit({ _tag: "Reply", turn: this.lastTurn, text })),
       fail: (error) => Effect.suspend(() => emit({ _tag: "Failed", turn: this.lastTurn, message: textOf(error) })),
@@ -182,9 +189,11 @@ export class LessonRuntime {
     const turnOf = () => this.openTurn
     const watched = LanguageModel.LanguageModel.of({
       ...inner,
-      streamText: ((options: { readonly prompt: Prompt.RawInput }) => {
+      streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => {
         const turn = turnOf()
-        this.emit({ _tag: "Prompt", turn, messages: saidOf(options.prompt) })
+        const kit = options.toolkit
+        const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
+        this.emit({ _tag: "Prompt", turn, messages: saidOf(options.prompt), tools })
         return Reflect.apply(inner.streamText, inner, [options]).pipe(
           Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", turn, usage }) })),
         )
@@ -201,7 +210,7 @@ export class LessonRuntime {
       watchMemory: (layer) => Layer.effect(Memory, Effect.map(Effect.gen(function* () { return yield* Memory }), (memory) => Memory.of({
         context: (session) => Effect.tap(memory.context(session), (messages) =>
           Effect.flatMap(Effect.orElseSucceed(session.journal, () => []), (journal) =>
-            emit({ _tag: "Context", turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map((message) => ({ role: message.role, text: textOfMessage(message) })) }))),
+            emit({ _tag: "Context", turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map(saidOfMessage) }))),
       }))).pipe(Layer.provide(layer)),
     }
   }

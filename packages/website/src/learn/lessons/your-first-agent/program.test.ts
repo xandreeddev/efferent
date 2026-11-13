@@ -36,26 +36,36 @@ const write = (name: string, program: string, memory: string = DEFAULT_MEMORY) =
 type Pane = { readonly onSend: (send: (text: string) => void) => void; readonly appendToAnswer: (piece: string) => void; readonly finishAnswer: (text: string) => void; readonly showError: (error: unknown) => void; readonly showStatus: (text: string) => void }
 type Run = (pane: Pane, model: Layer.Layer<LanguageModel.LanguageModel>) => Effect.Effect<void, unknown>
 
-/** Run `main` from the module at `file`, send `messages` through its pane, and stop the program once each has its answer. */
-const runMain = (file: URL, messages: ReadonlyArray<string>, script: Parameters<typeof scriptedModel>[0]) => Effect.gen(function* () {
+/**
+ * Run `main` from the module at `file`, send `messages` through its pane, and stop the program once they are
+ * answered. One by one, each is sent once the one before has its answer; at once, all are sent together, and one
+ * turn takes them all.
+ */
+const runMain = (file: URL, messages: ReadonlyArray<string>, script: Parameters<typeof scriptedModel>[0], sending: "one by one" | "at once" = "one by one") => Effect.gen(function* () {
   const { run } = (yield* Effect.promise(() => import(file.href))) as { run: Run }
   const { model, calls } = yield* scriptedModel(script)
   const shown = yield* Ref.make<Shown>({ pieces: [], replies: [], errors: [], status: [] })
   const done = yield* Deferred.make<void>()
   const sent = yield* Deferred.make<(text: string) => void>()
   const note = (key: keyof Shown, text: string) => Effect.runSync(Ref.update(shown, (all) => ({ ...all, [key]: [...all[key], text] })))
-  const settled = () => Effect.runSync(Effect.flatMap(Ref.get(shown), (all) => all.replies.length + all.errors.length >= messages.length ? Deferred.succeed(done, undefined) : Effect.void))
+  const expected = sending === "at once" ? 1 : messages.length
+  let send: (text: string) => void = () => {}
+  const settled = () => Effect.runSync(Effect.flatMap(Ref.get(shown), (all) => {
+    const answered = all.replies.length + all.errors.length
+    if (sending === "one by one" && answered < messages.length) send(messages[answered]!)
+    return answered >= expected ? Deferred.succeed(done, undefined) : Effect.void
+  }))
   const pane: Pane = {
-    onSend: (send) => Effect.runSync(Deferred.succeed(sent, send)),
+    onSend: (given) => { send = given; Effect.runSync(Deferred.succeed(sent, given)) },
     appendToAnswer: (piece) => note("pieces", piece),
     finishAnswer: (text) => { note("replies", text); settled() },
     showError: (error) => { note("errors", String(error)); settled() },
     showStatus: (text) => note("status", text),
   }
   const program = yield* Effect.forkChild(run(pane, model))
-  const send = yield* Deferred.await(sent)
-  // Sent at once: the second and third wait in the chat's queue while the first is answered.
-  messages.forEach(send)
+  const given = yield* Deferred.await(sent)
+  if (sending === "at once") messages.forEach(given)
+  else given(messages[0]!)
   yield* Deferred.await(done)
   yield* Fiber.interrupt(program)
   return { shown: yield* Ref.get(shown), calls: yield* calls }
@@ -64,7 +74,7 @@ const runMain = (file: URL, messages: ReadonlyArray<string>, script: Parameters<
 afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
 describe("lesson 1's displayed program", () => {
-  test("three messages sent at once are answered in order, one turn each, every turn seeing the turns before it", async () => {
+  test("one by one, each message is a turn of its own, every turn seeing the turns before it", async () => {
     const result = await Effect.runPromise(runMain(write("default", DEFAULT_AGENT), ["Hi, I'm Ana.", "What's my name?", "Spell it backwards."], [
       { _tag: "Answers", pieces: ["Hello, ", "Ana!"] },
       { _tag: "Answers", pieces: ["Your name is Ana."] },
@@ -84,6 +94,20 @@ describe("lesson 1's displayed program", () => {
     ])
   })
 
+  test("sent at once, the messages waiting behind the first are taken by its turn: all stored, one answer", async () => {
+    const result = await Effect.runPromise(runMain(write("at-once", DEFAULT_AGENT), ["Hi, I'm Ana.", "What's my name?", "Spell it backwards."], [
+      { _tag: "Answers", pieces: ["Hello Ana, your name is Ana, A-n-A."] },
+    ], "at once"))
+    expect(result.shown.replies).toEqual(["Hello Ana, your name is Ana, A-n-A."])
+    expect(result.shown.status).toEqual(["turn 1"])
+    expect(result.calls).toEqual([[
+      { role: "system", text: "You are a friendly tutor. Keep answers short." },
+      { role: "user", text: "Hi, I'm Ana." },
+      { role: "user", text: "What's my name?" },
+      { role: "user", text: "Spell it backwards." },
+    ]])
+  })
+
   test("a model that fails fails its own turn, which the chat shows, and the program goes on", async () => {
     const result = await Effect.runPromise(runMain(write("failing", DEFAULT_AGENT), ["One", "Two"], [
       { _tag: "Fails" },
@@ -100,7 +124,7 @@ describe("lesson 1's displayed program", () => {
     expect(result.calls[1]).toEqual([{ role: "system", text: "You are a friendly tutor. Keep answers short." }, { role: "user", text: "What's my name?" }])
   })
 
-  test("the memory as shown passes every check of the memory kit", async () => {
+  test("the memory as shown passes every check of the memory kit but pairs, which a conversation with tools needs", async () => {
     const file = new URL("./memory.ts", write("kit", DEFAULT_AGENT))
     const { flatMemory } = (await import(file.href)) as { flatMemory: Layer.Layer<Memory> }
     const checks: ReadonlyArray<ConformanceCheck> = memoryConformance({
@@ -108,7 +132,8 @@ describe("lesson 1's displayed program", () => {
       open: () => Effect.map(Layer.build(flatMemory), (built) => Context.get(built, Memory)),
     })
     const failed = await Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) => result._tag === "Failure" ? [check.id] : []), { concurrency: 1 }))
-    expect(failed.flat()).toEqual([])
+    // Lesson 1 has no tools; lesson 2's memory adds paired, and passes pairs too.
+    expect(failed.flat()).toEqual(["pairs"])
   })
 
   test("type-checks as TypeScript, all three files", () => {

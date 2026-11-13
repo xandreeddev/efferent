@@ -23,7 +23,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
 | Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
-| Add or change a kernel contract, a stock kernel plugin, memory or a host's turn, or a way for plugins to extend each other | skill `kernel-architecture`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0001-kernel-plugin-composition.md` |
+| Add or change a kernel contract, a stock kernel plugin, memory or a host's turn, or a way for plugins to extend each other | skill `kernel-architecture`, `docs/adr/0004-tool-traffic-is-conversation.md`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0001-kernel-plugin-composition.md` |
 
 ## Architecture
 

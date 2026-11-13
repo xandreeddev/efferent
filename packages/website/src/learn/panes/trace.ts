@@ -6,7 +6,7 @@
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
 import { emptyBoard, LOG_LIMIT, record, turnsOf, viewOf } from "../trace-model.ts"
-import type { Board, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
+import type { Board, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
 export interface TracePane {
@@ -58,12 +58,15 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const promptBox = q("[data-tr-prompt]")
   const promptHead = q("[data-tr-prompt-head]")
   const logBox = q("[data-tr-log]")
+  const callsBox = q("[data-tr-calls]")
   const logCount = q("[data-tr-log-count]")
 
   let board: Board = emptyBoard("")
   let t0 = performance.now()
   let selected: Option.Option<number> = Option.none()
   let step: Option.Option<StepView["id"]> = Option.none()
+  /** The model call the memory and prompt columns show, from 1; none follows the step lit, else the turn's last call. */
+  let pickedCall: Option.Option<number> = Option.none()
   let filter = "all"
   const openPayloads = new Set<number>()
   let replayTimer: ReturnType<typeof setInterval> | undefined
@@ -86,6 +89,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         selected = Option.some(turn)
         follow.checked = turn === turnsOf(board).at(-1)
         step = Option.none()
+        pickedCall = Option.none()
         paint()
       })
       return button
@@ -122,6 +126,25 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     return Option.match(lit, { onNone: () => new Set<number>(), onSome: (one) => new Set(one.seqs) })
   }
 
+  // ── which model call the columns show ─────────────────────────────────────
+  const callShown = (view: TurnView): CallView => {
+    const ofStep = Option.flatMap(step, (id) => Option.fromNullishOr(view.steps.find((one) => one.id === id && one.call > 0)?.call))
+    const n = Option.getOrElse(Option.orElse(ofStep, () => pickedCall), () => view.calls.length)
+    return view.calls[Math.min(Math.max(n, 1), view.calls.length) - 1] ?? view.calls[0]!
+  }
+  const renderCalls = (view: TurnView, shown: CallView) => {
+    callsBox.hidden = view.calls.length < 2
+    callsBox.replaceChildren(
+      el("span", { class: "tr-calls-label" }, "Model call"),
+      ...view.calls.map((call) => {
+        const button = el("button", { type: "button", class: "tr-call", "aria-pressed": String(call.call === shown.call) }, String(call.call))
+        button.addEventListener("click", () => { pickedCall = Option.some(call.call); step = Option.none(); paint() })
+        return button
+      }),
+      el("span", { class: "tr-calls-note" }, "This turn called the model more than once: each call gets its own context and prompt."),
+    )
+  }
+
   // ── journal ─────────────────────────────────────────────────────────────
   const useText: Record<JournalRow["use"], string> = {
     "in-context": "in the context",
@@ -129,7 +152,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     later: "written after the context",
     "not-conversation": "not conversation: memory skips it",
   }
-  const renderJournal = (view: TurnView, lit: ReadonlySet<number>) => {
+  const renderJournal = (view: CallView, lit: ReadonlySet<number>) => {
     const tags = [...new Set(view.journal.flatMap((row) => row.tags))]
     filters.replaceChildren(...["all", ...tags].map((tag) => {
       const button = el("button", { type: "button", class: "tr-filter", "data-tag": tag, "aria-pressed": String(filter === tag) }, tag)
@@ -155,7 +178,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   }
 
   // ── memory ──────────────────────────────────────────────────────────────
-  const renderMemory = (view: TurnView, lit: ReadonlySet<number>) => {
+  const renderMemory = (view: CallView, lit: ReadonlySet<number>) => {
     Option.match(view.memory, {
       onNone: () => {
         memoryHead.textContent = "not asked yet"
@@ -185,7 +208,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     row.source === "code" ? "your code · never stored"
       : row.source === "added" ? "added by your code · never stored"
         : Option.match(row.seq, { onNone: () => "memory", onSome: (seq) => `memory · #${seq}` })
-  const renderPrompt = (view: TurnView, lit: ReadonlySet<number>) => {
+  const renderPrompt = (view: CallView, lit: ReadonlySet<number>) => {
     Option.match(view.prompt, {
       onNone: () => {
         promptHead.textContent = "not sent yet"
@@ -198,6 +221,10 @@ export const mountTrace = (root: HTMLElement): TracePane => {
           el("li", { class: "tr-cache", title: "The part of this prompt that is the same as the one before, from the start: what a provider's prompt cache can reuse." },
             el("span", { class: "tr-cache-bar" }, el("i", { style: `width:${share}%` })),
             `${view.reusedTokens} of ${view.promptTokens} tok the same as the prompt before (${share}%)`),
+          ...(view.tools.length > 0 ? [el("li", { class: "tr-row tr-msg", "data-role": "tools", "data-source": "code" },
+            el("span", { class: "tr-role" }, "tools"),
+            el("span", { class: "tr-text" }, view.tools.join(", ")),
+            el("span", { class: "tr-from" }, "your code · never stored · offered with the prompt"))] : []),
           ...rows.map((row) => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-source": row.source, "data-reused": row.reused ? "" : undefined, "data-seq": seqAttr(row.seq), "data-lit": Option.match(row.seq, { onNone: () => undefined, onSome: (seq) => (lit.has(seq) ? "" : undefined) }) },
             el("span", { class: "tr-role" }, roleLabel[row.role] ?? row.role),
             el("span", { class: "tr-text" }, row.text),
@@ -247,9 +274,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     const view = viewOf(board, current.value)
     renderTurns(current.value)
     const lit = renderSteps(view)
-    renderJournal(view, lit)
-    renderMemory(view, lit)
-    renderPrompt(view, lit)
+    const call = callShown(view)
+    renderCalls(view, call)
+    renderJournal(call, lit)
+    renderMemory(call, lit)
+    renderPrompt(call, lit)
     if (lit.size > 0) root.querySelector('[data-lit=""]')?.scrollIntoView({ block: "nearest" })
   }
   const paintSoon = () => { if (frame === 0) frame = requestAnimationFrame(paint) }
@@ -292,7 +321,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       const before = turnsOf(board).length
       board = record(board, trace, performance.now() - t0)
       // A new turn: follow it, unless the reader picked one to look at.
-      if (follow.checked && turnsOf(board).length !== before) { selected = Option.none(); step = Option.none() }
+      if (follow.checked && turnsOf(board).length !== before) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
       paintSoon()
     },
     reset: (session) => {
@@ -301,6 +330,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       t0 = performance.now()
       selected = Option.none()
       step = Option.none()
+      pickedCall = Option.none()
       openPayloads.clear()
       logShown = 0
       logBox.replaceChildren()

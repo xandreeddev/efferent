@@ -66,6 +66,7 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
         <div class="tr-body" data-tr-body hidden>
           <ol class="tr-steps" data-tr-steps aria-label="The turn's steps"></ol>
           <p class="tr-step-detail" data-tr-step-detail aria-live="polite"></p>
+          <div class="tr-calls" data-tr-calls role="group" aria-label="Model calls of this turn" hidden></div>
           <div class="tr-cols">
             <section class="tr-col" data-col="journal" aria-label="The journal">
               <h3>Journal <small data-tr-journal-head></small></h3>

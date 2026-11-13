@@ -4,11 +4,11 @@ import type { Scope } from "effect"
 import type { Prompt } from "effect/ai"
 import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
 import {
-  assistantMessage, ConformanceFailure, Core, EventName, kernel, Seq, SessionId, stored, storedEvent, turnEnded, TurnNumber, turnStarted, userMessage,
+  assistantMessage, ConformanceFailure, Core, EventName, kernel, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber, turnStarted, userMessage,
 } from "@xandreed/core/kernel"
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { Memory } from "./memory.port.js"
-import { estimateContext } from "./memory.entity.functions.js"
+import { estimateContext, messageText } from "./memory.entity.functions.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type MemoryShape = Context.Service.Shape<typeof Memory>
@@ -45,6 +45,22 @@ const kitSession = Effect.gen(function* () {
     yield* append(assistantMessage(answered))
     yield* append(turnEnded(turn, { _tag: "Completed" }))
   })
+  /**
+   * A whole earlier turn that called a tool: its message, the model's call (`id`), and then, when `answered`, the
+   * tool's result and the model's answer, closed `Completed`; otherwise closed `Interrupted` with the call unanswered,
+   * as a turn stopped while its tool ran.
+   */
+  const toolTurn = (asked: string, id: string, answered: boolean) => Effect.gen(function* () {
+    const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
+    yield* append(turnStarted(turn))
+    yield* append(userMessage(asked))
+    yield* append(assistantMessage("", { toolCalls: [{ id, name: "add", params: { a: 2, b: 3 } }] }))
+    if (answered) {
+      yield* append(toolResult({ id, name: "add" }, 5))
+      yield* append(assistantMessage("It is 5."))
+    }
+    yield* append(turnEnded(turn, answered ? { _tag: "Completed" } : { _tag: "Interrupted" }))
+  })
   /** The turn that is open: its start and its message, and the session a memory opens. */
   const openTurn = (asked: string) => Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
@@ -58,8 +74,17 @@ const kitSession = Effect.gen(function* () {
     yield* append(assistantMessage(answered))
     yield* append(turnEnded(session.turn, { _tag: "Completed" }))
   })
-  return { journal: Ref.get(journal), append, pastTurn, openTurn, closeTurn }
+  return { journal: Ref.get(journal), append, pastTurn, toolTurn, openTurn, closeTurn }
 })
+
+/** The ids of the tool calls a context sends, and of the results it sends, in order. */
+const toolTraffic = (context: ReadonlyArray<Prompt.MessageEncoded>) => {
+  const parts = context.flatMap((message) => (typeof message.content === "string" ? [] : message.content.map((part) => ({ role: message.role, part }))))
+  return {
+    calls: parts.flatMap(({ role, part }) => (role === "assistant" && part.type === "tool-call" ? [part.id] : [])),
+    results: parts.flatMap(({ role, part }) => (role === "tool" && part.type === "tool-result" ? [part.id] : [])),
+  }
+}
 
 /** The text of a prompt message, as the kit compares it. */
 const textOf = (message: Prompt.MessageEncoded): string => typeof message.content === "string" ? message.content : show(message.content)
@@ -82,7 +107,9 @@ const textOf = (message: Prompt.MessageEncoded): string => typeof message.conten
  * that may not be skipped, since a memory reads the conversation with its
  * reader (`readerFor(name, own, CONVERSATION_READER)`), not its own prefix
  * alone (`unknown-conversation-refused`); another plugin's record it does not
- * know is not its concern (`foreign`).
+ * know is not its concern (`foreign`); a tool call is sent with its result
+ * and right before it, and a call no result answers (a turn stopped while its
+ * tool ran) is not sent (`pairs`).
  *
  * @public
  */
@@ -123,9 +150,20 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
       const session = yield* kit.openTurn("And a scope?")
       const context = yield* memory.context(session)
-      const said = new Set((yield* kit.journal).flatMap((event) => event.message === undefined ? [] : [`${event.message._tag === "User" ? "user" : "assistant"} ${event.message.text}`]))
+      const said = new Set((yield* kit.journal).flatMap((event) => event.message === undefined ? [] : [`${event.message._tag === "User" ? "user" : "assistant"} ${messageText(event.message)}`]))
       yield* expect("conversation", context.length > 0 && context.every((message) => said.has(`${message.role} ${textOf(message)}`)),
         `the context ${show(context)} holds a message no record of the conversation bears`)
+    })),
+    check("a tool call is sent with its result, right before it, and a call no result answers is not sent", "pairs", (memory, kit) => Effect.gen(function* () {
+      yield* kit.toolTurn("What is 2 + 3?", "kit-call-1", true)
+      yield* kit.toolTurn("And again?", "kit-call-2", false)
+      const session = yield* kit.openTurn("Thanks.")
+      const context = yield* memory.context(session)
+      const { calls, results } = toolTraffic(context)
+      const resultFollows = context.some((message, index) =>
+        message.role === "assistant" && toolTraffic([message]).calls.includes("kit-call-1") && show(toolTraffic(context.slice(index + 1, index + 2)).results) === show(["kit-call-1"]))
+      yield* expect("pairs", show(calls) === show(["kit-call-1"]) && show(results) === show(["kit-call-1"]) && resultFollows,
+        `the context ${show(context)} does not send the answered call with its result right after it, and the unanswered call not at all`)
     })),
     check("a record of another use that bears text is never in the context", "other-uses", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
