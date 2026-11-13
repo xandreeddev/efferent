@@ -69,7 +69,12 @@ it: `./kernel` is a `restricted` subpath.
   sends through it, ADR 0004) and the
   memory kit (`memoryConformance`; `MemorySubject` is `{ name,
   budgetTokens?, open }`, and the budget checks run only for a subject
-  that has one); `contracts/inbox` holds `Inbox`, its turn function
+  that has one), and the kit of a memory wrapper
+  (`memoryWrapperConformance`; `MemoryWrapperSubject` is `{ name, wrap }`,
+  `wrap` a higher-order plugin given the kit's own flat memory: the
+  wrapped context starts with the inner one whole, `starts-with-inner`,
+  and what it appends is under its prefix and never the conversation's,
+  `own-records`; ADR 0005); `contracts/inbox` holds `Inbox`, its turn function
   (`InboxTurn`, failing with `InboxTurnFailure`), its ticket, refusals and
   event. A contract imports core's kernel and other contracts, never a
   plugin; a plugin imports contracts and core's kernel, never another
@@ -213,7 +218,11 @@ it: `./kernel` is a `restricted` subpath.
   layers; a plugin's own event and a reaction to it), `listeners` (also a
   listener that cannot be interrupted), `unknown-records` (also a second
   session plugin over one store, and a memory swapped over one base),
-  `lesson` (the first lesson's program: three messages, each turn seeing
+  `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
+  clock, quoted by `docs/kernel.md`; the clock stored as a plugin's record
+  never reaching flat memory, stored as a user message piling up; the
+  wrapper kit on the clock and on careless wrappers, each failing only
+  its check), `lesson` (the first lesson's program: three messages, each turn seeing
   the ones before, and a journal of the conversation only), `tools` (a
   host's turn with tools, quoted by `docs/kernel.md`: a call stored with
   its result and the model asked again; a tool's failure, an unknown tool
@@ -260,7 +269,7 @@ it: `./kernel` is a `restricted` subpath.
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
-- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`; the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data, `InvalidBudget`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`; the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `OverBudget`, `isOverBudget`, `windowDroppedEvent`, `windowPressureEvent` and their data, `InvalidBudget`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

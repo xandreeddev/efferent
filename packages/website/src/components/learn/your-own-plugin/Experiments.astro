@@ -1,0 +1,20 @@
+---
+const experiments = [
+  { id: "store-clock", title: "Store the clock", button: "Store it as a message", text: "The wrong way: the note is stored as something you said. Send a few messages and open Context: the Memory column now holds every earlier note, each with its record, and every request sends them all. One more piles up each turn, and the journal says you wrote them." },
+  { id: "drop-first", title: "A careless wrapper", button: "Drop the first message", text: "The wrapper drops the first message of the context it was given. Ask \"What did I say earlier?\": the model no longer sees how the conversation began. The wrapper kit's starts-with-inner check fails on this code." },
+  { id: "slow-meter", title: "A listener the turn waits for", button: "Make the meter slow", text: "The meter's answer listener takes two seconds. It was registered with wait: true, so the turn waits: the answer streams, then the turn closes two seconds later." },
+  { id: "unplug-meter", title: "Unplug a plugin", button: "Remove the meter from main", text: "main no longer provides the meter. Nothing hooks the turn's events, and nothing else changes: the status line just stops counting." },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

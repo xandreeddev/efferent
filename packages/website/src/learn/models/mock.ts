@@ -22,14 +22,19 @@ const clip = (text: string, max = 60): string => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
-const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:")
+/** A note a memory wrapper added for this request (lesson 3's clock): code's, not something the user said. */
+const CLOCK = /^\[Host note: it is ([^\]]+?)\.?\]$/
+const isClock = (message: ChatMessage): boolean => message.role === "user" && CLOCK.test(message.content)
+const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isClock(message)
+const isNote = (message: ChatMessage): boolean => isLedger(message) || isClock(message)
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`
 
 /** What Echo says, from the messages the agent sent it. */
 export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   const system = messages.find((message) => message.role === "system")
-  const turns = messages.filter((message) => message.role !== "system")
-  const users = turns.filter((message) => message.role === "user" && !isLedger(message))
+  const clock = messages.findLast(isClock)
+  const turns = messages.filter((message) => message.role !== "system" && !isClock(message))
+  const users = turns.filter((message) => message.role === "user" && !isNote(message))
   const last = users[users.length - 1]?.content ?? ""
   const earlierUsers = users.slice(0, -1)
   const ledger = turns.some(isLedger)
@@ -41,6 +46,10 @@ export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   if (together.length > 1) {
     const before = turns.length - together.length
     return `You sent ${together.length} messages: ${together.map((message) => `"${clip(message.content, 40)}"`).join(", ")}. ${before > 0 ? `I can also see ${plural(before, "earlier message")}.` : "They start the conversation."}`
+  }
+  if (/\b(what time|the time|time is it|clock)\b/i.test(last)) {
+    const now = clock === undefined ? undefined : CLOCK.exec(clock.content)?.[1]
+    return now === undefined ? "Nothing I was sent says the time: I only know what is in the messages." : `A note your code added to this request says it is ${now}. It was not stored: the next request gets its own.`
   }
   if (/^\s*(hi|hello|hey|hola|howdy)\b/i.test(last)) {
     return "Hello! I'm Echo, a scripted stand-in model. Ask me what you said earlier and I'll answer from the messages I was sent."
@@ -71,7 +80,9 @@ const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×"
  * What Echo does with tools offered: by rule, so a lesson can rely on it. Sums go to the calculator, "remember …" to
  * remember, a question about notes to recall; a message that just got tool results is answered from them.
  */
-export const echoStep = (prompt: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
+export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
+  // A note code added for this request is not a message to answer or a sum to work out.
+  const prompt = { ...sent, content: sent.content.filter((message) => !(message.role === "user" && message.content.every((part) => part.type === "text" && CLOCK.test(part.text)))) }
   const last = prompt.content.at(-1)
   if (last?.role === "tool") {
     const said = last.content.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
@@ -96,7 +107,7 @@ export const echoStep = (prompt: Prompt.Prompt, offered: ReadonlyArray<string>):
   }
   const calls = pending.flatMap(callFor)
   if (calls.length > 0) return { text: calls.length > 1 ? `Let me use ${calls.length} tools.` : "Let me work that out.", calls }
-  return { text: echoReply(toChatMessages(prompt)), calls: [] }
+  return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
 
 let echoCalls = 0

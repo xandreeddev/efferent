@@ -4,11 +4,12 @@ import type { Scope } from "effect"
 import type { Prompt } from "effect/ai"
 import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
 import {
-  assistantMessage, ConformanceFailure, Core, EventName, kernel, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber, turnStarted, userMessage,
+  assistantMessage, ConformanceFailure, CONVERSATION_READER, Core, EventName, kernel, messageOf, readJournal, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber,
+  turnStarted, userMessage,
 } from "@xandreed/core/kernel"
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import type { Memory } from "./memory.port.js"
-import { estimateContext, messageText } from "./memory.entity.functions.js"
+import { Memory } from "./memory.port.js"
+import { estimateContext, messageText, paired, promptMessage } from "./memory.entity.functions.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type MemoryShape = Context.Service.Shape<typeof Memory>
@@ -228,6 +229,82 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.append(stored(storedEvent("kit-stranger", "noted", { data: Schema.Struct({}), skippable: false, tags: ["trace"] }), {}))
       const session = yield* kit.openTurn("And a scope?")
       yield* Effect.mapError(memory.context(session), (error) => new ConformanceFailure({ check: "foreign", message: `a context over another plugin's record failed with ${error._tag}: ${error.message}` }))
+    })),
+  ]
+}
+
+/**
+ * A wrapper of `Memory` as the kit opens it: a higher-order plugin, given the
+ * memory it wraps and returning the wrapped one, built on the `Core` the kit
+ * hands it. `name` is the wrapper's: what it appends while it builds is
+ * under `plugin.<name>.`.
+ *
+ * @public
+ */
+export interface MemoryWrapperSubject {
+  readonly name: string
+  readonly wrap: (inner: Layer.Layer<Memory>) => Layer.Layer<Memory, never, Core>
+}
+
+/**
+ * The memory the kit gives a wrapper to wrap: every message of the
+ * conversation, as the flat memory sends it. The kit compares the wrapped
+ * context with it.
+ */
+const innerMemory: Layer.Layer<Memory> = Layer.succeed(Memory, Memory.of({
+  context: Effect.fnUntraced(function* (session: OpenSession) {
+    const conversation = yield* Effect.fromResult(readJournal(CONVERSATION_READER)(yield* session.journal))
+    return paired(conversation.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage)
+  }),
+}))
+
+/**
+ * A wrapper of memory as checks (ADR 0005), each over a journal the kit
+ * writes and the inner memory above: the wrapped context starts with the
+ * inner memory's context, whole and in its order, so what a wrapper adds for
+ * the request comes after it and the cached prefix the inner memory keeps
+ * still holds (`starts-with-inner`); what the wrapper appends while it
+ * builds is under its own prefix and never a record of the conversation, so
+ * what it adds for one request is not stored as something said
+ * (`own-records`).
+ *
+ * @public
+ */
+export const memoryWrapperConformance = (subject: MemoryWrapperSubject): ReadonlyArray<ConformanceCheck> => {
+  type Kit = Effect.Success<typeof kitSession>
+  const check = (
+    name: string,
+    id: string,
+    body: (wrapped: MemoryShape, inner: MemoryShape, kit: Kit) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>,
+  ): ConformanceCheck => ({
+    id,
+    name,
+    run: Effect.scoped(Effect.gen(function* () {
+      const built = yield* Layer.build(kernel())
+      const wrapped = Context.get(yield* Layer.build(subject.wrap(innerMemory).pipe(Layer.provide(Layer.succeedContext(built)))), Memory)
+      const inner = Context.get(yield* Layer.build(innerMemory), Memory)
+      yield* body(wrapped, inner, yield* kitSession)
+    })).pipe(unexpected(id)),
+  })
+  const own = `plugin.${subject.name}.`
+  return [
+    check("the wrapped context starts with the inner memory's, whole and in order", "starts-with-inner", (wrapped, inner, kit) => Effect.gen(function* () {
+      yield* kit.pastTurn("What is a fiber?", "A light thread.")
+      yield* kit.toolTurn("What is 2 + 3?", "kit-call-1", true)
+      const session = yield* kit.openTurn("And a scope?")
+      const below = yield* inner.context(session)
+      const context = yield* wrapped.context(session)
+      yield* expect("starts-with-inner", show(context.slice(0, below.length)) === show(below),
+        `the wrapped context ${show(context)} does not start with the inner memory's ${show(below)}`)
+    })),
+    check("what the wrapper appends while it builds is under its own prefix, never the conversation's", "own-records", (wrapped, _inner, kit) => Effect.gen(function* () {
+      yield* kit.pastTurn("What is a fiber?", "A light thread.")
+      const session = yield* kit.openTurn("And a scope?")
+      const before = (yield* kit.journal).length
+      yield* wrapped.context(session)
+      const written = (yield* kit.journal).slice(before)
+      yield* expect("own-records", written.every((event) => event.name.startsWith(own) && !event.tags.some((tag) => tag === "conversation")),
+        `while it built, the wrapper appended ${show(written.map((event) => `${event.name} ${event.tags.join(",")}`))}, not all under ${own} and none of the conversation`)
     })),
   ]
 }

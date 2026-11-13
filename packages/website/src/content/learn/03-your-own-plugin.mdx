@@ -1,0 +1,97 @@
+---
+title: A plugin of your own
+description: Write two plugins for your agent, the Neovim way. One hooks events and counts what each turn costs. One wraps memory and adds the time to each request, without storing it.
+minutes: 20
+---
+
+import Step from '../../components/learn/Step.astro'
+import Controls from '../../components/learn/your-own-plugin/Controls.astro'
+import Experiments from '../../components/learn/your-own-plugin/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code" file="plugin">
+
+Your agent is lesson 2's program, with one new file: **plugin.ts**. It holds two plugins of your own.
+
+- **meter** counts what each answer cost, and shows it on the status line when the turn ends.
+- **withClock** adds the time to every request, so the model can answer "What time is it?".
+
+Neither changes the program's loop. As in Neovim, a plugin sets up when it is loaded and takes part through the APIs that are already there: here, the kernel's events and the memory contract.
+
+</Step>
+
+<Step n={2} id="ways" title="How a plugin takes part" focus="code">
+
+A plugin takes part in one of four ways, and no fifth:
+
+| Way | What it is | In this track |
+| --- | --- | --- |
+| **Replace** | another implementation of a contract | memory.ts, since lesson 1 |
+| **Event** | `core.on`: run when something happens, like an autocmd | the meter |
+| **Wrap** | take a contract's plugin, return one that adds to it | the clock |
+| **Journal** | store a fact that other parts read later | memories that summarize, later |
+
+This lesson builds the two you will reach for most: an event plugin and a wrapper.
+
+</Step>
+
+<Step n={3} id="meter" title="An event plugin: the meter" focus="code" file="plugin">
+
+`meter` is a layer. When main provides it, it **sets up**: it makes a counter and hooks three events with `core.on`.
+
+- `core.session.turn.started`: each turn's start. It names the turn on the status line.
+- `conversation.assistant.message`: each answer stored. It adds what the provider says the answer cost, or an estimate of its text.
+- `core.session.turn.ended`: each turn's end. It shows the turn's count and the total.
+
+It stores nothing and says nothing to the model: it observes. One listener has `wait: true`: the turn waits for it, so the count is in before the turn ends, and if it failed, the turn would fail. The others run in the background: nobody waits for a status line.
+
+Its listeners belong to its layer's scope. Rebuild closes the scope, and the old meter's listeners are gone with it: its count starts again at zero.
+
+</Step>
+
+<Step n={4} id="clock" title="A wrapper: the clock" focus="code" file="plugin">
+
+`withClock` is a **higher-order plugin**: given a memory plugin, it returns a memory plugin. Inside, it asks the memory it wraps for the context, then adds one note after it: `[Host note: it is 21:14.]`.
+
+The note is **code's**, like the system text. It is computed for each request and **never stored**. So:
+
+- the next request gets its own note, and the old one is not sent again;
+- what comes before it, the conversation, is the same as in the request before, so a provider's prompt cache still holds.
+
+The rule for a wrapper of memory: return what the memory below gave you **whole and in its order**, and add after it. The wrapper kit, `memoryWrapperConformance`, checks exactly that.
+
+</Step>
+
+<Step n={5} id="watch" title="Watch it in the Context tab" focus="context" wide={true}>
+
+Ask **"What time is it?"** and open **Context**.
+
+- The **Memory** column is what the flat memory returned: your message, and no note. The clock wraps it, so the page watches the memory below the wrapper.
+- The **Prompt** column is what the model was sent. Its last row is the note, marked **added by your code · never stored**. Hover it: no journal record lights up, because there is none.
+
+Send another message. The new request starts with every row of the last one but its note: then come the last answer, your new message and a new note. The old note is not sent again.
+
+Small models read the note too: Qwen2.5 0.5B on the GPU answers "What time is it?" with the time it says.
+
+</Step>
+
+<Step n={6} id="main" title="Where plugins plug in" focus="code" file="agent">
+
+Look at `main` in **agent.ts**. The meter is provided like any module: `Effect.provide(meter)`. It needs the chat and `Core`, so it comes before the modules that give them.
+
+The clock is applied to the plugin it wraps: `withClock(flatMemory)`. That is why a wrapper cannot end up in the wrong place. It is not a line in a list that might come after the part that uses memory: it **is** the memory that main provides.
+
+The status line's `turn N` hook that lesson 2 had in `program` is gone: the meter does that job now, from its own file.
+
+</Step>
+
+<Step n={7} id="experiments" title="Settings and experiments" focus="code">
+
+<Controls />
+
+<Experiments />
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** sub-agents. One turn hands a task to an agent of its own, in a session of its own, and gets back only its answer. To see the rule for wrappers in full, read [ADR 0005](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0005-context-for-one-request.md).
+
+</Step>
