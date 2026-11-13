@@ -151,6 +151,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn pages' CPU models keep their downloads in IndexedDB
+  where the browser has no Cache API (a page served over plain http from a
+  LAN address is no secure context), so a second visit loads them from
+  disk instead of downloading them again. No published package changes.
 - `docs/adr/0001-kernel-plugin-composition.md` records how the kernel's
   plugins compose (replace, wrap, an event, or an entry in the journal; no
   hooks), `docs/adr/0002-core-owns-state-plugins-own-workflows.md`
