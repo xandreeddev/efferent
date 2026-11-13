@@ -3,9 +3,8 @@ import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Scheduler, Schema, 
 import type { AiError, Response } from "effect/ai"
 import { Core, inspectionOf, listenerFailedEvent, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent } from "@xandreed/core/kernel"
-import type { Settings } from "../../contracts/loop/settings.port.js"
 import type { SessionsOptions } from "../../index.js"
-import { answer, inOrder, modelDown, scripted, stack } from "../../testing.js"
+import { answer, inOrder, modelDown, scripted, stack, testTurn } from "../../testing.js"
 import { inboxOf } from "./inbox.adapter.js"
 import { inboxQueuedEvent } from "../../contracts/inbox/inbox.entity.js"
 import { Inbox } from "../../contracts/inbox/inbox.port.js"
@@ -16,21 +15,21 @@ class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema
 const onQueued = <E>(handle: (ticket: number) => Effect.Effect<void, E>) =>
   Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(inboxQueuedEvent, (event) => handle(event.data.ticket), { name: "queued", wait: true })))
 
-const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
+const FOUR = ["core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "core.session.turn.ended"]
 
 /**
- * The stock stack with the inbox on top, built in the scope it is run in,
+ * The tests' stack with the inbox on top, running the tests' turn, built in the scope it is run in,
  * over a model that answers call `n` (from 0) with `answerOf(n)`: the
  * inbox, `Core`, a session, what the model was sent, the names its journal
  * holds, how each of its turns ended, and its state.
  */
 const inboxOver = (
   answerOf: (call: number) => Stream.Stream<Response.StreamPartEncoded, AiError.AiError>,
-  options: { readonly capacity?: number; readonly sessions?: SessionsOptions; readonly extras?: Layer.Layer<never, never, Core | Settings> } = {},
+  options: { readonly capacity?: number; readonly sessions?: SessionsOptions; readonly extras?: Layer.Layer<never, never, Core> } = {},
 ) => Effect.gen(function* () {
   const { model, received } = yield* scripted(answerOf)
   const parts = { ...(options.sessions === undefined ? {} : { sessions: options.sessions }), ...(options.extras === undefined ? {} : { extras: options.extras }) }
-  const built = yield* Layer.build(inboxOf(options.capacity === undefined ? {} : { capacity: options.capacity }).pipe(Layer.provideMerge(stack(model, parts))))
+  const built = yield* Layer.build(inboxOf(testTurn(), options.capacity === undefined ? {} : { capacity: options.capacity }).pipe(Layer.provideMerge(stack(model, parts))))
   const sessions = Context.get(built, Sessions)
   const session = yield* sessions.create({ owner: "learner" })
   const journal = Effect.map(sessions.read(session), (read) => read.events)
@@ -65,8 +64,8 @@ describe("the inbox", () => {
     }))
     expect(result.tickets).toEqual([1, 2, 3])
     // Each message was announced as it was queued, live, about the session and no turn of it.
-    expect(result.announced).toEqual([1, 2, 3].map((ticket) => ({ _tag: "Live", session: result.session, name: inboxQueuedEvent.name, data: { ticket } })))
-    expect(result.replies.map((reply) => reply._tag === "Success" ? reply.success.text : reply.failure._tag)).toEqual(["Reply 1.", "AiError", "Reply 3."])
+    expect(result.announced).toEqual([1, 2, 3].map((ticket) => ({ _tag: "Live", session: result.session, name: inboxQueuedEvent.name, tags: inboxQueuedEvent.tags, data: { ticket } })))
+    expect(result.replies.map((reply) => reply._tag === "Success" ? reply.success : reply.failure._tag)).toEqual(["Reply 1.", "AiError", "Reply 3."])
     expect(result.ends).toEqual([
       { turn: 1, outcome: { _tag: "Completed" } },
       { turn: 2, outcome: { _tag: "Failed", reason: expect.stringContaining("AiError") } },
@@ -92,8 +91,8 @@ describe("the inbox", () => {
       return { refused, replies: [yield* first.reply, yield* second.reply, yield* elsewhere.reply], names: yield* kit.names, received: yield* kit.received }
     }))
     expect(result.refused).toMatchObject({ _tag: "InboxRefused", reason: "Full" })
-    expect(result.replies).toEqual([{ text: "First." }, { text: "Next." }, { text: "Next." }])
-    expect(result.names).toEqual([...FIVE, ...FIVE])
+    expect(result.replies).toEqual(["First.", "Next.", "Next."])
+    expect(result.names).toEqual([...FOUR, ...FOUR])
     expect(result.received.flat().map((message) => message.text)).not.toContain("Three")
   })
 
@@ -105,12 +104,12 @@ describe("the inbox", () => {
       const replies = yield* Effect.forEach(Array.from({ length: 20 }, (_, index) => index), (index) => Effect.gen(function* () {
         if (index % 2 === 1) yield* Effect.yieldNow
         const entry = yield* kit.inbox.enqueue(kit.session, `Message ${index + 1}`)
-        return { ticket: Number(entry.ticket), reply: (yield* entry.reply).text }
+        return { ticket: Number(entry.ticket), reply: yield* entry.reply }
       }), { concurrency: 1 })
       return { replies, names: yield* kit.names, state: yield* kit.state }
     }))
     expect(result.replies).toEqual(Array.from({ length: 20 }, (_, index) => ({ ticket: index + 1, reply: `Reply ${index + 1}.` })))
-    expect(result.names).toEqual(Array.from({ length: 20 }, () => FIVE).flat())
+    expect(result.names).toEqual(Array.from({ length: 20 }, () => FOUR).flat())
     expect(result.state).toEqual({ _tag: "Free", turns: 20 })
   })
 
@@ -143,8 +142,8 @@ describe("the inbox", () => {
       const next = yield* kit.inbox.enqueue(kit.session, "Two")
       return { next: yield* next.reply, first: yield* entry.reply, ends: yield* kit.ends }
     }))
-    expect(result.first).toEqual({ text: "Done anyway." })
-    expect(result.next).toEqual({ text: "Next." })
+    expect(result.first).toEqual("Done anyway.")
+    expect(result.next).toEqual("Next.")
     expect(result.ends).toEqual([{ turn: 1, outcome: { _tag: "Completed" } }, { turn: 2, outcome: { _tag: "Completed" } }])
   })
 
@@ -161,7 +160,7 @@ describe("the inbox", () => {
       if (Exit.isFailure(exit)) return { returned: false }
       return { returned: true, ticket: Number(exit.value.ticket), reply: yield* exit.value.reply, calls: (yield* kit.received).length, names: yield* kit.names }
     }))
-    expect(result).toEqual({ returned: true, ticket: 1, reply: { text: "Reply 1." }, calls: 1, names: FIVE })
+    expect(result).toEqual({ returned: true, ticket: 1, reply: "Reply 1.", calls: 1, names: FOUR })
   })
 
   test("plugin.inbox.queued reaches a waiting listener that suspends before its message's turn starts, on a session whose worker runs", async () => {
@@ -191,7 +190,7 @@ describe("the inbox", () => {
       replies.push(yield* (yield* Fiber.join(second)).reply)
       return { replies, lines: yield* Ref.get(lines) }
     }))
-    expect(result.replies).toEqual([{ text: "First." }, { text: "Second." }])
+    expect(result.replies).toEqual(["First.", "Second."])
     expect(result.lines).toEqual(["queued 1", "started 1", "queued 2", "started 2"])
   })
 
@@ -203,7 +202,7 @@ describe("the inbox", () => {
       const queued = yield* kit.inbox.enqueue(kit.session, "One")
       return { ticket: Number(queued.ticket), reply: yield* queued.reply, report: yield* Deferred.await(reported), names: yield* kit.names }
     }))
-    expect(result).toEqual({ ticket: 1, reply: { text: "Reply 1." }, report: { listener: "queued", event: inboxQueuedEvent.name, reason: "Refused: not now" }, names: FIVE })
+    expect(result).toEqual({ ticket: 1, reply: "Reply 1.", report: { listener: "queued", event: inboxQueuedEvent.name, reason: "Refused: not now" }, names: FOUR })
   })
 
   test("a waiting listener of plugin.inbox.queued that fails holds back none after it: the next one hears the message", async () => {
@@ -215,7 +214,7 @@ describe("the inbox", () => {
       const queued = yield* kit.inbox.enqueue(kit.session, "One")
       return { reply: yield* queued.reply, heard: yield* Ref.get(heard) }
     }))
-    expect(result).toEqual({ reply: { text: "Reply 1." }, heard: [1] })
+    expect(result).toEqual({ reply: "Reply 1.", heard: [1] })
   })
 
   test("fails the reply of a message whose announcement is held when the scope closes, and starts no turn for it", async () => {
@@ -234,7 +233,7 @@ describe("the inbox", () => {
       const late = Exit.isSuccess(queued) ? yield* Effect.flip(queued.value.reply) : undefined
       return { reply, late: late?._tag, calls: (yield* kit.received).length, names: yield* kit.names }
     }))
-    expect(result).toEqual({ reply: { text: "Reply 1." }, late: "InboxClosed", calls: 1, names: FIVE })
+    expect(result).toEqual({ reply: "Reply 1.", late: "InboxClosed", calls: 1, names: FOUR })
   })
 
   test("announces one session's messages in ticket order, whichever announcement a waiting listener holds", async () => {
@@ -252,7 +251,7 @@ describe("the inbox", () => {
       const replies = yield* Effect.forEach(queued, (entry) => entry.reply, { concurrency: 1 })
       return { replies, heard: yield* Ref.get(heard) }
     }))
-    expect(result).toEqual({ replies: [{ text: "Reply 1." }, { text: "Reply 2." }], heard: [1, 2] })
+    expect(result).toEqual({ replies: ["Reply 1.", "Reply 2."], heard: [1, 2] })
   })
 
   /*
@@ -312,7 +311,7 @@ describe("the inbox", () => {
       const replies = [yield* first.reply, yield* second.reply]
       return { before, replies, heard: yield* Ref.get(heard) }
     }))
-    expect(result).toEqual({ before: [], replies: [{ text: "Reply 1." }, { text: "Reply 2." }], heard: [1, 2] })
+    expect(result).toEqual({ before: [], replies: ["Reply 1.", "Reply 2."], heard: [1, 2] })
   })
 
   test("a waiting listener of plugin.inbox.queued that does not suspend has heard of the message when enqueue returns", async () => {
@@ -344,9 +343,9 @@ describe("the inbox", () => {
       const replies = yield* Effect.forEach(queued, (entry) => entry.reply, { concurrency: "unbounded" })
       return { during, replies, names: yield* kit.names }
     }))
-    expect(result.during).toEqual(FIVE)
+    expect(result.during).toEqual(FOUR)
     expect(result.during.filter((name) => name === turnStartedEvent.name)).toHaveLength(1)
-    expect(result.replies).toEqual([{ text: "Reply 1." }, { text: "Reply 2." }])
-    expect(result.names).toEqual([...FIVE, ...FIVE])
+    expect(result.replies).toEqual(["Reply 1.", "Reply 2."])
+    expect(result.names).toEqual([...FOUR, ...FOUR])
   })
 })

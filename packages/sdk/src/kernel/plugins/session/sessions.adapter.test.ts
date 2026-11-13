@@ -10,7 +10,7 @@ import type { SessionsOptions } from "./sessions.adapter.js"
 const owner = Owner.make("learner")
 const STARTED = "core.session.turn.started"
 const ENDED = "core.session.turn.ended"
-const noted = storedEvent("notes", "noted", { data: Schema.Struct({}), skippable: true })
+const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: true })
 
 /** What a storage double does with one append: let it through, refuse it, or die. */
 type Fault = (event: StoredDraft) => Option.Option<Effect.Effect<never, JournalStorageError>>
@@ -45,8 +45,8 @@ const over = (count: number, options: SessionsOptions = {}) => Effect.gen(functi
   const after = yield* Ref.make<After>(acknowledged)
   const storage = JournalStorage.of({
     ...real,
-    append: (id, expectedSeq, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () =>
-      Effect.andThen(Effect.flatMap(Ref.get(pause), (wait) => wait(event)), real.append(id, expectedSeq, event)).pipe(
+    append: (id, expectedSeq, turn, event) => Effect.flatMap(Ref.get(fault), (decide) => Option.getOrElse(decide(event), () =>
+      Effect.andThen(Effect.flatMap(Ref.get(pause), (wait) => wait(event)), real.append(id, expectedSeq, turn, event)).pipe(
         Effect.tap(() => Effect.flatMap(Ref.get(after), (then) => then(event)))))),
   })
   const parts = Layer.merge(Layer.succeed(Core, Context.get(below, Core)), Layer.succeed(JournalStorage, storage))
@@ -201,7 +201,7 @@ describe("an append of a record named under core.", () => {
       const drafts = [
         turnEnded(TurnNumber.make(1), { _tag: "Completed" }),
         turnStarted(TurnNumber.make(2)),
-        { name: EventName.make("core.session.anything"), data: {}, skippable: true },
+        { name: EventName.make("core.session.anything"), data: {}, skippable: true, tags: [] },
       ]
       const refusals = yield* turns.turn(id, (session) => Effect.forEach(drafts, (draft) => Effect.flip(session.append(draft)), { concurrency: 1 }))
       const next = yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn)))

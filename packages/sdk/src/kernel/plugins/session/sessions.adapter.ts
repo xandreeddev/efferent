@@ -123,7 +123,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
   const store = Effect.fnUntraced(function* (open: Turn, event: StoredDraft) {
     const place = yield* Option.match(yield* Ref.get(open.place), { onNone: () => lastPlace(open.id), onSome: Effect.succeed })
     yield* Ref.set(open.place, Option.none())
-    const stored = yield* storage.append(open.id, place, event)
+    const stored = yield* storage.append(open.id, place, open.turn, event)
     yield* Ref.set(open.place, Option.some(stored.seq))
     return stored
   })
@@ -198,18 +198,24 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     yield* Effect.interruptible(Fiber.await(delivery))
   })
 
+  /** Announce a turn's start inside it, so a listener that fails it still closes it; marked once handed over, so the end announces a start never announced. */
+  const announceStart = (open: Opened) =>
+    Effect.as(core.publish(open.started, { beforeHandOver: Ref.set(open.announcing, true) }), open.session)
+
   return Sessions.of({
     create: (input) => decodeSession(input).pipe(
       Effect.mapError(() => new InvalidSession({ message: "a session needs an owner that is not empty, and a parent that is a session id" })),
       Effect.flatMap((decoded) => Effect.tap(options.mintId ?? mintUuid, (id) => storage.create(headerOf(id, decoded)))),
     ),
     read: (id) => storage.read(id),
+    // The turn closes with the scope. The scope's close cannot fail: an end that cannot be stored is its defect, and the turn stays open, as the journal says.
+    open: (id) => Effect.flatMap(
+      Effect.acquireRelease(begin(id), (open, exit) => Effect.orDie(end(open, exit))),   // Free → TurnOpen, or refused; the end stores core.session.turn.ended with the scope's outcome
+      announceStart,
+    ),
     turn: (id, body) => Effect.acquireUseRelease(
       begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
-      (open) => Effect.andThen(                                     // announced inside the turn, so a listener that fails it still closes it
-        core.publish(open.started, { beforeHandOver: Ref.set(open.announcing, true) }),   // marked once handed over; the end announces a start never announced
-        body(open.session),
-      ),
+      (open) => Effect.flatMap(announceStart(open), body),           // announced inside the turn, so a listener that fails it still closes it
       (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
     ),
   })

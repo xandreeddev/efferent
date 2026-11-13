@@ -984,8 +984,8 @@ const protocolFixtures: ReadonlyArray<PackedFixture> = [
   { file: "helper-executor-consumer.fixture.mjs", marker: "helper-executor", required: ["durableWitness", "liveHolderPreserved", "bookkeepingWithoutExecutor", "repeatedKillRepair", "uniqueRecoveryKeys", "abandonedTurnKeysVerified", "exactOutboxRepaired", "answerOnce", "borrowedTaskRoute", "lostEndAckRecovered", "terminalResultOnce", "sigkillRecoveryVerified"] },
   { file: "process-host-consumer.fixture.mjs", marker: "process-host", required: ["peerKitVerified", "controlsResponsive", "durableQueueAck", "cancelExactTurn", "lifecycleAckVerified", "protocolOnlyStdout", "steerReachesRunningTurn", "closedStdoutExitDocumented", "sigtermStoredShutdown", "restartResumeVerified", "retainedInputOnce", "sigkillWitnessVerified", "explicitTakeoverVerified", "noDuplicateHandler", "hardDeadlineStuckSetup", "hardDeadlineStuckFinalizer", "secondSignalVerified", "stalledStdoutBounded", "nativeExitCodesVerified"] },
   { file: "regex-search-consumer.fixture.mjs", marker: "regex-search", required: ["bounded", "literal", "ordinary"], timeoutMs: 15_000 },
-  // The kernel's two entries: the four contracts' kits on the stock plugins, one turn of a stack of layers on the scripted model, two messages queued with the inbox, and a consumer's own contract composed as a layer.
-  { file: "kernel-consumer.fixture.mjs", marker: "kernel", required: ["storageKit", "sessionsKit", "memoryKit", "loopKit", "scriptedTurn", "inboxQueued", "layersComposed"] },
+  // The kernel's two entries: the three contracts' kits on the stock plugins (the memory kit on both memories), one turn of a host's own over a stack of layers on the scripted model, two messages queued with the inbox running that turn, and a consumer's own contract composed as a layer.
+  { file: "kernel-consumer.fixture.mjs", marker: "kernel", required: ["storageKit", "sessionsKit", "memoryKit", "hostTurn", "inboxQueued", "layersComposed"] },
 ]
 for (const fixture of protocolFixtures) await runPackedFixture(fixture)
 // Native memory, RAG and temporal graph conformance through the packed public API.

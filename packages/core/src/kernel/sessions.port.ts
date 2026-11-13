@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { Effect } from "effect"
+import type { Effect, Scope } from "effect"
 import type { ListenerFailed, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { SessionId, TurnNumber } from "./ids.entity.js"
 import type { Journal, JournalStorageError, UnknownRecord } from "./journal.entity.js"
@@ -47,10 +47,20 @@ export class Sessions extends Context.Service<Sessions, {
   /** The session's header and stored events. */
   readonly read: (id: SessionId) => Effect.Effect<Journal, JournalStorageError>
   /**
-   * Run `body` as the session's next turn. Opening stores
-   * `core.session.turn.started`; every exit of the body (its value, its
-   * failure, an interrupt) stores `core.session.turn.ended` with the
-   * outcome and frees the session.
+   * Open the session's next turn in the current scope, and close it when the
+   * scope closes. Opening stores `core.session.turn.started`; the close stores
+   * `core.session.turn.ended` with the outcome the scope closes with (a
+   * success completes the turn, a failure fails it, an interrupt interrupts
+   * it) and frees the session. A scope's close cannot fail: an end that
+   * cannot be stored is a defect of the scope, and the turn stays open, as
+   * the journal says. `turn` returns that failure as it is.
+   */
+  readonly open: (id: SessionId) => Effect.Effect<OpenSession, TurnFailure, Scope.Scope>
+  /**
+   * Run `body` as the session's next turn: `open` in a scope of its own, the
+   * body, and the close with the body's exit. Every exit of the body (its
+   * value, its failure, an interrupt) stores `core.session.turn.ended` with
+   * the outcome and frees the session.
    */
   readonly turn: <A, E, R>(id: SessionId, body: (session: OpenSession) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | TurnFailure, R>
 }>()("@xandreed/core/kernel/Sessions") {}

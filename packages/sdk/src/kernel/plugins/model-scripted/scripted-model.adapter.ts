@@ -1,7 +1,7 @@
 import { Effect, Layer, Match, Ref, Stream } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import type { LoopScript } from "../../contracts/loop/loop.entity.js"
+import type { ModelScript } from "./scripted-model.entity.js"
 
 const usage = { inputTokens: { total: 0, uncached: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } }
 
@@ -31,13 +31,12 @@ const sent = (prompt: Prompt.Prompt): ScriptedCalls[number] =>
 /**
  * A model that follows a script and calls no provider: call `n` streams
  * the script's `n`th answer or fails as it says, and calls past the
- * script's end repeat its last entry. It is what a host hands the loop
- * kit's subject (`loopConformance` gives each check its script), and what a
- * test or an example runs an agent on. `calls` is what it was sent so far.
+ * script's end repeat its last entry. It is what a test or an example runs
+ * an agent on. `calls` is what it was sent so far.
  *
  * @public
  */
-export const scriptedModel = Effect.fn("kernel.scripted_model")(function* (script: LoopScript) {
+export const scriptedModel = Effect.fn("kernel.scripted_model")(function* (script: ModelScript) {
   const calls = yield* Ref.make<ScriptedCalls>([])
   const model = yield* LanguageModel.make({
     generateText: () => Effect.die("the scripted model only streams"),

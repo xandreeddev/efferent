@@ -28,7 +28,7 @@ export interface SessionsSubject {
 const owner = Owner.make("kit-owner")
 
 /** The kit's own record: any plugin's event, as far as a session plugin knows. */
-const noted = storedEvent("kit", "noted", { data: Schema.Struct({ text: Schema.String }), skippable: true })
+const noted = storedEvent("kit", "noted", { data: Schema.Struct({ text: Schema.String }), skippable: true, tags: ["trace"] })
 const note = (text: string) => stored(noted, { text })
 
 /** What a body fails with in the checks of a failing turn. */
@@ -44,7 +44,9 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * (`create`); a turn stores `core.session.turn.started`, what its body
  * appends and `core.session.turn.ended`, at consecutive places, its body
  * reading what it appended, and the next turn is numbered after it
- * (`turn`); every stored event is announced on `Core` after it is in the
+ * (`turn`); a turn opened with `open` closes when its scope closes, with
+ * the scope's outcome (completed, failed, interrupted), and every record
+ * names the turn it was stored in (`open`); every stored event is announced on `Core` after it is in the
  * journal, under the same name, with its session and turn (`announce`); a
  * turn asked for while one is open is refused and stores nothing (`busy`);
  * a turn of one session does not hold another (`isolated`);
@@ -164,6 +166,23 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("isolated", show(names(one.events)) === show([STARTED, ENDED]) && show(names(other.events)) === show([STARTED, noted.name, ENDED]),
         `two sessions hold ${show(names(one.events))} and ${show(names(other.events))}`)
     })),
+    check("a turn opened in a scope closes with the scope, and its records name their turn", "open", ({ core, sessions }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      yield* Effect.scoped(Effect.flatMap(sessions.open(id), (session) => session.append(note("answered"))))
+      yield* Effect.exit(Effect.scoped(Effect.flatMap(sessions.open(id), () => Effect.fail(new KitFailure({ message: "the turn failed" })))))
+      const running = yield* Deferred.make<void>()
+      const handedOver = yield* endOnStream(core)
+      const fiber = yield* Effect.forkChild(Effect.scoped(Effect.flatMap(sessions.open(id), () => Effect.andThen(Deferred.succeed(running, undefined), Effect.never))))
+      const started = yield* within(running)
+      yield* expect("open", Option.isSome(started), "a turn opened in a scope never ran what followed the open")
+      yield* Fiber.interrupt(fiber)
+      yield* handedOver
+      const journal = yield* sessions.read(id)
+      const ends = journal.events.filter((event) => event.name === ENDED).map((event) => outcomeOf(Option.some(event)))
+      yield* expect("open", show(ends) === show(["Completed", "Failed", "Interrupted"]), `three turns opened in a scope ended ${show(ends)}`)
+      yield* expect("open", show(journal.events.map((event) => event.turn)) === show([1, 1, 1, 2, 2, 3, 3]),
+        `the records of three turns name the turns ${show(journal.events.map((event) => event.turn))}`)
+    })),
     check("a body that fails still closes the turn, and the next turn runs", "closes", ({ sessions }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
       yield* refuses("closes", "a turn whose body failed", sessions.turn(id, () => Effect.fail(new KitFailure({ message: "the body failed" }))), (error) => error._tag === "KitFailure")
@@ -240,7 +259,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     })),
     check("a record named under core. is refused, and nothing is stored or announced", "reserved-name", ({ sessions, seen }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
-      const drafts = [turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)), { name: EventName.make("core.kit.anything"), data: {}, skippable: true }]
+      const drafts = [turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)), { name: EventName.make("core.kit.anything"), data: {}, skippable: true, tags: [] }]
       yield* sessions.turn(id, (session) => Effect.forEach(drafts, (draft) => refuses("reserved-name", `an append of ${draft.name}`, session.append(draft),
         (error) => error._tag === "SessionRefused" && error.reason === "ReservedName"), { concurrency: 1, discard: true }))
       const journal = yield* sessions.read(id)

@@ -16,7 +16,7 @@ describe("core with no loop", () => {
   test("runs a turn that a plugin of its own opens, and stores the turn and the plugin's records", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       // A record of the plugin's own.
-      const noted = storedEvent("notes", "noted", { data: Schema.Struct({ text: Schema.String }), skippable: false })
+      const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }), skippable: false })
 
       // The plugin: when built, it opens a turn of the session and appends its records. It needs `Sessions` and nothing else.
       const notes = (session: SessionId, texts: ReadonlyArray<string>): Layer.Layer<never, TurnFailure, Sessions> =>

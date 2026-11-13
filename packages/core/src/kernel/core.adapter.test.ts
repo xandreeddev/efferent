@@ -10,8 +10,8 @@ import { listenerFailedEvent } from "./vocabulary.entity.js"
 import { ListenerFailed } from "./event.entity.js"
 
 const origin = { id: SessionId.make("s-1"), turn: TurnNumber.make(1) }
-const ticked = liveEvent("clock", "ticked", { data: Schema.Struct({ n: Schema.Int }) })
-const tocked = liveEvent("clock", "tocked", { data: Schema.Struct({ n: Schema.Int }) })
+const ticked = liveEvent("clock", "ticked", { tags: ["trace"], data: Schema.Struct({ n: Schema.Int }) })
+const tocked = liveEvent("clock", "tocked", { tags: ["trace"], data: Schema.Struct({ n: Schema.Int }) })
 const tick = (n: number) => live(ticked, origin, { n })
 /** An event no listener waits for: published after something, it marks "everything before this has been handed over". */
 const probe = live(tocked, origin, { n: 0 })
@@ -52,7 +52,7 @@ describe("Core.publish", () => {
       yield* Deferred.await(entered)
       // The waiting listener holds the first event. An event published now reaches the hub before it: were the
       // hub handed an event before its waiting listeners ran, the tick would be there first.
-      yield* core.publish(live(liveEvent("clock", "chimed", { data: Schema.Struct({}) }), origin, {}))
+      yield* core.publish(live(liveEvent("clock", "chimed", { tags: ["trace"], data: Schema.Struct({}) }), origin, {}))
       yield* Deferred.succeed(go, undefined)
       yield* Fiber.join(publisher)
       yield* core.publish(probe)
@@ -164,7 +164,7 @@ describe("Core.publish", () => {
     const failure = await run(Effect.gen(function* () {
       const core = yield* makeCore()
       yield* core.on(ticked, () => Effect.void, { wait: true, name: "strict" })
-      const wrong: KernelEvent = { _tag: "Live", session: origin.id, turn: origin.turn, name: ticked.name, data: { n: "one" } }
+      const wrong: KernelEvent = { _tag: "Live", session: origin.id, turn: origin.turn, name: ticked.name, tags: ticked.tags, data: { n: "one" } }
       return yield* Effect.flip(core.publish(wrong))
     }))
     expect(failure).toMatchObject({ _tag: "ListenerFailed", listener: "strict", event: "plugin.clock.ticked" })
@@ -197,7 +197,7 @@ describe("a background listener", () => {
       yield* core.publish(tick(2))
       return { reported: yield* Deferred.await(reported), second: yield* Deferred.await(second) }
     }))
-    expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "Broken: no room" } })
+    expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, tags: listenerFailedEvent.tags, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "Broken: no room" } })
     expect(result.second).toBe(2)
   })
 
@@ -217,7 +217,7 @@ describe("a background listener", () => {
       return { reported: yield* Deferred.await(reported), heard: yield* Ref.get(heard) }
     }).pipe(Effect.timeout("2 seconds")))
     expect(result.heard).toEqual([2, 3])
-    expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "interrupted" } })
+    expect(result.reported).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: listenerFailedEvent.name, tags: listenerFailedEvent.tags, data: { listener: "ledger", event: "plugin.clock.ticked", reason: "interrupted" } })
   })
 
   test("that reads slower than events arrive loses the oldest ones: delivery is bounded and sliding", async () => {

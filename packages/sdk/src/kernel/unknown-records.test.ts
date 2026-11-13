@@ -1,12 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
-import { Core, EventName, JournalStorage, kernel, Owner, Seq, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
+import { Context, Deferred, Effect, Exit, Layer, Option, Schema, Scope } from "effect"
+import { Core, EventName, JournalStorage, kernel, messageOf, Owner, Seq, Sessions, stored, storedEvent, TurnNumber, userMessageEvent } from "@xandreed/core/kernel"
 import type { SessionId, StoredDraft } from "@xandreed/core/kernel"
-import { Tokens } from "./contracts/loop/request.entity.js"
-import { estimateRequest } from "./contracts/loop/request.entity.functions.js"
-import { Settings } from "./contracts/loop/settings.port.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
+import { inProcessJournal, promptMessage, sessions, windowMemory } from "./index.js"
 import { answering, base, open } from "./testing.js"
 
 /*
@@ -15,27 +12,26 @@ import { answering, base, open } from "./testing.js"
  * session's records are. Each says whether a reader that does not know it
  * may skip it.
  */
-const windowFuture = (skippable: boolean) => stored(storedEvent("window", "future", { data: Schema.Struct({ note: Schema.String }), skippable }), { note: "from a later release" })
+const windowFuture = (skippable: boolean) => stored(storedEvent("window", "future", { tags: ["memory"], data: Schema.Struct({ note: Schema.String }), skippable }), { note: "from a later release" })
 const sessionFuture = (skippable: boolean) =>
-  stored({ ...storedEvent("any", "future", { data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
+  stored({ ...storedEvent("any", "future", { tags: ["trace"], data: Schema.Struct({}), skippable }), name: EventName.make("core.session.future") }, {})
 /**
  * Store a record after the last one a session's journal holds, between its turns, as a later release of the session
  * plugin, the one writer of core's records, would: no turn's body may append a record named under `core.`.
  */
 const storedByAnotherRelease = (storage: Context.Service.Shape<typeof JournalStorage>, id: SessionId, draft: StoredDraft) =>
-  Effect.flatMap(storage.read(id), (journal) => storage.append(id, Seq.make(journal.events.at(-1)?.seq ?? 0), draft))
+  Effect.flatMap(storage.read(id), (journal) => storage.append(id, Seq.make(journal.events.at(-1)?.seq ?? 0), TurnNumber.make(journal.events.at(-1)?.turn ?? 1), draft))
 /** Another plugin's record, which may not be skipped by those it concerns. */
-const stranger = stored(storedEvent("elsewhere", "noted", { data: Schema.Struct({}), skippable: false }), {})
+const stranger = stored(storedEvent("elsewhere", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: false }), {})
 
 /** A memory that sends nothing but the turn's message and, before that, writes `records` into the journal. */
-const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Layer.Layer<Memory, never, Settings> => Layer.effect(Memory, Effect.map(Settings, (settings) => Memory.of({
-  build: (session) => Effect.gen(function* () {
+const scribe = (records: ReadonlyArray<ReturnType<typeof windowFuture>>): Layer.Layer<Memory> => Layer.succeed(Memory, Memory.of({
+  context: (session) => Effect.gen(function* () {
     yield* Effect.forEach(records, (record) => session.append(record), { concurrency: 1, discard: true })
     const journal = yield* session.journal
-    const asked = journal.filter((event) => event.name === "plugin.loop.user.message").slice(-1)
-    return { messages: asked.map((event) => event.seq), estimatedTokens: estimateRequest(settings.system, asked.flatMap((event) => event.message === undefined ? [] : [event.message])), budgetTokens: Tokens.make(3000) }
+    return journal.filter((event) => event.name === userMessageEvent.name).slice(-1).flatMap((event) => Option.toArray(messageOf(event))).map(promptMessage)
   }),
-})))
+}))
 
 /**
  * One turn under a memory that leaves `records` in the journal, then the stock window memory over that journal: the
@@ -48,12 +44,12 @@ const windowAfter = (records: ReadonlyArray<ReturnType<typeof windowFuture>>) =>
   const shared = Layer.succeedContext(built)
   const before = yield* Scope.make()
   const ours = (record: StoredDraft) => record.name.startsWith("core.")
-  const first = yield* open(stepLoop.pipe(Layer.provideMerge(scribe(records.filter((record) => !ours(record)))), Layer.provideMerge(shared))).pipe(Scope.provide(before))
+  const first = yield* open(scribe(records.filter((record) => !ours(record))).pipe(Layer.provideMerge(shared))).pipe(Scope.provide(before))
   const session = yield* first.createSession({ owner: "learner" })
   yield* first.send(session, "One")
   yield* Effect.forEach(records.filter(ours), (record) => storedByAnotherRelease(Context.get(built, JournalStorage), session, record), { concurrency: 1, discard: true })
   yield* Scope.close(before, Exit.void)
-  const agent = yield* open(stepLoop.pipe(Layer.provideMerge(windowMemory({ budgetTokens: 3000 })), Layer.provideMerge(shared)))
+  const agent = yield* open(windowMemory({ budgetTokens: 3000 }).pipe(Layer.provideMerge(shared)))
   const sent = yield* Effect.result(agent.send(session, "Two"))
   const inspected = yield* Effect.result(agent.inspect(session))
   return { sent, inspected }
@@ -62,7 +58,7 @@ const windowAfter = (records: ReadonlyArray<ReturnType<typeof windowFuture>>) =>
 describe("a stored plugin record a reader does not know", () => {
   test("is skipped by the window memory when the record says it may be", async () => {
     const result = await windowAfter([windowFuture(true)])
-    expect(result.sent).toMatchObject({ _tag: "Success", success: { text: "Fine." } })
+    expect(result.sent).toMatchObject({ _tag: "Success", success: "Fine." })
     expect(result.inspected).toMatchObject({ _tag: "Success", success: { state: { _tag: "Free", turns: 2 } } })
   })
 
@@ -70,19 +66,19 @@ describe("a stored plugin record a reader does not know", () => {
     const result = await windowAfter([windowFuture(false)])
     expect(result.sent).toMatchObject({ _tag: "Failure", failure: { _tag: "UnknownRecord", name: "plugin.window.future", seq: 3 } })
     const inspection = result.inspected._tag === "Success" ? result.inspected.success : undefined
-    expect(inspection?.events.map((event): string => event.name).slice(6)).toEqual(["core.session.turn.started", "plugin.loop.user.message", "core.session.turn.ended"])
+    expect(inspection?.events.map((event): string => event.name).slice(5)).toEqual(["core.session.turn.started", "conversation.user.message", "core.session.turn.ended"])
     expect(inspection?.events.at(-1)?.data).toMatchObject({ outcome: { _tag: "Failed" } })
   })
 
   test("is no concern of a reader whose prefixes it is not under, whatever it says", async () => {
     const result = await windowAfter([stranger])
-    expect(result.sent).toMatchObject({ _tag: "Success", success: { text: "Fine." } })
+    expect(result.sent).toMatchObject({ _tag: "Success", success: "Fine." })
     expect(result.inspected).toMatchObject({ _tag: "Success" })
   })
 
   test("under core's prefix: skipped by the readers of the session's state when it may be, refused when it may not", async () => {
     const skipped = await windowAfter([sessionFuture(true)])
-    expect(skipped.sent).toMatchObject({ _tag: "Success", success: { text: "Fine." } })
+    expect(skipped.sent).toMatchObject({ _tag: "Success", success: "Fine." })
     expect(skipped.inspected).toMatchObject({ _tag: "Success", success: { state: { _tag: "Free", turns: 2 } } })
     const refused = await windowAfter([sessionFuture(false)])
     // The window memory answers for `core.` too, and so does whoever folds the journal to a state.

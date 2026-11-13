@@ -1,15 +1,11 @@
-import { Context, Effect, Layer, Ref, Result, Stream } from "effect"
-import type { Schema } from "effect"
-import { AiError, LanguageModel } from "effect/ai"
-import type { Prompt, Response } from "effect/ai"
-import { Core, inspectionOf, kernel, Sessions } from "@xandreed/core/kernel"
-import { Loop } from "./contracts/loop/loop.port.js"
-import { requestsOf } from "./contracts/loop/request.entity.functions.js"
-import { settings } from "./contracts/loop/settings.adapter.js"
-import type { EventDefinition, JournalStorage, KernelEvent, NewSessionInput, SessionId } from "@xandreed/core/kernel"
-import type { Settings } from "./contracts/loop/settings.port.js"
-import type { Memory } from "./contracts/memory/memory.port.js"
-import { inProcessJournal, sessions, stepLoop, windowMemory } from "./index.js"
+import { Context, Effect, Layer, Match, Option, Ref, Schema, Stream } from "effect"
+import { AiError, LanguageModel, Prompt } from "effect/ai"
+import type { Response } from "effect/ai"
+import { assistantMessage, Core, inspectionOf, kernel, live, liveEvent, Sessions, userMessage } from "@xandreed/core/kernel"
+import type { EventDefinition, JournalStorage, KernelEvent, NewSessionInput, SessionId, Usage } from "@xandreed/core/kernel"
+import type { InboxTurnFailure } from "./contracts/inbox/inbox.port.js"
+import { Memory } from "./contracts/memory/memory.port.js"
+import { inProcessJournal, sessions, windowMemory } from "./index.js"
 import type { InvalidBudget, SessionsOptions } from "./index.js"
 
 /*
@@ -59,43 +55,88 @@ export const counting = scripted((call) => answer(`Reply ${call + 1}.`))
 /** The error of a model that is down. */
 export const modelDown = AiError.make({ module: "Scripted", method: "streamText", reason: new AiError.UnknownError({ description: "the scripted model is down" }) })
 
-/** What the parts of a test agent may need: everything below memory and the loop. */
-type Below = Core | Settings | Sessions | JournalStorage | LanguageModel.LanguageModel
+/** A model's stream reported an error part-way: an answer cut by one is no answer. */
+export class ModelFailed extends Schema.TaggedError<ModelFailed>()("ModelFailed", { message: Schema.String, cause: Schema.optional(Schema.Defect()) }) {}
+
+/** A message of no text, refused before a turn opens. */
+export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()("EmptyMessage", { message: Schema.String }) {}
+
+/** The provider's report, when it counted both what it read and what it wrote. */
+const usageOf = (reported: Response.Usage): Option.Option<Usage> =>
+  reported.inputTokens.total === undefined || reported.outputTokens.total === undefined
+    ? Option.none()
+    : Option.some({ inputTokens: reported.inputTokens.total, outputTokens: reported.outputTokens.total, ...(reported.inputTokens.cacheRead === undefined ? {} : { cachedInputTokens: reported.inputTokens.cacheRead }) })
+
+/** A piece of an answer as the tests' turn publishes it, live: what a client would draw. */
+export const pieceEvent = liveEvent("test", "piece", { tags: ["ui"], data: Schema.Struct({ text: Schema.String }) })
+
+/** What a turn of the tests runs over: the kernel's events, sessions, memory and a model. */
+export type TurnNeeds = Core | Sessions | Memory | LanguageModel.LanguageModel
+
+/** A turn as the tests run one: the host's program for one message, from the message to the answer. */
+export type Turn = (session: SessionId, message: string) => Effect.Effect<string, InboxTurnFailure, TurnNeeds>
+
+/**
+ * The tests' turn: the kernel has no loop, so the tests run turns the way a
+ * host writes its program. One turn per message: open it in a scope, store
+ * the message, ask memory for the context, send the system text and the
+ * context, publish the answer's pieces live, store the answer with what the
+ * provider reported it cost.
+ */
+export const testTurn = (system: string = SYSTEM): Turn => (conversation, message) => message.trim().length === 0
+  ? Effect.fail(new EmptyMessage({ message: "a turn needs a message that is not empty" }))
+  : Effect.scoped(Effect.gen(function* () {
+    const core = yield* Core
+    const turns = yield* Sessions
+    const memory = yield* Memory
+    const model = yield* LanguageModel.LanguageModel
+    type Gathered = { readonly text: string; readonly usage: Option.Option<Usage> }
+    const session = yield* turns.open(conversation)
+    yield* session.append(userMessage(message))
+    const history = yield* memory.context(session)
+    const answer = yield* model.streamText({ prompt: Prompt.make([{ role: "system", content: system }, ...history]) }).pipe(
+      Stream.runFoldEffect((): Gathered => ({ text: "", usage: Option.none() }), (gathered, part) => Match.value(part).pipe(
+        Match.discriminator("type")("text-delta", ({ delta }) => Effect.as(core.publish(live(pieceEvent, session, { text: delta })), { ...gathered, text: gathered.text + delta })),
+        Match.discriminator("type")("error", ({ error }) => Effect.fail(new ModelFailed({ message: "the model's stream reported an error", cause: error }))),
+        Match.discriminator("type")("finish", ({ usage }) => Effect.succeed({ ...gathered, usage: usageOf(usage) })),
+        Match.orElse(() => Effect.succeed(gathered)),
+      )),
+    )
+    yield* session.append(assistantMessage(answer.text, Option.match(answer.usage, { onNone: () => ({}), onSome: (usage) => ({ usage }) })))
+    return answer.text
+  }))
+
+/** What the parts of a test agent may need: everything below memory. */
+type Below = Core | Sessions | JournalStorage | LanguageModel.LanguageModel
 
 /** The parts of a test agent a test may replace; the stock ones where it leaves them out. */
-export interface Parts<EM, EL, EX> {
-  readonly system?: string
+export interface Parts<EM, EX> {
   readonly sessions?: SessionsOptions
   readonly memory?: Layer.Layer<Memory, EM, Below>
-  readonly loop?: Layer.Layer<Loop, EL, Below | Memory>
   /** Plugins that only listen, built right after the kernel and before every other part: `inOrder` sequences several. */
-  readonly extras?: Layer.Layer<never, EX, Core | Settings>
+  readonly extras?: Layer.Layer<never, EX, Core>
 }
 
 /** Several layers that only listen, built one after another in the order given, so their listeners register in that order. */
-export const inOrder = <E>(...layers: ReadonlyArray<Layer.Layer<never, E, Core | Settings>>): Layer.Layer<never, E, Core | Settings> =>
-  layers.reduce<Layer.Layer<never, E, Core | Settings>>((built, next) => next.pipe(Layer.provideMerge(built)), Layer.empty)
+export const inOrder = <E>(...layers: ReadonlyArray<Layer.Layer<never, E, Core>>): Layer.Layer<never, E, Core> =>
+  layers.reduce<Layer.Layer<never, E, Core>>((built, next) => next.pipe(Layer.provideMerge(built)), Layer.empty)
 
-/** The parts built once and shared by the stacks above them: the kernel, a journal kept in the process, the session plugin and the settings, over the model. */
-export const base = (model: Layer.Layer<LanguageModel.LanguageModel>, parts: { readonly system?: string; readonly sessions?: SessionsOptions } = {}) =>
+/** The parts built once and shared by the stacks above them: the kernel, a journal kept in the process and the session plugin, over the model. */
+export const base = (model: Layer.Layer<LanguageModel.LanguageModel>, parts: { readonly sessions?: SessionsOptions } = {}) =>
   sessions(parts.sessions).pipe(
     Layer.provideMerge(inProcessJournal()),
-    Layer.provideMerge(settings({ system: parts.system ?? SYSTEM })),
     Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
 
-/** The stock agent, composed as a host composes it, with the parts a test replaces. */
-export const stack = <EM = never, EL = never, EX = never>(model: Layer.Layer<LanguageModel.LanguageModel>, parts: Parts<EM, EL, EX> = {}) => {
-  const loop: Layer.Layer<Loop, EL, Below | Memory> = parts.loop ?? stepLoop
+/** The modules a test turn runs over, composed as a host composes them, with the parts a test replaces. */
+export const stack = <EM = never, EX = never>(model: Layer.Layer<LanguageModel.LanguageModel>, parts: Parts<EM, EX> = {}) => {
   const memory: Layer.Layer<Memory, EM | InvalidBudget, Below> = parts.memory ?? windowMemory({ budgetTokens: 3000 })
-  const extras: Layer.Layer<never, EX, Core | Settings> = parts.extras ?? Layer.empty
-  return loop.pipe(
-    Layer.provideMerge(memory),
+  const extras: Layer.Layer<never, EX, Core> = parts.extras ?? Layer.empty
+  return memory.pipe(
     Layer.provideMerge(sessions(parts.sessions)),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(extras),
-    Layer.provideMerge(settings({ system: parts.system ?? SYSTEM })),
     Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
   )
@@ -103,23 +144,18 @@ export const stack = <EM = never, EL = never, EX = never>(model: Layer.Layer<Lan
 
 /**
  * A stack built in the scope, with what a test calls on it: a test's own
- * shorthand, not a handle the kernel ships. `send` is the loop's `run`,
- * `inspect` the session read, folded and its requests resolved
- * (`inspectionOf` and `requestsOf`), `events` the
- * host's stream of `Core`.
+ * shorthand, not a handle the kernel ships. `send` runs `turn` (the tests'
+ * own when left out) over the stack, `inspect` reads the session and folds
+ * it (`inspectionOf`), `events` is the host's stream of `Core`.
  */
-export const open = <E>(layer: Layer.Layer<Core | Sessions | Loop, E>) => Effect.map(Layer.build(layer), (built) => {
+export const open = <E>(layer: Layer.Layer<TurnNeeds, E>, turn: Turn = testTurn()) => Effect.map(Layer.build(layer), (built) => {
   const core = Context.get(built, Core)
   const sessionsOf = Context.get(built, Sessions)
-  const loop = Context.get(built, Loop)
   return {
     core,
-    loop,
     createSession: (input: NewSessionInput) => sessionsOf.create(input),
-    send: (session: SessionId, message: string) => loop.run({ session, message }),
-    inspect: (session: SessionId) => Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(
-      Result.flatMap(inspectionOf(journal), (inspection) => Result.map(requestsOf(journal.events), (requests) => ({ ...inspection, requests }))),
-    )),
+    send: (session: SessionId, message: string) => Effect.provide(turn(session, message), built),
+    inspect: (session: SessionId) => Effect.flatMap(sessionsOf.read(session), (journal) => Effect.fromResult(inspectionOf(journal))),
     events: core.events,
   }
 })

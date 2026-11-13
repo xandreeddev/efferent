@@ -1,57 +1,43 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
 import type { Context } from "effect"
-import { Core, live, liveEvent, messageOf, originOf, Seq, Sessions, stored, storedEvent } from "@xandreed/core/kernel"
-import { assistantMessage, requestSent, userMessage } from "./contracts/loop/conversation.entity.functions.js"
-import { replyOf } from "./contracts/loop/loop.entity.functions.js"
-import { Loop } from "./contracts/loop/loop.port.js"
-import { Tokens } from "./contracts/loop/request.entity.js"
-import { estimateRequest, firstStep } from "./contracts/loop/request.entity.functions.js"
-import { Settings } from "./contracts/loop/settings.port.js"
+import { assistantMessage, Core, live, liveEvent, messageOf, originOf, Seq, Sessions, stored, storedEvent, userMessage } from "@xandreed/core/kernel"
+import { Tokens } from "./contracts/memory/memory.entity.js"
+import { estimateContext, promptMessage } from "./contracts/memory/memory.entity.functions.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import type { AssistantMessage, OpenSession } from "@xandreed/core/kernel"
+import type { OpenSession } from "@xandreed/core/kernel"
 import { answering, inOrder, open, recording, stack, SYSTEM as system } from "./testing.js"
-const FIVE = ["core.session.turn.started", "plugin.loop.user.message", "plugin.loop.request.sent", "plugin.loop.assistant.message", "core.session.turn.ended"]
+import type { Turn } from "./testing.js"
+const FOUR = ["core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "core.session.turn.ended"]
 
 /*
- * A different loop plugin, written here on the same contracts: it asks no
- * model and answers in capitals. The journal, session and memory layers
- * are the stock ones, untouched.
+ * A different turn, written here over the same contracts: it asks no model
+ * and answers in capitals, with how many messages memory gave it. The
+ * journal, session and memory layers are the stock ones, untouched.
  */
-const shoutLoop = Layer.effect(Loop, Effect.gen(function* () {
-  const turns = yield* Sessions
-  const memory = yield* Memory
-  const settings = yield* Settings
-  return Loop.of({
-    run: (input) => turns.turn(input.session, (session) => Effect.gen(function* () {
-      yield* session.append(userMessage(input.message))
-      const request = yield* memory.build(session, firstStep)
-      yield* session.append(requestSent(firstStep, settings.system, request))
-      const message: AssistantMessage = { _tag: "Assistant", text: input.message.toUpperCase(), toolCalls: [] }
-      yield* session.append(assistantMessage(firstStep, message))
-      return replyOf(message)
-    })),
-  })
+const shout: Turn = (conversation, message) => Effect.scoped(Effect.gen(function* () {
+  const session = yield* (yield* Sessions).open(conversation)
+  yield* session.append(userMessage(message))
+  const context = yield* (yield* Memory).context(session)
+  const text = `${message.toUpperCase()} (${context.length})`
+  yield* session.append(assistantMessage(text))
+  return text
 }))
 
-/** What the other loop needs, as its layer's type says: no model and no `Core`, unlike the stock one. */
-const shoutNeeds: Layer.Layer<Loop, never, Sessions | Memory | Settings> = shoutLoop
-
-describe("a different loop layer", () => {
+describe("a different turn", () => {
   test("runs with the journal, session and memory layers untouched", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("never asked")
-      const agent = yield* open(stack(model, { loop: shoutNeeds }))
+      const agent = yield* open(stack(model), shout)
       const session = yield* agent.createSession({ owner: "learner" })
       const replies = [yield* agent.send(session, "hello"), yield* agent.send(session, "again")]
       return { replies, inspection: yield* agent.inspect(session), received: yield* received }
     })))
-    expect(result.replies).toEqual([{ text: "HELLO" }, { text: "AGAIN" }])
+    // The stock memory built the second context from what the other loop stored in the first turn: three messages.
+    expect(result.replies).toEqual(["HELLO (1)", "AGAIN (3)"])
     expect(result.received).toEqual([])
-    expect(result.inspection.events.map((event): string => event.name)).toEqual([...FIVE, ...FIVE])
+    expect(result.inspection.events.map((event): string => event.name)).toEqual([...FOUR, ...FOUR])
     expect(result.inspection.state).toEqual({ _tag: "Free", turns: 2 })
-    // The stock memory built the second request from what the other loop stored in the first turn.
-    expect(result.inspection.requests[1]?.messages.map(({ message }) => message.text)).toEqual(["hello", "HELLO", "again"])
   })
 })
 
@@ -63,36 +49,32 @@ describe("a different loop layer", () => {
  * the three typed with a list of core's own events, this file would not compile.
  */
 const CompactionDue = Schema.Struct({ messages: Schema.Int, estimatedTokens: Tokens })
-const compactionDue = liveEvent("compact", "due", { data: CompactionDue })
-/** The memory's summary: how many messages it stands for, and the run of the journal they are in, both ends included. The meaning is the plugin's, in its own data. */
-const summaryWritten = storedEvent("compact", "summary", { data: Schema.Struct({ of: Schema.Int, from: Seq, through: Seq }), skippable: true })
-const swept = liveEvent("janitor", "swept", { data: Schema.Struct({ after: Schema.Int }) })
+const compactionDue = liveEvent("compact", "due", { tags: ["memory"], data: CompactionDue })
+/** The memory's summary: how many messages it stands for, and the run of the journal they are in, both ends included. The meaning is the plugin's, in its own data; it is the conversation's, and memory's own. */
+const summaryWritten = storedEvent("compact", "summary", { tags: ["conversation", "memory"], data: Schema.Struct({ of: Schema.Int, from: Seq, through: Seq }), skippable: true })
+const swept = liveEvent("janitor", "swept", { tags: ["trace"], data: Schema.Struct({ after: Schema.Int }) })
 
 /** A memory that sends every message until there are more than `keep`, then says so, writes a summary of its own and sends that with the turn's message. */
 const compactingMemory = (keep: number) => Layer.effect(Memory, Effect.gen(function* () {
   const core = yield* Core
-  const settings = yield* Settings
-  const budgetTokens = Tokens.make(3000)
   return Memory.of({
-    build: (session) => Effect.gen(function* () {
+    context: (session) => Effect.gen(function* () {
       const journal = yield* session.journal
-      const bearing = journal.filter((event) => event.message !== undefined && event.name !== summaryWritten.name)
-      const estimate = (seqs: ReadonlyArray<number>) => estimateRequest(settings.system, journal.filter((event) => seqs.includes(event.seq)).flatMap((event) => event.message === undefined ? [] : [event.message]))
-      const all = bearing.map((event) => event.seq)
-      if (bearing.length <= keep) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
+      const said = journal.flatMap((event) => event.name === summaryWritten.name ? [] : Option.toArray(Option.map(messageOf(event), (message) => ({ seq: event.seq, message }))))
+      const all = said.map((entry) => promptMessage(entry.message))
+      if (said.length <= keep) return all
       // The compression check tripped: announce it, live, under this plugin's own name.
-      yield* core.publish(live(compactionDue, session, { messages: bearing.length, estimatedTokens: estimate(all) }))
-      const older = bearing.slice(0, -1)
-      const last = bearing.at(-1)
+      yield* core.publish(live(compactionDue, session, { messages: said.length, estimatedTokens: estimateContext(all) }))
+      const older = said.slice(0, -1)
+      const last = said.at(-1)
       const first = older[0]
       const through = older.at(-1)
-      if (last === undefined || first === undefined || through === undefined) return { messages: all, estimatedTokens: estimate(all), budgetTokens }
-      // Text memory writes for the model is its own record first, bearing the message, with what it replaces in its own data; the request points at it.
+      if (last === undefined || first === undefined || through === undefined) return all
+      // Text memory writes for the model is its own record first, bearing the message, with what it replaces in its own data.
       const summary = yield* session.append(stored(summaryWritten, { of: older.length, from: first.seq, through: through.seq }, {
         message: { _tag: "User", text: `Summary of ${older.length} earlier messages.` },
       }))
-      const estimatedTokens = estimateRequest(settings.system, [...Option.toArray(messageOf(summary)), ...Option.toArray(messageOf(last))])
-      return { messages: [summary.seq, last.seq], estimatedTokens, budgetTokens }
+      return [...Option.toArray(messageOf(summary)), last.message].map(promptMessage)
     }),
   })
 }))
@@ -137,13 +119,11 @@ describe("a plugin adds an event on a compression check and another plugin react
     expect(result.quiet).toEqual([])
     // The check tripped on the third turn (five messages over a limit of three): the event, the reaction to it, then the summary's own record.
     expect(result.seen.map((event) => `${event._tag} ${event.name}`)).toEqual(["Live plugin.compact.due", "Live plugin.janitor.swept", "Stored plugin.compact.summary"])
-    expect(result.seen[0]?.data).toEqual({ messages: 5, estimatedTokens: 15 })
+    expect(result.seen[0]?.data).toEqual({ messages: 5, estimatedTokens: 8 })
     expect(result.sweeps).toEqual([5])
-    // The summary is stored once, as the plugin's record bearing a message, and the request points at it.
+    // The summary is stored once, as the plugin's record bearing a message, tagged as the conversation's and memory's own.
     const summary = result.inspection.events.find((event) => event.name === "plugin.compact.summary")
-    expect(summary).toMatchObject({ skippable: true, data: { of: 4, from: 2, through: 9 }, message: { _tag: "User", text: "Summary of 4 earlier messages." } })
-    const last = result.inspection.requests.at(-1)
-    expect(last?.messages.map((pointed): number => pointed.seq)).toEqual([13, 12])
+    expect(summary).toMatchObject({ skippable: true, tags: ["conversation", "memory"], data: { of: 4, from: 2, through: 7 }, message: { _tag: "User", text: "Summary of 4 earlier messages." } })
     expect(result.received.at(-1)).toEqual([
       { role: "system", text: system },
       { role: "user", text: "Summary of 4 earlier messages." },

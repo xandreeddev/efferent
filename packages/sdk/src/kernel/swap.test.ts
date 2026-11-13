@@ -1,15 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Exit, Layer, Ref, Scope } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { Core, inspectionOf, kernel, Sessions } from "@xandreed/core/kernel"
-import { requestSentEvent } from "./contracts/loop/conversation.entity.js"
-import { requestsOf } from "./contracts/loop/request.entity.functions.js"
-import { settings } from "./contracts/loop/settings.adapter.js"
+import { assistantMessageEvent, Core, inspectionOf, kernel, Sessions } from "@xandreed/core/kernel"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { SessionId } from "@xandreed/core/kernel"
-import type { Settings } from "./contracts/loop/settings.port.js"
-import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, stepLoop, windowMemory } from "./index.js"
+import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, windowMemory } from "./index.js"
 import type { InvalidBudget } from "./index.js"
+import { testTurn } from "./testing.js"
 
 /*
  * Replacing a part while running: the base (the kernel, the journal and the
@@ -26,13 +23,13 @@ describe("a session over a shared base", () => {
 
       /** The kernel, a journal kept in the process and the session plugin, over the model: the part built once. */
       const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()), Layer.provideMerge(model))
-      /** A window memory with a listener of its own, which notes, under `name`, each request it hears of. */
-      const noting = (name: string, budgetTokens: number): Layer.Layer<Memory, InvalidBudget, Core | Settings> => windowMemory({ budgetTokens }).pipe(
-        Layer.provideMerge(Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(requestSentEvent, () => Ref.update(heard, (all) => [...all, name]), { name, wait: true })))),
+      /** A window memory with a listener of its own, which notes, under `name`, each answer it hears of. */
+      const noting = (name: string, budgetTokens: number): Layer.Layer<Memory, InvalidBudget, Core> => windowMemory({ budgetTokens }).pipe(
+        Layer.provideMerge(Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(assistantMessageEvent, () => Ref.update(heard, (all) => [...all, name]), { name, wait: true })))),
       )
-      /** The parts above the base: the inbox, the loop, a memory and the system text they read. */
-      const Upper = (memory: Layer.Layer<Memory, InvalidBudget, Core | Settings>): Layer.Layer<Inbox, InvalidBudget, Core | Sessions | LanguageModel.LanguageModel> =>
-        inbox.pipe(Layer.provideMerge(stepLoop), Layer.provideMerge(memory), Layer.provideMerge(settings({ system: "You are a friendly tutor." })))
+      /** The parts above the base: the inbox over the tests' turn, with its system text, and a memory. */
+      const Upper = (memory: Layer.Layer<Memory, InvalidBudget, Core>): Layer.Layer<Inbox, InvalidBudget, Core | Sessions | LanguageModel.LanguageModel> =>
+        inbox(testTurn("You are a friendly tutor.")).pipe(Layer.provideMerge(memory))
       /** Queue a message with a stack's inbox and wait for its reply. */
       const ask = (agent: Context.Context<Inbox>, session: SessionId, message: string) =>
         Effect.flatMap(Context.get(agent, Inbox).enqueue(session, message), (entry) => entry.reply)
@@ -53,15 +50,14 @@ describe("a session over a shared base", () => {
       // #endregion swap
 
       const journal = yield* Context.get(base, Sessions).read(session)
-      const inspection = { ...(yield* Effect.fromResult(inspectionOf(journal))), requests: yield* Effect.fromResult(requestsOf(journal.events)) }
+      const inspection = yield* Effect.fromResult(inspectionOf(journal))
       return { before, after, heard: yield* Ref.get(heard), calls: yield* calls, inspection }
     })))
-    expect([result.before, result.after]).toEqual([{ text: "Hi, Ana." }, { text: "Ana." }])
-    // The old memory heard its own turn's request and nothing after its stack was closed; the new one heard the next.
+    expect([result.before, result.after]).toEqual(["Hi, Ana.", "Ana."])
+    // The old memory heard its own turn's answer and nothing after its stack was closed; the new one heard the next.
     expect(result.heard).toEqual(["A", "B"])
-    // One journal: the second turn is the session's second, and its request is the new memory's, with the new budget.
+    // One journal: the second turn is the session's second.
     expect(result.inspection.state).toEqual({ _tag: "Free", turns: 2 })
-    expect(result.inspection.requests.map((request) => Number(request.budgetTokens))).toEqual([200, 3000])
     // The session goes on with its earlier messages: the model is sent the first turn's, then the new one.
     expect(result.calls[1]?.map((message) => message.text)).toEqual(["You are a friendly tutor.", "Hi, I'm Ana.", "Hi, Ana.", "What's my name?"])
   })

@@ -49,4 +49,4 @@ export type InboxQueuedData = typeof InboxQueuedData.Type
  *
  * @public
  */
-export const inboxQueuedEvent = liveEvent("inbox", "queued", { data: InboxQueuedData })
+export const inboxQueuedEvent = liveEvent("inbox", "queued", { data: InboxQueuedData, tags: ["ui"] })
