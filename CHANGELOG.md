@@ -171,6 +171,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn pages' Context tab keeps each list at its bottom as
+  the conversation grows, also when the tab was hidden while it grew, and a
+  list scrolled up stays where it is. A row under the pointer no longer
+  flashes while an answer streams: a paint keeps every row whose content is
+  unchanged, and the step track and the model-call picker keep the room
+  they took, so the columns do not move during a turn. The workbench's
+  scrollbars are slim and in the theme's colours. No published package
+  changes.
 - Docs site: the learn pages' CPU models keep their downloads in IndexedDB
   where the browser has no Cache API (a page served over plain http from a
   LAN address is no secure context), so a second visit loads them from

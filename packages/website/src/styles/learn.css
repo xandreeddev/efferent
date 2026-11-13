@@ -15,6 +15,36 @@ body.app {
   min-height: 0;
 }
 
+/* Scrollbars: slim and in the theme's colours, as a chat app draws them. The
+   thumb is faint until the pane is hovered, and the track is the pane itself.
+   Chromium and Safari take the pseudo-elements; Firefox the standard pair. */
+.wb ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.wb ::-webkit-scrollbar-track,
+.wb ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.wb ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-faint) 22%, transparent);
+  border-radius: 999px;
+}
+.wb :hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-faint) 45%, transparent);
+}
+.wb ::-webkit-scrollbar-thumb:hover,
+.wb ::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--text-faint) 70%, transparent);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .wb,
+  .wb * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-faint) 40%, transparent) transparent;
+  }
+}
+
 /* ── Lesson panel (one step at a time) ───────────────────────────────────── */
 .wb-lesson {
   display: flex;
