@@ -7,7 +7,7 @@
 import { Option } from "effect"
 import { assistantMessageEvent, messageOf, SessionId, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens } from "@xandreed/sdk/kernel"
+import { estimateTokens, resultText } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
 
@@ -231,7 +231,21 @@ export interface PromptRow {
   readonly seq: Option.Option<number>
   /** The same as the previous prompt up to here: a provider's cache can reuse it. */
   readonly reused: boolean
+  /** A tool's result sent as a pointer (ADR 0011): how many tokens of it the journal keeps, by the stored result's estimate. */
+  readonly pointer: Option.Option<number>
 }
+
+/**
+ * How much of a stored tool result the journal keeps when the model was sent something else for it (a pointer, ADR
+ * 0011): the stored result's estimate, in tokens. None when the record holds no tool result, when the message
+ * answers another call, or when what was sent is the result as stored. It compares what was sent with what is
+ * stored, and never looks for a pointer's words.
+ */
+export const keptInJournal = (sent: Said, record: Pick<StoredEvent, "name" | "data" | "tags" | "message">): Option.Option<number> =>
+  Option.flatMap(messageOf(record), (message) =>
+    message._tag === "ToolResult" && sent.resultId === message.id && sent.text !== saidOfStored(message).text
+      ? Option.some(Number(estimateTokens(resultText(message.result))))
+      : Option.none())
 
 /** One model call of a turn: what memory gave it, and the prompt it received. */
 export interface CallView {
@@ -321,14 +335,18 @@ const callViewOf = (board: Board, turn: number, index: number, previous: Option.
     let next = 0
     let prefix = true
     return messages.map((message, at): PromptRow => {
-      prefix = prefix && Option.match(previous, { onNone: () => false, onSome: (before) => before[at] !== undefined && before[at]!.key === message.key })
+      // The same message as the prompt before had here, and sent the same way: a tool's result matches its record by
+      // its call, whatever was sent for it, so its text is compared too (a memory may send one record two ways).
+      prefix = prefix && Option.match(previous, { onNone: () => false, onSome: (before) => before[at] !== undefined && before[at]!.key === message.key && before[at]!.text === message.text })
       const tokens = estimateTokens(message.text)
-      const shown = { role: message.role, text: message.text, tokens, reused: prefix }
+      const shown = { role: message.role, text: message.text, tokens, reused: prefix, pointer: Option.none<number>() }
       if (at === 0 && message.role === "system") return { ...shown, source: "code", seq: Option.none() }
       const row = fromMemory[next]
       if (row !== undefined && row.key === message.key) {
         next++
-        return { ...shown, source: "memory", seq: row.seq }
+        // A tool's result that was sent as something other than what its record holds: a pointer.
+        const stored = Option.flatMap(row.seq, (seq) => Option.fromNullishOr(board.records.find((one) => one.seq === seq)))
+        return { ...shown, source: "memory", seq: row.seq, pointer: Option.flatMap(stored, (one) => keptInJournal(message, one)) }
       }
       return { ...shown, source: "added", seq: Option.none() }
     })

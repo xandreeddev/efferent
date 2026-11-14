@@ -105,9 +105,129 @@ const showTable = (match: RegExpExecArray): EchoCall => {
 
 const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×": "*", "/": "/", "÷": "/" }
 
+/** The first sentence of a text, on one line: up to its first full stop, question mark or exclamation mark; all of it when it has none. */
+const firstSentence = (text: string): string => {
+  const flat = text.replace(/\s+/g, " ").trim()
+  return /^.*?[.!?](?=\s|$)/.exec(flat)?.[0] ?? flat
+}
+
+/**
+ * The note under the start of a result that was cut short (lesson 8), by the exact words the kernel writes: how
+ * long the result is, how much of it was sent, and the call that reads on.
+ */
+const POINTER = /\[Host note: the result above is cut short: it is (\d+) characters long and its first (\d+) are shown\. To read on, call readResult with result (\d+) and from (\d+)\.\]$/
+
+/** A pointer Echo was sent in place of a long result: the start it frames, the result's length, and where to read on. */
+interface Pointer {
+  readonly preview: string
+  readonly total: number
+  readonly result: number
+  readonly from: number
+}
+
+const pointerIn = (result: unknown): Pointer | undefined => {
+  const note = typeof result === "string" ? POINTER.exec(result) : null
+  if (note === null || typeof result !== "string") return undefined
+  return { preview: framedIn("tool-result-preview", result) ?? "", total: Number(note[1]), result: Number(note[3]), from: Number(note[4]) }
+}
+
+/** A part of a result that `readResult` returned: its text, where it starts and ends, and the result's length. */
+interface Page {
+  readonly text: string
+  readonly from: number
+  readonly to: number
+  readonly total: number
+}
+
+const pageIn = (result: unknown): Page | undefined =>
+  typeof result === "object" && result !== null
+    && "text" in result && typeof result.text === "string" && "from" in result && typeof result.from === "number"
+    && "to" in result && typeof result.to === "number" && "total" in result && typeof result.total === "number"
+    ? { text: result.text, from: result.from, to: result.to, total: result.total }
+    : undefined
+
+/**
+ * The first whole sentence of a part: a part that starts inside a text opens with the end of a sentence, cut where
+ * the characters fell, and that is passed over. A part that is nothing but such an end is quoted as it is.
+ */
+const firstWholeSentence = (page: Page): string => {
+  const flat = page.text.replace(/\s+/g, " ").trim()
+  const rest = page.from === 0 ? flat : flat.replace(/^.*?[.!?](?:\s+|$)/, "")
+  return firstSentence(rest.length > 0 ? rest : flat)
+}
+
+/** A tool's result as a prompt carries it. */
+interface ResultPart {
+  readonly id: string
+  readonly name: string
+  readonly isFailure: boolean
+  readonly result: unknown
+}
+
+/**
+ * What Echo says of one result of `lookup` or `readResult` (lesson 8): the first sentence of what it was sent (of a
+ * part read on, the first whole one), and how much of the whole that is. Nothing for any other tool's result, or a
+ * failed one: those are answered as the tool's, as before.
+ */
+const readingOf = (part: ResultPart): string | undefined => {
+  if (part.isFailure) return undefined
+  if (part.name === "readResult") {
+    const page = pageIn(part.result)
+    return page === undefined ? undefined
+      : `Characters ${page.from} to ${page.to} of ${page.total}: "${firstWholeSentence(page)}" ${page.to < page.total ? 'Say "read more" for the next part.' : "That is the end."}`
+  }
+  if (part.name !== "lookup" || typeof part.result !== "string") return undefined
+  const pointer = pointerIn(part.result)
+  return pointer === undefined
+    ? `The article is ${part.result.length} characters long. It starts: "${firstSentence(part.result)}"`
+    : `The article starts: "${firstSentence(pointer.preview)}" I was sent the first ${pointer.from} of ${pointer.total} characters. Say "read more" for the next part.`
+}
+
+/** Where "read more" reads on from: a result and a character, or the end of a result that was read through. */
+type ReadOn = { readonly _tag: "At"; readonly result: number; readonly from: number } | { readonly _tag: "End" }
+
+/**
+ * The latest place to read on from in a prompt, looking back from its end: the last part `readResult` returned
+ * (on from where it stopped, in the result its call named; nowhere when it reached the end), or the last pointer.
+ * Whichever of the two comes later in the prompt wins, so a new lookup is what "read more" reads next.
+ */
+const readOnFrom = (messages: Prompt.Prompt["content"]): ReadOn | undefined => {
+  /** The result a `readResult` call asked for: the call's own parameter, found by the call's id. */
+  const askedFor = (id: string): number | undefined => {
+    const calls = messages.flatMap((message) => (message.role === "assistant" ? message.content : [])).flatMap((part) => (part.type === "tool-call" && part.id === id ? [part.params] : []))
+    const params = calls.at(-1)
+    return typeof params === "object" && params !== null && "result" in params && typeof params.result === "number" ? params.result : undefined
+  }
+  for (let at = messages.length - 1; at >= 0; at--) {
+    const message = messages[at]!
+    if (message.role !== "tool") continue
+    for (let index = message.content.length - 1; index >= 0; index--) {
+      const part = message.content[index]!
+      if (part.type !== "tool-result") continue
+      const page = part.name === "readResult" && !part.isFailure ? pageIn(part.result) : undefined
+      if (page !== undefined) {
+        if (page.to >= page.total) return { _tag: "End" }
+        const result = askedFor(part.id)
+        if (result !== undefined) return { _tag: "At", result, from: page.to }
+      }
+      const pointer = pointerIn(part.result)
+      if (pointer !== undefined) return { _tag: "At", result: pointer.result, from: pointer.from }
+    }
+  }
+  return undefined
+}
+
+/** How many characters Echo asks `readResult` for: short, so reading on takes a few steps a learner can watch. */
+const READ_LENGTH = 400
+
 /**
  * What Echo does with tools offered: by rule, so a lesson can rely on it. Sums go to the calculator, "remember …" to
- * remember, a question about notes to recall; a message that just got tool results is answered from them.
+ * remember, a question about notes to recall, "ask a helper" to delegate, "a table of" to show; a prompt that ends
+ * with tool results is answered from them. Lesson 8's rules: "look up" or "tell me about" tides, volcanoes or
+ * honeybees goes to lookup, and its result is answered with the first sentence Echo was sent and how much of the
+ * whole that is (a pointer, or the whole article); "read more", "read on" or "go on" calls readResult from the
+ * latest place a prompt gives (the last part read, else the last pointer), 400 characters at a time, and says so
+ * when the tool is not offered, when nothing was cut short, or when the last part reached the end.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
@@ -119,14 +239,22 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const parts = prompt.content.slice(first, at + 1).flatMap((message) => (message.role === "tool" ? message.content : []))
     const helped = parts.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
     if (helped.length > 0) return `The helper answered: ${helped.join(" ")}`
-    const all = parts.flatMap((part) => (part.type === "tool-result" ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
-    return `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`
+    // A result of lookup or readResult is answered in its own words (lesson 8); any other, and a failed one, as the tool's.
+    const results = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
+    const read = results.flatMap((part) => readingOf(part) ?? [])
+    const all = results.flatMap((part) => (readingOf(part) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
+    if (read.length > 0 && all.length === 0) return read.join(" ")
+    return [...read, `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`].join(" ")
   }
   if (prompt.content.at(-1)?.role === "tool") return { text: answerFrom(prompt.content.length - 1), calls: [] }
   // Every message sent since its last answer: the turn's own, and any that steered it.
   const since = prompt.content.length - 1 - prompt.content.slice().reverse().findIndex((message) => message.role === "assistant" || message.role === "tool")
   const pending = prompt.content.slice(since > prompt.content.length - 1 ? 0 : since + 1).flatMap((message) =>
     message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])
+  // Where "read more" reads on from, and whether a message asks for it: only where a result was cut short, or where
+  // the tools of lesson 8 are offered, so "go on" anywhere else is a message like any other.
+  const place = readOnFrom(prompt.content)
+  const readsOn = (asked: string): boolean => /\b(?:read more|read on|go on)\b/i.test(asked) && (place !== undefined || offered.includes("lookup") || offered.includes("readResult"))
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
     // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
     const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
@@ -134,6 +262,11 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // "Ask a helper: …", "have a helper work out …": the rest is the helper's task.
     const handed = /\b(?:ask|have|get) a helper\b[\s:,-]*(?:to\s+)?(.+)/i.exec(asked)
     if (handed !== null && offered.includes("delegate")) return [{ name: "delegate", params: { task: handed[1]?.trim() ?? "" } }]
+    // "Look up tides", "tell me about volcanoes": one of lookup's three topics, in lower case.
+    const topic = /\b(?:look up|tell me about)\s+(?:the\s+)?(tides|volcanoes|honeybees)\b/i.exec(asked)
+    if (topic !== null && offered.includes("lookup")) return [{ name: "lookup", params: { topic: topic[1]?.toLowerCase() ?? "" } }]
+    // "Read more", "read on", "go on": the next part of the result last cut short, from where the last part stopped.
+    if (readsOn(asked) && place?._tag === "At" && offered.includes("readResult")) return [{ name: "readResult", params: { result: place.result, from: place.from, length: READ_LENGTH } }]
     if (/\b(notes?|what did i ask you to remember)\b/i.test(asked) && offered.includes("recall")) return [{ name: "recall", params: {} }]
     const sum = /(-?\d+(?:\.\d+)?)\s*([-+*x×/÷])\s*(-?\d+(?:\.\d+)?)/.exec(asked)
     if (sum !== null && offered.includes("calculator")) return [{ name: "calculator", params: { a: Number(sum[1]), op: OPS[sum[2] ?? "+"] ?? "+", b: Number(sum[3]) } }]
@@ -143,6 +276,15 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   }
   const calls = pending.flatMap(callFor)
   if (calls.length > 0) return { text: calls.length > 1 ? `Let me use ${calls.length} tools.` : "Let me work that out.", calls }
+  // "Read more" with no call to make: nothing was cut short, the last part reached the end, or the tool is not offered.
+  if (pending.some(readsOn)) {
+    return {
+      text: place === undefined ? "There is nothing to read on from: look something up first."
+        : place._tag === "End" ? "That was the end of it."
+          : "I have no tool to read on: readResult is not among my tools.",
+      calls: [],
+    }
+  }
   // Messages that steered the turn after its tools answered: answer from the results, and say what was heard.
   if (prompt.content[since]?.role === "tool" && pending.length > 0) {
     return { text: `${answerFrom(since)} You also said: ${pending.map((text) => `"${clip(text, 40)}"`).join(", ")}.`, calls: [] }

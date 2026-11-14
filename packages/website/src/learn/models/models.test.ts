@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Stream } from "effect"
+import { Effect, Fiber, Option, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
+import { Seq, toolResult, TurnNumber } from "@xandreed/core/kernel"
+import { pointed, promptMessage } from "@xandreed/sdk/kernel"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
@@ -628,6 +630,156 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
       { role: "user", content: "And what is 2 + 2?" },
     ])
     expect(echoStep(sent, every)).toEqual(calling(sum(2, "+", 2)))
+  })
+})
+
+describe("Echo's rules for long results (lesson 8)", () => {
+  const offered = ["lookup", "readResult"]
+  const asked = (text: string, tools: ReadonlyArray<string> = offered) => echoStep(Prompt.make([{ role: "user", content: text }]), tools)
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+  const article = "Tides are the regular rise and fall of the sea. The moon causes most of the tide! Does the sun add to it? It does.\n\nThe shape of the coast changes everything. ".repeat(8).trim()
+  /** A pointer as the kernel writes it: the article stored at `seq`, read by a memory that points, with this preview. */
+  const pointerAt = (seq: number, previewTokens = 20, text = article): string => {
+    const stored = { ...toolResult({ id: "c1", name: "lookup" }, text), seq: Seq.make(seq), at: 0, turn: TurnNumber.make(1) }
+    const sent = Option.getOrThrow(pointed({ overTokens: 100, previewTokens })(stored))
+    return sent._tag === "ToolResult" && typeof sent.result === "string" ? sent.result : ""
+  }
+  /** A turn that looked the article up and was sent a pointer to it, stored at `seq`. */
+  const lookedUp = (seq: number, id = "c1") => [
+    { role: "user", content: "Look up tides." },
+    call(id, "lookup", { topic: "tides" }),
+    result(id, "lookup", pointerAt(seq)),
+    { role: "assistant", content: "The article starts." },
+  ] as const
+  /** A turn that read a part of the result stored at `seq`. */
+  const readOn = (seq: number, from: number, to: number, id: string) => [
+    { role: "user", content: "Read more." },
+    call(id, "readResult", { result: seq, from, length: 400 }),
+    result(id, "readResult", { text: article.slice(from, to), from, to, total: article.length }),
+    { role: "assistant", content: "A part." },
+  ] as const
+  const reading = (seq: number, from: number) => ({ text: "Let me work that out.", calls: [{ name: "readResult", params: { result: seq, from, length: 400 } }] })
+
+  test("the pointer Echo reads is the kernel's: its words, and the tool result a memory that points sends", () => {
+    expect(pointerAt(4)).toBe(`<tool-result-preview>\n${article.slice(0, 80)}\n</tool-result-preview>\n[Host note: the result above is cut short: it is ${article.length} characters long and its first 80 are shown. To read on, call readResult with result 4 and from 80.]`)
+    // The same record through the kernel's own mapping to a prompt message: what Echo is sent on the page.
+    const stored = { ...toolResult({ id: "c1", name: "lookup" }, article), seq: Seq.make(4), at: 0, turn: TurnNumber.make(1) }
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), promptMessage(Option.getOrThrow(pointed({ overTokens: 100, previewTokens: 20 })(stored)))])
+    expect(echoStep(sent, offered).text).toBe(`The article starts: "Tides are the regular rise and fall of the sea." I was sent the first 80 of ${article.length} characters. Say "read more" for the next part.`)
+  })
+
+  test("\"look up\" or \"tell me about\" one of the three topics goes to lookup, with the topic in lower case", () => {
+    const looking = (topic: string) => ({ text: "Let me work that out.", calls: [{ name: "lookup", params: { topic } }] })
+    expect(asked("Look up tides.")).toEqual(looking("tides"))
+    expect(asked("Tell me about volcanoes.")).toEqual(looking("volcanoes"))
+    expect(asked("Please LOOK UP the Honeybees for me.")).toEqual(looking("honeybees"))
+    // Any other topic is a message like any other, and so is one of the three when lookup is not offered.
+    expect(asked("Look up wolves.").calls).toEqual([])
+    expect(asked("Tell me about tides.", ["calculator", "readResult"])).toEqual({ text: 'You said: "Tell me about tides.". This is the start of the conversation.', calls: [] })
+  })
+
+  test("a lookup result that is a pointer is answered with the first sentence of its start and how much of it was sent", () => {
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", pointerAt(4))])
+    expect(echoStep(sent, offered)).toEqual({
+      text: `The article starts: "Tides are the regular rise and fall of the sea." I was sent the first 80 of ${article.length} characters. Say "read more" for the next part.`,
+      calls: [],
+    })
+  })
+
+  test("a start too short to hold a sentence is quoted as it was sent", () => {
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", pointerAt(4, 5))])
+    expect(echoStep(sent, offered).text).toBe(`The article starts: "Tides are the regula" I was sent the first 20 of ${article.length} characters. Say "read more" for the next part.`)
+  })
+
+  test("a lookup result sent whole is answered with its length and its first sentence", () => {
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", article)])
+    expect(echoStep(sent, offered)).toEqual({ text: `The article is ${article.length} characters long. It starts: "Tides are the regular rise and fall of the sea."`, calls: [] })
+  })
+
+  test("a lookup that failed is answered as a failed tool, with the failure's text, also when the failure was cut short", () => {
+    const failed = (value: unknown) => Prompt.make([{ role: "user", content: "Look up wolves." }, call("c1", "lookup", { topic: "wolves" }), result("c1", "lookup", value, true)])
+    expect(echoStep(failed('No article on "wolves". The topics are tides, volcanoes and honeybees.'), offered))
+      .toEqual({ text: 'The tool answered: lookup failed: "No article on \\"wolves\\". The topics are tides, volcanoes and honeybees.".', calls: [] })
+    expect(echoStep(failed(pointerAt(4)), offered).text).toBe(`The tool answered: lookup failed: ${JSON.stringify(pointerAt(4))}.`)
+  })
+
+  test("\"read more\", \"read on\" and \"go on\" call readResult with the place the last pointer names, 400 characters at a time", () => {
+    for (const words of ["Read more.", "Please read on.", "Go on."]) {
+      expect(echoStep(Prompt.make([...lookedUp(4), { role: "user", content: words }]), offered)).toEqual(reading(4, 80))
+    }
+  })
+
+  test("after a part that stopped before the end, \"read more\" goes on from where it stopped, in the result its call named", () => {
+    const sent = Prompt.make([...lookedUp(4), ...readOn(4, 80, 480, "c2"), { role: "user", content: "Read more." }])
+    expect(echoStep(sent, offered)).toEqual(reading(4, 480))
+    // Two parts read: the later one is the place.
+    expect(echoStep(Prompt.make([...lookedUp(4), ...readOn(4, 80, 480, "c2"), ...readOn(4, 480, 880, "c3"), { role: "user", content: "Read more." }]), offered)).toEqual(reading(4, 880))
+  })
+
+  test("the latest place in the prompt wins: a pointer sent after a part was read, or a part read after a second pointer", () => {
+    // Tides looked up and read on, then a second article looked up: "read more" reads the second.
+    expect(echoStep(Prompt.make([...lookedUp(4), ...readOn(4, 80, 480, "c2"), ...lookedUp(16, "c3"), { role: "user", content: "Read more." }]), offered)).toEqual(reading(16, 80))
+    // Two articles looked up, then the first read on: "read more" goes on with the first.
+    expect(echoStep(Prompt.make([...lookedUp(4), ...lookedUp(10, "c2"), ...readOn(4, 80, 480, "c3"), { role: "user", content: "Read more." }]), offered)).toEqual(reading(4, 480))
+  })
+
+  test("after the part that reached the end, \"read more\" says so and calls nothing", () => {
+    const sent = Prompt.make([...lookedUp(4), ...readOn(4, 80, article.length, "c2"), { role: "user", content: "Read more." }])
+    expect(echoStep(sent, offered)).toEqual({ text: "That was the end of it.", calls: [] })
+  })
+
+  test("with a pointer and no readResult among its tools, \"read more\" says it has no tool to read on", () => {
+    const sent = Prompt.make([...lookedUp(4), { role: "user", content: "Read more." }])
+    expect(echoStep(sent, ["lookup"])).toEqual({ text: "I have no tool to read on: readResult is not among my tools.", calls: [] })
+  })
+
+  test("with nothing cut short, \"read more\" says there is nothing to read on from", () => {
+    expect(asked("Read more.")).toEqual({ text: "There is nothing to read on from: look something up first.", calls: [] })
+    // A result that was sent whole is no place to read on from.
+    const whole = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", article), { role: "assistant", content: "The article." }, { role: "user", content: "Go on." }])
+    expect(echoStep(whole, offered)).toEqual({ text: "There is nothing to read on from: look something up first.", calls: [] })
+  })
+
+  test("\"go on\" is a message like any other where nothing was cut short and neither tool of lesson 8 is offered", () => {
+    expect(asked("Go on.", ["calculator", "remember", "recall"])).toEqual({ text: 'You said: "Go on.". This is the start of the conversation.', calls: [] })
+  })
+
+  test("a part readResult returned is answered with where it is, its first whole sentence, and whether more follows", () => {
+    const after = (from: number, to: number) => Prompt.make([...lookedUp(4), { role: "user", content: "Read more." }, call("c2", "readResult", { result: 4, from, length: 400 }), result("c2", "readResult", { text: article.slice(from, to), from, to, total: article.length })])
+    // The part starts where the characters fell, at the end of a sentence: the first sentence that is whole is quoted.
+    expect(article.slice(70, 100)).toBe("f the tide! Does the sun add t")
+    expect(echoStep(after(70, 470), offered).text).toBe(`Characters 70 to 470 of ${article.length}: "Does the sun add to it?" Say "read more" for the next part.`)
+    expect(echoStep(after(80, 480), offered)).toEqual({ text: `Characters 80 to 480 of ${article.length}: "Does the sun add to it?" Say "read more" for the next part.`, calls: [] })
+    expect(echoStep(after(article.length - 60, article.length), offered)).toEqual({ text: `Characters ${article.length - 60} to ${article.length} of ${article.length}: "It does." That is the end.`, calls: [] })
+    // A part from the result's first character is quoted from its start.
+    expect(echoStep(after(0, 400), offered).text).toBe(`Characters 0 to 400 of ${article.length}: "Tides are the regular rise and fall of the sea." Say "read more" for the next part.`)
+  })
+
+  test("a readResult that failed is answered as a failed tool", () => {
+    const sent = Prompt.make([{ role: "user", content: "Read more." }, call("c1", "readResult", { result: 9, from: 0, length: 400 }), result("c1", "readResult", "No tool result is stored at 9: use the number a cut-short result names.", true)])
+    expect(echoStep(sent, offered).text).toBe('The tool answered: readResult failed: "No tool result is stored at 9: use the number a cut-short result names.".')
+  })
+
+  test("several results in one step are answered in order, a lookup's in its own words before any other tool's", () => {
+    const messages = [
+      { role: "user", content: "Look up tides." },
+      { role: "user", content: "What is 12 * 3?" },
+      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "lookup", params: { topic: "tides" } }, { type: "tool-call", id: "c2", name: "lookup", params: { topic: "volcanoes" } }, { type: "tool-call", id: "c3", name: "calculator", params: { a: 12, op: "*", b: 3 } }] },
+    ] as const
+    const one = `The article starts: "Tides are the regular rise and fall of the sea." I was sent the first 80 of ${article.length} characters. Say "read more" for the next part.`
+    expect(echoStep(Prompt.make([...messages.slice(0, 1), call("c1", "lookup", {}), result("c1", "lookup", pointerAt(4)), result("c2", "lookup", pointerAt(5))]), offered).text).toBe(`${one} ${one}`)
+    expect(echoStep(Prompt.make([...messages, result("c1", "lookup", pointerAt(5)), result("c2", "lookup", pointerAt(6)), result("c3", "calculator", 36)]), offered).text).toBe(`${one} ${one} The tool answered: calculator says 36.`)
+  })
+
+  test("three messages at once: each topic is looked up, and a \"read more\" among them has nothing to read on from yet", () => {
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, { role: "user", content: "Read more." }, { role: "user", content: "Tell me about volcanoes." }])
+    expect(echoStep(sent, offered)).toEqual({ text: "Let me use 2 tools.", calls: [{ name: "lookup", params: { topic: "tides" } }, { name: "lookup", params: { topic: "volcanoes" } }] })
+  })
+
+  test("a \"read more\" that steers a turn after its lookup's pointer arrived reads on in the same turn", () => {
+    const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", pointerAt(4)), { role: "user", content: "Read more." }])
+    expect(echoStep(sent, offered)).toEqual(reading(4, 80))
   })
 })
 

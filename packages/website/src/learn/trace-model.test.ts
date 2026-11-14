@@ -1,19 +1,22 @@
 // The Context tab's model, fed the traces of real runs of lesson 1 on the
 // page's runtime: the steps of a turn, which record each context message
-// came from, what memory left out, and the part of a prompt the one before
-// shares.
+// came from, what memory left out, the part of a prompt the one before
+// shares, and (lesson 8's runs) a tool's result sent as a pointer.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
+import { toolResult, userMessage } from "@xandreed/core/kernel"
+import { estimateTokens } from "@xandreed/sdk/kernel"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
 import { withReminder, writeLastN } from "./lessons/your-first-agent/config-edit.ts"
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { tools } from "./lessons/tools/lesson.ts"
+import { pointers } from "./lessons/pointers/lesson.ts"
 import { yourOwnPlugin } from "./lessons/your-own-plugin/lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import { LessonRuntime } from "./runtime.ts"
-import { emptyBoard, record, turnsOf, viewOf } from "./trace-model.ts"
+import { emptyBoard, keptInJournal, record, turnsOf, viewOf } from "./trace-model.ts"
 import type { Board } from "./trace-model.ts"
 
 const opened: Array<LessonRuntime> = []
@@ -96,6 +99,48 @@ describe("the Context tab's model", () => {
     // Lesson 2 writes both blocks by hand; lesson 3's loop is the base's, on modelAnswer and callTool.
     expect(await codeOf(tools)).toEqual(["session.append(assistantMessage(…))", "toolkit.handle(call.name, call.params)", "session.append(assistantMessage(…))"])
     expect(await codeOf(yourOwnPlugin)).toEqual(["modelAnswer(stream, session)", "callTool(toolkit, call, session)", "modelAnswer(stream, session)"])
+  })
+
+  test("a tool's result sent as a pointer says how many tokens of it the journal keeps; one sent as stored says nothing", async () => {
+    const starters = Object.fromEntries(pointers.files.map((file) => [file.id, file.defaultText]))
+    const marks = (board: Board, turn: number, call: number) => Option.getOrThrow(viewOf(board, turn).calls[call]!.prompt).map((row) => [row.role, Option.getOrNull(row.seq), Option.getOrNull(row.pointer)])
+    const board = await boardAfter(["Look up tides.", "Read more."], starters, pointers)
+    // The article is record 4, whole; the prompt's row for it holds a pointer, and says what the journal keeps.
+    const stored = board.records.find((one) => one.seq === 4)?.message
+    const article = stored?._tag === "ToolResult" && typeof stored.result === "string" ? stored.result : ""
+    expect(article.length).toBe(2347)
+    expect(Number(estimateTokens(article))).toBe(587)
+    expect(marks(board, 1, 1)).toEqual([["system", null, null], ["user", 2, null], ["assistant", 3, null], ["tool", 4, 587]])
+    // The next turn reads on: the pointer is still a pointer, and the part readResult returned is sent as it is stored.
+    expect(marks(board, 2, 1)).toEqual([
+      ["system", null, null], ["user", 2, null], ["assistant", 3, null], ["tool", 4, 587], ["assistant", 5, null],
+      ["user", 8, null], ["assistant", 9, null], ["tool", 10, null],
+    ])
+    // With memory reading each record as stored, the same result is no pointer.
+    const whole = await boardAfter(["Look up tides."], { ...starters, memory: Option.getOrThrow(pointers.experiments["no-pointers"]!.apply(starters.memory!)) }, pointers)
+    expect(marks(whole, 1, 1)).toEqual([["system", null, null], ["user", 2, null], ["assistant", 3, null], ["tool", 4, null]])
+  })
+
+  test("a tool's result sent another way than in the prompt before is not the same as the prompt before, nor is anything after it", async () => {
+    const starters = Object.fromEntries(pointers.files.map((file) => [file.id, file.defaultText]))
+    const same = (board: Board) => Option.getOrThrow(viewOf(board, 2).calls[0]!.prompt).map((row) => [row.role, row.reused])
+    // A memory that sends a result whole in its own turn and as a pointer afterwards: the row answers the same call, and holds other text.
+    const older = await boardAfter(["Look up tides.", "Thanks."], { ...starters, memory: Option.getOrThrow(pointers.experiments["older-turns"]!.apply(starters.memory!)) }, pointers)
+    expect(same(older)).toEqual([["system", true], ["user", true], ["assistant", true], ["tool", false], ["assistant", false], ["user", false]])
+    // Sent the same way in both turns, the row is the prompt before's, and so is everything up to that prompt's end.
+    expect(same(await boardAfter(["Look up tides.", "Thanks."], starters, pointers))).toEqual([["system", true], ["user", true], ["assistant", true], ["tool", true], ["assistant", false], ["user", false]])
+  })
+
+  test("what was sent is compared with what is stored, by the call it answers: no words of a pointer are looked for", () => {
+    const stored = toolResult({ id: "c1", name: "lookup" }, "x".repeat(1000))
+    const said = (text: string, resultId = "c1") => ({ role: "tool", text, key: `result:${resultId}`, resultId })
+    // Sent as stored: nothing to say.
+    expect(keptInJournal(said(`lookup → ${JSON.stringify("x".repeat(1000))}`), stored)).toEqual(Option.none())
+    // Sent as anything else, a pointer's words or not: the stored result's estimate.
+    expect(keptInJournal(said('lookup → "xxxx"'), stored)).toEqual(Option.some(250))
+    // A result that answers another call, and a record that holds no tool result, are not compared.
+    expect(keptInJournal(said('lookup → "xxxx"', "c2"), stored)).toEqual(Option.none())
+    expect(keptInJournal(said('lookup → "xxxx"'), userMessage("hi"))).toEqual(Option.none())
   })
 
   test("events of another conversation are not on the board", () => {
