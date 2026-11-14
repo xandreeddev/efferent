@@ -10,7 +10,7 @@ import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Scope, Strea
 import { LanguageModel, Prompt } from "effect/ai"
 import { Core, JournalStorage, kernel, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { inProcessJournal, Memory, sessions } from "@xandreed/sdk/kernel"
+import { inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
@@ -48,10 +48,13 @@ export type Trace =
   | { readonly _tag: "Event"; readonly event: KernelEvent }
   /** What memory built for a session's turn: the messages after the system text, from the journal as it was up to record `upTo`. */
   | { readonly _tag: "Context"; readonly session: string; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
-  /** A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. */
-  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string> }
-  /** What the provider reported the last prompt cost. */
-  | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported }
+  /**
+   * A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. A
+   * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop.
+   */
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary" }
+  /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
+  | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
   /** What the program told the chat, after the turn it last opened. */
   | { readonly _tag: "Piece"; readonly turn: number; readonly text: string }
   | { readonly _tag: "Reply"; readonly turn: number; readonly text: string }
@@ -107,6 +110,8 @@ export class LessonRuntime {
    * made at once in two sessions would be told apart by the fiber, which the page does not track.
    */
   private asked: string | undefined
+  /** How many summarizer calls are running: a model call made meanwhile is the summarizer's, not the turn's. */
+  private summarizing = 0
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
 
@@ -211,9 +216,10 @@ export class LessonRuntime {
         const turn = turnOf(session)
         const kit = options.toolkit
         const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
-        this.emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools })
+        const purpose = this.summarizing > 0 ? { purpose: "summary" as const } : {}
+        this.emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose })
         return Reflect.apply(inner.streamText, inner, [options]).pipe(
-          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage }) })),
+          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
         )
       }) as typeof inner.streamText,
     })
@@ -231,6 +237,15 @@ export class LessonRuntime {
             this.asked = session.id
             return emit({ _tag: "Context", session: session.id, turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map(saidOfMessage) })
           })),
+      }))).pipe(Layer.provide(layer)),
+      // A model call made while the summarizer runs is the summarizer's: the lesson's page counts it apart from the turn's.
+      // One conversation compacts at a time here, so a count is enough to tell them apart.
+      watchSummarizer: (layer) => Layer.effect(Summarizer, Effect.map(Effect.gen(function* () { return yield* Summarizer }), (summarizer) => Summarizer.of({
+        summarize: (input) => Effect.acquireUseRelease(
+          Effect.sync(() => { this.summarizing += 1 }),
+          () => summarizer.summarize(input),
+          () => Effect.sync(() => { this.summarizing -= 1 }),
+        ),
       }))).pipe(Layer.provide(layer)),
     }
   }

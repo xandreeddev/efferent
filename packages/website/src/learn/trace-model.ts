@@ -6,7 +6,7 @@
 // steps), so its steps are built from what happened, call by call.
 import { Option } from "effect"
 import { assistantMessageEvent, messageOf, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
+import type { Message, StoredEvent } from "@xandreed/core/kernel"
 import { estimateTokens } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
@@ -38,6 +38,8 @@ export interface Board {
   /** The tools offered with each prompt, by turn. */
   readonly offered: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<string>>>
   readonly usage: ReadonlyMap<number, ReadonlyArray<Reported>>
+  /** What a summarizer was sent while memory compacted, by turn: model calls of their own, not the turn's. */
+  readonly summaries: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<Said>>>
   /** Pieces streamed, by turn, per model call. */
   readonly pieces: ReadonlyMap<number, ReadonlyArray<number>>
   /** The newest entries of the events log, at most LOG_LIMIT. */
@@ -49,7 +51,7 @@ export interface Board {
 }
 
 export const emptyBoard = (session: string, helper = false): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), usage: new Map(), pieces: new Map(), log: [], logged: 0, helper,
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper,
 })
 
 export const LOG_LIMIT = 400
@@ -61,9 +63,16 @@ const clip = (text: string, max = 80): string => {
 
 const json = (value: unknown): string => JSON.stringify(value, null, 2) ?? ""
 
+/**
+ * The message a record has the model read: a record of the conversation's, or a memory's own record that carries the
+ * text it sends (the summary memory's summary, ADR 0008).
+ */
+export const sentMessageOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "message">): Option.Option<Message> =>
+  Option.orElse(messageOf(record), () => record.tags.some((tag) => tag === "memory") ? Option.fromNullishOr(record.message) : Option.none())
+
 /** A record, in a few words. */
 export const summaryOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "message">): string =>
-  Option.match(messageOf(record), {
+  Option.match(sentMessageOf(record), {
     onSome: (message) => clip(saidOfStored(message).text),
     onNone: () => {
       const data = record.data
@@ -108,6 +117,13 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       })
     case "Prompt": {
       if (trace.session !== board.session) return board
+      if (trace.purpose === "summary") {
+        return withEntry({ ...board, summaries: append(board.summaries, trace.turn, trace.messages) }, {
+          ...base, kind: "prompt", turn: trace.turn,
+          title: `summarizer prompt sent: ${trace.messages.length} messages, ~${tokensOf(trace.messages)} tokens (a model call of memory's, not the turn's)`,
+          detail: json(trace.messages),
+        })
+      }
       const pieces = append(board.pieces, trace.turn, 0)
       return withEntry({ ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), pieces }, {
         ...base, kind: "prompt", turn: trace.turn,
@@ -118,6 +134,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
     case "Usage":
       // Another session's (a helper's): this board shows the chat's.
       if (trace.session !== board.session) return board
+      if (trace.purpose === "summary") return withEntry(board, { ...base, kind: "usage", turn: trace.turn, title: "the provider reported the summarizer's usage", detail: json(trace.usage) })
       return withEntry({ ...board, usage: append(board.usage, trace.turn, trace.usage) }, {
         ...base, kind: "usage", turn: trace.turn, title: "the provider reported its usage", detail: json(trace.usage),
       })
@@ -144,7 +161,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
 // ── one turn's view ─────────────────────────────────────────────────────────
 
 export type StepState = "done" | "now" | "todo" | "failed" | "skipped"
-export type StepKind = "opened" | "stored-message" | "steered" | "context" | "prompt" | "streamed" | "stored-answer" | "tools" | "closed"
+export type StepKind = "opened" | "stored-message" | "steered" | "compacted" | "context" | "prompt" | "streamed" | "stored-answer" | "tools" | "closed"
 
 export interface StepView {
   /** Unique in the turn: the kind, and the model call it belongs to (`context-2`). */
@@ -224,7 +241,7 @@ export const turnsOf = (board: Board): ReadonlyArray<number> =>
 
 /** Which record each context message came from: matched from the newest back, so a repeated text finds its own record. */
 const linkContext = (records: ReadonlyArray<StoredEvent>, messages: ReadonlyArray<Said>): ReadonlyArray<Option.Option<number>> => {
-  const pool = records.flatMap((record) => Option.match(messageOf(record), { onNone: () => [], onSome: (message) => [{ seq: record.seq, said: saidOfStored(message) }] }))
+  const pool = records.flatMap((record) => Option.match(sentMessageOf(record), { onNone: () => [], onSome: (message) => [{ seq: record.seq, said: saidOfStored(message) }] }))
   const used = new Set<number>()
   const links: Array<Option.Option<number>> = []
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -253,7 +270,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 const journalFor = (board: Board, turn: number, context: Option.Option<ContextSeen>, inContext: ReadonlySet<number>): ReadonlyArray<JournalRow> => {
   const upTo = Option.match(context, { onNone: () => Infinity, onSome: (seen) => seen.upTo })
   return board.records.map((record): JournalRow => {
-    const role = Option.map(messageOf(record), (message) => saidOfStored(message).role)
+    const role = Option.map(sentMessageOf(record), (message) => saidOfStored(message).role)
     const use: RecordUse = Option.isNone(role) ? "not-conversation"
       : record.seq > upTo ? "later"
         : Option.isNone(context) || inContext.has(record.seq) ? "in-context" : "left-out"
@@ -312,6 +329,9 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   const users = ofTurn.filter((record) => record.name === userMessageEvent.name)
   const answers = ofTurn.filter((record) => record.name === assistantMessageEvent.name)
   const results = ofTurn.filter((record) => record.name === toolResultEvent.name)
+  // A memory's own records that carry what it sends: the summaries it stored as it compacted (ADR 0008).
+  const compactions = ofTurn.filter((record) => Option.isNone(messageOf(record)) && Option.isSome(sentMessageOf(record)))
+  const summarized = board.summaries.get(turn)?.length ?? 0
   const callCount = Math.max(board.prompts.get(turn)?.length ?? 0, board.contexts.get(turn)?.length ?? 0, answers.length)
 
   // The prompt before each call: the turn's previous call, or the previous turn's last.
@@ -365,6 +385,20 @@ export const viewOf = (board: Board, turn: number): TurnView => {
           detail: `${plural(steers.length, "message")} you sent while it worked joined the turn: ${steers.map((record) => `#${record.seq}`).join(", ")}.`,
         })
       }
+    }
+    // Memory compacted while it built this call's context: a summary stored between the last context and this one.
+    const after = index === 0 ? -Infinity : (board.contexts.get(turn)?.[index - 1]?.upTo ?? Infinity)
+    const upTo = board.contexts.get(turn)?.[index]?.upTo ?? Infinity
+    const stored = compactions.filter((record) => record.seq > after && record.seq <= upTo)
+    const unstored = index === 0 && compactions.length === 0 && summarized > 0
+    if (stored.length > 0 || unstored) {
+      raw.push({
+        id: `compacted-${n}`, kind: "compacted", call: n, label: at(stored.length > 0 ? "Memory compacted" : "Memory asked for a summary"), code: "summarizer.summarize({ earlier, messages })", column: "journal",
+        happened: true, seqs: stored.map((record) => record.seq),
+        detail: stored.length > 0
+          ? `Over its budget, memory asked the summarizer for a summary of older turns, in a model call of its own (${plural(summarized, "summarizer call")} this turn), and stored it once: record ${stored.map((record) => `#${record.seq}`).join(", ")}, tagged memory. Every later context starts with it.`
+          : `Memory asked the summarizer ${plural(summarized, "time")}, and stored no summary: the summary failed, or the context was still over the budget.`,
+      })
     }
     raw.push({
       id: `context-${n}`, kind: "context", call: n, label: at("Memory built the context"), code: "memory.context(session)", column: "memory", happened: Option.isSome(view.memory), seqs: inContext,

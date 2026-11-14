@@ -1,0 +1,88 @@
+---
+title: Compaction
+description: The conversation outgrows the model. Give your agent a memory with state of its own, which replaces old turns with a summary, stored once, so the context stays small and the prompt's start holds between compactions.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Controls from '../../components/learn/compaction/Controls.astro'
+import Experiments from '../../components/learn/compaction/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code">
+
+Until now, memory sent the whole conversation. That stops working as the conversation grows: every turn costs more, and at some point the prompt no longer fits the model.
+
+Lesson 1's "last n" cut old turns and broke the cache on every request. This lesson's memory does better. It keeps every message while the conversation fits a **budget**. Past it, it **folds** the oldest turns into a **summary**, stores the summary once, and starts every later context with it. Between two compactions, each prompt starts as the one before did, so a provider's cache can reuse it.
+
+The memory now has **state**: the summary, kept in the journal as a record of its own. And it needs a model to write that summary, which no kernel plugin calls. Your program gives it a **summarizer**.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+Start with **Echo**. It summarizes by rule: "You said 7 things earlier, the last: …". It is short and the same every time, so you can see exactly when memory compacts.
+
+A real model writes a real summary, but a longer one. If its summary does not fit the budget, the turn fails with `OverBudget`. Raise the budget in step 7 for a real model.
+
+</Step>
+
+<Step n={3} id="memory" title="A memory with state" focus="code" file="memory">
+
+**memory.ts** is one call: `summaryMemory({ budgetTokens, keepTurns })`, a stock plugin of the kernel.
+
+While the conversation fits `budgetTokens`, it sends every message, as lesson 2's memory did. When it does not:
+
+1. it takes every finished turn but the last `keepTurns`, whole, with the summary so far;
+2. it asks the summarizer for a new summary;
+3. it stores it once: `plugin.summary.summarized`, tagged `memory`, the summary its message, `through` the last message it replaces;
+4. it sends the summary first, then every message after `through`.
+
+It never folds the turn being answered, and never part of a turn, so a tool call stays with its result. It asks for one summary per context. If the context is still over the budget after it, the turn fails with `OverBudget`.
+
+</Step>
+
+<Step n={4} id="summarizer" title="The summarizer" focus="code" file="summarizer">
+
+**summarizer.ts** provides `Summarizer`, the contract memory asks: `summarize({ earlier, messages })`, to a summary's text.
+
+Yours asks the model you picked, in a call of its own. Its prompt follows the rule for text the model must not obey: what to do first, then that what follows is data, then the data inside tags (`framed`), then what to reply. The summary memory frames the summary the same way when it sends it: a host note, then the summary inside `<conversation-summary>`, which a copy of the tag inside it cannot close.
+
+A model that fails, or answers with nothing, is no summary: `SummaryFailed`, and the turn's context fails with it.
+
+</Step>
+
+<Step n={5} id="main" title="Main" focus="code" file="agent">
+
+**agent.ts** is lesson 2's program. Only `main` changed: `Effect.provide(memory)`, then `Effect.provide(summarizerLive)`, which memory uses, and which uses the model given after it.
+
+Your turn does not know memory compacts. It asks `memory.context(session)` as before. The summarizer's model call happens inside that call.
+
+</Step>
+
+<Step n={6} id="watch" title="Watch it compact" focus="context" wide={true}>
+
+Send messages until the conversation passes the budget, about ten with Echo, then open **Context**. The button sends five at once: one turn takes them all, so press it three times.
+
+<p class="learn-try"><button class="btn btn-primary" type="button" data-fill>Send 5 messages</button></p>
+
+In the turn that passed the budget, a step reads **Memory compacted**: memory asked the summarizer, in a model call of its own, counted apart from the turn's, and stored the summary as one record.
+
+- **Memory** starts with the summary, *from* its record, and lists the folded turns as *left out*.
+- **Prompt** starts with the system text and the summary. The cache bar falls to the system text alone: the prompt's start changed.
+- **Journal**: the summary's record is tagged `memory`. Its payload holds the summary and `through`.
+
+Go to the next turn. The summary is the same, so the prompt starts as the one before did, and the cache bar climbs again until the next compaction.
+
+</Step>
+
+<Step n={7} id="experiments" title="Settings and experiments" focus="code">
+
+<Controls />
+
+<Experiments />
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** render. An agent shows things, not only text: a table, a card, progress. Why the summary is a record of memory's own, and who calls the model for it, is in [ADR 0008](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0008-a-memory-keeps-its-summary.md).
+
+</Step>

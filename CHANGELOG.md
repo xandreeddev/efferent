@@ -191,6 +191,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 5, "Compaction", at `/learn/compaction`. Lesson 2's
+  program over `summaryMemory`: `memory.ts` holds its options (the budget
+  and `keepTurns`), and `summarizer.ts` the learner's `Summarizer` over the
+  model they picked, its prompt framing the turns it folds as data. The
+  page's runtime wraps the summarizer (`watchSummarizer`), so a model call
+  made while it runs is stamped as the summarizer's and counted apart from
+  the turn's; the Context tab shows a "Memory compacted" step, the summary
+  row from its record and the folded turns left out. Echo summarizes by
+  rule, reads past every host note (a summary's as well as the clock's)
+  when it picks a tool, and quotes the summary when asked what was said
+  earlier. Experiments compact on every turn, keep no finished turn and
+  make the summarizer fail.
 - Docs site: Lesson 4, "Sub-agents", at `/learn/sub-agents`. The chat's
   agent hands a task to a helper through a `delegate` tool; the helper is
   an agent of its own (its own system text, tools and quiet hooks) working
