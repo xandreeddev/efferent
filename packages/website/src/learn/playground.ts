@@ -3,9 +3,11 @@
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition.
 import { Option } from "effect"
-import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { progressEvent, viewEvent } from "@xandreed/sdk/kernel"
+import { dropWaiting, emptyChat, hear, said, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
+import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
@@ -76,7 +78,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const refresh = () => {
     const ready = Boolean(state.runtime && state.model && state.alive && !state.building)
     chat.setState({
-      ready, running: busy() || waiting.length > 0,
+      ready, running: busy() || waitingCount(board) > 0,
       hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…" : "Your program is not running. Fix it, then press Rebuild.",
     })
     models.setBusy(state.loading || busy())
@@ -100,123 +102,68 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }
 
   // ── what the program does, as the page hears it ─────────────────────────
-  /** Messages sent and not yet taken by a turn, oldest first. */
-  const waiting: Array<HTMLElement> = []
-  /** The tool calls the model made, by id, as the chat shows them. */
-  const calls = new Map<string, string>()
-  /** The answer being written, by turn. */
-  const answers = new Map<number, { readonly item: HTMLElement; text: string }>()
+  /** The chat's rows: what was stored, and what was only said (chat-model.ts). Every change is drawn at once. */
+  let board: ChatBoard = emptyChat
+  const show = (next: ChatBoard) => {
+    if (next === board) return
+    board = next
+    chat.render(board.rows)
+  }
   let unseen = false
   /** The chat session's records as they are announced, for the views the chat draws (lesson 6). */
   const chatRecords: Array<StoredEvent> = []
   const views = viewBoard(() => chat.add("view", ""))
 
-  const answerOf = (turn: number) => {
-    const found = answers.get(turn)
-    if (found !== undefined) return found
-    const item = chat.add("agent", "")
-    item.dataset.live = ""
-    const made = { item, text: "" }
-    answers.set(turn, made)
-    return made
-  }
-  const finish = (turn: number) => {
-    const found = answers.get(turn)
-    found?.item.removeAttribute("data-live")
-    if (found !== undefined && found.text.length === 0) found.item.remove()
-    answers.delete(turn)
-  }
-
   function heard(event: Trace) {
     trace.hear(event)
     if (contextTab.getAttribute("aria-selected") !== "true" && !unseen) { unseen = true; contextTab.dataset.unseen = "" }
     window.dispatchEvent(new CustomEvent("learn:trace", { detail: event }))
+    const conversation = state.runtime?.conversation
+    // The chat's rows first: a stored record of the conversation shown, a piece, a reply, a failure, the program's end.
+    if (conversation !== undefined) show(hear(board, event, conversation))
     switch (event._tag) {
       case "Event": {
         const record = event.event
-        if (record._tag === "Live" && state.runtime !== undefined && record.session === state.runtime.conversation) {
+        if (record._tag === "Live" && record.session === conversation) {
           Option.map(dataOf(progressEvent, record), ({ id, done, total }) => views.progress(id, done, total))
         }
-        if (record._tag !== "Stored" || state.runtime === undefined || record.session !== state.runtime.conversation) break
-        const { session: _session, _tag: _stored, ...stored } = record
-        chatRecords.push(stored)
+        if (record._tag !== "Stored" || record.session !== conversation) break
+        const { session: _session, _tag: _stored, ...kept } = record
+        chatRecords.push(kept)
         // What the UI shows: every view record redraws the chat's views from the fold of its records.
         if (record.name === viewEvent.name) views.draw(chatRecords)
-        if (record.name === userMessageEvent.name) {
-          // The program took the oldest waiting message: its turn has it now.
-          const item = waiting.shift()
-          if (item !== undefined) chat.started(item)
-          answerOf(record.turn)
-        }
         if (record.name === turnEndedEvent.name) {
           views.settle()
-          const outcome = (record.data as { readonly outcome?: { readonly _tag?: string } }).outcome?._tag
-          if (outcome === "Interrupted") {
-            const answer = answers.get(record.turn)
-            if (answer !== undefined && answer.text.length > 0) answer.text += "\n\n*(stopped)*"
-            if (answer !== undefined) chat.setReply(answer.item, answer.text)
-            chat.add("note", `Turn ${record.turn} was stopped. Your message stays in the journal.`)
-            finish(record.turn)
-          }
           window.dispatchEvent(new CustomEvent("learn:done"))
         }
-        if (record.name === assistantMessageEvent.name && record.message?._tag === "Assistant" && record.message.toolCalls.length > 0) {
-          // The model asked for tools: this call's answer is done, and the next call streams into a bubble of its own.
-          record.message.toolCalls.forEach((call) => calls.set(call.id, `${call.name}(${JSON.stringify(call.input)})`))
-          finish(record.turn)
-        }
-        if (record.name === toolResultEvent.name && record.message?._tag === "ToolResult") {
-          const { id, isFailure, result } = record.message
-          const shown = chat.add("tool", `${calls.get(id) ?? record.message.name} ${isFailure ? "failed:" : "→"} ${JSON.stringify(result)}`)
-          if (isFailure) shown.dataset.failed = ""
-        }
-        if (record.name === assistantMessageEvent.name) refresh()
         break
       }
-      case "Piece": {
-        const answer = answerOf(event.turn)
-        answer.text += event.text
-        chat.setReply(answer.item, answer.text)
-        break
-      }
-      case "Reply": {
-        const answer = answerOf(event.turn)
-        answer.text = event.text.length > 0 ? event.text : "(the model sent no text)"
-        chat.setReply(answer.item, answer.text)
-        finish(event.turn)
+      case "Reply":
         chat.focus()
         break
-      }
-      case "Failed": {
-        finish(event.turn)
-        void failed(event.message)
+      case "Failed":
+        void failed(event.turn, event.message)
         break
-      }
       case "Status":
         statusBox.textContent = event.text
         break
-      case "Ended": {
+      case "Ended":
         state.alive = false
-        answers.forEach((_answer, turn) => finish(turn))
-        waiting.splice(0).forEach((item) => chat.dropped(item, "not taken: the program stopped"))
-        chat.add("error", `${event.reason[0]?.toUpperCase() ?? ""}${event.reason.slice(1)} Fix your code, then press Rebuild.`)
         showFoot("error", `Build ${state.builds}: ${event.reason}`)
         break
-      }
       default:
         break
     }
     refresh()
   }
 
-  /** A turn failed: the program said why. A lost GPU is said in words, and Echo takes over. */
-  const failed = async (message: string) => {
+  /** A turn failed. The chat shows why already; a lost GPU is said in the page's own words instead, and Echo takes over. */
+  const failed = async (turn: number, message: string) => {
     const lost = state.model
-    if (lost?.choice.kind === "webllm" && /device was lost|mapAsync|GPUBuffer|Model not loaded before/i.test(message)) {
-      await Promise.resolve(lost.dispose()).catch(() => undefined)
-      await fallBackToEcho()
-      chat.add("error", `The GPU stopped running ${lost.choice.label}: it ran out of memory or the driver reset the device. Echo is active again. Choose ${lost.choice.label} again to reload it. It needs about ${(lost.choice.memoryMB / 1000).toFixed(1)} GB of GPU memory, so on a GPU that shares memory with the system a smaller model is safer.`)
-    } else chat.add("error", message)
+    if (lost?.choice.kind !== "webllm" || !/device was lost|mapAsync|GPUBuffer|Model not loaded before/i.test(message)) return
+    await Promise.resolve(lost.dispose()).catch(() => undefined)
+    await fallBackToEcho()
+    show(said(withoutFailure(board, turn), "error", `The GPU stopped running ${lost.choice.label}: it ran out of memory or the driver reset the device. Echo is active again. Choose ${lost.choice.label} again to reload it. It needs about ${(lost.choice.memoryMB / 1000).toFixed(1)} GB of GPU memory, so on a GPU that shares memory with the system a smaller model is safer.`))
   }
 
   // ── models ──────────────────────────────────────────────────────────────
@@ -258,7 +205,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       models.close()
       // The model is one of the program's modules: the program runs again with it, over the same conversation.
       if (state.builds > 0) await rebuild()
-      if (chat.hasMessages()) chat.add("note", `Model: ${choice.label}`)
+      if (chat.hasMessages()) show(said(board, "note", `Model: ${choice.label}`))
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       const noGpu = /compatible GPU|WebGPU|adapter/i.test(reason)
@@ -268,7 +215,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       models.open()
       if (freed) {
         await fallBackToEcho()
-        if (chat.hasMessages()) chat.add("note", `${choice.label} did not load, and ${previous.choice.label} was released to make room, so Echo is active.`)
+        if (chat.hasMessages()) show(said(board, "note", `${choice.label} did not load, and ${previous.choice.label} was released to make room, so Echo is active.`))
       }
     } finally {
       models.progress(undefined)
@@ -306,7 +253,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     rebuildButton.textContent = "Building…"
     refresh()
     // Counted before the program starts again, which takes the first of them at once.
-    const kept = waiting.length
+    const kept = waitingCount(board)
     try {
       // A build takes a few milliseconds; "Building…" stays long enough to be seen.
       const [result] = await Promise.all([runtime.start(editor.sources()), new Promise((resolve) => setTimeout(resolve, 400))])
@@ -386,9 +333,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     refresh()
     // The program is stopped first, so nothing it was still saying lands in the new conversation's chat.
     const result = await runtime.clear()
-    waiting.splice(0)
-    answers.clear()
     chat.clear()
+    show(emptyChat)
     chatRecords.length = 0
     views.reset()
     statusBox.textContent = ""
@@ -401,9 +347,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const send = (texts: ReadonlyArray<string>) => {
     const runtime = state.runtime
     if (!runtime || !state.alive || !state.model || state.building) return
-    if (!busy() && waiting.length === 0) window.dispatchEvent(new CustomEvent("learn:start"))
+    if (!busy() && waitingCount(board) === 0) window.dispatchEvent(new CustomEvent("learn:start"))
     texts.forEach((text) => {
-      waiting.push(chat.waiting(text))
+      show(sent(board, text))
       runtime.send(text)
     })
     refresh()
@@ -417,7 +363,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     state.builds++
     refresh()
     const { dropped, result } = await runtime.stop()
-    waiting.splice(0).forEach((item) => chat.dropped(item, "dropped by Stop"))
+    show(dropWaiting(board, "dropped by Stop"))
     state.building = false
     showBuild(result, dropped.length > 0 ? `stopped; ${dropped.length} waiting message${dropped.length === 1 ? " was" : "s were"} dropped.` : "stopped.")
     refresh()
@@ -499,13 +445,30 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }))
 
   // "Send 5 short messages": sent at once, to build up a conversation to look at.
-  // Lesson 6: forget the views drawn, and draw them again from the journal alone, as a reload would.
+  /**
+   * Forget everything the chat drew, and draw it again from a journal alone, as a reload would: each record goes
+   * through the step a record takes live, so every stored row and view comes back where it was, and what was only
+   * said (a reply never stored, the page's notes) does not.
+   */
+  const drawFrom = (journal: ReadonlyArray<StoredEvent>) => {
+    chat.clear()
+    views.reset()
+    chatRecords.length = 0
+    let rows = emptyChat
+    for (const record of journal) {
+      rows = stored(rows, record)
+      chat.render(rows.rows)
+      chatRecords.push(record)
+      if (record.name === viewEvent.name) views.draw(chatRecords)
+    }
+    views.settle()
+    show(rows)
+  }
+  // Lesson 6: redraw the chat from the journal.
   document.querySelectorAll<HTMLButtonElement>("[data-redraw-views]").forEach((button) => button.addEventListener("click", async () => {
     const runtime = state.runtime
-    if (runtime === undefined) return
-    document.querySelectorAll("[data-pane=\"chat\"] [data-view]").forEach((item) => item.remove())
-    views.reset()
-    views.draw(await runtime.journal())
+    if (runtime === undefined || busy()) return
+    drawFrom(await runtime.journal())
   }))
   document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => send(lesson.fill)))
 

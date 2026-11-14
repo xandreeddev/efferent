@@ -2,18 +2,17 @@
 // orchestrator decides what sending does. Messages go to the chat's queue,
 // where the learner's program takes them one at a time, so the composer
 // stays open while the agent answers: what you send then waits its turn.
+// The rows it draws are the chat model's (chat-model.ts): `render` is given
+// them all each time and changes only what changed.
+import { NO_TEXT } from "../chat-model.ts"
+import type { ChatRow } from "../chat-model.ts"
 import { renderMarkdown } from "../markdown.ts"
 
 export interface ChatPane {
-  readonly add: (kind: "user" | "agent" | "error" | "note" | "tool" | "view", text: string) => HTMLElement
-  /** A user message waiting in the queue, marked so until its turn takes it. */
-  readonly waiting: (text: string) => HTMLElement
-  /** The waiting message's turn took it: it is no longer waiting. */
-  readonly started: (item: HTMLElement) => void
-  /** A waiting message that will never be taken: say why on it. */
-  readonly dropped: (item: HTMLElement, why: string) => void
-  /** Show `text` (markdown) in an agent message; follows the bottom while the reader has not scrolled up. */
-  readonly setReply: (item: HTMLElement, text: string) => void
+  /** An element of the pane's own at the end of the chat: the place a view is drawn in (views.ts). */
+  readonly add: (kind: "view", text: string) => HTMLElement
+  /** Draw the chat's rows: a new row goes at the end, one already drawn is changed where it is, one that is gone is removed. */
+  readonly render: (rows: ReadonlyArray<ChatRow>) => void
   readonly clear: () => void
   readonly setState: (state: { ready: boolean; running: boolean; hint: string }) => void
   readonly focus: () => void
@@ -75,42 +74,74 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
     submit()
   }))
 
-  const add = (kind: "user" | "agent" | "error" | "note" | "tool" | "view", text: string) => {
+  /**
+   * A new element. The messages still waiting are the chat's last, and anything else new goes before them: a
+   * waiting message is taken where it stands, so what happened before it is above it.
+   */
+  const add = (kind: ChatRow["kind"] | "view", text: string, waiting = false) => {
     empty.hidden = true
     const item = document.createElement("li")
     item.className = `pg-msg ${kind}`
-    if (kind === "agent") renderMarkdown(item, text)
-    else item.textContent = text
-    messages.append(item)
+    item.textContent = text
+    messages.insertBefore(item, waiting ? null : messages.querySelector(":scope > [data-queued]:not([data-dropped])"))
     if (kind === "user" || following) scrollDown()
     return item
+  }
+  /** Show `text` (markdown) in an agent message, at the next frame; follows the bottom while the reader has not scrolled up. */
+  const setReply = (item: HTMLElement, text: string) => {
+    pending.set(item, text)
+    if (frame === 0) frame = requestAnimationFrame(paint)
+  }
+  const flag = (item: HTMLElement, name: string, on: boolean) => {
+    if (on) item.dataset[name] = ""
+    else delete item.dataset[name]
+  }
+  /** The rows drawn, by the row's id: its element, and what of the row it shows. */
+  const drawn = new Map<number, { readonly item: HTMLElement; readonly shown: string }>()
+  const draw = (item: HTMLElement, row: ChatRow) => {
+    flag(item, "live", row.live === true)
+    flag(item, "queued", row.waiting === true)
+    flag(item, "dropped", row.dropped !== undefined)
+    flag(item, "failed", row.failed === true)
+    // Said by the program or the page, with no record behind it: gone when the chat is drawn from the journal.
+    flag(item, "unstored", row.seq === undefined && row.live !== true && row.waiting !== true)
+    if (row.kind === "agent") {
+      // An answer not yet written is an empty element: the caret shows in it.
+      if (row.live === true && row.text.length === 0) { pending.delete(item); item.replaceChildren() }
+      else setReply(item, row.text.length > 0 ? row.text : NO_TEXT)
+      return
+    }
+    item.textContent = row.text
+    if (row.waiting === true) {
+      const badge = document.createElement("span")
+      badge.className = "msg-queued"
+      badge.textContent = row.dropped ?? "waiting"
+      item.append(badge)
+    }
+  }
+  const render = (rows: ReadonlyArray<ChatRow>) => {
+    const kept = new Set(rows.map((row) => row.id))
+    for (const [id, { item }] of drawn) {
+      if (kept.has(id)) continue
+      pending.delete(item)
+      item.remove()
+      drawn.delete(id)
+    }
+    for (const row of rows) {
+      const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined])
+      const found = drawn.get(row.id)
+      if (found?.shown === shown) continue
+      const item = found?.item ?? add(row.kind, "", row.waiting === true)
+      item.className = `pg-msg ${row.kind}`
+      draw(item, row)
+      drawn.set(row.id, { item, shown })
+    }
   }
 
   return {
     add,
-    waiting: (text) => {
-      const item = add("user", text)
-      item.dataset.queued = ""
-      const badge = document.createElement("span")
-      badge.className = "msg-queued"
-      badge.textContent = "waiting"
-      item.append(badge)
-      return item
-    },
-    started: (item) => {
-      delete item.dataset.queued
-      item.querySelector(".msg-queued")?.remove()
-    },
-    dropped: (item, why) => {
-      const badge = item.querySelector(".msg-queued")
-      if (badge) badge.textContent = why
-      item.dataset.dropped = ""
-    },
-    setReply: (item, text) => {
-      pending.set(item, text)
-      if (frame === 0) frame = requestAnimationFrame(paint)
-    },
-    clear: () => { messages.replaceChildren(); pending.clear(); empty.hidden = false; following = true },
+    render,
+    clear: () => { messages.replaceChildren(); pending.clear(); drawn.clear(); empty.hidden = false; following = true },
     setState: ({ ready, running, hint: text }) => {
       // While the agent answers, more messages may be sent: they wait in the queue.
       input.disabled = !ready

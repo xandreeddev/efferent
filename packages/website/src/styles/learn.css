@@ -1143,6 +1143,16 @@ body.app {
 .chat-status:not(:empty)::before {
   content: "● ";
 }
+/* Said by the program, with no record behind it: gone when the chat is drawn from the journal. */
+.pg-msg.agent[data-unstored]::after {
+  content: "not stored";
+  display: block;
+  margin-top: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
 .pg-msg.user[data-dropped] {
   opacity: 0.55;
   text-decoration: line-through;
