@@ -241,6 +241,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn pages' chat is drawn from a model of its own
+  (`chat-model.ts`), as the Context tab is. Every row that shows a stored
+  record (a message, an answer, a tool's result, the line a stopped,
+  failed or abandoned turn leaves) comes from one step, live and when the
+  chat is drawn from a journal, and a journal's rows only grow at the end.
+  What a program says and never stores is still shown as it is said, and
+  marked: a reply that is no stored answer ("I stopped after 5 steps."),
+  the page's own notes. A turn that fails shows one error, from the record
+  of its end, so it now starts with the failure's tag ("SummaryFailed: …")
+  and shows also when the program says nothing. Lesson 6's button redraws
+  the whole chat from the journal, every row and view back in its place
+  (it redrew the views alone, at the end of the chat), and is named
+  "Redraw the chat from the journal". Tests run the lessons and compare
+  the rows the page drew with the rows the journal alone gives. No
+  published package changes.
 - Docs site: the learn track runs on the kernel's two functions from
   lesson 3 on. Lesson 2 still writes both blocks of a loop by hand, to
   teach them, and then says what replaces them; `lessons/base/` holds its

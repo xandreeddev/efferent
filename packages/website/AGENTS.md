@@ -59,9 +59,18 @@ check` (tsc over the learn code, the build, the link check) and
   stream runs; only a program that calls the model by hand, which provides
   none (lessons 1 and 2), is placed by the last memory call.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
-  each turn's steps, journal, memory and prompt from the traces. The chat
-  (`playground.ts`, `panes/chat.ts`) draws answers, tool notes, and views
-  (`views.ts`: the chat session's records folded with `viewsOf`).
+  each turn's steps, journal, memory and prompt from the traces.
+- **The chat** (`chat-model.ts`, pure, and `panes/chat.ts`) is rows. Every
+  row drawn from a stored record comes from one step, `stored`, whether the
+  record was just announced or is read back from a journal (`chatRowsOf`);
+  a journal's rows only grow at the end. What a program says and never
+  stores (an answer being written, a waiting message, a reply that is no
+  stored answer, the page's own notes) is a row with no `seq`, drawn live
+  and absent from a chat drawn from the journal (`drawFrom` in
+  `playground.ts`, lesson 6's redraw button). The pane renders the rows it
+  is given, by the row's id. Views are not rows: `views.ts` folds the same
+  records with `viewsOf`. A new kind of thing in the chat is a case of
+  `stored` when it has a record, with a test in `chat-model.test.ts`.
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every
