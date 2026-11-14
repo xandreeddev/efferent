@@ -31,7 +31,7 @@ export const meter = Layer.effectDiscard(
     yield* core.on(
       assistantMessageEvent,
       (event) => {
-        const said = "message" in event && event.message ? messageText(event.message) : ""
+        const said = event.message ? messageText(event.message) : ""
         const tokens = event.data.usage?.outputTokens ?? estimateTokens(said)
         return Ref.update(spent, (n) => ({ turn: n.turn + tokens, total: n.total + tokens }))
       },

@@ -361,7 +361,7 @@ const meter = (show: (line: string) => Effect.Effect<void>) =>
     // Each answer: what the provider says it cost, else an estimate of its text. `wait: true`, so the
     // count is in before the turn goes on, and so before its end is announced.
     yield* core.on(assistantMessageEvent, (event) => {
-      const said = "message" in event && event.message !== undefined ? messageText(event.message) : ""
+      const said = event.message === undefined ? "" : messageText(event.message)
       const tokens = event.data.usage?.outputTokens ?? estimateTokens(said)
       return Ref.update(spent, ({ turn, total }) => ({ turn: turn + tokens, total: total + tokens }))
     }, { name: "meter", wait: true })
@@ -496,7 +496,8 @@ the work ends with.
 
 There is no render service. A tool that shows something appends its view
 through the turn its call runs in (`CurrentTurn`, ADR 0007), and publishes
-its progress on `Core`. What it returns to the model is a few words. A view
+its progress through that turn too (`turn.publish`), so the turn is the one
+thing it declares. What it returns to the model is a few words. A view
 keeps out of the context what the tool worked out, not what the model
 wrote: a call's parameters are the model's message and are sent with the
 conversation, so the model asks in a few words and the tool makes the rows:
@@ -506,28 +507,26 @@ conversation, so the model asks in a few words and the tool makes the rows:
 ```ts
 import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { Core } from "@xandreed/core/kernel"
-import { CurrentTurn, showView, ViewId, viewProgress } from "@xandreed/sdk/kernel"
+import { CurrentTurn, progressEvent, showView, ViewId } from "@xandreed/sdk/kernel"
 
 // A tool that works out a table and shows it. The model asks in a few words; the rows are the tool's own work.
 const Squares = Tool.make("squares", {
   description: "Show the user the squares from 1 to upTo, as a table. Give it an id: showing again under that id replaces it.",
   parameters: Schema.Struct({ id: ViewId, upTo: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })) }),
   success: Schema.String,
-  // The turn its call runs in, to append the view, and Core, to publish its progress.
-  dependencies: [CurrentTurn, Core],
+  // The turn its call runs in: to append the view, and to publish its progress.
+  dependencies: [CurrentTurn],
 })
 const tools = Toolkit.make(Squares)
 
 const toolsLive = tools.toLayer({
   squares: ({ id, upTo }) => Effect.gen(function* () {
     const session = yield* CurrentTurn
-    const core = yield* Core
     const rows: Array<ReadonlyArray<string>> = []
     for (let n = 1; n <= upTo; n++) {
       rows.push([String(n), String(n * n)])
       // How far it got: live, for whoever watches, never stored.
-      yield* Effect.orDie(core.publish(viewProgress(session, id, n, upTo)))
+      yield* Effect.orDie(session.publish(progressEvent, { id, done: n, total: upTo }))
     }
     // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
     yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))
@@ -557,16 +556,27 @@ reserved tags:
 
 | Tag | What it marks |
 |---|---|
-| `conversation` | what memory builds the context from: the user's and the model's messages, the tools' results, and a memory's own record that stands for some of them |
+| `conversation` | what memory builds the context from: the user's and the model's messages and the tools' results; a plugin may tag a record of its own that stands for some of them, for the plugins that read its vocabulary |
 | `turn` | the session's own structure: a turn's start and end |
 | `memory` | a memory's own state, derived from the conversation and rebuildable from it |
 | `ui` | what a client draws |
 | `trace` | side work that is not the conversation |
 
-A plugin's own tags are named `<plugin>.<tag>`. `taggedWith(tag)` tells a
+A plugin's own tags are named `<plugin>.<tag>`. A tag is checked where its
+definition is made (`storedEvent`, `liveEvent`): a word that is not one of
+the five, such as a misspelt `conversation`, does not type and throws there,
+and so does another plugin's tag. `taggedWith(tag)` tells a
 record by its tags, and `messageOf` reads a message only from a record tagged
 `conversation`: text a record of another use bears never reads as part of
-the conversation. Token usage is metadata in a record's data, not a tag: the
+the conversation. The stock summary memory tags its summary `memory` and
+sends its message itself (ADR 0008).
+
+A record is appended as `stored(definition, data)` made it, from a
+definition `storedEvent` made, and no other way: an object written by hand,
+a copy of a draft with a field changed, or a record of a definition written
+by hand is refused by the session (`SessionRefused`, `NotADraft`). So every
+record a session stores carries the name, the tags and the skip flag of a
+definition whose tags were checked. Token usage is metadata in a record's data, not a tag: the
 assistant message stores the model and what the provider reported it cost,
 when its writer has them.
 
@@ -612,7 +622,11 @@ fails is reported as `core.listener.failed`, which is never waited for.
 
 `Core.on(definition, handler, { name, wait? })` registers a listener for one
 definition, in the scope it is called in, before it returns, so it misses
-nothing published after. `name` is how a failure of it is reported. A
+nothing published after. `name` is how a failure of it is reported. The
+handler is given what the definition's kind is delivered as: a stored
+record, with its place and the message it bears, for a stored definition; a
+live event for a live one. An event of the other kind under the same name is
+not delivered. A
 publisher waits for its listeners for as long as it is not interrupted
 itself; each listener runs on a fiber of its own, so a limit on the wait,
 or the close of a scope, holds whatever the listener does. Whatever a
@@ -689,6 +703,12 @@ a table.
 | `beginTurn` | to `TurnOpen`, the next turn number | refused: `SessionBusy` |
 | `endTurn` | refused: `NoOpenTurn` | to `Free` |
 
+A journal's header names the format it was written in. A turn opens only on
+a journal of this kernel's format (`JOURNAL_FORMAT`); another is refused
+(`SessionRefused`, `FormatMismatch`) and nothing is stored, since old
+journals are not migrated. `read` still gives such a journal, so a host can
+say what it found and start a new session.
+
 The state is also the fold of the journal (`sessionStateOf`), and the store
 is the truth. The session plugin begins every turn by reading the journal,
 folding it to the phase and appending `core.session.turn.started` at the
@@ -712,12 +732,17 @@ event is announced after its own store, so the announcements of appends
 made at once can reach a listener that suspends in another order than the
 journal's. A stored fact is `session.append(...)`, which stores it through
 `JournalStorage` and then publishes the stored event; a live fact is
-`Core.publish(...)`, which stores nothing:
+`Core.publish(...)`, which stores nothing. A part that holds the open
+session, a tool or a memory, publishes a live fact about its turn with
+`session.publish(definition, data)`, and needs no `Core` of its own:
 
 <!-- pinned: packages/sdk/src/kernel/plugins/session/sessions.adapter.ts -->
 
 ```ts
 const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+  // Only what `stored` made, from a definition `storedEvent` made, is a record: an object written by hand, or a definition
+  // written by hand, could carry a tag no part reads by, or another skip flag than its definition's.
+  if (!isStoredDraft(event)) return yield* Effect.fail(new SessionRefused({ reason: "NotADraft", message: "this value is not a record `stored(definition, data)` made from a definition `storedEvent` made: build a record with `stored`, or with `userMessage`, `assistantMessage` or `toolResult`, never by hand or as a copy" }))
   if (reserved(event)) return yield* Effect.fail(new SessionRefused({ reason: "ReservedName", message: `${event.name} is core's to write, not a turn's body` }))
   const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
     if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
@@ -782,8 +807,7 @@ characters rounded up:
 <!-- pinned: packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts -->
 
 ```ts
-export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget, Core> => Layer.effect(Memory, Effect.gen(function* () {
-  const core   = yield* Core
+export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => Layer.effect(Memory, Effect.gen(function* () {
   const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
 
   return Memory.of({
@@ -793,7 +817,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
       const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.
-      if (nearlyFull(fitted, options.pressureAt)) yield* core.publish(windowPressure(session, fitted))
+      if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
       return paired(fitted.messages).map(promptMessage)
     }),
   })
@@ -848,6 +872,8 @@ return Memory.of({
       // Fold once: summarize, store the summary, and plan again from the journal as it now stands.
       Fold: (fold) => Effect.gen(function* () {
         const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
+        // A summary stands for the turns it folds, for good: one that says nothing is not stored.
+        if (summary.trim().length === 0) return yield* Effect.fail(new SummaryFailed({ message: "the summarizer answered with nothing, so no summary was stored" }))
         // A summary too long to fit beside what stays is not stored: the next context asks again.
         const estimated = estimateTokens(summaryNote(summary)) + fold.kept
         if (estimated > budget) return yield* Effect.fail(over(estimated, "with a summary too long to fit beside the turns that stay: it was not stored"))
@@ -881,6 +907,12 @@ plugin's prefix is not its concern. The memory kit holds a memory to the
 conversation's vocabulary: an unknown record of the conversation that may not be
 skipped is refused (`unknown-conversation-refused`), which a memory reading
 its own prefix alone would pass.
+
+A plugin that changes the shape of a record it stores gives the new shape a
+new name. A journal written before then still holds the old name, which the
+plugin's vocabulary no longer knows: it is refused, or passed over when it
+may be skipped. That is the rule above, with nothing added; a plugin cannot
+change the journal's format, which is core's.
 
 ## The inbox: queueing messages for a turn
 
@@ -994,9 +1026,20 @@ const after  = yield* ask(agentB, session, "What's my name?")   // the same sess
   memory's listener hears nothing after the swap, and that the session goes
   on with its earlier messages.
 
-Each contract ships with its kit: core's `journalStorageConformance` and
-`sessionsConformance`, and the sdk's `memoryConformance`, are the contracts
-as runnable checks, each check with an id that its failures name.
+A contract with rules a plugin can break ships with its kit: the contract as
+runnable checks, each with an id that its failures name, and each shown to
+fail on a careless plugin written for it.
+
+| Contract | Kit | Or why none |
+|---|---|---|
+| `JournalStorage` | `journalStorageConformance` | |
+| `Sessions` | `sessionsConformance` | |
+| `Memory` | `memoryConformance`; a wrapper of it, `memoryWrapperConformance` | |
+| `Summarizer` | `summarizerConformance` | |
+| `Core` | none | core has one implementation, `kernel()`, held by its own tests |
+| `Inbox` | none | one stock plugin, held by its own tests; a kit comes with a second plugin |
+| `CurrentTurn` | none | a value the loop provides, with nothing to check beyond its type |
+| render (`viewsOf`) and `callTool` | none | pure functions, not contracts a plugin implements: unit tests hold them |
 
 ## What the first cut leaves out, and the order it returns
 
@@ -1030,19 +1073,25 @@ are not made by accident.
   from the last memory call, and a summarizer's prompt from a count of
   running summarizer calls: one watcher per contract. A reference the loop
   provides around each model call would make both exact.
-- **Kits for `Summarizer` and `CurrentTurn`.** Neither has a conformance kit
-  (skill `add-port`). A summarizer kit would check that it fails with
-  `SummaryFailed` rather than answering with nothing; `CurrentTurn` is a
-  value the loop provides, with nothing to check beyond its type.
-- **A tool that publishes needs two services.** A tool that shows progress
-  declares `CurrentTurn` and `Core`, because an open session appends but
-  does not publish. An `OpenSession` that could publish for its turn would
-  make one enough.
+- **A tool wraps its appends in `Effect.orDie`.** An append or a publish
+  through `CurrentTurn` can fail in its type, and a tool's failure schema
+  does not hold those failures. A turn handed to a tool whose writes cannot
+  fail in the type would remove it.
+- **What a draft's data holds is checked by the compiler alone.** Untyped
+  code can append data its definition does not describe; it is found when
+  the record is read (a listener fails, a fold passes over it).
+- **`Core.publish` takes any event.** A plugin can publish a stored event
+  that was never stored: only the session plugin should.
+- **Who may write under a prefix.** Only `core.` is refused to a turn's
+  body. A body can append under another plugin's prefix.
+- **`PluginFailure` is any tagged error with a message**, so a host cannot
+  handle a memory's or an inbox turn's failures exhaustively.
+- **`paired` pairs by set, not by order.** A result stored before the
+  message that asked for it is sent before its call.
+- **Two `kernel()` layers give two cores**, silently: the one nearer the
+  consumer wins.
 - **From which lesson the track uses `callTool`.** Lessons 2 to 6 write the
   block by hand; lesson 2 should, to teach it, and a later one could switch.
-- **`plugin.render.*` has no plugin.** The view and progress events are a
-  contract's, named under `plugin.` as ADR 0003 names a plugin's; a
-  contract's own prefix would say what they are.
 - **Lesson 4's helper and its caller.** The lesson files a helper under the
   chat's session, as it was written before `CurrentTurn`; ADR 0006 now
   files it under the turn that called it. Changing the lesson moves

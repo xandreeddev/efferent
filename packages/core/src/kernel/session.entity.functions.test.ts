@@ -3,8 +3,8 @@ import { Result, Schema } from "effect"
 import { stored, storedEvent } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
-import { beginTurn, endTurn, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
-import { JOURNAL_FORMAT } from "./session.entity.js"
+import { beginTurn, currentFormat, endTurn, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
+import { JOURNAL_FORMAT, SessionHeader as SessionHeaderSchema } from "./session.entity.js"
 import type { SessionHeader, SessionState } from "./session.entity.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 
@@ -89,6 +89,21 @@ describe("inspecting a session", () => {
     const events = journal(turnStarted(TurnNumber.make(1)), note("Hello"), turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)))
     const inspection = Result.getOrThrow(inspectionOf({ header, events }))
     expect(inspection).toEqual({ header, state: { _tag: "TurnOpen", turn: TurnNumber.make(2) }, events })
+  })
+
+  test("a header of this kernel's format is current; one of another format is refused, and still reads back", () => {
+    const table: ReadonlyArray<readonly [number, string]> = [
+      [JOURNAL_FORMAT, "current"],
+      [JOURNAL_FORMAT + 1, `FormatMismatch: session s-1 was written in journal format ${JOURNAL_FORMAT + 1}, and this kernel reads format ${JOURNAL_FORMAT}: old journals are not migrated, so start a new session`],
+      [JOURNAL_FORMAT + 41, `FormatMismatch: session s-1 was written in journal format ${JOURNAL_FORMAT + 41}, and this kernel reads format ${JOURNAL_FORMAT}: old journals are not migrated, so start a new session`],
+    ]
+    table.forEach(([format, expected]) => {
+      const other: SessionHeader = { ...header, format }
+      // A store may decode what it holds: a header of another format is a header, so a host can say what it found.
+      expect(Schema.is(SessionHeaderSchema)(other)).toBe(true)
+      expect(Result.match(currentFormat(other), { onSuccess: () => "current", onFailure: (refusal) => `${refusal.reason}: ${refusal.message}` })).toBe(expected)
+    })
+    expect(Result.match(inspectionOf({ header: { ...header, format: JOURNAL_FORMAT + 1 }, events: [] }), { onSuccess: () => "inspected", onFailure: (refusal) => "reason" in refusal ? refusal.reason : refusal._tag })).toBe("FormatMismatch")
   })
 
   test("refuses a journal the session's transitions do not allow", () => {

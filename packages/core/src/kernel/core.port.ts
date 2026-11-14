@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Schema, Scope, Stream } from "effect"
-import type { Delivered, EventDefinition, KernelEvent, ListenerFailed } from "./event.entity.js"
+import type { DeliveryOf, EventDefinition, KernelEvent, ListenerFailed } from "./event.entity.js"
 
 /**
  * How a listener takes part: its name, and whether the publisher waits for it.
@@ -83,11 +83,14 @@ export class Core extends Context.Service<Core, {
    * default: a failure there is published as `core.listener.failed`, under
    * the listener's `name`. With `{ wait: true }` the publisher waits, and
    * the failure is the publisher's; a listener whose scope closed while a
-   * publish was under way is not run.
+   * publish was under way is not run. The handler is given what the
+   * definition's kind is delivered as (`DeliveryOf`): a stored record for a
+   * stored definition, a live event for a live one. An event of the other
+   * kind under the same name is not the definition's, and is not delivered.
    */
-  readonly on: <D extends Schema.Json, E>(
-    event: EventDefinition<D>,
-    handler: (event: Delivered<D>) => Effect.Effect<void, E>,
+  readonly on: <Definition extends EventDefinition<Schema.Json>, E>(
+    event: Definition,
+    handler: (event: DeliveryOf<Definition>) => Effect.Effect<void, E>,
     options: ListenOptions,
   ) => Effect.Effect<void, never, Scope.Scope>
   /** Every event, live, from the moment the stream is run. */

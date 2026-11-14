@@ -1,10 +1,11 @@
 import { Effect } from "effect"
 import type { Context, Scope } from "effect"
-import { expect, fail } from "./conformance.entity.functions.js"
+import { expect, fail, show } from "./conformance.entity.functions.js"
 import type { ConformanceCheck, ConformanceFailure } from "./conformance.entity.js"
+import { Schema } from "effect"
+import { stored, storedEvent } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
-import { Tag } from "./event.entity.js"
-import { EventName, Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
+import { Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
 import type { JournalStorageError } from "./journal.entity.js"
 import { JOURNAL_FORMAT } from "./session.entity.js"
 import type { SessionHeader } from "./session.entity.js"
@@ -24,23 +25,18 @@ export interface JournalStorageSubject {
 
 const session = SessionId.make("kit-session")
 const stranger = SessionId.make("kit-stranger")
-const header: SessionHeader = { id: session, owner: Owner.make("kit-owner"), format: JOURNAL_FORMAT }
+const header: SessionHeader = { id: session, owner: Owner.make("kit-owner"), parent: SessionId.make("kit-parent"), format: JOURNAL_FORMAT }
 const turn = TurnNumber.make(1)
 const next = TurnNumber.make(2)
 
+/** The kit's own record, with a tag of its own. */
+const noted = storedEvent("kit", "noted", { data: Schema.Json, skippable: true, tags: ["kit.noted"] })
+
 /** An event whose envelope storage must give back as it got it. One key an object, so no store's key order shows. */
-const draft = (text: string): StoredDraft => ({
-  name: EventName.make("plugin.kit.noted"),
-  data: { note: { text, list: [1, "two", null] } },
-  skippable: true,
-  tags: [Tag.make("kit.noted")],
-  message: { _tag: "User", text },
-})
+const draft = (text: string): StoredDraft => stored(noted, { note: { text, list: [1, "two", null] } }, { message: { _tag: "User", text } })
 
-const show = (value: unknown): string => JSON.stringify(value)
-
-/** What storage adds to a draft is its place, its turn and its time; the rest is the draft. */
-const draftOf = ({ seq: _seq, at: _at, turn: _turn, ...rest }: StoredEvent): StoredDraft => rest
+/** What storage adds to a draft is its place, its turn and its time; the rest is the draft's envelope. */
+const draftOf = ({ seq: _seq, at: _at, turn: _turn, ...rest }: StoredEvent): Omit<StoredEvent, "seq" | "at" | "turn"> => rest
 
 /** `call` must be refused for `reason`. */
 const refused = (id: string, what: string, reason: JournalStorageError["reason"], call: Effect.Effect<unknown, JournalStorageError>) =>
@@ -51,8 +47,9 @@ const refused = (id: string, what: string, reason: JournalStorageError["reason"]
 
 /**
  * The storage contract as checks, each over an empty store: a created
- * session reads back with its header and no events, and creating it again
- * is refused and changes nothing (`create`); an appended event comes back
+ * session reads back with its header (its id, owner, parent and format, as
+ * given) and no events, and creating it again is refused and changes
+ * nothing (`create`); an appended event comes back
  * stamped with the next place and its turn, and the events read back in order with
  * their envelopes as they were given (`append`); an append that expects
  * another place than the last stored one, behind it or ahead of it, is
@@ -78,6 +75,8 @@ export const journalStorageConformance = (subject: JournalStorageSubject): Reado
       const created = yield* storage.read(session)
       yield* expect("create", created.header.id === session && created.header.owner === header.owner && created.events.length === 0,
         `a new session read back as ${show(created)}`)
+      yield* expect("create", created.header.parent === header.parent && created.header.format === header.format,
+        `a header with parent ${header.parent} and format ${header.format} read back as ${show(created.header)}`)
       yield* storage.append(session, Seq.make(0), turn, draft("kept"))
       yield* refused("create", "creating a session a second time", "SessionExists", storage.create(header))
       const after = yield* storage.read(session)

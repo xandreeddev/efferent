@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
-import { announced, dataOf, live, liveEvent, originOf, reasonOf, stored, storedEvent } from "./event.entity.functions.js"
+import { announced, dataOf, isStoredDraft, live, liveEvent, originOf, reasonOf, stored, storedEvent } from "./event.entity.functions.js"
 import { KernelEvent, ListenerFailed, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { StoredDefinition } from "./event.entity.js"
 import { Seq, SessionId, TurnNumber } from "./ids.entity.js"
@@ -48,14 +48,15 @@ describe("a plugin's own events", () => {
   })
 
   test("a name that is no plugin's or no event's is refused where the event is defined", () => {
-    expect(() => storedEvent("My Plugin", "noted", { tags: ["trace"], data: Noted, skippable: true })).toThrow()
-    expect(() => storedEvent("notes", "Noted!", { tags: ["trace"], data: Noted, skippable: true })).toThrow()
-    expect(() => liveEvent("", "noted", { tags: ["trace"], data: Noted })).toThrow()
+    // Each refusal says what is wrong: a learner's page shows the message, and nothing else.
+    expect(() => storedEvent("My Plugin", "noted", { tags: ["trace"], data: Noted, skippable: true })).toThrow(`"My Plugin" is not a plugin's name: lowercase letters, digits and hyphens, starting with a letter or a digit`)
+    expect(() => storedEvent("notes", "Noted!", { tags: ["trace"], data: Noted, skippable: true })).toThrow(`"Noted!" is not an event's name: words of lowercase letters, digits and hyphens, joined by dots`)
+    expect(() => liveEvent("", "noted", { tags: ["trace"], data: Noted })).toThrow(`"" is not a plugin's name: lowercase letters, digits and hyphens, starting with a letter or a digit`)
   })
 
   test("a stored one becomes a draft, a live one an event; neither passes for the other", () => {
     const draft = stored(noted, { text: "kept", at: Seq.make(4) })
-    expect(draft).toEqual({ name: noted.name, data: { text: "kept", at: 4 }, skippable: true, tags: noted.tags })
+    expect<unknown>({ ...draft }).toEqual({ name: noted.name, data: { text: "kept", at: 4 }, skippable: true, tags: noted.tags })
     expect(live(glanced, origin, { text: "seen" })).toEqual({ _tag: "Live", session: origin.id, turn: origin.turn, name: glanced.name, tags: glanced.tags, data: { text: "seen" } })
     // The kind is in the type: a live definition makes no draft, and a stored one no live event.
     // @ts-expect-error a live-only definition cannot be stored
@@ -86,11 +87,68 @@ describe("a plugin's own events", () => {
 
   test("the envelope holds the name, the data, the skip flag, the tags and the message, and nothing of what a message stands for", () => {
     // What a record's message replaces, or any other meaning a plugin gives it, is that plugin's own data.
-    expect(Object.keys(StoredDraft.fields)).toEqual(["name", "data", "skippable", "tags", "message"])
     expect(Object.keys(StoredEvent.fields)).toEqual(["seq", "at", "turn", "name", "data", "skippable", "tags", "message"])
     const summary = stored(noted, { text: "Summary.", at: Seq.make(9) }, { message: { _tag: "User", text: "Summary." } })
+    expect(Object.keys(summary)).toEqual(["name", "data", "skippable", "tags", "message"])
     expect(Schema.is(StoredDraft)(summary)).toBe(true)
     expect(Schema.is(StoredEvent)({ seq: Seq.make(10), at: 0, turn: origin.turn, ...summary })).toBe(true)
+  })
+})
+
+describe("a definition's tags", () => {
+  const Noted = Schema.Struct({})
+
+  test("the five reserved words and a plugin's own tag are accepted", () => {
+    expect(storedEvent("notes", "noted", { tags: ["conversation", "turn", "memory", "ui", "trace", "notes.kind"], data: Noted, skippable: true }).tags.map(String))
+      .toEqual(["conversation", "turn", "memory", "ui", "trace", "notes.kind"])
+    expect(liveEvent("notes", "glanced", { tags: ["ui", "notes.kind"], data: Noted }).tags.map(String)).toEqual(["ui", "notes.kind"])
+  })
+
+  test("a word that is not reserved does not type, and is refused where the event is defined", () => {
+    // A misspelt tag used to be accepted, and its records were then passed over by everything that reads by tag.
+    // @ts-expect-error "conversaton" is no reserved tag and no plugin's own
+    expect(() => storedEvent("notes", "noted", { tags: ["conversaton"], data: Noted, skippable: true })).toThrow(`"conversaton" is not a tag: the reserved ones are conversation, turn, memory, ui, trace, and a plugin's own is "<plugin>.<tag>"`)
+    // @ts-expect-error "live" is no reserved tag and no plugin's own
+    expect(() => liveEvent("notes", "glanced", { tags: ["live"], data: Noted })).toThrow(`"live" is not a tag: the reserved ones are conversation, turn, memory, ui, trace, and a plugin's own is "<plugin>.<tag>"`)
+  })
+
+  test("another plugin's tag is refused where the event is defined", () => {
+    expect(() => storedEvent("notes", "noted", { tags: ["window.kind"], data: Noted, skippable: true })).toThrow(`"window.kind" is not this plugin's tag: the tags of plugin "notes" start with "notes."`)
+    expect(() => liveEvent("notes", "glanced", { tags: ["notesx.kind"], data: Noted })).toThrow(`"notesx.kind" is not this plugin's tag: the tags of plugin "notes" start with "notes."`)
+    // A tag of no shape at all: an upper-case word, a tag with two dots.
+    expect(() => liveEvent("notes", "glanced", { tags: ["notes.a.b"], data: Noted })).toThrow(`"notes.a.b" is not a tag: a tag is one of conversation, turn, memory, ui, trace, or a plugin's own, "<plugin>.<tag>"`)
+  })
+
+  test("a stored record with a one-word tag this kernel does not reserve still decodes", () => {
+    // The words are checked where a definition is made, never where a journal is read: one record of a later kernel
+    // must not fail a whole journal.
+    const record = { seq: Seq.make(1), at: 0, turn: origin.turn, name: "plugin.notes.noted", data: {}, skippable: true, tags: ["archive"] }
+    expect(Schema.decodeUnknownOption(StoredEvent)(record)._tag).toBe("Some")
+  })
+})
+
+describe("a draft", () => {
+  const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }), skippable: true })
+
+  test("is what `stored` made, and nothing else", () => {
+    const draft = stored(noted, { text: "kept" })
+    expect(isStoredDraft(draft)).toBe(true)
+    expect(isStoredDraft(turnStarted(TurnNumber.make(1)))).toBe(true)
+    // An object written by hand with every field of a draft, and a copy of a draft, are not drafts: either could
+    // carry other tags or another skip flag than its definition's.
+    expect(isStoredDraft({ name: noted.name, data: { text: "kept" }, skippable: true, tags: noted.tags })).toBe(false)
+    expect(isStoredDraft({ ...draft })).toBe(false)
+    expect(isStoredDraft({ ...draft, skippable: false })).toBe(false)
+    expect(isStoredDraft(undefined)).toBe(false)
+    // A definition written by hand, or a copy of one with a tag changed, makes no draft: its tags were never checked.
+    expect(isStoredDraft(stored({ kind: "stored", name: noted.name, data: Schema.Struct({ text: Schema.String }), skippable: true, tags: noted.tags }, { text: "kept" }))).toBe(false)
+    expect(isStoredDraft(stored({ ...noted, tags: [] }, { text: "kept" }))).toBe(false)
+  })
+
+  test("carries its mark on no field a store or a listener sees", () => {
+    const draft = stored(noted, { text: "kept" })
+    expect(JSON.stringify(draft)).toBe(JSON.stringify({ name: noted.name, data: { text: "kept" }, skippable: true, tags: noted.tags }))
+    expect(Object.getOwnPropertySymbols({ ...draft })).toEqual([])
   })
 })
 

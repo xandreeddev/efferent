@@ -2,17 +2,43 @@ import { Schema } from "effect"
 import { EventName, Seq, SessionId, TurnNumber } from "./ids.entity.js"
 import { Message } from "./message.entity.js"
 
+/** The shape of a tag: one word, or `<plugin>.<tag>`. */
+export const TAG_SHAPE = /^[a-z0-9][a-z0-9-]*(\.[a-z][a-z0-9-]*)?$/
+
+/** The tags the kernel reserves: one word each. Any other tag is a plugin's own, `<plugin>.<tag>`. */
+export const RESERVED_TAGS = ["conversation", "turn", "memory", "ui", "trace"] as const
+
 /**
- * What a record or a live event is for, so a reader can take only what it
- * rebuilds from: `conversation` (what memory builds the context from),
- * `turn` (the session's own structure), `memory` (a memory's derived state),
- * `ui` (what a client draws) and `trace` (side work that is not the
- * conversation). A plugin's own tags are named `<plugin>.<tag>`. A
- * definition declares its tags once, and every event of it carries them.
+ * A tag the kernel reserves: `conversation` (what memory builds the context
+ * from), `turn` (the session's own structure), `memory` (a memory's derived
+ * state), `ui` (what a client draws) and `trace` (side work that is not the
+ * conversation).
  *
  * @public
  */
-export const Tag = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)?$/)).pipe(Schema.brand("Tag"))
+export type ReservedTag = (typeof RESERVED_TAGS)[number]
+
+/**
+ * A tag as a definition declares it: one of the reserved words, or a
+ * plugin's own, `<plugin>.<tag>`. A one-word tag that is not reserved (a
+ * misspelt `conversation`) does not type, and is refused where the
+ * definition is made.
+ *
+ * @public
+ */
+export type DefinitionTag = ReservedTag | `${string}.${string}`
+
+/**
+ * What a record or a live event is for, so a part that reads the journal
+ * takes only what it rebuilds from: a reserved tag (`ReservedTag`) or a
+ * plugin's own, `<plugin>.<tag>`. A definition declares its tags once, and
+ * every event of it carries them. The schema checks the shape only, so a
+ * stored record with a tag a later kernel reserved still decodes; the words
+ * are checked where a definition is made (`storedEvent`, `liveEvent`).
+ *
+ * @public
+ */
+export const Tag = Schema.String.check(Schema.isPattern(TAG_SHAPE)).pipe(Schema.brand("Tag"))
 export type Tag = typeof Tag.Type
 
 /**
@@ -61,8 +87,14 @@ const envelope = {
   message: Schema.optionalKey(Message),
 }
 
-/** An event on its way into the journal: what `session.append` takes. Built with `stored` from a stored definition. */
-export const StoredDraft = Schema.Struct(envelope)
+/**
+ * An event on its way into the journal: what `session.append` takes. Only
+ * `stored`, from a stored definition, makes one (core's `userMessage`,
+ * `assistantMessage` and `toolResult` are built with it): an object written
+ * by hand does not type, and a session refuses it (`NotADraft`), so a record
+ * always carries the tags and the skip flag of its definition.
+ */
+export const StoredDraft = Schema.Struct(envelope).pipe(Schema.brand("StoredDraft"))
 export type StoredDraft = typeof StoredDraft.Type
 
 /** An event as the journal keeps it: the draft, where it is, the turn it was stored in, and when. */
@@ -87,11 +119,39 @@ export const KernelEvent = Schema.Union([AnnouncedEvent, LiveEvent])
 export type KernelEvent = typeof KernelEvent.Type
 
 /**
- * An event as a listener receives it: the envelope, with the data its definition describes.
+ * A stored record as a listener of its definition receives it: the record
+ * as announced (its place, its turn, the message it bears), with the data
+ * its definition describes.
  *
  * @public
  */
-export type Delivered<D> = (Omit<AnnouncedEvent, "data"> | Omit<LiveEvent, "data">) & { readonly data: D }
+export type StoredDelivery<D> = Omit<AnnouncedEvent, "data"> & { readonly data: D }
+
+/**
+ * A live event as a listener of its definition receives it, with the data its definition describes.
+ *
+ * @public
+ */
+export type LiveDelivery<D> = Omit<LiveEvent, "data"> & { readonly data: D }
+
+/**
+ * An event as a listener receives it, when the kind of its definition is not known: stored or live.
+ *
+ * @public
+ */
+export type Delivered<D> = StoredDelivery<D> | LiveDelivery<D>
+
+/**
+ * What a listener of `Definition` receives: a stored record for a stored
+ * definition, a live event for a live one, so a handler reads `event.seq` or
+ * `event.message` without telling the two apart first.
+ *
+ * @public
+ */
+export type DeliveryOf<Definition> =
+  Definition extends StoredDefinition<infer D> ? StoredDelivery<D>
+    : Definition extends LiveDefinition<infer D> ? LiveDelivery<D>
+      : never
 
 /**
  * A listener that was waited for failed, or was cut short: which listener, on which event, and why.

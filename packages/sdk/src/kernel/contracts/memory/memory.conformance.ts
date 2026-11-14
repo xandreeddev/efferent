@@ -4,7 +4,7 @@ import type { Scope } from "effect"
 import type { Prompt } from "effect/ai"
 import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
 import {
-  assistantMessage, ConformanceFailure, CONVERSATION_VOCABULARY, Core, EventName, kernel, messageOf, readJournal, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber,
+  assistantMessage, ConformanceFailure, CONVERSATION_VOCABULARY, Core, EventName, isStoredDraft, kernel, live, messageOf, readJournal, Seq, SessionId, SessionRefused, stored, storedEvent, toolResult, turnEnded, TurnNumber,
   turnStarted, userMessage,
 } from "@xandreed/core/kernel"
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
@@ -30,14 +30,25 @@ export interface MemorySubject {
 
 const sessionId = SessionId.make("kit-session")
 
-/** A journal the kit writes, and the open session over it that a memory is given. */
-const kitSession = Effect.gen(function* () {
+/** A record as the kit puts it in its journal: a draft's fields, or those of a record no definition of this kernel makes. */
+type KitRecord = Omit<StoredEvent, "seq" | "at" | "turn">
+
+/**
+ * A journal the kit writes, and the open session over it that a memory is given. What the memory publishes through
+ * that session goes to `core`, the one the kit handed the plugin.
+ */
+const kitSession = (core: CoreShape) => Effect.gen(function* () {
   const journal = yield* Ref.make<ReadonlyArray<StoredEvent>>([])
   const turns = yield* Ref.make(0)
-  const append = (event: StoredDraft) => Effect.flatMap(Ref.get(turns), (turn) => Ref.modify(journal, (events) => {
+  /** Put a record at the next place of the kit's journal, as it is: the kit writes records no draft could be. */
+  const appendRecord = (event: KitRecord) => Effect.flatMap(Ref.get(turns), (turn) => Ref.modify(journal, (events) => {
     const kept: StoredEvent = { seq: Seq.make(events.length + 1), at: 1_767_225_600_000, turn: TurnNumber.make(Math.max(1, turn)), ...event }
     return [kept, [...events, kept]] as const
   }))
+  /** What a memory appends, as a session takes it: only what `stored` made. */
+  const append = (event: StoredDraft) => isStoredDraft(event)
+    ? appendRecord(event)
+    : Effect.fail(new SessionRefused({ reason: "NotADraft", message: "this value is not a record `stored(definition, data)` made from a definition `storedEvent` made" }))
   /** A whole earlier turn: its message and the answer. */
   const pastTurn = (asked: string, answered: string) => Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
@@ -67,7 +78,13 @@ const kitSession = Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
     yield* append(turnStarted(turn))
     yield* append(userMessage(asked))
-    const session: OpenSession = { id: sessionId, turn, journal: Ref.get(journal), append }
+    const session: OpenSession = {
+      id: sessionId,
+      turn,
+      journal: Ref.get(journal),
+      append,
+      publish: (definition, data) => core.publish(live(definition, { id: sessionId, turn }, data)),
+    }
     return session
   })
   /** Close the open turn with the model's answer. */
@@ -75,7 +92,7 @@ const kitSession = Effect.gen(function* () {
     yield* append(assistantMessage(answered))
     yield* append(turnEnded(session.turn, { _tag: "Completed" }))
   })
-  return { journal: Ref.get(journal), append, pastTurn, toolTurn, openTurn, closeTurn }
+  return { journal: Ref.get(journal), append, appendRecord, pastTurn, toolTurn, openTurn, closeTurn }
 })
 
 /** The ids of the tool calls a context sends, and of the results it sends, in order. */
@@ -115,7 +132,7 @@ const textOf = (message: Prompt.MessageEncoded): string => typeof message.conten
  * @public
  */
 export const memoryConformance = (subject: MemorySubject): ReadonlyArray<ConformanceCheck> => {
-  type Kit = Effect.Success<typeof kitSession>
+  type Kit = Effect.Success<ReturnType<typeof kitSession>>
   const check = (
     name: string,
     id: string,
@@ -124,8 +141,9 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
-      const memory = yield* subject.open(Context.get(yield* Layer.build(kernel()), Core))
-      yield* body(memory, yield* kitSession)
+      const core = Context.get(yield* Layer.build(kernel()), Core)
+      const memory = yield* subject.open(core)
+      yield* body(memory, yield* kitSession(core))
     })).pipe(unexpected(id)),
   })
   const answersTurn = (id: string, context: ReadonlyArray<Prompt.MessageEncoded>, asked: string) => {
@@ -134,7 +152,8 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
   }
   const own = `plugin.${subject.name}.`
   const unknown = (skippable: boolean, plugin: string = subject.name) => stored(storedEvent(plugin, "kit-unknown", { data: Schema.Struct({}), skippable, tags: ["memory"] }), {})
-  const unknownConversation = (skippable: boolean): StoredDraft =>
+  /** A record of the conversation no definition of this kernel makes: one a later core may write. */
+  const unknownConversation = (skippable: boolean): KitRecord =>
     ({ name: EventName.make("conversation.kit.unknown"), data: {}, skippable, tags: userMessage("").tags, message: { _tag: "User", text: "an unknown record of the conversation" } })
   const budget = Option.fromNullishOr(subject.budgetTokens)
   const long = "long ".repeat(Math.max(1, Math.ceil(Option.getOrElse(budget, () => 400) / 4)))
@@ -220,7 +239,7 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     })),
     check("an unknown record of the conversation that may not be skipped is refused", "unknown-conversation-refused", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")
-      yield* kit.append(unknownConversation(false))
+      yield* kit.appendRecord(unknownConversation(false))
       const session = yield* kit.openTurn("And a scope?")
       yield* refuses("unknown-conversation-refused", "a context over a record of the conversation that may not be skipped", memory.context(session), (error) => error._tag === "UnknownRecord")
     })),
@@ -271,7 +290,7 @@ const innerMemory: Layer.Layer<Memory> = Layer.succeed(Memory, Memory.of({
  * @public
  */
 export const memoryWrapperConformance = (subject: MemoryWrapperSubject): ReadonlyArray<ConformanceCheck> => {
-  type Kit = Effect.Success<typeof kitSession>
+  type Kit = Effect.Success<ReturnType<typeof kitSession>>
   const check = (
     name: string,
     id: string,
@@ -283,7 +302,7 @@ export const memoryWrapperConformance = (subject: MemoryWrapperSubject): Readonl
       const built = yield* Layer.build(kernel())
       const wrapped = Context.get(yield* Layer.build(subject.wrap(innerMemory).pipe(Layer.provide(Layer.succeedContext(built)))), Memory)
       const inner = Context.get(yield* Layer.build(innerMemory), Memory)
-      yield* body(wrapped, inner, yield* kitSession)
+      yield* body(wrapped, inner, yield* kitSession(Context.get(built, Core)))
     })).pipe(unexpected(id)),
   })
   const own = `plugin.${subject.name}.`

@@ -1,7 +1,6 @@
 import { Schema } from "effect"
 import type { StoredDefinition } from "./event.entity.js"
-import { tagsOf } from "./event.entity.functions.js"
-import { EventName } from "./ids.entity.js"
+import { coreStoredEvent } from "./event.entity.functions.js"
 import type { Vocabulary } from "./journal.entity.js"
 import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
@@ -51,22 +50,10 @@ export const ToolResultData = Schema.Struct({})
 export type ToolResultData = typeof ToolResultData.Type
 
 /** `conversation.user.message`: what the user sent, in the turn that answers it. Stored, tagged `conversation`. */
-export const userMessageEvent: StoredDefinition<UserMessageData> = {
-  kind: "stored",
-  name: EventName.make("conversation.user.message"),
-  data: UserMessageData,
-  skippable: false,
-  tags: tagsOf(["conversation"]),
-}
+export const userMessageEvent: StoredDefinition<UserMessageData> = coreStoredEvent("conversation.user.message", { data: UserMessageData, skippable: false, tags: ["conversation"] })
 
 /** `conversation.assistant.message`: what the model answered. Stored, tagged `conversation`. */
-export const assistantMessageEvent: StoredDefinition<AssistantMessageData> = {
-  kind: "stored",
-  name: EventName.make("conversation.assistant.message"),
-  data: AssistantMessageData,
-  skippable: false,
-  tags: tagsOf(["conversation"]),
-}
+export const assistantMessageEvent: StoredDefinition<AssistantMessageData> = coreStoredEvent("conversation.assistant.message", { data: AssistantMessageData, skippable: false, tags: ["conversation"] })
 
 /**
  * `conversation.tool.result`: what a tool call the model asked for came to, stored after the assistant message that
@@ -75,13 +62,7 @@ export const assistantMessageEvent: StoredDefinition<AssistantMessageData> = {
  *
  * @public
  */
-export const toolResultEvent: StoredDefinition<ToolResultData> = {
-  kind: "stored",
-  name: EventName.make("conversation.tool.result"),
-  data: ToolResultData,
-  skippable: false,
-  tags: tagsOf(["conversation"]),
-}
+export const toolResultEvent: StoredDefinition<ToolResultData> = coreStoredEvent("conversation.tool.result", { data: ToolResultData, skippable: false, tags: ["conversation"] })
 
 /**
  * The vocabulary of a conversation: core's records and the conversation's. A

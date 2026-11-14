@@ -4,9 +4,12 @@ import {
   announced,
   beginTurn,
   Core,
+  currentFormat,
   headerOf,
   InvalidSession,
+  isStoredDraft,
   KERNEL_VOCABULARY,
+  live,
   NewSession,
   outcomeOf,
   Seq,
@@ -18,7 +21,7 @@ import {
   turnEnded,
   turnStarted,
 } from "@xandreed/core/kernel"
-import type { AnnouncedEvent, OpenSession, JournalStorageError, StoredDraft, TurnNumber } from "@xandreed/core/kernel"
+import type { AnnouncedEvent, LiveDefinition, OpenSession, JournalStorageError, StoredDraft, TurnNumber } from "@xandreed/core/kernel"
 
 /**
  * How the session plugin is set up.
@@ -129,6 +132,9 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
   })
 
   const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
+    // Only what `stored` made, from a definition `storedEvent` made, is a record: an object written by hand, or a definition
+    // written by hand, could carry a tag no part reads by, or another skip flag than its definition's.
+    if (!isStoredDraft(event)) return yield* Effect.fail(new SessionRefused({ reason: "NotADraft", message: "this value is not a record `stored(definition, data)` made from a definition `storedEvent` made: build a record with `stored`, or with `userMessage`, `assistantMessage` or `toolResult`, never by hand or as a copy" }))
     if (reserved(event)) return yield* Effect.fail(new SessionRefused({ reason: "ReservedName", message: `${event.name} is core's to write, not a turn's body` }))
     const stored = yield* open.writes.withPermits(1)(Effect.gen(function* () {   // one write at a time, the end's included
       if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
@@ -138,10 +144,17 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     return stored
   })
 
+  /** Publish a live event about an open turn; a turn that closed publishes nothing. */
+  const publish = (open: Turn) => <D extends Schema.Json>(definition: LiveDefinition<D>, data: D) => Effect.gen(function* () {
+    if (yield* Ref.get(open.closed)) return yield* Effect.fail(new SessionRefused({ reason: "NoOpenTurn", message: `turn ${open.turn} of session ${open.id} has closed` }))
+    yield* core.publish(live(definition, open, data))
+  })
+
   const begin = Effect.fn("kernel.session.begin")(function* (id: SessionId) {
     yield* claim(id)                                                // one turn at a time here, until its end was announced
     return yield* Effect.gen(function* () {
       const journal = yield* storage.read(id)                       // the store is the truth: the phase and the last place, read now
+      yield* Effect.fromResult(currentFormat(journal.header))        // a journal of another format is not written to, or migrated
       const state = yield* Effect.fromResult(sessionStateOf(journal.events))
       const { turn } = yield* Effect.fromResult(beginTurn(state))   // Free → TurnOpen, or SessionBusy
       const open: Turn = {
@@ -156,7 +169,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
         Effect.catchTag("JournalStorageError", (error): Effect.Effect<never, SessionRefused | JournalStorageError> =>
           error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer opened a turn")) : Effect.fail(error)),
       )
-      const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open) }
+      const session: OpenSession = { id, turn, journal: Effect.map(storage.read(id), (now) => now.events), append: append(open), publish: publish(open) }
       const opened: Opened = { turn: open, session, started: announced(open, started), announcing: yield* Ref.make(false) }
       return opened
     }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? release(id) : Effect.void))   // a turn that did not open, for whatever reason, holds nothing

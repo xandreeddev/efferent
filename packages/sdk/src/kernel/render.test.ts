@@ -3,7 +3,7 @@ import { Effect, Layer, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, progressEvent, scriptedModel, sessions, showView, ViewId, viewProgress, viewsOf } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, progressEvent, scriptedModel, sessions, showView, ViewId, viewsOf } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -19,20 +19,19 @@ const Squares = Tool.make("squares", {
   description: "Show the user the squares from 1 to upTo, as a table. Give it an id: showing again under that id replaces it.",
   parameters: Schema.Struct({ id: ViewId, upTo: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })) }),
   success: Schema.String,
-  // The turn its call runs in, to append the view, and Core, to publish its progress.
-  dependencies: [CurrentTurn, Core],
+  // The turn its call runs in: to append the view, and to publish its progress.
+  dependencies: [CurrentTurn],
 })
 const tools = Toolkit.make(Squares)
 
 const toolsLive = tools.toLayer({
   squares: ({ id, upTo }) => Effect.gen(function* () {
     const session = yield* CurrentTurn
-    const core = yield* Core
     const rows: Array<ReadonlyArray<string>> = []
     for (let n = 1; n <= upTo; n++) {
       rows.push([String(n), String(n * n)])
       // How far it got: live, for whoever watches, never stored.
-      yield* Effect.orDie(core.publish(viewProgress(session, id, n, upTo)))
+      yield* Effect.orDie(session.publish(progressEvent, { id, done: n, total: upTo }))
     }
     // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
     yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))

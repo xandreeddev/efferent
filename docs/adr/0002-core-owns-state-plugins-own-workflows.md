@@ -38,7 +38,8 @@ Those are workflow, and a workflow is a plugin's.
 
 **Workflow contracts live in contract folders** of `@xandreed/sdk/kernel`:
 
-- `contracts/loop`: `Loop` (`run(input)`), `TurnInput`, `Reply`, `LoopFailure`, the loop
+- `contracts/loop` (superseded by ADR 0003: there is no loop contract; the loop is the
+  host's program, and the conversation's records are core's): `Loop` (`run(input)`), `TurnInput`, `Reply`, `LoopFailure`, the loop
   kit and the script it hands a model; `Settings { system }` and its `settings({ system })`
   layer; the conversation's events (`plugin.loop.user.message`, `request.sent`,
   `assistant.message`, `assistant.delta`); the request vocabulary (`ModelRequest`,

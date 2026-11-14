@@ -59,6 +59,16 @@ describe("reading a journal", () => {
   })
 })
 
+describe("a plugin's vocabulary", () => {
+  test("refuses, where it is made, a definition that is not under the plugin's own prefix", () => {
+    // Such a definition was once accepted as known and never read, since a journal is read by prefix first: a
+    // mistake that showed as records silently missing.
+    expect(() => vocabularyOf("margin", [noted])).toThrow(`plugin.notes.noted is not a record of plugin "margin", whose own are under plugin.margin.: a vocabulary knows its plugin's records, and extends another plugin's vocabulary to read that plugin's`)
+    expect(() => vocabularyOf("notes", [noted, storedEvent("notesx", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: true })])).toThrow(`plugin.notesx.noted is not a record of plugin "notes"`)
+    expect(vocabularyOf("notes", [noted]).knows.map(String)).toContain("plugin.notes.noted")
+  })
+})
+
 describe("the message a record bears", () => {
   /** A plugin's own record of the conversation: a summary that stands for earlier turns, say. */
   const summarised = storedEvent("notes", "summarised", { tags: ["conversation", "memory"], data: Schema.Struct({}), skippable: true })

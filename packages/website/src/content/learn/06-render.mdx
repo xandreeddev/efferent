@@ -29,10 +29,10 @@ The small models on your machine rarely call a tool, as lesson 2 showed. Hosted 
 
 **tools.ts** declares `show`. It takes three small things: an `id`, which `table` (`squares`, `cubes` or `times`) and `n`. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat. The rows are the handler's own work, from `kinds`.
 
-Its handler needs two things it lists in `dependencies`:
+Its handler needs one thing, which it lists in `dependencies`: **`CurrentTurn`**, the turn its call runs in. Through it the handler does two things:
 
-- **`CurrentTurn`**, the turn its call runs in, to `append` the view;
-- **`Core`**, to publish progress as it goes.
+- it `append`s the view, which is stored;
+- it `publish`es progress as it goes, which is live and stored nowhere.
 
 A call the model gets wrong, such as `n` of 50, is a failure the model reads, and nothing is shown.
 

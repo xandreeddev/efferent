@@ -1,9 +1,10 @@
 import { Option, Result } from "effect"
-import { CONVERSATION_VOCABULARY, dataOf, live, messageOf, vocabularyOf, stored, turnStartedEvent } from "@xandreed/core/kernel"
-import type { LiveEvent, Message, Vocabulary, Seq, SessionId, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { CONVERSATION_VOCABULARY, dataOf, messageOf, vocabularyOf, stored, turnStartedEvent } from "@xandreed/core/kernel"
+import type { Message, Vocabulary, Seq, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { OverBudget, Tokens } from "../../contracts/memory/memory.entity.js"
 import { estimateTokens, messageText } from "../../contracts/memory/memory.entity.functions.js"
-import { windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
+import { windowDroppedEvent } from "./window.entity.js"
+import type { WindowPressureData } from "./window.entity.js"
 
 /** What the window memory reads of a journal: core's records and the conversation's, whose vocabulary it extends, and its own. */
 export const WINDOW_VOCABULARY: Vocabulary = vocabularyOf("window", [windowDroppedEvent], CONVERSATION_VOCABULARY)
@@ -15,9 +16,9 @@ export const windowDropped = (through: Seq): StoredDraft => stored(windowDropped
 export const nearlyFull = (context: { readonly estimatedTokens: Tokens; readonly budgetTokens: Tokens }, share = 0.8): boolean =>
   context.estimatedTokens >= context.budgetTokens * share
 
-/** `plugin.window.pressure`, about the open turn whose context came close to the budget. */
-export const windowPressure = (session: { readonly id: SessionId; readonly turn: TurnNumber }, context: { readonly estimatedTokens: Tokens; readonly budgetTokens: Tokens }): LiveEvent =>
-  live(windowPressureEvent, session, { estimatedTokens: context.estimatedTokens, budgetTokens: context.budgetTokens })
+/** The data of `plugin.window.pressure`, for the context that came close to the budget: published through the open session. */
+export const pressureOf = (context: { readonly estimatedTokens: Tokens; readonly budgetTokens: Tokens }): WindowPressureData =>
+  ({ estimatedTokens: context.estimatedTokens, budgetTokens: context.budgetTokens })
 
 /** The messages of one turn: each with its place, and what the turn costs. */
 interface WindowTurn {

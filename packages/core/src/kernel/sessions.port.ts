@@ -1,6 +1,6 @@
 import { Context } from "effect"
-import type { Effect, Scope } from "effect"
-import type { ListenerFailed, StoredDraft, StoredEvent } from "./event.entity.js"
+import type { Effect, Schema, Scope } from "effect"
+import type { ListenerFailed, LiveDefinition, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { SessionId, TurnNumber } from "./ids.entity.js"
 import type { Journal, JournalStorageError, UnknownRecord } from "./journal.entity.js"
 import type { InvalidSession, NewSessionInput, SessionRefused } from "./session.entity.js"
@@ -18,9 +18,19 @@ export interface OpenSession {
    * that fails fails the append, after the event is stored. Once the turn
    * closed, an append is refused (`SessionRefused`, `NoOpenTurn`). A record
    * named under `core.` is refused (`SessionRefused`, `ReservedName`) and
-   * nothing is stored: core's records are the session plugin's to write.
+   * nothing is stored: core's records are the session plugin's to write. A
+   * value `stored` did not make, an object built by hand, is refused too
+   * (`NotADraft`).
    */
   readonly append: (event: StoredDraft) => Effect.Effect<StoredEvent, JournalStorageError | ListenerFailed | SessionRefused>
+  /**
+   * Publish a live event of `definition` about this turn, on `Core`: it is
+   * stored nowhere. A waiting listener that fails fails the publish. Once
+   * the turn closed, a publish is refused (`SessionRefused`, `NoOpenTurn`).
+   * So a part that holds the open session, a tool or a memory, needs no
+   * `Core` to say what it is doing.
+   */
+  readonly publish: <D extends Schema.Json>(definition: LiveDefinition<D>, data: D) => Effect.Effect<void, ListenerFailed | SessionRefused>
 }
 
 /**
@@ -53,7 +63,10 @@ export class Sessions extends Context.Service<Sessions, {
    * success completes the turn, a failure fails it, an interrupt interrupts
    * it) and frees the session. A scope's close cannot fail: an end that
    * cannot be stored is a defect of the scope, and the turn stays open, as
-   * the journal says. `turn` returns that failure as it is.
+   * the journal says. `turn` returns that failure as it is. A journal
+   * written in another format than this kernel's is refused
+   * (`SessionRefused`, `FormatMismatch`) and nothing is stored: `read` still
+   * gives it, so a host can say what it found.
    */
   readonly open: (id: SessionId) => Effect.Effect<OpenSession, TurnFailure, Scope.Scope>
   /**

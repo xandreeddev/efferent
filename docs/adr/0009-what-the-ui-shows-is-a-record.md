@@ -31,9 +31,11 @@ questions decide how:
   in the order the ids first appeared, with the place each first appeared. Drawing live and
   redrawing after a reload are the same fold.
 - **Progress is live.** `plugin.render.progress`, tagged `ui`, `{ id, done, total }`, is
-  published on `Core` and never stored: what stays is the view the work ends with.
+  published and never stored: what stays is the view the work ends with.
 - **No render service.** A tool appends its view through the turn its call runs in
-  (`CurrentTurn`, ADR 0007) and publishes progress on `Core`, which it declares too.
+  (`CurrentTurn`, ADR 0007) and publishes progress through that turn too
+  (`turn.publish(progressEvent, …)`), so the turn is all it declares. (Amended 14 November
+  2026: a tool used to declare `Core` as well, since an open session could not publish.)
 - **A small, closed vocabulary.** `Text`, `List`, `Table` (each row as many cells as there
   are columns, checked by the schema) and `Card`. Cells are plain text: a model may have
   written them, and a client draws them as text, never as markup. A record of a shape the

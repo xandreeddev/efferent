@@ -4,7 +4,7 @@
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { CurrentTurn, Memory, paired, promptMessage, showView, ViewData, ViewId, viewProgress } from "@xandreed/sdk/kernel"
+import { CurrentTurn, Memory, paired, progressEvent, promptMessage, showView, ViewData, ViewId } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
@@ -16,7 +16,7 @@ import { noTurn, slowShow, tableAsResult } from "./config-edit.ts"
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentOf } from "./tools.source.ts"
 
 const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
-const toolsNames = { Effect, Schema, Tool, Toolkit, Core, CurrentTurn, showView, ViewData, ViewId, viewProgress }
+const toolsNames = { Effect, Schema, Tool, Toolkit, CurrentTurn, progressEvent, showView, ViewData, ViewId }
 
 const agentNames = (parts: PageParts, flatMemory: unknown, tools: unknown, toolsLive: unknown) => ({
   Effect, Option, Stream, LanguageModel, Prompt,

@@ -1,12 +1,11 @@
 // Lesson 6's tools.ts: lesson 2's calculator, and `show`, a tool that shows
 // the user a table. Its handler appends a view in the turn its call runs in
-// and publishes progress on Core; what it returns to the model is a few words.
+// and publishes progress through it; what it returns to the model is a few words.
 
 /** Read-only: what the tools import. */
 export const TOOLS_IMPORTS = `import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { Core } from "@xandreed/core/kernel"
-import { CurrentTurn, showView, ViewData, ViewId, viewProgress } from "@xandreed/sdk/kernel"`
+import { CurrentTurn, progressEvent, showView, ViewData, ViewId } from "@xandreed/sdk/kernel"`
 
 /** Everything before the editable part. */
 export const TOOLS_HEADER = `${TOOLS_IMPORTS}\n\n`
@@ -32,8 +31,8 @@ const show = Tool.make("show", {
   success: Schema.String,
   failure: Schema.String,
   failureMode: "return",
-  // What its handler needs: the turn its call runs in, to store the view, and Core, to publish progress.
-  dependencies: [CurrentTurn, Core],
+  // What its handler needs: the turn its call runs in, to store the view and to publish progress.
+  dependencies: [CurrentTurn],
 })
 
 // What each kind of table holds: its title, its columns, and its row for i.
@@ -53,14 +52,13 @@ export const toolsLive = tools.toLayer({
   show: ({ id, table, n }) =>
     Effect.gen(function* () {
       const session = yield* CurrentTurn
-      const core = yield* Core
       const { title, columns, row, rows: count } = kinds[table](n)
       // The model asked in a few words; the rows are this tool's own work, and the model never sees them.
       const rows = []
       for (let i = 1; i <= count; i++) {
         rows.push(row(i))
         // How far it got: live, for whoever watches, never stored.
-        yield* Effect.orDie(core.publish(viewProgress(session, id, i, count)))
+        yield* Effect.orDie(session.publish(progressEvent, { id, done: i, total: count }))
       }
       // The view is checked as it is built, then stored in the journal, tagged ui. No memory sends it.
       const shown = yield* Schema.decodeUnknownEffect(ViewData)({ id, view: { _tag: "Table", title, columns, rows } }).pipe(

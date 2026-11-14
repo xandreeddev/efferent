@@ -4,7 +4,7 @@ import { Core } from "./core.port.js"
 import type { ListenOptions, PublishOptions } from "./core.port.js"
 import { dataOf, reasonOf } from "./event.entity.functions.js"
 import { ListenerFailed } from "./event.entity.js"
-import type { Delivered, EventDefinition, KernelEvent } from "./event.entity.js"
+import type { DeliveryOf, EventDefinition, KernelEvent } from "./event.entity.js"
 import type { EventName } from "./ids.entity.js"
 import { listenerFailed } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent } from "./vocabulary.entity.js"
@@ -96,8 +96,11 @@ export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}
     })
   }
 
-  const on = Effect.fnUntraced(function* <D extends Schema.Json, E>(definition: EventDefinition<D>, handler: (event: Delivered<D>) => Effect.Effect<void, E>, options: ListenOptions) {
+  const on = Effect.fnUntraced(function* <Definition extends EventDefinition<Schema.Json>, E>(definition: Definition, handler: (event: DeliveryOf<Definition>) => Effect.Effect<void, E>, options: ListenOptions) {
     const listener = options.name
+    // An event is the definition's when it has its name and its kind: a live event published under a stored
+    // definition's name is not a record, and a handler written for records is not given it.
+    const ofDefinition = (event: KernelEvent) => event.name === definition.name && (event._tag === "Stored") === (definition.kind === "stored")
     const failed = (event: KernelEvent, message: string, cause?: unknown) =>
       new ListenerFailed({ listener, event: event.name, message, ...(cause === undefined ? {} : { cause }) })
     const run = (event: KernelEvent): Effect.Effect<void, ListenerFailed> =>
@@ -105,7 +108,7 @@ export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}
         onNone: () => Effect.fail(failed(event, "the event's data is not what the listener's definition describes")),
         // Whatever the handler ends with is its own failure, an interrupt it was not sent included (`Effect.interrupt`,
         // a join of an interrupted fiber): only the interruption of whoever waits for it is the cut, and `call` sees that.
-        onSome: (data): Effect.Effect<void, ListenerFailed> => handler({ ...event, data }).pipe(
+        onSome: (data): Effect.Effect<void, ListenerFailed> => handler({ ...event, data } as DeliveryOf<Definition>).pipe(
           Effect.catchCause((cause) => Effect.fail(failed(event, reasonOf(cause), Cause.squash(cause)))),
         ),
       })
@@ -113,7 +116,7 @@ export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}
     // `core.listener.failed` is never waited for: a report must not be held by the listeners it is for.
     if (options.wait === true && definition.name !== listenerFailedEvent.name) {
       // A waiting listener cut short is reported by name, by the publisher that stopped waiting: it was interrupted, or its limit ran out.
-      const waited = (event: KernelEvent) => call(listener, event, run(event), report(event, failed(event, "interrupted before it finished")))
+      const waited = (event: KernelEvent) => ofDefinition(event) ? call(listener, event, run(event), report(event, failed(event, "interrupted before it finished"))) : Effect.void
       yield* Effect.acquireRelease(
         Ref.update(waiting, (all) => [...all, { key, event: definition.name, run: waited }]),
         () => Ref.update(waiting, (all) => all.filter((entry) => entry.key !== key)),
@@ -124,7 +127,7 @@ export const makeCore = Effect.fnUntraced(function* (options: KernelOptions = {}
     const subscription = yield* PubSub.subscribe(hub)
     // Its scope's close stops the wait for a call under way, and the call behind it: no report, the listener is going.
     yield* Effect.forkScoped(Effect.forever(PubSub.take(subscription).pipe(
-      Effect.flatMap((next) => next.name === definition.name
+      Effect.flatMap((next) => ofDefinition(next)
         ? call(listener, next, run(next), Effect.void).pipe(Effect.catchTag("ListenerFailed", (failure) => report(next, failure)))
         : Effect.void),
     )))

@@ -44,9 +44,9 @@ const scriptedModel
 const sessions
 const showView
 const summarizedEvent
+const summarizerConformance
 const summaryMemory
 const viewEvent
-const viewProgress
 const viewsOf
 const windowDroppedEvent
 const windowMemory
@@ -58,6 +58,7 @@ interface ModelToolCall
 interface Queued
 interface SessionsOptions
 interface Shown
+interface SummarizerSubject
 interface SummaryOptions
 interface WindowOptions
 type InboxQueuedData

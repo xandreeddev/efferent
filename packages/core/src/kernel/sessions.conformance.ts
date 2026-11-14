@@ -4,9 +4,9 @@ import { expect, refuses, show, unexpected } from "./conformance.entity.function
 import type { ConformanceCheck } from "./conformance.entity.js"
 import { makeCore } from "./core.adapter.js"
 import type { Core } from "./core.port.js"
-import { dataOf, stored, storedEvent } from "./event.entity.functions.js"
-import type { EventDefinition, KernelEvent } from "./event.entity.js"
-import { EventName, Owner, SessionId, TurnNumber } from "./ids.entity.js"
+import { dataOf, liveEvent, stored, storedEvent } from "./event.entity.functions.js"
+import type { EventDefinition, KernelEvent, StoredDraft, StoredEvent } from "./event.entity.js"
+import { Owner, SessionId, TurnNumber } from "./ids.entity.js"
 import type { Sessions } from "./sessions.port.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
@@ -30,13 +30,17 @@ const owner = Owner.make("kit-owner")
 /** The kit's own record: any plugin's event, as far as a session plugin knows. */
 const noted = storedEvent("kit", "noted", { data: Schema.Struct({ text: Schema.String }), skippable: true, tags: ["trace"] })
 const note = (text: string) => stored(noted, { text })
+/** The kit's own live event: what a part holding the open session says of its turn. */
+const glanced = liveEvent("kit", "glanced", { data: Schema.Struct({ text: Schema.String }), tags: ["trace"] })
+/** A record as an object written by hand, with every field a draft has: what `stored` alone may make. */
+const handBuilt: Omit<StoredEvent, "seq" | "at" | "turn"> = { name: noted.name, data: { text: "by hand" }, skippable: noted.skippable, tags: noted.tags }
 
 /** What a body fails with in the checks of a failing turn. */
 class KitFailure extends Schema.TaggedError<KitFailure>()("KitFailure", { message: Schema.String }) {}
 
 const STARTED = turnStartedEvent.name
 const ENDED = turnEndedEvent.name
-const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, noted, turnEndedEvent]
+const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, noted, glanced, turnEndedEvent]
 
 /**
  * The sessions contract as checks, each over a fresh session plugin: a
@@ -62,7 +66,11 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * journal order (`ordered`); an open session kept after its turn closed
  * appends nothing (`closed-append`); a body's append of a record named
  * under `core.` is refused with `ReservedName`, and nothing is stored or
- * announced (`reserved-name`); a session never created is refused
+ * announced (`reserved-name`); a value `stored` did not make, an object
+ * written by hand or a copy of a draft, is refused with `NotADraft`
+ * (`not-a-draft`); a live event published through the open session is heard
+ * on `Core` with its session and turn and stored nowhere, and refused once
+ * the turn closed (`publish`); a session never created is refused
  * before any body runs (`missing`); a session asked for with an empty
  * owner, or a parent that is no id, is refused with `InvalidSession`
  * (`invalid-session`).
@@ -259,7 +267,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     })),
     check("a record named under core. is refused, and nothing is stored or announced", "reserved-name", ({ sessions, seen }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
-      const drafts = [turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)), { name: EventName.make("core.kit.anything"), data: {}, skippable: true, tags: [] }]
+      const drafts = [turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2))]
       yield* sessions.turn(id, (session) => Effect.forEach(drafts, (draft) => refuses("reserved-name", `an append of ${draft.name}`, session.append(draft),
         (error) => error._tag === "SessionRefused" && error.reason === "ReservedName"), { concurrency: 1, discard: true }))
       const journal = yield* sessions.read(id)
@@ -267,6 +275,32 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       // Of core's records, at most the turn's own start and end were announced (whether a plugin announces at all is `announce`).
       const announced = names(yield* seen)
       yield* expect("reserved-name", announced.length <= 2 && announced.every((name) => name === STARTED || name === ENDED), `appends of core's records announced ${show(announced)}`)
+    })),
+    check("a value `stored` did not make is refused, and nothing is stored or announced", "not-a-draft", ({ sessions, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      const notDraft = (error: { readonly _tag: string; readonly reason?: string }) => error._tag === "SessionRefused" && error.reason === "NotADraft"
+      yield* sessions.turn(id, (session) => Effect.gen(function* () {
+        yield* refuses("not-a-draft", "an append of an object written by hand", session.append(handBuilt as StoredDraft), notDraft)
+        // A copy of a draft is not the draft: a field changed on the way would not be its definition's.
+        yield* refuses("not-a-draft", "an append of a copy of a draft", session.append({ ...note("copied") }), notDraft)
+        yield* session.append(note("made"))
+      }))
+      const journal = yield* sessions.read(id)
+      yield* expect("not-a-draft", show(names(journal.events)) === show([STARTED, noted.name, ENDED]), `appends of values \`stored\` did not make left ${show(names(journal.events))}`)
+      const announced = (yield* seen).filter((event) => event.name === noted.name)
+      yield* expect("not-a-draft", announced.length <= 1, `appends of values \`stored\` did not make announced ${announced.length} records`)
+    })),
+    check("a live event published through the open session is heard on Core with its session and turn, and stored nowhere; refused once the turn closed", "publish", ({ sessions, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      const kept = yield* sessions.turn(id, (session) => Effect.as(session.publish(glanced, { text: "looking" }), session))
+      const heard = (yield* seen).filter((event) => event.name === glanced.name)
+      yield* expect("publish", heard.length === 1 && heard.every((event) => event._tag === "Live" && event.session === id && event.turn === kept.turn && show(event.data) === show({ text: "looking" })),
+        `a live event published in turn ${kept.turn} of ${id} was heard as ${show(heard)}`)
+      const journal = yield* sessions.read(id)
+      yield* expect("publish", show(names(journal.events)) === show([STARTED, ENDED]), `a published live event left ${show(names(journal.events))} in the journal`)
+      yield* refuses("publish", "a publish through a session whose turn closed", kept.publish(glanced, { text: "late" }), (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn")
+      const after = (yield* seen).filter((event) => event.name === glanced.name)
+      yield* expect("publish", after.length === 1, `a publish after the turn closed was heard: ${show(after)}`)
     })),
     check("a session never created is refused before any body runs", "missing", ({ sessions }) => Effect.gen(function* () {
       const ran = yield* Ref.make(false)

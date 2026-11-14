@@ -82,6 +82,22 @@ const unnumbering: JournalStorageSubject = {
   })),
 }
 
+/** A store with a column for the id and one for the owner, and no other: a header reads back without its parent. */
+const headless: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    read: (id, from) => Effect.map(storage.read(id, from), (journal) => ({ header: { id: journal.header.id, owner: journal.header.owner, format: JOURNAL_FORMAT }, events: journal.events })),
+  })),
+}
+
+/** A store that writes its own format on every header, whatever it was given. */
+const reformatting: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    read: (id, from) => Effect.map(storage.read(id, from), (journal) => ({ header: { ...journal.header, format: journal.header.format + 1 }, events: journal.events })),
+  })),
+}
+
 /** The ids of the checks that fail; a failure that names another check than the one it came from is told apart. */
 const failedChecks = (subject: JournalStorageSubject) => Effect.runPromise(Effect.forEach(journalStorageConformance(subject), (check) =>
   Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check === check.id ? check.id : `${check.id} reported as ${result.failure.check}`] : [])))).then((failed) => failed.flat().toSorted())
@@ -103,6 +119,11 @@ describe("the storage kit", () => {
 
   test("a store that never refuses fails every check of a refusal or a place", async () => {
     expect(await failedChecks(trusting)).toEqual(["conflict", "create", "missing", "read-from"])
+  })
+
+  test("a store that loses a header's parent, or rewrites its format, fails the check of a creation", async () => {
+    expect(await failedChecks(headless)).toEqual(["create"])
+    expect(await failedChecks(reformatting)).toEqual(["create"])
   })
 
   test("a store that does not stamp the next place fails the check of an append", async () => {
