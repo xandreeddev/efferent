@@ -6,7 +6,7 @@ import { readJournal } from "./journal.entity.functions.js"
 import type { Journal, UnknownRecord } from "./journal.entity.js"
 import { JOURNAL_FORMAT, SessionRefused } from "./session.entity.js"
 import type { Free, Inspection, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
-import { KERNEL_READER, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
+import { KERNEL_VOCABULARY, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 /**
  * The state of a session nothing happened in yet.
@@ -41,7 +41,7 @@ export const endTurn = (state: SessionState): Result.Result<Free, SessionRefused
  * they refuse it.
  */
 export const sessionStateOf = (events: ReadonlyArray<StoredEvent>): Result.Result<SessionState, UnknownRecord | SessionRefused> => {
-  const read = readJournal(KERNEL_READER)(events)
+  const read = readJournal(KERNEL_VOCABULARY)(events)
   if (Result.isFailure(read)) return Result.fail(read.failure)
   let state: SessionState = newSession
   for (const event of read.success) {

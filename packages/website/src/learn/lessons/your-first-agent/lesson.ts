@@ -4,7 +4,7 @@
 // context, calls the model and stores the answer.
 import { Effect, Layer, Option, Result, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { assistantMessage, Core, CONVERSATION_READER, messageOf, readerFor, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { Memory, promptMessage } from "@xandreed/sdk/kernel"
 import { runStatements, run } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
@@ -15,7 +15,7 @@ import { DEFAULT_MEMORY, MEMORY_INTRO, memoryDocumentOf } from "./memory.source.
 import { readLastN, readSystem, shouting, withoutMemory, withReminder, writeLastN, writeSystem } from "./config-edit.ts"
 
 /** The names memory.ts imports: all its code may use. */
-const memoryNames = { Effect, Layer, Option, CONVERSATION_READER, messageOf, readerFor, readJournal, Memory, promptMessage }
+const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, promptMessage }
 
 /** The names agent.ts imports, with the page's stand-ins for the modules it is given, and `pane` and `model`. */
 const agentNames = (parts: PageParts, flatMemory: unknown) => ({

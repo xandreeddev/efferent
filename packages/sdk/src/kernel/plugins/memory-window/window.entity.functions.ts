@@ -1,12 +1,12 @@
 import { Option, Result } from "effect"
-import { CONVERSATION_READER, dataOf, live, messageOf, readerFor, stored, turnStartedEvent } from "@xandreed/core/kernel"
-import type { LiveEvent, Message, Reader, Seq, SessionId, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { CONVERSATION_VOCABULARY, dataOf, live, messageOf, vocabularyOf, stored, turnStartedEvent } from "@xandreed/core/kernel"
+import type { LiveEvent, Message, Vocabulary, Seq, SessionId, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { OverBudget, Tokens } from "../../contracts/memory/memory.entity.js"
 import { estimateTokens, messageText } from "../../contracts/memory/memory.entity.functions.js"
 import { windowDroppedEvent, windowPressureEvent } from "./window.entity.js"
 
-/** What the window memory reads of a journal: core's records and the conversation's, whose reader it extends, and its own. */
-export const WINDOW_READER: Reader = readerFor("window", [windowDroppedEvent], CONVERSATION_READER)
+/** What the window memory reads of a journal: core's records and the conversation's, whose vocabulary it extends, and its own. */
+export const WINDOW_VOCABULARY: Vocabulary = vocabularyOf("window", [windowDroppedEvent], CONVERSATION_VOCABULARY)
 
 /** `plugin.window.dropped`: every message at or before `through` leaves the window. */
 export const windowDropped = (through: Seq): StoredDraft => stored(windowDroppedEvent, { through })
@@ -34,7 +34,7 @@ export interface Fitted {
 }
 
 /**
- * Fit a journal, as `WINDOW_READER` read it, to the budget: every message
+ * Fit a journal, as `WINDOW_VOCABULARY` read it, to the budget: every message
  * of the conversation not dropped before, whole turns leaving oldest first
  * while the estimate is over the budget and more than the current turn is
  * left. A turn once dropped stays dropped. The current turn alone over the

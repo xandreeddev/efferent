@@ -4,7 +4,7 @@
 // sent while it works between steps.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, CONVERSATION_READER, messageOf, readerFor, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
@@ -16,7 +16,7 @@ import { DEFAULT_MEMORY, MEMORY_INTRO, memoryDocumentOf } from "./memory.source.
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentOf } from "./tools.source.ts"
 import { brokenCalculator, readMaxSteps, slowCalculator, withoutSteering, writeMaxSteps } from "./config-edit.ts"
 
-const memoryNames = { Effect, Layer, Option, CONVERSATION_READER, messageOf, readerFor, readJournal, Memory, paired, promptMessage }
+const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
 const toolsNames = { Effect, Schema, Tool, Toolkit }
 
 const agentNames = (parts: PageParts, flatMemory: unknown, tools: unknown, toolsLive: unknown) => ({

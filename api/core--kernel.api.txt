@@ -10,13 +10,13 @@ class UnknownRecord
 const AnnouncedEvent
 const AssistantMessage
 const AssistantMessageData
-const CONVERSATION_READER
+const CONVERSATION_VOCABULARY
 const EventName
 const Free
 const Inspection
 const JOURNAL_FORMAT
 const Journal
-const KERNEL_READER
+const KERNEL_VOCABULARY
 const KernelEvent
 const ListenerFailedData
 const LiveEvent
@@ -24,7 +24,6 @@ const Message
 const NewSession
 const Owner
 const PluginName
-const Reader
 const Seq
 const SessionHeader
 const SessionId
@@ -44,6 +43,7 @@ const TurnStartedData
 const Usage
 const UserMessage
 const UserMessageData
+const Vocabulary
 const announced
 const assistantMessage
 const assistantMessageEvent
@@ -62,7 +62,6 @@ const newSession
 const originOf
 const outcomeOf
 const readJournal
-const readerFor
 const sessionStateOf
 const sessionsConformance
 const stored
@@ -76,6 +75,7 @@ const turnStarted
 const turnStartedEvent
 const userMessage
 const userMessageEvent
+const vocabularyOf
 interface ConformanceCheck
 interface JournalStorageSubject
 interface KernelOptions
@@ -103,7 +103,6 @@ type NewSession
 type NewSessionInput
 type Owner
 type PluginName
-type Reader
 type Seq
 type SessionHeader
 type SessionId
@@ -124,3 +123,4 @@ type TurnStartedData
 type Usage
 type UserMessage
 type UserMessageData
+type Vocabulary

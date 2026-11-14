@@ -5,7 +5,7 @@ import { Memory } from "../../contracts/memory/memory.port.js"
 import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf } from "../../contracts/memory/memory.entity.functions.js"
 import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
-import { fitToBudget, nearlyFull, WINDOW_READER, windowDropped, windowPressure } from "./window.entity.functions.js"
+import { fitToBudget, nearlyFull, WINDOW_VOCABULARY, windowDropped, windowPressure } from "./window.entity.functions.js"
 import type { WindowOptions } from "./window.entity.js"
 
 /**
@@ -27,7 +27,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
   return Memory.of({
     // Nothing is kept between turns: each context is built from the journal as it stands.
     context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
-      const journal = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
+      const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
       const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.

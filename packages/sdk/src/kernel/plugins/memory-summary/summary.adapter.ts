@@ -6,7 +6,7 @@ import { OverBudget } from "../../contracts/memory/memory.entity.js"
 import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import { Summarizer } from "../../contracts/summary/summarizer.port.js"
-import { plan, SUMMARY_READER, summarized, summaryNote } from "./summary.entity.functions.js"
+import { plan, SUMMARY_VOCABULARY, summarized, summaryNote } from "./summary.entity.functions.js"
 import type { SummaryOptions } from "./summary.entity.js"
 
 /**
@@ -32,7 +32,7 @@ export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, Inva
   const keepTurns = options.keepTurns ?? 1
 
   const planned = (session: OpenSession) => Effect.map(
-    Effect.flatMap(session.journal, (journal) => Effect.fromResult(readJournal(SUMMARY_READER)(journal))),
+    Effect.flatMap(session.journal, (journal) => Effect.fromResult(readJournal(SUMMARY_VOCABULARY)(journal))),
     (known) => plan(known, session.turn, budget, keepTurns),
   )
   const over = (estimatedTokens: number, why = "with nothing more to fold") => new OverBudget({

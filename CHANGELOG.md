@@ -20,12 +20,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     workflow: ids, `Message`, the event envelope, the `JournalStorage` and
     `Sessions` contracts with a conformance kit each, the session's two
     transitions and the fold of a journal to its state, reading a journal
-    (`readJournal`, `readerFor`, `KERNEL_READER`), `inspectionOf` (a
+    (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), `inspectionOf` (a
     session's header, state and events), the conversation's records
     (`conversation.user.message` and `conversation.assistant.message`,
     written with `userMessage(text)` and `assistantMessage(text, meta?)`,
     whose meta is the model, the `Usage` the provider reported and the
-    tool calls; `CONVERSATION_READER` reads them), and `Core`, which is
+    tool calls; `CONVERSATION_VOCABULARY` reads them), and `Core`, which is
     events only: `publish`, `on` (named, in the background or with
     `{ wait: true }`) and `events`. `kernel({ capacity? })` is the layer
     that provides `Core` alone. It imports `effect` alone, and names no
@@ -67,9 +67,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     may send the message of a record of its own, as the summary memory
     sends its summary (`docs/adr/0008-a-memory-keeps-its-summary.md`). Every stored
     record carries its tags and the turn it was stored in. A stored record
-    says whether a reader that does not know it may skip it, and a reader
-    of the conversation or of another plugin's records extends that reader
-    (`readerFor(name, own, CONVERSATION_READER)`). A live event names its
+    says whether a part that does not know it may skip it, and a plugin
+    that reads the conversation or another plugin's records extends that
+    vocabulary (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`). A live event names its
     turn only when it happens inside one.
   - The stock plugins, each a layer whose type says what it needs:
     `inProcessJournal()`, `sessions()`, `flatMemory`,
@@ -183,7 +183,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - The memory kit checks that a memory refuses an unknown record of the
     conversation's that may not be skipped (`unknown-conversation-refused`):
     a memory reads the conversation's records with the conversation's
-    reader, not its own prefix alone. It holds a memory to a budget only
+    vocabulary, not its own prefix alone. It holds a memory to a budget only
     when the subject has one (`MemorySubject.budgetTokens`).
   - Core's event envelope holds no `replaces`, and `SeqRange` is gone: a
     plugin whose record stands for a run of the journal keeps that run in

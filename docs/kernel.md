@@ -46,7 +46,7 @@ caught up.
 | Part | Where | What it is |
 |---|---|---|
 | Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `Tag`; `Message`; `StoredEvent` and `KernelEvent` |
-| The conversation's records | core | `conversation.user.message` and `conversation.assistant.message`, `userMessage(text)` and `assistantMessage(text, meta?)`, `CONVERSATION_READER` |
+| The conversation's records | core | `conversation.user.message` and `conversation.assistant.message`, `userMessage(text)` and `assistantMessage(text, meta?)`, `CONVERSATION_VOCABULARY` |
 | Event definitions | core for its own, and the folder of each contract or plugin for theirs | a name, what the event is for (its tags), the schema of the data, stored or live, and for a stored one whether it may be skipped |
 | Contracts | core | `JournalStorage`, `Sessions`, each with a kit |
 | Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal |
@@ -762,7 +762,7 @@ export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
   Memory.of({
     context: Effect.fn("kernel.flat.context")(function* (session: OpenSession) {
       // Only the conversation's records and its own; a record it cannot read and may not skip is refused.
-      const conversation = yield* Effect.fromResult(readJournal(FLAT_READER)(yield* session.journal))
+      const conversation = yield* Effect.fromResult(readJournal(FLAT_VOCABULARY)(yield* session.journal))
       // A tool call goes only with its result: a turn stopped while a tool ran leaves a call nothing answers.
       return paired(conversation.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage)
     }),
@@ -789,7 +789,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
   return Memory.of({
     // Nothing is kept between turns: each context is built from the journal as it stands.
     context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
-      const journal = yield* Effect.fromResult(readJournal(WINDOW_READER)(yield* session.journal))
+      const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
       const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.
@@ -869,14 +869,16 @@ The strategies still to come sit behind the same call: results replaced by
 pointers with a tool that reads them back, or facts retrieved from an index
 built from the journal.
 
-A journal outlives the code that wrote it. A reader answers for core's
-records (`core.`, `KERNEL_READER`) and for those under its own prefix
-(`readerFor`, `readJournal`); a memory reads the conversation through the
-conversation's reader (`readerFor(name, own, CONVERSATION_READER)`). A record
+A journal outlives the code that wrote it. A plugin reads it with a
+vocabulary: plain data, the prefixes it answers for and the record names it
+knows. A vocabulary answers for core's records (`core.`,
+`KERNEL_VOCABULARY`) and for those under its plugin's prefix (`vocabularyOf`,
+`readJournal`); a memory reads the conversation through the conversation's
+vocabulary (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`). A record
 it does not know is passed over when the record says it may be skipped, and
 refused with `UnknownRecord` when it may not. A record under another
 plugin's prefix is not its concern. The memory kit holds a memory to the
-conversation's reader: an unknown record of the conversation that may not be
+conversation's vocabulary: an unknown record of the conversation that may not be
 skipped is refused (`unknown-conversation-refused`), which a memory reading
 its own prefix alone would pass.
 
@@ -1017,9 +1019,6 @@ memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 Decisions not yet made, or that wait for a second use, recorded here so they
 are not made by accident.
 
-- **`Reader` or `Vocabulary`.** A `Reader` is data, `{ reads, knows }`: the
-  names a plugin knows and the prefix it answers for. Renaming it to say so
-  touches every memory and the kits.
 - **The view vocabulary** (ADR 0009). `Text`, `List`, `Table` and `Card`,
   closed. Open: whether hosts add shapes of their own, and whether a view
   bounds its size in its schema rather than in the tool that makes it.

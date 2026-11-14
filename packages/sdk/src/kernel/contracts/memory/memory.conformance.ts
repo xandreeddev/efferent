@@ -4,7 +4,7 @@ import type { Scope } from "effect"
 import type { Prompt } from "effect/ai"
 import { expect, refuses, show, unexpected } from "../conformance.entity.functions.js"
 import {
-  assistantMessage, ConformanceFailure, CONVERSATION_READER, Core, EventName, kernel, messageOf, readJournal, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber,
+  assistantMessage, ConformanceFailure, CONVERSATION_VOCABULARY, Core, EventName, kernel, messageOf, readJournal, Seq, SessionId, stored, storedEvent, toolResult, turnEnded, TurnNumber,
   turnStarted, userMessage,
 } from "@xandreed/core/kernel"
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
@@ -106,7 +106,7 @@ const textOf = (message: Prompt.MessageEncoded): string => typeof message.conten
  * skipped (`unknown-skipped`) and refused with `UnknownRecord` when it may
  * not (`unknown-refused`); so is an unknown record of the conversation
  * that may not be skipped, since a memory reads the conversation with its
- * reader (`readerFor(name, own, CONVERSATION_READER)`), not its own prefix
+ * vocabulary (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`), not its own prefix
  * alone (`unknown-conversation-refused`); another plugin's record it does not
  * know is not its concern (`foreign`); a tool call is sent with its result
  * and right before it, and a call no result answers (a turn stopped while its
@@ -253,7 +253,7 @@ export interface MemoryWrapperSubject {
  */
 const innerMemory: Layer.Layer<Memory> = Layer.succeed(Memory, Memory.of({
   context: Effect.fnUntraced(function* (session: OpenSession) {
-    const conversation = yield* Effect.fromResult(readJournal(CONVERSATION_READER)(yield* session.journal))
+    const conversation = yield* Effect.fromResult(readJournal(CONVERSATION_VOCABULARY)(yield* session.journal))
     return paired(conversation.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage)
   }),
 }))

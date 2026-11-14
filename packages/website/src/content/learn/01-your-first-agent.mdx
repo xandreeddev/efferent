@@ -95,7 +95,7 @@ The **events log** at the bottom lists everything in order: each record as it is
 
 A memory is a layer that provides `Memory`, with one function: `context(session)`, the messages the model sees after the system text. **memory.ts** is yours. This one is flat: every message of the conversation, oldest first.
 
-It reads with a **reader**, which takes the records tagged `conversation`, refuses one it cannot read and may not skip, and passes over the rest. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
+It reads the journal with a **vocabulary**: the prefixes it answers for (core's, the conversation's and its own) and the record names it knows under them. A record it knows is kept. One it does not know, under one of those prefixes, is passed over if the record says it may be skipped, and refused if not. Another plugin's records are not its concern. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-two">Keep only the last two messages</button></p>
 
