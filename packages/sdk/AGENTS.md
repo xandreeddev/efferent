@@ -81,7 +81,15 @@ it: `./kernel` is a `restricted` subpath.
   (`summarize({ earlier, messages })`, the summary so far and the
   messages to fold to a new summary's text, failing with `SummaryFailed`):
   the host provides it, over the model it picked, since no kernel plugin
-  calls a model; `contracts/inbox` holds `Inbox`, its turn function
+  calls a model; `contracts/render` holds what the UI shows (ADR 0009): the
+  view vocabulary (`View`: `TextView`, `ListView`, `TableView`, each row
+  as many cells as columns, `CardView`; `ViewId`, the caller's), the view
+  record (`viewEvent`, `plugin.render.view`, stored, tagged `ui`, no
+  message, so no memory sends it; `showView(id, view)`), live progress
+  (`progressEvent`, `viewProgress(session, id, done, total)`) and the pure
+  fold a client draws (`viewsOf(journal)`: one view per id, the latest,
+  in first-shown order); no service: a tool appends through `CurrentTurn`
+  and publishes on `Core`; `contracts/inbox` holds `Inbox`, its turn function
   (`InboxTurn`, failing with `InboxTurnFailure`), its ticket, refusals and
   event. A contract imports core's kernel and other contracts, never a
   plugin; a plugin imports contracts and core's kernel, never another
@@ -247,7 +255,13 @@ it: `./kernel` is a `restricted` subpath.
   `CurrentTurn`, quoted by `docs/kernel.md`: the caller's journal holds
   the call and its result, which names the child; the helper's prompt
   holds only its task; a helper asked from a helper's turn works under it,
-  and the depth limit, read from the parent chain, refuses the next one), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
+  and the depth limit, read from the parent chain, refuses the next one), `render` (a
+  `show` tool appending a view through `CurrentTurn` and publishing its
+  progress, quoted by `docs/kernel.md`: the view stored between the call
+  and its result, progress heard and never stored, the next prompt holding
+  none of the cells, the table returned as a result instead sent in every
+  later request, a view replaced by id, a call the model got wrong refused
+  as a failed result), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
   clock, quoted by `docs/kernel.md`; the clock stored as a plugin's record
   never reaching flat memory, stored as a user message piling up; the
   wrapper kit on the clock and on careless wrappers, each failing only
@@ -286,7 +300,8 @@ it: `./kernel` is a `restricted` subpath.
   has the careless `unpaired`, which sends a call no result answers), `browser-bundle`, `guide`, and
   beside the contracts' files their own
   (`contracts/memory/memory.entity.functions.test.ts`: a record's prompt
-  message, tool calls and results included, `paired`, and the estimate). A test whose claim is the compiler's says
+  message, tool calls and results included, `paired`, and the estimate;
+  `contracts/render/render.entity.functions.test.ts`: `viewsOf`). A test whose claim is the compiler's says
   `type-level:` in its title. `testing.ts` holds the test turn
   (`testTurn(system)`, a `Turn` needing `TurnNeeds`, which refuses a
   message of no text with its own `EmptyMessage` and fails a model's error
@@ -308,7 +323,7 @@ it: `./kernel` is a `restricted` subpath.
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
-- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `OverBudget`, `isOverBudget`, `InvalidBudget`; the tool call's: `CurrentTurn`; the summary's: `Summarizer`, `SummaryFailed`; the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `OverBudget`, `isOverBudget`, `InvalidBudget`; the tool call's: `CurrentTurn`; the summary's: `Summarizer`, `SummaryFailed`; what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewProgress`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ModelAnswer` with its `Calls` answer, `ScriptedCalls`), the model that follows a script, for kits and tests, and the inbox: `inbox`, `inboxOf` (`InboxOptions`). No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

@@ -2,11 +2,12 @@
 import { Option } from "effect"
 import type { Lesson } from "../lesson.ts"
 import { compaction } from "./compaction/lesson.ts"
+import { render } from "./render/lesson.ts"
 import { subAgents } from "./sub-agents/lesson.ts"
 import { tools } from "./tools/lesson.ts"
 import { yourOwnPlugin } from "./your-own-plugin/lesson.ts"
 import { yourFirstAgent } from "./your-first-agent/lesson.ts"
 
-const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction]
+const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render]
 
 export const lessonOf = (slug: string): Option.Option<Lesson> => Option.fromNullishOr(lessons.find((lesson) => lesson.slug === slug))

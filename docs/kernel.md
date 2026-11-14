@@ -489,6 +489,65 @@ and the depth, read from the `parent` chain, is bounded by the host
 (`MAX_DEPTH`): the loop's step limit bounds one turn, not helpers calling
 helpers.
 
+## What the UI shows: a record tagged ui
+
+An agent shows things, not only text: a table, a card, progress. What it
+shows is the UI's, never the model's (ADR 0009). A view is one of four
+shapes (`Text`, `List`, `Table`, `Card`), stored as `plugin.render.view`
+under an id, tagged `ui`, with no message, so no memory sends it. A later
+view under the same id replaces it. A client folds the journal's views with
+`viewsOf`, the same fold live and after a reload. Progress is a live event,
+`plugin.render.progress`, for whoever watches now; what stays is the view
+the work ends with.
+
+There is no render service. A tool that shows something appends its view
+through the turn its call runs in (`CurrentTurn`, ADR 0007), and publishes
+its progress on `Core`. What it returns to the model is a few words. A view
+keeps out of the context what the tool worked out, not what the model
+wrote: a call's parameters are the model's message and are sent with the
+conversation, so the model asks in a few words and the tool makes the rows:
+
+<!-- pinned: packages/sdk/src/kernel/render.test.ts#show-tool -->
+
+```ts
+import { Effect, Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+import { Core } from "@xandreed/core/kernel"
+import { CurrentTurn, showView, ViewId, viewProgress } from "@xandreed/sdk/kernel"
+
+// A tool that works out a table and shows it. The model asks in a few words; the rows are the tool's own work.
+const Squares = Tool.make("squares", {
+  description: "Show the user the squares from 1 to upTo, as a table. Give it an id: showing again under that id replaces it.",
+  parameters: Schema.Struct({ id: ViewId, upTo: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })) }),
+  success: Schema.String,
+  // The turn its call runs in, to append the view, and Core, to publish its progress.
+  dependencies: [CurrentTurn, Core],
+})
+const tools = Toolkit.make(Squares)
+
+const toolsLive = tools.toLayer({
+  squares: ({ id, upTo }) => Effect.gen(function* () {
+    const session = yield* CurrentTurn
+    const core = yield* Core
+    const rows: Array<ReadonlyArray<string>> = []
+    for (let n = 1; n <= upTo; n++) {
+      rows.push([String(n), String(n * n)])
+      // How far it got: live, for whoever watches, never stored.
+      yield* Effect.orDie(core.publish(viewProgress(session, id, n, upTo)))
+    }
+    // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
+    yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))
+    // What the model reads: a few words.
+    return `shown as ${id}`
+  }),
+})
+```
+
+`render.test.ts` holds it: the view is stored between the call and its
+result, no message of the next prompt holds the table (the call and "shown
+as squares" do), and the same table returned as the tool's result instead
+is sent in every later request.
+
 ## Records and tags
 
 A stored event is an envelope: its place in the journal (`seq`), when it was
@@ -952,8 +1011,10 @@ memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 1. **Pointer memories.** Results replaced by pointers with a tool that
    reads them back, behind `memory.context`. (A summary of old turns has
    returned: `summaryMemory`.)
-2. **A UI rendering plugin**, whose client applies patches from records and
-   events tagged `ui`.
+2. **Views beyond the first four.** A client draws `Text`, `List`, `Table`
+   and `Card`; a richer vocabulary, or one a host extends, returns when a
+   client needs it. (What the UI shows has returned: a record tagged `ui`,
+   `viewsOf`.)
 3. **Durable stores and crash recovery**, on the seam the fold of the
    journal already gives.
 
