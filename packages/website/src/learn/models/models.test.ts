@@ -445,3 +445,187 @@ describe("Echo and the summary of older turns (lesson 5)", () => {
     expect(echoReply([{ role: "user", content: request }])).toBe('You said 6 things earlier, the last: "Tell me about scopes.".')
   })
 })
+
+describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
+  const every = ["calculator", "remember", "recall", "delegate", "show"]
+  const without = (tool: string) => every.filter((name) => name !== tool)
+  /** What Echo does with one message, the conversation's first, and these tools offered. */
+  const asked = (text: string, offered: ReadonlyArray<string> = every) => echoStep(Prompt.make([{ role: "user", content: text }]), offered)
+  const calling = (...calls: ReadonlyArray<{ readonly name: string; readonly params: Record<string, unknown> }>) => ({ text: "Let me work that out.", calls })
+  const sum = (a: number, op: string, b: number) => ({ name: "calculator", params: { a, op, b } })
+  /** The model's call, as the conversation holds it. */
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  /** A tool's result, in a message of its own: how a memory sends each one back. */
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+
+  test("a sum, a op b, goes to the calculator with its two numbers and its operator", () => {
+    expect(asked("What is 2 + 2?")).toEqual(calling(sum(2, "+", 2)))
+    expect(asked("What is 9 - 4?")).toEqual(calling(sum(9, "-", 4)))
+    expect(asked("What is 12 * 3?")).toEqual(calling(sum(12, "*", 3)))
+    expect(asked("What is 120 / 8?")).toEqual(calling(sum(120, "/", 8)))
+  })
+
+  test("a sum written with x, × or ÷ is sent with the operator the calculator takes", () => {
+    expect(asked("What is 6 x 7?")).toEqual(calling(sum(6, "*", 7)))
+    expect(asked("What is 6 × 7?")).toEqual(calling(sum(6, "*", 7)))
+    expect(asked("What is 120 ÷ 8?")).toEqual(calling(sum(120, "/", 8)))
+  })
+
+  test("\"remember …\" saves the rest of the message as a note, without a leading \"that\"", () => {
+    expect(asked("Remember to buy milk.")).toEqual(calling({ name: "remember", params: { note: "to buy milk." } }))
+    expect(asked("Please remember that the sky is blue.")).toEqual(calling({ name: "remember", params: { note: "the sky is blue." } }))
+  })
+
+  test("a question about a note, or about what it was asked to remember, goes to recall with no parameters", () => {
+    expect(asked("What are my notes?")).toEqual(calling({ name: "recall", params: {} }))
+    expect(asked("Read me my note.")).toEqual(calling({ name: "recall", params: {} }))
+    expect(asked("What did I ask you to remember?")).toEqual(calling({ name: "recall", params: {} }))
+  })
+
+  test("\"ask a helper\", \"have a helper\" and \"get a helper\" hand the rest of the message to delegate as the task", () => {
+    expect(asked("Ask a helper: what is 6 * 7?")).toEqual(calling({ name: "delegate", params: { task: "what is 6 * 7?" } }))
+    expect(asked("Have a helper work out 120 / 8.")).toEqual(calling({ name: "delegate", params: { task: "work out 120 / 8." } }))
+    expect(asked("Get a helper to greet Ana.")).toEqual(calling({ name: "delegate", params: { task: "greet Ana." } }))
+  })
+
+  test("\"a table of squares\" or \"of cubes\" is shown up to the number named, under an id that is the table's kind", () => {
+    expect(asked("Show a table of squares to 8.")).toEqual(calling({ name: "show", params: { id: "squares", table: "squares", n: 8 } }))
+    expect(asked("Show a table of Cubes to 4.")).toEqual(calling({ name: "show", params: { id: "cubes", table: "cubes", n: 4 } }))
+  })
+
+  test("a table of squares or cubes that names no number goes up to 5", () => {
+    expect(asked("Show a table of squares.")).toEqual(calling({ name: "show", params: { id: "squares", table: "squares", n: 5 } }))
+    expect(asked("Show a table of cubes.")).toEqual(calling({ name: "show", params: { id: "cubes", table: "cubes", n: 5 } }))
+  })
+
+  test("\"the times table of n\" is shown under an id that names n", () => {
+    expect(asked("Show the times table of 7.")).toEqual(calling({ name: "show", params: { id: "times-7", table: "times", n: 7 } }))
+  })
+
+  test("a tool is called only when it is offered: without it, the message that asks for it gets no call", () => {
+    expect(asked("What is 12 * 3?", without("calculator"))).toEqual({ text: 'You said: "What is 12 * 3?". This is the start of the conversation.', calls: [] })
+    expect(asked("Remember to buy milk.", without("remember")).calls).toEqual([])
+    expect(asked("What are my notes?", without("recall")).calls).toEqual([])
+    expect(asked("Get a helper to greet Ana.", without("delegate")).calls).toEqual([])
+    expect(asked("Show a table of squares to 8.", without("show")).calls).toEqual([])
+    expect(asked("Show the times table of 7.", without("show")).calls).toEqual([])
+  })
+
+  test("a rule whose tool is not offered is passed over, and the next rule the message matches is used", () => {
+    expect(asked("Ask a helper: what is 6 * 7?", ["calculator", "remember", "recall"])).toEqual(calling(sum(6, "*", 7)))
+  })
+
+  test("a message two rules match gets the first of them, in the order show, delegate, recall, calculator, remember", () => {
+    expect(asked("Ask a helper to show a table of squares to 4.")).toEqual(calling({ name: "show", params: { id: "squares", table: "squares", n: 4 } }))
+    expect(asked("Ask a helper to read my notes.")).toEqual(calling({ name: "delegate", params: { task: "read my notes." } }))
+    expect(asked("Add 2 + 2 to my notes.")).toEqual(calling({ name: "recall", params: {} }))
+    expect(asked("Remember that 2 + 2 is 4.")).toEqual(calling(sum(2, "+", 2)))
+  })
+
+  test("each message waiting since its last answer gets its own call, and the text says how many", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "Remember to buy milk." },
+      { role: "user", content: "What is 12 * 3?" },
+      { role: "user", content: "What are my notes?" },
+    ])
+    expect(echoStep(sent, every)).toEqual({
+      text: "Let me use 3 tools.",
+      calls: [{ name: "remember", params: { note: "to buy milk." } }, sum(12, "*", 3), { name: "recall", params: {} }],
+    })
+  })
+
+  test("a message it has already answered is not sent to a tool again", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "What is 12 * 3?" },
+      { role: "assistant", content: "12 * 3 is 36." },
+      { role: "user", content: "Thanks." },
+    ])
+    expect(echoStep(sent, every)).toEqual({ text: 'You said: "Thanks.". I can also see 2 earlier messages.', calls: [] })
+  })
+
+  test("after a tool's result it answers with what the tool said, and calls nothing more", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "What is 12 * 3?" },
+      call("c1", "calculator", { a: 12, op: "*", b: 3 }),
+      result("c1", "calculator", 36),
+    ])
+    expect(echoStep(sent, every)).toEqual({ text: "The tool answered: calculator says 36.", calls: [] })
+  })
+
+  test("after several results, in one message or in one each, it answers with all of them in order", () => {
+    const messages = [
+      { role: "user", content: "Remember to buy milk." },
+      { role: "user", content: "What are my notes?" },
+      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "remember", params: { note: "to buy milk." } }, { type: "tool-call", id: "c2", name: "recall", params: {} }] },
+    ] as const
+    const answer = { text: 'The tools answered: remember says "Saved. 1 notes so far."; recall says ["to buy milk."].', calls: [] }
+    expect(echoStep(Prompt.make([...messages, result("c1", "remember", "Saved. 1 notes so far."), result("c2", "recall", ["to buy milk."])]), every)).toEqual(answer)
+    expect(echoStep(Prompt.make([...messages, {
+      role: "tool",
+      content: [
+        { type: "tool-result", id: "c1", name: "remember", isFailure: false, result: "Saved. 1 notes so far." },
+        { type: "tool-result", id: "c2", name: "recall", isFailure: false, result: ["to buy milk."] },
+      ],
+    }]), every)).toEqual(answer)
+  })
+
+  test("a result that failed is answered as a failure, with what the tool gave", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "What is 1 / 0?" },
+      call("c1", "calculator", { a: 1, op: "/", b: 0 }),
+      result("c1", "calculator", "cannot divide by zero", true),
+    ])
+    expect(echoStep(sent, every)).toEqual({ text: 'The tool answered: calculator failed: "cannot divide by zero".', calls: [] })
+  })
+
+  test("delegate's result is passed on as the helper's answer, without the session it came with", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "Ask a helper: what is 6 * 7?" },
+      call("c1", "delegate", { task: "what is 6 * 7?" }),
+      result("c1", "delegate", { answer: "The tool answered: calculator says 42.", session: "s-1" }),
+    ])
+    expect(echoStep(sent, every)).toEqual({ text: "The helper answered: The tool answered: calculator says 42.", calls: [] })
+  })
+
+  test("a delegate that failed is answered as a failed tool, not as a helper's answer", () => {
+    const failed = (value: unknown) => Prompt.make([
+      { role: "user", content: "Ask a helper: what is 6 * 7?" },
+      call("c1", "delegate", { task: "what is 6 * 7?" }),
+      result("c1", "delegate", value, true),
+    ])
+    expect(echoStep(failed("the helper is busy"), every)).toEqual({ text: 'The tool answered: delegate failed: "the helper is busy".', calls: [] })
+    expect(echoStep(failed({ answer: "half an answer" }), every)).toEqual({ text: 'The tool answered: delegate failed: {"answer":"half an answer"}.', calls: [] })
+  })
+
+  test("a steer that arrives after the tool results is answered from the results, then quoted back", () => {
+    const turn = [
+      { role: "user", content: "What is 12 * 3?" },
+      call("c1", "calculator", { a: 12, op: "*", b: 3 }),
+      result("c1", "calculator", 36),
+    ] as const
+    expect(echoStep(Prompt.make([...turn, { role: "user", content: "Keep it short, please." }]), every))
+      .toEqual({ text: 'The tool answered: calculator says 36. You also said: "Keep it short, please.".', calls: [] })
+    expect(echoStep(Prompt.make([...turn, { role: "user", content: "Keep it short, please." }, { role: "user", content: "Thanks!" }]), every))
+      .toEqual({ text: 'The tool answered: calculator says 36. You also said: "Keep it short, please.", "Thanks!".', calls: [] })
+  })
+
+  test("a steer after a helper's answer is quoted back after the helper's answer", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "Ask a helper: what is 6 * 7?" },
+      call("c1", "delegate", { task: "what is 6 * 7?" }),
+      result("c1", "delegate", { answer: "It is 42.", session: "s-1" }),
+      { role: "user", content: "Thanks!" },
+    ])
+    expect(echoStep(sent, every)).toEqual({ text: 'The helper answered: It is 42. You also said: "Thanks!".', calls: [] })
+  })
+
+  test("a steer after the tool results that asks for a tool gets that call, not the quote", () => {
+    const sent = Prompt.make([
+      { role: "user", content: "What is 12 * 3?" },
+      call("c1", "calculator", { a: 12, op: "*", b: 3 }),
+      result("c1", "calculator", 36),
+      { role: "user", content: "And what is 2 + 2?" },
+    ])
+    expect(echoStep(sent, every)).toEqual(calling(sum(2, "+", 2)))
+  })
+})
