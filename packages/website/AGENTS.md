@@ -58,8 +58,26 @@ check` (tsc over the learn code, the build, the link check) and
   A prompt's session and turn are read from `CurrentTurn` as the model's
   stream runs; only a program that calls the model by hand, which provides
   none (lessons 1 and 2), is placed by the last memory call.
+  - A definition that is refused as the learner's file runs refuses
+    the build (lesson 8: `pointed` given numbers it refuses, a statement
+    of memory.ts above the layer): `start` returns `Refused` with the
+    file's name and the refusal's words, which the page shows at the foot
+    of the Code pane. The program that ran before is stopped and none
+    takes its place until a build passes; nothing is stored and the chat
+    is untouched. A file whose rule must be made once is statements, as
+    tools.ts is (`runStatements`, a body without `export`, an empty
+    `formatPrefix`), not one expression after a read-only declaration.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
+  - A prompt's row is "the same as the prompt before" when the message is
+    the same one and was sent the same way: a tool's result matches its
+    record by its call's id, whatever was sent for it, so its text is
+    compared too. A memory may send one record two ways (lesson 8's
+    `older-turns`).
+  - A tool's result that was sent as something other than its record
+    holds says so on a line of its own under the row, `sent as a pointer: N tok kept in
+    the journal` (`keptInJournal`, lesson 8): decided by comparing what
+    was sent with what is stored, never by a pointer's words.
 - **The chat** (`chat-model.ts`, pure, and `panes/chat.ts`) is rows. Every
   row drawn from a stored record comes from one step, `stored`, whether the
   record was just announced or is read back from a journal (`chatRowsOf`);
@@ -109,6 +127,22 @@ check` (tsc over the learn code, the build, the link check) and
   between page loads: a counter alone starts again on a reload, and a
   durable lesson would store two calls under one id. A test that needs
   the same ids on two pages passes its own minter (`loadEcho(callIds(…))`).
+  - Lesson 8's rules: "look up" or "tell me about" tides, volcanoes or
+    honeybees goes to `lookup`. A `lookup` result is answered with the
+    first sentence of what Echo was sent and how much of the whole that is:
+    a pointer (read by the kernel's exact words, ADR 0011) or the article
+    whole. "Read more", "read on" or "go on" calls `readResult` with 400
+    characters from the latest place the prompt gives, looking back from
+    its end: where the last part read stopped, or what the last pointer
+    names, whichever comes later. It answers in words when `readResult`
+    is not offered, when nothing was cut short, or when the last part
+    reached the end. A part is answered with its range and its first whole
+    sentence. The rule is asleep where nothing was cut short and neither
+    tool is offered, so "go on" in another lesson is a message like any
+    other.
+  - A turn that failed leaves its message in the journal with no answer:
+    Echo treats it as waiting, and the next turn answers it with the new
+    one (two calls where one was expected).
 - Skill `add-lesson` is the checklist for a new lesson.
 
 ## Rules

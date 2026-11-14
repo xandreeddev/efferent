@@ -1373,6 +1373,9 @@ body.app {
   color: var(--text-dim);
   background: color-mix(in srgb, #b48ef0 7%, var(--surface));
   overflow-wrap: anywhere;
+  /* A long result (lesson 8's articles) is all there, in a box that scrolls: the chat stays a chat. */
+  max-height: 9.5rem;
+  overflow-y: auto;
 }
 .pg-msg.tool::before {
   content: "⚙ ";
@@ -1649,7 +1652,7 @@ body.app {
 .tr-msg {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas: "role from" "text text";
+  grid-template-areas: "role from" "text text" "kept kept";
   column-gap: 0.5rem;
   row-gap: 0.1rem;
   padding: 0.3rem 0.45rem;
@@ -1678,6 +1681,12 @@ body.app {
   font-family: var(--font-mono);
   font-size: 0.66rem;
   color: var(--text-faint);
+}
+.tr-msg .tr-kept {
+  grid-area: kept;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: color-mix(in srgb, #b48ef0 70%, var(--text-dim));
 }
 .tr-msg[data-role="system"] { border-left-color: #d6a24a; }
 .tr-msg[data-role="user"] { border-left-color: var(--accent); }

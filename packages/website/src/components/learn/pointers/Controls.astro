@@ -1,0 +1,19 @@
+---
+// Step 7: controls bound to the learner's code in the playground (see learn/playground.ts, `data-control`).
+---
+
+<div class="learn-controls">
+  <label>
+    <span>Point results over</span>
+    <input type="number" min="40" max="1000" step="10" data-control="over" />
+    <small>The <code>overTokens</code> number of memory.ts: a tool result estimated over it is sent as a pointer.</small>
+  </label>
+  <label>
+    <span>Preview</span>
+    <input type="number" min="5" max="400" step="5" data-control="preview" />
+    <small>The <code>previewTokens</code> number of memory.ts: how much of a long result's start is sent with its pointer.</small>
+  </label>
+</div>
+<p class="learn-note" data-controls-note hidden>
+  A control is greyed out when its line is missing from your code. Press Reset in the Code pane to bring it back.
+</p>

@@ -257,6 +257,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 8, "Pointers", at `/learn/pointers`. `memory.ts` is
+  lesson 2's flat memory with one function changed: each record's message
+  is read with the function `pointed` gives, made once in a statement
+  above the layer, so a tool's long result is sent as its start and a
+  pointer while the journal keeps it whole.
+  `tools.ts` holds `lookup`, which answers with one of three articles of
+  about 2,400 characters, and the kernel's `ReadResult` with `readResult`
+  as its handler; `agent.ts` is the base program with one comment of
+  `main` changed. Two controls set the size over which a result is
+  pointed and the preview sent with the pointer; numbers `pointed`
+  refuses refuse the build, in the kernel's words, and leave the
+  conversation untouched. Echo looks up "tides", "volcanoes" or "honeybees",
+  answers with the first sentence of what it was sent and how much of
+  the whole that is, and reads on with `readResult` at "read more", 400
+  characters at a time. In the Context tab a tool's result that was sent
+  as something other than its record holds reads "sent as a pointer: N
+  tok kept in the journal", and a prompt's row counts as the same as the
+  prompt before only when it was sent the same way: until now a tool's
+  result was matched by its call alone. Experiments read every record
+  with `messageOf` again (three lookups cost 1,952 tokens a prompt where
+  pointers cost 458), point only the turns before the open one (the next
+  turn's prompt no longer starts with the one before), send a preview of
+  five tokens, and take `ReadResult` out of the tools (Echo says it has
+  no tool to read on). In the chat of every lesson, a tool's row is at
+  most a few lines high and scrolls: it holds the whole result, which
+  is long here. Lesson 7's page links here. No published package
+  changes.
 - Docs site: the models that run in the page (Echo, and the real models'
   tool calls written as text) numbered their calls from one on every page
   load, so lesson 7, which keeps its conversation across reloads, could

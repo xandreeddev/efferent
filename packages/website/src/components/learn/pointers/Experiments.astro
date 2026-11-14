@@ -1,0 +1,32 @@
+---
+const experiments = [
+  {
+    id: "no-pointers", title: "Every result whole", button: "Read with messageOf again",
+    text: "memory.ts is lesson 2's again: each record is read with messageOf, and the rule is gone with its two numbers, so the two controls are greyed out. Press Clear context, then the chips Look up tides., Tell me about volcanoes. and Look up honeybees., one after another. Echo is sent each article whole and says how long it is. In Context, the prompt after the third lookup is 1952 tokens, where pointers gave 458: every later prompt carries every article. \"Read more.\" finds nothing to read on from, because nothing was cut short.",
+  },
+  {
+    id: "older-turns", title: "Point only older turns", button: "Send the open turn's results whole",
+    text: "A record of the turn being answered is read with messageOf, and one of an earlier turn with the rule. Press Clear context, then Look up tides., then Tell me about volcanoes. Echo sees each article whole in the turn that fetched it. Open Context at turn 2 and pick its first model call: its prompt holds a pointer where turn 1's last prompt held the article, so 41 of its 169 tokens are the same as the prompt before. The lesson's memory gives 135 of 182. A provider's cache keeps a prompt by its start, and here the start changes once for every long result.",
+  },
+  {
+    id: "tiny-preview", title: "A preview of five tokens", button: "Set previewTokens to 5",
+    text: "The model is sent the first 20 characters. Press Clear context, then Look up tides.: Echo answers The article starts: \"Tides are the regula\". The prompt after the lookup is 100 tokens, where a preview of 40 gave 135. A shorter preview costs less in every prompt, and tells the model less about whether to read on.",
+  },
+  {
+    id: "no-read-result", title: "A pointer with no tool behind it", button: "Take ReadResult out of tools.ts",
+    text: "Memory still sends pointers, and each one names readResult. Press Clear context, then Look up tides., then Read more.: Echo answers \"I have no tool to read on: readResult is not among my tools.\" Nothing checks this for you: memory does not know the tools. A model that calls readResult anyway reads a failure, the tool was not found.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

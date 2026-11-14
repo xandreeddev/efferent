@@ -1,0 +1,105 @@
+---
+title: Pointers
+description: A tool's long answer stays whole in the journal. The model is sent its start and a pointer, and reads on with a tool.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Controls from '../../components/learn/pointers/Controls.astro'
+import Experiments from '../../components/learn/pointers/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+A tool's result is conversation: it is stored once, and sent again in every later prompt. That is fine for a sum. It is not for a page, a file or a table.
+
+This lesson's tool, `lookup`, answers with an article of 2,300 to 2,400 characters, close to 600 tokens. With lesson 2's memory, three lookups, one after another, put all three articles in every later prompt: 1,952 tokens, by the count the Context tab shows.
+
+The journal can keep a result whole while the prompt carries less of it:
+
+- memory sends a long result as its **start and a pointer**;
+- the journal keeps it **whole**, at the place the pointer names;
+- the model **reads on** with a tool, when it needs more.
+
+The same three lookups then cost 458 tokens.
+
+Press **Look up tides.** under the chat. Echo answers from what it was sent: *The article starts: "Tides are the regular rise and fall of the sea along a coast." I was sent the first 160 of 2347 characters.* The chat's row for the tool holds the whole article all the same, in a box that scrolls: the chat is drawn from the journal.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. "Look up tides." or "Tell me about volcanoes." goes to `lookup`, by rule: the topics are tides, volcanoes and honeybees. "Read more." goes to `readResult`, from the place the last pointer names, or from where the last part it read stopped.
+
+Echo answers with the first sentence of what it was sent, and how much of the whole that is. Its answers show what reached the model, and nothing more.
+
+The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Look up tides." and then "Read more.", called neither `lookup` nor `readResult` in two runs: each time it answered "Its result comes back inside text.", a line of its tool instructions, garbled. Asked how high the tide is in the Bay of Fundy, it answered from what it knows, 13 metres in one run and 3 feet in the other. The article never reached its prompt. A model that does call `lookup` is sent the preview, and decides from it whether to read on.
+
+</Step>
+
+<Step n={3} id="memory" title="One function changed" focus="code" file="memory">
+
+**memory.ts** is lesson 2's flat memory with one function changed. Lesson 2 read each record's message with `messageOf`. This one reads it with the function `pointed` gives. The rule is made once, in a statement above the layer: `const sent = pointed({ overTokens: 150, previewTokens: 40 })`. The layer calls `sent(record)` where lesson 2's called `messageOf(record)`.
+
+`sent(record)` is `messageOf(record)` for every record but one kind: a tool's result whose text is estimated over `overTokens`. That result is still the same call's result. What it says becomes two things:
+
+1. the first `previewTokens` of its text, 160 characters here, inside `<tool-result-preview>` tags;
+2. one host note: how long the result is, how much of it this is, and the call that reads on.
+
+Nothing is stored by pointing. The journal holds the result as the tool returned it, and the rule works the pointer out from the record for every prompt.
+
+</Step>
+
+<Step n={4} id="context" title="What the model was sent" focus="context" wide={true}>
+
+Open **Context** at turn 1, the lookup of tides.
+
+- **Journal**: record 4 is the tool's result, `conversation.tool.result`. Its payload holds the article whole, 2347 characters.
+- **Prompt**, at the turn's second model call, the one shown: the tool's row holds the preview and the note, which ends "To read on, call readResult with result 4 and from 160." Under it the row says *sent as a pointer: 587 tok kept in the journal*. The row is 94 tokens, and the whole prompt 135.
+
+The pointer names the record's **place** in the journal, 4, not the call's id. A place is unique in its journal and never changes. A call's id is the model's, and can repeat.
+
+</Step>
+
+<Step n={5} id="read" title="Read on" focus="code" file="tools">
+
+**tools.ts** lists two tools. `lookup` is yours. `ReadResult` is the kernel's, with `readResult` as its handler: you add both where you list your own, and there is no registry.
+
+`readResult({ result, from, length })` returns a part of a stored result's text: `text`, the characters from `from` up to `to`, and `total`, the result's length. It reads the journal of the turn its call runs in, at most 2,000 characters a call.
+
+Press **Read more.** Echo calls `readResult` with the pointer's two numbers and a length of 400, and answers *Characters 160 to 560 of 2347*, with the first whole sentence of the part. Press it again: it goes on from 560. Six parts read this article to its end.
+
+A part the model read is conversation like any result: stored, and sent in every later prompt. It is never pointed. `ReadResult` carries the annotation `SentWhole`: `callTool` stores it on the result as `whole`, and the rule leaves such a result alone. So reading on costs what you read: each part of 400 characters is 116 tokens in every prompt from then on.
+
+</Step>
+
+<Step n={6} id="same" title="The same in every prompt" focus="context" wide={true}>
+
+The rule reads the record and its two numbers, nothing else. It does not know which turn is open, or what was sent before. So a result is sent the same way in the turn that fetched it and in every later one.
+
+That decides what a prompt costs. A provider caches a prompt by its start: what is the same as the prompt before, from the first token on, can be read from the cache.
+
+Press **Tell me about volcanoes.**, then open **Context** at turn 4 and pick its first model call. The bar over the prompt reads *505 of 551 tok the same as the prompt before*. The prompt before was 505 tokens: all of it is there again, the pointer and the two parts included.
+
+The price: the model sees only the start of a long result, also in the turn that fetched it. The other choice is the whole result in its own turn and a pointer afterwards. The second experiment of the next step shows what the bar does then.
+
+</Step>
+
+<Step n={7} id="experiments" title="Settings and experiments" focus="code">
+
+<Controls />
+
+Both numbers count by memory's estimate, a quarter of the characters. The longest article is 599 tokens: with **Point results over** at 599 or more, no article is pointed.
+
+A preview must be shorter than the results it stands for. Set **Preview** to 150 or more while the size is 150, and `pointed` refuses the two numbers where they are written: memory.ts does not run, and the build is refused. The line at the foot of the Code pane names the file and says why, in the kernel's words. For a preview of 400: "memory.ts did not run: a preview of 400 tokens is not shorter than the results it stands for, those over 150 tokens: give pointers a previewTokens below overTokens". No program runs until a build passes. Nothing is stored, and the conversation is untouched. Set a number that fits: the program runs again, over the same conversation.
+
+<Experiments />
+
+**Send three at once**, in a new conversation, looks the three articles up in one turn. The prompt after the lookups holds three pointers and is 352 tokens. With the first experiment applied it holds three articles, and is 1,874.
+
+After breaking it, press **Reset** in the Code pane.
+
+What pointers cost: the model sees only the start of a long result, and pays a step to read on. Each part it reads is sent whole from then on.
+
+**Next:** approvals: a tool asks a person before it acts. Why the rule reads only the record, and why a pointer names a place and not a call, is in [ADR 0011](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0011-a-long-result-is-sent-as-a-pointer.md).
+
+</Step>

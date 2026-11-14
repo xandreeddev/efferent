@@ -323,7 +323,9 @@ export const mountTrace = (root: HTMLElement): TracePane => {
           ...rows.map((row): Item => [keyOf(row, isLit(row.seq)), () => el("li", { class: "tr-row tr-msg", "data-role": row.role, "data-source": row.source, "data-reused": row.reused ? "" : undefined, "data-seq": seqAttr(row.seq), "data-lit": isLit(row.seq) ? "" : undefined },
             el("span", { class: "tr-role" }, roleLabel[row.role] ?? row.role),
             el("span", { class: "tr-text" }, row.text),
-            el("span", { class: "tr-from" }, `${sourceText(row)} · ${row.tokens} tok`))]),
+            el("span", { class: "tr-from" }, `${sourceText(row)} · ${row.tokens} tok`),
+            // A result sent as a pointer says so on a line of its own: the source line is one line, cut where it ends.
+            Option.match(row.pointer, { onNone: () => undefined, onSome: (kept) => el("span", { class: "tr-kept" }, `sent as a pointer: ${kept} tok kept in the journal`) }))]),
           [keyOf("usage", view.usage), () => Option.match(view.usage, {
             onNone: () => el("li", { class: "tr-usage" }, "Token counts are estimates: a quarter of the characters. This model reports no usage of its own."),
             onSome: (usage) => el("li", { class: "tr-usage" }, `The provider counted ${usage.inputTokens ?? "?"} tokens in, ${usage.outputTokens ?? "?"} out${usage.cachedInputTokens === undefined ? "" : `, ${usage.cachedInputTokens} read from its cache`}.`),
