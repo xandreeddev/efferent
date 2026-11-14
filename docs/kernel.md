@@ -59,6 +59,7 @@ caught up.
 | `flatMemory` | sdk, `plugins/memory-flat` | every message of the conversation, oldest first |
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | the conversation within a budget; drops whole turns, oldest first |
 | `inbox(turn)` | sdk, `plugins/inbox` | queues messages per session and answers them in order, through the host's `turn` |
+| `ReadResult`, `readResult` | sdk, `plugins/tool-read-result` | the one tool the kernel ships, and its handler: reads on from a pointer to a long result |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
@@ -822,21 +823,25 @@ characters rounded up:
 <!-- pinned: packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts -->
 
 ```ts
-export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => Layer.effect(Memory, Effect.gen(function* () {
-  const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
+export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => {
+  // How a record's message is read: as stored, or a long result as its pointer. Options that are none throw here.
+  const sent = options.pointers === undefined ? messageOf : pointed(options.pointers)
+  return Layer.effect(Memory, Effect.gen(function* () {
+    const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
 
-  return Memory.of({
-    // Nothing is kept between turns: each context is built from the journal as it stands.
-    context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
-      const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
-      const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
-      if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
-      // React: announce pressure, so any plugin can act on it.
-      if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
-      return paired(fitted.messages).map(promptMessage)
-    }),
-  })
-}))
+    return Memory.of({
+      // Nothing is kept between turns: each context is built from the journal as it stands.
+      context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
+        const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
+        const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget, sent))   // whole turns, oldest dropped first
+        if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
+        // React: announce pressure, so any plugin can act on it.
+        if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
+        return paired(fitted.messages).map(promptMessage)
+      }),
+    })
+  }))
+}
 ```
 
 A memory written in a few lines:
@@ -929,6 +934,105 @@ new name. A journal written before then still holds the old name, which the
 plugin's vocabulary no longer knows: it is refused, or passed over when it
 may be skipped. That is the rule above, with nothing added; a plugin cannot
 change the journal's format, which is core's.
+
+### Pointers: a long result stays in the journal
+
+A tool can answer with more than a prompt should carry: a page, a file, a
+table. The journal keeps the result whole. The model is sent its start and a
+pointer, and reads on with a tool when it needs more (ADR 0011).
+
+The rule is `pointed(options)`, which gives a function a memory reads each
+record's message with, where it called `messageOf`. A tool's result whose
+text is estimated over `overTokens` is still that call's result; what it
+says becomes the first `previewTokens` of its text, framed, and one host
+note with the result's length and the call that reads on. A memory that
+points is the flat memory with that one function changed:
+
+<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#memory -->
+
+```ts
+// A flat memory that points: every message of the conversation, a long tool result as its start and a pointer.
+// `pointed` gives the function that reads a record's message, in place of `messageOf`.
+const sent = pointed({ overTokens: 100, previewTokens: 20 })
+const pointingMemory = Layer.succeed(Memory, Memory.of({
+  context: (session) => Effect.gen(function* () {
+    const conversation = yield* Effect.fromResult(readJournal(vocabularyOf("flat", [], CONVERSATION_VOCABULARY))(yield* session.journal))
+    return paired(conversation.flatMap((record) => Option.toArray(sent(record)))).map(promptMessage)
+  }),
+}))
+```
+
+The rule reads the record and nothing else. A result is sent the same way in
+the turn that fetched it and in every later one, so the start of a prompt a
+provider cached never changes, and nothing is stored by pointing. The
+pointer names the result by its place in the journal, not by its call's id:
+a call's id is the model's, and can repeat.
+
+The tool that reads on is the kernel's, the first it ships: `ReadResult`,
+with `readResult` as its handler. A host adds both where it lists its tools.
+It reads the journal of the turn it runs in (`CurrentTurn`), a page of at
+most 2,000 characters a call, whatever length is asked:
+
+<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#tools -->
+
+```ts
+// A tool with a long answer, and the kernel's tool that reads on from a pointer, with its handler.
+const Lookup = Tool.make("lookup", { description: "Look up an article.", parameters: Schema.Struct({ topic: Schema.String }), success: Schema.String })
+const tools = Toolkit.make(Lookup, ReadResult)
+const toolsLive = tools.toLayer({ lookup: () => Effect.succeed(article), readResult })
+```
+
+<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#read -->
+
+```ts
+const { calls, journal } = await Effect.runPromise(run(story, ["Tell me about tides.", "Thanks."]).pipe(Effect.provide(over(pointingMemory))))
+
+// The journal keeps the article whole, at place 4, and the page the model read, marked whole by its tool.
+const results = journal.flatMap((record) => Option.toArray(messageOf(record))).filter((message) => message._tag === "ToolResult")
+expect<unknown>(results).toEqual([
+  { _tag: "ToolResult", id: "call-1-1", name: "lookup", result: article, isFailure: false },
+  { _tag: "ToolResult", id: "call-2-1", name: "readResult", result: { text: article.slice(80, 200), from: 80, to: 200, total: 1310 }, isFailure: false, whole: true },
+])
+
+// The model's second call is sent the start of the article and where to read on, not the article.
+const pointer = "<tool-result-preview>\nLine 1 of the article on tides.\nLine 2 of the article on tides.\nLine 3 of the ar\n</tool-result-preview>\n[Host note: the result above is cut short: it is 1310 characters long and its first 80 are shown. To read on, call readResult with result 4 and from 80.]"
+expect(calls[1]).toEqual([
+  { role: "system", text: SYSTEM },
+  { role: "user", text: "Tell me about tides." },
+  { role: "assistant", text: "lookup({\"topic\":\"tides\"})" },
+  { role: "tool", text: `→ ${JSON.stringify(pointer)}` },
+])
+// Each later prompt starts with the one before it: the pointer is the same text every time.
+expect(calls[2]?.slice(0, 4)).toEqual([...calls[1]!])
+expect(calls[3]?.slice(0, calls[2]!.length)).toEqual([...calls[2]!])
+// The page it asked for is sent as it is stored.
+expect(calls[2]?.at(-1)).toEqual({ role: "tool", text: `→ ${JSON.stringify({ text: article.slice(80, 200), from: 80, to: 200, total: 1310 })}` })
+```
+
+Three results are left as stored. One whose tool said so: a tool whose
+answer must reach the model in full (instructions, a page it asked for)
+carries the annotation `SentWhole`, `Tool.make(…).annotate(SentWhole,
+true)`; `callTool` reads it off the tool it runs and stores it on the result
+as `whole`. A page `readResult` itself returned, by its name, so a loop that
+stores results by hand cannot point a page at itself. And a result the
+pointer would not make shorter.
+
+The stock memories with a budget take the rule as an option,
+`windowMemory({ budgetTokens, pointers })` and `summaryMemory({ …, pointers })`:
+a long result is read as its pointer before anything is counted, so the
+budget counts what is sent, and the summary memory's summarizer is handed
+what the model was. `flatMemory` sends everything, by definition. Pointer
+options that are none (a number that is not finite or under one token, a
+preview not shorter than the size) are refused where they are written:
+`pointed` throws, as a definition does. The memory kit holds a memory that
+says it points (`MemorySubject.pointers`) to four more checks: `pointer`,
+`pointer-whole`, `pointer-stable` and, with a budget, `pointer-budget`.
+
+What it costs: the model sees only the start of a long result, also in the
+turn that fetched it, and pays a step to read on. A page it reads is sent
+whole from then on. A host that would rather send a result whole in its own
+turn and point it afterwards writes that memory itself, and pays for the
+prompt's start changing once per result.
 
 ## The inbox: queueing messages for a turn
 
@@ -1112,6 +1216,8 @@ fail on a careless plugin written for it.
 | `Inbox` | none | one stock plugin, held by its own tests; a kit comes with a second plugin |
 | `CurrentTurn` | none | a value the loop provides, with nothing to check beyond its type |
 | render (`viewsOf`) and `callTool` | none | pure functions, not contracts a plugin implements: unit tests hold them |
+| `pointed` | the memory kit's pointer checks | a rule a memory applies, held where the memory is: a subject that names its `pointers` |
+| `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 
 ## What the first cut leaves out, and the order it returns
 
@@ -1119,17 +1225,16 @@ This cut keeps journals in the process or in a browser's storage, and has one
 session plugin and three memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
-1. **Pointer memories.** Results replaced by pointers with a tool that
-   reads them back, behind `memory.context`. (A summary of old turns has
-   returned: `summaryMemory`.)
-2. **Views beyond the first four.** A client draws `Text`, `List`, `Table`
+1. **Views beyond the first four.** A client draws `Text`, `List`, `Table`
    and `Card`; a richer vocabulary, or one a host extends, returns when a
    client needs it. (What the UI shows has returned: a record tagged `ui`,
    `viewsOf`.)
-3. **Stores on a disk or in a database**, on the contract and kit the two
+2. **Stores on a disk or in a database**, on the contract and kit the two
    shipped stores pass. (A store that outlives its process, and the close
    of a turn its writer left open, have returned: `webStorageJournal`,
-   `Sessions.recover`.)
+   `Sessions.recover`. So have a summary of old turns, `summaryMemory`, and
+   results sent as pointers with a tool that reads them back, `pointed` and
+   `readResult`.)
 
 ## Open questions
 

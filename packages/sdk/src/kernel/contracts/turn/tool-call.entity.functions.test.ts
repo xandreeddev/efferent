@@ -5,6 +5,7 @@ import { kernel, Sessions, stored, storedEvent, userMessage } from "@xandreed/co
 import { inProcessJournal, sessions } from "../../index.js"
 import { callTool } from "./tool-call.entity.functions.js"
 import { CurrentTurn } from "./current-turn.port.js"
+import { SentWhole } from "./sent-whole.port.js"
 
 const Echo = Tool.make("echo", { parameters: Schema.Struct({ text: Schema.String }), success: Schema.String, failure: Schema.String, failureMode: "return" })
 const Dies = Tool.make("dies", { success: Schema.String })
@@ -12,12 +13,15 @@ const Plain = Tool.make("plain", { success: Schema.String, failure: Schema.Numbe
 const Where = Tool.make("where", { success: Schema.String, dependencies: [CurrentTurn] })
 const Sloppy = Tool.make("sloppy", { success: Schema.String, dependencies: [CurrentTurn] })
 const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({}), skippable: true })
-const tools = Toolkit.make(Echo, Dies, Plain, Where, Sloppy)
+// A tool whose result must reach the model as it is stored: its annotation says so.
+const Manual = Tool.make("manual", { parameters: Schema.Struct({ page: Schema.Number }), success: Schema.String, failure: Schema.String, failureMode: "return" }).annotate(SentWhole, true)
+const tools = Toolkit.make(Echo, Dies, Plain, Where, Sloppy, Manual)
 const handlers = tools.toLayer({
   echo: ({ text }) => (text === "fail" ? Effect.fail("it failed") : Effect.succeed(text)),
   dies: () => Effect.die(new Error("the handler broke")),
   plain: () => Effect.fail(404),
   where: () => Effect.map(CurrentTurn, (session) => `turn ${session.turn}`),
+  manual: ({ page }) => (page < 1 ? Effect.fail("there is no such page") : Effect.succeed(`page ${page}`)),
   // It appends a copy of a record, which a session refuses: the write needs no handling of its own in a handler.
   sloppy: () => Effect.gen(function* () {
     const turn = yield* CurrentTurn
@@ -59,6 +63,20 @@ describe("callTool", () => {
     const [unknown, wrong] = await results([{ name: "search", params: {} }, { name: "echo", params: { text: 3 } }])
     expect(unknown).toMatchObject({ _tag: "ToolResult", name: "search", isFailure: true })
     expect(wrong).toMatchObject({ _tag: "ToolResult", name: "echo", isFailure: true })
+  })
+
+  test("a tool annotated SentWhole has its result stored as whole, a failed one too, and no other tool's record holds the key", async () => {
+    const [page, none, plain] = await results([{ name: "manual", params: { page: 2 } }, { name: "manual", params: { page: 0 } }, { name: "echo", params: { text: "hi" } }])
+    expect(page).toEqual({ _tag: "ToolResult", id: "call-0", name: "manual", result: "page 2", isFailure: false, whole: true })
+    expect(none).toEqual({ _tag: "ToolResult", id: "call-1", name: "manual", result: "there is no such page", isFailure: true, whole: true })
+    expect(Object.keys(plain ?? {})).toEqual(["_tag", "id", "name", "result", "isFailure"])
+  })
+
+  test("the tool's name is the model's: a name of every object, which no toolkit has, is an unknown tool and asks for nothing", async () => {
+    const answers = await results([{ name: "constructor", params: {} }, { name: "__proto__", params: {} }, { name: "toString", params: {} }])
+    expect(answers.map((answer) => (answer?._tag === "ToolResult" ? [answer.name, answer.isFailure, "whole" in answer] : []))).toEqual([
+      ["constructor", true, false], ["__proto__", true, false], ["toString", true, false],
+    ])
   })
 
   test("runs the call in the turn it is given: a handler reads it as CurrentTurn", async () => {

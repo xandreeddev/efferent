@@ -32,7 +32,7 @@ import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
 import type { KeyValueStore, SummarizerSubject } from "./index.js"
-import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
+import { flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -353,6 +353,50 @@ describe("the memory kit", () => {
     const summary = subject("summary", Layer.provide(summaryMemory({ budgetTokens }), summarizer))
     expect(ids(memoryConformance(summary))).toEqual(every)
     expect(await failedChecks(memoryConformance(summary))).toEqual([])
+  })
+
+  const pointers = { overTokens: 60, previewTokens: 10 }
+  const pointerChecks = ["pointer", "pointer-whole", "pointer-stable", "pointer-budget"]
+  /** Where the kit runs a memory's pointer checks: after `pairs`' neighbours, before the unknown-record ones. */
+  const everyWithPointers = [...every.slice(0, every.indexOf("unknown-skipped")), ...pointerChecks, ...every.slice(every.indexOf("unknown-skipped"))]
+  /** A flat memory that reads each record with `read`: `messageOf`, or a function that points. */
+  const flatReading = (read: (record: StoredEvent, journal: ReadonlyArray<StoredEvent>) => Option.Option<Message>) => Layer.succeed(Memory, Memory.of({
+    context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(vocabularyOf("flat", [], CONVERSATION_VOCABULARY))(journal)), (records) =>
+      paired(records.flatMap((record) => Option.toArray(read(record, journal)))).map(promptMessage))),
+  }))
+
+  test("a memory that sends long results as pointers is held to it: the window and the summary memory with pointers, and a flat one that points", async () => {
+    const window = { ...subject("window", windowMemory({ budgetTokens, pointers })), pointers }
+    expect(ids(memoryConformance(window))).toEqual(everyWithPointers)
+    expect(await failedChecks(memoryConformance(window))).toEqual([])
+    const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
+    const summary = { ...subject("summary", Layer.provide(summaryMemory({ budgetTokens, pointers }), summarizer)), pointers }
+    expect(await failedChecks(memoryConformance(summary))).toEqual([])
+    const sent = pointed(pointers)
+    const flat = { ...subject("flat", flatReading((record) => sent(record)), null), pointers }
+    expect(ids(memoryConformance(flat))).toEqual(everyWithPointers.filter((id) => id !== "fits" && id !== "over-budget" && id !== "pointer-budget"))
+    expect(await failedChecks(memoryConformance(flat))).toEqual([])
+    // A memory that sends every result whole fails each pointer check, when it says it points.
+    expect(await failedChecks(memoryConformance({ ...subject("window", windowMemory({ budgetTokens })), pointers }))).toEqual(["pointer", "pointer-budget", "pointer-stable"])
+  })
+
+  test("each careless pointing memory fails the check of what it is careless about, and no other", async () => {
+    const sent = pointed(pointers)
+    // It points a result its tool marked whole.
+    const unmarked = (record: StoredEvent): StoredEvent => record.message?._tag === "ToolResult" ? { ...record, message: { _tag: "ToolResult", id: record.message.id, name: record.message.name, result: record.message.result, isFailure: record.message.isFailure } } : record
+    const pointsWhole = { ...subject("flat", flatReading((record) => sent(unmarked(record))), null), pointers }
+    expect(await failedChecks(memoryConformance(pointsWhole))).toEqual(["pointer-whole"])
+    // It sends a result whole in the turn that fetched it, and as a pointer from the next turn on: the prompt's start changes once per result.
+    const lateToPoint = { ...subject("flat", flatReading((record, journal) => record.turn === journal.at(-1)?.turn ? messageOf(record) : sent(record)), null), pointers }
+    expect(await failedChecks(memoryConformance(lateToPoint))).toEqual(["pointer-stable"])
+    // It counts every result whole against its budget, then sends pointers.
+    const countsWhole = { ...subject("window", Layer.effect(Memory, Effect.gen(function* () {
+      const core = yield* Core
+      const counting = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(core)))), Memory)
+      const pointing = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens, pointers }), onCore(core)))), Memory)
+      return Memory.of({ context: (session) => Effect.flatMap(counting.context(session), () => pointing.context(session)) })
+    }))), pointers }
+    expect(await failedChecks(memoryConformance(countsWhole))).toEqual(["pointer-budget"])
   })
 
   /** A careless memory: what it sends, read from the journal as it stands, and what it writes while it builds. */

@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0011-a-long-result-is-sent-as-a-pointer.md`: a long tool result stays whole in the journal and is sent as its start and a pointer, by `pointed`, a function of the record alone (the same in every context, nothing stored); the pointer names the record's place, never the call's id; the model reads on with the kernel's `ReadResult` tool; a tool whose result must be sent whole says so with the `SentWhole` annotation, which `callTool` stores as `whole`; a memory points before it counts
 - `docs/adr/0010-a-store-is-a-part.md`: a store is the `JournalStorage` contract and its kit (`list` by `byCreation`, no index; a `pair` of handles for a store that outlives its handle); a turn its writer left open is closed by `Sessions.recover` as `Abandoned`, called by the host, never by the kernel; one writer per store is assumed and the journal stays whole when the host was wrong; a parent is not checked to exist
 - `docs/adr/0009-what-the-ui-shows-is-a-record.md`: what the UI shows is a view record (`plugin.render.view`, tagged `ui`, no message, same id replaces) a tool appends through `CurrentTurn`; a client folds them with `viewsOf`; progress is live; the model never sees a view
 - `docs/adr/0008-a-memory-keeps-its-summary.md`: a memory keeps what it derived (a summary) as a record of its own, tagged `memory`, whose message it sends; it gets a model's work through a contract the host provides (`Summarizer`)
@@ -74,6 +75,11 @@ checklist, the records have the reasons.
       the memory kit's `pairs` check holds it to that. A call's id is the model's and can
       repeat across restarts: pair in order, never by id alone, and never use a call id
       as the key of something stored.
+- [ ] A long tool result is shortened only by `pointed`, where a memory reads a record's
+      message, before anything is counted: never by rewriting the stored result, by a
+      wrapper over the context, or by a record of what was pointed. A tool whose result
+      must reach the model whole carries `SentWhole`; a host that sends pointers offers
+      `ReadResult` with `readResult` as its handler.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a
       tool result the model reads in every later request; a client draws it by folding the
       journal, the same fold live and after a reload.

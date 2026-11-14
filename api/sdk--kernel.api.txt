@@ -6,6 +6,7 @@ class InvalidBudget
 class Memory
 class ModelAnswerFailed
 class OverBudget
+class SentWhole
 class Summarizer
 class SummaryFailed
 const CardView
@@ -13,6 +14,10 @@ const InboxQueuedData
 const ListView
 const ModelScript
 const ProgressData
+const READ_RESULT
+const READ_RESULT_PAGE
+const ReadResult
+const ResultPage
 const ScriptedAnswer
 const SummarizedData
 const TableView
@@ -40,8 +45,11 @@ const memoryWrapperConformance
 const messageText
 const modelAnswer
 const paired
+const pointed
 const progressEvent
 const promptMessage
+const readResult
+const resultText
 const scriptedModel
 const sessions
 const showView
@@ -60,6 +68,7 @@ interface KeyValueStore
 interface MemorySubject
 interface MemoryWrapperSubject
 interface ModelToolCall
+interface PointerOptions
 interface Queued
 interface RunningTurn
 interface SessionsOptions
@@ -74,6 +83,7 @@ type InboxTurnFailure
 type MemoryFailure
 type ModelScript
 type ProgressData
+type ResultPage
 type ScriptedAnswer
 type ScriptedCalls
 type SummarizedData

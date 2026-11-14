@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { liveEvent, Seq, storedEvent } from "@xandreed/core/kernel"
 import { Tokens } from "../../contracts/memory/memory.entity.js"
+import type { PointerOptions } from "../../contracts/memory/pointer.entity.js"
 
 /**
  * How the window memory is set up.
@@ -12,6 +13,8 @@ export interface WindowOptions {
   readonly budgetTokens: number
   /** The share of the budget from which a context counts as pressure. 0.8 when left out. */
   readonly pressureAt?: number
+  /** Send long tool results as pointers (`pointed`): the budget then counts what is sent. Left out, every result is sent whole. */
+  readonly pointers?: PointerOptions
 }
 
 /**

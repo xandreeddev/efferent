@@ -40,15 +40,16 @@ export interface Fitted {
  * while the estimate is over the budget and more than the current turn is
  * left. A turn once dropped stays dropped. The current turn alone over the
  * budget is `OverBudget`. The system text is the caller's: the budget is
- * the history's.
+ * the history's. `sent` reads a record's message as it is sent: `messageOf`,
+ * or `pointed`'s function, so the budget counts a long result as its pointer.
  */
-export const fitToBudget = (known: ReadonlyArray<StoredEvent>, budgetTokens: Tokens): Result.Result<Fitted, OverBudget> => {
+export const fitToBudget = (known: ReadonlyArray<StoredEvent>, budgetTokens: Tokens, sent: (record: StoredEvent) => Option.Option<Message> = messageOf): Result.Result<Fitted, OverBudget> => {
   const through = known.reduce<number>((last, event) => Option.match(dataOf(windowDroppedEvent, event), { onNone: () => last, onSome: (data) => Math.max(last, data.through) }), 0)
   const turns: Array<{ messages: Array<{ readonly seq: Seq; readonly message: Message }>; tokens: number }> = []
   for (const event of known) {
     if (event.seq <= through) continue
     if (event.name === turnStartedEvent.name) { turns.push({ messages: [], tokens: 0 }); continue }
-    const said = messageOf(event)
+    const said = sent(event)
     if (Option.isNone(said)) continue
     const turn = turns.at(-1) ?? turns[turns.push({ messages: [], tokens: 0 }) - 1]
     if (turn === undefined) continue

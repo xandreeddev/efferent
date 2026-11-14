@@ -135,7 +135,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     with its call, so a turn stopped while a tool ran never sends a call
     nothing answers. It pairs in order, since a model that numbers its
     own calls repeats an id after a restart: a result answers the last
-    call of its id before it. Both stock memories send through it, the memory
+    call of its id before it.
+  - Pointers (ADR 0011): a long tool result stays whole in the journal
+    and the model is sent its start and a pointer. `pointed({ overTokens,
+    previewTokens })` gives the function a memory reads each record's
+    message with; it reads the record alone, so a result is sent the same
+    way in every context, and it names the result by its place in the
+    journal. The model reads on with `ReadResult`, the first tool the
+    kernel ships, and its handler `readResult`. A tool whose result must
+    be sent whole carries the annotation `SentWhole`, which `callTool`
+    stores on the result (`whole`, a new optional key of
+    `conversation.tool.result`; `toolResult` takes it as an option).
+    `windowMemory` and `summaryMemory` take `pointers` and count what
+    they send. The memory kit holds a subject that names its `pointers`
+    to four more checks (`pointer`, `pointer-whole`, `pointer-stable`,
+    `pointer-budget`). Both stock memories send through it, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
     (`ModelAnswer` `Calls`). The window memory drops whole turns only, so

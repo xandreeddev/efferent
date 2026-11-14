@@ -10,6 +10,8 @@ import {
 import type { ConformanceCheck, OpenSession, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { Memory } from "./memory.port.js"
 import { estimateContext, messageText, paired, promptMessage } from "./memory.entity.functions.js"
+import { pointed } from "./pointer.entity.functions.js"
+import type { PointerOptions } from "./pointer.entity.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type MemoryShape = Context.Service.Shape<typeof Memory>
@@ -18,13 +20,16 @@ type MemoryShape = Context.Service.Shape<typeof Memory>
  * A memory plugin as the kit opens it: a fresh one per check, on the
  * `Core` the kit hands it, released with its scope. The kit is told the
  * plugin's name (its records are under `plugin.<name>.`) and, for a memory
- * that keeps to a budget, the budget, so it can count what the plugin counts.
+ * that keeps to a budget, the budget, so it can count what the plugin counts;
+ * for one that sends long results as pointers, its pointer options, so the
+ * kit can say what each result must be sent as.
  *
  * @public
  */
 export interface MemorySubject {
   readonly name: string
   readonly budgetTokens?: number
+  readonly pointers?: PointerOptions
   readonly open: (core: CoreShape) => Effect.Effect<MemoryShape, never, Scope.Scope>
 }
 
@@ -73,6 +78,17 @@ const kitSession = (core: CoreShape) => Effect.gen(function* () {
     }
     yield* append(turnEnded(turn, answered ? { _tag: "Completed" } : { _tag: "Interrupted" }))
   })
+  /** A whole earlier turn whose tool answered with `result`: the stored result is given back. */
+  const resultTurn = (asked: string, id: string, result: string, whole = false) => Effect.gen(function* () {
+    const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
+    yield* append(turnStarted(turn))
+    yield* append(userMessage(asked))
+    yield* append(assistantMessage("", { toolCalls: [{ id, name: "lookup", params: {} }] }))
+    const kept = yield* append(toolResult({ id, name: "lookup" }, result, false, { whole }))
+    yield* append(assistantMessage("Done."))
+    yield* append(turnEnded(turn, { _tag: "Completed" }))
+    return kept
+  })
   /** The turn that is open: its start and its message, and the session a memory opens. */
   const openTurn = (asked: string) => Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
@@ -92,7 +108,7 @@ const kitSession = (core: CoreShape) => Effect.gen(function* () {
     yield* append(assistantMessage(answered))
     yield* append(turnEnded(session.turn, { _tag: "Completed" }))
   })
-  return { journal: Ref.get(journal), append, appendRecord, pastTurn, toolTurn, openTurn, closeTurn }
+  return { journal: Ref.get(journal), append, appendRecord, pastTurn, toolTurn, resultTurn, openTurn, closeTurn }
 })
 
 /** The ids of the tool calls a context sends, and of the results it sends, in order. */
@@ -103,6 +119,14 @@ const toolTraffic = (context: ReadonlyArray<Prompt.MessageEncoded>) => {
     results: parts.flatMap(({ role, part }) => (role === "tool" && part.type === "tool-result" ? [part.id] : [])),
   }
 }
+
+/** What a context sends as the result of the call `id`: each one it sends, as the kit compares it. */
+const resultsOf = (context: ReadonlyArray<Prompt.MessageEncoded>, id: string): ReadonlyArray<string> =>
+  context.flatMap((message) => (typeof message.content === "string" ? [] : message.content.flatMap((part) => (message.role === "tool" && part.type === "tool-result" && part.id === id ? [show(part.result)] : []))))
+
+/** What a stored result must be sent as under pointer options: `pointed`'s word for its record. */
+const pointedResult = (options: PointerOptions, record: StoredEvent): string =>
+  show(Option.match(pointed(options)(record), { onNone: () => null, onSome: (message) => (message._tag === "ToolResult" ? message.result : null) }))
 
 /** The text of a prompt message, as the kit compares it. */
 const textOf = (message: Prompt.MessageEncoded): string => typeof message.content === "string" ? message.content : show(message.content)
@@ -128,7 +152,14 @@ const textOf = (message: Prompt.MessageEncoded): string => typeof message.conten
  * know is not its concern (`foreign`); a tool call is sent with its result
  * and right before it, and a call no result answers (a turn stopped while its
  * tool ran) is not sent, also when its id is asked again later and answered
- * (`pairs`).
+ * (`pairs`). For a memory that sends long results as pointers (a subject
+ * with `pointers`): a long result is sent as `pointed` gives it and a short
+ * one as stored (`pointer`); one its tool marked `whole` is sent as stored,
+ * however long (`pointer-whole`); a long result
+ * is sent the same way in the turn that fetched it and in the next
+ * (`pointer-stable`); and, with a budget, a turn whose result alone is over
+ * the budget fits once pointed, since the budget counts what is sent
+ * (`pointer-budget`).
  *
  * @public
  */
@@ -158,6 +189,13 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
     ({ name: EventName.make("conversation.kit.unknown"), data: {}, skippable, tags: userMessage("").tags, message: { _tag: "User", text: "an unknown record of the conversation" } })
   const budget = Option.fromNullishOr(subject.budgetTokens)
   const long = "long ".repeat(Math.max(1, Math.ceil(Option.getOrElse(budget, () => 400) / 4)))
+  const pointers = Option.fromNullishOr(subject.pointers)
+  /** The checks of pointers, for a memory that sends long results as pointers. */
+  const pointing = (checks: (options: PointerOptions) => ReadonlyArray<ConformanceCheck>) => Option.match(pointers, { onNone: () => [], onSome: checks })
+  /** A result of about `tokens` tokens, by memory's estimate. */
+  const resultOf = (tokens: number) => "result ".repeat(Math.ceil(tokens * 4 / 7))
+  /** A result twice the size a pointer stands for: small enough that a budgeted memory still keeps its turn. */
+  const longResult = (options: PointerOptions) => resultOf(options.overTokens * 2)
   /** The checks of a budget, for a memory that keeps to one. */
   const budgeted = (checks: (budgetTokens: number) => ReadonlyArray<ConformanceCheck>) => Option.match(budget, { onNone: () => [], onSome: checks })
 
@@ -230,6 +268,44 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
           Predicate.hasProperty(error, "estimatedTokens") && Predicate.isNumber(error.estimatedTokens)
           && Predicate.hasProperty(error, "budgetTokens") && error.budgetTokens === budgetTokens && error.estimatedTokens > budgetTokens)
       })),
+    ]),
+    ...pointing((options) => [
+      check("a long result is sent as its pointer, with its call, and a short one as stored", "pointer", (memory, kit) => Effect.gen(function* () {
+        const long = yield* kit.resultTurn("Look it up.", "kit-call-1", longResult(options))
+        yield* kit.resultTurn("A short one.", "kit-call-2", "short")
+        const session = yield* kit.openTurn("Thanks.")
+        const context = yield* memory.context(session)
+        yield* expect("pointer", show(resultsOf(context, "kit-call-1")) === show([pointedResult(options, long)]) && show(toolTraffic(context).calls) === show(["kit-call-1", "kit-call-2"]),
+          `a result over ${options.overTokens} tokens was sent as ${show(resultsOf(context, "kit-call-1")).slice(0, 300)}, not once as its pointer ${pointedResult(options, long)} with its call`)
+        yield* expect("pointer", show(resultsOf(context, "kit-call-2")) === show([show("short")]), `a short result was sent as ${show(resultsOf(context, "kit-call-2"))}, not as stored`)
+      })),
+      check("a long result its tool marked whole is sent as stored", "pointer-whole", (memory, kit) => Effect.gen(function* () {
+        const manual = resultOf(options.overTokens * 1.25)
+        yield* kit.resultTurn("The manual.", "kit-call-1", manual, true)
+        const session = yield* kit.openTurn("Thanks.")
+        const context = yield* memory.context(session)
+        yield* expect("pointer-whole", show(resultsOf(context, "kit-call-1")) === show([show(manual)]),
+          `a result its tool marked whole was sent as ${show(resultsOf(context, "kit-call-1")).slice(0, 300)}, not as stored`)
+      })),
+      check("a long result is sent the same way in the turn that fetched it and in the next", "pointer-stable", (memory, kit) => Effect.gen(function* () {
+        const first = yield* kit.openTurn("Look it up.")
+        yield* kit.append(assistantMessage("", { toolCalls: [{ id: "kit-call-1", name: "lookup", params: {} }] }))
+        const long = yield* kit.append(toolResult({ id: "kit-call-1", name: "lookup" }, longResult(options)))
+        const now = resultsOf(yield* memory.context(first), "kit-call-1")
+        yield* kit.closeTurn(first, "Done.")
+        const later = resultsOf(yield* memory.context(yield* kit.openTurn("Thanks.")), "kit-call-1")
+        yield* expect("pointer-stable", show(now) === show([pointedResult(options, long)]) && show(later) === show(now),
+          `a long result was sent as ${show(now).slice(0, 200)} in its own turn and as ${show(later).slice(0, 200)} in the next, not both times as its pointer`)
+      })),
+      ...budgeted((budgetTokens) => [
+        check("a turn whose result alone is over the budget fits once pointed: the budget counts what is sent", "pointer-budget", (memory, kit) => Effect.gen(function* () {
+          const session = yield* kit.openTurn("Look it up.")
+          yield* kit.append(assistantMessage("", { toolCalls: [{ id: "kit-call-1", name: "lookup", params: {} }] }))
+          yield* kit.append(toolResult({ id: "kit-call-1", name: "lookup" }, resultOf(Math.max(options.overTokens, budgetTokens) * 2)))
+          const context = yield* Effect.mapError(memory.context(session), (error) => new ConformanceFailure({ check: "pointer-budget", message: `a turn whose result fits the budget as a pointer failed with ${error._tag}: ${error.message}` }))
+          yield* expect("pointer-budget", estimateContext(context) <= budgetTokens, `the context is estimated at ${estimateContext(context)}, over its budget of ${budgetTokens}`)
+        })),
+      ]),
     ]),
     check("an unknown record of its own that may be skipped is passed over", "unknown-skipped", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")

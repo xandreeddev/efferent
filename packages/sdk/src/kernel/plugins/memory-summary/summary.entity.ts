@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { Seq, storedEvent } from "@xandreed/core/kernel"
+import type { PointerOptions } from "../../contracts/memory/pointer.entity.js"
 
 /**
  * How the summary memory is set up.
@@ -14,6 +15,11 @@ export interface SummaryOptions {
    * When keeping them would still be over the budget, they are folded too. 1 when left out.
    */
   readonly keepTurns?: number
+  /**
+   * Send long tool results as pointers (`pointed`): the budget then counts what is sent, and the summarizer is
+   * handed what the model was. Left out, every result is sent whole.
+   */
+  readonly pointers?: PointerOptions
 }
 
 /**
