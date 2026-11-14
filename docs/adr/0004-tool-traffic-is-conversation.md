@@ -22,6 +22,12 @@ with the results. Three questions follow: where the tools live, what is stored, 
 each call through `toolkit.handle`. The model is Effect AI's `LanguageModel` and the turn calls it directly; the
 tools are the same kind of module, called the same way. A kernel contract for tools would wrap one that exists.
 
+*Amended 14 November 2026:* every host's loop wrote the same block around `toolkit.handle` (run the call in its
+turn, take its last result, give a failure or a defect back as a failed result), and the copies drifted: some
+provided `CurrentTurn`, some caught defects. The kernel now holds it once as a function, `callTool(toolkit, call,
+session)`, which gives back the `toolResult` to store. It is a function a loop calls, not a service: the loop is
+still the host's, and a host may write its own.
+
 **Tool definitions are code.** A tool's name, description and schema are offered in every call and never stored,
 like the system text: changing them changes the next prompt and leaves nothing stored stale.
 

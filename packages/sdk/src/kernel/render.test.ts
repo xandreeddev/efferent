@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Effect, Layer, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, kernel, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { CurrentTurn, flatMemory, inProcessJournal, Memory, progressEvent, scriptedModel, sessions, showView, ViewId, viewProgress, viewsOf } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, progressEvent, scriptedModel, sessions, showView, ViewId, viewProgress, viewsOf } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -64,13 +64,7 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>, handlers: Lay
       yield* session.append(assistantMessage(text, { toolCalls: asked }))
       if (asked.length === 0) return text
       for (const call of asked) {
-        const result = yield* toolkit.handle(call.name as "squares", call.params as never).pipe(
-          Effect.flatMap(Stream.runLast),
-          Effect.map(Option.match({ onNone: () => toolResult(call, null), onSome: (last) => toolResult(call, last.encodedResult, last.isFailure) })),
-          // A call the model got wrong is an answer too: a failed result it reads.
-          Effect.catch((error) => Effect.succeed(toolResult(call, error.message, true))),
-          Effect.provideService(CurrentTurn, session),
-        )
+        const result = yield* callTool(toolkit, call, session)
         yield* session.append(result)
       }
     }

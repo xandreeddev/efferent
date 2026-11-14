@@ -50,7 +50,9 @@ checklist, the records have the reasons.
 - [ ] Nothing derived from configuration is stored: no system text, no request, no
       pointers to what was sent, no tool definitions.
 - [ ] Tool calls and their results are stored as conversation records, a failure as a
-      result with `isFailure`, never as a failed turn.
+      result with `isFailure`, never as a failed turn. A loop runs a call with
+      `callTool(toolkit, call, session)`, which provides `CurrentTurn` and gives the
+      failure back as a result, rather than its own copy of that block.
 - [ ] A memory sends its messages through `paired`, so no call goes without its result;
       the memory kit's `pairs` check holds it to that.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a

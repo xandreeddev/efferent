@@ -47,7 +47,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `SummaryFailed`), the tool call's
     (`CurrentTurn`: the open turn a call runs in, which the host's loop
     provides around `toolkit.handle` and a tool declares in its
-    `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`) and the
+    `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
+    `callTool(toolkit, call, session)`, which runs one call the model made in
+    its turn and gives back the result to store, a failure or a defect as a
+    failed result, so a host's loop need not copy that block) and the
     inbox's (`Inbox`, `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
     gate refuses both. There is no loop contract and no stock loop: the
@@ -197,6 +200,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Repository: an architecture review of the kernel after lessons 4 to 6.
+  The learn track's code and every source it shows import only the two
+  kernel entries, and a test now fails on any other `@xandreed/` import.
+  The clock note of lesson 3 and the kernel's own-plugin test is written
+  with the kernel's `hostNote`. `packages/website/AGENTS.md` describes the
+  learn track, a new skill, `add-lesson`, is its checklist, and
+  `docs/kernel.md` lists the questions still open.
 - Docs site: Lesson 6, "Render", at `/learn/render`. Lesson 2's program,
   whose loop runs each tool call in its turn (`CurrentTurn`), with a
   `show` tool that stores a table as a view and returns a few words. The

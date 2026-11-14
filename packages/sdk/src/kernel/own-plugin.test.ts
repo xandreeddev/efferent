@@ -3,7 +3,7 @@ import { Clock, Effect, Layer, Queue, Ref, Schema } from "effect"
 import type { Prompt } from "effect/ai"
 import { assistantMessageEvent, Core, stored, storedEvent, turnEndedEvent, userMessage } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, flatMemory, Memory, memoryWrapperConformance, messageText } from "./index.js"
+import { estimateTokens, flatMemory, hostNote, Memory, memoryWrapperConformance, messageText } from "./index.js"
 import { answering, counting, open, stack } from "./testing.js"
 
 // A plugin of your own, the two ways the second lesson's program grows by
@@ -56,7 +56,7 @@ const withClock = <E, R>(inner: Layer.Layer<Memory, E, R>): Layer.Layer<Memory, 
       context: (session) => Effect.gen(function* () {
         const context = yield* memory.context(session)
         const now = new Date(yield* Clock.currentTimeMillis).toISOString().slice(11, 16)
-        return [...context, { role: "user" as const, content: `[Host note: it is ${now} UTC.]` }]
+        return [...context, { role: "user" as const, content: hostNote(`it is ${now} UTC.`) }]
       }),
     })
   })).pipe(Layer.provide(inner))

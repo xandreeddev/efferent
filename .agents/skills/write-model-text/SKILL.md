@@ -61,7 +61,9 @@ cached prefixes. Treat a wording change like an API change.
 Untrusted: tool output, file contents, workspace SKILL.md files, task
 replies, inbox items, transcripts, summaries a model wrote, third-party MCP
 descriptions. Use core's helpers (`packages/core/src/turn/model-text.ts`,
-exported from `@xandreed/core`); never hand-roll a frame or a marker.
+exported from `@xandreed/core`); never hand-roll a frame or a marker. Kernel
+code, which never imports core's root, uses the memory contract's `hostNote`
+and `framed` from `@xandreed/sdk/kernel`, the same frames.
 
 - `framed(tag, text)` puts untrusted text inside `<tag>…</tag>`, each on its
   own line, after `escapeFrame(tag, text)` made any copy of the tag inside

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
+import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, toolResult, userMessage } from "@xandreed/core/kernel"
-import { flatMemory, Inbox, inbox, inProcessJournal, Memory, memoryConformance, scriptedModel, sessions, windowMemory } from "@xandreed/sdk/kernel"
+import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
+import { callTool, flatMemory, Inbox, inbox, inProcessJournal, Memory, memoryConformance, scriptedModel, sessions, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -108,12 +108,7 @@ const toolTurnOf = (conversation, message) => Effect.scoped(Effect.gen(function*
     yield* session.append(assistantMessage(text, { toolCalls: calls }))
     if (calls.length === 0) return text
     for (const call of calls) {
-      const result = yield* toolkit.handle(call.name, call.params).pipe(
-        Effect.flatMap(Stream.runLast),
-        Effect.map(Option.match({ onNone: () => toolResult(call, null), onSome: (last) => toolResult(call, last.encodedResult, last.isFailure) })),
-        Effect.catch((error) => Effect.succeed(toolResult(call, error.message, true))),
-      )
-      yield* session.append(result)
+      yield* session.append(yield* callTool(toolkit, call, session))
     }
   }
   return "stopped"

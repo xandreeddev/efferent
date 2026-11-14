@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option, Schema, Stream } from "effect"
+import { Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, kernel, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { JournalStorageError, OpenSession, SessionId } from "@xandreed/core/kernel"
-import { CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
 import { Helper } from "./testing.port.js"
 
 /*
@@ -28,12 +28,7 @@ const agentTurn = <Tools extends Record<string, Tool.Any>>(system: string, toolk
       yield* session.append(assistantMessage(text, { toolCalls: calls }))
       if (calls.length === 0) return text
       for (const call of calls) {
-        yield* session.append(yield* toolkit.handle(call.name as keyof Tools & string, call.params as never).pipe(
-          Effect.flatMap(Stream.runLast),
-          Effect.map(Option.match({ onNone: () => toolResult(call, null), onSome: (last) => toolResult(call, last.encodedResult, last.isFailure) })),
-          Effect.catch((error) => Effect.succeed(toolResult(call, error instanceof Error ? error.message : String(error), true))),
-          Effect.provideService(CurrentTurn, session), // the call runs in this turn (ADR 0007)
-        ))
+        yield* session.append(yield* callTool(toolkit, call, session)) // the call runs in this turn (ADR 0007)
       }
     }
     return "I stopped."
