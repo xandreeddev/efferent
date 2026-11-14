@@ -14,7 +14,7 @@ import { TasksLive } from "./tasks.adapter.js"
  * @public
  */
 export const tasksPlugin = definePlugin({
-  id: "@xandreed/plugin-tasks", version: "0.22.0", scope: "runtime",
+  id: "@xandreed/plugin-tasks", version: "0.23.0", scope: "runtime",
   config: TasksConfig, defaults: tasksDefaults,
   requires: [Sessions, TaskRunner, TaskExecutor],
   provides: [Tasks],

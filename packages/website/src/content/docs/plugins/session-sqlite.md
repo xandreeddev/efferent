@@ -85,7 +85,7 @@ The runtime's scoped layer owns and closes its database connection.
 
 This section is generated from the exported plugin definition by `bun run docs:generate`.
 
-Plugin: `@xandreed/plugin-session-sqlite` · Version **0.22.0** · Plugin API **3** · Scope **runtime**
+Plugin: `@xandreed/plugin-session-sqlite` · Version **0.23.0** · Plugin API **3** · Scope **runtime**
 
 | Contract | Services |
 | --- | --- |
