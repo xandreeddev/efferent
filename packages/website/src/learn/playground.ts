@@ -6,7 +6,8 @@ import { Option } from "effect"
 import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { progressEvent, viewEvent } from "@xandreed/sdk/kernel"
-import { dropWaiting, emptyChat, hear, said, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
+import { continues, dropWaiting, emptyChat, hear, said, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
+import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
 import type { Lesson } from "./lesson.ts"
@@ -90,9 +91,43 @@ function boot(root: HTMLElement, lesson: Lesson) {
     setChip(busy() ? "answering" : "waiting for a message", "ready")
   }
 
+  /**
+   * The browser's storage for a durable lesson; a storage of the page's own where the browser gives none (a
+   * private window with storage blocked), with a line that says the conversation will not outlive the page.
+   */
+  const browserStorage = (): KeyValueStore | undefined => {
+    try {
+      const storage = window.localStorage
+      storage.getItem("efferent-learn:probe")
+      return storage
+    } catch {
+      showFoot("error", "This browser gives the page no storage (a private window, or storage blocked): the conversation is kept in the page, and is gone with it.")
+      return undefined
+    }
+  }
+  /** Where a durable lesson keeps the learner's edits across a reload, in this tab only. */
+  const sourcesKey = lesson.durable === undefined ? undefined : `${lesson.durable.prefix}sources`
+  const saveSources = () => {
+    if (sourcesKey === undefined) return
+    try { window.sessionStorage.setItem(sourcesKey, JSON.stringify(editor.sources())) } catch { /* no storage: the edits last as long as the page */ }
+  }
+  /** The edits the page before this one saved: an experiment applied before a reload is still applied after it. */
+  const restoreSources = () => {
+    if (sourcesKey === undefined) return
+    try {
+      const saved: unknown = JSON.parse(window.sessionStorage.getItem(sourcesKey) ?? "null")
+      if (typeof saved !== "object" || saved === null) return
+      lesson.files.forEach((file) => {
+        const text = (saved as Record<string, unknown>)[file.id]
+        if (!file.readOnly && typeof text === "string" && text !== editor.source(file.id)) editor.setSource(file.id, text)
+      })
+    } catch { /* no storage, or nothing readable saved: the starter code stands */ }
+  }
+
   const ensureRuntime = (): Promise<LessonRuntime> => {
     state.runtimeReady ??= import("./runtime.ts").then(async ({ LessonRuntime }) => {
-      const runtime = await LessonRuntime.create(lesson)
+      const storage = lesson.durable === undefined ? undefined : browserStorage()
+      const runtime = await LessonRuntime.create(lesson, storage === undefined ? {} : { storage })
       trace.reset(runtime.conversation)
       runtime.onTrace(heard)
       state.runtime = runtime
@@ -114,7 +149,16 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const chatRecords: Array<StoredEvent> = []
   const views = viewBoard(() => chat.add("view", ""))
 
+  /** The conversation a durable lesson's program last named. */
+  let shownSession: string | undefined
   function heard(event: Trace) {
+    // A conversation not shown before, or the one shown under a journal that does not go on from what the page took (the
+    // store was changed, or forgot): the Context tab starts over on it, before it hears of its journal.
+    const fresh = event._tag === "Showing" && (event.session !== shownSession || !continues(board, event.journal))
+    if (event._tag === "Showing" && fresh) {
+      shownSession = event.session
+      trace.reset(event.session)
+    }
     trace.hear(event)
     if (contextTab.getAttribute("aria-selected") !== "true" && !unseen) { unseen = true; contextTab.dataset.unseen = "" }
     window.dispatchEvent(new CustomEvent("learn:trace", { detail: event }))
@@ -129,6 +173,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
         }
         if (record._tag !== "Stored" || record.session !== conversation) break
         const { session: _session, _tag: _stored, ...kept } = record
+        // A record the chat took already, read from the journal as the conversation was shown, is not taken twice.
+        if (kept.seq <= (chatRecords.at(-1)?.seq ?? 0)) break
         chatRecords.push(kept)
         // What the UI shows: every view record redraws the chat's views from the fold of its records.
         if (record.name === viewEvent.name) views.draw(chatRecords)
@@ -138,6 +184,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
         }
         break
       }
+      case "Showing":
+        // The journal as the store held it when the program named the conversation. One not shown before is drawn
+        // from it alone; the one already shown takes the records it has not taken (a turn closed as the program started).
+        if (fresh) drawFrom(event.journal, board.rows.filter((row) => row.waiting === true && row.dropped === undefined).map((row) => row.text))
+        else event.journal.forEach(take)
+        break
       case "Reply":
         chat.focus()
         break
@@ -257,6 +309,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     try {
       // A build takes a few milliseconds; "Building…" stays long enough to be seen.
       const [result] = await Promise.all([runtime.start(editor.sources()), new Promise((resolve) => setTimeout(resolve, 400))])
+      saveSources()
       showBuild(result, kept > 0 ? `${what} ${kept} waiting message${kept === 1 ? " is" : "s are"} kept.` : what)
       return result._tag === "Built"
     } finally {
@@ -298,7 +351,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
       const source = editor.source(file.id)
       try {
         // A file of statements parses as a function's body; one that is an expression, as its return value.
-        if (file.formatPrefix === "") new Function(source)
+        // A file's own `export` is no statement of a function's body: the page runs the file without it.
+        if (file.formatPrefix === "") new Function(source.replace(/^export /gm, ""))
         else new Function(`return (${source}\n)`)
         syntaxBox.textContent = ""
       } catch (error) {
@@ -331,14 +385,19 @@ function boot(root: HTMLElement, lesson: Lesson) {
     state.building = true
     state.builds++
     refresh()
+    // What waited for a turn is dropped with the queue: it is not drawn again in the new conversation.
+    show(dropWaiting(board, "dropped by Clear context"))
     // The program is stopped first, so nothing it was still saying lands in the new conversation's chat.
     const result = await runtime.clear()
-    chat.clear()
-    show(emptyChat)
-    chatRecords.length = 0
-    views.reset()
+    // A durable lesson's program names the new conversation as it starts, and the page draws it then.
+    if (lesson.durable === undefined) {
+      chat.clear()
+      show(emptyChat)
+      chatRecords.length = 0
+      views.reset()
+      trace.reset(runtime.conversation)
+    }
     statusBox.textContent = ""
-    trace.reset(runtime.conversation)
     state.building = false
     showBuild(result, "a new, empty conversation; the old one stays in the journal store.")
     refresh()
@@ -450,19 +509,22 @@ function boot(root: HTMLElement, lesson: Lesson) {
    * through the step a record takes live, so every stored row and view comes back where it was, and what was only
    * said (a reply never stored, the page's notes) does not.
    */
-  const drawFrom = (journal: ReadonlyArray<StoredEvent>) => {
+  function drawFrom(journal: ReadonlyArray<StoredEvent>, waiting: ReadonlyArray<string> = []) {
     chat.clear()
     views.reset()
     chatRecords.length = 0
-    let rows = emptyChat
-    for (const record of journal) {
-      rows = stored(rows, record)
-      chat.render(rows.rows)
-      chatRecords.push(record)
-      if (record.name === viewEvent.name) views.draw(chatRecords)
-    }
+    board = emptyChat
+    journal.forEach(take)
     views.settle()
-    show(rows)
+    // The messages that waited for a turn still wait, after everything stored.
+    show(waiting.reduce((rows, text) => sent(rows, text), board))
+  }
+  /** One record of the conversation shown, read from its journal: the step a record takes when it is announced. */
+  function take(record: StoredEvent) {
+    if (record.seq <= (chatRecords.at(-1)?.seq ?? 0)) return
+    show(stored(board, record))
+    chatRecords.push(record)
+    if (record.name === viewEvent.name) views.draw(chatRecords)
   }
   // Lesson 6: redraw the chat from the journal.
   document.querySelectorAll<HTMLButtonElement>("[data-redraw-views]").forEach((button) => button.addEventListener("click", async () => {
@@ -472,17 +534,79 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }))
   document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => send(lesson.fill)))
 
+  // Lesson 7: run a kit over the code as it stands, and list each check under the button.
+  document.querySelectorAll<HTMLButtonElement>("[data-kit]").forEach((button) => button.addEventListener("click", async () => {
+    const id = button.dataset.kit ?? ""
+    // The list in the button's own step: a kit may have a button in more than one.
+    const list = (button.closest("[data-step]") ?? document).querySelector<HTMLElement>(`[data-kit-results="${id}"]`)
+    if (list === null) return
+    button.disabled = true
+    const ran = await (await ensureRuntime()).runKit(id, editor.sources())
+    button.disabled = false
+    const line = (state: "passed" | "failed", head: string, detail: string) => {
+      const item = document.createElement("li")
+      item.dataset.state = state
+      const name = document.createElement("strong")
+      name.textContent = head
+      item.append(name, detail === "" ? "" : ` ${detail}`)
+      return item
+    }
+    list.replaceChildren(...(ran._tag === "Failure"
+      ? [line("failed", "The kit did not run.", ran.failure)]
+      : ran.success.map((check) => line(check.passed ? "passed" : "failed", `${check.passed ? "✓" : "✗"} ${check.id}`, check.passed ? check.name : `${check.name}: ${check.message}`))))
+    list.hidden = false
+  }))
+  // Lesson 7: reload the page as it stands, a turn in progress included.
+  document.querySelectorAll<HTMLButtonElement>("[data-reload]").forEach((button) => button.addEventListener("click", () => window.location.reload()))
+  // Lesson 7: forget everything this lesson stored (its journals and the edits kept for a reload), and start again.
+  document.querySelectorAll<HTMLButtonElement>("[data-start-over]").forEach((button) => button.addEventListener("click", () => {
+    const prefix = lesson.durable?.prefix
+    if (prefix === undefined) return
+    try {
+      const storage = window.localStorage
+      Array.from({ length: storage.length }, (_, index) => storage.key(index)).forEach((key) => { if (key !== null && key.startsWith(prefix)) storage.removeItem(key) })
+      if (sourcesKey !== undefined) window.sessionStorage.removeItem(sourcesKey)
+    } catch { /* no storage: there is nothing kept to forget */ }
+    window.location.reload()
+  }))
+
   // ── start ───────────────────────────────────────────────────────────────
   // Echo and the program come up at once; the device probe (a GPU lookup that can
   // be slow or hang) only decides how the other models are described.
   refresh()
   models.render(state.device)
   void probeDevice().then((device) => { state.device = device; models.render(device) })
-  void (async () => {
+  const start = async (note?: string) => {
     await ensureRuntime()
+    restoreSources()
     await chooseModel(echoChoice)
     await rebuild()
     syncControls()
+    if (note !== undefined) show(said(board, "note", note))
     refresh()
-  })()
+  }
+  if (lesson.durable === undefined) void start()
+  else whenWriter(lesson.durable.prefix, (note) => void start(note), (text) => { setChip("open in another tab", "idle"); showFoot("idle", text) })
+}
+
+/**
+ * Start a durable lesson when this page is its store's one writer. A store has one writer (ADR 0010), and the
+ * page arranges it with a Web Lock named for the lesson, held while the page is open: a second tab waits, says
+ * so, and starts when the first is closed. A reload gets the lock again once the page before it is gone, so the
+ * notice is held back for a moment. Without Web Locks (a page served over plain http from another machine) the
+ * page cannot tell: it starts, and says so in the chat.
+ */
+function whenWriter(prefix: string, start: (note?: string) => void, wait: (text: string) => void) {
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks
+  if (locks === undefined) {
+    return start("This page is not served over https, so it cannot tell whether the lesson is open in another tab: keep it to one. Two tabs would write to the same journal.")
+  }
+  let granted = false
+  setTimeout(() => { if (!granted) wait("This lesson is open in another tab, which is writing its conversation. It starts here when that tab is closed.") }, 1200)
+  void locks.request(`${prefix}writer`, () => {
+    granted = true
+    start()
+    // Held for as long as the page is open: the promise never settles.
+    return new Promise<never>(() => {})
+  })
 }

@@ -23,8 +23,10 @@ export interface ChatRow {
   readonly seq?: number
   /** An answer still being written. */
   readonly live?: true
-  /** A message sent and not yet taken by a turn. */
+  /** A message sent and not yet stored by a turn. */
   readonly waiting?: true
+  /** A waiting message the program took off the queue: a turn has it, and has not stored it yet. */
+  readonly taken?: true
   /** Why a waiting message will never be taken. */
   readonly dropped?: string
   /** A tool's result that is a failure. */
@@ -37,9 +39,13 @@ export interface ChatBoard {
   readonly next: number
   /** The tool calls the model made, by id, as the chat words them. */
   readonly calls: ReadonlyMap<string, string>
+  /** The place of the last record taken: a record at or before it was taken already, and is passed over. */
+  readonly last: number
+  /** When each record taken was stored, by its place: what tells one journal from another that holds the same places. */
+  readonly times: ReadonlyArray<number>
 }
 
-export const emptyChat: ChatBoard = { rows: [], next: 1, calls: new Map() }
+export const emptyChat: ChatBoard = { rows: [], next: 1, calls: new Map(), last: 0, times: [] }
 
 /** What the chat shows for an answer with no text. */
 export const NO_TEXT = "(the model sent no text)"
@@ -72,8 +78,14 @@ const endRow = (turn: number, outcome: TurnOutcome): Option.Option<Pick<ChatRow,
   return Option.none()
 }
 
-/** One stored record of the conversation the chat shows: the one step every stored row comes from. */
-export const stored = (board: ChatBoard, record: StoredEvent): ChatBoard => {
+/**
+ * One stored record of the conversation the chat shows: the one step every stored row comes from. A record is
+ * taken once: one read from the journal and then heard announced (a turn closed as the program started) adds
+ * nothing the second time.
+ */
+export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
+  if (record.seq <= before.last) return before
+  const board = { ...before, last: record.seq, times: [...before.times, record.at] }
   const at = { turn: record.turn, seq: record.seq }
   const message = record.message
   if (record.name === userMessageEvent.name && message?._tag === "User") {
@@ -83,7 +95,7 @@ export const stored = (board: ChatBoard, record: StoredEvent): ChatBoard => {
     const waiting = open.rows.find((row) => row.waiting === true && row.dropped === undefined)
     return waiting === undefined
       ? add(open, { kind: "user", text: message.text, ...at })
-      : change(open, waiting.id, ({ waiting: _waiting, ...row }) => Option.some({ ...row, text: message.text, ...at }))
+      : change(open, waiting.id, ({ waiting: _waiting, taken: _taken, ...row }) => Option.some({ ...row, text: message.text, ...at }))
   }
   if (record.name === assistantMessageEvent.name && message?._tag === "Assistant") {
     const calls = new Map([...board.calls, ...message.toolCalls.map((call) => [call.id, `${call.name}(${JSON.stringify(call.input)})`] as const)])
@@ -124,6 +136,16 @@ export const chatRowsOf = (events: ReadonlyArray<StoredEvent>): ReadonlyArray<Ch
 /** A message was sent: it waits until a turn takes it. */
 export const sent = (board: ChatBoard, text: string): ChatBoard => add(board, { kind: "user", text, waiting: true })
 
+/** The program took `count` messages off the queue: the oldest that wait. */
+export const taken = (board: ChatBoard, count: number): ChatBoard => {
+  const ids = board.rows.filter((row) => row.waiting === true && row.dropped === undefined && row.taken !== true).slice(0, count).map((row) => row.id)
+  return { ...board, rows: board.rows.map((row) => ids.includes(row.id) ? { ...row, taken: true as const } : row) }
+}
+
+/** A turn said it is over. A message it took and never stored will not be: it is no conversation, and says so. */
+const unstoredTaken = (board: ChatBoard): ChatBoard =>
+  ({ ...board, rows: board.rows.map((row) => row.taken === true && row.waiting === true && row.dropped === undefined ? { ...row, dropped: "not stored: its turn ended before it was" } : row) })
+
 /** The messages still waiting will never be taken. */
 export const dropWaiting = (board: ChatBoard, why: string): ChatBoard =>
   ({ ...board, rows: board.rows.map((row) => row.waiting === true && row.dropped === undefined ? { ...row, dropped: why } : row) })
@@ -143,7 +165,7 @@ const storedAnswer = (board: ChatBoard, turn: number) =>
  * (the turn stored no answer last, or the program worded its own) is a row with no record behind it.
  */
 export const replied = (board: ChatBoard, turn: number, text: string): ChatBoard => {
-  const done = finish(board, turn)
+  const done = unstoredTaken(finish(board, turn))
   const repeats = Option.exists(storedAnswer(done, turn), (row) => row.text.trim() === text.trim())
   return repeats ? done : add(done, { kind: "agent", text: text.length > 0 ? text : NO_TEXT, turn })
 }
@@ -153,8 +175,12 @@ const failureStored = (board: ChatBoard, turn: number) => board.rows.some((row) 
 
 /** The program said a turn failed. The journal's own word for it shows already when the turn ended failed; else the program's does. */
 export const failed = (board: ChatBoard, turn: number, message: string): ChatBoard => {
-  const done = finish(board, turn)
-  return failureStored(done, turn) ? done : add(done, { kind: "error", text: message, turn })
+  const closed = finish(board, turn)
+  const done = unstoredTaken(closed)
+  // A turn that never stored the message it took opened nothing: the journal holds no end for it, whatever the
+  // turn before it left, so the program's word is the only one.
+  const neverOpened = done.rows.some((row, index) => row.dropped !== closed.rows[index]?.dropped)
+  return !neverOpened && failureStored(done, turn) ? done : add(done, { kind: "error", text: message, ...(neverOpened ? {} : { turn }) })
 }
 
 /** A turn's failure, taken out, however it got there: the page says the same thing in words of its own (a lost GPU). */
@@ -173,6 +199,25 @@ export const programEnded = (board: ChatBoard, reason: string): ChatBoard => {
   return said(dropWaiting(closed, "not taken: the program stopped"), "error", `${reason[0]?.toUpperCase() ?? ""}${reason.slice(1)} Fix your code, then press Rebuild.`)
 }
 
+/**
+ * A durable lesson's program named the conversation to show, and here is its journal as the store held it then.
+ * The conversation already shown, when that journal goes on from what the chat took, takes the records it has
+ * not taken yet (a turn closed as the program started). Any other is drawn from the journal alone, with the
+ * messages still waiting after it.
+ */
+export const showing = (board: ChatBoard, journal: ReadonlyArray<StoredEvent>, sameSession: boolean): ChatBoard =>
+  sameSession && continues(board, journal)
+    ? journal.reduce(stored, board)
+    : board.rows.filter((row) => row.waiting === true && row.dropped === undefined).reduce((now, row) => sent(now, row.text), journal.reduce(stored, emptyChat))
+
+/**
+ * Whether a journal goes on from the records the chat took: each of them is there, at its place, stored when it
+ * was. A session's journal can be another one under the same id (a store that was changed, or that forgot), and
+ * the chat is then drawn from that journal alone.
+ */
+export const continues = (board: ChatBoard, journal: ReadonlyArray<StoredEvent>): boolean =>
+  board.times.every((at, index) => journal[index]?.seq === index + 1 && journal[index]?.at === at)
+
 /** What the page heard, for the conversation the chat shows: the board after it. */
 export const hear = (board: ChatBoard, trace: Trace, shown: string): ChatBoard => {
   if (trace._tag === "Event") {
@@ -183,6 +228,7 @@ export const hear = (board: ChatBoard, trace: Trace, shown: string): ChatBoard =
     // A turn took the message: its answer is being written from here on.
     return record.name === userMessageEvent.name ? piece(next, record.turn, "") : next
   }
+  if (trace._tag === "Taken") return taken(board, trace.count)
   if (trace._tag === "Piece") return piece(board, trace.turn, trace.text)
   if (trace._tag === "Reply") return replied(board, trace.turn, trace.text)
   if (trace._tag === "Failed") return failed(board, trace.turn, trace.message)

@@ -5,7 +5,7 @@
 // A turn may call the model several times (a turn with tools is a loop over
 // steps), so its steps are built from what happened, call by call.
 import { Option } from "effect"
-import { assistantMessageEvent, messageOf, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, messageOf, SessionId, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
 import { estimateTokens } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
@@ -50,10 +50,15 @@ export interface Board {
   readonly logged: number
   /** A helper's session (lesson 4), not the chat's: its turn is opened by its caller, and its words stay out of the chat. */
   readonly helper: boolean
+  /**
+   * The place of the last record read from the journal as the conversation was shown (a durable lesson, after a
+   * reload): a turn that started at or before it ran in a page that is gone, and nothing of it but its records is here.
+   */
+  readonly restored: number
 }
 
 export const emptyBoard = (session: string, helper = false): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper,
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper, restored: 0,
 })
 
 export const LOG_LIMIT = 400
@@ -103,6 +108,8 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       const event = trace.event
       if (event.session !== board.session) return board
       if (event._tag === "Stored") {
+        // A record is taken once: one read from the journal as the conversation was shown, then heard announced, is passed over.
+        if (event.seq <= (board.records.at(-1)?.seq ?? 0)) return board
         const { session: _session, _tag: _ignored, ...stored } = event
         return withEntry({ ...board, records: [...board.records, stored] }, {
           ...base, kind: "record", turn: event.turn, seq: Option.some(event.seq), tags: event.tags,
@@ -157,6 +164,16 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       return withEntry(board, { ...base, kind: "chat", turn: trace.turn, title: `chat.status: ${trace.text}`, detail: trace.text })
     case "Ended":
       return withEntry(board, { ...base, kind: "program", turn: 0, title: "the program stopped", detail: trace.reason })
+    case "Taken":
+      return board
+    case "Showing":
+      // The conversation as its store holds it, read when the program named it: each record is taken as one announced is.
+      if (trace.session !== board.session) return board
+      return {
+        ...trace.journal.reduce((seeded, event) => record(seeded, { _tag: "Event", event: { _tag: "Stored", session: SessionId.make(trace.session), ...event } }, at), board),
+        // Only what this page did not hear of live: a rebuild shows the same conversation again, and its turns ran here.
+        restored: Math.max(board.restored, board.records.length === 0 ? (trace.journal.at(-1)?.seq ?? 0) : board.restored),
+      }
   }
 }
 
@@ -232,10 +249,15 @@ export interface CallView {
 
 export interface TurnView {
   readonly turn: number
+  /** The turn ran before this page loaded: its records were read from the journal, and its contexts and prompts were never stored. */
+  readonly restored: boolean
   readonly closed: Option.Option<string>
   readonly steps: ReadonlyArray<StepView>
   readonly calls: ReadonlyArray<CallView>
 }
+
+/** What a restored turn's context and prompt steps say. */
+export const BEFORE_THIS_PAGE = "This turn ran before the page was loaded. Its contexts and prompts were built for one call each and never stored: what is left is what it stored."
 
 /** The turns of the conversation, in order. */
 export const turnsOf = (board: Board): ReadonlyArray<number> =>
@@ -328,6 +350,8 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   const ofTurn = board.records.filter((record) => record.turn === turn)
   const started = Option.fromNullishOr(board.records.find((record) => record.name === turnStartedEvent.name && record.turn === turn))
   const ended = Option.fromNullishOr(ofTurn.find((record) => record.name === turnEndedEvent.name))
+  // A turn that started before the journal was read as the page loaded ran in a page that is gone.
+  const restored = Option.exists(started, (one) => one.seq <= board.restored)
   const users = ofTurn.filter((record) => record.name === userMessageEvent.name)
   const answers = ofTurn.filter((record) => record.name === assistantMessageEvent.name)
   const results = ofTurn.filter((record) => record.name === toolResultEvent.name)
@@ -406,13 +430,13 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       id: `context-${n}`, kind: "context", call: n, label: at("Memory built the context"), code: "memory.context(session)", column: "memory", happened: Option.isSome(view.memory), seqs: inContext,
       detail: Option.isSome(view.memory)
         ? `${plural(memoryCount, "message")} from the journal${leftOut > 0 ? `; ${leftOut} left out by memory` : ", nothing left out"}.`
-        : "Memory reads the journal and picks what the model sees.",
+        : restored ? BEFORE_THIS_PAGE : "Memory reads the journal and picks what the model sees.",
     })
     raw.push({
       id: `prompt-${n}`, kind: "prompt", call: n, label: at("Prompt sent"), code: "model.streamText({ prompt })", column: "prompt", happened: Option.isSome(view.prompt), seqs: inContext,
       detail: Option.isSome(view.prompt)
         ? `The system text from your code, ${memoryCount} from memory${added > 0 ? `, ${added} added by your code` : ""}: about ${view.promptTokens} tokens, ${view.reusedTokens} the same as the prompt before.`
-        : "The prompt is built fresh: the system text, then the context.",
+        : restored ? BEFORE_THIS_PAGE : "The prompt is built fresh: the system text, then the context.",
     })
     // A loop on the kernel's two functions: the hints name them, not the lines a loop writes by hand (lessons 1 and 2).
     const byKernel = board.given.get(turn)?.[index] === true
@@ -426,7 +450,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
     })
     const asked = Option.match(answer, { onNone: () => [] as ReadonlyArray<string>, onSome: (one) => (one.message?._tag === "Assistant" ? one.message.toolCalls.map((call) => String(call.id)) : []) })
     raw.push({
-      id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: byKernel ? "modelAnswer(stream, session)" : "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
+      id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: restored ? "stored before this page loaded" : byKernel ? "modelAnswer(stream, session)" : "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
       detail: Option.match(answer, {
         onNone: () => "The answer goes into the journal, for the next call's context.",
         onSome: (one) => asked.length > 0 ? `Record #${one.seq}: the model asked for ${plural(asked.length, "tool call")}.` : `Record #${one.seq}. The next turn's memory can read it.`,
@@ -436,7 +460,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       const done = results.filter((record) => record.message?._tag === "ToolResult" && asked.includes(String(record.message.id)))
       const failed = done.filter((record) => record.message?._tag === "ToolResult" && record.message.isFailure).length
       raw.push({
-        id: `tools-${n}`, kind: "tools", call: n, label: at("Tools ran"), code: byKernel ? "callTool(toolkit, call, session)" : "toolkit.handle(call.name, call.params)", column: "journal", happened: done.length === asked.length, seqs: done.map((record) => record.seq),
+        id: `tools-${n}`, kind: "tools", call: n, label: at("Tools ran"), code: restored ? "stored before this page loaded" : byKernel ? "callTool(toolkit, call, session)" : "toolkit.handle(call.name, call.params)", column: "journal", happened: done.length === asked.length, seqs: done.map((record) => record.seq),
         detail: done.length === 0 ? `Running ${plural(asked.length, "tool call")}.`
           : `${plural(done.length, "result")} stored${failed > 0 ? `, ${failed} of them failures the model reads` : ""}: ${done.map((record) => `#${record.seq}`).join(", ")}. Then the model is asked again.`,
       })
@@ -458,5 +482,5 @@ export const viewOf = (board: Board, turn: number): TurnView => {
         : isClosed ? "skipped"
           : index === firstMissing ? "now" : "todo",
   }))
-  return { turn, closed, steps, calls }
+  return { turn, restored, closed, steps, calls }
 }

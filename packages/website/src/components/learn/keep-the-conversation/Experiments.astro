@@ -1,0 +1,37 @@
+---
+const experiments = [
+  {
+    id: "slow-calculator", title: "Reload in the middle of a turn", button: "Make the calculator slow",
+    text: "The calculator now takes four seconds. Ask \"What is 6 * 7?\" and press Reload the page while it works. The page that comes back finds a turn its journal still holds open, with a call no result answered. recover closes it as Abandoned: the chat shows the line it left, and the next message is answered. Open Context: the abandoned call is in the journal and not in the prompt.",
+  },
+  {
+    id: "no-recover", title: "A turn nobody closes", button: "Take recover out of chat.ts",
+    text: "Do the same again, with the slow calculator: ask, and reload while it works. The conversation is found, and its turn is still open. Your next message is refused: the session is busy, and the failure says what to call. Press Reset and the page closes the turn as it starts.",
+  },
+  {
+    id: "no-place-check", title: "A store that does not check the place", button: "Remove the place check",
+    text: "append now writes wherever it is told. The chat still works: one writer, in order, never needs the check. Press Run the kit: conflict fails and says what it saw, and so does reopens, where a second handle writes at a place the first one took. The kit asks what a single conversation never does.",
+  },
+  {
+    id: "forgets-events", title: "A store that forgets", button: "Keep the events in the page",
+    text: "The headers still go to localStorage, and the events to a Map in the page. Say something, then reload: the conversation is found, and it is empty. Run the kit: reopens fails, the check that asks a second handle on the same storage what the first one wrote.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>
+<p class="learn-try">
+  <button class="btn btn-primary" type="button" data-reload>Reload the page</button>
+  <button class="btn" type="button" data-kit="store">Run the kit</button>
+</p>
+<ul class="learn-kit" data-kit-results="store" hidden></ul>

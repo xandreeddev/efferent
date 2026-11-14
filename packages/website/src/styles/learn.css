@@ -428,6 +428,17 @@ body.app {
 .files {
   display: flex;
   gap: 0.15rem;
+  /* A lesson with five files and the pane's buttons is wider than the pane: the tabs scroll, and Rebuild stays in sight. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.files button {
+  flex: none;
+  white-space: nowrap;
+}
+.pane-code .pane-actions {
+  flex: none;
 }
 .files button {
   font: inherit;
@@ -1142,6 +1153,32 @@ body.app {
 }
 .chat-status:not(:empty)::before {
   content: "● ";
+}
+/* A kit's checks, listed under the button that ran them. */
+.learn-kit {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.learn-kit li {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+.learn-kit strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+.learn-kit li[data-state="failed"] {
+  background: color-mix(in srgb, #ff8b7b 10%, var(--bg-soft));
+  border-color: color-mix(in srgb, #ff8b7b 40%, var(--border));
+  color: var(--text);
 }
 /* Said by the program, with no record behind it: gone when the chat is drawn from the journal. */
 .pg-msg.agent[data-unstored]::after {

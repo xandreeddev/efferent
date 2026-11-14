@@ -1,0 +1,101 @@
+---
+title: Keep the conversation
+description: The store is a module like any other. Write one over the browser's storage, and the conversation outlives the page, a turn the page left open included.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Kit from '../../components/learn/keep-the-conversation/Kit.astro'
+import Experiments from '../../components/learn/keep-the-conversation/Experiments.astro'
+import StartOver from '../../components/learn/keep-the-conversation/StartOver.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+Until now a reload lost everything. The journal was kept in the page, by `inProcessJournal()`, and went with it.
+
+The journal's store is a module like the others: a contract, **`JournalStorage`**, with four calls. In this lesson you write one that keeps the journal in the browser's `localStorage`. Then:
+
+- the conversation **outlives the page**: reload, and it is there;
+- the chat **finds it again** when the page loads, and closes a turn the page before it left open;
+- everything stored is **drawn again from the journal**: your messages, the answers, the tools' results.
+
+Say something, then reload the page.
+
+<p class="learn-try"><button class="btn btn-primary" type="button" data-reload>Reload the page</button></p>
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. Ask it "What did I say earlier?" after a reload: it answers from the messages it was sent, which now come from the stored journal.
+
+A reload starts the page again, so it comes back on Echo. Pick your model again to go on with it: the model is not part of the journal, and the conversation does not depend on which one answers. Qwen2.5 0.5B on the GPU, told "My name is Ana." before a reload and asked "What is my name?" after it, answers from the stored message: "Your name is Ana." in one run, the sentence repeated back in another.
+
+</Step>
+
+<Step n={3} id="store" title="The store" focus="code" file="store">
+
+**store.ts** is the whole store. A session's header has a key of its own, and so has each of its events:
+
+- **`create`** stores a header, once.
+- **`append`** stores one more event at the place after `expectedSeq`. It checks the place first: the one before must be taken, and this one free. That check is what keeps a journal in order when two writers meet.
+- **`read`** gives a header and its events in order.
+- **`list`** gives every header, by the time each session was created: how a program finds a conversation again.
+
+The store never looks inside an event. It keeps what it is given, and says so when a stored text is not a journal's (`Unreadable`).
+
+`localStorage` is shared by every page of a site, so a store takes a **prefix** for its keys. The page hands your program a `localStorage` that sees only this lesson's keys.
+
+The kernel ships this store as `webStorageJournal`, with one more thing yours leaves out: a storage that is full is reported, not thrown.
+
+</Step>
+
+<Step n={4} id="kit" title="Run the kit" focus="code" file="store">
+
+How do you know a store is right? Its contract comes with a **kit**: the contract as checks anyone can run over any store. The same kit runs over the kernel's stores.
+
+<Kit />
+
+Seven checks. Six ask what any store must do. The seventh, **reopens**, is only asked of a store whose journals outlive it: a second handle on the same storage must read what the first one wrote.
+
+</Step>
+
+<Step n={5} id="resume" title="Find the conversation again" focus="code" file="chat">
+
+**chat.ts** used to create a new session every time the page loaded. Now it asks **`resume`** which one to show:
+
+1. list the sessions, and keep yours: owned by `"learner"`, with no parent, in a format this kernel reads;
+2. take the last one, or create one if there is none;
+3. **`recover`** it.
+
+`recover` is for a turn nobody will close. A page that is reloaded in the middle of a turn stores the turn's start and never its end, so the journal says a turn is open, and a session takes one turn at a time. The journal cannot tell whether that turn's writer is slow or gone. Your program can: this page is the store's one writer, and it has just started. So it says so, and `recover` closes the turn as **`Abandoned`**. On a session that is free it does nothing.
+
+The page keeps to one writer for you: open this lesson in a second tab and it waits until the first is closed. A page not served over https has no way to do that, and tells you to keep to one tab.
+
+**agent.ts** changed by one line of `main`: `store(localStorage, { prefix: "agent:" })` where `inProcessJournal()` was.
+
+</Step>
+
+<Step n={6} id="watch" title="Watch it" focus="context" wide={true}>
+
+Send a few messages, then reload and open **Context**.
+
+- **Journal**: the records are the ones the page before wrote, with their places and times.
+- The turns from before the reload show what they stored. Their prompts are gone: a prompt is built for one call and never stored.
+- Your next message is turn 3, or whichever comes next: the session counts its turns from the journal.
+
+What the chat shows after a reload is everything **stored**. What a program only said is gone: "I stopped after 5 steps." was never a record, and neither was an answer cut off by Stop. The chat marks those "not stored" while they are on screen.
+
+</Step>
+
+<Step n={7} id="experiments" title="Experiments" focus="code">
+
+<Experiments />
+
+Your edits survive a reload in this tab, so an experiment is still applied when the page comes back. After breaking it, press **Reset** in the Code pane.
+
+<StartOver />
+
+**Next:** pointers: long tool results that stay out of the prompt. Why a store is a module, and why your program is the one that calls `recover`, is in [ADR 0010](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0010-a-store-is-a-part.md).
+
+</Step>

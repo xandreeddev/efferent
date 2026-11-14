@@ -241,6 +241,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 7, "Keep the conversation", at
+  `/learn/keep-the-conversation`. The learner writes the journal's store
+  over the browser's `localStorage` in `store.ts`, held to the storage kit
+  beside the kernel's `webStorageJournal`, and `chat.ts` gains one
+  editable piece, `resume`: the last conversation the learner started
+  that this kernel reads, its open turn closed with `Sessions.recover`,
+  or a new one. `agent.ts` is the base program with one line of `main`
+  changed. A reload brings the conversation back: the chat is drawn again
+  from the journal and the Context tab shows the earlier turns with what
+  they stored, saying their prompts never were. A "Run the kit" button
+  lists each check of the storage kit over the code as it stands. The
+  page holds a Web Lock as the store's one writer, so a second tab waits
+  until the first is closed; the learner's edits survive a reload in the
+  tab; "Start over" forgets everything stored. Experiments reload in the
+  middle of a turn (closed as `Abandoned`, its unanswered call not
+  sent), take `recover` out (the next message is refused and the failure
+  names it), remove the store's place check (the kit's `conflict`
+  fails) and keep the events in the page's memory (the kit's `reopens`
+  fails, and a reload finds the conversation empty). A message a program
+  takes and never stores, as when its turn is refused, no longer stays
+  "waiting" in the chat: it says it was not stored, and the failure
+  follows it. Lesson 1's "Show one thing, store another" now says what
+  the chat shows since it is drawn from the journal: two answers, the
+  stored one and the capitals the program said. Fixed: editing a file whose code starts a line with
+  `export` (tools.ts in lessons 2 to 6) showed "Unexpected keyword
+  'export'" under the editor, though the code ran; and in a lesson with
+  five files the Code pane's Rebuild button was cut off at its right
+  edge (the file tabs now scroll). No published package changes.
 - Docs site: the learn pages' chat is drawn from a model of its own
   (`chat-model.ts`), as the Context tab is. Every row that shows a stored
   record (a message, an answer, a tool's result, the line a stopped,

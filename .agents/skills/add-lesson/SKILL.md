@@ -49,6 +49,11 @@ checks.
   of the model's: the model's call is conversation and is sent again (ADR
   0009).
 
+- A lesson whose state outlives the page sets `Lesson.durable`
+  (`packages/website/AGENTS.md`, "A durable lesson"): its tests reload by
+  closing a storage view, and its browser script removes the lesson's keys
+  first and reloads for real.
+
 ## 3. Tests that can fail
 
 - `program.test.ts`: tsc over every shown file, and the program run on

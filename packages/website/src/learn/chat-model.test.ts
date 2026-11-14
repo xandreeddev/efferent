@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { assistantMessage, Seq, ToolCallId, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import { chatRowsOf, dropWaiting, emptyChat, failed, hear, piece, replied, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
+import { chatRowsOf, dropWaiting, emptyChat, failed, hear, piece, replied, sent, stored, taken, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -216,6 +216,23 @@ describe("the chat's rows, record by record", () => {
     const dropped = sent(dropWaiting(after, "dropped by Stop"), "Four.")
     expect(dropped.rows.map((row) => [row.text, row.dropped ?? ""])).toEqual([["One.", ""], ["Fine.", ""], ["Two.", "dropped by Stop"], ["Three.", "dropped by Stop"], ["Four.", ""]])
     expect(waitingCount(dropped)).toBe(1)
+  })
+
+  test("a message a turn took and never stored is no longer waiting once the turn says it failed: it says so, and the failure follows it", () => {
+    const one = TurnNumber.make(1)
+    const before = journal([turnStarted(one), userMessage("One."), turnEnded(one, { _tag: "Failed", reason: "Broken: it broke" })]).reduce(stored, emptyChat)
+    // The next message is taken off the queue, and its turn is refused before it stores anything: no record names it.
+    const refused = failed(taken(sent(before, "Two."), 1), 1, "the session is busy")
+    expect(refused.rows.map((row) => `${told(row)}${row.dropped === undefined ? "" : ` [${row.dropped}]`}`)).toEqual([
+      "user: One.",
+      "error: Broken: it broke",
+      "user* (waiting): Two. [not stored: its turn ended before it was]",
+      "error*: the session is busy",
+    ])
+    expect(waitingCount(refused)).toBe(0)
+    // What is sent next is a message of its own: the one that was dropped is not taken for it.
+    const next = journal([turnStarted(one), userMessage("One."), turnEnded(one, { _tag: "Failed", reason: "Broken: it broke" })], [turnStarted(TurnNumber.make(2)), userMessage("Three.")])[4]!
+    expect(stored(taken(sent(refused, "Three."), 1), next).rows.map((row) => row.text).slice(-3)).toEqual(["Two.", "the session is busy", "Three."])
   })
 
   test("an answer with no text is a row that says so, and its reply adds nothing", () => {

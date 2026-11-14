@@ -51,6 +51,8 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     expect(replyTexts(heard)).toEqual(["You said: \"tell me about loops\". This is the start of the conversation."])
     const order = [...new Set(heard.map(step))]
     expect(order).toEqual([
+      // The program takes the message off the chat's queue, then opens its turn.
+      "Taken",
       // The boot hook waits on the turn's start: it has run before the page's own log hears the record.
       "Status",
       "stored core.session.turn.started",

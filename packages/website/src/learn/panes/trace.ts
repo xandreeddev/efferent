@@ -5,7 +5,7 @@
 // Hovering a row lights the same record everywhere; a step lights what it
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
-import { emptyBoard, LOG_LIMIT, record, turnsOf, viewOf } from "../trace-model.ts"
+import { BEFORE_THIS_PAGE, emptyBoard, LOG_LIMIT, record, turnsOf, viewOf } from "../trace-model.ts"
 import type { Board, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
@@ -271,11 +271,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   }
 
   // ── memory ──────────────────────────────────────────────────────────────
-  const renderMemory = (view: CallView, lit: ReadonlySet<number>) => {
+  const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
     Option.match(view.memory, {
       onNone: () => {
-        memoryHead.textContent = "not asked yet"
-        patch(memoryBox, [["none", () => el("li", { class: "tr-none" }, "Memory has not been asked for this turn's context yet.")]])
+        memoryHead.textContent = restored ? "before this page loaded" : "not asked yet"
+        patch(memoryBox, [[restored ? "restored" : "none", () => el("li", { class: "tr-none" }, restored ? BEFORE_THIS_PAGE : "Memory has not been asked for this turn's context yet.")]])
       },
       onSome: (rows) => {
         const tokens = rows.reduce<number>((sum, row) => sum + row.tokens, 0)
@@ -302,11 +302,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     row.source === "code" ? "your code · never stored"
       : row.source === "added" ? "added by your code · never stored"
         : Option.match(row.seq, { onNone: () => "memory", onSome: (seq) => `memory · #${seq}` })
-  const renderPrompt = (view: CallView, lit: ReadonlySet<number>) => {
+  const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
     Option.match(view.prompt, {
       onNone: () => {
-        promptHead.textContent = "not sent yet"
-        patch(promptBox, [["none", () => el("li", { class: "tr-none" }, "No prompt has been sent in this turn yet.")]])
+        promptHead.textContent = restored ? "before this page loaded" : "not sent yet"
+        patch(promptBox, [[restored ? "restored" : "none", () => el("li", { class: "tr-none" }, restored ? BEFORE_THIS_PAGE : "No prompt has been sent in this turn yet.")]])
       },
       onSome: (rows) => {
         const share = view.promptTokens === 0 ? 0 : Math.round((view.reusedTokens / view.promptTokens) * 100)
@@ -392,8 +392,8 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     const call = callShown(view)
     renderCalls(view, call)
     renderJournal(call, lit)
-    renderMemory(call, lit)
-    renderPrompt(call, lit)
+    renderMemory(call, lit, view.restored)
+    renderPrompt(call, lit, view.restored)
     lightHovered()
     if (lit.size > 0) root.querySelector('[data-lit=""]')?.scrollIntoView({ block: "nearest" })
   }
