@@ -11,11 +11,12 @@
 // its summarizer. A program that calls the model by hand (lessons 1 and 2)
 // provides none, and the page falls back to the session memory was last
 // asked about.
-import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Scope, Stream } from "effect"
+import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Result, Scope, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { Core, JournalStorage, kernel, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
+import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { KernelEvent, StoredEvent } from "@xandreed/core/kernel"
 import { CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
+import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
@@ -23,6 +24,48 @@ import { Chat } from "./page-chat.ts"
 import { saidOfMessage } from "./said.ts"
 
 const OWNER = "learner"
+
+/** What a durable lesson's runtime shows before its program has named a conversation: no session has this id. */
+export const NO_CONVERSATION = SessionId.make("no-conversation-yet")
+
+/** How a runtime is made. */
+export interface RuntimeOptions {
+  /** A durable lesson's storage: the browser's `localStorage` on the page, a value of the test's own in a test. */
+  readonly storage?: KeyValueStore
+}
+
+/** Strings by key, kept in the page: what a durable lesson runs on where no storage was given. */
+const memoryStore = (): KeyValueStore => {
+  const values = new Map<string, string>()
+  return {
+    get length() { return values.size },
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value) },
+    removeItem: (key) => { values.delete(key) },
+  }
+}
+
+/** A storage seen through a prefix: every key the view reads or writes starts with it, and it lists no other. */
+export const prefixed = (storage: KeyValueStore, prefix: string): KeyValueStore => {
+  const keys = () => Array.from({ length: storage.length }, (_, index) => storage.key(index)).flatMap((key) => key !== null && key.startsWith(prefix) ? [key.slice(prefix.length)] : [])
+  return {
+    get length() { return keys().length },
+    key: (index) => keys()[index] ?? null,
+    getItem: (key) => storage.getItem(`${prefix}${key}`),
+    setItem: (key, value) => { storage.setItem(`${prefix}${key}`, value) },
+    removeItem: (key) => { storage.removeItem(`${prefix}${key}`) },
+  }
+}
+
+/** One check of a kit, as the page lists it. */
+export interface KitResult {
+  readonly id: string
+  readonly name: string
+  readonly passed: boolean
+  /** What the check found, when it failed. */
+  readonly message: string
+}
 
 /**
  * A message as the page shows it: who it is from, its text, and the key that matches it to the record it came
@@ -60,6 +103,8 @@ export type Trace =
   | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary"; readonly givenTurn?: true }
   /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
   | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
+  /** The program took messages off the chat's queue: the next one, or every one that waited. */
+  | { readonly _tag: "Taken"; readonly count: number }
   /** What the program told the chat, after the turn it last opened. */
   | { readonly _tag: "Piece"; readonly turn: number; readonly text: string }
   | { readonly _tag: "Reply"; readonly turn: number; readonly text: string }
@@ -67,6 +112,11 @@ export type Trace =
   | { readonly _tag: "Status"; readonly turn: number; readonly text: string }
   /** The program stopped on its own: it ended, or failed. Never sent for a stop the page asked for. */
   | { readonly _tag: "Ended"; readonly reason: string }
+  /**
+   * A durable lesson's program named the conversation to show (its chat's `resume`), as the program started: the
+   * session, and its journal as it was then, a turn closed by `resume` included.
+   */
+  | { readonly _tag: "Showing"; readonly session: string; readonly journal: ReadonlyArray<StoredEvent> }
 
 export type BuildResult =
   | { readonly _tag: "Built" }
@@ -126,24 +176,54 @@ export class LessonRuntime {
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
 
+  /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
+  private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
+
   private constructor(
     private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
     private readonly base: Context.Context<BaseServices>,
     private readonly queue: Queue.Queue<string>,
     session: SessionId,
+    /** A durable lesson's storage, seen through the lesson's prefix. */
+    private readonly storage: KeyValueStore,
   ) {
     this.session = session
   }
 
-  /** A runtime for one lesson: its base, its chat's queue and conversation, and the page listening on Core. */
-  static async create(lesson: Lesson): Promise<LessonRuntime> {
+  /**
+   * A runtime for one lesson: its base, its chat's queue and conversation, and the page listening on Core. A
+   * durable lesson's base keeps no journal: its storage hands every call to the store the learner's program
+   * builds, and no session is created here, since the learner's chat names the one to show.
+   */
+  static async create(lesson: Lesson, options: RuntimeOptions = {}): Promise<LessonRuntime> {
     const root = await Effect.runPromise(Scope.make())
-    const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
-    const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
     const queue = await Effect.runPromise(Queue.bounded<string>(100))
-    const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
-    const runtime = new LessonRuntime(lesson, root, base, queue, session)
+    if (lesson.durable === undefined) {
+      const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
+      const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
+      const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
+      const runtime = new LessonRuntime(lesson, root, base, queue, session, memoryStore())
+      await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
+      return runtime
+    }
+    // The runtime is made before its base, which hands its storage calls to whatever store the runtime holds by then.
+    let made: Option.Option<LessonRuntime> = Option.none()
+    const through = <A>(use: (store: Context.Service.Shape<typeof JournalStorage>) => Effect.Effect<A, JournalStorageError>) => Effect.suspend(() =>
+      Option.match(Option.flatMap(made, (runtime) => runtime.store), {
+        onNone: () => Effect.fail(new JournalStorageError({ reason: "Unavailable", message: "no store yet: the program that builds it has not started" })),
+        onSome: use,
+      }))
+    const delegating = JournalStorage.of({
+      create: (header) => through((store) => store.create(header)),
+      append: (id, expectedSeq, turn, event) => through((store) => store.append(id, expectedSeq, turn, event)),
+      read: (id, from) => through((store) => store.read(id, from)),
+      list: through((store) => store.list),
+    })
+    const Base = sessions().pipe(Layer.provideMerge(Layer.succeed(JournalStorage, delegating)), Layer.provideMerge(kernel()))
+    const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
+    const runtime = new LessonRuntime(lesson, root, base, queue, NO_CONVERSATION, prefixed(options.storage ?? memoryStore(), lesson.durable.prefix))
+    made = Option.some(runtime)
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
   }
@@ -204,13 +284,18 @@ export class LessonRuntime {
     const storage = Context.get(base, JournalStorage)
     const sessionsOf = Context.get(base, Sessions)
     const emit = (trace: Trace) => Effect.sync(() => this.emit(trace))
+    /** The conversation the chat shows from here on. */
+    const shown = (session: SessionId) => {
+      this.session = session
+      this.asked = undefined
+    }
     const chat = Chat.of({
       session: this.session,
       // One message at a time: a message is taken off the queue only when a turn is ready for it,
       // so what waits stays in the queue, where a rebuild keeps it and Stop drops it.
-      messages: Stream.fromEffectRepeat(Queue.take(this.queue)),
+      messages: Stream.fromEffectRepeat(Effect.tap(Queue.take(this.queue), () => emit({ _tag: "Taken", count: 1 }))),
       // Every message waiting now, taken at once: a turn that runs many steps takes them between steps.
-      drain: Effect.map(Queue.clear(this.queue), (taken) => Array.from(taken)),
+      drain: Effect.tap(Effect.map(Queue.clear(this.queue), (taken) => Array.from(taken)), (taken) => taken.length > 0 ? emit({ _tag: "Taken", count: taken.length }) : Effect.void),
       stream: (piece) => Effect.suspend(() => emit({ _tag: "Piece", turn: this.lastTurn, text: piece })),
       reply: (text) => Effect.suspend(() => emit({ _tag: "Reply", turn: this.lastTurn, text })),
       fail: (error) => Effect.suspend(() => emit({ _tag: "Failed", turn: this.lastTurn, message: textOf(error) })),
@@ -262,6 +347,22 @@ export class LessonRuntime {
       watchSummarizer: (layer) => Layer.effect(Summarizer, Effect.map(Effect.gen(function* () { return yield* Summarizer }), (summarizer) => Summarizer.of({
         summarize: (input) => summarizer.summarize(input).pipe(Effect.provideService(Summarizing, true)),
       }))).pipe(Layer.provide(layer)),
+      // The learner's store is built, and is what the base's storage hands every call to from here on.
+      storeOn: (layer) => Layer.effect(JournalStorage, Effect.map(Effect.gen(function* () { return yield* JournalStorage }), (store) => {
+        this.store = Option.some(store)
+        return storage
+      })).pipe(Layer.provide(layer)),
+      storage: this.storage,
+      // The learner's `resume` names the conversation; its journal is read before the chat is handed over, so the
+      // page draws what is stored before the program takes a message.
+      chatWith: (resume) => Layer.effect(Chat, Effect.gen(function* () {
+        yield* Sessions
+        const session = yield* resume.pipe(Effect.provideService(Sessions, sessionsOf))
+        const journal = yield* Effect.mapError(sessionsOf.read(session), (error) => ({ message: `the conversation \`resume\` gave cannot be read: ${error.message}` }))
+        shown(session)
+        yield* emit({ _tag: "Showing", session, journal: journal.events })
+        return Chat.of({ ...chat, session })
+      })),
     }
   }
 
@@ -311,18 +412,45 @@ export class LessonRuntime {
     return { dropped, result: await this.start(this.last) }
   }
 
-  /** A new, empty conversation in the same base, and the program started again. The old one stays in the journal store. */
+  /**
+   * A new, empty conversation in the same base, and the program started again. The old one stays in the journal
+   * store. In a durable lesson the program's chat finds the new session as the last one, and shows it.
+   */
   async clear(): Promise<BuildResult> {
     await Effect.runPromise(Queue.clear(this.queue))
-    this.session = await Effect.runPromise(Context.get(this.base, Sessions).create({ owner: OWNER }))
+    // The program is stopped first: a turn it has open ends before the new conversation is the one shown.
+    await this.stopProgram()
+    const created = await Effect.runPromise(Effect.result(Context.get(this.base, Sessions).create({ owner: OWNER })))
+    if (created._tag === "Failure") return { _tag: "Refused", message: `a new conversation could not be created: ${created.failure.message}` }
+    if (this.lesson.durable === undefined) this.session = created.success
     this.asked = undefined
     return this.start(this.last)
   }
 
-  /** The conversation's journal, as stored. */
+  /** The conversation's journal, as stored; none before a durable lesson's program has named a conversation. */
   async journal(): Promise<ReadonlyArray<StoredEvent>> {
+    if (this.session === NO_CONVERSATION) return []
     const journal = await Effect.runPromise(Context.get(this.base, Sessions).read(this.session))
     return journal.events
+  }
+
+  /** Every session the store holds, by creation. */
+  async list(): Promise<ReadonlyArray<{ readonly id: string; readonly owner: string; readonly parent?: string; readonly createdAt: number; readonly format: number }>> {
+    return Effect.runPromise(Effect.orElseSucceed(Context.get(this.base, Sessions).list, () => []))
+  }
+
+  /** Run one of the lesson's kits over the learner's code: each check, passed or what it found. */
+  async runKit(id: string, sources: Sources): Promise<Result.Result<ReadonlyArray<KitResult>, string>> {
+    const kit = this.lesson.kits?.[id]
+    if (kit === undefined) return Result.fail(`this lesson has no kit named ${id}`)
+    const checks = kit(sources, memoryStore)
+    if (Result.isFailure(checks)) return Result.fail(checks.failure)
+    const ran = await Effect.runPromise(Effect.forEach(checks.success, (check) => Effect.exit(Effect.timeout(check.run, "5 seconds")).pipe(
+      Effect.map((exit): KitResult => Exit.isSuccess(exit)
+        ? { id: check.id, name: check.name, passed: true, message: "" }
+        : { id: check.id, name: check.name, passed: false, message: Option.match(Cause.findErrorOption(exit.cause), { onNone: () => buildFailure(exit.cause), onSome: textOf }) }),
+    ), { concurrency: 1 }))
+    return Result.succeed(ran)
   }
 
   async dispose(): Promise<void> {

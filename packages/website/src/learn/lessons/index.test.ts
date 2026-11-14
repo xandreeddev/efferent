@@ -51,6 +51,7 @@ describe("lesson definitions", () => {
     expect(Option.map(lessonOf("sub-agents"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["agent", "tools", "loop", "chat", "memory"]))
     expect(Option.map(lessonOf("render"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["tools", "agent", "chat", "memory"]))
     expect(Option.map(lessonOf("compaction"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "summarizer", "agent", "tools", "chat"]))
+    expect(Option.map(lessonOf("keep-the-conversation"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["store", "chat", "agent", "tools", "memory"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
   })
 

@@ -129,6 +129,7 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
     }
     for (const row of rows) {
       const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined])
+      // (Whether a waiting message was taken off the queue changes nothing on screen until it is stored or dropped.)
       const found = drawn.get(row.id)
       if (found?.shown === shown) continue
       const item = found?.item ?? add(row.kind, "", row.waiting === true)

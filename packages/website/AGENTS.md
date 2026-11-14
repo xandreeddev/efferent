@@ -73,6 +73,32 @@ check` (tsc over the learn code, the build, the link check) and
   is given, by the row's id, and never reorders an element. Views are not rows: `views.ts` folds the same
   records with `viewsOf`. A new kind of thing in the chat is a case of
   `stored` when it has a record, with a test in `chat-model.test.ts`.
+- **A durable lesson** (`Lesson.durable`, lesson 7) keeps its journal in
+  the browser's storage, through the learner's own store.
+  - The runtime creates no session and keeps no journal: its base's
+    storage hands every call to the store the program builds
+    (`PageParts.storeOn`), over `localStorage` seen through the lesson's
+    prefix (`prefixed`), and the conversation is the one the learner's
+    `resume` gives (`PageParts.chatWith`). The program names it as it
+    starts, in a `Showing` trace that carries the journal read then: the
+    chat is drawn from it (`drawFrom`) and the Context tab seeded, and a
+    record at or below the last one taken is passed over, so one read
+    from the journal and then heard announced is drawn once. A session
+    can come back under another journal (the learner changed the store):
+    the page draws from scratch unless the records it holds are a prefix
+    of the journal it is handed (`continues`: same place, same time).
+  - The page is the store's one writer (ADR 0010): it holds a Web Lock
+    while it is open, and a second tab waits (`whenWriter`). The learner's
+    edits are kept in `sessionStorage`, so an experiment survives a reload.
+  - A test's reload is a second runtime over the same storage value, after
+    the first one's view of it was closed (every call of a closed view
+    throws): disposing the first would close its turn as `Interrupted`.
+    Two sessions created in one millisecond are listed by id: a test that
+    creates a second root session waits a few milliseconds first.
+  - A browser script starts by removing the lesson's keys: the Chrome
+    profile is kept between runs, and so is its storage.
+  - `Lesson.kits` are kits the page runs over the learner's code
+    (`runtime.runKit`), listed under a `data-kit` button.
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every
