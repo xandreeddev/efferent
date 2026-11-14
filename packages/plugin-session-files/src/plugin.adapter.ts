@@ -9,7 +9,7 @@ import { SessionFilesConfig, sessionFilesDefaults } from "./session-files.entity
  * @public
  */
 export const sessionLogFilesPlugin = definePlugin({
-  id: "@xandreed/plugin-session-files/log", version: "0.22.0", scope: "runtime",
+  id: "@xandreed/plugin-session-files/log", version: "0.23.0", scope: "runtime",
   config: SessionFilesConfig, defaults: sessionFilesDefaults, provides: [SessionLog],
   layer: ({ path, stallMs }) => SessionLogFilesLive(path, { stallMs }),
 })
@@ -21,7 +21,7 @@ export const sessionLogFilesPlugin = definePlugin({
  * @public
  */
 export const sessionFilesPlugin = definePlugin({
-  id: "@xandreed/plugin-session-files", version: "0.22.0", scope: "runtime",
+  id: "@xandreed/plugin-session-files", version: "0.23.0", scope: "runtime",
   config: SessionFilesConfig, defaults: sessionFilesDefaults, provides: [SessionLog, TurnAdmission],
   layer: ({ path, stallMs }) => Layer.merge(SessionLogFilesLive(path, { stallMs }), TurnAdmissionOpen),
 })
