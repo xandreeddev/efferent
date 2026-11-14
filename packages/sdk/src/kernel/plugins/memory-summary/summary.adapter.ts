@@ -1,10 +1,12 @@
 import { Effect, Layer, Match } from "effect"
-import { readJournal } from "@xandreed/core/kernel"
-import type { OpenSession } from "@xandreed/core/kernel"
+import type { Option } from "effect"
+import { messageOf, readJournal } from "@xandreed/core/kernel"
+import type { Message, OpenSession, StoredEvent } from "@xandreed/core/kernel"
 import { budgetOf, estimateTokens, paired, promptMessage } from "../../contracts/memory/memory.entity.functions.js"
 import { OverBudget } from "../../contracts/memory/memory.entity.js"
 import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
+import { pointed } from "../../contracts/memory/pointer.entity.functions.js"
 import { SummaryFailed } from "../../contracts/summary/summarizer.entity.js"
 import { Summarizer } from "../../contracts/summary/summarizer.port.js"
 import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
@@ -26,18 +28,28 @@ import type { SummaryOptions } from "./summary.entity.js"
  * context with its `SummaryFailed`, and nothing is stored; one that answers
  * with nothing fails it the same way, since a stored summary stays. A budget that is
  * no finite number of at least one token fails the layer with
- * `InvalidBudget`.
+ * `InvalidBudget`. With `pointers`, a long tool result is read as its
+ * pointer (`pointed`) before anything is counted or folded, so the
+ * summarizer is handed what the model was sent; pointer options that are
+ * none are refused where the layer is made.
  *
  * @public
  */
-export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, InvalidBudget, Summarizer> => Layer.effect(Memory, Effect.gen(function* () {
+export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, InvalidBudget, Summarizer> => {
+  // How a record's message is read: as stored, or a long result as its pointer. Options that are none throw here.
+  const sent = options.pointers === undefined ? messageOf : pointed(options.pointers)
+  return summaryMemoryOver(options, sent)
+}
+
+/** The summary memory's layer, reading each record's message with `sent`. */
+const summaryMemoryOver = (options: SummaryOptions, sent: (record: StoredEvent) => Option.Option<Message>): Layer.Layer<Memory, InvalidBudget, Summarizer> => Layer.effect(Memory, Effect.gen(function* () {
   const summarizer = yield* Summarizer
   const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))
   const keepTurns = options.keepTurns ?? 1
 
   const planned = (session: OpenSession) => Effect.map(
     Effect.flatMap(session.journal, (journal) => Effect.fromResult(readJournal(SUMMARY_VOCABULARY)(journal))),
-    (known) => plan(known, session.turn, budget, keepTurns),
+    (known) => plan(known, session.turn, budget, keepTurns, sent),
   )
   const over = (estimatedTokens: number, why = "with nothing more to fold") => new OverBudget({
     estimatedTokens: OverBudget.fields.estimatedTokens.make(estimatedTokens),

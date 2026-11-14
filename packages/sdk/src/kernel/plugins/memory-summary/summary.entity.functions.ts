@@ -52,9 +52,16 @@ export type Plan =
  * compaction is as far off as it can be; fold the kept turns too, oldest first, while the rest does not fit beside a
  * note of the present size (before the first summary, its frame alone). The open turn is never folded, and whole
  * turns only, so a tool call stays with its result. When even folding every closed turn would leave the context over
- * the budget, nothing is folded: the plan is `Over`, and no summary is asked for.
+ * the budget, nothing is folded: the plan is `Over`, and no summary is asked for. `sent` reads a record's message as
+ * it is sent: `messageOf`, or `pointed`'s function, so a long result counts, and is folded, as its pointer.
  */
-export const plan = (known: ReadonlyArray<StoredEvent>, openTurn: number, budgetTokens: Tokens, keepTurns: number): Plan => {
+export const plan = (
+  known: ReadonlyArray<StoredEvent>,
+  openTurn: number,
+  budgetTokens: Tokens,
+  keepTurns: number,
+  sent: (record: StoredEvent) => Option.Option<Message> = messageOf,
+): Plan => {
   const latest = known.reduceRight<Option.Option<{ readonly through: Seq; readonly note: string }>>(
     (found, event) => Option.isSome(found) ? found : Option.flatMap(dataOf(summarizedEvent, event), (data) =>
       Option.map(Option.fromNullishOr(event.message), (message) => ({ through: data.through, note: messageText(message) }))),
@@ -67,7 +74,7 @@ export const plan = (known: ReadonlyArray<StoredEvent>, openTurn: number, budget
   const turns: Array<{ turn: number; messages: Array<{ readonly seq: Seq; readonly message: Message }>; tokens: number }> = []
   for (const event of known) {
     if (event.seq <= through) continue
-    const said = messageOf(event)
+    const said = sent(event)
     if (Option.isNone(said)) continue
     const last = turns.at(-1)
     const turn = last !== undefined && last.turn === event.turn ? last : turns[turns.push({ turn: event.turn, messages: [], tokens: 0 }) - 1]!

@@ -1,10 +1,11 @@
 import { Effect, Layer, Option } from "effect"
-import { readJournal } from "@xandreed/core/kernel"
+import { messageOf, readJournal } from "@xandreed/core/kernel"
 import { paired, promptMessage } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf } from "../../contracts/memory/memory.entity.functions.js"
 import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
+import { pointed } from "../../contracts/memory/pointer.entity.functions.js"
 import { fitToBudget, nearlyFull, pressureOf, WINDOW_VOCABULARY, windowDropped } from "./window.entity.functions.js"
 import { windowPressureEvent } from "./window.entity.js"
 import type { WindowOptions } from "./window.entity.js"
@@ -18,22 +19,28 @@ import type { WindowOptions } from "./window.entity.js"
  * context built close to the budget it announces as `plugin.window.pressure`,
  * published through the open session, so it needs no `Core` of its own.
  * A budget that is no finite number of at least one token fails the layer
- * with `InvalidBudget`.
+ * with `InvalidBudget`. With `pointers`, a long tool result is read as its
+ * pointer (`pointed`) before anything is counted; pointer options that are
+ * none are refused here, where the layer is made.
  *
  * @public
  */
-export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => Layer.effect(Memory, Effect.gen(function* () {
-  const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
+export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => {
+  // How a record's message is read: as stored, or a long result as its pointer. Options that are none throw here.
+  const sent = options.pointers === undefined ? messageOf : pointed(options.pointers)
+  return Layer.effect(Memory, Effect.gen(function* () {
+    const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
 
-  return Memory.of({
-    // Nothing is kept between turns: each context is built from the journal as it stands.
-    context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
-      const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
-      const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
-      if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
-      // React: announce pressure, so any plugin can act on it.
-      if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
-      return paired(fitted.messages).map(promptMessage)
-    }),
-  })
-}))
+    return Memory.of({
+      // Nothing is kept between turns: each context is built from the journal as it stands.
+      context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
+        const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
+        const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget, sent))   // whole turns, oldest dropped first
+        if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
+        // React: announce pressure, so any plugin can act on it.
+        if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
+        return paired(fitted.messages).map(promptMessage)
+      }),
+    })
+  }))
+}

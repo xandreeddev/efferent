@@ -40,7 +40,9 @@ export const assistantMessage = (
 /**
  * `conversation.tool.result`: what the call `call` came to, for `session.append`. `result` is what the tool
  * returned, as it encodes it, or, with `isFailure`, what went wrong: a failure is stored as an answer, and the
- * turn goes on.
+ * turn goes on. `whole` says the tool wants its result sent as it is stored, however long.
  */
-export const toolResult = (call: Omit<CallPart, "params">, result: unknown, isFailure = false): StoredDraft =>
-  stored(toolResultEvent, {}, { message: { _tag: "ToolResult", id: ToolCallId.make(call.id), name: call.name, result: jsonOf(result), isFailure } })
+export const toolResult = (call: Omit<CallPart, "params">, result: unknown, isFailure = false, options: { readonly whole?: boolean } = {}): StoredDraft =>
+  stored(toolResultEvent, {}, {
+    message: { _tag: "ToolResult", id: ToolCallId.make(call.id), name: call.name, result: jsonOf(result), isFailure, ...(options.whole === true ? { whole: true as const } : {}) },
+  })

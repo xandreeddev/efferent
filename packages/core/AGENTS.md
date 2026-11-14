@@ -159,7 +159,7 @@ kernel's rules:
   and `conversation.tool.result`, which whoever runs a turn writes (ADRs
   0003 and 0004). `assistantMessage(text, { toolCalls })` takes the model's
   `tool-call` stream parts as they came (`{ id, name, params }`) and
-  `toolResult(call, result, isFailure)` what a call came to; both brand the
+  `toolResult(call, result, isFailure, { whole? })` what a call came to (`whole`, written only when true: the tool's word that its result is sent as stored, ADR 0011); both brand the
   call's id and keep a value that is not JSON as its text. Tools are never
   stored: they are the host's code, like the system text. A plugin contract's events
   and a plugin's own are defined in its folder with `storedEvent` and

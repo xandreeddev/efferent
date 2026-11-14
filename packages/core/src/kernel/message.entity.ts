@@ -27,11 +27,19 @@ export type AssistantMessage = typeof AssistantMessage.Type
 
 /**
  * What one tool call came to: its result as the tool encoded it, or, with `isFailure`, why it failed. A failure is
- * an answer like any other: the model reads it and decides what to do next. The call it answers is `id`.
+ * an answer like any other: the model reads it and decides what to do next. The call it answers is `id`. `whole`,
+ * written only when true, is the tool's word that its result reaches the model as it is stored, however long: a
+ * memory that shortens long results leaves this one alone.
  *
  * @public
  */
-export const ToolResult = Schema.TaggedStruct("ToolResult", { id: ToolCallId, name: Schema.String, result: Schema.Json, isFailure: Schema.Boolean })
+export const ToolResult = Schema.TaggedStruct("ToolResult", {
+  id: ToolCallId,
+  name: Schema.String,
+  result: Schema.Json,
+  isFailure: Schema.Boolean,
+  whole: Schema.optionalKey(Schema.Literal(true)),
+})
 export type ToolResult = typeof ToolResult.Type
 
 /**
