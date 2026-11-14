@@ -1,7 +1,7 @@
 ---
 const experiments = [
-  { id: "slow-show", title: "Watch the progress", button: "Make show slow", text: "Each row now takes half a second. Ask for a table of squares to 10: a bar fills on the view as the rows come, from live progress events nobody stores. Press Stop halfway: the turn closes, the bar goes, and no view is stored." },
-  { id: "table-as-result", title: "The wrong way", button: "Return the table to the model", text: "show now returns the table itself. Ask for a table, then say hello, and open Context: the cells are in the tool result, in that prompt and in every later one. The view's few words cost almost nothing; a table as a result costs its size on every request." },
+  { id: "slow-show", title: "Watch the progress", button: "Make show slow", text: "Each row now takes half a second. Ask for a table of cubes to 10: a bar fills on the view as the rows come, from live progress events nobody stores. Press Stop halfway: the turn closes, the bar goes, and no view is stored." },
+  { id: "table-as-result", title: "The wrong way", button: "Return the table to the model", text: "show now returns the table itself. Ask for a table, then say hello, and open Context: the cells are in the tool result, in that prompt and in every later one. The call and the view's few words cost almost nothing; a table as a result costs its size on every request." },
   { id: "no-turn", title: "A call with no turn", button: "Run calls outside their turn", text: "The loop no longer gives each call its turn. show declares CurrentTurn, so its call fails: the model reads why, and nothing is shown. A tool that needs nothing, the calculator, runs as before." },
 ]
 ---

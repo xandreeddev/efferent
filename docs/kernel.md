@@ -502,7 +502,10 @@ the work ends with.
 
 There is no render service. A tool that shows something appends its view
 through the turn its call runs in (`CurrentTurn`, ADR 0007), and publishes
-its progress on `Core`. What it returns to the model is a few words:
+its progress on `Core`. What it returns to the model is a few words. A view
+keeps out of the context what the tool worked out, not what the model
+wrote: a call's parameters are the model's message and are sent with the
+conversation, so the model asks in a few words and the tool makes the rows:
 
 <!-- pinned: packages/sdk/src/kernel/render.test.ts#show-tool -->
 
@@ -510,39 +513,40 @@ its progress on `Core`. What it returns to the model is a few words:
 import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
 import { Core } from "@xandreed/core/kernel"
-import { CurrentTurn, showView, TableView, ViewId, viewProgress } from "@xandreed/sdk/kernel"
+import { CurrentTurn, showView, ViewId, viewProgress } from "@xandreed/sdk/kernel"
 
-// A tool that shows a table. Its parameters are what the model chose; its result is a few words, not the table.
-const Show = Tool.make("show", {
-  description: "Show the user a table. Give it an id; showing again under the same id replaces it.",
-  parameters: Schema.Struct({ id: ViewId, title: Schema.String, columns: Schema.Array(Schema.String), rows: Schema.Array(Schema.Array(Schema.String)) }),
+// A tool that works out a table and shows it. The model asks in a few words; the rows are the tool's own work.
+const Squares = Tool.make("squares", {
+  description: "Show the user the squares from 1 to upTo, as a table. Give it an id: showing again under that id replaces it.",
+  parameters: Schema.Struct({ id: ViewId, upTo: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })) }),
   success: Schema.String,
-  failure: Schema.String,
-  failureMode: "return",
   // The turn its call runs in, to append the view, and Core, to publish its progress.
   dependencies: [CurrentTurn, Core],
 })
-const tools = Toolkit.make(Show)
+const tools = Toolkit.make(Squares)
 
 const toolsLive = tools.toLayer({
-  show: ({ id, title, columns, rows }) => Effect.gen(function* () {
+  squares: ({ id, upTo }) => Effect.gen(function* () {
     const session = yield* CurrentTurn
     const core = yield* Core
-    // Progress for whoever watches; a watcher that fails is a bug of the host's, not the model's mistake.
-    yield* Effect.orDie(core.publish(viewProgress(session, id, 0, rows.length)))
-    // The view is checked as it is built: a row with the wrong number of cells is the model's mistake, returned to it.
-    const table = yield* Effect.mapError(Schema.decodeUnknownEffect(TableView)({ _tag: "Table", title, columns, rows }), (error) => error.message)
-    yield* Effect.orDie(session.append(showView(id, table)))
-    yield* Effect.orDie(core.publish(viewProgress(session, id, rows.length, rows.length)))
+    const rows: Array<ReadonlyArray<string>> = []
+    for (let n = 1; n <= upTo; n++) {
+      rows.push([String(n), String(n * n)])
+      // How far it got: live, for whoever watches, never stored.
+      yield* Effect.orDie(core.publish(viewProgress(session, id, n, upTo)))
+    }
+    // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
+    yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))
+    // What the model reads: a few words.
     return `shown as ${id}`
   }),
 })
 ```
 
 `render.test.ts` holds it: the view is stored between the call and its
-result, the next prompt holds the call and "shown as squares" and none of
-the cells, and the same table returned as the tool's result instead is sent
-in every later request.
+result, no message of the next prompt holds the table (the call and "shown
+as squares" do), and the same table returned as the tool's result instead
+is sent in every later request.
 
 ## Records and tags
 

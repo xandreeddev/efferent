@@ -13,11 +13,13 @@ Some answers are better shown than said: a table of results, a card, the progres
 
 What is shown belongs to the UI, never to the model. A table costs its size in every later request if it is sent as text. So `show` stores the table as a **view**: a record of its own in the journal, tagged `ui`. The chat draws it, and no memory sends it. The model reads only a few words: "shown as squares".
 
+One rule makes it work: **the model asks, the tool makes**. What the model writes in a call is its own message, stored and sent with the conversation. So the model asks in a few words, "the squares to 5", and the tool works out the rows.
+
 </Step>
 
 <Step n={2} id="model" title="Pick a model" focus="model">
 
-This lesson runs on **Echo**. "Show a table of squares to 5" or "show the times table of 7" goes to `show`, with the rows worked out by rule.
+This lesson runs on **Echo**. "Show a table of squares to 5" or "show the times table of 7" goes to `show`, by rule.
 
 The small models on your machine rarely call a tool, as lesson 2 showed. Hosted models use `show` when their system text tells them to.
 
@@ -25,14 +27,14 @@ The small models on your machine rarely call a tool, as lesson 2 showed. Hosted 
 
 <Step n={3} id="tool" title="A tool that shows" focus="code" file="tools">
 
-**tools.ts** declares `show`: an id, a title, columns and rows. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat.
+**tools.ts** declares `show`. It takes three small things: an `id`, which `table` (`squares`, `cubes` or `times`) and `n`. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat. The rows are the handler's own work, from `kinds`.
 
 Its handler needs two things it lists in `dependencies`:
 
 - **`CurrentTurn`**, the turn its call runs in, to `append` the view;
 - **`Core`**, to publish progress as it goes.
 
-The table is checked as it is built: a row with the wrong number of cells is a failure the model reads.
+A call the model gets wrong, such as `n` of 50, is a failure the model reads, and nothing is shown.
 
 </Step>
 
@@ -50,7 +52,7 @@ Open **Context**:
 
 - **Journal**: between the call and its result, a record `plugin.render.view`, tagged `ui`. Its payload is the view.
 - **Memory**: the view is not there. It is not conversation, and memory skips it.
-- **Prompt**: the call, and the result "shown as squares". None of the cells.
+- **Prompt**: the call, `show({ id, table, n })`, and the result "shown as squares". None of the cells.
 
 The chat draws views by folding the journal: one view per id, the latest wins. The button below forgets every view drawn and draws them again from the journal alone, as a reload would.
 

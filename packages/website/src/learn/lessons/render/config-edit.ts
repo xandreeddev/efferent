@@ -8,12 +8,12 @@ const swap = (from: string, to: string) => (source: string): Option.Option<strin
 
 /** Each row takes half a second: watch the progress bar, and Stop it halfway. */
 export const slowShow = swap(
-  "      for (let done = 1; done <= rows.length; done++) {\n",
-  "      for (let done = 1; done <= rows.length; done++) {\n        yield* Effect.sleep(\"500 millis\")\n",
+  "      for (let i = 1; i <= count; i++) {\n",
+  "      for (let i = 1; i <= count; i++) {\n        yield* Effect.sleep(\"500 millis\")\n",
 )
 
 /** The wrong way: the tool returns the table itself, which the model reads in every later request. */
-export const tableAsResult = swap("      return `shown as ${id}`", "      return [columns, ...rows].map((row) => row.join(\" | \")).join(\"\\n\")")
+export const tableAsResult = swap("      return `shown as ${id}`", "      return [columns, ...rows].map((cells) => cells.join(\" | \")).join(\"\\n\")")
 
 /** The loop gives a call no turn: show, which needs one, fails, and the model reads why. */
 export const noTurn = (agent: string): Option.Option<string> => {

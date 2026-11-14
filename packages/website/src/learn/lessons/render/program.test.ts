@@ -69,21 +69,21 @@ const runMain = (file: URL, messages: ReadonlyArray<string>, script: Parameters<
 
 afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
-const squares = { id: "squares", title: "Squares", columns: ["n", "n²"], rows: [["1", "1"], ["2", "4"], ["3", "9"]] }
+const squares = { id: "squares", table: "squares", n: 3 }
 const script = [
   { _tag: "Calls" as const, pieces: [], calls: [{ name: "show", params: squares }] },
   { _tag: "Answers" as const, pieces: ["There it is."] },
 ]
 
 describe("lesson 6's displayed program", () => {
-  test("show stores a view in the turn its call runs in, and the model reads a few words, none of the cells", async () => {
+  test("show stores the view it worked out in the turn its call runs in, and no message the model reads holds the table", async () => {
     const result = await Effect.runPromise(runMain(write("shows"), ["Show me squares."], script))
     expect(result.shown.replies).toEqual(["There it is."])
     expect(result.calls[1]?.slice(-2)).toEqual([
       { role: "assistant", text: `show(${JSON.stringify(squares)})` },
       { role: "tool", text: "→ \"shown as squares\"" },
     ])
-    expect(result.calls[1]?.some((message) => message.role === "tool" && message.text.includes("n²"))).toBe(false)
+    expect(result.calls[1]?.some((message) => message.text.includes("n²"))).toBe(false)
   })
 
   test("the wrong way, the table returned as the result, puts the cells in the model's next prompt", async () => {

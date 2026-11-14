@@ -260,8 +260,8 @@ it: `./kernel` is a `restricted` subpath.
   progress, quoted by `docs/kernel.md`: the view stored between the call
   and its result, progress heard and never stored, the next prompt holding
   none of the cells, the table returned as a result instead sent in every
-  later request, a view replaced by id, a table whose rows do not match its
-  columns refused), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
+  later request, a view replaced by id, a call the model got wrong refused
+  as a failed result), `own-plugin` (an event plugin, the meter, and a wrapper of memory, the
   clock, quoted by `docs/kernel.md`; the clock stored as a plugin's record
   never reaching flat memory, stored as a user message piling up; the
   wrapper kit on the clock and on careless wrappers, each failing only

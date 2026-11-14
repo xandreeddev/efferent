@@ -47,10 +47,11 @@ describe("lesson 6 on the page (the kernel, Echo)", () => {
     await oneByOne(runtime, ["Show a table of squares to 3."])
     expect(replies(heard)).toEqual(["The tool answered: show says \"shown as squares\"."])
     const shown = viewsOf(await runtime.journal())
-    expect(shown.map(({ id, view }) => ({ id: String(id), view }))).toEqual([{ id: "squares", view: { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows: [["1", "1"], ["2", "4"], ["3", "9"]] } }])
+    expect(shown.map(({ id, view }) => ({ id: String(id), view }))).toEqual([{ id: "squares", view: { _tag: "Table", title: "Squares to 3", columns: ["n", "n²"], rows: [["1", "1"], ["2", "4"], ["3", "9"]] } }])
     const progress = heard.flatMap((trace) => (trace._tag === "Event" && trace.event._tag === "Live" && trace.event.name === "plugin.render.progress" ? [trace.event.data] : []))
     expect(progress).toEqual([{ id: "squares", done: 1, total: 3 }, { id: "squares", done: 2, total: 3 }, { id: "squares", done: 3, total: 3 }])
-    expect(prompts(heard).flat().some((message) => message.text.includes("n²") && message.role === "tool")).toBe(false)
+    // No message the model was sent, whoever's, holds the table: Echo asked in a few words, and the tool made the rows.
+    expect(prompts(heard).flat().some((message) => message.text.includes("n²"))).toBe(false)
   })
 
   test("showing again under the same id replaces the view, which keeps its first place", async () => {

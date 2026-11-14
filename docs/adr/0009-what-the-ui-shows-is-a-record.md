@@ -20,6 +20,10 @@ questions decide how:
 - **A view is a record.** `plugin.render.view`, stored, tagged `ui`, may be skipped, data
   `{ id, view }`. It bears no message, so no memory sends it: the model never sees a view.
   What the model gets back from a tool that showed something is a few words of its result.
+- **A view holds what the tool made, not what the model wrote.** A call's parameters are the
+  model's own message, stored with the conversation and sent in every later request. A tool
+  that takes its rows from the model saves nothing by showing them; one that works them out
+  from a few words keeps them out of the context. The model asks; the tool makes.
 - **The id is the caller's.** A tool takes it from the model as a parameter, since a handler
   is not given its call's id; a later view under the same id replaces it, and keeps its
   first place.
@@ -38,8 +42,10 @@ questions decide how:
 ## Consequences
 
 - A reload, or a second client, draws the same views from the store.
-- The model's context stays the conversation: a table shown costs a few words in later
-  requests, not its rows.
+- The model's context stays the conversation: a table a tool worked out costs the call and a
+  few words in later requests, not its rows.
+- Nothing bounds a view's size but its shape's checks: the host's tool bounds what it makes
+  (the lesson's tables stop at 20 rows).
 - The vocabulary is a choice still open: the four shapes are what the first lesson needs.
   The old engine's render plugin rendered surfaces of opaque JSON specs with component
   releases, versions, phases and a transport; the kernel keeps none of that until a client

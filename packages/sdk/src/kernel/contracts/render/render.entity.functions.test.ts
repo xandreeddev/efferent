@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { Option, Schema } from "effect"
+import { TableView } from "./render.entity.js"
 import { EventName, Seq, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { viewsOf } from "./render.entity.functions.js"
@@ -19,5 +21,11 @@ describe("viewsOf", () => {
       { id: "a", view: { _tag: "List", items: ["x", "y"] }, firstSeq: 1, turn: 1, seq: 5 },
       { id: "b", view: { _tag: "Card", title: "B", body: "b" }, firstSeq: 2, turn: 1, seq: 2 },
     ])
+  })
+
+  test("a table whose rows do not each have one cell per column is no view", () => {
+    const decode = Schema.decodeUnknownOption(TableView)
+    expect(Option.isSome(decode({ _tag: "Table", columns: ["n", "n²"], rows: [["1", "1"]] }))).toBe(true)
+    expect(Option.isNone(decode({ _tag: "Table", columns: ["n", "n²"], rows: [["1"]] }))).toBe(true)
   })
 })

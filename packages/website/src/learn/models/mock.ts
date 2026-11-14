@@ -95,18 +95,11 @@ interface EchoCall {
   readonly params: Record<string, unknown>
 }
 
-/** The table Echo asks `show` for, by rule: squares or cubes up to n (5 if none is named, at most 20), or a times table. */
+/** The table Echo asks `show` for, by rule: squares or cubes up to n (5 if none is named), or a times table. A few words: the tool makes the rows. */
 const showTable = (match: RegExpExecArray): EchoCall => {
   const kind = match[1]!.toLowerCase()
-  if (kind === "squares" || kind === "cubes") {
-    const upTo = Math.min(20, Math.max(1, Number(match[2] ?? 5)))
-    const power = kind === "squares" ? 2 : 3
-    const rows = Array.from({ length: upTo }, (_, index) => [String(index + 1), String((index + 1) ** power)])
-    return { name: "show", params: { id: kind, title: kind === "squares" ? "Squares" : "Cubes", columns: ["n", kind === "squares" ? "n²" : "n³"], rows } }
-  }
-  const of = Number(kind)
-  const rows = Array.from({ length: 10 }, (_, index) => [`${index + 1} × ${of}`, String((index + 1) * of)])
-  return { name: "show", params: { id: `times-${of}`, title: `The times table of ${of}`, columns: ["sum", "answer"], rows } }
+  if (kind === "squares" || kind === "cubes") return { name: "show", params: { id: kind, table: kind, n: Number(match[2] ?? 5) } }
+  return { name: "show", params: { id: `times-${kind}`, table: "times", n: Number(kind) } }
 }
 
 const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×": "*", "/": "/", "÷": "/" }
