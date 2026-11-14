@@ -3,9 +3,12 @@
 // note reaches the model and never the journal, and every experiment finds
 // its line and does what the page says it does.
 import { afterEach, describe, expect, test } from "bun:test"
-import { Option } from "effect"
-import { assistantMessageEvent, userMessageEvent } from "@xandreed/core/kernel"
-import { loadEcho } from "../../models/mock.ts"
+import { Effect, Option, Stream } from "effect"
+import { assistantMessageEvent, toolResultEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { makeBrowserModel } from "../../models/make.ts"
+import { echoChoice, loadEcho } from "../../models/mock.ts"
+import type { LoadedModel } from "../../models/types.ts"
+import { streamDelta, streamEnd, streamFinish, streamStart } from "../../prompt-map.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
 import { DEFAULT_MEMORY } from "../tools/memory.source.ts"
@@ -20,10 +23,10 @@ afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runt
 const SOURCES = { plugin: DEFAULT_PLUGIN, agent: DEFAULT_AGENT, tools: DEFAULT_TOOLS, memory: DEFAULT_MEMORY }
 const NOTE = /^\[Host note: it is .+\.\]$/
 
-const start = async (sources: Record<string, string> = SOURCES) => {
+const start = async (sources: Record<string, string> = SOURCES, model: LoadedModel = loadEcho()) => {
   const runtime = await LessonRuntime.create(yourOwnPlugin)
   opened.push(runtime)
-  runtime.setModel(loadEcho())
+  runtime.setModel(model)
   const heard: Array<Trace> = []
   runtime.onTrace((trace) => heard.push(trace))
   expect(await runtime.start(sources)).toEqual({ _tag: "Built" })
@@ -82,6 +85,38 @@ describe("lesson 3 on the page (the kernel, Echo)", () => {
     const stored = (await runtime.journal()).filter((record) => record.name === assistantMessageEvent.name)
       .map((record) => (record.data as { readonly usage?: { readonly outputTokens?: number } }).usage?.outputTokens)
     expect(stored).toEqual([30, 6, 10])
+  })
+
+  test("a model on your machine, which writes its call as text: the loop runs the call and stores both answers with their usage", async () => {
+    // What a GPU or CPU model's adapter streams (start, pieces, end, finish with the provider's usage), given tools
+    // by the text protocol: the first answer is a call written as a block, the second reads its result.
+    const answers = ['Let me check. <tool_call>{"name":"calculator","arguments":{"a":12,"op":"*","b":3}}</tool_call>', "It is 36."]
+    let asked = 0
+    const written: LoadedModel = {
+      choice: { ...echoChoice, id: "written", label: "Written" },
+      model: makeBrowserModel({
+        generateText: () => Effect.die("this lesson streams"),
+        streamText: () => {
+          const text = answers[asked++] ?? "Nothing more."
+          const pieces = text.match(/.{1,7}/gs) ?? []
+          return Stream.fromIterable([streamStart, ...pieces.map(streamDelta), streamEnd, streamFinish({ inputTokens: { total: 100 + asked }, outputTokens: { total: 10 * asked } })]) as never
+        },
+      }),
+      interrupt: () => {},
+      dispose: () => {},
+    }
+    const { runtime, heard } = await start(SOURCES, written)
+    await say(runtime, "What is 12 * 3?")
+    expect(replyTexts(heard)).toEqual(["It is 36."])
+    const records = (await runtime.journal()).filter((record) => record.message !== undefined)
+    expect(records.map((record) => record.name)).toEqual([userMessageEvent.name, assistantMessageEvent.name, toolResultEvent.name, assistantMessageEvent.name])
+    // The block never reaches the chat or the journal as text: the call is stored as a call, with what the provider reported.
+    expect(records[1]?.message).toMatchObject({ _tag: "Assistant", text: "Let me check. ", toolCalls: [{ name: "calculator", input: { a: 12, op: "*", b: 3 } }] })
+    expect(records[2]?.message).toMatchObject({ _tag: "ToolResult", name: "calculator", result: 36, isFailure: false })
+    expect(records[3]?.message).toMatchObject({ _tag: "Assistant", text: "It is 36.", toolCalls: [] })
+    const usage = records.filter((record) => record.name === assistantMessageEvent.name).map((record) => (record.data as { readonly usage?: object }).usage)
+    expect(usage).toEqual([{ inputTokens: 101, outputTokens: 10 }, { inputTokens: 102, outputTokens: 20 }])
+    expect(statuses(heard).at(-1)).toBe("turn 1: ~30 tok, ~30 in all")
   })
 
   test("a sum still goes to the calculator with the note after it, and the note is not a sum", async () => {

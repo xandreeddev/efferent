@@ -57,7 +57,7 @@ export type Trace =
    * A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. A
    * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop.
    */
-  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary" }
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary"; readonly givenTurn?: true }
   /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
   | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
   /** What the program told the chat, after the turn it last opened. */
@@ -233,7 +233,10 @@ export class LessonRuntime {
         const kit = options.toolkit
         const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
         const purpose = summarizing ? { purpose: "summary" as const } : {}
-        yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose })
+        // A stream that runs with a turn was handed to the kernel's `modelAnswer` (or is a summarizer's): the Context
+        // tab then names that function, not the lines a loop would write by hand.
+        const given = Option.isSome(current) ? { givenTurn: true as const } : {}
+        yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose, ...given })
         return Reflect.apply(inner.streamText, inner, [options]).pipe(
           Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
         )

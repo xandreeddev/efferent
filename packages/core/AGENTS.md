@@ -188,8 +188,11 @@ kernel's rules:
   stamps it with the place and the time. Nothing about a request is
   stored, and core names none (ADR 0003): the system text is the host's
   program's, and memory builds the context from the conversation. The
-  kernel writes no text the model reads: a failed tool result holds the
-  text of the tool's failure or of Effect AI's toolkit, as it came.
+  kernel writes no text for the model: a failed tool result holds the
+  text of the failure, as it came. That is a tool's own failure, Effect
+  AI's toolkit's, or a kernel refusal raised inside the handler (a
+  `SessionRefused` such as `NotADraft`), whose message the model then
+  reads; those messages say what to do next.
 - `Sessions.open(id)` opens the next turn in the caller's scope and closes
   it with the scope's exit; `turn(id, body)` runs a body in a scope of its
   own. A scope's close cannot fail, so an end that cannot be stored is a
