@@ -43,7 +43,8 @@ const unreadable = (key: string) => new JournalStorageError({ reason: "Unreadabl
  * two: the one at the place it expects, which must be there, and the one
  * after it, which must not. Every call reads and writes in one synchronous
  * step. The storage is shared by every page of an origin: the prefix keeps
- * a store's keys apart, and one writer at a time is the host's to arrange.
+ * a store's keys apart (a store whose prefix starts with another's is not
+ * listed by it), and one writer at a time is the host's to arrange.
  * A storage that refuses a write (it is full, or blocked) is `Unavailable`;
  * a stored value that does not decode is `Unreadable`.
  *
@@ -109,8 +110,10 @@ export const webStorageJournal = (storage: KeyValueStore, options: WebStorageJou
       }
       return found
     }), (found) => Effect.map(
-      Effect.forEach(found, ([key, value]) => decoded(decodeHeader, key, value), { concurrency: 1 }),
-      (headers) => Arr.sort(headers, byCreation),
+      // A key under the prefix that is another store's header (a store whose prefix starts with this one) is not this
+      // store's session: only a header kept under its own id's key is listed.
+      Effect.forEach(found, ([key, value]) => Effect.map(decoded(decodeHeader, key, value), (one) => key === headerKey(one.id) ? [one] : []), { concurrency: 1 }),
+      (headers) => Arr.sort(headers.flat(), byCreation),
     )),
   }))
 }

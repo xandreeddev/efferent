@@ -109,15 +109,18 @@ describe("the storage kit", () => {
     store.setItem("somebody-else", "not a journal")
     store.setItem("b:not-a-session", "not a journal either")
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const [a, b] = [yield* webOver(store, "a:"), yield* webOver(store, "b:")]
+      const [a, b, nested] = [yield* webOver(store, "a:"), yield* webOver(store, "b:"), yield* webOver(store, "a:inner:")]
       yield* a.create(header)
       yield* a.append(header.id, Seq.make(0), TurnNumber.make(1), userMessage("Hello"))
-      return { a: yield* a.list, b: yield* b.list, missing: yield* Effect.flip(b.read(header.id)), keys: Array.from({ length: store.length }, (_, index) => store.key(index)) }
+      // A store whose prefix starts with another's: its sessions are its own.
+      yield* nested.create({ ...header, id: SessionId.make("s-2") })
+      return { a: yield* a.list, b: yield* b.list, nested: yield* nested.list, missing: yield* Effect.flip(b.read(header.id)), keys: Array.from({ length: store.length }, (_, index) => store.key(index)) }
     })))
     expect(result.a.map((listed): string => listed.id)).toEqual(["s-1"])
     expect(result.b).toEqual([])
+    expect(result.nested.map((listed): string => listed.id)).toEqual(["s-2"])
     expect(result.missing.reason).toBe("SessionMissing")
-    expect(Arr.sort(result.keys.flatMap((key) => key === null ? [] : [key]), Order.String)).toEqual(["a:s-1:1", "a:s-1:header", "b:not-a-session", "somebody-else"])
+    expect(Arr.sort(result.keys.flatMap((key) => key === null ? [] : [key]), Order.String)).toEqual(["a:inner:s-2:header", "a:s-1:1", "a:s-1:header", "b:not-a-session", "somebody-else"])
   })
 
   test("the web storage journal says what it cannot read, and what the storage refused", async () => {

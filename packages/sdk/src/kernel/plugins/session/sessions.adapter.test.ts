@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Array as Arr, Clock, Context, Deferred, Effect, Fiber, Layer, Option, Order, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Core, JOURNAL_FORMAT, kernel, listenerFailedEvent, liveEvent, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
+import { Core, JOURNAL_FORMAT, kernel, listenerFailedEvent, liveEvent, Owner, Seq, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -117,6 +117,23 @@ describe("the end of a turn", () => {
         ? Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn)))).pipe(Effect.flatMap((exit) => Deferred.done(next, exit)))
         : Effect.void, { name: "follower" })
       yield* turns.turn(id, () => Effect.void)
+      return yield* Effect.match(Deferred.await(next), { onSuccess: (turn) => ({ budget, turn }), onFailure: (failure) => ({ budget, failure }) })
+    }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
+    expect(results).toEqual(budgets.map((budget) => ({ budget, turn: 2 })))
+  })
+
+  test("stored by recover finds the session free for such a listener too, wherever the publisher is preempted", async () => {
+    const results = await run(Effect.forEach(budgets, (budget) => Effect.scoped(Effect.gen(function* () {
+      const { plugins: [turns], core, storage } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      // A writer that is gone left turn 1 open.
+      yield* storage.append(id, Seq.make(0), TurnNumber.make(1), turnStarted(TurnNumber.make(1)))
+      const next = yield* Deferred.make<number, unknown>()
+      yield* core.on(turnEndedEvent, (ended) => ended.data.turn === 1
+        ? Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn)))).pipe(Effect.flatMap((exit) => Deferred.done(next, exit)))
+        : Effect.void, { name: "follower" })
+      yield* turns.recover(id)
       return yield* Effect.match(Deferred.await(next), { onSuccess: (turn) => ({ budget, turn }), onFailure: (failure) => ({ budget, failure }) })
     }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
     expect(results).toEqual(budgets.map((budget) => ({ budget, turn: 2 })))

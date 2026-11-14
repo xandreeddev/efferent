@@ -261,8 +261,9 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
         Effect.catchTag("JournalStorageError", (error): Effect.Effect<never, SessionRefused | JournalStorageError> =>
           error.reason === "SeqConflict" ? Effect.fail(busy(id, "another writer is writing to it")) : Effect.fail(error)),
       )
-      // Announced as any stored record. No listener can fail it or hold it past `closeWait`, as for an end of this process.
-      yield* Effect.timeoutOption(core.publish(announced({ id }, ended), { listenerFailures: "report" }), options.closeWait ?? "5 seconds")
+      // Announced as the end of a turn of this process is: no listener can fail it or hold it past `closeWait`, and the
+      // session is freed before the end is handed to the background listeners and the host's stream.
+      yield* Effect.timeoutOption(core.publish(announced({ id }, ended), { beforeHandOver: release(id), listenerFailures: "report" }), options.closeWait ?? "5 seconds")
       return abandoned
     }).pipe(Effect.ensuring(release(id)))
   })

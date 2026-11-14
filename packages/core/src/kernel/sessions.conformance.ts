@@ -80,9 +80,9 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * owner, or a parent that is no id, is refused with `InvalidSession`
  * (`invalid-session`); every session is listed with its header, by
  * creation (`list`); a turn a writer that is gone left open is closed by
- * `recover` as `Abandoned` and announced, the next turn runs, a free
- * session is left as it is, and a turn this plugin holds is refused
- * (`recover`); a turn another writer closed in the store stores nothing
+ * `recover` as `Abandoned` and announced, the session free by the time a
+ * background listener hears of it, a free session is left as it is, and a
+ * turn this plugin holds is refused (`recover`); a turn another writer closed in the store stores nothing
  * more: its append is refused, its close adds no second end and is heard
  * once, and the next turn opens (`recovered-writer`); a journal of another
  * format reads back and is listed, and no turn opens or is recovered on it
@@ -341,7 +341,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("list", listed.some((header) => header.id === child && header.parent === first && header.owner === "kit-helper"),
         `a session created with a parent was listed as ${show(listed.filter((header) => header.id === child))}`)
     })),
-    check("a turn left open by a writer that is gone is closed as abandoned, and the next turn runs", "recover", ({ sessions, storage, seen }) => Effect.gen(function* () {
+    check("a turn left open by a writer that is gone is closed as abandoned, and the next turn runs", "recover", ({ core, sessions, storage, seen }) => Effect.gen(function* () {
       const id = yield* sessions.create({ owner })
       yield* sessions.turn(id, (session) => session.append(note("before")))
       const free = yield* sessions.recover(id)
@@ -352,20 +352,24 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* storage.append(id, Seq.make(4), two, note("left behind"))
       yield* refuses("recover", "a turn of a session whose turn was left open", sessions.turn(id, () => Effect.void),
         (error) => error._tag === "SessionRefused" && error.reason === "SessionBusy" && error.message.includes("Sessions.recover"))
+      // The session is free by the time the end reaches a background listener: one that opens the next turn there is not refused.
+      const opened = yield* Deferred.make<Option.Option<TurnNumber>>()
+      yield* core.on(turnEndedEvent, (event) => event.turn !== two ? Effect.void
+        : Effect.flatMap(Effect.option(sessions.turn(id, (session) => Effect.succeed(session.turn))), (turn) => Deferred.succeed(opened, turn)), { name: "kit-next" })
       const closed = yield* sessions.recover(id)
       yield* expect("recover", Option.contains(closed, two), `recovering a session whose turn 2 was left open closed ${show(Option.getOrNull(closed))}`)
+      const next = Option.flatten(yield* within(opened))
+      yield* expect("recover", Option.contains(next, TurnNumber.make(3)), `a listener that heard the end of a recovered turn and opened the next was given ${show(Option.getOrNull(next))}, not turn 3`)
       const journal = yield* sessions.read(id)
-      const ended = Option.fromNullishOr(journal.events.at(-1))
-      yield* expect("recover", show(names(journal.events)) === show([STARTED, noted.name, ENDED, STARTED, noted.name, ENDED]) && outcomeOf(ended) === "Abandoned" && journal.events.at(-1)?.turn === 2,
+      const ended = Option.fromNullishOr(journal.events.find((event) => event.name === ENDED && event.turn === 2))
+      yield* expect("recover", show(names(journal.events.slice(0, 6))) === show([STARTED, noted.name, ENDED, STARTED, noted.name, ENDED]) && outcomeOf(ended) === "Abandoned" && Option.exists(ended, (event) => event.seq === 6),
         `a recovered session holds ${show(journal.events)}`)
-      const heard = (yield* seen).at(-1)
-      yield* expect("recover", heard !== undefined && heard._tag === "Stored" && heard.name === ENDED && heard.session === id && heard.seq === 6,
+      const heard = (yield* seen).find((event) => event.name === ENDED && event.turn === 2)
+      yield* expect("recover", heard !== undefined && heard._tag === "Stored" && heard.session === id && heard.seq === 6,
         `the end a recovery stored was announced as ${show(heard)}`)
       const again = yield* sessions.recover(id)
       const after = yield* sessions.read(id)
-      yield* expect("recover", Option.isNone(again) && after.events.length === 6, `a second recovery closed ${show(Option.getOrNull(again))} and left ${show(names(after.events))}`)
-      const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
-      yield* expect("recover", next === 3, `the turn after a recovered one was turn ${next}`)
+      yield* expect("recover", Option.isNone(again) && after.events.length === journal.events.length, `a second recovery closed ${show(Option.getOrNull(again))} and left ${show(names(after.events))}`)
       yield* sessions.turn(id, () => refuses("recover", "recovering a session whose turn this plugin holds open", sessions.recover(id),
         (error) => error._tag === "SessionRefused" && error.reason === "SessionBusy"))
       const ends = (yield* sessions.read(id)).events.filter((event) => event.name === ENDED).map((event) => outcomeOf(Option.some(event)))

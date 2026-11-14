@@ -53,6 +53,11 @@ four questions the in-process store never had to answer:
 - A turn `recover` closed keeps what it stored. A memory sends of it what it sends of any
   turn; a tool call with no result is not sent (`paired`).
 - A listener in the recovering process hears the end of a turn whose start it never heard.
+  The session is free by the time a background listener or the host's stream hears of it, as
+  for any end.
+- Two session plugins over one store on one `Core`, one recovering the other's live turn,
+  announce that end twice: the recovery does, and the writer's close announces the end it
+  took for its own. A second writer in one process is the case the host must not arrange.
 - The sessions kit is handed the store its plugin runs on (`{ sessions, storage }`), since
   three of its checks write what another writer would have left there. A session plugin that
   hides its store cannot run the kit.
