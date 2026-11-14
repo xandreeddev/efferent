@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref, Schema, Stream } from "effect"
+import { Effect, Layer, Ref, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
+import { Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, progressEvent, scriptedModel, sessions, showView, ViewId, viewsOf } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, progressEvent, scriptedModel, sessions, showView, ViewId, viewsOf } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -31,10 +31,10 @@ const toolsLive = tools.toLayer({
     for (let n = 1; n <= upTo; n++) {
       rows.push([String(n), String(n * n)])
       // How far it got: live, for whoever watches, never stored.
-      yield* Effect.orDie(session.publish(progressEvent, { id, done: n, total: upTo }))
+      yield* session.publish(progressEvent, { id, done: n, total: upTo })
     }
     // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
-    yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))
+    yield* session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows }))
     // What the model reads: a few words.
     return `shown as ${id}`
   }),
@@ -57,14 +57,10 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>, handlers: Lay
     yield* session.append(userMessage(message))
     for (let step = 1; step <= 3; step++) {
       const prompt = Prompt.make([{ role: "system", content: "Show tables when asked." }, ...(yield* memory.context(session))])
-      const parts = yield* Stream.runCollect(llm.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }))
-      const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
-      const asked = parts.flatMap((part) => (part.type === "tool-call" ? [part] : []))
-      yield* session.append(assistantMessage(text, { toolCalls: asked }))
-      if (asked.length === 0) return text
-      for (const call of asked) {
-        const result = yield* callTool(toolkit, call, session)
-        yield* session.append(result)
+      const answer = yield* modelAnswer(llm.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+      if (answer.toolCalls.length === 0) return answer.text
+      for (const call of answer.toolCalls) {
+        yield* callTool(toolkit, call, session)
       }
     }
     return "stopped"

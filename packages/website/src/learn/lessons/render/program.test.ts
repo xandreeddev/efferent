@@ -1,7 +1,8 @@
 // Lesson 6's four files, compiled as written, type-checked, and run on the
 // kernel with a scripted model: show stores a view in the turn its call runs
 // in, the model's next prompt holds a few words and none of the cells, and
-// without its turn the tool fails as an answer the model reads.
+// a program that runs show's handler with no one to give it its turn does
+// not compile.
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
@@ -12,7 +13,7 @@ import { scriptedModel } from "@xandreed/sdk/kernel"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_MEMORY, memoryModuleOf } from "../tools/memory.source.ts"
 import { DEFAULT_AGENT, moduleOf } from "./agent.source.ts"
-import { noTurn, tableAsResult } from "./config-edit.ts"
+import { tableAsResult } from "./config-edit.ts"
 import { DEFAULT_TOOLS, toolsModuleOf } from "./tools.source.ts"
 
 const dir = new URL("./generated-program-check/", import.meta.url)
@@ -91,10 +92,30 @@ describe("lesson 6's displayed program", () => {
     expect(result.calls[1]?.at(-1)?.text).toContain("n | n²")
   })
 
-  test("a loop that gives a call no turn: show fails, and the model reads why", async () => {
-    const result = await Effect.runPromise(runMain(write("no-turn", Option.getOrThrow(noTurn(DEFAULT_AGENT))), ["Show me squares."], script))
-    expect(result.calls[1]?.at(-1)?.text).toMatch(/^→ failed: .*CurrentTurn/)
-  })
+  test("a program that runs show's handler itself, with no one to give it its turn, does not compile; with callTool it does", () => {
+    // What running a program asks of it: that it needs nothing more than it was given.
+    const runnable = "\nexport const runnable: (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>) => Effect.Effect<void, unknown, never> = run\n"
+    const byHand = DEFAULT_AGENT.replace("yield* callTool(toolkit, call, session)", 'yield* toolkit.handle("show", { id: "squares", table: "squares", n: 3 })')
+    expect(byHand).not.toBe(DEFAULT_AGENT)
+    const at = new URL("./refused/", dir)
+    for (const [name, agent] of [["with-turn", DEFAULT_AGENT], ["no-turn", byHand]] as const) {
+      const folder = new URL(`./${name}/`, at)
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(new URL("./agent.ts", folder), `${moduleOf(agent)}${runnable}`)
+      writeFileSync(new URL("./chat.ts", folder), CHAT)
+      writeFileSync(new URL("./memory.ts", folder), memoryModuleOf(DEFAULT_MEMORY))
+      writeFileSync(new URL("./tools.ts", folder), toolsModuleOf(DEFAULT_TOOLS))
+    }
+    const config = new URL("./tsconfig.json", at)
+    writeFileSync(config, JSON.stringify({ extends: "../../../../../../tsconfig.learn.json", include: ["./*/*.ts"], exclude: [] }))
+    const checked = Bun.spawnSync(["bunx", "tsc", "-p", fileURLToPath(config)], { cwd: fileURLToPath(new URL("../../../../", import.meta.url)) })
+    const errors = checked.stdout.toString().split("\n").filter((line) => line.includes("error TS"))
+    // One error, in the program that ran the handler by hand, where it is said to need nothing: it still needs its turn.
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("refused/no-turn/agent.ts")
+    expect(checked.stdout.toString()).toContain("CurrentTurn")
+    expect(checked.exitCode).not.toBe(0)
+  }, 120_000)
 
   test("type-checks as TypeScript, all four files", () => {
     write("typed")

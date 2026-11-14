@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, flatMemory, Inbox, inbox, inProcessJournal, Memory, memoryConformance, scriptedModel, sessions, windowMemory } from "@xandreed/sdk/kernel"
+import { callTool, flatMemory, Inbox, inbox, inProcessJournal, Memory, memoryConformance, modelAnswer, scriptedModel, sessions, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -100,15 +100,13 @@ const toolTurnOf = (conversation, message) => Effect.scoped(Effect.gen(function*
   yield* session.append(userMessage(message))
   for (let step = 1; step <= 3; step++) {
     const history = yield* (yield* Memory).context(session)
-    const parts = yield* (yield* LanguageModel.LanguageModel).streamText({
+    // The kernel's two functions for a turn's work: one reads the model's answer and stores it, the other runs a call and stores its result.
+    const answer = yield* modelAnswer((yield* LanguageModel.LanguageModel).streamText({
       prompt: Prompt.make([{ role: "system", content: system }, ...history]), toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred",
-    }).pipe(Stream.runCollect)
-    const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
-    const calls = parts.filter((part) => part.type === "tool-call")
-    yield* session.append(assistantMessage(text, { toolCalls: calls }))
-    if (calls.length === 0) return text
-    for (const call of calls) {
-      yield* session.append(yield* callTool(toolkit, call, session))
+    }), session)
+    if (answer.toolCalls.length === 0) return answer.text
+    for (const call of answer.toolCalls) {
+      yield* callTool(toolkit, call, session)
     }
   }
   return "stopped"

@@ -153,11 +153,11 @@ describe("a model that fails part-way through its answer", () => {
       const reply = yield* agent.send(session, "Again")
       return { failed, afterFailure, reply, deltas: (yield* deltas.seen).map((event) => event.data), journal: yield* journalOf(agent, session) }
     })))
-    expect(result.failed).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelFailed", cause: { status: 529, body: "overloaded" } } })
+    expect(result.failed).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelAnswerFailed", message: "the model's stream reported an error", cause: { status: 529, body: "overloaded" } } })
     // What streamed before the error was shown live; none of it is stored as an answer.
     expect(result.deltas[0]).toEqual({ text: "Half an ans" })
     expect(result.afterFailure.names).toEqual(["core.session.turn.started", "conversation.user.message", "core.session.turn.ended"])
-    expect(result.afterFailure.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("ModelFailed") } }])
+    expect(result.afterFailure.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: "ModelAnswerFailed: the model's stream reported an error" } }])
     expect(JSON.stringify(result.afterFailure.events)).not.toContain("Half an ans")
     expect(result.reply).toEqual("Whole.")
     expect(result.journal.names.slice(3)).toEqual(FOUR)

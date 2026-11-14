@@ -5,12 +5,17 @@
 // stand-ins for the base layers it names, so the conversation outlives
 // every rebuild. What happens is traced for the page: every event on Core,
 // what memory built for each turn, every prompt the model received, and
-// what the program told the chat.
+// what the program told the chat. A prompt is traced with the session and
+// turn its call runs in, read from `CurrentTurn` as the model's stream runs:
+// the kernel's `modelAnswer` provides it, and the summary memory does around
+// its summarizer. A program that calls the model by hand (lessons 1 and 2)
+// provides none, and the page falls back to the session memory was last
+// asked about.
 import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Scope, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
 import { Core, JournalStorage, kernel, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
+import { CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
@@ -52,7 +57,7 @@ export type Trace =
    * A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. A
    * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop.
    */
-  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary" }
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary"; readonly givenTurn?: true }
   /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
   | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
   /** What the program told the chat, after the turn it last opened. */
@@ -68,6 +73,13 @@ export type BuildResult =
   | { readonly _tag: "Refused"; readonly message: string }
 
 type BaseServices = Core | JournalStorage | Sessions
+
+/**
+ * Whether the work under way is a summarizer's. The page's own, and private to it: `watchSummarizer` provides it
+ * as `true` around `summarize`, and the model watcher reads it as a stream runs, so a model call a summarizer
+ * makes is told from the turn's by what it runs in, however many run at once.
+ */
+const Summarizing = Context.Reference<boolean>("learn/Summarizing", { defaultValue: () => false })
 
 const count = (value: unknown, key: string): Option.Option<number> =>
   typeof value === "object" && value !== null && key in value && typeof (value as Record<string, unknown>)[key] === "number"
@@ -105,13 +117,12 @@ export class LessonRuntime {
   /** The chat's last turn: what the chat's pieces, replies and status lines belong to. */
   private lastTurn = 0
   /**
-   * The session memory was last asked about: a turn asks memory for the context and then calls the model, in one
-   * fiber, so the next prompt is that session's. This holds while a program runs one model call at a time; calls
-   * made at once in two sessions would be told apart by the fiber, which the page does not track.
+   * The session memory was last asked about. Only a model call that runs with no `CurrentTurn` is placed by it: a
+   * program that reads the model's stream by hand (lessons 1 and 2) asks memory for the context and then calls
+   * the model, in one fiber and one session, so the next prompt is that session's. A call made through
+   * `modelAnswer` names its own turn, and this is not looked at.
    */
   private asked: string | undefined
-  /** How many summarizer calls are running: a model call made meanwhile is the summarizer's, not the turn's. */
-  private summarizing = 0
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
 
@@ -206,22 +217,30 @@ export class LessonRuntime {
       status: (text) => Effect.suspend(() => emit({ _tag: "Status", turn: this.lastTurn, text })),
     })
     const inner = model.model
-    // The session the prompt is for: the one memory was last asked about, else the chat's.
-    const askedOf = () => this.asked ?? this.session
-    const turnOf = (session: string) => this.openTurns.get(session) ?? 0
+    // With no turn provided: the session memory was last asked about, else the chat's, and the turn open in it.
+    const guessed = () => {
+      const session = this.asked ?? this.session
+      return { session, turn: this.openTurns.get(session) ?? 0 }
+    }
     const watched = LanguageModel.LanguageModel.of({
       ...inner,
-      streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => {
-        const session = askedOf()
-        const turn = turnOf(session)
+      // The prompt is traced when the stream runs, not when it is made: a loop makes the stream first and hands it
+      // to `modelAnswer`, which provides the turn only while it reads it.
+      streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => Stream.unwrap(Effect.gen(function* () {
+        const current = yield* Effect.serviceOption(CurrentTurn)
+        const summarizing = yield* Summarizing
+        const { session, turn } = Option.match(current, { onNone: guessed, onSome: (running) => ({ session: String(running.id), turn: Number(running.turn) }) })
         const kit = options.toolkit
         const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
-        const purpose = this.summarizing > 0 ? { purpose: "summary" as const } : {}
-        this.emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose })
+        const purpose = summarizing ? { purpose: "summary" as const } : {}
+        // A stream that runs with a turn was handed to the kernel's `modelAnswer` (or is a summarizer's): the Context
+        // tab then names that function, not the lines a loop would write by hand.
+        const given = Option.isSome(current) ? { givenTurn: true as const } : {}
+        yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose, ...given })
         return Reflect.apply(inner.streamText, inner, [options]).pipe(
           Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
         )
-      }) as typeof inner.streamText,
+      }))) as typeof inner.streamText,
     })
     return {
       // Each requires what the real one requires, so a line removed from the stack fails as it would for real.
@@ -238,14 +257,10 @@ export class LessonRuntime {
             return emit({ _tag: "Context", session: session.id, turn: session.turn, upTo: journal.at(-1)?.seq ?? 0, messages: messages.map(saidOfMessage) })
           })),
       }))).pipe(Layer.provide(layer)),
-      // A model call made while the summarizer runs is the summarizer's: the lesson's page counts it apart from the turn's.
-      // One conversation compacts at a time here, so a count is enough to tell them apart.
+      // A model call made inside `summarize` is the summarizer's: it runs with `Summarizing` set, which the model
+      // watcher reads, so the lesson's page counts it apart from the turn's.
       watchSummarizer: (layer) => Layer.effect(Summarizer, Effect.map(Effect.gen(function* () { return yield* Summarizer }), (summarizer) => Summarizer.of({
-        summarize: (input) => Effect.acquireUseRelease(
-          Effect.sync(() => { this.summarizing += 1 }),
-          () => summarizer.summarize(input),
-          () => Effect.sync(() => { this.summarizing -= 1 }),
-        ),
+        summarize: (input) => summarizer.summarize(input).pipe(Effect.provideService(Summarizing, true)),
       }))).pipe(Layer.provide(layer)),
     }
   }

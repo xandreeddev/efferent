@@ -56,6 +56,8 @@ Read `turn` in **agent.ts**. Each time round the loop:
 
 `MAX_STEPS` stops a model that keeps asking.
 
+You wrote two blocks by hand here: reading the model's stream, and running a call. Every agent needs both, so the kernel has them as functions: `modelAnswer` reads the stream, shows each piece and stores the answer, and `callTool` runs a call in its turn and stores the result. From lesson 3 on, the program uses them, and is shorter for it.
+
 </Step>
 
 <Step n={5} id="watch" title="Watch it run" focus="context" wide={true}>

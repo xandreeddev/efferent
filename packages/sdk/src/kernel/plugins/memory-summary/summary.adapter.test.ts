@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Layer, Option, Predicate, Ref } from "effect"
 import type { Message } from "@xandreed/core/kernel"
-import { messageText, summarizedEvent, Summarizer, SummaryFailed, summaryMemory } from "../../index.js"
+import { CurrentTurn, messageText, summarizedEvent, Summarizer, SummaryFailed, summaryMemory } from "../../index.js"
 import type { SummaryOptions } from "../../index.js"
 import { answering, open, stack } from "../../testing.js"
 import { summaryNote } from "./summary.entity.functions.js"
@@ -125,6 +125,18 @@ describe("the summary memory", () => {
     expect(asked.length).toBeGreaterThan(0)
     expect(errorOf(exits.at(-1))).toBe("SummaryFailed")
     expect(summaries).toEqual([])
+  })
+
+  test("the summarizer is given the turn it summarizes for, as CurrentTurn", async () => {
+    // What a summarizer calls (a model, through a host's wrapper) can then say which session it works for.
+    const turns: Array<number> = []
+    const { summaries } = await run(numbered(10), (call) => Effect.flatMap(Effect.serviceOption(CurrentTurn), (turn) => Effect.sync(() => {
+      turns.push(Option.match(turn, { onNone: () => 0, onSome: (running) => running.turn }))
+      return `Summary ${call + 1}.`
+    })))
+    expect(summaries.length).toBeGreaterThan(0)
+    expect(turns.length).toBeGreaterThan(0)
+    expect(turns.every((turn) => turn > 0)).toBe(true)
   })
 
   test("a summarizer that fails fails the context with its error, and stores no summary", async () => {

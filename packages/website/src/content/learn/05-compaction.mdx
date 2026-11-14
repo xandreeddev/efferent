@@ -53,7 +53,7 @@ A model that fails, or answers with nothing, is no summary: `SummaryFailed`, and
 
 <Step n={5} id="main" title="Main" focus="code" file="agent">
 
-**agent.ts** is lesson 2's program. Only `main` changed: `Effect.provide(memory)`, then `Effect.provide(summarizerLive)`, which memory uses, and which uses the model given after it.
+**agent.ts** is lesson 2's program, on the kernel's `modelAnswer` and `callTool`. Only `main` changed from there: `Effect.provide(memory)`, then `Effect.provide(summarizerLive)`, which memory uses, and which uses the model given after it.
 
 Your turn does not know memory compacts. It asks `memory.context(session)` as before. The summarizer's model call happens inside that call.
 

@@ -99,7 +99,7 @@ contract wraps nothing for it, and nothing says so.
 
 1. **One stack per contract**, built with higher-order plugins as above. The rest of the agent gets one layer per contract.
 2. **A memory wrapper appends, then delegates.** (For what a wrapper adds to the context of one request, superseded by ADR 0005: it comes after the inner context, whole and in order, and is not stored. This rule stands for a wrapper that records.) It appends its own entry to the journal first, then calls the memory below, and never edits the request that memory returns. The memory below owns the budget and the estimate.
-3. **A model wrapper cannot record.** It has no session, so a retry or a fallback that must show in the journal belongs to the loop's model call, not to a model wrapper.
+3. **A model wrapper cannot record.** It has no session, so a retry or a fallback that must show in the journal belongs to the loop's model call, not to a model wrapper. (Amended by ADR 0007, 14 November 2026: a wrapper reaches the turn its call is for when the loop gives it one, through `modelAnswer`, and may publish a live event about it. What it may store is decided with the first wrapper that needs to.)
 4. **Adding tools goes through one helper** (`addTools`, with the tools cut), so a careless wrapper cannot drop the tools below it.
 
 ## Three cases, worked through

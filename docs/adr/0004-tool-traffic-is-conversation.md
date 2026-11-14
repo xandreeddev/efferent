@@ -25,8 +25,15 @@ tools are the same kind of module, called the same way. A kernel contract for to
 *Amended 14 November 2026:* every host's loop wrote the same block around `toolkit.handle` (run the call in its
 turn, take its last result, give a failure or a defect back as a failed result), and the copies drifted: some
 provided `CurrentTurn`, some caught defects. The kernel now holds it once as a function, `callTool(toolkit, call,
-session)`, which gives back the `toolResult` to store. It is a function a loop calls, not a service: the loop is
-still the host's, and a host may write its own.
+session)`. It is a function a loop calls, not a service: the loop is still the host's, and a host may write its
+own.
+
+*Amended again 14 November 2026:* `callTool` stores the result itself and gives back the stored record, since a
+result that is not stored answers nothing (`paired` then drops its call). The loop's other block, reading the
+model's stream, is a function too: `modelAnswer(stream, session, { onText })` folds the stream into the answer's
+text, calls, usage and model, and stores it as one `conversation.assistant.message`. So two kernel functions now
+write conversation records on a host's behalf, in the turn the host hands them; a host that writes its own loop
+still writes them itself, with `assistantMessage` and `toolResult`.
 
 **Tool definitions are code.** A tool's name, description and schema are offered in every call and never stored,
 like the system text: changing them changes the next prompt and leaves nothing stored stale.
@@ -50,7 +57,7 @@ it (`pairs`).
 ## Consequences
 
 - A host's turn grows from one model call to a loop, written in its own program; the kernel ships the records,
-  `toolResult`, `paired` and a scripted model that can ask for tools (`ModelAnswer` `Calls`), and no loop.
+  `toolResult`, `paired` and a scripted model that can ask for tools (`ScriptedAnswer` `Calls`), and no loop.
 - A step limit is the host's: what a turn says when it reaches it is the program's own words, and is not stored.
 - Messages that arrive while a turn runs may be taken into it between steps, so a long run can be steered. That is
   the host's choice too.

@@ -5,7 +5,7 @@ import { assistantMessage, Core, inspectionOf, kernel, live, liveEvent, Sessions
 import type { EventDefinition, JournalStorage, KernelEvent, NewSessionInput, SessionId, Usage } from "@xandreed/core/kernel"
 import type { InboxTurnFailure } from "./contracts/inbox/inbox.port.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import { inProcessJournal, sessions, windowMemory } from "./index.js"
+import { inProcessJournal, modelAnswer, sessions, windowMemory } from "./index.js"
 import type { InvalidBudget, SessionsOptions } from "./index.js"
 
 /*
@@ -55,17 +55,8 @@ export const counting = scripted((call) => answer(`Reply ${call + 1}.`))
 /** The error of a model that is down. */
 export const modelDown = AiError.make({ module: "Scripted", method: "streamText", reason: new AiError.UnknownError({ description: "the scripted model is down" }) })
 
-/** A model's stream reported an error part-way: an answer cut by one is no answer. */
-export class ModelFailed extends Schema.TaggedError<ModelFailed>()("ModelFailed", { message: Schema.String, cause: Schema.optional(Schema.Defect()) }) {}
-
 /** A message of no text, refused before a turn opens. */
 export class EmptyMessage extends Schema.TaggedError<EmptyMessage>()("EmptyMessage", { message: Schema.String }) {}
-
-/** The provider's report, when it counted both what it read and what it wrote. */
-const usageOf = (reported: Response.Usage): Option.Option<Usage> =>
-  reported.inputTokens.total === undefined || reported.outputTokens.total === undefined
-    ? Option.none()
-    : Option.some({ inputTokens: reported.inputTokens.total, outputTokens: reported.outputTokens.total, ...(reported.inputTokens.cacheRead === undefined ? {} : { cachedInputTokens: reported.inputTokens.cacheRead }) })
 
 /** A piece of an answer as the tests' turn publishes it, live: what a client would draw. */
 export const pieceEvent = liveEvent("test", "piece", { tags: ["ui"], data: Schema.Struct({ text: Schema.String }) })
@@ -90,19 +81,14 @@ export const testTurn = (system: string = SYSTEM): Turn => (conversation, messag
     const turns = yield* Sessions
     const memory = yield* Memory
     const model = yield* LanguageModel.LanguageModel
-    type Gathered = { readonly text: string; readonly usage: Option.Option<Usage> }
     const session = yield* turns.open(conversation)
     yield* session.append(userMessage(message))
     const history = yield* memory.context(session)
-    const answer = yield* model.streamText({ prompt: Prompt.make([{ role: "system", content: system }, ...history]) }).pipe(
-      Stream.runFoldEffect((): Gathered => ({ text: "", usage: Option.none() }), (gathered, part) => Match.value(part).pipe(
-        Match.discriminator("type")("text-delta", ({ delta }) => Effect.as(core.publish(live(pieceEvent, session, { text: delta })), { ...gathered, text: gathered.text + delta })),
-        Match.discriminator("type")("error", ({ error }) => Effect.fail(new ModelFailed({ message: "the model's stream reported an error", cause: error }))),
-        Match.discriminator("type")("finish", ({ usage }) => Effect.succeed({ ...gathered, usage: usageOf(usage) })),
-        Match.orElse(() => Effect.succeed(gathered)),
-      )),
-    )
-    yield* session.append(assistantMessage(answer.text, Option.match(answer.usage, { onNone: () => ({}), onSome: (usage) => ({ usage }) })))
+    // The kernel's own function for the model's answer: it reads the stream in this turn, hands each piece on, and
+    // stores the answer with what the provider reported it cost.
+    const answer = yield* modelAnswer(model.streamText({ prompt: Prompt.make([{ role: "system", content: system }, ...history]) }), session, {
+      onText: (text) => core.publish(live(pieceEvent, session, { text })),
+    })
     return answer.text
   }))
 

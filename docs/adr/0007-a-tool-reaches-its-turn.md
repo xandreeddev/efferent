@@ -32,6 +32,20 @@ call runs in.
   its own name, create a session with it as the parent. The call and its result are still the loop's to
   store.
 
+*Amended 14 November 2026.* Three things changed, and the decision above stands otherwise:
+
+- **`CurrentTurn` is the turn a piece of work runs for, not a tool's alone.** It is provided by the function
+  that already holds the open session, and by nothing else: `callTool` around a tool's handler,
+  `modelAnswer` while the model's stream runs (so a wrapper of the model reaches the session its call is
+  for), and the summary memory around its summarizer. A host's loop that uses those functions provides
+  nothing by hand.
+- **It hands a `RunningTurn`**: the open session, with reads and writes that cannot fail in their type. A
+  tool's failures are the ones its schema declares, so a write the session refuses is a defect of the
+  handler, which `callTool` stores as a failed result the model reads; one that fails while the model
+  answers is a defect of that call, and fails the turn. A handler no longer wraps its writes in
+  `Effect.orDie`.
+- **The call's result is `callTool`'s to store**, not the loop's.
+
 ## Consequences
 
 - Helpers can delegate again: a helper's helper is created under the helper, and the depth is read from

@@ -8,6 +8,9 @@ import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
 import { withReminder, writeLastN } from "./lessons/your-first-agent/config-edit.ts"
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
+import { tools } from "./lessons/tools/lesson.ts"
+import { yourOwnPlugin } from "./lessons/your-own-plugin/lesson.ts"
+import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import { LessonRuntime } from "./runtime.ts"
 import { emptyBoard, record, turnsOf, viewOf } from "./trace-model.ts"
@@ -17,8 +20,8 @@ const opened: Array<LessonRuntime> = []
 afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runtime.dispose())) })
 
 /** Run `messages` through lesson 1 with these sources, and the board the page would have drawn from what it heard. */
-const boardAfter = async (messages: ReadonlyArray<string>, sources = { agent: DEFAULT_AGENT, memory: DEFAULT_MEMORY }): Promise<Board> => {
-  const runtime = await LessonRuntime.create(yourFirstAgent)
+const boardAfter = async (messages: ReadonlyArray<string>, sources: Record<string, string> = { agent: DEFAULT_AGENT, memory: DEFAULT_MEMORY }, lesson: Lesson = yourFirstAgent): Promise<Board> => {
+  const runtime = await LessonRuntime.create(lesson)
   opened.push(runtime)
   runtime.setModel(loadEcho())
   let board = emptyBoard(runtime.conversation)
@@ -82,6 +85,17 @@ describe("the Context tab's model", () => {
   test("a message the code adds after the context is shown as added, never stored", async () => {
     const view = viewOf(await boardAfter(["hi"], { agent: Option.getOrThrow(withReminder(DEFAULT_AGENT)), memory: DEFAULT_MEMORY }), 1)
     expect(Option.getOrThrow(view.calls.at(-1)!.prompt).map((row) => row.source)).toEqual(["code", "memory", "added"])
+  })
+
+  test("a step names the line that did it: a loop written by hand, or the kernel's two functions", async () => {
+    const startersOf = (lesson: Lesson) => Object.fromEntries(lesson.files.map((file) => [file.id, file.defaultText]))
+    const codeOf = async (lesson: Lesson) => {
+      const view = viewOf(await boardAfter(["What is 12 * 3?"], startersOf(lesson), lesson), 1)
+      return ["stored-answer-1", "tools-1", "stored-answer-2"].map((id) => view.steps.find((step) => step.id === id)?.code)
+    }
+    // Lesson 2 writes both blocks by hand; lesson 3's loop is the base's, on modelAnswer and callTool.
+    expect(await codeOf(tools)).toEqual(["session.append(assistantMessage(…))", "toolkit.handle(call.name, call.params)", "session.append(assistantMessage(…))"])
+    expect(await codeOf(yourOwnPlugin)).toEqual(["modelAnswer(stream, session)", "callTool(toolkit, call, session)", "modelAnswer(stream, session)"])
   })
 
   test("events of another conversation are not on the board", () => {

@@ -37,6 +37,8 @@ export interface Board {
   readonly prompts: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<Said>>>
   /** The tools offered with each prompt, by turn. */
   readonly offered: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<string>>>
+  /** Whether each prompt's stream ran with its turn given, by turn: the loop handed it to the kernel's `modelAnswer`. */
+  readonly given: ReadonlyMap<number, ReadonlyArray<boolean>>
   readonly usage: ReadonlyMap<number, ReadonlyArray<Reported>>
   /** What a summarizer was sent while memory compacted, by turn: model calls of their own, not the turn's. */
   readonly summaries: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<Said>>>
@@ -51,7 +53,7 @@ export interface Board {
 }
 
 export const emptyBoard = (session: string, helper = false): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper,
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper,
 })
 
 export const LOG_LIMIT = 400
@@ -125,7 +127,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
         })
       }
       const pieces = append(board.pieces, trace.turn, 0)
-      return withEntry({ ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), pieces }, {
+      return withEntry({ ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), given: append(board.given, trace.turn, trace.givenTurn === true), pieces }, {
         ...base, kind: "prompt", turn: trace.turn,
         title: `prompt sent: ${trace.messages.length} messages, ~${tokensOf(trace.messages)} tokens${trace.tools.length > 0 ? `, ${trace.tools.length} tools offered` : ""}`,
         detail: json(trace.tools.length > 0 ? { messages: trace.messages, tools: trace.tools } : trace.messages),
@@ -412,6 +414,8 @@ export const viewOf = (board: Board, turn: number): TurnView => {
         ? `The system text from your code, ${memoryCount} from memory${added > 0 ? `, ${added} added by your code` : ""}: about ${view.promptTokens} tokens, ${view.reusedTokens} the same as the prompt before.`
         : "The prompt is built fresh: the system text, then the context.",
     })
+    // A loop on the kernel's two functions: the hints name them, not the lines a loop writes by hand (lessons 1 and 2).
+    const byKernel = board.given.get(turn)?.[index] === true
     const streamed = pieces[index] ?? 0
     raw.push(board.helper ? {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "hooks.stream (quiet)", column: "prompt", happened: Option.isSome(answer), seqs: [],
@@ -422,7 +426,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
     })
     const asked = Option.match(answer, { onNone: () => [] as ReadonlyArray<string>, onSome: (one) => (one.message?._tag === "Assistant" ? one.message.toolCalls.map((call) => String(call.id)) : []) })
     raw.push({
-      id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
+      id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: byKernel ? "modelAnswer(stream, session)" : "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
       detail: Option.match(answer, {
         onNone: () => "The answer goes into the journal, for the next call's context.",
         onSome: (one) => asked.length > 0 ? `Record #${one.seq}: the model asked for ${plural(asked.length, "tool call")}.` : `Record #${one.seq}. The next turn's memory can read it.`,
@@ -432,7 +436,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       const done = results.filter((record) => record.message?._tag === "ToolResult" && asked.includes(String(record.message.id)))
       const failed = done.filter((record) => record.message?._tag === "ToolResult" && record.message.isFailure).length
       raw.push({
-        id: `tools-${n}`, kind: "tools", call: n, label: at("Tools ran"), code: "toolkit.handle(call.name, call.params)", column: "journal", happened: done.length === asked.length, seqs: done.map((record) => record.seq),
+        id: `tools-${n}`, kind: "tools", call: n, label: at("Tools ran"), code: byKernel ? "callTool(toolkit, call, session)" : "toolkit.handle(call.name, call.params)", column: "journal", happened: done.length === asked.length, seqs: done.map((record) => record.seq),
         detail: done.length === 0 ? `Running ${plural(asked.length, "tool call")}.`
           : `${plural(done.length, "result")} stored${failed > 0 ? `, ${failed} of them failures the model reads` : ""}: ${done.map((record) => `#${record.seq}`).join(", ")}. Then the model is asked again.`,
       })

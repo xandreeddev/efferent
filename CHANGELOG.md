@@ -31,7 +31,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     that provides `Core` alone. It imports `effect` alone, and names no
     loop, memory, system text or request to a model.
   - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
-    folder with its entities, events, pure rules and kit: memory's
+    folder with its entities, events and pure rules, and a kit where a
+    plugin can break the contract's rules (`docs/kernel.md` lists which
+    have one, and why the others have none): memory's
     (`Memory`, `memoryConformance`, `Tokens`, `estimateTokens`,
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
@@ -46,12 +48,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     (`Summarizer`, which a host provides over its model, failing with
     `SummaryFailed`, with its kit, `summarizerConformance`: it answers with
     text or fails so, never with nothing), the tool call's
-    (`CurrentTurn`: the open turn a call runs in, which the host's loop
-    provides around `toolkit.handle` and a tool declares in its
-    `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
-    `callTool(toolkit, call, session)`, which runs one call the model made in
-    its turn and gives back the result to store, a failure or a defect as a
-    failed result, so a host's loop need not copy that block) and the
+    (`CurrentTurn`: the turn a piece of work runs for, a `RunningTurn`
+    whose reads and writes cannot fail in their type, which a tool declares
+    in its `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
+    the two blocks every loop wrote, as functions that each store what they
+    produce and give the work its turn:
+    `modelAnswer(stream, session, { onText })`, which reads one call's
+    answer from the model's stream and stores it with its tool calls, its
+    usage and its model, failing with `ModelAnswerFailed` on an error part;
+    and `callTool(toolkit, call, session)`, which runs one call the model
+    made and stores its result, a failure or a defect as a failed result) and the
     inbox's (`Inbox`, `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
     gate refuses both. There is no loop contract and no stock loop: the
@@ -212,6 +218,30 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn track runs on the kernel's two functions from
+  lesson 3 on. Lesson 2 still writes both blocks of a loop by hand, to
+  teach them, and then says what replaces them; `lessons/base/` holds its
+  program on `modelAnswer` and `callTool`, derived by named pieces, and a
+  test runs both programs and compares their prompts and journals. Lessons
+  3, 5 and 6 derive their `agent.ts` from that base (lessons 3 and 4 were
+  hand copies), and lesson 4's `loop.ts` is written on the two functions.
+  Its `delegate` declares `CurrentTurn` and creates the helper under the
+  session of the turn it was called in, as ADR 0006 says. Lesson 6's
+  `show` writes through its turn with no `Effect.orDie`, its loop names no
+  turn, and its "run calls outside their turn" experiment is gone: with
+  `callTool` a call cannot lack its turn. Fixed: pressing Format on a
+  fresh page of lessons 2 to 6 wrapped `const system = "…"` onto two lines
+  and the system-text control then went dead; every starter text is now
+  as Format leaves it (the list of untidy ones is deleted) and the control
+  reads and writes the wrapped form. The page's model watcher reads
+  `CurrentTurn` when a stream runs, so a prompt is filed under the session
+  and turn that asked for it and not under a guess, also with two sessions
+  calling the model at once; a summarizer's call is known by a reference
+  set around `summarize`, not by a counter. The Context tab's steps name
+  the line that did the work: `modelAnswer(stream, session)` and
+  `callTool(toolkit, call, session)` on such a loop, the hand-written
+  lines in lessons 1 and 2. A stray conflict marker left in this file is
+  removed.
 - Docs site: the learn track's own checklist is now held by tests. Each of
   Echo's tool rules has a direct test that fails without the rule; the
   lesson registry's test lists lesson 2; and the Format test covers every
@@ -233,8 +263,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   however it ends, and draws every view again from the journal alone on
   "Redraw views from the journal". Cells are drawn as text. Echo sends
   "show a table of squares to n", cubes and times tables to `show`.
-  Experiments make `show` slow, return the table to the model instead,
-  and run calls outside their turn.
+  Experiments make `show` slow and return the table to the model instead.
 - Docs site: Lesson 5, "Compaction", at `/learn/compaction`. Lesson 2's
   program over `summaryMemory`: `memory.ts` holds its options (the budget
   and `keepTurns`), and `summarizer.ts` the learner's `Summarizer` over the
@@ -279,7 +308,6 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   A test compiles the five files with tsc and holds the learner's clock to
   `memoryWrapperConformance`; Echo skips the note and answers "What time is
   it?" from it. ADR 0005 records the rule, and lesson 2 now points here.
-||||||| parent of 86cc89a9f4c (keep the learn page's turns per session, and show the chat's)
 - Docs site: the learn pages' Context tab keeps each list at its bottom as
   the conversation grows, also when the tab was hidden while it grew, and a
   list scrolled up stays where it is. A row under the pointer no longer

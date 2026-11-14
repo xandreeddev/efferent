@@ -1,7 +1,8 @@
 // The page's runtime over lesson 1: the learner's program runs as one fiber
 // over a base built once, with the Echo model, and the page hears what it
 // does. These pin what the workbench shows: the order of a turn, the queue,
-// rebuild, stop, clear, and the defect of a removed module.
+// rebuild, stop, clear, the defect of a removed module, and the refusal of a
+// record written by hand.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { turnEndedEvent } from "@xandreed/core/kernel"
@@ -185,6 +186,29 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     await ended
     expect(heard.find((trace) => trace._tag === "Ended")).toMatchObject({ reason: expect.stringContaining("Memory") })
     expect(replyTexts(heard)).toEqual([])
+  })
+
+  test("a record written by hand is refused: the turn fails, and the chat says how a record is made", async () => {
+    // What a learner might try: the record's fields written out, instead of userMessage(text).
+    const byHand = DEFAULT_AGENT.replace(
+      "yield* session.append(userMessage(text))",
+      'yield* session.append({ name: "conversation.user.message", data: {}, skippable: false, tags: [], message: { _tag: "User", text: "x" } })',
+    )
+    expect(byHand).not.toBe(DEFAULT_AGENT)
+    const { runtime, heard, built } = await start({ ...SOURCES, agent: byHand })
+    expect(built).toEqual({ _tag: "Built" })
+    const done = replies(runtime)
+    runtime.send("x")
+    await done
+    // The chat shows the session's refusal (NotADraft) as it is worded: it names `stored`, and `userMessage`, which the line should have used.
+    expect(heard.flatMap((trace) => (trace._tag === "Failed" ? [trace.message] : []))).toEqual([
+      "this value is not a record `stored(definition, data)` made from a definition `storedEvent` made: build a record with `stored`, or with `userMessage`, `assistantMessage` or `toolResult`, never by hand or as a copy",
+    ])
+    expect(replyTexts(heard)).toEqual([])
+    // Nothing of it was stored: the turn opened, and closed as failed. The program goes on to the next message.
+    expect((await runtime.journal()).map((record) => String(record.name))).toEqual(["core.session.turn.started", "core.session.turn.ended"])
+    expect(await endings(runtime)).toEqual(["Failed"])
+    expect(heard.some((trace) => trace._tag === "Ended")).toBe(false)
   })
 
   test("code that does not run is refused before anything starts, by file and in words", async () => {
