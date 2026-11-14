@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, kernel, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -47,20 +47,6 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>) => Effect.gen
   const show = (line: string) => Ref.update(said, (all) => [...all, line])
 
   // #region turn
-  // Run one call. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
-  // The call is what the model sent, untyped: its name and parameters are checked by the toolkit, not here.
-  const runTool = (toolkit: Toolkit.WithHandler<typeof tools.tools>, call: { readonly id: string; readonly name: string; readonly params: unknown }) =>
-    toolkit.handle(call.name as keyof typeof tools.tools, call.params as never).pipe(
-      Effect.flatMap(Stream.runLast),
-      Effect.map(Option.match({
-        onNone: () => toolResult(call, null),
-        onSome: (last) => toolResult(call, last.encodedResult, last.isFailure),
-      })),
-      // A failure (the tool's own, an unknown tool, wrong parameters), or a bug in a tool: an answer marked failed.
-      Effect.catch((error) => Effect.succeed(toolResult(call, error.message, true))),
-      Effect.catchDefect((defect) => Effect.succeed(toolResult(call, String(defect), true))),
-    )
-
   // One turn: the model answers, or asks for tools; their results are stored, and the model is asked again.
   const turn = (conversation: SessionId, message: string) =>
     Effect.scoped(
@@ -89,9 +75,10 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>) => Effect.gen
           // Store the model's answer with the calls it made, then run each call and store its result.
           yield* session.append(assistantMessage(text, { toolCalls: calls }))
           if (calls.length === 0) return text
-          // Each call runs in this turn: a tool that declares CurrentTurn reaches the session from its handler.
+          // Each call runs in this turn (a tool that declares CurrentTurn reaches the session from its handler), and its
+          // result is stored. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
           for (const call of calls) {
-            yield* session.append(yield* runTool(toolkit, call).pipe(Effect.provideService(CurrentTurn, session)))
+            yield* session.append(yield* callTool(toolkit, call, session))
           }
         }
         return `I stopped after ${MAX_STEPS} steps.`

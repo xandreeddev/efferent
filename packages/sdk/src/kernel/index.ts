@@ -24,6 +24,8 @@ export { WindowDroppedData, WindowPressureData, windowDroppedEvent, windowPressu
 export type { WindowOptions } from "./plugins/memory-window/window.entity.js"
 export { scriptedModel } from "./plugins/model-scripted/scripted-model.adapter.js"
 export { ModelAnswer, ModelScript } from "./plugins/model-scripted/scripted-model.entity.js"
+export { callTool } from "./contracts/turn/tool-call.entity.functions.js"
+export type { ModelToolCall } from "./contracts/turn/tool-call.entity.functions.js"
 export { CardView, ListView, ProgressData, progressEvent, TableView, TextView, View, ViewData, viewEvent, ViewId } from "./contracts/render/render.entity.js"
 export { showView, viewProgress, viewsOf } from "./contracts/render/render.entity.functions.js"
 export type { Shown } from "./contracts/render/render.entity.functions.js"

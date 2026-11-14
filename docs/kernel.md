@@ -236,25 +236,11 @@ And the turn:
 <!-- pinned: packages/sdk/src/kernel/tools.test.ts#turn -->
 
 ```ts
-import { Effect, Option, Stream } from "effect"
-import { LanguageModel, Prompt, Toolkit } from "effect/ai"
-import { assistantMessage, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
+import { Effect, Stream } from "effect"
+import { LanguageModel, Prompt } from "effect/ai"
+import { assistantMessage, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { Memory } from "@xandreed/sdk/kernel"
-
-// Run one call. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
-// The call is what the model sent, untyped: its name and parameters are checked by the toolkit, not here.
-const runTool = (toolkit: Toolkit.WithHandler<typeof tools.tools>, call: { readonly id: string; readonly name: string; readonly params: unknown }) =>
-  toolkit.handle(call.name as keyof typeof tools.tools, call.params as never).pipe(
-    Effect.flatMap(Stream.runLast),
-    Effect.map(Option.match({
-      onNone: () => toolResult(call, null),
-      onSome: (last) => toolResult(call, last.encodedResult, last.isFailure),
-    })),
-    // A failure (the tool's own, an unknown tool, wrong parameters), or a bug in a tool: an answer marked failed.
-    Effect.catch((error) => Effect.succeed(toolResult(call, error.message, true))),
-    Effect.catchDefect((defect) => Effect.succeed(toolResult(call, String(defect), true))),
-  )
+import { callTool, Memory } from "@xandreed/sdk/kernel"
 
 // One turn: the model answers, or asks for tools; their results are stored, and the model is asked again.
 const turn = (conversation: SessionId, message: string) =>
@@ -284,9 +270,10 @@ const turn = (conversation: SessionId, message: string) =>
         // Store the model's answer with the calls it made, then run each call and store its result.
         yield* session.append(assistantMessage(text, { toolCalls: calls }))
         if (calls.length === 0) return text
-        // Each call runs in this turn: a tool that declares CurrentTurn reaches the session from its handler.
+        // Each call runs in this turn (a tool that declares CurrentTurn reaches the session from its handler), and its
+        // result is stored. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
         for (const call of calls) {
-          yield* session.append(yield* runTool(toolkit, call).pipe(Effect.provideService(CurrentTurn, session)))
+          yield* session.append(yield* callTool(toolkit, call, session))
         }
       }
       return `I stopped after ${MAX_STEPS} steps.`
@@ -300,11 +287,18 @@ const turn = (conversation: SessionId, message: string) =>
   "deferred"` a call the model got wrong (a tool that does not exist,
   parameters that do not decode) comes through as it is; the default would
   fail the stream, and with it the turn.
+- **`callTool(toolkit, call, session)` runs one call** in the turn it
+  belongs to: it provides `CurrentTurn` (ADR 0007), runs the call through
+  the toolkit's handlers, and gives back the result to store. It is a
+  function, not a service (ADR 0004): every host's loop wrote the same
+  block, so the kernel holds it once. Lesson 2 writes it out by hand, to
+  show what it does.
 - **Failures are data.** A tool that fails with `failureMode: "return"`
-  answers with its failure; an unknown tool or bad parameters fail
-  `toolkit.handle`, and the turn stores that as a failed result. Either way
-  the model reads the failure as the answer to its call, and the turn goes
-  on. The failure text comes from Effect AI's toolkit, not from the kernel.
+  answers with its failure; an unknown tool, bad parameters or a defect in a
+  handler fail the call, and `callTool` gives that back as a failed result.
+  Either way the model reads the failure as the answer to its call, and the
+  turn goes on. The failure text comes from Effect AI's toolkit, not from
+  the kernel.
 - **Every call and result is a record.** The model's answer is stored with
   the calls it made (`assistantMessage(text, { toolCalls })`, which takes the
   stream's `tool-call` parts as they came), and each result as
@@ -406,7 +400,7 @@ const withClock = <E, R>(inner: Layer.Layer<Memory, E, R>): Layer.Layer<Memory, 
       context: (session) => Effect.gen(function* () {
         const context = yield* memory.context(session)
         const now = new Date(yield* Clock.currentTimeMillis).toISOString().slice(11, 16)
-        return [...context, { role: "user" as const, content: `[Host note: it is ${now} UTC.]` }]
+        return [...context, { role: "user" as const, content: hostNote(`it is ${now} UTC.`) }]
       }),
     })
   })).pipe(Layer.provide(inner))
@@ -1017,6 +1011,34 @@ memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
    `viewsOf`.)
 3. **Durable stores and crash recovery**, on the seam the fold of the
    journal already gives.
+
+## Open questions
+
+Decisions that are the user's, or that wait for a second use, recorded here so
+they are not made by accident.
+
+- **`Reader` or `Vocabulary`.** A `Reader` is data, `{ reads, knows }`: the
+  names a plugin knows and the prefix it answers for. Renaming it to say so
+  touches every memory and the kits.
+- **The view vocabulary** (ADR 0009). `Text`, `List`, `Table` and `Card`,
+  closed. Open: whether hosts add shapes of their own, and whether a view
+  bounds its size in its schema rather than in the tool that makes it.
+- **Where `hostNote` and `framed` live.** They are the memory contract's,
+  because a memory was the first kernel code to frame text; tools and hosts
+  frame text too. They are copies of core's root helpers, which the kernel
+  does not import.
+- **The learn page's guesses.** The page tells which session a prompt is for
+  from the last memory call, and a summarizer's prompt from a count of
+  running summarizer calls: one watcher per contract. A reference the loop
+  provides around each model call would make both exact.
+- **Kits for `Summarizer` and `CurrentTurn`.** Neither has a conformance kit
+  (skill `add-port`). A summarizer kit would check that it fails with
+  `SummaryFailed` rather than answering with nothing; `CurrentTurn` is a
+  value the loop provides, with nothing to check beyond its type.
+- **Lesson 4's helper and its caller.** The lesson files a helper under the
+  chat's session, as it was written before `CurrentTurn`; ADR 0006 now
+  files it under the turn that called it. Changing the lesson moves
+  `CurrentTurn` earlier in the track.
 
 ## Keeping a tailored context cache-stable
 

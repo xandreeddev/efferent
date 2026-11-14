@@ -6,7 +6,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 `.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
 `commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
 `domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`,
-`kernel-architecture`. Architecture decisions: `docs/adr/`.
+`kernel-architecture`, `add-lesson`. Architecture decisions: `docs/adr/`.
 
 ## Task map
 
@@ -22,6 +22,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Test a plugin end to end through `Agent.define` | skill `journey-test` |
 | Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
 | Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
+| Add or change a lesson of the learn track (`/learn`) | skill `add-lesson`, `packages/website/AGENTS.md` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
 | Add or change a kernel contract, a stock kernel plugin, memory or a host's turn, or a way for plugins to extend each other | skill `kernel-architecture`, `docs/adr/0009-what-the-ui-shows-is-a-record.md`, `docs/adr/0008-a-memory-keeps-its-summary.md`, `docs/adr/0007-a-tool-reaches-its-turn.md`, `docs/adr/0006-a-sub-agent-is-a-session.md`, `docs/adr/0005-context-for-one-request.md`, `docs/adr/0004-tool-traffic-is-conversation.md`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0001-kernel-plugin-composition.md` |
 
@@ -175,7 +176,9 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 ## Model-facing text
 
 Text the model reads is a contract and part of cached prompt prefixes: frame
-it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), pin
+it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), or,
+in the kernel, which never imports core's root, with the memory contract's
+`hostNote` and `framed` from `@xandreed/sdk/kernel`; pin
 it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
 Each package's `AGENTS.md` inventories its model-facing text and cites the
 tests that pin each row by title (`path.test.ts#<part of a test's title>`).

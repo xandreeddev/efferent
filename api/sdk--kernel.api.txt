@@ -23,6 +23,7 @@ const ViewData
 const ViewId
 const WindowDroppedData
 const WindowPressureData
+const callTool
 const estimateContext
 const estimateTokens
 const flatMemory
@@ -53,6 +54,7 @@ const windowPressureEvent
 interface InboxOptions
 interface MemorySubject
 interface MemoryWrapperSubject
+interface ModelToolCall
 interface Queued
 interface SessionsOptions
 interface Shown

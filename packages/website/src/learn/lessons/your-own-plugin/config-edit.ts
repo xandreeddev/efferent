@@ -6,7 +6,7 @@ import { Option } from "effect"
 const swap = (from: string, to: string) => (source: string): Option.Option<string> =>
   source.includes(from) ? Option.some(source.replace(from, to)) : Option.none()
 
-const ADDED = "            return [...context, { role: \"user\", content: `[Host note: it is ${time}.]` }]"
+const ADDED = "            return [...context, { role: \"user\", content: hostNote(`it is ${time}.`) }]"
 
 /** The clock's body as plugin.ts has it: the context asked for first, then the time, then the note added after it. */
 const BODY = [
@@ -25,12 +25,12 @@ export const storeClock = swap(BODY, [
   "            const now = new Date(yield* Clock.currentTimeMillis)",
   "            const time = now.toLocaleTimeString([], { hour: \"2-digit\", minute: \"2-digit\" })",
   "            // The wrong way: stored as something you said. Every later request sends it again.",
-  "            yield* session.append(userMessage(`[Host note: it is ${time}.]`))",
+  "            yield* session.append(userMessage(hostNote(`it is ${time}.`)))",
   "            return yield* memory.context(session)",
 ].join("\n"))
 
 /** A careless wrapper: it drops the first message of the context it was given. */
-export const dropFirst = swap(ADDED, "            return [...context.slice(1), { role: \"user\", content: `[Host note: it is ${time}.]` }]")
+export const dropFirst = swap(ADDED, "            return [...context.slice(1), { role: \"user\", content: hostNote(`it is ${time}.`) }]")
 
 /** The meter's answer listener takes two seconds, and the turn waits for it (wait: true). */
 export const slowMeter = swap(

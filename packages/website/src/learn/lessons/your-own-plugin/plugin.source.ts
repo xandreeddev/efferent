@@ -6,7 +6,7 @@
 /** Read-only: what the plugins import. */
 export const PLUGIN_IMPORTS = `import { Clock, Effect, Layer, Ref } from "effect"
 import { assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { estimateTokens, Memory, messageText } from "@xandreed/sdk/kernel"
+import { estimateTokens, hostNote, Memory, messageText } from "@xandreed/sdk/kernel"
 import { Chat } from "./chat.ts"`
 
 /** Everything before the editable part. */
@@ -65,7 +65,7 @@ export const withClock = (inner) =>
             // Computed here, like the system text, and never stored: the next request gets its own.
             const now = new Date(yield* Clock.currentTimeMillis)
             const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-            return [...context, { role: "user", content: \`[Host note: it is \${time}.]\` }]
+            return [...context, { role: "user", content: hostNote(\`it is \${time}.\`) }]
           }),
       })
     }),
