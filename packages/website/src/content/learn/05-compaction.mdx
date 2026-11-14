@@ -22,7 +22,7 @@ The memory now has **state**: the summary, kept in the journal as a record of it
 
 Start with **Echo**. It summarizes by rule: "You said 7 things earlier, the last: …". It is short and the same every time, so you can see exactly when memory compacts.
 
-A real model writes a real summary, but a longer one. If its summary does not fit the budget, the turn fails with `OverBudget`. Raise the budget in step 7 for a real model.
+A real model writes a real summary, but a longer one. A summary that does not fit beside the turns that stay is not stored, and the turn fails with `OverBudget`: the next turn asks again. For a model on your machine, raise the budget to 300 in step 7 first: it compacts after about ten turns. A model this small writes summaries that lose detail, and may repeat its instructions instead: the summary is only as good as the model that writes it.
 
 </Step>
 
@@ -61,7 +61,7 @@ Your turn does not know memory compacts. It asks `memory.context(session)` as be
 
 <Step n={6} id="watch" title="Watch it compact" focus="context" wide={true}>
 
-Send messages until the conversation passes the budget, about ten with Echo, then open **Context**. The button sends five at once: one turn takes them all, so press it three times.
+Send messages until the conversation passes the budget, about ten with Echo, then open **Context**. The button sends five at once, and one turn takes them all: with Echo, the fourth press compacts.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-fill>Send 5 messages</button></p>
 

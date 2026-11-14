@@ -35,10 +35,10 @@ export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, Inva
     Effect.flatMap(session.journal, (journal) => Effect.fromResult(readJournal(SUMMARY_READER)(journal))),
     (known) => plan(known, session.turn, budget, keepTurns),
   )
-  const over = (estimatedTokens: number) => new OverBudget({
+  const over = (estimatedTokens: number, why = "with nothing more to fold") => new OverBudget({
     estimatedTokens: OverBudget.fields.estimatedTokens.make(estimatedTokens),
     budgetTokens: budget,
-    message: `the context is estimated at ${estimatedTokens} tokens, over the budget of ${budget}, with nothing more to fold`,
+    message: `the context is estimated at ${estimatedTokens} tokens, over the budget of ${budget}, ${why}`,
   })
 
   return Memory.of({
@@ -52,7 +52,7 @@ export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, Inva
           const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
           // A summary too long to fit beside what stays is not stored: the next context asks again.
           const estimated = estimateTokens(summaryNote(summary)) + fold.kept
-          if (estimated > budget) return yield* Effect.fail(over(estimated))
+          if (estimated > budget) return yield* Effect.fail(over(estimated, "with a summary too long to fit beside the turns that stay: it was not stored"))
           yield* session.append(summarized(fold.through, summary))
           const again = yield* planned(session)
           return yield* Match.valueTags(again, {

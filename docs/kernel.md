@@ -797,7 +797,7 @@ return Memory.of({
         const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
         // A summary too long to fit beside what stays is not stored: the next context asks again.
         const estimated = estimateTokens(summaryNote(summary)) + fold.kept
-        if (estimated > budget) return yield* Effect.fail(over(estimated))
+        if (estimated > budget) return yield* Effect.fail(over(estimated, "with a summary too long to fit beside the turns that stay: it was not stored"))
         yield* session.append(summarized(fold.through, summary))
         const again = yield* planned(session)
         return yield* Match.valueTags(again, {

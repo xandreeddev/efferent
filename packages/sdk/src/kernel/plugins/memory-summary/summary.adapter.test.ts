@@ -48,6 +48,9 @@ const run = (messages: ReadonlyArray<string>, summaryOf: (call: number) => Effec
 const errorOf = (exit: Exit.Exit<unknown, unknown> | undefined) =>
   exit !== undefined && Exit.isFailure(exit) ? Option.getOrUndefined(Option.map(Exit.findErrorOption(exit), (error) => Predicate.hasProperty(error, "_tag") ? error._tag : undefined)) : undefined
 
+const messageOf = (exit: Exit.Exit<unknown, unknown> | undefined) =>
+  exit !== undefined && Exit.isFailure(exit) ? Option.getOrUndefined(Option.map(Exit.findErrorOption(exit), (error) => Predicate.hasProperty(error, "message") ? String(error.message) : undefined)) : undefined
+
 const turnOf = (n: number) => [`Message number ${n}`, "An answer of some length."]
 
 describe("the summary memory", () => {
@@ -102,6 +105,7 @@ describe("the summary memory", () => {
     const { exits, asked, summaries } = await run(numbered(11), (call) => Effect.succeed(call === 0 ? "long ".repeat(200) : "Short."))
     // The tenth turn: one summary asked for, too long, refused and not stored; never a second in the same context.
     expect(errorOf(exits[9])).toBe("OverBudget")
+    expect(messageOf(exits[9])).toMatch(/with a summary too long to fit beside the turns that stay: it was not stored$/)
     // The eleventh: the summary so far is still none, so it asks again, and this one fits.
     expect(exits[10]?._tag).toBe("Success")
     expect(asked.map((call) => call.earlier)).toEqual([Option.none(), Option.none()])
