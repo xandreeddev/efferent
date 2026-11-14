@@ -40,6 +40,6 @@ export const callTool = <Tools extends Record<string, Tool.Any>>(
       onSome: (last) => toolResult(call, last.encodedResult, last.isFailure),
     })),
     Effect.catch((error) => Effect.succeed(toolResult(call, failureText(error), true))),
-    Effect.catchDefect((defect) => Effect.succeed(toolResult(call, String(defect), true))),
+    Effect.catchDefect((defect) => Effect.succeed(toolResult(call, failureText(defect), true))),
     Effect.provideService(CurrentTurn, session),
   )

@@ -9,9 +9,11 @@ reverse dependency order; a failed activation closes its partially acquired
 scope. See [Composable agents](#composable-agents-the-host-composes-the-turn).
 
 A second, much smaller way to build an agent ships beside this engine as a
-first cut: a core that only carries events, and storage, sessions, memory
-and the loop as plugins. It is described in [The kernel](kernel.md), with
-what it leaves out for now; this guide describes the engine.
+first cut: a core that carries events, sessions and the journal; storage,
+memory and the rest as plugins, each a plain layer; and the loop as the
+host's own program. It is described in [The kernel](kernel.md), with what it
+leaves out for now and the questions still open, and taught step by step in
+the site's interactive lessons (`/learn`); this guide describes the engine.
 
 Each plugin has a stable `id`, `version`, `apiVersion`, `scope`, Effect Schema,
 default options, required service tags, provided service tags, and Layer factory.

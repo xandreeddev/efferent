@@ -10,7 +10,7 @@ const ALLOWED = new Set(["@xandreed/core/kernel", "@xandreed/sdk/kernel"])
 
 /** Every `@xandreed/…` module a text names in an import or export, written as code or inside a shown source string. */
 export const specifiersOf = (text: string): ReadonlyArray<string> =>
-  Array.from(text.matchAll(/from\s+\\?["'`](@xandreed\/[^"'`\\]+)\\?["'`]|import\(\s*["'`](@xandreed\/[^"'`]+)["'`]\s*\)/g), (match) => match[1] ?? match[2] ?? "")
+  Array.from(text.matchAll(/(?:from|import)\s+\\?["'`](@xandreed\/[^"'`\\]+)\\?["'`]|import\(\s*["'`](@xandreed\/[^"'`]+)["'`]\s*\)/g), (match) => match[1] ?? match[2] ?? "")
 
 /** The track's files, this test aside: its controls name the old engine on purpose. */
 const filesUnder = (dir: string): ReadonlyArray<string> =>
@@ -23,7 +23,7 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 
 describe("the learn track's imports", () => {
   test("name only the two kernel entries, in the page's code and in every shown source", () => {
-    const files = [...filesUnder(join(root, "learn")), ...filesUnder(join(root, "components/learn")), ...filesUnder(join(root, "content/learn"))]
+    const files = [...filesUnder(join(root, "learn")), ...filesUnder(join(root, "components/learn")), ...filesUnder(join(root, "content/learn")), ...filesUnder(join(root, "pages/learn"))]
     const named = files.flatMap((file) => specifiersOf(readFileSync(file, "utf8")).map((specifier) => `${specifier} in ${file.slice(root.length)}`))
     expect(named.length).toBeGreaterThan(20)
     expect(named.filter((entry) => !ALLOWED.has(entry.split(" in ")[0]!))).toEqual([])
@@ -34,5 +34,6 @@ describe("the learn track's imports", () => {
     expect(specifiersOf('export const IMPORTS = `import { Memory } from "@xandreed/core"`')).toEqual(["@xandreed/core"])
     expect(specifiersOf("const shown = \"import { x } from \\\"@xandreed/plugin-render\\\"\"")).toEqual(["@xandreed/plugin-render"])
     expect(specifiersOf('await import("@xandreed/core/internal")')).toEqual(["@xandreed/core/internal"])
+    expect(specifiersOf('import "@xandreed/plugin-models"')).toEqual(["@xandreed/plugin-models"])
   })
 })

@@ -1014,8 +1014,8 @@ memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 
 ## Open questions
 
-Decisions that are the user's, or that wait for a second use, recorded here so
-they are not made by accident.
+Decisions not yet made, or that wait for a second use, recorded here so they
+are not made by accident.
 
 - **`Reader` or `Vocabulary`.** A `Reader` is data, `{ reads, knows }`: the
   names a plugin knows and the prefix it answers for. Renaming it to say so
@@ -1035,6 +1035,15 @@ they are not made by accident.
   (skill `add-port`). A summarizer kit would check that it fails with
   `SummaryFailed` rather than answering with nothing; `CurrentTurn` is a
   value the loop provides, with nothing to check beyond its type.
+- **A tool that publishes needs two services.** A tool that shows progress
+  declares `CurrentTurn` and `Core`, because an open session appends but
+  does not publish. An `OpenSession` that could publish for its turn would
+  make one enough.
+- **From which lesson the track uses `callTool`.** Lessons 2 to 6 write the
+  block by hand; lesson 2 should, to teach it, and a later one could switch.
+- **`plugin.render.*` has no plugin.** The view and progress events are a
+  contract's, named under `plugin.` as ADR 0003 names a plugin's; a
+  contract's own prefix would say what they are.
 - **Lesson 4's helper and its caller.** The lesson files a helper under the
   chat's session, as it was written before `CurrentTurn`; ADR 0006 now
   files it under the turn that called it. Changing the lesson moves

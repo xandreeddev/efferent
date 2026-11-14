@@ -81,6 +81,8 @@ The [getting started guide](https://xandreeddev.github.io/efferent/docs/getting-
 
 ## Learn more
 
+- [Learn](https://xandreeddev.github.io/efferent/learn/): build an agent on the kernel, step by step, in your browser
+- [The kernel](docs/kernel.md): the smaller core beside the engine, its contracts and plugins, and what is still open
 - [Architecture](https://xandreeddev.github.io/efferent/docs/concepts/architecture/): ports, plugins and the plugin graph
 - [Models and providers](https://xandreeddev.github.io/efferent/docs/concepts/providers/): endpoints, credentials, proxies
 - [Events](https://xandreeddev.github.io/efferent/docs/guides/events/): streaming a turn to a client
