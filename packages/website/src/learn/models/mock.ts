@@ -28,9 +28,29 @@ const isClock = (message: ChatMessage): boolean => message.role === "user" && CL
 const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isClock(message)
 const isNote = (message: ChatMessage): boolean => isLedger(message) || isClock(message)
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`
+/** Any note the host added (a clock, a summary of older turns): never a message to answer or a sum to work out. */
+const isHostNote = (text: string): boolean => text.startsWith("[Host note:")
+
+/** The text inside `<tag>…</tag>`, when a message frames one. */
+const framedIn = (tag: string, text: string): string | undefined => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(text)?.[1]
+
+/**
+ * What Echo answers a summarizer's request (lesson 5) with, by rule, so the lesson can rely on it: how many things the
+ * user said before, the summary so far's count included, and the last of them. Short, whatever the conversation's length.
+ */
+export const echoSummary = (request: string): string => {
+  const earlier = Number(/You said (\d+) things? earlier/.exec(framedIn("earlier-summary", request) ?? "")?.[1] ?? 0)
+  const said = (framedIn("conversation-transcript", request) ?? "").split("\n")
+    .flatMap((line) => (line.startsWith("user: ") && !isHostNote(line.slice(6)) ? [line.slice(6)] : []))
+  const count = earlier + said.length
+  const last = said.at(-1)
+  return `You said ${plural(count, "thing")} earlier${last === undefined ? "" : `, the last: "${clip(last, 40)}"`}.`
+}
 
 /** What Echo says, from the messages the agent sent it. */
 export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
+  const request = messages.findLast((message) => message.role === "user")?.content ?? ""
+  if (request.includes("<conversation-transcript>")) return echoSummary(request)
   const system = messages.find((message) => message.role === "system")
   const clock = messages.findLast(isClock)
   const turns = messages.filter((message) => message.role !== "system" && !isClock(message))
@@ -57,7 +77,8 @@ export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   if (/\b(remember|recap|earlier|so far|summari[sz]e)\b|what (did|have) (i|we)\b/i.test(last)) {
     if (earlierUsers.length === 0 && !ledger) return "This is the first message, so I have nothing earlier to recall."
     const said = earlierUsers.slice(-5).map((message) => `"${clip(message.content)}"`).join(", ")
-    const note = ledger ? " Older turns were condensed into a short note, so I only see a summary of those." : ""
+    const summary = framedIn("conversation-summary", turns.findLast(isLedger)?.content ?? "")
+    const note = summary !== undefined ? ` Older turns were replaced by a summary: "${clip(summary)}"` : ledger ? " Older turns were condensed into a short note, so I only see a summary of those." : ""
     return `${earlierUsers.length > 0 ? `Earlier you said: ${said}.` : "I only have a condensed note about earlier turns."}${note}`
   }
   if (/\b(context|journal|window|system prompt|what can you see)\b/i.test(last)) {
@@ -81,8 +102,8 @@ const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×"
  * remember, a question about notes to recall; a message that just got tool results is answered from them.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
-  // A note code added for this request is not a message to answer or a sum to work out.
-  const prompt = { ...sent, content: sent.content.filter((message) => !(message.role === "user" && message.content.every((part) => part.type === "text" && CLOCK.test(part.text)))) }
+  // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
+  const prompt = { ...sent, content: sent.content.filter((message) => !(message.role === "user" && message.content.every((part) => part.type === "text" && isHostNote(part.text)))) }
   /** What the tool results ending at `at` say, as Echo answers from them: a helper's answer passed on as the helper's. */
   const answerFrom = (at: number): string => {
     let first = at

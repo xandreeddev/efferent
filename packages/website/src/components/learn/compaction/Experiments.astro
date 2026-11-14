@@ -1,0 +1,20 @@
+---
+const experiments = [
+  { id: "every-turn", title: "Summarize every turn", button: "Lower the budget to 100", text: "With Echo, a budget of 100 leaves room for the summary and one turn. From the fifth message on, every turn compacts: Memory compacted shows in every turn's steps, the summarizer is asked once a turn, and the cache bar drops to the system text each time. A summary that changes every turn is a prompt whose start never holds." },
+  { id: "keep-none", title: "Keep no recent turns", button: "Set keepTurns to 0", text: "Every finished turn is folded into the summary. The prompt after a compaction holds the system text, the summary and your message, and the model loses the exact words of your last exchange: a question about it is answered from the summary alone." },
+  { id: "failing-summarizer", title: "A summarizer that fails", button: "Make the summarizer fail", text: "The summarizer now fails, whatever it is asked. Turns answer as before until the budget is passed. Then the turn whose context needed a summary fails, and the chat says why, and so does every turn after it: each asks the summarizer once, gets nothing, and stores nothing. Reset the summarizer, and the next turn compacts." },
+  { id: "broken-calculator", title: "Tools after a compaction", button: "Break the calculator", text: "Lesson 2's broken calculator, here to show that tool traffic folds like any turn: a call and its result go into the summary together, never one without the other." },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

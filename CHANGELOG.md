@@ -36,7 +36,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
     after the context, whole and in its order, and is never stored,
-    `docs/adr/0005-context-for-one-request.md`), the tool call's
+    `docs/adr/0005-context-for-one-request.md`), the summary's
+    (`Summarizer`, which a host provides over its model, failing with
+    `SummaryFailed`), the tool call's
     (`CurrentTurn`: the open turn a call runs in, which the host's loop
     provides around `toolkit.handle` and a tool declares in its
     `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`) and the
@@ -52,7 +54,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     with a schema for its data and the tags that say what it is for
     (`conversation`, `turn`, `memory`, `ui`, `trace`, or a plugin's own
     `<plugin>.<tag>`; `taggedWith` tells a record by them). Only a record
-    tagged `conversation` bears a message (`messageOf`). Every stored
+    tagged `conversation` is read as a message (`messageOf`); a memory
+    may send the message of a record of its own, as the summary memory
+    sends its summary (`docs/adr/0008-a-memory-keeps-its-summary.md`). Every stored
     record carries its tags and the turn it was stored in. A stored record
     says whether a reader that does not know it may skip it, and a reader
     of the conversation or of another plugin's records extends that reader
@@ -76,7 +80,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `memory` and derived from the conversation. `flatMemory` sends every
     message; `windowMemory` drops whole turns oldest first, its budget
     covering the history, and publishes `plugin.window.pressure` as it
-    builds a context near the budget.
+    builds a context near the budget. `summaryMemory({ budgetTokens,
+    keepTurns? })`, over a `Summarizer` the host provides, folds the
+    oldest closed turns, whole, with the summary so far, into a new
+    summary when the conversation passes its budget, stores it once as
+    `plugin.summary.summarized` (tagged `memory`), and starts every later
+    context with it as a host note, so the cached prefix holds from one
+    compaction to the next; it folds every closed turn but the latest,
+    never the open one, frames the summary as data (`hostNote`,
+    `framed`), and asks for one summary at most per context. A budget's errors, `OverBudget`, `isOverBudget` and
+    `InvalidBudget`, are the memory contract's, shared by every memory
+    with a budget, no longer the window plugin's.
   - Tools: a turn that uses them is a loop the host writes over Effect
     AI's `Toolkit`, and the kernel adds no tool service
     (`docs/adr/0004-tool-traffic-is-conversation.md`). The turn offers
@@ -177,6 +191,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 5, "Compaction", at `/learn/compaction`. Lesson 2's
+  program over `summaryMemory`: `memory.ts` holds its options (the budget
+  and `keepTurns`), and `summarizer.ts` the learner's `Summarizer` over the
+  model they picked, its prompt framing the turns it folds as data. The
+  page's runtime wraps the summarizer (`watchSummarizer`), so a model call
+  made while it runs is stamped as the summarizer's and counted apart from
+  the turn's; the Context tab shows a "Memory compacted" step, the summary
+  row from its record and the folded turns left out. Echo summarizes by
+  rule, reads past every host note (a summary's as well as the clock's)
+  when it picks a tool, and quotes the summary when asked what was said
+  earlier. Experiments compact on every turn, keep no finished turn and
+  make the summarizer fail.
 - Docs site: Lesson 4, "Sub-agents", at `/learn/sub-agents`. The chat's
   agent hands a task to a helper through a `delegate` tool; the helper is
   an agent of its own (its own system text, tools and quiet hooks) working

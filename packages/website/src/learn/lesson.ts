@@ -5,7 +5,7 @@
 import type { Effect, Layer, Option, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, Sessions } from "@xandreed/core/kernel"
-import type { Memory } from "@xandreed/sdk/kernel"
+import type { Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 
 /** A part of a file's text, by offsets. */
@@ -77,6 +77,8 @@ export interface PageParts {
   readonly model: Layer.Layer<LanguageModel.LanguageModel>
   readonly pane: unknown
   readonly watchMemory: <E, R>(layer: Layer.Layer<Memory, E, R>) => Layer.Layer<Memory, E, R>
+  /** A wrapper around the learner's summarizer (lesson 5), so the page tells its model calls from the turn's. */
+  readonly watchSummarizer: <E, R>(layer: Layer.Layer<Summarizer, E, R>) => Layer.Layer<Summarizer, E, R>
 }
 
 export interface Lesson {

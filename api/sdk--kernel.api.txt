@@ -5,9 +5,12 @@ class InboxRefused
 class InvalidBudget
 class Memory
 class OverBudget
+class Summarizer
+class SummaryFailed
 const InboxQueuedData
 const ModelAnswer
 const ModelScript
+const SummarizedData
 const Ticket
 const Tokens
 const WindowDroppedData
@@ -15,6 +18,8 @@ const WindowPressureData
 const estimateContext
 const estimateTokens
 const flatMemory
+const framed
+const hostNote
 const inProcessJournal
 const inbox
 const inboxOf
@@ -27,6 +32,8 @@ const paired
 const promptMessage
 const scriptedModel
 const sessions
+const summarizedEvent
+const summaryMemory
 const windowDroppedEvent
 const windowMemory
 const windowPressureEvent
@@ -35,6 +42,7 @@ interface MemorySubject
 interface MemoryWrapperSubject
 interface Queued
 interface SessionsOptions
+interface SummaryOptions
 interface WindowOptions
 type InboxQueuedData
 type InboxTurn
@@ -43,6 +51,7 @@ type MemoryFailure
 type ModelAnswer
 type ModelScript
 type ScriptedCalls
+type SummarizedData
 type Ticket
 type Tokens
 type WindowDroppedData

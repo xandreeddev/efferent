@@ -1,7 +1,25 @@
-import { Match } from "effect"
+import { Match, Predicate, Result } from "effect"
 import type { Prompt } from "effect/ai"
 import type { Message } from "@xandreed/core/kernel"
-import { Tokens } from "./memory.entity.js"
+import { InvalidBudget, Tokens } from "./memory.entity.js"
+import type { OverBudget } from "./memory.entity.js"
+
+/**
+ * Text the host, not the user, adds to a context as a user-role message: `[Host note: …]`.
+ *
+ * @public
+ */
+export const hostNote = (text: string): string => `[Host note: ${text}]`
+
+/**
+ * Untrusted text (a summary a model wrote, a tool's output) inside `<tag>` and `</tag>`, each on its own line, with
+ * every copy of the tag inside it, in any case or spacing, made inert (`</conversation-summary>` becomes
+ * `</conversation_summary>`), so it cannot close the frame early or open another. The tag is lowercase with a hyphen.
+ *
+ * @public
+ */
+export const framed = (tag: string, text: string): string =>
+  `<${tag}>\n${text.replace(new RegExp(`<\\s*/?\\s*${tag}(?![\\w-])[^>]*>`, "gi"), (found) => found.replaceAll("-", "_"))}\n</${tag}>`
 
 /**
  * The estimate of what a text costs, in tokens: a quarter of its
@@ -92,3 +110,16 @@ export const paired = (messages: ReadonlyArray<Message>): ReadonlyArray<Message>
       ToolResult: (result) => (asked.has(result.id) ? [result] : []),
     }))
 }
+
+/** The budget a memory was given, as whole tokens; a number that is no budget is refused. */
+export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBudget> =>
+  Number.isFinite(budgetTokens) && budgetTokens >= 1
+    ? Result.succeed(Tokens.make(Math.floor(budgetTokens)))
+    : Result.fail(new InvalidBudget({ message: `a memory needs a budget of at least one token; it was given ${budgetTokens}` }))
+
+/**
+ * Whether an error is a memory's `OverBudget`, whichever memory or copy of the kernel raised it.
+ *
+ * @public
+ */
+export const isOverBudget = (error: unknown): error is OverBudget => Predicate.isTagged(error, "OverBudget")
