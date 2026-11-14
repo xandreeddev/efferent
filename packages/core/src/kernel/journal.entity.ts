@@ -19,13 +19,13 @@ export class JournalStorageError extends Schema.TaggedError<JournalStorageError>
 }) {}
 
 /**
- * Who reads a journal: the prefixes it answers for, and the names under
- * them it understands. Built with `readerFor`.
+ * What a part reads of a journal: the prefixes it answers for, and the
+ * record names under them it knows. Plain data, built with `vocabularyOf`.
  */
-export const Reader = Schema.Struct({ reads: Schema.Array(Schema.String), knows: Schema.Array(EventName) })
-export type Reader = typeof Reader.Type
+export const Vocabulary = Schema.Struct({ reads: Schema.Array(Schema.String), knows: Schema.Array(EventName) })
+export type Vocabulary = typeof Vocabulary.Type
 
-/** A reader met a record under one of its prefixes that it does not know, and the record does not say it may be skipped. */
+/** A journal read with a vocabulary held a record under one of its prefixes that the vocabulary does not know, and the record does not say it may be skipped. */
 export class UnknownRecord extends Schema.TaggedError<UnknownRecord>()("UnknownRecord", {
   name: EventName,
   seq: Seq,

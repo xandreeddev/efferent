@@ -34,7 +34,7 @@ like the system text: changing them changes the next prompt and leaves nothing s
 **Tool traffic is conversation.** The model's answer is stored with the calls it made (`assistantMessage(text, {
 toolCalls })`, from the stream's `tool-call` parts as they came), and each call's outcome as
 `conversation.tool.result` (`toolResult(call, result, isFailure)`), a new `Message` variant, `ToolResult`. Both are
-tagged `conversation` and read through `CONVERSATION_READER`. `promptMessage` sends a call as a part of the model's
+tagged `conversation` and read through `CONVERSATION_VOCABULARY`. `promptMessage` sends a call as a part of the model's
 message and a result as a tool message that answers it.
 
 **Failures are data.** A tool's failure (`failureMode: "return"`), an unknown tool and parameters that do not decode

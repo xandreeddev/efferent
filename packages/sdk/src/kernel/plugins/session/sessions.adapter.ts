@@ -6,7 +6,7 @@ import {
   Core,
   headerOf,
   InvalidSession,
-  KERNEL_READER,
+  KERNEL_VOCABULARY,
   NewSession,
   outcomeOf,
   Seq,
@@ -87,7 +87,7 @@ const decodeSession = Schema.decodeUnknownEffect(NewSession)
 const busy = (id: SessionId, why: string) => new SessionRefused({ reason: "SessionBusy", message: `session ${id} is busy: ${why}` })
 
 /** Whether a record is named under core's own prefix: core's records are this plugin's to write, never a body's. */
-const reserved = (event: StoredDraft) => KERNEL_READER.reads.some((prefix) => event.name.startsWith(prefix))
+const reserved = (event: StoredDraft) => KERNEL_VOCABULARY.reads.some((prefix) => event.name.startsWith(prefix))
 
 /**
  * The session plugin: it owns turns and the order of the journal. One turn

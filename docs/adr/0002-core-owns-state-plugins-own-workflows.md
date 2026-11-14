@@ -29,7 +29,7 @@ assembles an editor from them. Here the sessions and their journal are the buffe
   `OpenSession`, the session's phase, its two transitions and the fold of a journal to it;
 - events: `Core` (`publish`, `on`, `events`), event definitions, `storedEvent` and
   `liveEvent`, the session's own events and `core.listener.failed`;
-- reading a journal (`readJournal`, `readerFor`, the skip flag);
+- reading a journal (`readJournal`, `vocabularyOf`, the skip flag);
 - `kernel({ capacity? })`, which provides `Core` and nothing else;
 - the core part of inspecting a session: its header, state and events (`inspectionOf`).
 
@@ -77,9 +77,9 @@ not by the gate.
 
 **Events are named by the owner of the contract that defines them.** Sessions are a core
 contract, so their events are `core.session.turn.started` and `core.session.turn.ended`.
-The loop contract's are `plugin.loop.*`, a memory's `plugin.<its name>.*`. Core's reader
-(`KERNEL_READER`) answers for `core.` records only; `LOOP_READER` adds the loop's, and a
-memory's reader extends that (`readerFor(name, own, LOOP_READER)`).
+The loop contract's are `plugin.loop.*`, a memory's `plugin.<its name>.*`. Core's vocabulary
+(`KERNEL_VOCABULARY`) answers for `core.` records only; `LOOP_READER` adds the loop's, and a
+memory's vocabulary extends that (`vocabularyOf(name, own, LOOP_READER)`).
 
 **Turn and session lifetimes.** ADR 0001 proposed a pure reading rule for entries that live
 for a turn or a session (`visibleEntries`). It reads what a memory sends, so it belongs to
@@ -102,7 +102,7 @@ which `api/core--kernel.api.txt` lists. A plugin may rely on all of it:
   `listenerFailedEvent`; their data, `TurnStartedData`, `TurnEndedData`, `TurnOutcome` and
   `ListenerFailedData`; and the constructors the session plugin stores a turn's start and end
   with, `turnStarted`, `turnEnded` and `outcomeOf`.
-- **Reading a journal:** `Journal`, `Reader`, `readJournal`, `readerFor`, `KERNEL_READER`.
+- **Reading a journal:** `Journal`, `Vocabulary` (named `Reader` when this was written), `readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`.
 - **Sessions:** `Sessions` (`create`, `read`, `turn`), `OpenSession` (`append` and `journal`
   inside a turn), `TurnFailure`; a session's header and how one is asked for, `SessionHeader`,
   `JOURNAL_FORMAT`, `NewSession`, `NewSessionInput`; its phase, `SessionState`, `Free`,

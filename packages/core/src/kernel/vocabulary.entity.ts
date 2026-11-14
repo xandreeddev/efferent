@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { LiveDefinition, StoredDefinition } from "./event.entity.js"
 import { tagsOf } from "./event.entity.functions.js"
 import { EventName, TurnNumber } from "./ids.entity.js"
-import type { Reader } from "./journal.entity.js"
+import type { Vocabulary } from "./journal.entity.js"
 
 /*
  * Core's own events: those of the session contract, which every agent has
@@ -74,13 +74,13 @@ export const listenerFailedEvent: LiveDefinition<ListenerFailedData> = {
 }
 
 /**
- * What every reader of a journal answers for: core's own records, those
- * under `core.`. A plugin's reader adds its own prefix (`readerFor`), over
- * this one or over another plugin's reader it extends.
+ * What every vocabulary answers for: core's own records, those
+ * under `core.`. A plugin's vocabulary adds its own prefix (`vocabularyOf`), over
+ * this one or over another plugin's vocabulary it extends.
  *
  * @public
  */
-export const KERNEL_READER: Reader = {
+export const KERNEL_VOCABULARY: Vocabulary = {
   reads: ["core."],
   knows: [turnStartedEvent.name, turnEndedEvent.name],
 }

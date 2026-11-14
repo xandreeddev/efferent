@@ -39,9 +39,9 @@ checklist, the records have the reasons.
       imports core and other contracts, never a plugin. The boundaries gate refuses both.
 - [ ] An event is named after the owner of the contract that defines it: `core.` for
       core's, `plugin.<name>.` for a plugin contract's; `conversation.` is core's vocabulary
-      for the conversation, which a turn's body writes. A reader of the conversation or of
-      another plugin's records extends that reader (`readerFor(name, own,
-      CONVERSATION_READER)`).
+      for the conversation, which a turn's body writes. A plugin that reads the
+      conversation or another plugin's records extends that vocabulary
+      (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`).
 - [ ] An event's definition declares its tags (`conversation`, `turn`, `memory`, `ui`,
       `trace`, `<plugin>.<tag>`). Only a record tagged `conversation` is read as a message
       (`messageOf`); a memory may send the message of its own record (a summary, ADR 0008);

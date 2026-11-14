@@ -4,7 +4,7 @@
 
 /** Read-only: where each name the memory uses comes from. */
 export const MEMORY_IMPORTS = `import { Effect, Layer, Option } from "effect"
-import { CONVERSATION_READER, messageOf, readerFor, readJournal } from "@xandreed/core/kernel"
+import { CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal } from "@xandreed/core/kernel"
 import { Memory, promptMessage } from "@xandreed/sdk/kernel"`
 
 /** Read-only: the comment and the declaration before the editable layer. */
@@ -22,9 +22,9 @@ export const DEFAULT_MEMORY = `Layer.succeed(
       Effect.gen(function* () {
         // It reads the conversation, and its own records ("plugin.flat."), where it writes none yet.
         // A record it cannot read and may not skip is refused, never passed over.
-        const reader = readerFor("flat", [], CONVERSATION_READER)
+        const vocabulary = vocabularyOf("flat", [], CONVERSATION_VOCABULARY)
         const journal = yield* session.journal
-        const conversation = yield* Effect.fromResult(readJournal(reader)(journal))
+        const conversation = yield* Effect.fromResult(readJournal(vocabulary)(journal))
         const messages = conversation.flatMap((record) => Option.toArray(messageOf(record)))
         return messages.map(promptMessage)
       }),

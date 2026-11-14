@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { StoredDefinition } from "./event.entity.js"
 import { tagsOf } from "./event.entity.functions.js"
 import { EventName } from "./ids.entity.js"
-import type { Reader } from "./journal.entity.js"
+import type { Vocabulary } from "./journal.entity.js"
 import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 /*
@@ -84,14 +84,14 @@ export const toolResultEvent: StoredDefinition<ToolResultData> = {
 }
 
 /**
- * The reader of a conversation: core's records and the conversation's. A
- * memory reads through it, or through its own reader over it
- * (`readerFor(name, own, CONVERSATION_READER)`), so a conversation record it
+ * The vocabulary of a conversation: core's records and the conversation's. A
+ * memory reads through it, or through its own vocabulary over it
+ * (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`), so a conversation record it
  * does not know and may not skip is refused, never passed over in silence.
  *
  * @public
  */
-export const CONVERSATION_READER: Reader = {
+export const CONVERSATION_VOCABULARY: Vocabulary = {
   reads: ["core.", "conversation."],
   knows: [turnStartedEvent.name, turnEndedEvent.name, userMessageEvent.name, assistantMessageEvent.name, toolResultEvent.name],
 }

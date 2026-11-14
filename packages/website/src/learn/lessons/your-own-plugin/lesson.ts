@@ -1,6 +1,6 @@
 import { Clock, Effect, Layer, Option, Ref, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, assistantMessageEvent, Core, CONVERSATION_READER, messageOf, readerFor, readJournal, Sessions, toolResult, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, assistantMessageEvent, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { estimateTokens, hostNote, Memory, messageText, paired, promptMessage } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
@@ -13,7 +13,7 @@ import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
 import { dropFirst, slowMeter, storeClock, unplugMeter } from "./config-edit.ts"
 import { DEFAULT_PLUGIN, PLUGIN_HEADER, PLUGIN_IMPORTS, pluginBodyOf, pluginDocumentOf } from "./plugin.source.ts"
 
-const memoryNames = { Effect, Layer, Option, CONVERSATION_READER, messageOf, readerFor, readJournal, Memory, paired, promptMessage }
+const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
 const toolsNames = { Effect, Schema, Tool, Toolkit }
 const pluginNames = { Clock, Effect, Layer, Ref, assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage, estimateTokens, hostNote, Memory, messageText, Chat }
 

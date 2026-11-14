@@ -58,7 +58,7 @@ it: `./kernel` is a `restricted` subpath.
 - A contract lives in `contracts/<name>/`: its entities, events, pure
   rules and kit. There is no loop contract (ADR 0003): the loop is the
   host's program, and the conversation's records (`userMessage`,
-  `assistantMessage`, `CONVERSATION_READER`) are core's.
+  `assistantMessage`, `CONVERSATION_VOCABULARY`) are core's.
   `contracts/memory` holds `Memory` (`context(session)`, the messages
   that follow the system text, as Effect AI's `Prompt.MessageEncoded`),
   `Tokens`, `estimateTokens`, `estimateContext`, `messageText` (a
@@ -135,7 +135,7 @@ it: `./kernel` is a `restricted` subpath.
   `summary.entity.functions.ts`), `memory-flat`
   (`flatMemory`: every message of the conversation but a call no result
   answers, nothing stored, read through
-  `readerFor("flat", [], CONVERSATION_READER)`), `model-scripted`
+  `vocabularyOf("flat", [], CONVERSATION_VOCABULARY)`), `model-scripted`
   (`scriptedModel(script)`: a `LanguageModel` layer that follows a
   `ModelScript` of `ModelAnswer`s, `Answers`, `Calls` (pieces, then
   `tool-call` parts named `call-<n>-<i>`) or `Fails`, and records the

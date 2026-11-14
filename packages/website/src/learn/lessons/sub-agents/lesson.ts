@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, CONVERSATION_READER, messageOf, readerFor, readJournal, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, userMessage } from "@xandreed/core/kernel"
 import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
@@ -13,7 +13,7 @@ import { noDelegate, sameSession, slowHelper } from "./config-edit.ts"
 import { DEFAULT_LOOP, LOOP_HEADER, LOOP_IMPORTS, loopBodyOf, loopDocumentOf } from "./loop.source.ts"
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentOf } from "./tools.source.ts"
 
-const memoryNames = { Effect, Layer, Option, CONVERSATION_READER, messageOf, readerFor, readJournal, Memory, paired, promptMessage }
+const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
 const loopNames = { Effect, Option, Stream, LanguageModel, Prompt, assistantMessage, toolResult, userMessage, Memory }
 const toolsNames = { Context, Effect, Schema, Tool, Toolkit }
 

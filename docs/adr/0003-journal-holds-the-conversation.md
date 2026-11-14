@@ -55,7 +55,7 @@ rebuilding need no fold.
 
 **Memory builds the context.** `Memory.context(session)` returns the messages that follow
 the system text, ready for a prompt. It reads the conversation's records and its own,
-through the conversation's reader (`readerFor(name, own, CONVERSATION_READER)`); what it
+through the conversation's vocabulary (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`); what it
 stores of its own is tagged `memory` and is derived from the conversation, never a copy of
 it. A budget is the memory's own option and covers the history. The stock memories are
 `flatMemory`, everything, and `windowMemory`, whole turns dropped oldest first. (ADR 0008

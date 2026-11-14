@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Array as Arr, Context, Effect, Layer, Option, Order, Ref, Result } from "effect"
 import {
   announced,
-  CONVERSATION_READER,
+  CONVERSATION_VOCABULARY,
   Core,
   EventName,
   kernel,
@@ -14,7 +14,7 @@ import {
   sessionsConformance,
   JournalStorage,
   journalStorageConformance,
-  readerFor,
+  vocabularyOf,
   readJournal,
   TurnNumber,
   UnknownRecord,
@@ -236,7 +236,7 @@ describe("the memory kit", () => {
   /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
   const strict = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
     const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(yield* Core)))), Memory)
-    const known: ReadonlyArray<string> = [...CONVERSATION_READER.knows, windowDroppedEvent.name]
+    const known: ReadonlyArray<string> = [...CONVERSATION_VOCABULARY.knows, windowDroppedEvent.name]
     return Memory.of({
       context: (session) => Effect.flatMap(session.journal, (journal) => {
         const stranger = journal.find((event) => !known.includes(event.name))
@@ -246,18 +246,18 @@ describe("the memory kit", () => {
   })))
 
   /**
-   * The window memory, but it judges unknown records under its own prefix alone: it reads the journal with a reader
-   * over core's (`readerFor("window", own)`), not over the conversation's, so a record of the conversation it does not
+   * The window memory, but it judges unknown records under its own prefix alone: it reads the journal with a vocabulary
+   * over core's (`vocabularyOf("window", own)`), not over the conversation's, so a record of the conversation it does not
    * know passes as another plugin's, and the window below never sees it.
    */
   const ownPrefixOnly = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
     const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(yield* Core)))), Memory)
-    const reader = readerFor("window", [windowDroppedEvent])
+    const vocabulary = vocabularyOf("window", [windowDroppedEvent])
     const ofTheConversation = (name: string) => name.startsWith("conversation.")
     return Memory.of({
-      context: (session) => Effect.flatMap(session.journal, (journal) => Result.match(readJournal(reader)(journal), {
+      context: (session) => Effect.flatMap(session.journal, (journal) => Result.match(readJournal(vocabulary)(journal), {
         onFailure: Effect.fail,
-        onSuccess: () => inner.context({ ...session, journal: Effect.succeed(journal.filter((event) => !ofTheConversation(event.name) || CONVERSATION_READER.knows.includes(event.name))) }),
+        onSuccess: () => inner.context({ ...session, journal: Effect.succeed(journal.filter((event) => !ofTheConversation(event.name) || CONVERSATION_VOCABULARY.knows.includes(event.name))) }),
       })),
     })
   })))
@@ -273,9 +273,9 @@ describe("the memory kit", () => {
     const sloppy = await failedChecks(memoryConformance(careless("sloppy", (journal) => journal.flatMap((event) => Option.toArray(messageOf(event))).slice(-3).map((message) => ({ role: "user" as const, content: messageText(message) })), { writes: true })))
     expect(sloppy).toEqual(["conversation", "fits", "over-budget", "own-records", "pairs", "prefix", "turn-message", "unknown-conversation-refused", "unknown-refused"])
     // It reads as the flat memory does, but sends every tool call, a call no result answers too.
-    const unpairedReader = readerFor("unpaired", [], CONVERSATION_READER)
+    const unpairedVocabulary = vocabularyOf("unpaired", [], CONVERSATION_VOCABULARY)
     const unpaired = await failedChecks(memoryConformance(subject("unpaired", Layer.succeed(Memory, Memory.of({
-      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(unpairedReader)(journal)), (records) =>
+      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(unpairedVocabulary)(journal)), (records) =>
         records.flatMap((record) => Option.toArray(messageOf(record))).map(promptMessage))),
     })), null)))
     expect(unpaired).toEqual(["pairs"])
