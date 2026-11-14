@@ -112,7 +112,7 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the lesson's program, a turn with tools, a plugin of your own, the session plugin's functions, the memories, the inbox, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the lesson's program, a turn with tools, a plugin of your own, the session plugin's functions, the memories, the inbox, a host's resume, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
@@ -134,6 +134,7 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/guide.test.ts#memory-plugin",
       "packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts#",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
+      "packages/sdk/src/kernel/durable.test.ts#resume",
       "packages/sdk/src/kernel/swap.test.ts#swap",
     ])
     // Every fence of the document is one of the pinned quotes: two fence lines each.

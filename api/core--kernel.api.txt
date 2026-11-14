@@ -44,10 +44,12 @@ const Usage
 const UserMessage
 const UserMessageData
 const Vocabulary
+const abandonedTurn
 const announced
 const assistantMessage
 const assistantMessageEvent
 const beginTurn
+const byCreation
 const currentFormat
 const dataOf
 const endTurn

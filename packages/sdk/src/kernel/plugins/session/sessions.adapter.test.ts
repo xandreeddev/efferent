@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
+import { Array as Arr, Clock, Context, Deferred, Effect, Fiber, Layer, Option, Order, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Core, JOURNAL_FORMAT, kernel, listenerFailedEvent, liveEvent, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
+import { Core, JOURNAL_FORMAT, kernel, listenerFailedEvent, liveEvent, Owner, Seq, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -117,6 +117,23 @@ describe("the end of a turn", () => {
         ? Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn)))).pipe(Effect.flatMap((exit) => Deferred.done(next, exit)))
         : Effect.void, { name: "follower" })
       yield* turns.turn(id, () => Effect.void)
+      return yield* Effect.match(Deferred.await(next), { onSuccess: (turn) => ({ budget, turn }), onFailure: (failure) => ({ budget, failure }) })
+    }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
+    expect(results).toEqual(budgets.map((budget) => ({ budget, turn: 2 })))
+  })
+
+  test("stored by recover finds the session free for such a listener too, wherever the publisher is preempted", async () => {
+    const results = await run(Effect.forEach(budgets, (budget) => Effect.scoped(Effect.gen(function* () {
+      const { plugins: [turns], core, storage } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      // A writer that is gone left turn 1 open.
+      yield* storage.append(id, Seq.make(0), TurnNumber.make(1), turnStarted(TurnNumber.make(1)))
+      const next = yield* Deferred.make<number, unknown>()
+      yield* core.on(turnEndedEvent, (ended) => ended.data.turn === 1
+        ? Effect.exit(turns.turn(id, (session) => Effect.succeed(Number(session.turn)))).pipe(Effect.flatMap((exit) => Deferred.done(next, exit)))
+        : Effect.void, { name: "follower" })
+      yield* turns.recover(id)
       return yield* Effect.match(Deferred.await(next), { onSuccess: (turn) => ({ budget, turn }), onFailure: (failure) => ({ budget, failure }) })
     }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget))), { concurrency: 1 }))
     expect(results).toEqual(budgets.map((budget) => ({ budget, turn: 2 })))
@@ -359,6 +376,77 @@ describe("two session plugins over one store", () => {
   })
 })
 
+describe("a turn whose writer is taken for gone", () => {
+  /** The outcomes of the turns a journal holds, in order. */
+  const outcomes = (events: ReadonlyArray<{ readonly name: string; readonly data: unknown }>) =>
+    events.flatMap((event) => event.name === ENDED ? [(event.data as { readonly outcome: { readonly _tag: string } }).outcome._tag] : [])
+
+  test("is closed by another plugin's recover: the writer's next append is refused, its close stores no second end, and the next turn opens", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [writer, host], names, storage } = yield* over(2)
+      if (writer === undefined || host === undefined) return yield* Effect.die("no session plugins")
+      const id = yield* writer.create({ owner })
+      const recovered = yield* writer.turn(id, (session) => Effect.gen(function* () {
+        yield* session.append(stored(noted, {}))
+        const closed = yield* host.recover(id)
+        const late = yield* Effect.flip(session.append(stored(noted, {})))
+        return { closed, late }
+      }))
+      const after = yield* names(id)
+      return { ...recovered, after, outcomes: outcomes((yield* storage.read(id)).events), next: yield* host.turn(id, (session) => Effect.succeed(Number(session.turn))) }
+    }))
+    expect(result.closed).toEqual(Option.some(TurnNumber.make(1)))
+    expect(result.late).toMatchObject({ _tag: "SessionRefused", reason: "NoOpenTurn" })
+    expect(result.late.message).toMatch(/^turn 1 of session .+ is no longer open in the journal: another writer closed it$/)
+    expect(result.after).toEqual([STARTED, "plugin.notes.noted", ENDED])
+    expect(result.outcomes).toEqual(["Abandoned"])
+    expect(result.next).toBe(2)
+  })
+
+  test("and writes nothing more before it closes: its close finds the other's end in the journal, and stores none of its own", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [writer, host], names, storage } = yield* over(2)
+      if (writer === undefined || host === undefined) return yield* Effect.die("no session plugins")
+      const id = yield* writer.create({ owner })
+      const value = yield* writer.turn(id, () => Effect.as(host.recover(id), "the body's value"))
+      return { value, after: yield* names(id), outcomes: outcomes((yield* storage.read(id)).events), next: yield* writer.turn(id, (session) => Effect.succeed(Number(session.turn))) }
+    }))
+    expect(result).toEqual({ value: "the body's value", after: [STARTED, ENDED], outcomes: ["Abandoned"], next: 2 })
+  })
+
+  test("is not recovered by the plugin that holds it, nor a free session by anyone: nothing is stored", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const held = yield* turns.turn(id, () => Effect.flip(turns.recover(id)))
+      const free = yield* turns.recover(id)
+      return { held: [held._tag, held.message], free, after: yield* names(id) }
+    }))
+    expect(result.held[0]).toBe("SessionRefused")
+    expect(result.held[1]).toMatch(/^session .+ is busy: a turn is open, or its end is being announced$/)
+    expect(result.free).toEqual(Option.none())
+    expect(result.after).toEqual([STARTED, ENDED])
+  })
+})
+
+describe("a session's header", () => {
+  test("is stamped with the time it was created at, and the sessions are listed by it", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns] } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const before = yield* Clock.currentTimeMillis
+      const first = yield* turns.create({ owner })
+      const second = yield* turns.create({ owner, parent: first })
+      const listed = yield* turns.list
+      return { fresh: listed.every((header) => header.createdAt >= before && header.format === JOURNAL_FORMAT), ids: Arr.sort(listed.map((header): string => header.id), Order.String), expected: Arr.sort([first, second].map(String), Order.String), parents: listed.filter((header) => header.parent === first).length }
+    }))
+    expect(result.fresh).toBe(true)
+    expect(result.ids).toEqual(result.expected)
+    expect(result.parents).toBe(1)
+  })
+})
+
 describe("a session's id", () => {
   test("is a version 4 UUID from the platform's random source, a new one each time", async () => {
     const ids = await run(Effect.gen(function* () {
@@ -410,7 +498,7 @@ describe("what a session refuses to store or to open", () => {
       const { plugins: [turns], storage, names } = yield* over(1)
       if (turns === undefined) return yield* Effect.die("no session plugin")
       const id = SessionId.make("from-a-later-kernel")
-      yield* storage.create({ id, owner, format: JOURNAL_FORMAT + 1 })
+      yield* storage.create({ id, owner, createdAt: 1, format: JOURNAL_FORMAT + 1 })
       const ran = yield* Ref.make(false)
       const told = (refusal: { readonly _tag: string; readonly reason?: string }) => refusal.reason ?? refusal._tag
       const turned = yield* Effect.flip(turns.turn(id, () => Ref.set(ran, true)))

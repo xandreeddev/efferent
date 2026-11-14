@@ -54,6 +54,7 @@ caught up.
 | The memory contract | sdk, `contracts/memory` | `Memory` with its kit; `promptMessage`, `estimateTokens`, `estimateContext`, `Tokens` |
 | The inbox contract | sdk, `contracts/inbox` | `Inbox`, its ticket, refusals and event; `InboxTurn`, the host's turn it runs |
 | `inProcessJournal()` | sdk, `plugins/journal-in-process` | keeps journals in the process; knows nothing else |
+| `webStorageJournal(storage, { prefix })` | sdk, `plugins/journal-web-storage` | keeps journals in a browser's `localStorage`, or any value with its five members: they outlive the page |
 | `sessions()` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `flatMemory` | sdk, `plugins/memory-flat` | every message of the conversation, oldest first |
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | the conversation within a budget; drops whole turns, oldest first |
@@ -711,11 +712,13 @@ a table.
 | `beginTurn` | to `TurnOpen`, the next turn number | refused: `SessionBusy` |
 | `endTurn` | refused: `NoOpenTurn` | to `Free` |
 
-A journal's header names the format it was written in. A turn opens only on
-a journal of this kernel's format (`JOURNAL_FORMAT`); another is refused
-(`SessionRefused`, `FormatMismatch`) and nothing is stored, since old
-journals are not migrated. `read` still gives such a journal, so a host can
-say what it found and start a new session.
+A journal's header names the format it was written in, and when the session
+was created. A turn opens only on a journal of this kernel's format
+(`JOURNAL_FORMAT`, 2 since the header's `createdAt` and the `Abandoned`
+outcome); another is refused (`SessionRefused`, `FormatMismatch`) and
+nothing is stored, since old journals are not migrated. `read` and `list`
+still give such a journal, so a host can say what it found and start a new
+session.
 
 The state is also the fold of the journal (`sessionStateOf`), and the store
 is the truth. The session plugin begins every turn by reading the journal,
@@ -729,9 +732,9 @@ uncertain acknowledgement, as a remote store may give), leaves the turn's
 place unknown: the next write, the end's included, reads the last place
 from the store before it stores. Such an event may be in the journal and
 never announced. So a turn stays open in the journal only when its end
-could not be stored, or when the store kept its start and reported a
-failure; closing such a turn is crash recovery, which returns with the
-durable stores. Inside a turn, the writes take one lock
+could not be stored, when the store kept its start and reported a
+failure, or when its writer is gone; closing such a turn is `recover`
+(see "A store that outlives its process"). Inside a turn, the writes take one lock
 in turn: two appends made at once are stored one after the other, and the
 end, once the body has returned, waits for an append still being stored
 and is stored after it. An append made after the end began is refused
@@ -993,6 +996,62 @@ places, or replies a caller waits for one by one. Its rules:
   fails with `SessionBusy`.
 - **In the process only.** Queued messages do not survive the process.
 
+## A store that outlives its process
+
+A store is a part like any other: `JournalStorage` is four calls
+(`create`, `append`, `read`, `list`) and a kit. `inProcessJournal()` keeps
+journals in the process, and they are gone with it. `webStorageJournal`
+keeps them in a browser's `localStorage`: one key for a session's header,
+one for each of its events, so an append writes one key. It is handed the
+storage as a value with five members (`length`, `key`, `getItem`,
+`setItem`, `removeItem`), so it names no browser type and a test hands it a
+map. A storage that refuses a write is `Unavailable`; a stored value that
+does not decode is `Unreadable`, which trying again does not help.
+
+A host finds its sessions in the store. `Sessions.list` gives every header,
+ordered by `byCreation`: the time the session was created at, then its id.
+The order is a function of the headers alone, so a store keeps no index,
+and a host keeps none of its own.
+
+A process that dies inside a turn leaves it open in the journal, and
+nothing of the kernel will close it: the journal cannot say whether its
+writer is slow or gone. The host can, because the host arranged that the
+store has one writer (one process over a file, one tab holding a lock).
+`Sessions.recover(id)` is the host saying so: it stores
+`core.session.turn.ended` with the outcome `Abandoned`, announces it, and
+gives the turn it closed; a session that is free is left as it is. What
+the abandoned turn stored stays in the journal, and a memory sends of it
+what it sends of any turn: a tool call with no result is not sent
+(`paired`).
+
+<!-- pinned: packages/sdk/src/kernel/durable.test.ts#resume -->
+
+```ts
+/**
+ * The conversation to go on with: the last one this owner started that this
+ * kernel reads, or a new one. This host is the store's one writer and has
+ * just started, so a turn the journal holds open is nobody's: `recover`
+ * closes it as `Abandoned`, and does nothing to a session that is free.
+ */
+const resume = (owner: string) => Effect.gen(function* () {
+  const sessions = yield* Sessions
+  const mine = (yield* sessions.list).filter((header) =>
+    header.owner === owner && header.parent === undefined && Result.isSuccess(currentFormat(header)))
+  const last = mine.at(-1)
+  if (last === undefined) return yield* sessions.create({ owner })
+  yield* sessions.recover(last.id)
+  return last.id
+})
+```
+
+The kernel does not enforce the one writer. It does keep the journal whole
+when the host was wrong: a writer whose turn was closed under it finds that
+out at its next write, which reads the journal and is refused
+(`NoOpenTurn`), and its close stores nothing, taking the end the journal
+holds for its own. A turn this process holds is never recovered by it
+(`SessionBusy`). The session a header names as its parent is not checked
+to exist: the parent may be in another store.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the
@@ -1041,8 +1100,8 @@ fail on a careless plugin written for it.
 
 | Contract | Kit | Or why none |
 |---|---|---|
-| `JournalStorage` | `journalStorageConformance` | |
-| `Sessions` | `sessionsConformance` | |
+| `JournalStorage` | `journalStorageConformance`; with the subject's `pair` (two handles on one medium) it also checks that a second handle reads what the first wrote, which a store kept in the process has no way to show | |
+| `Sessions` | `sessionsConformance`, over the plugin and the store it runs on | |
 | `Memory` | `memoryConformance`; a wrapper of it, `memoryWrapperConformance` | |
 | `Summarizer` | `summarizerConformance` | |
 | `Core` | none | core has one implementation, `kernel()`, held by its own tests |
@@ -1052,8 +1111,8 @@ fail on a careless plugin written for it.
 
 ## What the first cut leaves out, and the order it returns
 
-This cut keeps journals in the process, and has one session plugin and three
-memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
+This cut keeps journals in the process or in a browser's storage, and has one
+session plugin and three memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
 1. **Pointer memories.** Results replaced by pointers with a tool that
@@ -1063,8 +1122,10 @@ memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
    and `Card`; a richer vocabulary, or one a host extends, returns when a
    client needs it. (What the UI shows has returned: a record tagged `ui`,
    `viewsOf`.)
-3. **Durable stores and crash recovery**, on the seam the fold of the
-   journal already gives.
+3. **Stores on a disk or in a database**, on the contract and kit the two
+   shipped stores pass. (A store that outlives its process, and the close
+   of a turn its writer left open, have returned: `webStorageJournal`,
+   `Sessions.recover`.)
 
 ## Open questions
 

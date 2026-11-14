@@ -23,7 +23,9 @@ export type TurnStartedData = typeof TurnStartedData.Type
 export const turnStartedEvent: StoredDefinition<TurnStartedData> = coreStoredEvent("core.session.turn.started", { data: TurnStartedData, skippable: false, tags: ["turn"] })
 
 /**
- * How a turn ended: completed, failed with the reason, or interrupted. The reply is not here: a turn's workflow records it.
+ * How a turn ended: completed, failed with the reason, interrupted, or
+ * abandoned: closed by `Sessions.recover`, not by the writer that opened
+ * it, which was gone. The reply is not here: a turn's workflow records it.
  *
  * @public
  */
@@ -31,6 +33,7 @@ export const TurnOutcome = Schema.Union([
   Schema.TaggedStruct("Completed", {}),
   Schema.TaggedStruct("Failed", { reason: Schema.String }),
   Schema.TaggedStruct("Interrupted", {}),
+  Schema.TaggedStruct("Abandoned", {}),
 ])
 export type TurnOutcome = typeof TurnOutcome.Type
 

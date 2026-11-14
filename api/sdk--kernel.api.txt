@@ -50,11 +50,13 @@ const summarizerConformance
 const summaryMemory
 const viewEvent
 const viewsOf
+const webStorageJournal
 const windowDroppedEvent
 const windowMemory
 const windowPressureEvent
 interface Answered
 interface InboxOptions
+interface KeyValueStore
 interface MemorySubject
 interface MemoryWrapperSubject
 interface ModelToolCall
@@ -64,6 +66,7 @@ interface SessionsOptions
 interface Shown
 interface SummarizerSubject
 interface SummaryOptions
+interface WebStorageJournalOptions
 interface WindowOptions
 type InboxQueuedData
 type InboxTurn

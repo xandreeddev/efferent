@@ -1,4 +1,4 @@
-import { Match, Result } from "effect"
+import { Match, Option, Order, Result } from "effect"
 import type { StoredEvent } from "./event.entity.js"
 import { TurnNumber } from "./ids.entity.js"
 import type { SessionId } from "./ids.entity.js"
@@ -19,7 +19,10 @@ export const newSession: SessionState = { _tag: "Free", turns: 0 }
 export const beginTurn = (state: SessionState): Result.Result<TurnOpen, SessionRefused> =>
   Match.valueTags(state, {
     Free: ({ turns }): Result.Result<TurnOpen, SessionRefused> => Result.succeed({ _tag: "TurnOpen", turn: TurnNumber.make(turns + 1) }),
-    TurnOpen: ({ turn }) => Result.fail(new SessionRefused({ reason: "SessionBusy", message: `turn ${turn} is still open` })),
+    TurnOpen: ({ turn }) => Result.fail(new SessionRefused({
+      reason: "SessionBusy",
+      message: `turn ${turn} is still open: if the writer that opened it is gone, close it with \`Sessions.recover\``,
+    })),
   })
 
 /**
@@ -31,6 +34,16 @@ export const endTurn = (state: SessionState): Result.Result<Free, SessionRefused
   Match.valueTags(state, {
     Free: () => Result.fail(new SessionRefused({ reason: "NoOpenTurn", message: "no turn is open" })),
     TurnOpen: ({ turn }): Result.Result<Free, SessionRefused> => Result.succeed({ _tag: "Free", turns: turn }),
+  })
+
+/**
+ * The turn to close for a writer that is gone (`Sessions.recover`): the
+ * open one, or none for a free session, which is left as it is.
+ */
+export const abandonedTurn = (state: SessionState): Option.Option<TurnNumber> =>
+  Match.valueTags(state, {
+    Free: () => Option.none<TurnNumber>(),
+    TurnOpen: ({ turn }) => Option.some(turn),
   })
 
 /**
@@ -53,13 +66,24 @@ export const sessionStateOf = (events: ReadonlyArray<StoredEvent>): Result.Resul
   return Result.succeed(state)
 }
 
-/** The header a new session is stored with. */
-export const headerOf = (id: SessionId, input: NewSession): SessionHeader => ({
+/** The header a new session is stored with: created at `createdAt`, in milliseconds since the epoch. */
+export const headerOf = (id: SessionId, input: NewSession, createdAt: number): SessionHeader => ({
   id,
   owner: input.owner,
   ...(input.parent === undefined ? {} : { parent: input.parent }),
+  createdAt,
   format: JOURNAL_FORMAT,
 })
+
+/**
+ * The order `list` gives headers in: by `createdAt`, then by id for two
+ * created in the same millisecond. A function of the headers alone, so
+ * every store lists the same sessions in the same order.
+ */
+export const byCreation: Order.Order<SessionHeader> = Order.combineAll([
+  Order.mapInput(Order.Number, (header: SessionHeader) => header.createdAt),
+  Order.mapInput(Order.String, (header: SessionHeader) => header.id),
+])
 
 /**
  * A header whose journal this kernel reads: one written in `JOURNAL_FORMAT`.
