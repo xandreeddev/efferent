@@ -1776,3 +1776,57 @@ body.app {
     animation: none;
   }
 }
+
+/* Views (lesson 6): what the UI shows, drawn from the journal's view records. */
+.pg-msg.view {
+  justify-self: stretch;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  font-size: 0.86rem;
+}
+.pg-msg.view[data-placeholder] { border-style: dashed; color: var(--text-dim); }
+.pg-msg.view .vw-id {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  margin-bottom: 0.3rem;
+}
+.pg-msg.view .vw-title { display: block; margin-bottom: 0.35rem; }
+.pg-msg.view .vw-text, .pg-msg.view .vw-card p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pg-msg.view ul { margin: 0; padding-left: 1.1rem; }
+.pg-msg.view .vw-scroll { max-width: 100%; overflow-x: auto; }
+.pg-msg.view table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.pg-msg.view th, .pg-msg.view td {
+  padding: 0.2rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.pg-msg.view th { color: var(--text-dim); font-weight: 600; }
+.pg-msg.view .vw-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.pg-msg.view .vw-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.pg-msg.view .vw-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.pg-msg.view .vw-progress[data-done] { opacity: 0.6; }

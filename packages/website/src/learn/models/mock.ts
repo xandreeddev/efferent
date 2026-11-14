@@ -95,6 +95,20 @@ interface EchoCall {
   readonly params: Record<string, unknown>
 }
 
+/** The table Echo asks `show` for, by rule: squares or cubes up to n (5 if none is named, at most 20), or a times table. */
+const showTable = (match: RegExpExecArray): EchoCall => {
+  const kind = match[1]!.toLowerCase()
+  if (kind === "squares" || kind === "cubes") {
+    const upTo = Math.min(20, Math.max(1, Number(match[2] ?? 5)))
+    const power = kind === "squares" ? 2 : 3
+    const rows = Array.from({ length: upTo }, (_, index) => [String(index + 1), String((index + 1) ** power)])
+    return { name: "show", params: { id: kind, title: kind === "squares" ? "Squares" : "Cubes", columns: ["n", kind === "squares" ? "n²" : "n³"], rows } }
+  }
+  const of = Number(kind)
+  const rows = Array.from({ length: 10 }, (_, index) => [`${index + 1} × ${of}`, String((index + 1) * of)])
+  return { name: "show", params: { id: `times-${of}`, title: `The times table of ${of}`, columns: ["sum", "answer"], rows } }
+}
+
 const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×": "*", "/": "/", "÷": "/" }
 
 /**
@@ -120,6 +134,9 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   const pending = prompt.content.slice(since > prompt.content.length - 1 ? 0 : since + 1).flatMap((message) =>
     message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
+    // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
+    const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
+    if (table !== null && offered.includes("show")) return [showTable(table)]
     // "Ask a helper: …", "have a helper work out …": the rest is the helper's task.
     const handed = /\b(?:ask|have|get) a helper\b[\s:,-]*(?:to\s+)?(.+)/i.exec(asked)
     if (handed !== null && offered.includes("delegate")) return [{ name: "delegate", params: { task: handed[1]?.trim() ?? "" } }]

@@ -5,7 +5,7 @@
 import { renderMarkdown } from "../markdown.ts"
 
 export interface ChatPane {
-  readonly add: (kind: "user" | "agent" | "error" | "note" | "tool", text: string) => HTMLElement
+  readonly add: (kind: "user" | "agent" | "error" | "note" | "tool" | "view", text: string) => HTMLElement
   /** A user message waiting in the queue, marked so until its turn takes it. */
   readonly waiting: (text: string) => HTMLElement
   /** The waiting message's turn took it: it is no longer waiting. */
@@ -75,7 +75,7 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
     submit()
   }))
 
-  const add = (kind: "user" | "agent" | "error" | "note" | "tool", text: string) => {
+  const add = (kind: "user" | "agent" | "error" | "note" | "tool" | "view", text: string) => {
     empty.hidden = true
     const item = document.createElement("li")
     item.className = `pg-msg ${kind}`

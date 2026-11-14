@@ -1,0 +1,69 @@
+---
+title: Render
+description: An agent shows things, not only text. A tool stores a view, a record tagged ui, which the chat draws and the model never sees.
+minutes: 20
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/render/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code">
+
+Some answers are better shown than said: a table of results, a card, the progress of slow work. This lesson's agent gets a tool, `show`, that puts a table in the chat.
+
+What is shown belongs to the UI, never to the model. A table costs its size in every later request if it is sent as text. So `show` stores the table as a **view**: a record of its own in the journal, tagged `ui`. The chat draws it, and no memory sends it. The model reads only a few words: "shown as squares".
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. "Show a table of squares to 5" or "show the times table of 7" goes to `show`, with the rows worked out by rule.
+
+The small models on your machine rarely call a tool, as lesson 2 showed. Hosted models use `show` when their system text tells them to.
+
+</Step>
+
+<Step n={3} id="tool" title="A tool that shows" focus="code" file="tools">
+
+**tools.ts** declares `show`: an id, a title, columns and rows. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat.
+
+Its handler needs two things it lists in `dependencies`:
+
+- **`CurrentTurn`**, the turn its call runs in, to `append` the view;
+- **`Core`**, to publish progress as it goes.
+
+The table is checked as it is built: a row with the wrong number of cells is a failure the model reads.
+
+</Step>
+
+<Step n={4} id="loop" title="The loop gives each call its turn" focus="code" file="agent">
+
+**agent.ts** is lesson 2's program, with one change: each call runs with `Effect.provideService(CurrentTurn, session)`. The loop holds the open turn, so it hands it to the tool. A tool that declares nothing never notices.
+
+</Step>
+
+<Step n={5} id="watch" title="Watch it" focus="context" wide={true}>
+
+Ask **"Show a table of squares to 5"**. The table appears in the chat. Then ask for squares to 8: the same table updates in its place.
+
+Open **Context**:
+
+- **Journal**: between the call and its result, a record `plugin.render.view`, tagged `ui`. Its payload is the view.
+- **Memory**: the view is not there. It is not conversation, and memory skips it.
+- **Prompt**: the call, and the result "shown as squares". None of the cells.
+
+The chat draws views by folding the journal: one view per id, the latest wins. The button below forgets every view drawn and draws them again from the journal alone, as a reload would.
+
+<p class="learn-try"><button class="btn btn-primary" type="button" data-redraw-views>Redraw views from the journal</button></p>
+
+</Step>
+
+<Step n={6} id="experiments" title="Experiments" focus="code">
+
+<Experiments />
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** keep the conversation: journals that outlive the page. Why a view is a record and not a result is in [ADR 0009](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0009-what-the-ui-shows-is-a-record.md).
+
+</Step>

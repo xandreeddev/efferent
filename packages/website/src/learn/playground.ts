@@ -3,7 +3,9 @@
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition.
 import { Option } from "effect"
-import { assistantMessageEvent, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import type { StoredEvent } from "@xandreed/core/kernel"
+import { progressEvent, viewEvent } from "@xandreed/sdk/kernel"
 import { lessonOf } from "./lessons/index.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
@@ -15,6 +17,7 @@ import { mountEditor } from "./panes/editor.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
 import type { BuildResult, LessonRuntime, Trace } from "./runtime.ts"
+import { viewBoard } from "./views.ts"
 
 const CONTEXT_TAB = "context"
 
@@ -104,6 +107,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
   /** The answer being written, by turn. */
   const answers = new Map<number, { readonly item: HTMLElement; text: string }>()
   let unseen = false
+  /** The chat session's records as they are announced, for the views the chat draws (lesson 6). */
+  const chatRecords: Array<StoredEvent> = []
+  const views = viewBoard(() => chat.add("view", ""))
 
   const answerOf = (turn: number) => {
     const found = answers.get(turn)
@@ -128,7 +134,14 @@ function boot(root: HTMLElement, lesson: Lesson) {
     switch (event._tag) {
       case "Event": {
         const record = event.event
+        if (record._tag === "Live" && state.runtime !== undefined && record.session === state.runtime.conversation) {
+          Option.map(dataOf(progressEvent, record), ({ id, done, total }) => views.progress(id, done, total))
+        }
         if (record._tag !== "Stored" || state.runtime === undefined || record.session !== state.runtime.conversation) break
+        const { session: _session, _tag: _stored, ...stored } = record
+        chatRecords.push(stored)
+        // What the UI shows: every view record redraws the chat's views from the fold of its records.
+        if (record.name === viewEvent.name) views.draw(chatRecords)
         if (record.name === userMessageEvent.name) {
           // The program took the oldest waiting message: its turn has it now.
           const item = waiting.shift()
@@ -136,6 +149,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
           answerOf(record.turn)
         }
         if (record.name === turnEndedEvent.name) {
+          views.settle()
           const outcome = (record.data as { readonly outcome?: { readonly _tag?: string } }).outcome?._tag
           if (outcome === "Interrupted") {
             const answer = answers.get(record.turn)
@@ -375,6 +389,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     waiting.splice(0)
     answers.clear()
     chat.clear()
+    chatRecords.length = 0
+    views.reset()
     statusBox.textContent = ""
     trace.reset(runtime.conversation)
     state.building = false
@@ -483,6 +499,14 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }))
 
   // "Send 5 short messages": sent at once, to build up a conversation to look at.
+  // Lesson 6: forget the views drawn, and draw them again from the journal alone, as a reload would.
+  document.querySelectorAll<HTMLButtonElement>("[data-redraw-views]").forEach((button) => button.addEventListener("click", async () => {
+    const runtime = state.runtime
+    if (runtime === undefined) return
+    document.querySelectorAll("[data-pane=\"chat\"] [data-view]").forEach((item) => item.remove())
+    views.reset()
+    views.draw(await runtime.journal())
+  }))
   document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => send(lesson.fill)))
 
   // ── start ───────────────────────────────────────────────────────────────
