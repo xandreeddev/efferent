@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
+import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
 import { echoReply, echoStep, echoSummary, loadEcho } from "./mock.ts"
@@ -627,5 +628,17 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
       { role: "user", content: "And what is 2 + 2?" },
     ])
     expect(echoStep(sent, every)).toEqual(calling(sum(2, "+", 2)))
+  })
+})
+
+describe("the ids of a page model's tool calls", () => {
+  test("a minter counts from one after its own run, and two page loads never share an id", () => {
+    const first = callIds("echo-call", "aaaaaa")
+    const second = callIds("echo-call", "bbbbbb")
+    expect([first(), first(), second()]).toEqual(["echo-call-aaaaaa-1", "echo-call-aaaaaa-2", "echo-call-bbbbbb-1"])
+    // Each minter draws its own run when none is given.
+    const drawn = [callIds("echo-call")(), callIds("echo-call")()]
+    expect(drawn[0]).toMatch(/^echo-call-[0-9a-z]{6}-1$/)
+    expect(drawn[0]).not.toBe(drawn[1])
   })
 })

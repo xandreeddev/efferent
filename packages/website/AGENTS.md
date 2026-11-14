@@ -104,7 +104,11 @@ check` (tsc over the learn code, the build, the link check) and
   `show`, a summarizer's request summarized by count; it reads past every
   host note. A new rule gets a test in `models/models.test.ts` that fails
   without it. Real models run in the browser (WebLLM on WebGPU, a CPU
-  worker, Chrome's Prompt API).
+  worker, Chrome's Prompt API). A model in the page mints the ids of its
+  own tool calls with `callIds` (`models/call-ids.ts`), which differ
+  between page loads: a counter alone starts again on a reload, and a
+  durable lesson would store two calls under one id. A test that needs
+  the same ids on two pages passes its own minter (`loadEcho(callIds(…))`).
 - Skill `add-lesson` is the checklist for a new lesson.
 
 ## Rules

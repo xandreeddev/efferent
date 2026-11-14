@@ -8,6 +8,7 @@
 import { Stream } from "effect"
 import { Prompt, Tool } from "effect/ai"
 import type { LanguageModel, Response } from "effect/ai"
+import { callIds } from "./call-ids.ts"
 
 type Implementation = Parameters<typeof LanguageModel.make>[0]
 type StreamOptions = Parameters<Implementation["streamText"]>[0]
@@ -139,7 +140,8 @@ export const callHolder = () => {
   }
 }
 
-let next = 0
+/** This page load's ids for the calls a model wrote as text. */
+const browserCallId = callIds("browser-call")
 
 /** A browser model's implementation, given tools by the text protocol whenever a call offers them. */
 export const withToolProtocol = (impl: Implementation): Implementation => ({
@@ -157,7 +159,7 @@ export const withToolProtocol = (impl: Implementation): Implementation => ({
         if (part.type === "finish") {
           const { text, calls } = holder.finish()
           const leftover: ReadonlyArray<Response.StreamPartEncoded> = text.length > 0 ? [{ type: "text-delta", id: "text", delta: text }] : []
-          const asked = calls.map((call): Response.StreamPartEncoded => ({ type: "tool-call", id: `browser-call-${++next}`, name: call.name, params: call.params }))
+          const asked = calls.map((call): Response.StreamPartEncoded => ({ type: "tool-call", id: browserCallId(), name: call.name, params: call.params }))
           return Stream.fromIterable([...leftover, ...asked, { ...part, reason: asked.length > 0 ? "tool-calls" : part.reason }])
         }
         return Stream.make(part)

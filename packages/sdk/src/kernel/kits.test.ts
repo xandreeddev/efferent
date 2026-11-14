@@ -413,6 +413,17 @@ describe("the memory kit", () => {
         records.flatMap((record) => Option.toArray(messageOf(record))).map(promptMessage))),
     })), null)))
     expect(unpaired).toEqual(["pairs"])
+    // It pairs by id alone: a call left open is sent when a later call of the same id was answered.
+    const byId = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
+      const answered = new Set(messages.flatMap((message) => message._tag === "ToolResult" ? [message.id] : []))
+      return messages.flatMap((message): ReadonlyArray<Message> => message._tag !== "Assistant" ? [message]
+        : message.text.length === 0 && message.toolCalls.every((call) => !answered.has(call.id)) ? [] : [{ ...message, toolCalls: message.toolCalls.filter((call) => answered.has(call.id)) }])
+    }
+    const pairedById = await failedChecks(memoryConformance(subject("byid", Layer.succeed(Memory, Memory.of({
+      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(vocabularyOf("byid", [], CONVERSATION_VOCABULARY))(journal)), (records) =>
+        byId(records.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage))),
+    })), null)))
+    expect(pairedById).toEqual(["pairs"])
     // It refuses records it should pass over: another plugin's, a record of another use, and its own that may be skipped.
     const refusing = await failedChecks(memoryConformance(strict()))
     expect(refusing).toEqual(["foreign", "other-uses", "unknown-skipped"])

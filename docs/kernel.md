@@ -322,10 +322,14 @@ A turn stopped while a tool ran leaves a call with no result in the journal,
 and a memory that cuts the conversation can split a call from its result. A
 provider refuses a call nothing answers, so every memory sends its messages
 through `paired`: a call goes only with its result, a result only with its
-call, and an answer left with neither text nor a call is dropped. The
+call, and an answer left with neither text nor a call is dropped. Pairs are
+made in order: a call's id is the model's and can repeat (a model that
+numbers its calls starts again when its process does), so a result answers
+the last call of its id before it that nothing answered yet. The
 journal keeps every record; `paired` decides only what is sent. The memory
 kit holds a memory to it (`pairs`): an answered call is sent with its result
-right after it, and an unanswered one not at all. The window memory drops
+right after it, and an unanswered one not at all, also when its id was asked
+again later and answered. The window memory drops
 whole turns only, so one long tool turn can go over its budget: it fails
 with `OverBudget` like any turn that alone does not fit (ADR 0004).
 
@@ -1148,8 +1152,6 @@ are not made by accident.
   body. A body can append under another plugin's prefix.
 - **`PluginFailure` is any tagged error with a message**, so a host cannot
   handle a memory's or an inbox turn's failures exhaustively.
-- **`paired` pairs by set, not by order.** A result stored before the
-  message that asked for it is sent before its call.
 - **Two `kernel()` layers give two cores**, silently: the one nearer the
   consumer wins.
 

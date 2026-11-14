@@ -71,7 +71,9 @@ checklist, the records have the reasons.
       function that holds the open session provides it (`callTool`, `modelAnswer`, the
       summary memory around its summarizer).
 - [ ] A memory sends its messages through `paired`, so no call goes without its result;
-      the memory kit's `pairs` check holds it to that.
+      the memory kit's `pairs` check holds it to that. A call's id is the model's and can
+      repeat across restarts: pair in order, never by id alone, and never use a call id
+      as the key of something stored.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a
       tool result the model reads in every later request; a client draws it by folding the
       journal, the same fold live and after a reload.

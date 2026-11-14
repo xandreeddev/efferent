@@ -6,6 +6,7 @@ import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
+import { callIds } from "./call-ids.ts"
 import { makeBrowserModel } from "./make.ts"
 import type { LoadedModel, ModelChoice } from "./types.ts"
 
@@ -149,9 +150,11 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
 
-let echoCalls = 0
+/** This page load's ids for Echo's tool calls. */
+const echoCallId = callIds("echo-call")
 
-export const loadEcho = (): LoadedModel => {
+/** Echo, loaded. `callId` mints the ids of its tool calls: a test passes its own to make two pages mint the same ones. */
+export const loadEcho = (callId: () => string = echoCallId): LoadedModel => {
   let interrupted = false
   const model = makeBrowserModel({
     generateText: (options) => Effect.sync(() => {
@@ -163,7 +166,7 @@ export const loadEcho = (): LoadedModel => {
       const messages = toChatMessages(options.prompt)
       const { text: reply, calls } = options.tools.length > 0 ? echoStep(options.prompt, options.tools.map((tool) => tool.name)) : { text: echoReply(messages), calls: [] }
       interrupted = false
-      const asked = calls.map((call) => ({ type: "tool-call" as const, id: `echo-call-${++echoCalls}`, name: call.name, params: call.params }))
+      const asked = calls.map((call) => ({ type: "tool-call" as const, id: callId(), name: call.name, params: call.params }))
       return Stream.fromIterable(words(reply)).pipe(
         Stream.mapEffect((word) => Effect.sleep("35 millis").pipe(Effect.as(word))),
         Stream.takeWhile(() => !interrupted),
