@@ -87,6 +87,8 @@ export type ProgressData = typeof ProgressData.Type
 /**
  * `plugin.render.progress`: live, tagged `ui`, never stored: progress is
  * for whoever watches now, and the view the work ends with is what stays.
+ * A tool publishes it through its turn: `turn.publish(progressEvent, { id,
+ * done, total })`.
  *
  * @public
  */

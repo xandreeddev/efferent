@@ -42,8 +42,19 @@ checklist, the records have the reasons.
       for the conversation, which a turn's body writes. A plugin that reads the
       conversation or another plugin's records extends that vocabulary
       (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`).
+- [ ] An event is defined with `storedEvent` or `liveEvent`, and a record is made with
+      `stored(definition, data)`: a session refuses an object written by hand, a copy of a
+      draft, or a record of a definition written by hand (`NotADraft`). A definition's
+      mistake (a name, a tag) throws where it is made, with what is wrong.
+- [ ] A record whose shape changes takes a new name. A journal that holds the old name is
+      refused by the new vocabulary, or passed over when the record may be skipped; a
+      plugin never changes the journal's format, which is core's.
+- [ ] A part that holds the open session (a tool, a memory) publishes a live event about
+      its turn with `session.publish(definition, data)`, and asks for no `Core`.
+- [ ] A listener is given what its definition's kind is delivered as: a stored record
+      (`seq`, `turn`, `message`) or a live event. No handler tells the two apart by hand.
 - [ ] An event's definition declares its tags (`conversation`, `turn`, `memory`, `ui`,
-      `trace`, `<plugin>.<tag>`). Only a record tagged `conversation` is read as a message
+      `trace`, `<plugin>.<tag>`). A word outside the five does not type and is refused. Only a record tagged `conversation` is read as a message
       (`messageOf`); a memory may send the message of its own record (a summary, ADR 0008);
       a memory's own records are tagged `memory` and derived from the conversation, never a
       copy of it.

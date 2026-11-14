@@ -62,9 +62,23 @@ export const headerOf = (id: SessionId, input: NewSession): SessionHeader => ({
 })
 
 /**
+ * A header whose journal this kernel reads: one written in `JOURNAL_FORMAT`.
+ * Another format is refused with `FormatMismatch`: an old journal is not
+ * migrated, and a host that meets one starts a new session.
+ */
+export const currentFormat = (header: SessionHeader): Result.Result<SessionHeader, SessionRefused> =>
+  header.format === JOURNAL_FORMAT
+    ? Result.succeed(header)
+    : Result.fail(new SessionRefused({
+      reason: "FormatMismatch",
+      message: `session ${header.id} was written in journal format ${header.format}, and this kernel reads format ${JOURNAL_FORMAT}: old journals are not migrated, so start a new session`,
+    }))
+
+/**
  * A session as a host inspects it: its header, the state its journal
  * folds to, and its journal. What a workflow recorded in it, its plugins'
  * contracts read from the same journal.
  */
 export const inspectionOf = (journal: Journal): Result.Result<Inspection, UnknownRecord | SessionRefused> =>
-  Result.map(sessionStateOf(journal.events), (state) => ({ header: journal.header, state, events: journal.events }))
+  Result.flatMap(currentFormat(journal.header), (header) =>
+    Result.map(sessionStateOf(journal.events), (state) => ({ header, state, events: journal.events })))

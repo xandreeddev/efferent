@@ -84,7 +84,12 @@ describe("wrapping a contract with higher-order plugins", () => {
   })
 })
 
-describe("memory wrappers that append, then delegate", () => {
+/*
+ * A wrapper that records: it appends an entry of its own, then delegates (ADR 0001, "Rules for wrappers"). What a
+ * wrapper adds to the context of one request is not this: it comes after the inner context and is never stored
+ * (ADR 0005, `memoryWrapperConformance`). This holds the order of wrappers alone.
+ */
+describe("memory wrappers that record: the last applied is the outermost, and runs first", () => {
   const noted = storedEvent("note", "added", { tags: ["memory"], data: Schema.Struct({ by: Schema.String }), skippable: true })
 
   /** A memory wrapper as a higher-order plugin: it appends a note of its own, then asks the memory it wraps. */

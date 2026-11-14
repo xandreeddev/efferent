@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Array as Arr, Context, Effect, Layer, Option, Order, Ref, Result } from "effect"
+import { Array as Arr, Context, Effect, Layer, Option, Order, Ref, Result, Schema } from "effect"
 import {
   announced,
   CONVERSATION_VOCABULARY,
+  isStoredDraft,
+  live,
+  stored,
+  storedEvent,
   Core,
   EventName,
   kernel,
@@ -23,9 +27,10 @@ import {
 } from "@xandreed/core/kernel"
 import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import type { ConformanceCheck, JournalStorageSubject, Message, PluginFailure, SessionsSubject, StoredEvent } from "@xandreed/core/kernel"
+import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summaryMemory, windowDroppedEvent, windowMemory } from "./index.js"
+import type { SummarizerSubject } from "./index.js"
+import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -71,10 +76,14 @@ describe("the storage kit", () => {
   })
 })
 
+/** A record's fields as a draft of a definition of the careless plugin's own: what it makes of a value it should have refused. */
+const redrafted = (event: { readonly data: Schema.Json; readonly skippable: boolean; readonly message?: StoredDraft["message"] }, plugin: string, name: string, tags: ReadonlyArray<ReservedTag>): StoredDraft =>
+  stored(storedEvent(plugin, name, { data: Schema.Json, skippable: event.skippable, tags }), event.data, event.message === undefined ? {} : { message: event.message })
+
 describe("the sessions kit", () => {
   const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal(), onCore(core))
   const stock: SessionsSubject = { open: (core) => built(Sessions, sessions(), over(core)) }
-  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "missing", "invalid-session"]
+  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "not-a-draft", "publish", "missing", "invalid-session"]
 
   test("has the checks its doc comment lists, and passes on the stock session plugin", async () => {
     expect(ids(sessionsConformance(stock))).toEqual(every)
@@ -148,8 +157,25 @@ describe("the sessions kit", () => {
         turn: (id, body) => inner.turn(id, (session) => body({
           ...session,
           append: (event) => Effect.catchIf(session.append(event), (error) => error._tag === "SessionRefused" && error.reason === "ReservedName", () =>
-            session.append({ ...event, name: EventName.make(`plugin.renamed.${event.name}`) })),
+            session.append(redrafted(event, "renamed", event.name, ["turn"]))),
         })),
+      })),
+    }),
+    // Whatever a body hands it is "helpfully" made into a draft: an object written by hand, or a copy of a draft, is stored as it reads.
+    forgiving: (): SessionsSubject => ({
+      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+        ...inner,
+        turn: (id, body) => inner.turn(id, (session) => body({ ...session, append: (event) => {
+          const given: unknown = event
+          return session.append(isStoredDraft(given) ? event : redrafted(event, "kit", "noted", ["trace"]))
+        } })),
+      })),
+    }),
+    // A live event is published whether or not the turn it is about is still open.
+    late: (): SessionsSubject => ({
+      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+        ...inner,
+        turn: (id, body) => inner.turn(id, (session) => body({ ...session, publish: (definition, data) => core.publish(live(definition, session, data)) })),
       })),
     }),
     // It appends what a body gives it and announces it, with no start, no end, no phase and no check that the session exists.
@@ -157,10 +183,11 @@ describe("the sessions kit", () => {
       open: (core) => Effect.gen(function* () {
         const storage = yield* built(JournalStorage, inProcessJournal(), Layer.empty)
         const only = SessionId.make("the-only-session")
-        const sessionOf = (id: SessionId) => ({
+        const sessionOf = (id: SessionId): OpenSession => ({
           id,
           turn: TurnNumber.make(1),
           journal: Effect.map(storage.read(id), (journal) => journal.events),
+          publish: (definition, data) => core.publish(live(definition, { id, turn: TurnNumber.make(1) }, data)),
           append: (event: Parameters<typeof storage.append>[3]) => Effect.flatMap(storage.read(id), (journal) => storage.append(id, Seq.make(journal.events.length), TurnNumber.make(1), event)).pipe(
             Effect.tap((kept) => core.publish(announced({ id }, kept))),
           ),
@@ -182,15 +209,20 @@ describe("the sessions kit", () => {
       oneFlag: await failedChecks(sessionsConformance(careless.oneFlag())),
       pooled: await failedChecks(sessionsConformance(careless.pooled())),
       renaming: await failedChecks(sessionsConformance(careless.renaming())),
+      forgiving: await failedChecks(sessionsConformance(careless.forgiving())),
+      late: await failedChecks(sessionsConformance(careless.late())),
       reopening: await failedChecks(sessionsConformance(careless.reopening())),
       trusting: await failedChecks(sessionsConformance(careless.trusting())),
       turnless: await failedChecks(sessionsConformance(careless.turnless())),
     }
-    expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered"])
+    // Its events, a published live one included, go to a Core of its own.
+    expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered", "publish"])
     expect(failed.detached).toEqual(["open"])
     expect(failed.oneFlag).toEqual(["isolated"])
     expect(failed.pooled).toEqual(["ordered"])
     expect(failed.renaming).toEqual(["reserved-name"])
+    expect(failed.forgiving).toEqual(["not-a-draft"])
+    expect(failed.late).toEqual(["publish"])
     expect(failed.reopening).toEqual(["closed-append"])
     expect(failed.trusting).toEqual(["invalid-session"])
     expect(failed.turnless).toEqual(sorted(every))
@@ -285,5 +317,23 @@ describe("the memory kit", () => {
     // It reads its own prefix and not the conversation's: an unknown record of the conversation passes.
     expect(await failedChecks(memoryConformance(ownPrefixOnly()))).toEqual(["unknown-conversation-refused"])
     expect(sorted([...new Set([...everything, ...nothing, ...sloppy, ...refusing, ...unpaired])])).toEqual(sorted(every))
+  })
+})
+
+describe("the summarizer kit", () => {
+  const subject = (summarize: Context.Service.Shape<typeof Summarizer>["summarize"]): SummarizerSubject => ({ open: Effect.succeed(Summarizer.of({ summarize })) })
+
+  test("has the check its doc comment lists, and passes on a summarizer that answers in a few words, or fails as the contract says", async () => {
+    const wordy = subject(({ earlier, messages }) => Effect.succeed(`${Option.isSome(earlier) ? "Earlier, and " : ""}${messages.length} messages about a sum`))
+    expect(ids(summarizerConformance(wordy))).toEqual(["answers"])
+    expect(await failedChecks(summarizerConformance(wordy))).toEqual([])
+    expect(await failedChecks(summarizerConformance(subject(() => Effect.fail(new SummaryFailed({ message: "the model is down" })))))).toEqual([])
+  })
+
+  test("fails on a summarizer that answers with nothing, with or without an earlier summary, and on one that dies", async () => {
+    expect(await failedChecks(summarizerConformance(subject(() => Effect.succeed(" \n"))))).toEqual(["answers"])
+    // Blank only when it is handed an earlier summary: the second half of the check.
+    expect(await failedChecks(summarizerConformance(subject(({ earlier }) => Effect.succeed(Option.isSome(earlier) ? "" : "A sum."))))).toEqual(["answers"])
+    expect(await failedChecks(summarizerConformance(subject(() => Effect.die("the summarizer broke"))))).toEqual(["answers"])
   })
 })

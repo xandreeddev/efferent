@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { kernel, makeCore } from "./core.adapter.js"
 import { Core } from "./core.port.js"
-import { live, liveEvent } from "./event.entity.functions.js"
+import { announced, live, liveEvent, stored, storedEvent } from "./event.entity.functions.js"
 import type { KernelEvent } from "./event.entity.js"
-import { SessionId, TurnNumber } from "./ids.entity.js"
+import { Seq, SessionId, TurnNumber } from "./ids.entity.js"
 import { listenerFailed } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent } from "./vocabulary.entity.js"
 import { ListenerFailed } from "./event.entity.js"
@@ -23,6 +23,44 @@ const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromis
 /** Everything the hub hands over, in its order, up to and including the probe; reading from now. */
 const untilProbe = (core: Effect.Success<ReturnType<typeof makeCore>>) =>
   Effect.forkScoped(Stream.runCollect(Stream.takeUntil(core.events, (event) => event.name === tocked.name)), { startImmediately: true })
+
+describe("Core.on", () => {
+  const noted = storedEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }), skippable: true })
+  /** A live definition under the same name as the stored one: what a careless publisher could make. */
+  const impostor = { ...liveEvent("notes", "noted", { tags: ["trace"], data: Schema.Struct({ text: Schema.String }) }) }
+  const record = (seq: number, text: string) => announced(origin, { seq: Seq.make(seq), at: 0, turn: origin.turn, ...stored(noted, { text }, { message: { _tag: "User", text } }) })
+
+  test("hands a stored definition's listener the record, and a live one's the live event: neither is told apart by hand", async () => {
+    const heard = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      // The handler reads the record's place and the message it bears, and a live event's turn, with no check of which it was given.
+      yield* core.on(noted, (event) => Ref.update(heard, (all) => [...all, `record ${event.seq} ${event.data.text} ${event.message?._tag ?? "no message"}`]), { wait: true, name: "host" })
+      yield* core.on(ticked, (event) => Ref.update(heard, (all) => [...all, `live ${event.data.n} turn ${event.turn ?? "none"}`]), { wait: true, name: "host" })
+      yield* core.publish(record(4, "kept"))
+      yield* core.publish(tick(7))
+      return yield* Ref.get(heard)
+    }))
+    expect(heard).toEqual(["record 4 kept User", "live 7 turn 1"])
+  })
+
+  test("delivers an event to a listener only when it is of the definition's kind as well as its name", async () => {
+    const heard = await run(Effect.gen(function* () {
+      const core = yield* makeCore()
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      const reached = yield* Deferred.make<void>()
+      yield* core.on(noted, (event) => Ref.update(heard, (all) => [...all, `waiting ${event.seq}`]), { wait: true, name: "host" })
+      yield* core.on(noted, (event) => Effect.andThen(Ref.update(heard, (all) => [...all, `background ${event.seq}`]), Deferred.succeed(reached, undefined)), { name: "host" })
+      // A live event under the record's name is no record: a handler written for records is not given it, waiting or not.
+      // It is published first, so a background listener that took it would have it before the record.
+      yield* core.publish(live(impostor, origin, { text: "not stored" }))
+      yield* core.publish(record(2, "stored"))
+      yield* Deferred.await(reached)
+      return yield* Ref.get(heard)
+    }))
+    expect(heard).toEqual(["waiting 2", "background 2"])
+  })
+})
 
 describe("Core.publish", () => {
   test("runs the waiting listeners in the order they registered, one after another, before it returns", async () => {

@@ -39,7 +39,8 @@ export const SessionHeader = Schema.Struct({
   id: SessionId,
   owner: Owner,
   parent: Schema.optionalKey(SessionId),
-  format: Schema.Literal(JOURNAL_FORMAT),
+  /** The format the journal was written in. A header of any format reads back; a turn opens only on `JOURNAL_FORMAT` (`currentFormat`). */
+  format: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type SessionHeader = typeof SessionHeader.Type
 
@@ -69,12 +70,14 @@ export type SessionState = typeof SessionState.Type
 
 /**
  * What a session refuses: a turn begun while one is open (`SessionBusy`), a
- * write to a turn that is not open (`NoOpenTurn`), or a record a body
+ * write to a turn that is not open (`NoOpenTurn`), a record a body
  * appends under core's own names, which only the session plugin writes
- * (`ReservedName`).
+ * (`ReservedName`), a value to append that `stored` did not make
+ * (`NotADraft`), or a turn on a journal written in another format than this
+ * kernel's (`FormatMismatch`).
  */
 export class SessionRefused extends Schema.TaggedError<SessionRefused>()("SessionRefused", {
-  reason: Schema.Literals(["SessionBusy", "NoOpenTurn", "ReservedName"]),
+  reason: Schema.Literals(["SessionBusy", "NoOpenTurn", "ReservedName", "NotADraft", "FormatMismatch"]),
   message: Schema.String,
 }) {}
 

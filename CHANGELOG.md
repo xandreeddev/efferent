@@ -42,9 +42,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     never sees a view, and a later one with the same id replaces it;
     `viewsOf`, the pure fold a client draws, live and after a reload; live
     progress, `plugin.render.progress`; no service: a tool appends its view
-    through `CurrentTurn`, `docs/adr/0009-what-the-ui-shows-is-a-record.md`), the summary's
+    and publishes its progress through `CurrentTurn`, `docs/adr/0009-what-the-ui-shows-is-a-record.md`), the summary's
     (`Summarizer`, which a host provides over its model, failing with
-    `SummaryFailed`), the tool call's
+    `SummaryFailed`, with its kit, `summarizerConformance`: it answers with
+    text or fails so, never with nothing), the tool call's
     (`CurrentTurn`: the open turn a call runs in, which the host's loop
     provides around `toolkit.handle` and a tool declares in its
     `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
@@ -62,7 +63,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     open: a plugin defines its own with `storedEvent` and `liveEvent`, each
     with a schema for its data and the tags that say what it is for
     (`conversation`, `turn`, `memory`, `ui`, `trace`, or a plugin's own
-    `<plugin>.<tag>`; `taggedWith` tells a record by them). Only a record
+    `<plugin>.<tag>`; `taggedWith` tells a record by them). A mistake in a
+    definition throws where it is made, with what is wrong: a word that is
+    no reserved tag (a misspelt `conversation`, which does not type either),
+    another plugin's tag, or a name that is none. A record is made with
+    `stored(definition, data)` and no other way: a session refuses an
+    object written by hand, a copy of a draft, or a record of a definition
+    written by hand (`SessionRefused`, `NotADraft`). A listener is given
+    what its definition's kind is delivered as (`DeliveryOf`): a stored
+    record or a live event. A part that holds the open session publishes a
+    live event about its turn with `session.publish(definition, data)`. A
+    journal written in another format than `JOURNAL_FORMAT` opens no turn
+    (`FormatMismatch`), and still reads. Only a record
     tagged `conversation` is read as a message (`messageOf`); a memory
     may send the message of a record of its own, as the summary memory
     sends its summary (`docs/adr/0008-a-memory-keeps-its-summary.md`). Every stored

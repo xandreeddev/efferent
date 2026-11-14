@@ -1,11 +1,12 @@
 import { Effect, Layer, Option } from "effect"
-import { Core, readJournal } from "@xandreed/core/kernel"
+import { readJournal } from "@xandreed/core/kernel"
 import { paired, promptMessage } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import type { OpenSession } from "@xandreed/core/kernel"
 import { budgetOf } from "../../contracts/memory/memory.entity.functions.js"
 import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
-import { fitToBudget, nearlyFull, WINDOW_VOCABULARY, windowDropped, windowPressure } from "./window.entity.functions.js"
+import { fitToBudget, nearlyFull, pressureOf, WINDOW_VOCABULARY, windowDropped } from "./window.entity.functions.js"
+import { windowPressureEvent } from "./window.entity.js"
 import type { WindowOptions } from "./window.entity.js"
 
 /**
@@ -14,14 +15,14 @@ import type { WindowOptions } from "./window.entity.js"
  * budget, which is the history's: the system text is the caller's. What it
  * drops it records as `plugin.window.dropped`, tagged `memory`, so a turn
  * once dropped stays dropped and the start of every later context holds; a
- * context built close to the budget it announces as `plugin.window.pressure`.
+ * context built close to the budget it announces as `plugin.window.pressure`,
+ * published through the open session, so it needs no `Core` of its own.
  * A budget that is no finite number of at least one token fails the layer
  * with `InvalidBudget`.
  *
  * @public
  */
-export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget, Core> => Layer.effect(Memory, Effect.gen(function* () {
-  const core   = yield* Core
+export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => Layer.effect(Memory, Effect.gen(function* () {
   const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
 
   return Memory.of({
@@ -31,7 +32,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
       const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget))   // whole turns, oldest dropped first
       if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
       // React: announce pressure, so any plugin can act on it.
-      if (nearlyFull(fitted, options.pressureAt)) yield* core.publish(windowPressure(session, fitted))
+      if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
       return paired(fitted.messages).map(promptMessage)
     }),
   })

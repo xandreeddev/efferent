@@ -18,13 +18,22 @@ export const messageOf = (event: { readonly message?: Message; readonly tags: Re
 /**
  * The vocabulary of plugin `plugin`: it answers for what `over` answers for
  * (core's own records when left out) and for the records under its own
- * prefix, and knows, of its own, the definitions in `own`. A plugin that
- * reads another plugin's records extends that plugin's vocabulary.
+ * prefix, and knows, of its own, the definitions in `own`, each of which
+ * must be under that prefix: another plugin's definition throws here, at
+ * load. A plugin that reads another plugin's records extends that plugin's
+ * vocabulary.
  */
-export const vocabularyOf = (plugin: string, own: ReadonlyArray<{ readonly name: EventName }>, over: Vocabulary = KERNEL_VOCABULARY): Vocabulary => ({
-  reads: [...over.reads, `plugin.${PluginName.make(plugin)}.`],
-  knows: [...over.knows, ...own.map((definition) => definition.name)],
-})
+export const vocabularyOf = (plugin: string, own: ReadonlyArray<{ readonly name: EventName }>, over: Vocabulary = KERNEL_VOCABULARY): Vocabulary => {
+  const prefix = `plugin.${PluginName.make(plugin)}.`
+  // A definition of another plugin among `own` would be known and never read: refused here, where the vocabulary is made.
+  const strangers = own.filter((definition) => !definition.name.startsWith(prefix)).map((definition) => definition.name)
+  return Result.getOrThrowWith(
+    strangers.length === 0
+      ? Result.succeed({ reads: [...over.reads, prefix], knows: [...over.knows, ...own.map((definition) => definition.name)] })
+      : Result.fail(`${strangers.join(", ")} ${strangers.length === 1 ? "is" : "are"} not a record of plugin "${plugin}", whose own are under ${prefix}: a vocabulary knows its plugin's records, and extends another plugin's vocabulary to read that plugin's`),
+    (problem) => new Error(problem),
+  )
+}
 
 /**
  * A journal as read with `vocabulary`: the records it knows, in order. A record

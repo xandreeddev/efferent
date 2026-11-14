@@ -201,6 +201,34 @@ kernel's rules:
   (`NewSessionInput`, the encoded side of `NewSession`) and decodes it: an
   empty owner, or a parent that is no id, is `InvalidSession`. The kit
   checks it (`invalid-session`).
+- A definition and a record are made one way each. `storedEvent` and
+  `liveEvent` make a plugin's definitions (core's own are `coreStoredEvent`
+  and `coreLiveEvent`, which the entry does not export), and each checks
+  where it is called: a name that is none, a one-word tag outside
+  `RESERVED_TAGS` (which does not type either, `DefinitionTag`), a tag under
+  another plugin's name. A refusal there throws an `Error` whose message
+  says what is wrong (`orRefuse`, over `Result.getOrThrowWith`: the gates
+  ban `throw`, and `Schema`'s own `make` says only "Schema validation
+  failed"). `stored(definition, data)` is the one way to make a
+  `StoredDraft`, which is branded: it marks what it makes, and only for a
+  definition made by those functions, on a property no copy or store
+  carries over (`isStoredDraft`). The session plugin refuses anything else
+  (`NotADraft`), and the sessions kit checks it (`not-a-draft`). The `Tag`
+  schema checks a tag's shape alone, so a stored record with a tag a later
+  kernel reserved still decodes: never move the reserved words into it.
+  `vocabularyOf` refuses, where it is called, a definition that is not
+  under its plugin's prefix.
+- `Core.on` hands a handler what its definition's kind is delivered as
+  (`DeliveryOf`: `StoredDelivery` or `LiveDelivery`), and delivers an event
+  only when it has the definition's name and its kind. `OpenSession.publish`
+  publishes a live event about the open turn (the sessions kit's `publish`),
+  so a tool or a memory that holds the session needs no `Core`.
+- A header reads back with whatever format it was written in
+  (`SessionHeader.format` is an integer, not the literal); `currentFormat`
+  is the one place it is compared with `JOURNAL_FORMAT`, and the session
+  plugin calls it before a turn opens (`FormatMismatch`). `Sessions.read`
+  does not refuse: a host shows what it found. The storage kit checks that
+  a header's `parent` and `format` read back as given.
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
   kernel's own helpers (`conformance.entity.ts` and its functions, which
   are not exported), not core's `src/conformance.functions.ts`. A check

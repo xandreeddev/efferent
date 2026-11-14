@@ -1,7 +1,7 @@
 import { Option } from "effect"
-import { dataOf, live, stored } from "@xandreed/core/kernel"
-import type { LiveEvent, OpenSession, Seq, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { progressEvent, viewEvent } from "./render.entity.js"
+import { dataOf, stored } from "@xandreed/core/kernel"
+import type { Seq, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { viewEvent } from "./render.entity.js"
 import type { View, ViewId } from "./render.entity.js"
 
 /**
@@ -11,14 +11,6 @@ import type { View, ViewId } from "./render.entity.js"
  * @public
  */
 export const showView = (id: ViewId, view: View): StoredDraft => stored(viewEvent, { id, view })
-
-/**
- * `plugin.render.progress`, to publish on `Core` for the open turn.
- *
- * @public
- */
-export const viewProgress = (session: Pick<OpenSession, "id" | "turn">, id: ViewId, done: number, total: number): LiveEvent =>
-  live(progressEvent, session, { id, done, total })
 
 /**
  * A view as a client shows it: its latest record, and where its id first

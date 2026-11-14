@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scheduler, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Core, EventName, kernel, listenerFailedEvent, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
+import { Core, JOURNAL_FORMAT, kernel, listenerFailedEvent, liveEvent, Owner, SessionId, Sessions, JournalStorage, JournalStorageError, stored, storedEvent, turnEnded, turnEndedEvent, turnStarted, turnStartedEvent, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import { inProcessJournal } from "../journal-in-process/journal.adapter.js"
 import { sessions } from "./sessions.adapter.js"
@@ -53,7 +53,7 @@ const over = (count: number, options: SessionsOptions = {}) => Effect.gen(functi
   const plugins = yield* Effect.forEach(Array.from({ length: count }), () =>
     Effect.map(Layer.build(Layer.provide(sessions(options), parts)), (built) => Context.get(built, Sessions)), { concurrency: 1 })
   const names = (id: Parameters<typeof real.read>[0]) => Effect.map(real.read(id), (journal) => journal.events.map((event): string => event.name))
-  return { plugins, core: Context.get(below, Core), fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), after: (next: After) => Ref.set(after, next), names }
+  return { plugins, core: Context.get(below, Core), storage: real, fault: (next: Fault) => Ref.set(fault, next), pause: (next: Pause) => Ref.set(pause, next), after: (next: After) => Ref.set(after, next), names }
 })
 
 /** Every test gives itself five seconds: code that waits on what never comes fails here and does not hang the run. */
@@ -201,13 +201,12 @@ describe("an append of a record named under core.", () => {
       const drafts = [
         turnEnded(TurnNumber.make(1), { _tag: "Completed" }),
         turnStarted(TurnNumber.make(2)),
-        { name: EventName.make("core.session.anything"), data: {}, skippable: true, tags: [] },
       ]
       const refusals = yield* turns.turn(id, (session) => Effect.forEach(drafts, (draft) => Effect.flip(session.append(draft)), { concurrency: 1 }))
       const next = yield* turns.turn(id, (session) => Effect.succeed(Number(session.turn)))
       return { refusals: refusals.map((refusal) => refusal._tag === "SessionRefused" ? refusal.reason : refusal._tag), next, names: yield* names(id), heard: yield* Ref.get(heard) }
     }))
-    expect(result.refusals).toEqual(["ReservedName", "ReservedName", "ReservedName"])
+    expect(result.refusals).toEqual(["ReservedName", "ReservedName"])
     expect(result.names).toEqual([STARTED, ENDED, STARTED, ENDED])
     expect(result.heard).toEqual([STARTED, ENDED, STARTED, ENDED])
     expect(result.next).toBe(2)
@@ -382,5 +381,76 @@ describe("a session's id", () => {
     }))
     expect(result.ids).toEqual(["session-1", "session-2"])
     expect(result.turn).toBe(1)
+  })
+})
+
+describe("what a session refuses to store or to open", () => {
+  test("a value `stored` did not make from a definition `storedEvent` made is refused with NotADraft, and the turn goes on", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const refusals = yield* turns.turn(id, (session) => Effect.gen(function* () {
+        const copy = yield* Effect.flip(session.append({ ...stored(noted, {}) }))
+        const changed = yield* Effect.flip(session.append({ ...stored(noted, {}), skippable: false }))
+        // A definition written by hand could declare a tag no part reads by: what `stored` makes of it is no record.
+        const byHand = yield* Effect.flip(session.append(stored({ kind: "stored", name: noted.name, data: Schema.Struct({}), skippable: true, tags: noted.tags }, {})))
+        yield* session.append(stored(noted, {}))
+        return [copy, changed, byHand].map((refusal) => refusal._tag === "SessionRefused" ? `${refusal.reason}: ${refusal.message}` : refusal._tag)
+      }))
+      return { refusals, names: yield* names(id) }
+    }))
+    const message = "NotADraft: this value is not a record `stored(definition, data)` made from a definition `storedEvent` made: build a record with `stored`, or with `userMessage`, `assistantMessage` or `toolResult`, never by hand or as a copy"
+    expect(result.refusals).toEqual([message, message, message])
+    expect(result.names).toEqual([STARTED, "plugin.notes.noted", ENDED])
+  })
+
+  test("a journal written in another format is read as it is, and no turn opens on it: nothing is stored", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], storage, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = SessionId.make("from-a-later-kernel")
+      yield* storage.create({ id, owner, format: JOURNAL_FORMAT + 1 })
+      const ran = yield* Ref.make(false)
+      const told = (refusal: { readonly _tag: string; readonly reason?: string }) => refusal.reason ?? refusal._tag
+      const turned = yield* Effect.flip(turns.turn(id, () => Ref.set(ran, true)))
+      const opened = yield* Effect.flip(Effect.scoped(turns.open(id)))
+      const read = yield* turns.read(id)
+      return { turned: told(turned), opened: told(opened), ran: yield* Ref.get(ran), format: read.header.format, names: yield* names(id) }
+    }))
+    expect(result).toEqual({ turned: "FormatMismatch", opened: "FormatMismatch", ran: false, format: JOURNAL_FORMAT + 1, names: [] })
+  })
+})
+
+describe("a live event published through the open session", () => {
+  const glanced = liveEvent("notes", "glanced", { tags: ["trace"], data: Schema.Struct({ at: Schema.String }) })
+
+  test("is about its session and turn, reaches Core's listeners and stream, and is stored nowhere", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core, names } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const heard = yield* Ref.make<ReadonlyArray<string>>([])
+      yield* core.on(glanced, (event) => Ref.update(heard, (all) => [...all, `${event.session === id ? "this session" : "another"} turn ${event.turn ?? "none"} at ${event.data.at}`]), { name: "watch", wait: true })
+      yield* turns.turn(id, (session) => session.publish(glanced, { at: "the first step" }))
+      yield* turns.turn(id, (session) => session.publish(glanced, { at: "the second turn" }))
+      return { heard: yield* Ref.get(heard), names: yield* names(id) }
+    }))
+    expect(result.heard).toEqual(["this session turn 1 at the first step", "this session turn 2 at the second turn"])
+    expect(result.names).toEqual([STARTED, ENDED, STARTED, ENDED])
+  })
+
+  test("is refused with NoOpenTurn once its turn closed, and a waiting listener that fails fails the publish", async () => {
+    const result = await run(Effect.gen(function* () {
+      const { plugins: [turns], core } = yield* over(1)
+      if (turns === undefined) return yield* Effect.die("no session plugin")
+      const id = yield* turns.create({ owner })
+      const kept = yield* turns.turn(id, (session) => Effect.succeed(session))
+      const late = yield* Effect.flip(kept.publish(glanced, { at: "too late" }))
+      yield* core.on(glanced, () => Effect.fail(new JournalStorageError({ reason: "Unavailable", message: "the watcher broke" })), { name: "watch", wait: true })
+      const failed = yield* turns.turn(id, (session) => Effect.flip(session.publish(glanced, { at: "watched" })))
+      return [late, failed].map((failure) => failure._tag === "SessionRefused" ? failure.reason : `${failure._tag} of ${failure.listener}`)
+    }))
+    expect(result).toEqual(["NoOpenTurn", "ListenerFailed of watch"])
   })
 })

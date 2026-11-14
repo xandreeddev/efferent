@@ -29,7 +29,7 @@ const meter = (show: (line: string) => Effect.Effect<void>) =>
     // Each answer: what the provider says it cost, else an estimate of its text. `wait: true`, so the
     // count is in before the turn goes on, and so before its end is announced.
     yield* core.on(assistantMessageEvent, (event) => {
-      const said = "message" in event && event.message !== undefined ? messageText(event.message) : ""
+      const said = event.message === undefined ? "" : messageText(event.message)
       const tokens = event.data.usage?.outputTokens ?? estimateTokens(said)
       return Ref.update(spent, ({ turn, total }) => ({ turn: turn + tokens, total: total + tokens }))
     }, { name: "meter", wait: true })

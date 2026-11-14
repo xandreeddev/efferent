@@ -48,7 +48,11 @@ open:
   summary is paid for once per compaction, not per turn.
 - The summary memory reads a record of its own that may not be skipped: a reader that does
   not know `plugin.summary.summarized` is not its concern, and a later summary memory that
-  changes the record's shape bumps the journal format.
+  changes the record's shape gives the new shape a new name: a journal that holds the old
+  name is then refused by the new vocabulary, which does not know it and may not skip it.
+  (Amended 14 November 2026. This said the memory "bumps the journal format", which is
+  core's constant and no plugin's to change.) A summarizer that answers with nothing fails
+  the context as one that fails does, and nothing is stored: a stored summary stays.
 - The page, a client or a test can tell the summarizer's model call from the turn's only
   by the `Summarizer` it provides: the memory does not say.
 

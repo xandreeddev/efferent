@@ -119,6 +119,14 @@ describe("the summary memory", () => {
     expect(summaries).toEqual([])
   })
 
+  test("a summarizer that answers with nothing fails the context with SummaryFailed, and stores no summary", async () => {
+    // A stored summary stands for the turns it folded in every later context: a blank one would erase them.
+    const { exits, summaries, asked } = await run(numbered(10), () => Effect.succeed("  \n "))
+    expect(asked.length).toBeGreaterThan(0)
+    expect(errorOf(exits.at(-1))).toBe("SummaryFailed")
+    expect(summaries).toEqual([])
+  })
+
   test("a summarizer that fails fails the context with its error, and stores no summary", async () => {
     const { exits, summaries } = await run(numbered(10), () => Effect.fail(new SummaryFailed({ message: "the summarizer is down" })))
     expect(errorOf(exits.at(-1))).toBe("SummaryFailed")
