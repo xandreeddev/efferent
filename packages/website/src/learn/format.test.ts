@@ -1,15 +1,61 @@
 import { describe, expect, test } from "bun:test"
+import { existsSync, readdirSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { Option } from "effect"
 import { formatRegion } from "./format.ts"
-import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
-import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
-import { DEFAULT_PLUGIN } from "./lessons/your-own-plugin/plugin.source.ts"
+import { lessonOf } from "./lessons/index.ts"
+
+/** Every lesson's slug: the folders under `lessons/` that hold a `lesson.ts`. The registry finds a lesson by slug and lists none. */
+const lessonsDir = fileURLToPath(new URL("./lessons/", import.meta.url))
+const slugs = readdirSync(lessonsDir, { withFileTypes: true })
+  .flatMap((entry) => (entry.isDirectory() && existsSync(join(lessonsDir, entry.name, "lesson.ts")) ? [entry.name] : []))
+
+/**
+ * Starter files Format would change, as `<slug>/<file id>`. Each holds a line longer than the formatter's 100 columns
+ * (a system text, a tool's parameters, a `streamText` call), which Prettier breaks over several lines. The list only
+ * shrinks: a file leaves it when its text is made tidy, and the test fails on an entry that is tidy or is no file.
+ */
+const UNTIDY_STARTERS: ReadonlyArray<string> = [
+  "tools/agent",
+  "tools/tools",
+  "your-own-plugin/agent",
+  "your-own-plugin/tools",
+  "sub-agents/agent",
+  "sub-agents/tools",
+  "sub-agents/loop",
+  "compaction/summarizer",
+  "compaction/agent",
+  "compaction/tools",
+  "render/tools",
+  "render/agent",
+]
 
 describe("formatRegion", () => {
-  test("the starter code of both editable files is already formatted", async () => {
-    expect(await formatRegion(DEFAULT_AGENT, "")).toEqual({ ok: true, text: DEFAULT_AGENT })
-    expect(await formatRegion(DEFAULT_MEMORY, "const flatMemory = ")).toEqual({ ok: true, text: DEFAULT_MEMORY })
-    expect(await formatRegion(DEFAULT_PLUGIN, "")).toEqual({ ok: true, text: DEFAULT_PLUGIN })
+  test("every lesson folder is a lesson the registry finds", () => {
+    expect(slugs.length).toBeGreaterThan(0)
+    expect(slugs.filter((slug) => Option.isNone(lessonOf(slug)))).toEqual([])
   })
+
+  test("the starter text of every editable file of every lesson is already formatted, but for the files listed as untidy", async () => {
+    const checked: Array<string> = []
+    for (const slug of slugs) {
+      for (const file of Option.match(lessonOf(slug), { onNone: () => [], onSome: (lesson) => lesson.files })) {
+        if (file.readOnly) continue
+        const name = `${slug}/${file.id}`
+        checked.push(name)
+        // What Format is given on a fresh page: the editable part of the file as the editor holds it, and the file's prefix.
+        const started = file.documentOf(file.defaultText).slice(file.editableFrom, file.editableFrom + file.defaultText.length)
+        expect({ name, started }).toEqual({ name, started: file.defaultText })
+        const result = await formatRegion(started, file.formatPrefix)
+        // A listed file is one Format changes: text it refuses, or leaves alone, fails here.
+        if (UNTIDY_STARTERS.includes(name)) expect({ name, changes: result.ok && result.text !== started }).toEqual({ name, changes: true })
+        else expect({ name, result }).toEqual({ name, result: { ok: true, text: started } })
+      }
+    }
+    expect(checked.length).toBeGreaterThan(UNTIDY_STARTERS.length)
+    expect(UNTIDY_STARTERS.filter((name) => !checked.includes(name))).toEqual([])
+  }, 30_000)
 
   test("re-indents a call, one argument a line, without semicolons or a trailing newline", async () => {
     const result = await formatRegion("program.pipe(  Effect.provide( flatMemory ),\n        Effect.provide(model) )", "const main = ")

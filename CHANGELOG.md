@@ -212,6 +212,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn track's own checklist is now held by tests. Each of
+  Echo's tool rules has a direct test that fails without the rule; the
+  lesson registry's test lists lesson 2; and the Format test covers every
+  editable starter file of every lesson, with a list of the twelve that
+  Format would still change, which only shrinks.
 - Repository: an architecture review of the kernel after lessons 4 to 6.
   The learn track's code and every source it shows import only the two
   kernel entries, and a test now fails on any other `@xandreed/` import.
