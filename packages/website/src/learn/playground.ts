@@ -105,6 +105,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   /** The chat's rows: what was stored, and what was only said (chat-model.ts). Every change is drawn at once. */
   let board: ChatBoard = emptyChat
   const show = (next: ChatBoard) => {
+    if (next === board) return
     board = next
     chat.render(board.rows)
   }

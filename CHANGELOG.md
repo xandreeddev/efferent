@@ -246,9 +246,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   record (a message, an answer, a tool's result, the line a stopped,
   failed or abandoned turn leaves) comes from one step, live and when the
   chat is drawn from a journal, and a journal's rows only grow at the end.
-  What a program says and never stores is still shown as it is said, and
-  marked: a reply that is no stored answer ("I stopped after 5 steps."),
-  the page's own notes. A turn that fails shows one error, from the record
+  What a program says and never stores is still shown as it is said: a
+  reply that is no stored answer ("I stopped after 5 steps.") or an answer
+  cut off by Stop now reads "not stored" under it. A message sent while a
+  turn works waits at the end of the chat and is taken where it stands,
+  so it sits after what the turn had stored by then, as in the journal. A turn that fails shows one error, from the record
   of its end, so it now starts with the failure's tag ("SummaryFailed: …")
   and shows also when the program says nothing. Lesson 6's button redraws
   the whole chat from the journal, every row and view back in its place

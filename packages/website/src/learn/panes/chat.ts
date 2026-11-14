@@ -74,12 +74,16 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
     submit()
   }))
 
-  const add = (kind: ChatRow["kind"] | "view", text: string) => {
+  /**
+   * A new element. The messages still waiting are the chat's last, and anything else new goes before them: a
+   * waiting message is taken where it stands, so what happened before it is above it.
+   */
+  const add = (kind: ChatRow["kind"] | "view", text: string, waiting = false) => {
     empty.hidden = true
     const item = document.createElement("li")
     item.className = `pg-msg ${kind}`
     item.textContent = text
-    messages.append(item)
+    messages.insertBefore(item, waiting ? null : messages.querySelector(":scope > [data-queued]:not([data-dropped])"))
     if (kind === "user" || following) scrollDown()
     return item
   }
@@ -127,7 +131,7 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
       const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined])
       const found = drawn.get(row.id)
       if (found?.shown === shown) continue
-      const item = found?.item ?? add(row.kind, "")
+      const item = found?.item ?? add(row.kind, "", row.waiting === true)
       item.className = `pg-msg ${row.kind}`
       draw(item, row)
       drawn.set(row.id, { item, shown })

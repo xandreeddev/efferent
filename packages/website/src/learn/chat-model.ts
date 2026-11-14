@@ -44,7 +44,15 @@ export const emptyChat: ChatBoard = { rows: [], next: 1, calls: new Map() }
 /** What the chat shows for an answer with no text. */
 export const NO_TEXT = "(the model sent no text)"
 
-const add = (board: ChatBoard, row: Omit<ChatRow, "id">): ChatBoard => ({ ...board, rows: [...board.rows, { id: board.next, ...row }], next: board.next + 1 })
+/**
+ * A new row. The messages still waiting are the chat's last rows, and a new row of any other kind goes before
+ * them: a waiting message is taken where it stands, so what was stored before it is above it, as in the journal.
+ */
+const add = (board: ChatBoard, row: Omit<ChatRow, "id">): ChatBoard => {
+  const made = { id: board.next, ...row }
+  const first = row.waiting === true ? -1 : board.rows.findIndex((one) => one.waiting === true && one.dropped === undefined)
+  return { ...board, rows: first < 0 ? [...board.rows, made] : [...board.rows.slice(0, first), made, ...board.rows.slice(first)], next: board.next + 1 }
+}
 const change = (board: ChatBoard, id: number, to: (row: ChatRow) => Option.Option<ChatRow>): ChatBoard =>
   ({ ...board, rows: board.rows.flatMap((row) => row.id === id ? Option.match(to(row), { onNone: () => [], onSome: (next) => [next] }) : [row]) })
 const liveOf = (board: ChatBoard, turn: number) => Option.fromNullishOr(board.rows.find((row) => row.live === true && row.turn === turn))
@@ -69,18 +77,24 @@ export const stored = (board: ChatBoard, record: StoredEvent): ChatBoard => {
   const at = { turn: record.turn, seq: record.seq }
   const message = record.message
   if (record.name === userMessageEvent.name && message?._tag === "User") {
+    // A turn that takes several messages stores them one after another: an answer not yet begun is written after the last.
+    const open = Option.match(liveOf(board, record.turn), { onNone: () => board, onSome: (row) => row.text.length === 0 ? change(board, row.id, () => Option.none()) : board })
     // The program took the oldest waiting message: its row is now the row of this record.
-    const waiting = board.rows.find((row) => row.waiting === true && row.dropped === undefined)
+    const waiting = open.rows.find((row) => row.waiting === true && row.dropped === undefined)
     return waiting === undefined
-      ? add(board, { kind: "user", text: message.text, ...at })
-      : change(board, waiting.id, ({ waiting: _waiting, ...row }) => Option.some({ ...row, text: message.text, ...at }))
+      ? add(open, { kind: "user", text: message.text, ...at })
+      : change(open, waiting.id, ({ waiting: _waiting, ...row }) => Option.some({ ...row, text: message.text, ...at }))
   }
   if (record.name === assistantMessageEvent.name && message?._tag === "Assistant") {
     const calls = new Map([...board.calls, ...message.toolCalls.map((call) => [call.id, `${call.name}(${JSON.stringify(call.input)})`] as const)])
     const known = { ...board, calls }
     // An answer that only asks for tools has no row: its calls show with their results.
     const shown = message.text.length > 0 || message.toolCalls.length === 0
-    return Option.match(liveOf(known, record.turn), {
+    // The row to make this record's: the answer being written, or the same text the program already said as its
+    // reply, when the reply was heard before the record.
+    const said = Option.orElse(liveOf(known, record.turn), () => Option.fromNullishOr(known.rows.find((row) =>
+      row.kind === "agent" && row.turn === record.turn && row.seq === undefined && message.toolCalls.length === 0 && row.text.trim() === (message.text.length > 0 ? message.text : NO_TEXT).trim())))
+    return Option.match(said, {
       onNone: () => shown ? add(known, { kind: "agent", text: message.text, ...at }) : known,
       onSome: (row) => change(known, row.id, (found) => shown ? Option.some(settled({ ...found, text: message.text, ...at })) : Option.none()),
     })
@@ -94,7 +108,12 @@ export const stored = (board: ChatBoard, record: StoredEvent): ChatBoard => {
     onSome: ({ outcome }) => {
       // What was being written when the turn ended was never stored: it stays as it stands, and says so when the turn was stopped.
       const closed = finish(board, record.turn, outcome._tag === "Interrupted" ? "\n\n*(stopped)*" : "")
-      return Option.match(endRow(record.turn, outcome), { onNone: () => closed, onSome: (row) => add(closed, { ...row, ...at }) })
+      // A failure the program said before this record was heard is this turn's: the record's row takes its place.
+      const said = outcome._tag === "Failed" ? Option.fromNullishOr(closed.rows.find((row) => row.kind === "error" && row.turn === record.turn && row.seq === undefined)) : Option.none()
+      return Option.match(endRow(record.turn, outcome), {
+        onNone: () => closed,
+        onSome: (row) => Option.match(said, { onNone: () => add(closed, { ...row, ...at }), onSome: (found) => change(closed, found.id, (one) => Option.some({ ...one, ...row, ...at })) }),
+      })
     },
   })
 }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { assistantMessage, Seq, ToolCallId, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import { chatRowsOf, emptyChat, failed, hear, piece, replied, sent, stored, withoutFailure } from "./chat-model.ts"
+import { chatRowsOf, dropWaiting, emptyChat, failed, hear, piece, replied, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -93,6 +93,28 @@ describe("the chat's rows", () => {
     expect(storedRows(board().rows)).toEqual(storedRows(chatRowsOf(await runtime.journal())))
   }, 20_000)
 
+  test("a message sent while a slow tool runs is drawn where the journal has it: after the tool's result, steered into the turn or in a turn of its own", async () => {
+    const slow = applied(tools, "slow-calculator", startersOf(tools))
+    for (const [sources, turns] of [[slow, 1], [applied(tools, "no-steering", slow), 2]] as const) {
+      const { runtime, board, send, until } = await chatOn(tools, sources)
+      const running = until((trace) => trace._tag === "Status" && trace.text.startsWith("step 1"))
+      const done = until((trace) => trace._tag === "Reply", turns)
+      send("What is 6 * 7?")
+      await running
+      send("Also, what is 10 / 4?")
+      // It waits below what the turn has drawn so far.
+      expect(board().rows.at(-1)).toMatchObject({ kind: "user", text: "Also, what is 10 / 4?", waiting: true })
+      await done
+      const kinds = board().rows.map((row) => `${row.kind}${row.seq === undefined ? "*" : ""}`)
+      const second = board().rows.findIndex((row) => row.text === "Also, what is 10 / 4?")
+      expect({ turns, kinds: kinds.slice(0, second + 1) }).toEqual({ turns, kinds: turns === 1 ? ["user", "agent", "tool", "user"] : ["user", "agent", "tool", "agent", "user"] })
+      // Row for row, in the order of the journal: a chat drawn from it again is the same chat.
+      expect({ turns, rows: storedRows(board().rows) }).toEqual({ turns, rows: storedRows(chatRowsOf(await runtime.journal())) })
+      expect(board().rows.filter((row) => row.seq === undefined)).toEqual([])
+      await runtime.dispose()
+    }
+  }, 30_000)
+
   test("a reply the turn never stored shows once, with no record behind it, and the journal's rows do not have it", async () => {
     const { runtime, board, say } = await chatOn(tools, applied(tools, "one-step", startersOf(tools)))
     await say("What is 2 + 2?")
@@ -158,6 +180,42 @@ describe("the chat's rows, record by record", () => {
     const final = stored(written, journal([turnStarted(one), userMessage("Add them."), assistantMessage("It is 3.")])[2]!)
     expect(final.rows.map(told)).toEqual(["user: Add them.", "agent: It is 3."])
     expect(final.rows.at(-1)?.id).toBe(live.id)
+  })
+
+  test("a turn stopped while its answer was being written keeps what was written, marked, and then the turn's line", () => {
+    const [started, asked, , ended] = journal([turnStarted(one), userMessage("Tell me about loops."), assistantMessage("never stored"), turnEnded(one, { _tag: "Interrupted" })])
+    const writing = piece(piece(piece([started!, asked!].reduce(stored, emptyChat), 1, ""), 1, "A loop is"), 1, " a turn that")
+    expect(writing.rows.map(told)).toEqual(["user: Tell me about loops.", "agent* (live): A loop is a turn that"])
+    expect(stored(writing, ended!).rows.map(told)).toEqual([
+      "user: Tell me about loops.",
+      "agent*: A loop is a turn that\n\n*(stopped)*",
+      "note: Turn 1 was stopped. Your message stays in the journal.",
+    ])
+    // Nothing was written yet: the empty row goes, and the line stays.
+    expect(stored(piece([started!, asked!].reduce(stored, emptyChat), 1, ""), ended!).rows.map(told)).toEqual(["user: Tell me about loops.", "note: Turn 1 was stopped. Your message stays in the journal."])
+  })
+
+  test("what the program says is heard before the record it repeats: the record takes the row, and nothing shows twice", () => {
+    const answered = journal([turnStarted(one), userMessage("Hello."), assistantMessage("Hello!"), turnEnded(one, { _tag: "Completed" })])
+    const early = replied(answered.slice(0, 2).reduce(stored, emptyChat), 1, "Hello!")
+    expect(early.rows.map(told)).toEqual(["user: Hello.", "agent*: Hello!"])
+    expect(answered.slice(2).reduce(stored, early).rows.map(told)).toEqual(["user: Hello.", "agent: Hello!"])
+    const broken = journal([turnStarted(one), userMessage("Hello."), turnEnded(one, { _tag: "Failed", reason: "Broken: it broke" })])
+    const said = failed(broken.slice(0, 2).reduce(stored, emptyChat), 1, "it broke")
+    expect(said.rows.map(told)).toEqual(["user: Hello.", "error*: it broke"])
+    expect(broken.slice(2).reduce(stored, said).rows.map(told)).toEqual(["user: Hello.", "error: Broken: it broke"])
+  })
+
+  test("messages that wait stay the chat's last rows, and are dropped where they stand", () => {
+    const [started, asked, answered] = journal([turnStarted(one), userMessage("One."), assistantMessage("Fine.")])
+    const waiting = sent(sent(piece([started!, asked!].reduce(stored, emptyChat), 1, "Fi"), "Two."), "Three.")
+    expect(waiting.rows.map(told)).toEqual(["user: One.", "agent* (live): Fi", "user* (waiting): Two.", "user* (waiting): Three."])
+    const after = stored(waiting, answered!)
+    expect(after.rows.map(told)).toEqual(["user: One.", "agent: Fine.", "user* (waiting): Two.", "user* (waiting): Three."])
+    // Dropped, they are no longer waiting for a turn: what comes next goes after them.
+    const dropped = sent(dropWaiting(after, "dropped by Stop"), "Four.")
+    expect(dropped.rows.map((row) => [row.text, row.dropped ?? ""])).toEqual([["One.", ""], ["Fine.", ""], ["Two.", "dropped by Stop"], ["Three.", "dropped by Stop"], ["Four.", ""]])
+    expect(waitingCount(dropped)).toBe(1)
   })
 
   test("an answer with no text is a row that says so, and its reply adds nothing", () => {

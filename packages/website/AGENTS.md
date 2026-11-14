@@ -67,8 +67,10 @@ check` (tsc over the learn code, the build, the link check) and
   stores (an answer being written, a waiting message, a reply that is no
   stored answer, the page's own notes) is a row with no `seq`, drawn live
   and absent from a chat drawn from the journal (`drawFrom` in
-  `playground.ts`, lesson 6's redraw button). The pane renders the rows it
-  is given, by the row's id. Views are not rows: `views.ts` folds the same
+  `playground.ts`, lesson 6's redraw button). The messages still waiting
+  are the chat's last rows and a new row goes before them, so the stored
+  rows are always in the journal's order. The pane renders the rows it
+  is given, by the row's id, and never reorders an element. Views are not rows: `views.ts` folds the same
   records with `viewsOf`. A new kind of thing in the chat is a case of
   `stored` when it has a record, with a test in `chat-model.test.ts`.
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
