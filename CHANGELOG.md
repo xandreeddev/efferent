@@ -133,7 +133,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     sends a call as a part of the model's message and a result as a tool
     message; `paired` keeps a call only with its result and a result only
     with its call, so a turn stopped while a tool ran never sends a call
-    nothing answers. Both stock memories send through it, the memory
+    nothing answers. It pairs in order, since a model that numbers its
+    own calls repeats an id after a restart: a result answers the last
+    call of its id before it. Both stock memories send through it, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
     (`ModelAnswer` `Calls`). The window memory drops whole turns only, so
@@ -241,6 +243,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the models that run in the page (Echo, and the real models'
+  tool calls written as text) numbered their calls from one on every page
+  load, so lesson 7, which keeps its conversation across reloads, could
+  store two calls under one id. After a reload in the middle of a tool
+  call, the next tool call made the prompt send the abandoned call with no
+  result. Their ids now differ between page loads, and the kernel's
+  `paired` no longer depends on it.
 - Docs site: Lesson 7, "Keep the conversation", at
   `/learn/keep-the-conversation`. The learner writes the journal's store
   over the browser's `localStorage` in `store.ts`, held to the storage kit

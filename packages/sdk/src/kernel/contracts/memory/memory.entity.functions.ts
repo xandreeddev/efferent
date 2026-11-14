@@ -95,19 +95,39 @@ export const promptMessage = (message: Message): Prompt.UserMessageEncoded | Pro
  * otherwise send a call no result answers, which a provider refuses. The
  * journal keeps every record; this decides only what is sent.
  *
+ * Pairs are made in order, since a call's id is the model's and can repeat
+ * (a model that numbers its calls starts again when its process does): a
+ * result answers the last call of its id before it that nothing answered
+ * yet. So a call left open, then asked again under the same id and
+ * answered, is sent once, with that answer; a result with no call before
+ * it, or a second result for one call, is not sent.
+ *
  * @public
  */
 export const paired = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
-  const answered = new Set(messages.flatMap((message) => (message._tag === "ToolResult" ? [message.id] : [])))
-  const asked = new Set(messages.flatMap((message) => (message._tag === "Assistant" ? message.toolCalls.map((call) => call.id) : [])))
-  return messages.flatMap((message): ReadonlyArray<Message> =>
+  /** The message holding the last call of an id that no result has answered yet. */
+  const open = new Map<string, number>()
+  /** The calls that have their result, each as the message that asked and the id. */
+  const answered = new Set<string>()
+  /** The results that answer a call. */
+  const answers = new Set<number>()
+  messages.forEach((message, at) => {
+    if (message._tag === "Assistant") message.toolCalls.forEach((call) => open.set(call.id, at))
+    if (message._tag !== "ToolResult") return
+    const asked = open.get(message.id)
+    if (asked === undefined) return
+    open.delete(message.id)
+    answered.add(`${asked} ${message.id}`)
+    answers.add(at)
+  })
+  return messages.flatMap((message, at): ReadonlyArray<Message> =>
     Match.valueTags(message, {
       User: () => [message],
       Assistant: (assistant) => {
-        const toolCalls = assistant.toolCalls.filter((call) => answered.has(call.id))
+        const toolCalls = assistant.toolCalls.filter((call) => answered.has(`${at} ${call.id}`))
         return assistant.text.length === 0 && toolCalls.length === 0 ? [] : [{ ...assistant, toolCalls }]
       },
-      ToolResult: (result) => (asked.has(result.id) ? [result] : []),
+      ToolResult: (result) => (answers.has(at) ? [result] : []),
     }))
 }
 

@@ -65,8 +65,9 @@ it: `./kernel` is a `restricted` subpath.
   message as text for an estimate, tool calls and results counted),
   `promptMessage` (a call as a `tool-call` part of the model's message, a
   result as a `tool` message), `paired` (a call only with its result, a
-  result only with its call, an answer left empty dropped: every memory
-  sends through it, ADR 0004) and the
+  result only with its call, an answer left empty dropped, pairs made in
+  order since a call's id can repeat: a result answers the last call of
+  its id before it; every memory sends through it, ADR 0004) and the
   memory kit (`memoryConformance`; `MemorySubject` is `{ name,
   budgetTokens?, open }`, and the budget checks run only for a subject
   that has one), and the kit of a memory wrapper
@@ -314,7 +315,8 @@ it: `./kernel` is a `restricted` subpath.
   over a summarizer that answers in a few words), and on careless ones:
   each careless plugin fails the checks of what it is careless about and
   no others, and between them every check; the memory kit's `pairs` check
-  has the careless `unpaired`, which sends a call no result answers), `browser-bundle`, `guide`, and
+  has the careless `unpaired`, which sends a call no result answers, and
+  `byid`, which pairs by id alone), `browser-bundle`, `guide`, and
   beside the contracts' files their own
   (`contracts/memory/memory.entity.functions.test.ts`: a record's prompt
   message, tool calls and results included, `paired`, and the estimate;

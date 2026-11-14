@@ -127,7 +127,8 @@ const textOf = (message: Prompt.MessageEncoded): string => typeof message.conten
  * alone (`unknown-conversation-refused`); another plugin's record it does not
  * know is not its concern (`foreign`); a tool call is sent with its result
  * and right before it, and a call no result answers (a turn stopped while its
- * tool ran) is not sent (`pairs`).
+ * tool ran) is not sent, also when its id is asked again later and answered
+ * (`pairs`).
  *
  * @public
  */
@@ -174,16 +175,21 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* expect("conversation", context.length > 0 && context.every((message) => said.has(`${message.role} ${textOf(message)}`)),
         `the context ${show(context)} holds a message no record of the conversation bears`)
     })),
-    check("a tool call is sent with its result, right before it, and a call no result answers is not sent", "pairs", (memory, kit) => Effect.gen(function* () {
+    check("a tool call is sent with its result, right before it, and a call no result answers is not sent, its id asked again or not", "pairs", (memory, kit) => Effect.gen(function* () {
       yield* kit.toolTurn("What is 2 + 3?", "kit-call-1", true)
       yield* kit.toolTurn("And again?", "kit-call-2", false)
+      // A call's id is the model's, and can repeat: the id of the call left open is asked again, and answered.
+      yield* kit.toolTurn("Once more?", "kit-call-2", true)
       const session = yield* kit.openTurn("Thanks.")
       const context = yield* memory.context(session)
       const { calls, results } = toolTraffic(context)
-      const resultFollows = context.some((message, index) =>
-        message.role === "assistant" && toolTraffic([message]).calls.includes("kit-call-1") && show(toolTraffic(context.slice(index + 1, index + 2)).results) === show(["kit-call-1"]))
-      yield* expect("pairs", show(calls) === show(["kit-call-1"]) && show(results) === show(["kit-call-1"]) && resultFollows,
-        `the context ${show(context)} does not send the answered call with its result right after it, and the unanswered call not at all`)
+      /** Whether the call of `id` is sent once, with its result as the next message. */
+      const answeredOnce = (id: string) => context.filter((message, index) =>
+        message.role === "assistant" && toolTraffic([message]).calls.includes(id) && show(toolTraffic(context.slice(index + 1, index + 2)).results) === show([id])).length === 1
+      yield* expect("pairs", show(calls.slice(0, 1)) === show(["kit-call-1"]) && show(results.slice(0, 1)) === show(["kit-call-1"]) && answeredOnce("kit-call-1"),
+        `the context ${show(context)} does not send the answered call with its result right after it`)
+      yield* expect("pairs", show(calls) === show(["kit-call-1", "kit-call-2"]) && show(results) === show(["kit-call-1", "kit-call-2"]) && answeredOnce("kit-call-2"),
+        `the context ${show(context)} does not send each answered call once with its result right after it, and the unanswered call not at all: a result answers the last call of its id before it, not every call of that id`)
     })),
     check("a record of another use that bears text is never in the context", "other-uses", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")

@@ -30,6 +30,21 @@ describe("memory's helpers", () => {
     expect(paired([user, asked("Thinking.", "c2")])).toEqual([user, asked("Thinking.")])
   })
 
+  test("paired pairs in order, so an id that repeats answers the call before it, not an earlier one left open", () => {
+    const user: Message = { _tag: "User", text: "add" }
+    const again: Message = { _tag: "User", text: "and again" }
+    // The first c1 was cut off by a stop; a model that numbers its calls from one asked c1 again, and that one was answered.
+    expect(paired([user, asked("", "c1"), again, asked("", "c1"), answered("c1")])).toEqual([user, again, asked("", "c1"), answered("c1")])
+    expect(paired([user, asked("First.", "c1"), again, asked("Second.", "c1"), answered("c1")])).toEqual([user, asked("First."), again, asked("Second.", "c1"), answered("c1")])
+    // Both answered: each call keeps its own result.
+    expect(paired([user, asked("", "c1"), answered("c1"), again, asked("", "c1"), answered("c1")])).toEqual([user, asked("", "c1"), answered("c1"), again, asked("", "c1"), answered("c1")])
+    // The first answered and the second cut off: the old result does not stand for the new call.
+    expect(paired([user, asked("", "c1"), answered("c1"), again, asked("", "c1")])).toEqual([user, asked("", "c1"), answered("c1"), again])
+    // A result before its call, and a second result for one call, answer nothing.
+    expect(paired([user, answered("c1"), asked("", "c1")])).toEqual([user])
+    expect(paired([user, asked("", "c1"), answered("c1"), answered("c1")])).toEqual([user, asked("", "c1"), answered("c1")])
+  })
+
   test("the estimate is a quarter of the characters, rounded up, summed over a context, tool traffic counted", () => {
     expect([estimateTokens(""), estimateTokens("abcd"), estimateTokens("abcde")].map(Number)).toEqual([0, 1, 2])
     expect(Number(estimateContext([{ role: "user", content: "abcde" }, { role: "assistant", content: [{ type: "text", text: "abcd" }] }]))).toBe(3)

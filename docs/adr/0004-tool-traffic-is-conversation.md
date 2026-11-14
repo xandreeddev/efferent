@@ -54,6 +54,12 @@ a pair. Every memory sends its messages through `paired`: a call only with its r
 and an answer left with neither text nor a call not at all. The journal keeps every record. The memory kit checks
 it (`pairs`).
 
+*Amended 2026-11-14.* Pairs are made in order, not by id alone. A call's id is the model's, and a model that numbers
+its own calls starts again when its process does: a journal kept across restarts then holds two calls of one id. A
+result answers the last call of its id before it that nothing answered yet; a result with no call before it, or a
+second result for one call, is not sent. Pairing by id alone sent a call left open as soon as a later call of the
+same id was answered.
+
 ## Consequences
 
 - A host's turn grows from one model call to a loop, written in its own program; the kernel ships the records,

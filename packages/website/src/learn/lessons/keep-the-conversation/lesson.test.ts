@@ -6,10 +6,11 @@
 // closed: a closed page can write nothing more.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { messageOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import { chatRowsOf, emptyChat, hear, sent, showing } from "../../chat-model.ts"
 import { BEFORE_THIS_PAGE, emptyBoard, record, turnsOf, viewOf } from "../../trace-model.ts"
+import { callIds } from "../../models/call-ids.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -56,11 +57,11 @@ const opened: Array<{ readonly runtime: LessonRuntime; readonly close: () => voi
 afterEach(async () => { await Promise.all(opened.splice(0).map(({ runtime, close }) => { close(); return runtime.dispose().catch(() => undefined) })) })
 
 /** A page over the storage: the runtime, what it heard, and how to close the page as a reload does. */
-const page = async (storage: KeyValueStore, sources = SOURCES) => {
+const page = async (storage: KeyValueStore, sources = SOURCES, model = loadEcho()) => {
   const { view, close } = pageView(storage)
   const runtime = await LessonRuntime.create(keepTheConversation, { storage: view })
   opened.push({ runtime, close })
-  runtime.setModel(loadEcho())
+  runtime.setModel(model)
   const heard: Array<Trace> = []
   runtime.onTrace((trace) => heard.push(trace))
   const until = (match: (trace: Trace) => boolean, count = 1) => new Promise<void>((resolve) => {
@@ -137,6 +138,38 @@ describe("lesson 7 on the page (the kernel, Echo)", () => {
     expect(prompt.messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "user"])
     expect(prompt.messages[2]?.callIds).toEqual([])
     expect((await second.runtime.journal()).filter((record) => record.name === toolResultEvent.name)).toEqual([])
+  }, 30_000)
+
+  test("a call id that starts again with the page: the call the closed page left open is still not sent once the same id was asked again and answered", async () => {
+    // A model that numbers its calls starts from one on every page: both pages mint the same ids.
+    const sameIds = () => loadEcho(callIds("echo-call", "page"))
+    const storage = storageOf()
+    const first = await page(storage, applied("slow-calculator"), sameIds())
+    const running = first.until((trace) => trace._tag === "Status" && trace.text.startsWith("step 1"))
+    first.runtime.send("What is 6 * 7?")
+    await running
+    first.close()
+
+    const second = await page(storage, SOURCES, sameIds())
+    await second.say("What is 2 + 2?")
+    expect(second.replies()).toEqual(["The tool answered: calculator says 4."])
+    const stored = (await second.runtime.journal()).flatMap((record) => Option.toArray(messageOf(record)))
+    const ids = stored.flatMap((message) => message._tag === "Assistant" ? message.toolCalls.map((call) => String(call.id)) : message._tag === "ToolResult" ? [String(message.id)] : [])
+    // The journal holds the open call, the call after the reload and its result, all under one id.
+    expect(ids).toEqual(["echo-call-page-1", "echo-call-page-1", "echo-call-page-1"])
+    // The last prompt sends the answered call with its result, and the first turn's answer without its call.
+    const prompt = second.heard.flatMap((trace) => (trace._tag === "Prompt" ? [trace] : [])).at(-1)!
+    expect(prompt.messages.map((message) => `${message.role} ${(message.callIds ?? []).length}`)).toEqual(["system 0", "user 0", "assistant 0", "user 0", "assistant 1", "tool 0"])
+    // The chat drawn from that journal names each result's own call, though three records share the id.
+    expect(chatRowsOf(await second.runtime.journal()).map((row) => `${row.kind}: ${row.text}`)).toEqual([
+      "user: What is 6 * 7?",
+      "agent: Let me work that out.",
+      "note: Turn 1 was left open by a page that closed, and was closed when the next one started. What it stored stays in the journal.",
+      "user: What is 2 + 2?",
+      "agent: Let me work that out.",
+      "tool: calculator({\"a\":2,\"op\":\"+\",\"b\":2}) → 4",
+      "agent: The tool answered: calculator says 4.",
+    ])
   }, 30_000)
 
   test("without recover in chat.ts the conversation is found and stays busy: the message fails, and says what to call", async () => {
