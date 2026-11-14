@@ -1,9 +1,12 @@
 // Lesson 4 on the page's runtime, with Echo: the chat's agent hands a task to
-// a helper, which works in a session of its own; the chat's journal holds the
-// call and the helper's answer; each experiment does what the page says.
+// a helper, which works in a session of its own, created under the session
+// whose turn called it; the chat's journal holds the call and the helper's
+// answer; each experiment does what the page says.
 import { afterEach, describe, expect, test } from "bun:test"
-import { Option } from "effect"
-import { toolResultEvent } from "@xandreed/core/kernel"
+import { Context, Effect, Layer, Option } from "effect"
+import { Sessions, toolResultEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import type { SessionId } from "@xandreed/core/kernel"
+import type { Lesson, PageParts } from "../../lesson.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -18,8 +21,8 @@ afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runt
 
 const SOURCES = { agent: DEFAULT_AGENT, tools: DEFAULT_TOOLS, loop: DEFAULT_LOOP, memory: DEFAULT_MEMORY }
 
-const start = async (sources: Record<string, string> = SOURCES) => {
-  const runtime = await LessonRuntime.create(subAgents)
+const start = async (sources: Record<string, string> = SOURCES, lesson: Lesson = subAgents) => {
+  const runtime = await LessonRuntime.create(lesson)
   opened.push(runtime)
   runtime.setModel(loadEcho())
   const heard: Array<Trace> = []
@@ -33,6 +36,24 @@ const replies = (runtime: LessonRuntime, count = 1) => new Promise<void>((resolv
 })
 const replyTexts = (heard: ReadonlyArray<Trace>) => heard.flatMap((trace) => (trace._tag === "Reply" ? [trace.text] : []))
 const apply = (id: string, source: string) => Option.getOrThrow(subAgents.experiments[id]!.apply(source))
+
+/**
+ * The lesson, and the page's parts as its program was given them: through them a test reads the header of any
+ * session in the page's store, a helper's included, which the chat's journal only names.
+ */
+const withParts = () => {
+  let given: Option.Option<PageParts> = Option.none()
+  const lesson: Lesson = { ...subAgents, evaluate: (sources, parts) => { given = Option.some(parts); return subAgents.evaluate(sources, parts) } }
+  const headerOf = (session: SessionId) => {
+    const parts = Option.getOrThrow(given)
+    const stack = parts.sessions().pipe(Layer.provide(parts.inProcessJournal()), Layer.provide(parts.kernel()))
+    return Effect.runPromise(Effect.scoped(Effect.flatMap(Layer.build(stack), (built) => Effect.map(Context.get(built, Sessions).read(session), (journal) => journal.header))))
+  }
+  return { lesson, headerOf }
+}
+/** The sessions a turn was opened in, in order. */
+const turnsOpenedIn = (heard: ReadonlyArray<Trace>): ReadonlyArray<SessionId> =>
+  heard.flatMap((trace) => (trace._tag === "Event" && trace.event._tag === "Stored" && trace.event.name === turnStartedEvent.name ? [trace.event.session] : []))
 
 describe("lesson 4 on the page (the kernel, Echo)", () => {
   test("the chat hands a task to a helper, which works in a session of its own, and the chat answers from its answer", async () => {
@@ -50,6 +71,43 @@ describe("lesson 4 on the page (the kernel, Echo)", () => {
     const sessions = heard.flatMap((trace) => (trace._tag === "Prompt" ? [trace.session === runtime.conversation ? "chat" : "helper"] : []))
     expect(sessions).toEqual(["chat", "helper", "helper", "chat"])
     expect(busyAtHelperEnd).toEqual([true])
+  })
+
+  test("the helper's session is created under the turn that called it: its header names the chat's session as its parent", async () => {
+    const { lesson, headerOf } = withParts()
+    const { runtime, heard } = await start(SOURCES, lesson)
+    const done = replies(runtime)
+    runtime.send("Ask a helper: what is 6 * 7?")
+    await done
+    const [chat, helper] = turnsOpenedIn(heard)
+    expect(chat).toBe(runtime.conversation)
+    expect(await headerOf(helper!)).toMatchObject({ id: helper, owner: "helper", parent: runtime.conversation })
+    // The link the other way: the delegate result the chat stored names that session.
+    const result = (await runtime.journal()).find((record) => record.name === toolResultEvent.name)?.message
+    expect(result).toMatchObject({ name: "delegate", result: { session: helper } })
+  })
+
+  test("the parent is the session of the turn delegate ran in, not the chat's: a turn in another session is the helper's parent", async () => {
+    // The same program, but its turn runs in a session of its own making, not the one the chat shows.
+    const elsewhere = DEFAULT_AGENT.replace(
+      "        const session = yield* sessions.open(chat.session)\n",
+      "        const session = yield* sessions.open(yield* sessions.create({ owner: \"another\" }))\n",
+    )
+    expect(elsewhere).not.toBe(DEFAULT_AGENT)
+    const { lesson, headerOf } = withParts()
+    const { runtime, heard } = await start({ ...SOURCES, agent: elsewhere }, lesson)
+    const done = replies(runtime)
+    runtime.send("Ask a helper: what is 6 * 7?")
+    await done
+    expect(replyTexts(heard)).toEqual(["The helper answered: The tool answered: calculator says 42."])
+    const [caller, helper] = turnsOpenedIn(heard)
+    expect(caller).not.toBe(runtime.conversation)
+    expect(await headerOf(caller!)).toMatchObject({ owner: "another" })
+    expect(await headerOf(helper!)).toMatchObject({ owner: "helper", parent: caller })
+    // delegate takes the session from the turn its call runs in, and the helper is created under what it is given.
+    expect(DEFAULT_TOOLS).toContain("dependencies: [CurrentTurn]")
+    expect(DEFAULT_TOOLS).toContain("return yield* helper.ask(task, turn.id)")
+    expect(DEFAULT_AGENT).toContain("const session = yield* sessions.create({ owner: \"helper\", parent })")
   })
 
   test("in the chat's own session, the helper is refused as busy, and the chat's model reads the failure", async () => {
@@ -88,8 +146,8 @@ describe("lesson 4 on the page (the kernel, Echo)", () => {
     const control = subAgents.controls.system!
     expect(control.read(DEFAULT_AGENT)).toEqual(Option.some("You are a helpful assistant. Hand a task to a helper with delegate, then answer in one short sentence."))
     const written = Option.getOrThrow(control.write(DEFAULT_AGENT, "You are a pirate."))
-    expect(written).toContain('const system = "You are a pirate."')
-    expect(written).toContain('const helperSystem = "You are a helper. Do the task you are given, then answer in one short sentence."')
+    // The string is written where it stood, on the line after `const system =`, and the helper's is untouched.
+    expect(written).toContain('const system =\n  "You are a pirate."\nconst helperSystem =\n  "You are a helper. Do the task you are given, then answer in one short sentence."')
   })
 
   test("every experiment finds its line in the default code", () => {

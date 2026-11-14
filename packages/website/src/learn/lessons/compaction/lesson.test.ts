@@ -9,7 +9,8 @@ import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
 import { emptyBoard, record, viewOf } from "../../trace-model.ts"
 import { DEFAULT_TOOLS } from "../tools/tools.source.ts"
-import { DEFAULT_AGENT } from "./agent.source.ts"
+import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
+import { DEFAULT_AGENT, IMPORTS, REPLACED, REPLACED_IMPORTS } from "./agent.source.ts"
 import { compaction } from "./lesson.ts"
 import { DEFAULT_MEMORY } from "./memory.source.ts"
 import { DEFAULT_SUMMARIZER } from "./summarizer.source.ts"
@@ -128,9 +129,15 @@ describe("lesson 5 on the page (the kernel, Echo)", () => {
     expect(Option.flatMap(control.write(DEFAULT_MEMORY, 300), control.read)).toEqual(Option.some(300))
   })
 
-  test("lesson 2's program text still holds what this lesson replaces in it", () => {
+  test("the base program still holds what this lesson replaces in it", () => {
+    for (const [from] of REPLACED) expect({ from, held: BASE_AGENT.split(from).length - 1 }).toEqual({ from, held: 1 })
+    for (const [from] of REPLACED_IMPORTS) expect({ from, held: BASE_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })
     expect(DEFAULT_AGENT).toContain("Effect.provide(memory)")
     expect(DEFAULT_AGENT).toContain("Effect.provide(summarizerLive)")
-    expect(DEFAULT_AGENT).not.toContain("flatMemory")
+    expect(`${IMPORTS}\n${DEFAULT_AGENT}`).not.toContain("flatMemory")
+    // The loop is the base's: the kernel's two functions, and no block written by hand.
+    expect(DEFAULT_AGENT).toContain("yield* modelAnswer(")
+    expect(DEFAULT_AGENT).toContain("yield* callTool(toolkit, call, session)")
+    expect(DEFAULT_AGENT).not.toContain("runTool")
   })
 })

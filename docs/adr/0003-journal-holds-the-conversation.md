@@ -44,7 +44,8 @@ meta?)`, are core's vocabulary under a `conversation.` prefix of their own, beca
 whoever runs a turn writes them and every memory reads them. The assistant message's data
 is metadata the writer has: the model, and the usage the provider reported. Core's
 `core.` records stay the session plugin's alone; a turn's body may write the
-conversation's.
+conversation's, by hand or through the two kernel functions that do it for a loop
+(`modelAnswer`, `callTool`: ADR 0004, as amended).
 
 **Records carry tags.** A definition declares what its events are for, and every event of
 it carries the tags: `conversation`, `turn`, `memory`, `ui`, `trace`, and a plugin's own

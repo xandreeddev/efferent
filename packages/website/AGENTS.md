@@ -17,9 +17,11 @@ check` (tsc over the learn code, the build, the link check) and
   components that focus a pane and a file) and `src/learn/lessons/<slug>/`:
   - `*.source.ts`: the text of each file the learner sees, as strings. The
     page runs that text as written; `moduleOf`-style functions turn it into
-    a typed module for the tests. A lesson that builds on an earlier one
-    derives its text from that lesson's by replacing named pieces, and a
-    test checks the earlier text still holds them.
+    a typed module for the tests. A lesson that builds on an earlier text
+    derives its own from it by replacing named pieces (`REPLACED`, pairs of
+    `[from, to]`), and a test checks the earlier text still holds each
+    `from`. Every starter text is as the page's Format button leaves it
+    (`format.test.ts`).
   - `lesson.ts`: the `Lesson` (files, chips, the messages "Send three" and
     `data-fill` send, controls bound to a line of a file, experiments that
     edit a file) and `evaluate`, which runs the files with the names they
@@ -31,12 +33,31 @@ check` (tsc over the learn code, the build, the link check) and
   - `lesson.test.ts`: the lesson on the page's runtime with Echo: every claim
     the mdx makes, and every experiment.
   - Registered in `src/learn/lessons/index.ts` and `index.test.ts`.
+- **The loop's two blocks.** Lesson 2 writes them by hand: reading the
+  model's stream, and running a tool call. From lesson 3 on a program uses
+  the kernel's functions, `modelAnswer(stream, session, { onText })` and
+  `callTool(toolkit, call, session)`: each stores what it read or ran, and
+  provides `CurrentTurn` while it does.
+  - `lessons/base/agent.source.ts` is lesson 2's `agent.ts` on those two
+    functions (`BASE_AGENT`): no lesson, no page. A lesson's `agent.ts`
+    derives from it by named pieces, with the test that the base holds
+    each; `base/program.test.ts` runs the base beside lesson 2's program
+    and pins their one difference.
+  - A tool's handler that must reach its turn declares
+    `dependencies: [CurrentTurn]` and reads it with `yield* CurrentTurn`.
+    Its `append` and `publish` cannot fail in their type, so the handler
+    writes no `Effect.orDie`.
+  - `lesson.ts` gives each file exactly the names its imports list
+    (`agentNames`, `toolsNames`, …): a name added to shown imports is added
+    there, and one removed is removed.
 - **The runtime** (`runtime.ts`) builds the kernel, journal and sessions once,
   so the conversation outlives a rebuild, and runs the learner's `main` on a
   fiber. It wraps what it hands the program to watch it: the model (each
   prompt and its usage, a `Trace`), memory (`watchMemory`, each context) and
   a summarizer (`watchSummarizer`, so its model calls are counted apart).
-  Which session a prompt is for is guessed from the last memory call.
+  A prompt's session and turn are read from `CurrentTurn` as the model's
+  stream runs; only a program that calls the model by hand, which provides
+  none (lessons 1 and 2), is placed by the last memory call.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces. The chat
   (`playground.ts`, `panes/chat.ts`) draws answers, tool notes, and views

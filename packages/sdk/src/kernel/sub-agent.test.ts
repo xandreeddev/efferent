@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema, Stream } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
+import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { JournalStorageError, OpenSession, SessionId } from "@xandreed/core/kernel"
-import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, scriptedModel, sessions } from "./index.js"
 import { Helper } from "./testing.port.js"
 
 /*
@@ -22,13 +22,10 @@ const agentTurn = <Tools extends Record<string, Tool.Any>>(system: string, toolk
     yield* session.append(userMessage(message))
     for (let step = 1; step <= 4; step++) {
       const prompt = Prompt.make([{ role: "system", content: system }, ...(yield* memory.context(session))])
-      const parts = yield* Stream.runCollect(model.streamText({ prompt, toolkit, disableToolCallResolution: true, toolCallValidation: "deferred" }))
-      const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
-      const calls = parts.filter((part) => part.type === "tool-call")
-      yield* session.append(assistantMessage(text, { toolCalls: calls }))
-      if (calls.length === 0) return text
-      for (const call of calls) {
-        yield* session.append(yield* callTool(toolkit, call, session)) // the call runs in this turn (ADR 0007)
+      const answer = yield* modelAnswer(model.streamText({ prompt, toolkit, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+      if (answer.toolCalls.length === 0) return answer.text
+      for (const call of answer.toolCalls) {
+        yield* callTool(toolkit, call, session) // the call runs in this turn (ADR 0007), and its result is stored
       }
     }
     return "I stopped."

@@ -1,11 +1,11 @@
-// Lesson 5, "Compaction": the conversation outgrows the model. Lesson 2's
+// Lesson 5, "Compaction": the conversation outgrows the model. The base
 // program, with a memory that keeps state of its own: over its budget it asks
 // the learner's summarizer to fold old turns into a summary, stores it once,
 // and starts every later context with it.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { framed, Memory, messageText, Summarizer, SummaryFailed, summaryMemory } from "@xandreed/sdk/kernel"
+import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { callTool, framed, Memory, messageText, modelAnswer, Summarizer, SummaryFailed, summaryMemory } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
@@ -23,8 +23,8 @@ const summarizerNames = { Effect, Layer, Option, Stream, LanguageModel, Prompt, 
 const toolsNames = { Effect, Schema, Tool, Toolkit }
 
 const agentNames = (parts: PageParts, memory: unknown, summarizerLive: unknown, tools: unknown, toolsLive: unknown) => ({
-  Effect, Option, Stream, LanguageModel, Prompt,
-  assistantMessage, Core, Sessions, toolResult, turnStartedEvent, userMessage, Memory, Chat,
+  Effect, Stream, LanguageModel, Prompt,
+  Core, Sessions, turnStartedEvent, userMessage, callTool, Memory, modelAnswer, Chat,
   kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
   memory, summarizerLive, tools, toolsLive, pane: parts.pane, model: parts.model,
 })

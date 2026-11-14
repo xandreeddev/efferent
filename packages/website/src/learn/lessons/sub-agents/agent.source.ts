@@ -1,6 +1,7 @@
 // The one source of truth for lesson 4's agent.ts: the chat's agent and its
 // helper, each a run of loop.ts's runAgent with its own system text, tools and
-// hooks, the helper in a session of its own (ADR 0006). The page shows the
+// hooks, the helper in a session of its own, created under the session that
+// asked for it (ADR 0006). The page shows the
 // imports (read-only, folded) above the code the learner edits, and runs it as
 // written; program.test.ts compiles and runs this exact text.
 
@@ -15,10 +16,13 @@ import { delegateLive, Helper, helperTools, helperToolsLive, tools } from "./too
 
 /** What the learner edits. */
 export const DEFAULT_AGENT = `// The system texts: the chat's agent and its helper. Code, sent first, never stored.
-const system = "You are a helpful assistant. Hand a task to a helper with delegate, then answer in one short sentence."
-const helperSystem = "You are a helper. Do the task you are given, then answer in one short sentence."
+const system =
+  "You are a helpful assistant. Hand a task to a helper with delegate, then answer in one short sentence."
+const helperSystem =
+  "You are a helper. Do the task you are given, then answer in one short sentence."
 
-// The helper: an agent of its own, in a session of its own whose parent is the chat's.
+// The helper: an agent of its own, in a session of its own whose parent is the session that asked.
+// Here that is the chat's: delegate runs in the chat's turn.
 const helperLive = Layer.effect(
   Helper,
   Effect.gen(function* () {
@@ -28,14 +32,18 @@ const helperLive = Layer.effect(
     // What the helper's turns run with: the memory and the model main provides.
     const services = yield* Effect.context()
     // Its hooks: its words stay out of the chat, its status says it is the helper, nothing steers it.
-    const hooks = { stream: () => Effect.void, status: (text) => chat.status(\`helper: \${text}\`), drain: Effect.succeed([]) }
+    const hooks = {
+      stream: () => Effect.void,
+      status: (text) => chat.status(\`helper: \${text}\`),
+      drain: Effect.succeed([]),
+    }
     const helper = runAgent({ system: helperSystem, toolkit, hooks })
     return Helper.of({
-      ask: (task) =>
+      ask: (task, parent) =>
         Effect.scoped(
           Effect.gen(function* () {
-            // A session of its own, a child of the chat's, and a turn in it while the chat's is open.
-            const session = yield* sessions.create({ owner: "helper", parent: chat.session })
+            // A session of its own, a child of the one that asked, and a turn in it while the asker's is open.
+            const session = yield* sessions.create({ owner: "helper", parent })
             const answer = yield* helper(yield* sessions.open(session), [task])
             return { answer, session }
           }),
@@ -102,8 +110,7 @@ export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageMod
 ${agent
   .replace("const services = yield* Effect.context()", "const services = yield* Effect.context<Memory | LanguageModel.LanguageModel>()")
   .replace("status: (text) => chat.status(", "status: (text: string) => chat.status(")
-  .replace("drain: Effect.succeed([]) }", "drain: Effect.succeed<ReadonlyArray<string>>([]) }")
-  .replace("ask: (task) =>", "ask: (task: string) =>")
+  .replace("drain: Effect.succeed([]),", "drain: Effect.succeed<ReadonlyArray<string>>([]),")
   .replace("Effect.mapError((error) => error.message ?? String(error)),", "Effect.mapError((error: unknown) => (error instanceof Error ? error.message : String(error))),")}
   return main
 }

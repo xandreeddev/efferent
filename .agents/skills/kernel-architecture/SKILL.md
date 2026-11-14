@@ -11,7 +11,7 @@ checklist, the records have the reasons.
 - `docs/adr/0009-what-the-ui-shows-is-a-record.md`: what the UI shows is a view record (`plugin.render.view`, tagged `ui`, no message, same id replaces) a tool appends through `CurrentTurn`; a client folds them with `viewsOf`; progress is live; the model never sees a view
 - `docs/adr/0008-a-memory-keeps-its-summary.md`: a memory keeps what it derived (a summary) as a record of its own, tagged `memory`, whose message it sends; it gets a model's work through a contract the host provides (`Summarizer`)
 - `docs/adr/0006-a-sub-agent-is-a-session.md`: a sub-agent is a session created with the caller's as its parent, reached through a tool whose result `{ answer, session }` names it; no new contract; a helper is created under the turn its delegate call runs in (`CurrentTurn`), with a depth limit read from the parent chain
-- `docs/adr/0007-a-tool-reaches-its-turn.md`: a tool handler reaches the open turn its call runs in through `CurrentTurn`, which the host's loop provides around `toolkit.handle`; a tool declares it in `dependencies`
+- `docs/adr/0007-a-tool-reaches-its-turn.md`: work reaches the open turn it runs for through `CurrentTurn` (a `RunningTurn`), provided by `callTool` around a tool's handler, by `modelAnswer` while the model's stream runs, and by the summary memory around its summarizer; a tool declares it in `dependencies`
 - `docs/adr/0005-context-for-one-request.md`: what a wrapper of `Memory` adds for one request (the time, a chosen instruction, fetched data) comes after the memory's context, whole and in its order, and is never stored; `memoryWrapperConformance` checks it
 - `docs/adr/0004-tool-traffic-is-conversation.md`: the tools are Effect AI's `Toolkit`
   (no kernel service); tool definitions are code, never stored; a call and its result
@@ -61,9 +61,14 @@ checklist, the records have the reasons.
 - [ ] Nothing derived from configuration is stored: no system text, no request, no
       pointers to what was sent, no tool definitions.
 - [ ] Tool calls and their results are stored as conversation records, a failure as a
-      result with `isFailure`, never as a failed turn. A loop runs a call with
-      `callTool(toolkit, call, session)`, which provides `CurrentTurn` and gives the
-      failure back as a result, rather than its own copy of that block.
+      result with `isFailure`, never as a failed turn. A loop reads the model's answer
+      with `modelAnswer(stream, session, { onText })` and runs a call with
+      `callTool(toolkit, call, session)`: each stores what it produced, and gives the
+      work its turn (`CurrentTurn`), rather than the loop's own copy of those blocks.
+- [ ] Work that must reach its session reads `CurrentTurn`, a `RunningTurn` whose writes
+      cannot fail in their type, and never wraps them in `Effect.orDie`. Only the
+      function that holds the open session provides it (`callTool`, `modelAnswer`, the
+      summary memory around its summarizer).
 - [ ] A memory sends its messages through `paired`, so no call goes without its result;
       the memory kit's `pairs` check holds it to that.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a

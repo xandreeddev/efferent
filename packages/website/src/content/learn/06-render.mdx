@@ -5,6 +5,7 @@ minutes: 20
 ---
 
 import Step from '../../components/learn/Step.astro'
+import Controls from '../../components/learn/render/Controls.astro'
 import Experiments from '../../components/learn/render/Experiments.astro'
 
 <Step n={1} id="build" title="What you will build" focus="code">
@@ -40,7 +41,7 @@ A call the model gets wrong, such as `n` of 50, is a failure the model reads, an
 
 <Step n={4} id="loop" title="The loop gives each call its turn" focus="code" file="agent">
 
-**agent.ts** is lesson 2's program, with one change: each call runs with `Effect.provideService(CurrentTurn, session)`. The loop holds the open turn, so it hands it to the tool. A tool that declares nothing never notices.
+**agent.ts** is lesson 2's program on the kernel's `modelAnswer` and `callTool`, with a system text that names `show`. Its loop runs each call with `callTool(toolkit, call, session)`. The loop holds the open turn, and `callTool` gives each call its turn: a tool that declares `CurrentTurn` always has it, and a tool that declares nothing never notices. There is no line here to forget.
 
 </Step>
 
@@ -60,7 +61,9 @@ The chat draws views by folding the journal: one view per id, the latest wins. T
 
 </Step>
 
-<Step n={6} id="experiments" title="Experiments" focus="code">
+<Step n={6} id="experiments" title="Settings and experiments" focus="code">
+
+<Controls />
 
 <Experiments />
 

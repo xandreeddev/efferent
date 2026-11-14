@@ -8,7 +8,7 @@ const swap = (from: string, to: string) => (source: string): Option.Option<strin
 
 /** The wrong way: the helper works in the chat's own session. The chat's turn is open, so the helper's is refused. */
 export const sameSession = swap(
-  `            const session = yield* sessions.create({ owner: "helper", parent: chat.session })`,
+  `            const session = yield* sessions.create({ owner: "helper", parent })`,
   `            // The wrong way: the chat's own session. Its turn is open, so this one is refused.
             const session = chat.session`,
 )

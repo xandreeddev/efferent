@@ -1,6 +1,8 @@
 // Lesson 6's tools.ts: lesson 2's calculator, and `show`, a tool that shows
-// the user a table. Its handler appends a view in the turn its call runs in
-// and publishes progress through it; what it returns to the model is a few words.
+// the user a table. Its handler takes the turn its call runs in from
+// `CurrentTurn`, appends a view in it and publishes progress through it;
+// neither write can fail in its type, so the handler wraps none of them.
+// What it returns to the model is a few words.
 
 /** Read-only: what the tools import. */
 export const TOOLS_IMPORTS = `import { Effect, Schema } from "effect"
@@ -15,14 +17,19 @@ export const DEFAULT_TOOLS = `// The tools: what each is called, what it does, w
 // Code, like the system text: offered to the model in every call, never stored.
 const calculator = Tool.make("calculator", {
   description: "Work out a op b, where op is +, -, * or /.",
-  parameters: Schema.Struct({ a: Schema.Number, op: Schema.Literals(["+", "-", "*", "/"]), b: Schema.Number }),
+  parameters: Schema.Struct({
+    a: Schema.Number,
+    op: Schema.Literals(["+", "-", "*", "/"]),
+    b: Schema.Number,
+  }),
   success: Schema.Number,
   failure: Schema.String,
   failureMode: "return",
 })
 
 const show = Tool.make("show", {
-  description: "Show the user a table: the squares or cubes from 1 to n, or the times table of n. Give it an id: showing again under that id replaces it.",
+  description:
+    "Show the user a table: the squares or cubes from 1 to n, or the times table of n. Give it an id: showing again under that id replaces it.",
   parameters: Schema.Struct({
     id: ViewId,
     table: Schema.Literals(["squares", "cubes", "times"]),
@@ -37,9 +44,24 @@ const show = Tool.make("show", {
 
 // What each kind of table holds: its title, its columns, and its row for i.
 const kinds = {
-  squares: (n) => ({ title: \`Squares to \${n}\`, columns: ["n", "n²"], row: (i) => [String(i), String(i * i)], rows: n }),
-  cubes: (n) => ({ title: \`Cubes to \${n}\`, columns: ["n", "n³"], row: (i) => [String(i), String(i ** 3)], rows: n }),
-  times: (n) => ({ title: \`The times table of \${n}\`, columns: ["sum", "answer"], row: (i) => [\`\${i} × \${n}\`, String(i * n)], rows: 10 }),
+  squares: (n) => ({
+    title: \`Squares to \${n}\`,
+    columns: ["n", "n²"],
+    row: (i) => [String(i), String(i * i)],
+    rows: n,
+  }),
+  cubes: (n) => ({
+    title: \`Cubes to \${n}\`,
+    columns: ["n", "n³"],
+    row: (i) => [String(i), String(i ** 3)],
+    rows: n,
+  }),
+  times: (n) => ({
+    title: \`The times table of \${n}\`,
+    columns: ["sum", "answer"],
+    row: (i) => [\`\${i} × \${n}\`, String(i * n)],
+    rows: 10,
+  }),
 }
 
 export const tools = Toolkit.make(calculator, show)
@@ -58,13 +80,14 @@ export const toolsLive = tools.toLayer({
       for (let i = 1; i <= count; i++) {
         rows.push(row(i))
         // How far it got: live, for whoever watches, never stored.
-        yield* Effect.orDie(session.publish(progressEvent, { id, done: i, total: count }))
+        yield* session.publish(progressEvent, { id, done: i, total: count })
       }
       // The view is checked as it is built, then stored in the journal, tagged ui. No memory sends it.
-      const shown = yield* Schema.decodeUnknownEffect(ViewData)({ id, view: { _tag: "Table", title, columns, rows } }).pipe(
-        Effect.mapError((error) => error.message),
-      )
-      yield* Effect.orDie(session.append(showView(shown.id, shown.view)))
+      const shown = yield* Schema.decodeUnknownEffect(ViewData)({
+        id,
+        view: { _tag: "Table", title, columns, rows },
+      }).pipe(Effect.mapError((error) => error.message))
+      yield* session.append(showView(shown.id, shown.view))
       // What the model reads: a few words.
       return \`shown as \${id}\`
     }),

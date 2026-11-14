@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref, Schema, Stream } from "effect"
+import { Effect, Layer, Ref, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
+import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, scriptedModel, sessions } from "./index.js"
+import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, scriptedModel, sessions } from "./index.js"
 import type { ModelScript } from "./index.js"
 
 /*
@@ -64,21 +64,14 @@ const run = (script: ModelScript, messages: ReadonlyArray<string>) => Effect.gen
           const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...history])
 
           // Offer the tools, but run none: the turn runs the calls itself. A call the model got wrong comes through
-          // as it is ("deferred"), so it can be answered as a failure.
-          const parts = yield* model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
-            Stream.tap((part) => (part.type === "error" ? Effect.fail(part.error) : Effect.void)),
-            Stream.runCollect,
-          )
-          const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
-          const calls = parts.flatMap((part) => (part.type === "tool-call" ? [part] : []))
-
-          // Store the model's answer with the calls it made, then run each call and store its result.
-          yield* session.append(assistantMessage(text, { toolCalls: calls }))
-          if (calls.length === 0) return text
+          // as it is ("deferred"), so it can be answered as a failure. `modelAnswer` reads the stream in this turn and
+          // stores the answer: its text, the calls it made, and what the provider said it cost.
+          const answer = yield* modelAnswer(model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+          if (answer.toolCalls.length === 0) return answer.text
           // Each call runs in this turn (a tool that declares CurrentTurn reaches the session from its handler), and its
           // result is stored. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
-          for (const call of calls) {
-            yield* session.append(yield* callTool(toolkit, call, session))
+          for (const call of answer.toolCalls) {
+            yield* callTool(toolkit, call, session)
           }
         }
         return `I stopped after ${MAX_STEPS} steps.`

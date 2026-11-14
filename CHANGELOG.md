@@ -31,7 +31,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     that provides `Core` alone. It imports `effect` alone, and names no
     loop, memory, system text or request to a model.
   - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
-    folder with its entities, events, pure rules and kit: memory's
+    folder with its entities, events and pure rules, and a kit where a
+    plugin can break the contract's rules (`docs/kernel.md` lists which
+    have one, and why the others have none): memory's
     (`Memory`, `memoryConformance`, `Tokens`, `estimateTokens`,
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
@@ -46,12 +48,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     (`Summarizer`, which a host provides over its model, failing with
     `SummaryFailed`, with its kit, `summarizerConformance`: it answers with
     text or fails so, never with nothing), the tool call's
-    (`CurrentTurn`: the open turn a call runs in, which the host's loop
-    provides around `toolkit.handle` and a tool declares in its
-    `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
-    `callTool(toolkit, call, session)`, which runs one call the model made in
-    its turn and gives back the result to store, a failure or a defect as a
-    failed result, so a host's loop need not copy that block) and the
+    (`CurrentTurn`: the turn a piece of work runs for, a `RunningTurn`
+    whose reads and writes cannot fail in their type, which a tool declares
+    in its `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
+    the two blocks every loop wrote, as functions that each store what they
+    produce and give the work its turn:
+    `modelAnswer(stream, session, { onText })`, which reads one call's
+    answer from the model's stream and stores it with its tool calls, its
+    usage and its model, failing with `ModelAnswerFailed` on an error part;
+    and `callTool(toolkit, call, session)`, which runs one call the model
+    made and stores its result, a failure or a defect as a failed result) and the
     inbox's (`Inbox`, `InboxTurn`). A plugin imports contracts and core, never another
     plugin's folder, and a contract never imports a plugin: the boundaries
     gate refuses both. There is no loop contract and no stock loop: the

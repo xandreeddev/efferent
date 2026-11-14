@@ -1,7 +1,7 @@
 import { Clock, Effect, Layer, Option, Ref, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, assistantMessageEvent, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { estimateTokens, hostNote, Memory, messageText, paired, promptMessage } from "@xandreed/sdk/kernel"
+import { assistantMessageEvent, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { callTool, estimateTokens, hostNote, Memory, messageText, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
@@ -18,8 +18,8 @@ const toolsNames = { Effect, Schema, Tool, Toolkit }
 const pluginNames = { Clock, Effect, Layer, Ref, assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage, estimateTokens, hostNote, Memory, messageText, Chat }
 
 const agentNames = (parts: PageParts, flatMemory: unknown, tools: unknown, toolsLive: unknown, meter: unknown, withClock: unknown) => ({
-  Effect, Option, Stream, LanguageModel, Prompt,
-  assistantMessage, Sessions, toolResult, userMessage, Memory, Chat,
+  Effect, Stream, LanguageModel, Prompt,
+  Sessions, userMessage, callTool, Memory, modelAnswer, Chat,
   kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
   flatMemory, tools, toolsLive, meter, withClock, pane: parts.pane, model: parts.model,
 })

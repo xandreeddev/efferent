@@ -28,7 +28,7 @@ The small models on your machine rarely call a tool, as lesson 2 showed, so they
 
 <Step n={3} id="loop" title="One loop, two agents" focus="code" file="loop">
 
-**loop.ts** is lesson 2's loop, now a function of the agent it runs: `runAgent({ system, toolkit, hooks })` returns a turn for any session.
+**loop.ts** is lesson 2's loop, on the kernel's `modelAnswer` and `callTool`, and now a function of the agent it runs: `runAgent({ system, toolkit, hooks })` returns a turn for any session.
 
 The **hooks** are where an agent's words go: `stream` for its answer as it comes, `status` for the line above the chat, `drain` for messages that steer it. The chat's agent is given the chat itself. The helper is given quiet ones: its words stay out of your chat, and nothing you type reaches it.
 
@@ -38,7 +38,9 @@ The **hooks** are where an agent's words go: `stream` for its answer as it comes
 
 **tools.ts** has the helper's tools (the calculator) and the chat's: those, plus `delegate`.
 
-`delegate` needs a helper, but tools.ts does not build one. It declares what it needs, a contract: `Helper`, with one method, `ask(task)`. Main provides it. That is the Neovim way again: tools.ts depends on an API, not on the code behind it.
+`delegate` needs a helper, but tools.ts does not build one. It declares what it needs, a contract: `Helper`, with one method, `ask(task, parent)`. Main provides it. That is the Neovim way again: tools.ts depends on an API, not on the code behind it.
+
+`delegate` also says who is asking. It lists `CurrentTurn` in its `dependencies`: the turn the call runs in, which the loop's `callTool` gives every call. Its handler hands that turn's session to the helper as the `parent`.
 
 `delegate` returns `{ answer, session }`. The session id is the link from the call to the helper's session, stored with the result.
 
@@ -48,7 +50,7 @@ The **hooks** are where an agent's words go: `stream` for its answer as it comes
 
 In **agent.ts**, `helperLive` provides `Helper`. For each task it:
 
-1. creates a session, with `parent: chat.session`;
+1. creates a session whose `parent` is the session that asked. Here that is the chat's, because `delegate` ran in the chat's turn;
 2. opens a turn in it. The chat's turn is still open, waiting on `delegate`, and that is fine: a turn holds its own session, not others;
 3. runs `runAgent` with the helper's system text, tools and quiet hooks;
 4. returns the answer and the session id.

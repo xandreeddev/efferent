@@ -1,4 +1,5 @@
-// Lesson 3's five files, compiled as written and type-checked; the learner's
+// Lesson 3's five files, compiled as written and type-checked; its agent.ts
+// derived from the base, which still holds each piece replaced; the learner's
 // clock, as the page shows it, held to the wrapper kit, and its careless
 // variant failing it.
 import { afterAll, describe, expect, test } from "bun:test"
@@ -11,7 +12,8 @@ import type { Memory } from "@xandreed/sdk/kernel"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_MEMORY, memoryModuleOf } from "../tools/memory.source.ts"
 import { DEFAULT_TOOLS, toolsModuleOf } from "../tools/tools.source.ts"
-import { DEFAULT_AGENT, moduleOf } from "./agent.source.ts"
+import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
+import { DEFAULT_AGENT, IMPORTS, moduleOf, REPLACED, REPLACED_IMPORTS } from "./agent.source.ts"
 import { dropFirst } from "./config-edit.ts"
 import { DEFAULT_PLUGIN, pluginModuleOf } from "./plugin.source.ts"
 
@@ -36,6 +38,20 @@ const failedChecks = (wrap: Wrap) =>
 afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
 describe("lesson 3's displayed program", () => {
+  test("the base program still holds what this lesson replaces in it: the boot hook, the memory in main, two imports", () => {
+    for (const [from] of REPLACED) expect({ from, held: BASE_AGENT.split(from).length - 1 }).toEqual({ from, held: 1 })
+    for (const [from] of REPLACED_IMPORTS) expect({ from, held: BASE_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })
+    // The program hooks nothing itself: the meter does, from plugin.ts, and main provides both plugins.
+    expect(`${IMPORTS}\n${DEFAULT_AGENT}`).not.toMatch(/\bCore\b|turnStartedEvent|core\.on/)
+    expect(IMPORTS).toContain('import { meter, withClock } from "./plugin.ts"')
+    expect(DEFAULT_AGENT).toContain("    // On boot, the plugins main provides set up: the meter hooks its events there, not here.\n    // Then, on each message you send: one turn, in order.\n")
+    expect(DEFAULT_AGENT).toContain("  Effect.provide(meter), // your event plugin: it counts what each turn cost\n  Effect.provide(withClock(flatMemory)), // your wrapper: the flat memory, with the time after it\n")
+    // The loop is the base's: the kernel's two functions, and no block written by hand.
+    expect(DEFAULT_AGENT).toContain("yield* modelAnswer(")
+    expect(DEFAULT_AGENT).toContain("yield* callTool(toolkit, call, session)")
+    expect(DEFAULT_AGENT).not.toContain("runTool")
+  })
+
   test("the clock as the page shows it passes the wrapper kit", async () => {
     const { withClock } = (await import(write("clock").href)) as { withClock: Wrap }
     expect(await failedChecks(withClock)).toEqual([])

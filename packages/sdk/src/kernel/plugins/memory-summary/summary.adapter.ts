@@ -7,6 +7,8 @@ import type { InvalidBudget } from "../../contracts/memory/memory.entity.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import { SummaryFailed } from "../../contracts/summary/summarizer.entity.js"
 import { Summarizer } from "../../contracts/summary/summarizer.port.js"
+import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
+import { runningTurn } from "../../contracts/turn/running-turn.entity.functions.js"
 import { plan, SUMMARY_VOCABULARY, summarized, summaryNote } from "./summary.entity.functions.js"
 import type { SummaryOptions } from "./summary.entity.js"
 
@@ -51,7 +53,8 @@ export const summaryMemory = (options: SummaryOptions): Layer.Layer<Memory, Inva
         Over: (it) => Effect.fail(over(it.estimatedTokens)),
         // Fold once: summarize, store the summary, and plan again from the journal as it now stands.
         Fold: (fold) => Effect.gen(function* () {
-          const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
+          // The summarizer works for this turn: what it calls (a model, through a wrapper) reaches the session as `CurrentTurn`.
+          const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold }).pipe(Effect.provideService(CurrentTurn, runningTurn(session)))
           // A summary stands for the turns it folds, for good: one that says nothing is not stored.
           if (summary.trim().length === 0) return yield* Effect.fail(new SummaryFailed({ message: "the summarizer answered with nothing, so no summary was stored" }))
           // A summary too long to fit beside what stays is not stored: the next context asks again.

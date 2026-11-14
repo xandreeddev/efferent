@@ -236,11 +236,11 @@ And the turn:
 <!-- pinned: packages/sdk/src/kernel/tools.test.ts#turn -->
 
 ```ts
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { assistantMessage, Sessions, userMessage } from "@xandreed/core/kernel"
+import { Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { callTool, Memory } from "@xandreed/sdk/kernel"
+import { callTool, Memory, modelAnswer } from "@xandreed/sdk/kernel"
 
 // One turn: the model answers, or asks for tools; their results are stored, and the model is asked again.
 const turn = (conversation: SessionId, message: string) =>
@@ -259,21 +259,14 @@ const turn = (conversation: SessionId, message: string) =>
         const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...history])
 
         // Offer the tools, but run none: the turn runs the calls itself. A call the model got wrong comes through
-        // as it is ("deferred"), so it can be answered as a failure.
-        const parts = yield* model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
-          Stream.tap((part) => (part.type === "error" ? Effect.fail(part.error) : Effect.void)),
-          Stream.runCollect,
-        )
-        const text = parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join("")
-        const calls = parts.flatMap((part) => (part.type === "tool-call" ? [part] : []))
-
-        // Store the model's answer with the calls it made, then run each call and store its result.
-        yield* session.append(assistantMessage(text, { toolCalls: calls }))
-        if (calls.length === 0) return text
+        // as it is ("deferred"), so it can be answered as a failure. `modelAnswer` reads the stream in this turn and
+        // stores the answer: its text, the calls it made, and what the provider said it cost.
+        const answer = yield* modelAnswer(model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+        if (answer.toolCalls.length === 0) return answer.text
         // Each call runs in this turn (a tool that declares CurrentTurn reaches the session from its handler), and its
         // result is stored. A tool that fails, or a call the model got wrong, is an answer too: the model reads it and goes on.
-        for (const call of calls) {
-          yield* session.append(yield* callTool(toolkit, call, session))
+        for (const call of answer.toolCalls) {
+          yield* callTool(toolkit, call, session)
         }
       }
       return `I stopped after ${MAX_STEPS} steps.`
@@ -287,15 +280,30 @@ const turn = (conversation: SessionId, message: string) =>
   "deferred"` a call the model got wrong (a tool that does not exist,
   parameters that do not decode) comes through as it is; the default would
   fail the stream, and with it the turn.
+- **`modelAnswer(stream, session, { onText })` reads one call's answer**
+  from the model's stream, in the turn it belongs to, and stores it: the
+  text, each piece handed to `onText` as it arrives, the calls the model
+  made, and what the provider reported it cost and which model answered, as
+  one `conversation.assistant.message`. The stream is the host's: it calls
+  the model with its own prompt, tools and options. A stream that reports
+  an error fails with `ModelAnswerFailed`, and nothing is stored.
 - **`callTool(toolkit, call, session)` runs one call** in the turn it
-  belongs to: it provides `CurrentTurn` (ADR 0007), runs the call through
-  the toolkit's handlers, and gives back the result to store. It is a
-  function, not a service (ADR 0004): every host's loop wrote the same
-  block, so the kernel holds it once. Lesson 2 writes it out by hand, to
-  show what it does.
+  belongs to, through the toolkit's handlers, and stores its result. A
+  result that is not stored answers nothing, so the function stores it, and
+  gives back the stored record.
+- **Both are functions, not services** (ADR 0004): every host's loop wrote
+  the same two blocks, so the kernel holds each once, and the loop stays the
+  host's. Lesson 2 writes both out by hand, to show what they do.
+- **Both give the work its turn** (`CurrentTurn`, ADR 0007): a tool that
+  declares it, and whatever runs while the model answers (a wrapper of the
+  model), reach the open session as a `RunningTurn`, whose reads and writes
+  cannot fail in their type. A write that fails in a tool is a defect of
+  the handler, stored as a failed result; one that fails while the model
+  answers fails the turn. The summary memory gives its summarizer its turn
+  the same way.
 - **Failures are data.** A tool that fails with `failureMode: "return"`
   answers with its failure; an unknown tool, bad parameters or a defect in a
-  handler fail the call, and `callTool` gives that back as a failed result.
+  handler fail the call, and `callTool` stores that as a failed result.
   Either way the model reads the failure as the answer to its call, and the
   turn goes on. The failure text comes from Effect AI's toolkit, not from
   the kernel.
@@ -526,10 +534,10 @@ const toolsLive = tools.toLayer({
     for (let n = 1; n <= upTo; n++) {
       rows.push([String(n), String(n * n)])
       // How far it got: live, for whoever watches, never stored.
-      yield* Effect.orDie(session.publish(progressEvent, { id, done: n, total: upTo }))
+      yield* session.publish(progressEvent, { id, done: n, total: upTo })
     }
     // The table it worked out, stored as a view tagged ui. No memory sends it: the model never sees the rows.
-    yield* Effect.orDie(session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows })))
+    yield* session.append(showView(id, { _tag: "Table", title: "Squares", columns: ["n", "n²"], rows }))
     // What the model reads: a few words.
     return `shown as ${id}`
   }),
@@ -871,7 +879,8 @@ return Memory.of({
       Over: (it) => Effect.fail(over(it.estimatedTokens)),
       // Fold once: summarize, store the summary, and plan again from the journal as it now stands.
       Fold: (fold) => Effect.gen(function* () {
-        const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
+        // The summarizer works for this turn: what it calls (a model, through a wrapper) reaches the session as `CurrentTurn`.
+        const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold }).pipe(Effect.provideService(CurrentTurn, runningTurn(session)))
         // A summary stands for the turns it folds, for good: one that says nothing is not stored.
         if (summary.trim().length === 0) return yield* Effect.fail(new SummaryFailed({ message: "the summarizer answered with nothing, so no summary was stored" }))
         // A summary too long to fit beside what stays is not stored: the next context asks again.
@@ -1069,14 +1078,6 @@ are not made by accident.
   because a memory was the first kernel code to frame text; tools and hosts
   frame text too. They are copies of core's root helpers, which the kernel
   does not import.
-- **The learn page's guesses.** The page tells which session a prompt is for
-  from the last memory call, and a summarizer's prompt from a count of
-  running summarizer calls: one watcher per contract. A reference the loop
-  provides around each model call would make both exact.
-- **A tool wraps its appends in `Effect.orDie`.** An append or a publish
-  through `CurrentTurn` can fail in its type, and a tool's failure schema
-  does not hold those failures. A turn handed to a tool whose writes cannot
-  fail in the type would remove it.
 - **What a draft's data holds is checked by the compiler alone.** Untyped
   code can append data its definition does not describe; it is found when
   the record is read (a listener fails, a fold passes over it).
@@ -1090,12 +1091,6 @@ are not made by accident.
   message that asked for it is sent before its call.
 - **Two `kernel()` layers give two cores**, silently: the one nearer the
   consumer wins.
-- **From which lesson the track uses `callTool`.** Lessons 2 to 6 write the
-  block by hand; lesson 2 should, to teach it, and a later one could switch.
-- **Lesson 4's helper and its caller.** The lesson files a helper under the
-  chat's session, as it was written before `CurrentTurn`; ADR 0006 now
-  files it under the turn that called it. Changing the lesson moves
-  `CurrentTurn` earlier in the track.
 
 ## Keeping a tailored context cache-stable
 

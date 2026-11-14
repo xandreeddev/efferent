@@ -1,7 +1,8 @@
 // Lesson 6 on the page's runtime, with Echo: "show a table of …" goes to
 // show, whose view is stored in the chat's journal and folded by viewsOf;
 // its progress is heard live; the model's prompts hold none of the cells;
-// each experiment does what the page says.
+// each experiment does what the page says, and the system-text control finds
+// its line.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
 import { viewsOf } from "@xandreed/sdk/kernel"
@@ -9,10 +10,10 @@ import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
 import { DEFAULT_MEMORY } from "../tools/memory.source.ts"
-import { DEFAULT_AGENT, REPLACED } from "./agent.source.ts"
+import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
+import { DEFAULT_AGENT, IMPORTS, REPLACED } from "./agent.source.ts"
 import { render } from "./lesson.ts"
 import { DEFAULT_TOOLS } from "./tools.source.ts"
-import { DEFAULT_AGENT as LESSON2_AGENT, IMPORTS as LESSON2_IMPORTS } from "../tools/agent.source.ts"
 
 setDefaultTimeout(60_000)
 const opened: Array<LessonRuntime> = []
@@ -69,15 +70,28 @@ describe("lesson 6 on the page (the kernel, Echo)", () => {
     expect(last.some((message) => message.role === "tool" && message.text.includes("n | n²"))).toBe(true)
   })
 
-  test("a loop that gives a call no turn: show fails, Echo reads the failure, and nothing is shown", async () => {
-    const { runtime, heard } = await start({ ...SOURCES, agent: apply("no-turn", DEFAULT_AGENT) })
-    await oneByOne(runtime, ["Show a table of squares to 3."])
-    expect(replies(heard)[0]).toMatch(/^The tool answered: show failed: .*CurrentTurn/)
-    expect(viewsOf(await runtime.journal())).toEqual([])
+  test("the base program still holds what this lesson replaces in it, and callTool is what gives each call its turn", () => {
+    for (const [from] of REPLACED) expect({ from, held: BASE_AGENT.split(from).length - 1 }).toEqual({ from, held: 1 })
+    expect(IMPORTS).toBe(BASE_IMPORTS)
+    expect(DEFAULT_AGENT).toContain('const system =\n  "You are a helpful assistant. To show the user a table, use show. Answer in one short sentence."')
+    // The loop names no turn itself: callTool provides it, and show, which declares CurrentTurn, takes it from there.
+    expect(DEFAULT_AGENT).toContain("yield* callTool(toolkit, call, session)")
+    expect(`${IMPORTS}\n${DEFAULT_AGENT}`).not.toContain("CurrentTurn")
+    expect(DEFAULT_TOOLS).toContain("dependencies: [CurrentTurn]")
+    expect(DEFAULT_TOOLS).toContain("const session = yield* CurrentTurn")
+    // A write through the turn cannot fail in its type, so the handler wraps none of them.
+    expect(DEFAULT_TOOLS).not.toContain("Effect.orDie")
   })
 
-  test("lesson 2's program still holds what this lesson replaces in it", () => {
-    for (const [from] of REPLACED) expect(`${LESSON2_IMPORTS}\n${LESSON2_AGENT}`).toContain(from)
-    expect(DEFAULT_AGENT).toContain("Effect.provideService(CurrentTurn, session)")
+  test("every experiment finds its line in the starter code, and the system-text control reads and writes its line", () => {
+    expect(Object.keys(render.experiments)).toEqual(["slow-show", "table-as-result"])
+    for (const [id, experiment] of Object.entries(render.experiments)) {
+      const source = { tools: DEFAULT_TOOLS, agent: DEFAULT_AGENT }[experiment.file] ?? ""
+      const next = experiment.apply(source)
+      expect([id, Option.isSome(next) && next.value !== source]).toEqual([id, true])
+    }
+    const control = render.controls.system!
+    expect(control.read(DEFAULT_AGENT)).toEqual(Option.some("You are a helpful assistant. To show the user a table, use show. Answer in one short sentence."))
+    expect(Option.flatMap(control.write(DEFAULT_AGENT, "You are a pirate."), control.read)).toEqual(Option.some("You are a pirate."))
   })
 })

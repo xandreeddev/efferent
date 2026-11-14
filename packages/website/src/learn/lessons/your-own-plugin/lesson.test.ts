@@ -1,9 +1,10 @@
 // Lesson 3 on the page's runtime, with Echo: the meter counts each turn on the
-// status line, the clock's note reaches the model and never the journal, and
-// every experiment finds its line and does what the page says it does.
+// status line, from what the provider reported for each answer, the clock's
+// note reaches the model and never the journal, and every experiment finds
+// its line and does what the page says it does.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, userMessageEvent } from "@xandreed/core/kernel"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -66,6 +67,21 @@ describe("lesson 3 on the page (the kernel, Echo)", () => {
     const [first, second] = counts.map((status) => status.match(/~(\d+) tok, ~(\d+) in all/)!.slice(1).map(Number))
     expect(first![0]).toBe(first![1])
     expect(second![1]).toBe(first![1]! + second![0]!)
+  })
+
+  test("the meter counts what the provider reported for each answer, which modelAnswer stored with it", async () => {
+    const { runtime, heard } = await start()
+    await say(runtime, "Hi, I'm Ana.")
+    await say(runtime, "What is 12 * 3?")
+    // Echo reports a quarter of each answer's characters: 30 for its greeting; 6 for its words before the call and 10 for its answer after it.
+    expect(statuses(heard).filter((status) => status.includes(" tok, "))).toEqual(["turn 1: ~30 tok, ~30 in all", "turn 2: ~16 tok, ~46 in all"])
+    const reported = heard.flatMap((trace) => (trace._tag === "Usage" ? [[trace.turn, trace.usage.outputTokens]] : []))
+    expect(reported).toEqual([[1, 30], [2, 6], [2, 10]])
+    // Each answer's record holds the report, so the meter's listener reads it there and estimates nothing.
+    // (What it read is left out here: the clock's note is in it, and its length changes with the time.)
+    const stored = (await runtime.journal()).filter((record) => record.name === assistantMessageEvent.name)
+      .map((record) => (record.data as { readonly usage?: { readonly outputTokens?: number } }).usage?.outputTokens)
+    expect(stored).toEqual([30, 6, 10])
   })
 
   test("a sum still goes to the calculator with the note after it, and the note is not a sum", async () => {

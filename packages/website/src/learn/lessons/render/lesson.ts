@@ -1,10 +1,11 @@
-// Lesson 6, "Render": an agent shows things, not only text. Lesson 2's
-// program, whose loop runs each call in its turn, and a `show` tool that
-// stores a view (a record tagged ui) the chat draws and the model never sees.
+// Lesson 6, "Render": an agent shows things, not only text. The base
+// program, whose loop runs each call in its turn (`callTool`), and a `show`
+// tool that stores a view (a record tagged ui) the chat draws and the model
+// never sees.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { CurrentTurn, Memory, paired, progressEvent, promptMessage, showView, ViewData, ViewId } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
+import { callTool, CurrentTurn, Memory, modelAnswer, paired, progressEvent, promptMessage, showView, ViewData, ViewId } from "@xandreed/sdk/kernel"
 import { run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
@@ -12,15 +13,15 @@ import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_MEMORY, MEMORY_INTRO, memoryDocumentOf } from "../tools/memory.source.ts"
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
-import { noTurn, slowShow, tableAsResult } from "./config-edit.ts"
+import { slowShow, tableAsResult } from "./config-edit.ts"
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentOf } from "./tools.source.ts"
 
 const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
 const toolsNames = { Effect, Schema, Tool, Toolkit, CurrentTurn, progressEvent, showView, ViewData, ViewId }
 
 const agentNames = (parts: PageParts, flatMemory: unknown, tools: unknown, toolsLive: unknown) => ({
-  Effect, Option, Stream, LanguageModel, Prompt,
-  assistantMessage, Core, Sessions, toolResult, turnStartedEvent, userMessage, Memory, CurrentTurn, Chat,
+  Effect, Stream, LanguageModel, Prompt,
+  Core, Sessions, turnStartedEvent, userMessage, callTool, Memory, modelAnswer, Chat,
   kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
   flatMemory, tools, toolsLive, pane: parts.pane, model: parts.model,
 })
@@ -66,7 +67,6 @@ export const render: Lesson = {
   experiments: {
     "slow-show": { file: "tools", apply: slowShow },
     "table-as-result": { file: "tools", apply: tableAsResult },
-    "no-turn": { file: "agent", apply: noTurn },
   },
   evaluate: evaluateLesson,
 }

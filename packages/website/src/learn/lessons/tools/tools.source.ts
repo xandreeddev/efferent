@@ -14,7 +14,11 @@ export const DEFAULT_TOOLS = `// The tools: what each is called, what it does, w
 // Code, like the system text: offered to the model in every call, never stored.
 const calculator = Tool.make("calculator", {
   description: "Work out a op b, where op is +, -, * or /.",
-  parameters: Schema.Struct({ a: Schema.Number, op: Schema.Literals(["+", "-", "*", "/"]), b: Schema.Number }),
+  parameters: Schema.Struct({
+    a: Schema.Number,
+    op: Schema.Literals(["+", "-", "*", "/"]),
+    b: Schema.Number,
+  }),
   success: Schema.Number,
   failure: Schema.String,
   // A failure goes back to the model as the tool's answer.

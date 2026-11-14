@@ -3,8 +3,11 @@
 // recognition is left alone (None) rather than guessed at.
 import { Option, Schema } from "effect"
 
-/** `const system = "…"` in agent.ts. */
-const systemLine = /(const system = )("(?:[^"\\\n]|\\.)*")/
+/**
+ * `const system = "…"` in agent.ts, on one line or as Format wraps a long one: `const system =`, then the string on
+ * the next line. The string is written where it stands, so the code keeps the form it has.
+ */
+const systemLine = /(const system =\s*)("(?:[^"\\\n]|\\.)*")/
 
 /** memory.ts's last line: every message, or the last n of them. */
 const contextLine = /return messages(?:\.slice\(-(\d+)\))?\.map\(promptMessage\)/

@@ -14,7 +14,8 @@ import { tools, toolsLive } from "./tools.ts"`
 
 /** What the learner edits: the system text, the step limit, running a call, one turn, the program and main. */
 export const DEFAULT_AGENT = `// The system text: code, sent first in every prompt, never stored.
-const system = "You are a helpful assistant. Use a tool when it helps, then answer in one short sentence."
+const system =
+  "You are a helpful assistant. Use a tool when it helps, then answer in one short sentence."
 
 // How many times one turn may call the model before it gives up.
 const MAX_STEPS = 5
@@ -60,10 +61,17 @@ const turn = (message) =>
         // Offer the tools, but run none: this loop runs the calls. A call the model got wrong
         // comes through as it is ("deferred"), so it can be answered as a failure.
         const parts = yield* model
-          .streamText({ prompt, toolkit, disableToolCallResolution: true, toolCallValidation: "deferred" })
+          .streamText({
+            prompt,
+            toolkit,
+            disableToolCallResolution: true,
+            toolCallValidation: "deferred",
+          })
           .pipe(
             Stream.tap((part) => (part.type === "error" ? Effect.fail(part.error) : Effect.void)),
-            Stream.tap((part) => (part.type === "text-delta" ? chat.stream(part.delta) : Effect.void)),
+            Stream.tap((part) =>
+              part.type === "text-delta" ? chat.stream(part.delta) : Effect.void,
+            ),
             Stream.runCollect,
           )
         const text = parts
