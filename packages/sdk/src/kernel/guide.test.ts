@@ -124,6 +124,7 @@ describe("docs/kernel.md", () => {
     "packages/sdk/src/kernel/own-plugin.test.ts#clock",
     "packages/sdk/src/kernel/testing.port.ts#helper-contract",
     "packages/sdk/src/kernel/sub-agent.test.ts#helper",
+    "packages/sdk/src/kernel/render.test.ts#show-tool",
       "packages/sdk/src/kernel/guide.test.ts#follow",
       "packages/sdk/src/kernel/guide.test.ts#own-event",
       "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts#",

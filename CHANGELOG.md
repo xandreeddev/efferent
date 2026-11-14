@@ -36,7 +36,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
     the kit of a wrapper of memory: what it adds for one request comes
     after the context, whole and in its order, and is never stored,
-    `docs/adr/0005-context-for-one-request.md`), the summary's
+    `docs/adr/0005-context-for-one-request.md`), what the UI shows
+    (`View`: `Text`, `List`, `Table` and `Card`; the record
+    `plugin.render.view`, tagged `ui`, which bears no message, so the model
+    never sees a view, and a later one with the same id replaces it;
+    `viewsOf`, the pure fold a client draws, live and after a reload; live
+    progress, `plugin.render.progress`; no service: a tool appends its view
+    through `CurrentTurn`, `docs/adr/0009-what-the-ui-shows-is-a-record.md`), the summary's
     (`Summarizer`, which a host provides over its model, failing with
     `SummaryFailed`), the tool call's
     (`CurrentTurn`: the open turn a call runs in, which the host's loop

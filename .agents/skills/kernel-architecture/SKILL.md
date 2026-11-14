@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0009-what-the-ui-shows-is-a-record.md`: what the UI shows is a view record (`plugin.render.view`, tagged `ui`, no message, same id replaces) a tool appends through `CurrentTurn`; a client folds them with `viewsOf`; progress is live; the model never sees a view
 - `docs/adr/0008-a-memory-keeps-its-summary.md`: a memory keeps what it derived (a summary) as a record of its own, tagged `memory`, whose message it sends; it gets a model's work through a contract the host provides (`Summarizer`)
 - `docs/adr/0006-a-sub-agent-is-a-session.md`: a sub-agent is a session created with the caller's as its parent, reached through a tool whose result `{ answer, session }` names it; no new contract; a helper is created under the turn its delegate call runs in (`CurrentTurn`), with a depth limit read from the parent chain
 - `docs/adr/0007-a-tool-reaches-its-turn.md`: a tool handler reaches the open turn its call runs in through `CurrentTurn`, which the host's loop provides around `toolkit.handle`; a tool declares it in `dependencies`
@@ -52,6 +53,9 @@ checklist, the records have the reasons.
       result with `isFailure`, never as a failed turn.
 - [ ] A memory sends its messages through `paired`, so no call goes without its result;
       the memory kit's `pairs` check holds it to that.
+- [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a
+      tool result the model reads in every later request; a client draws it by folding the
+      journal, the same fold live and after a reload.
 - [ ] A memory with state (a summary, a cut) stores it once as a record of its own,
       tagged `memory`, and starts every later context from it, so the prefix changes only
       when it compacts. It asks for a model's work through a contract the host provides
