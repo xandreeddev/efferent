@@ -117,8 +117,10 @@ it: `./kernel` is a `restricted` subpath.
   closed turn but the latest `keepTurns` (1 by default), and those too
   when the rest does not fit beside a note of the present size, and never
   the open turn; the note is `hostNote` text with the summary `framed` in
-  `<conversation-summary>`; one summary per context, then `OverBudget`,
-  and none asked for when folding every closed turn could not fit; the plan is the pure `plan` of
+  `<conversation-summary>`; one summary per context, and one too long to
+  fit beside the turns that stay is not stored (`OverBudget`; the next
+  context asks again); none asked for when folding every closed turn
+  could not fit; the plan is the pure `plan` of
   `summary.entity.functions.ts`), `memory-flat`
   (`flatMemory`: every message of the conversation but a call no result
   answers, nothing stored, read through
@@ -270,8 +272,9 @@ it: `./kernel` is a `restricted` subpath.
   closed turn but the latest, stored once; the exact turns that compact
   over twenty, each context starting with the one before between them,
   the next compaction folding the summary so far; a summary as long as a
-  turn or two still making room; a summary still over the budget failing
-  with `OverBudget` after one call; none asked for when nothing could fit;
+  turn or two still making room; a summary too long to fit failing with
+  `OverBudget` after one call, not stored, and the next context asking
+  again; none asked for when nothing could fit;
   a failing summarizer; the note's words and its frame), `plugins/inbox/*` (the transitions as a
   table, and the inbox's rules, among them an announcement before its turn
   and in ticket order under a scheduler that makes every fiber yield after

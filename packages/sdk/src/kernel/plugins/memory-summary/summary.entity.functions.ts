@@ -38,8 +38,11 @@ interface Turn {
 export type Plan =
   /** The context fits: the summary's note, if there is one, then every message after it. */
   | { readonly _tag: "Fits"; readonly messages: ReadonlyArray<Message>; readonly estimatedTokens: Tokens }
-  /** Over the budget: fold these messages, with the summary so far, into a new summary up to `through`. */
-  | { readonly _tag: "Fold"; readonly earlier: Option.Option<string>; readonly fold: ReadonlyArray<Message>; readonly through: Seq; readonly estimatedTokens: Tokens }
+  /**
+   * Over the budget: fold these messages, with the summary so far, into a new summary up to `through`; `kept` is what
+   * the messages left after them cost, which the new summary's note must fit beside.
+   */
+  | { readonly _tag: "Fold"; readonly earlier: Option.Option<string>; readonly fold: ReadonlyArray<Message>; readonly through: Seq; readonly kept: Tokens; readonly estimatedTokens: Tokens }
   /** Over the budget with nothing left to fold: the open turn alone does not fit. */
   | { readonly _tag: "Over"; readonly estimatedTokens: Tokens }
 
@@ -92,6 +95,7 @@ export const plan = (known: ReadonlyArray<StoredEvent>, openTurn: number, budget
     earlier: Option.map(latest, (summary) => summaryOf(summary.note)),
     fold: fold.flatMap((turn) => turn.messages.map((entry) => entry.message)),
     through: last,
+    kept: Tokens.make(cost(all.slice(folded))),
     estimatedTokens: Tokens.make(total),
   }
 }

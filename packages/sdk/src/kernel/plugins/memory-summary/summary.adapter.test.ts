@@ -98,10 +98,14 @@ describe("the summary memory", () => {
     expect(compactedAt).toEqual([9, 12, 15, 18])
   })
 
-  test("a summary still over the budget fails the context with OverBudget, after one summary and never a second", async () => {
-    const { exits, asked } = await run(numbered(10), () => Effect.succeed("long ".repeat(200)))
-    expect(asked.length).toBe(1)
-    expect(errorOf(exits.at(-1))).toBe("OverBudget")
+  test("a summary too long to fit fails the context with OverBudget after one summary, is not stored, and the next context asks again", async () => {
+    const { exits, asked, summaries } = await run(numbered(11), (call) => Effect.succeed(call === 0 ? "long ".repeat(200) : "Short."))
+    // The tenth turn: one summary asked for, too long, refused and not stored; never a second in the same context.
+    expect(errorOf(exits[9])).toBe("OverBudget")
+    // The eleventh: the summary so far is still none, so it asks again, and this one fits.
+    expect(exits[10]?._tag).toBe("Success")
+    expect(asked.map((call) => call.earlier)).toEqual([Option.none(), Option.none()])
+    expect(summaries.map((event) => event.message)).toEqual([{ _tag: "User", text: summaryNote("Short.") }])
   })
 
   test("when even folding every closed turn would not fit, fails with OverBudget and asks for no summary", async () => {

@@ -35,10 +35,12 @@ open:
 - **The host provides the model's work.** The memory asks a `Summarizer` contract
   (`summarize({ earlier, messages })`), which the host provides over the model it picked
   or any other. The memory's type says it needs one.
-- **One summary per context.** A context asks for one summary at most. If the context is
-  still over the budget after it, or folding every closed turn could not make it fit, it
-  fails with `OverBudget`, the memory contract's error, shared with every memory that has a
-  budget.
+- **One summary per context.** A context asks for one summary at most. A summary too long
+  to fit beside the turns that stay is not stored: the context fails with `OverBudget`, the
+  memory contract's error, shared with every memory that has a budget, and the next
+  context asks again, so one long summary cannot leave the conversation stuck over its
+  budget. When even folding every closed turn could not make the context fit, it fails so
+  without asking for a summary.
 
 ## Consequences
 

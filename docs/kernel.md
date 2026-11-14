@@ -778,8 +778,9 @@ too when it must), so the next compaction is as far off as it can be. The
 summary is framed as data in a host note, which a copy of its tag inside
 cannot close. No kernel plugin calls a model: the summary comes from a
 `Summarizer` the host provides, over the model it picked or any other
-(ADR 0008). One summary at most per context: still over the budget after
-it, the context fails with `OverBudget`, and when even folding every closed
+(ADR 0008). One summary at most per context: a summary too long to fit
+beside the turns that stay is not stored, and the context fails with
+`OverBudget`, so the next one asks again; when even folding every closed
 turn would not fit, it fails so without asking for one.
 
 <!-- pinned: packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts -->
@@ -794,6 +795,9 @@ return Memory.of({
       // Fold once: summarize, store the summary, and plan again from the journal as it now stands.
       Fold: (fold) => Effect.gen(function* () {
         const summary = yield* summarizer.summarize({ earlier: fold.earlier, messages: fold.fold })
+        // A summary too long to fit beside what stays is not stored: the next context asks again.
+        const estimated = estimateTokens(summaryNote(summary)) + fold.kept
+        if (estimated > budget) return yield* Effect.fail(over(estimated))
         yield* session.append(summarized(fold.through, summary))
         const again = yield* planned(session)
         return yield* Match.valueTags(again, {
