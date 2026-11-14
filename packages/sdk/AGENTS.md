@@ -119,7 +119,11 @@ it: `./kernel` is a `restricted` subpath.
   declare, no replacement API. A plugin's layer lives in an `.adapter.ts`;
   a `.usecase.ts` and an entity's functions hold no `Layer`.
 - A plugin is a folder under `plugins/`: `journal-in-process`
-  (`inProcessJournal`), `session` (`sessions`), `memory-window`
+  (`inProcessJournal`), `journal-web-storage` (`webStorageJournal`: a
+  browser's `localStorage` as a value with five members, `KeyValueStore`,
+  so it names no browser type; every call is one synchronous step in an
+  `Effect.try`; a new plugin folder gets its layer in `foundry.config.ts`),
+  `session` (`sessions`), `memory-window`
   (`windowMemory`, with its own events; `OverBudget`, `isOverBudget`,
   `InvalidBudget` and `budgetOf` are the memory contract's, shared by every
   memory with a budget; a budget that is

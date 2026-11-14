@@ -51,7 +51,8 @@ open:
   changes the record's shape gives the new shape a new name: a journal that holds the old
   name is then refused by the new vocabulary, which does not know it and may not skip it.
   (Amended 14 November 2026. This said the memory "bumps the journal format", which is
-  core's constant and no plugin's to change.) A summarizer that answers with nothing fails
+  core's constant and no plugin's to change. Core changed it once since, to 2, for its own
+  header and outcome: ADR 0010.) A summarizer that answers with nothing fails
   the context as one that fails does, and nothing is stored: a stored summary stays.
 - The page, a client or a test can tell the summarizer's model call from the turn's only
   by the `Summarizer` it provides: the memory does not say.

@@ -1,5 +1,5 @@
-import { Clock, Effect, Layer, Ref } from "effect"
-import { JournalStorage, JournalStorageError, Seq } from "@xandreed/core/kernel"
+import { Array as Arr, Clock, Effect, Layer, Ref } from "effect"
+import { byCreation, JournalStorage, JournalStorageError, Seq } from "@xandreed/core/kernel"
 import type { Journal, SessionId, StoredEvent } from "@xandreed/core/kernel"
 
 type Journals = ReadonlyMap<SessionId, Journal>
@@ -36,5 +36,6 @@ export const inProcessJournal = (): Layer.Layer<JournalStorage> => Layer.effect(
       return journal === undefined ? Effect.fail(missing(id))
         : Effect.succeed(from === undefined ? journal : { header: journal.header, events: journal.events.filter((event) => event.seq >= from) })
     }),
+    list: Effect.map(Ref.get(journals), (all) => Arr.sort(Array.from(all.values(), (journal) => journal.header), byCreation)),
   })
 }))

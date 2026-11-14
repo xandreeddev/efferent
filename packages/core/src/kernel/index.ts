@@ -19,7 +19,7 @@ export { Journal, Vocabulary, JournalStorageError, UnknownRecord } from "./journ
 export { messageOf, readJournal, vocabularyOf } from "./journal.entity.functions.js"
 export { Free, Inspection, InvalidSession, JOURNAL_FORMAT, NewSession, SessionHeader, SessionRefused, SessionState, TurnOpen } from "./session.entity.js"
 export type { NewSessionInput } from "./session.entity.js"
-export { beginTurn, currentFormat, endTurn, headerOf, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
+export { abandonedTurn, beginTurn, byCreation, currentFormat, endTurn, headerOf, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
 export { Core } from "./core.port.js"
 export type { ListenOptions, PublishOptions } from "./core.port.js"
 export { kernel } from "./core.adapter.js"

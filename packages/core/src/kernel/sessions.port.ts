@@ -1,9 +1,9 @@
 import { Context } from "effect"
-import type { Effect, Schema, Scope } from "effect"
+import type { Effect, Option, Schema, Scope } from "effect"
 import type { ListenerFailed, LiveDefinition, StoredDraft, StoredEvent } from "./event.entity.js"
 import type { SessionId, TurnNumber } from "./ids.entity.js"
 import type { Journal, JournalStorageError, UnknownRecord } from "./journal.entity.js"
-import type { InvalidSession, NewSessionInput, SessionRefused } from "./session.entity.js"
+import type { InvalidSession, NewSessionInput, SessionHeader, SessionRefused } from "./session.entity.js"
 
 /** A session with its turn open: what a turn reads and writes. */
 export interface OpenSession {
@@ -16,7 +16,8 @@ export interface OpenSession {
    * Store the event at the next place of the journal, then announce it on
    * `Core` under the same name, and return it as stored. A waiting listener
    * that fails fails the append, after the event is stored. Once the turn
-   * closed, an append is refused (`SessionRefused`, `NoOpenTurn`). A record
+   * closed, an append is refused (`SessionRefused`, `NoOpenTurn`), and so
+   * is one to a turn another writer closed in the store (`recover`). A record
    * named under `core.` is refused (`SessionRefused`, `ReservedName`) and
    * nothing is stored: core's records are the session plugin's to write. A
    * value `stored` did not make, an object built by hand, is refused too
@@ -48,7 +49,8 @@ export type TurnFailure = SessionRefused | JournalStorageError | UnknownRecord |
  * a background listener or the host's stream, so whoever hears of
  * `core.session.turn.ended` there may start the next turn. A store
  * failure is a `JournalStorageError`, and a turn whose end cannot be stored
- * stays open, as the journal says it is.
+ * stays open, as the journal says it is. A store has one writer: `recover`
+ * closes a turn whose writer is gone, and only a host knows that it is.
  * `sessionsConformance` is the contract as runnable checks.
  */
 export class Sessions extends Context.Service<Sessions, {
@@ -56,6 +58,21 @@ export class Sessions extends Context.Service<Sessions, {
   readonly create: (input: NewSessionInput) => Effect.Effect<SessionId, InvalidSession | JournalStorageError>
   /** The session's header and stored events. */
   readonly read: (id: SessionId) => Effect.Effect<Journal, JournalStorageError>
+  /** The header of every session in the store, by creation (`byCreation`): how a host finds a conversation to go on with. */
+  readonly list: Effect.Effect<ReadonlyArray<SessionHeader>, JournalStorageError>
+  /**
+   * Close a turn the journal holds open and no turn of this process does:
+   * its writer is gone (a page that was reloaded, a process that died), so
+   * nothing else will. It stores `core.session.turn.ended` with the outcome
+   * `Abandoned`, announces it, and gives the turn it closed; a free session
+   * is left as it is, and gives none. A turn this process holds is refused
+   * (`SessionBusy`), and a journal of another format too (`FormatMismatch`).
+   * It assumes the store has one writer, and the host is the one that
+   * knows: called while another writer lives, it closes that writer's
+   * turn, whose next write is refused (`NoOpenTurn`) and whose close
+   * stores nothing.
+   */
+  readonly recover: (id: SessionId) => Effect.Effect<Option.Option<TurnNumber>, TurnFailure>
   /**
    * Open the session's next turn in the current scope, and close it when the
    * scope closes. Opening stores `core.session.turn.started`; the close stores

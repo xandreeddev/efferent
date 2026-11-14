@@ -4,6 +4,7 @@ import {
   announced,
   CONVERSATION_VOCABULARY,
   isStoredDraft,
+  JOURNAL_FORMAT,
   live,
   stored,
   storedEvent,
@@ -20,6 +21,7 @@ import {
   journalStorageConformance,
   vocabularyOf,
   readJournal,
+  turnEnded,
   TurnNumber,
   UnknownRecord,
   messageOf,
@@ -29,8 +31,8 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import type { SummarizerSubject } from "./index.js"
-import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, windowDroppedEvent, windowMemory } from "./index.js"
+import type { KeyValueStore, SummarizerSubject } from "./index.js"
+import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -41,6 +43,19 @@ import { flatMemory, inProcessJournal, messageText, promptMessage, sessions, Sum
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type SessionsShape = Context.Service.Shape<typeof Sessions>
+type StorageShape = Context.Service.Shape<typeof JournalStorage>
+
+/** A value with the five members the web storage journal uses, over a map: what a browser's `localStorage` is to it. */
+const memoryStore = (): KeyValueStore => {
+  const values = new Map<string, string>()
+  return {
+    get length() { return values.size },
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value) },
+    removeItem: (key) => { values.delete(key) },
+  }
+}
 
 /** The ids of the checks of a kit that fail, sorted; a failure that names another check than the one it came from is told apart. */
 const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) =>
@@ -57,7 +72,7 @@ const built = <I, S, E, R>(key: Context.Key<I, S>, layer: Layer.Layer<I, E, R>, 
 
 describe("the storage kit", () => {
   const stock: JournalStorageSubject = { open: built(JournalStorage, inProcessJournal(), Layer.empty) }
-  const every = ["create", "append", "conflict", "read-from", "missing"]
+  const every = ["create", "append", "conflict", "read-from", "missing", "list"]
 
   test("has the checks its doc comment lists, and passes on the in-process journal plugin", async () => {
     expect(ids(journalStorageConformance(stock))).toEqual(every)
@@ -69,10 +84,59 @@ describe("the storage kit", () => {
       open: Effect.succeed(JournalStorage.of({
         create: () => Effect.void,
         append: (_id, expectedSeq, turn, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, turn, ...event }),
-        read: (id) => Effect.succeed({ header: { id, owner: Owner.make("nobody"), format: 1 }, events: [] }),
+        read: (id) => Effect.succeed({ header: { id, owner: Owner.make("nobody"), createdAt: 0, format: 1 }, events: [] }),
+        list: Effect.succeed([]),
       })),
     }
     expect(await failedChecks(journalStorageConformance(forgetful))).toEqual(sorted(every))
+  })
+
+  const webOver = (store: KeyValueStore, prefix = "kit:") => built(JournalStorage, webStorageJournal(store, { prefix }), Layer.empty)
+  /** The web storage journal: a fresh storage per check, and two handles on one storage for the check of a reopening. */
+  const web: JournalStorageSubject = {
+    open: Effect.suspend(() => webOver(memoryStore())),
+    pair: Effect.suspend(() => { const store = memoryStore(); return Effect.all([webOver(store), webOver(store)], { concurrency: 1 }) }),
+  }
+  const header = { id: SessionId.make("s-1"), owner: Owner.make("learner"), createdAt: 1, format: JOURNAL_FORMAT }
+
+  test("passes on the web storage journal plugin, a second handle on the same storage included", async () => {
+    expect(ids(journalStorageConformance(web))).toEqual([...every, "reopens"])
+    expect(await failedChecks(journalStorageConformance(web))).toEqual([])
+  })
+
+  test("the web storage journal keeps to its prefix: two stores in one storage see none of each other's sessions, and no other key", async () => {
+    const store = memoryStore()
+    store.setItem("somebody-else", "not a journal")
+    store.setItem("b:not-a-session", "not a journal either")
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const [a, b] = [yield* webOver(store, "a:"), yield* webOver(store, "b:")]
+      yield* a.create(header)
+      yield* a.append(header.id, Seq.make(0), TurnNumber.make(1), userMessage("Hello"))
+      return { a: yield* a.list, b: yield* b.list, missing: yield* Effect.flip(b.read(header.id)), keys: Array.from({ length: store.length }, (_, index) => store.key(index)) }
+    })))
+    expect(result.a.map((listed): string => listed.id)).toEqual(["s-1"])
+    expect(result.b).toEqual([])
+    expect(result.missing.reason).toBe("SessionMissing")
+    expect(Arr.sort(result.keys.flatMap((key) => key === null ? [] : [key]), Order.String)).toEqual(["a:s-1:1", "a:s-1:header", "b:not-a-session", "somebody-else"])
+  })
+
+  test("the web storage journal says what it cannot read, and what the storage refused", async () => {
+    const store = memoryStore()
+    const full: KeyValueStore = { length: 0, key: () => null, getItem: () => null, removeItem: () => {}, setItem: () => Result.getOrThrowWith(Result.fail("the quota is used up"), (why) => new Error(why)) }
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const storage = yield* webOver(store)
+      yield* storage.create(header)
+      yield* storage.append(header.id, Seq.make(0), TurnNumber.make(1), userMessage("Hello"))
+      store.setItem("kit:s-1:1", "{ not json")
+      const event = yield* Effect.flip(storage.read(header.id))
+      store.setItem("kit:s-2:header", JSON.stringify({ id: "s-2", owner: "learner" }))
+      const listed = yield* Effect.flip(storage.list)
+      const refused = yield* Effect.flip(Effect.flatMap(webOver(full), (blocked) => blocked.create({ ...header, id: SessionId.make("s-3") })))
+      return { event, listed, refused }
+    })))
+    expect([result.event.reason, result.event.message]).toEqual(["Unreadable", "the value stored under kit:s-1:1 is not a journal's: it was written by something else, or by another format"])
+    expect([result.listed.reason, result.listed.message]).toEqual(["Unreadable", "the value stored under kit:s-2:header is not a journal's: it was written by something else, or by another format"])
+    expect([result.refused.reason, result.refused.message]).toEqual(["Unavailable", "the storage refused: the quota is used up"])
   })
 })
 
@@ -81,9 +145,23 @@ const redrafted = (event: { readonly data: Schema.Json; readonly skippable: bool
   stored(storedEvent(plugin, name, { data: Schema.Json, skippable: event.skippable, tags }), event.data, event.message === undefined ? {} : { message: event.message })
 
 describe("the sessions kit", () => {
-  const over = (core: CoreShape) => Layer.provideMerge(inProcessJournal(), onCore(core))
-  const stock: SessionsSubject = { open: (core) => built(Sessions, sessions(), over(core)) }
-  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "not-a-draft", "publish", "missing", "invalid-session"]
+  /** The stock session plugin over a store, and that store: the in-process one when none is given. */
+  const stockOver = (core: CoreShape, store: Layer.Layer<JournalStorage> = inProcessJournal()) => Effect.gen(function* () {
+    const storage = yield* built(JournalStorage, store, Layer.empty)
+    const inner = yield* built(Sessions, sessions(), Layer.merge(onCore(core), Layer.succeed(JournalStorage, storage)))
+    return { sessions: inner, storage }
+  })
+  const stock: SessionsSubject = { open: (core) => stockOver(core) }
+  /** The stock plugin with something about it changed. */
+  const changed = (change: (inner: SessionsShape, core: CoreShape, storage: StorageShape) => SessionsShape): SessionsSubject => ({
+    open: (core) => Effect.map(stockOver(core), ({ sessions: inner, storage }) => ({ sessions: change(inner, core, storage), storage })),
+  })
+  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "not-a-draft", "publish", "missing", "invalid-session", "list", "recover", "recovered-writer", "format"]
+
+  test("passes on the stock session plugin over the web storage journal", async () => {
+    const overWeb: SessionsSubject = { open: (core) => stockOver(core, webStorageJournal(memoryStore(), { prefix: "kit:" })) }
+    expect(await failedChecks(sessionsConformance(overWeb))).toEqual([])
+  })
 
   test("has the checks its doc comment lists, and passes on the stock session plugin", async () => {
     expect(ids(sessionsConformance(stock))).toEqual(every)
@@ -93,20 +171,20 @@ describe("the sessions kit", () => {
   /** The checks each careless session plugin fails. */
   const careless = {
     // It announces on a bus of its own: nothing it stores reaches the listeners it was given.
-    private: (): SessionsSubject => ({ open: () => Effect.flatMap(Layer.build(kernel()), (own) => built(Sessions, sessions(), over(Context.get(own, Core)))) }),
+    private: (): SessionsSubject => ({ open: () => Effect.flatMap(Layer.build(kernel()), (own) => stockOver(Context.get(own, Core))) }),
     // One busy flag for every session.
     oneFlag: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
-        const inner = yield* built(Sessions, sessions(), over(core))
+        const { sessions: inner, storage } = yield* stockOver(core)
         const taken = yield* Ref.make(false)
-        return Sessions.of({
+        return { storage, sessions: Sessions.of({
           ...inner,
           turn: (id, body) => Effect.acquireUseRelease(
             Effect.flatMap(Ref.getAndSet(taken, true), (was) => was ? Effect.fail(new SessionRefused({ reason: "SessionBusy", message: "some session is busy" })) : Effect.void),
             () => inner.turn(id, body),
             () => Ref.set(taken, false),
           ),
-        })
+        }) }
       }),
     }),
     // Two session plugins over one store, each turn on the other one: neither knows the other is still announcing an end.
@@ -116,68 +194,75 @@ describe("the sessions kit", () => {
         const parts = Layer.merge(onCore(core), Layer.succeed(JournalStorage, storage))
         const pool = [yield* built(Sessions, sessions(), parts), yield* built(Sessions, sessions(), parts)]
         const turns = yield* Ref.make(0)
-        const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), open: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool") }))
-        return Sessions.of({
+        const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), list: Effect.die("empty pool"), recover: () => Effect.die("empty pool"), open: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool") }))
+        return { storage, sessions: Sessions.of({
           create: (input) => Effect.flatMap(next, (one) => one.create(input)),
           read: (id) => Effect.flatMap(next, (one) => one.read(id)),
+          list: Effect.flatMap(next, (one) => one.list),
+          recover: (id) => Effect.flatMap(next, (one) => one.recover(id)),
           open: (id) => Effect.flatMap(next, (one) => one.open(id)),
           turn: (id, body) => Effect.flatMap(next, (one) => one.turn(id, body)),
-        })
+        }) }
       }),
     }),
     // A session asked for with an input that is no valid one is "helpfully" created for somebody.
-    trusting: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    trusting: (): SessionsSubject => changed((inner) => Sessions.of({
         ...inner,
         create: (input) => Effect.catchTag(inner.create(input), "InvalidSession", () => inner.create({ owner: "somebody" })),
-      })),
-    }),
+    })),
     // An append after the turn closed is "helpfully" stored in a turn of its own.
-    reopening: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    reopening: (): SessionsSubject => changed((inner) => Sessions.of({
         ...inner,
         turn: (id, body) => inner.turn(id, (session) => body({
           ...session,
           append: (event) => Effect.catchIf(session.append(event), (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn", () =>
             Effect.mapError(inner.turn(id, (again) => again.append(event)), (error) => error._tag === "UnknownRecord" ? new SessionRefused({ reason: "NoOpenTurn", message: error.message }) : error)),
         })),
-      })),
-    }),
+    })),
     // A turn opened in a scope is closed at once: what follows the open finds the turn already over.
-    detached: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    detached: (): SessionsSubject => changed((inner) => Sessions.of({
         ...inner,
         open: (id) => inner.turn(id, (session) => Effect.succeed(session)),
-      })),
-    }),
+    })),
     // A record a body appends under core's names is "helpfully" stored under a name of the body's own.
-    renaming: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    renaming: (): SessionsSubject => changed((inner) => Sessions.of({
         ...inner,
         turn: (id, body) => inner.turn(id, (session) => body({
           ...session,
           append: (event) => Effect.catchIf(session.append(event), (error) => error._tag === "SessionRefused" && error.reason === "ReservedName", () =>
             session.append(redrafted(event, "renamed", event.name, ["turn"]))),
         })),
-      })),
-    }),
+    })),
     // Whatever a body hands it is "helpfully" made into a draft: an object written by hand, or a copy of a draft, is stored as it reads.
-    forgiving: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    forgiving: (): SessionsSubject => changed((inner) => Sessions.of({
         ...inner,
         turn: (id, body) => inner.turn(id, (session) => body({ ...session, append: (event) => {
           const given: unknown = event
           return session.append(isStoredDraft(given) ? event : redrafted(event, "kit", "noted", ["trace"]))
         } })),
-      })),
-    }),
+    })),
     // A live event is published whether or not the turn it is about is still open.
-    late: (): SessionsSubject => ({
-      open: (core) => Effect.map(built(Sessions, sessions(), over(core)), (inner) => Sessions.of({
+    late: (): SessionsSubject => changed((inner, core) => Sessions.of({
         ...inner,
         turn: (id, body) => inner.turn(id, (session) => body({ ...session, publish: (definition, data) => core.publish(live(definition, session, data)) })),
-      })),
-    }),
+    })),
+    // It lists only the sessions that have no parent.
+    rootsOnly: (): SessionsSubject => changed((inner) => Sessions.of({ ...inner, list: Effect.map(inner.list, (headers) => headers.filter((header) => header.parent === undefined)) })),
+    // It takes every session for a free one: a turn left open is left open.
+    neverRecovering: (): SessionsSubject => changed((inner) => Sessions.of({ ...inner, recover: () => Effect.succeed(Option.none()) })),
+    // It takes a journal it cannot read for a free session.
+    formatBlind: (): SessionsSubject => changed((inner) => Sessions.of({
+      ...inner,
+      recover: (id) => Effect.catchIf(inner.recover(id), (error) => error._tag === "SessionRefused" && error.reason === "FormatMismatch", () => Effect.succeed(Option.none())),
+    })),
+    // A turn is closed with this plugin's own end, whatever the journal holds by then: another writer's end is followed by a second.
+    insisting: (): SessionsSubject => changed((inner, _core, storage) => Sessions.of({
+      ...inner,
+      turn: (id, body) => Effect.flatMap(inner.turn(id, (session) => Effect.map(body(session), (value) => [value, session.turn] as const)), ([value, turn]) =>
+        Effect.flatMap(storage.read(id), (journal) => journal.events.at(-1)?.at === undefined || !JSON.stringify(journal.events.at(-1)?.data).includes("Abandoned")
+          ? Effect.succeed(value)
+          : Effect.as(storage.append(id, Seq.make(journal.events.length), turn, turnEnded(turn, { _tag: "Completed" })), value))),
+    })),
     // It appends what a body gives it and announces it, with no start, no end, no phase and no check that the session exists.
     turnless: (): SessionsSubject => ({
       open: (core) => Effect.gen(function* () {
@@ -192,12 +277,14 @@ describe("the sessions kit", () => {
             Effect.tap((kept) => core.publish(announced({ id }, kept))),
           ),
         })
-        return Sessions.of({
-          create: () => Effect.as(Effect.ignore(storage.create({ id: only, owner: Owner.make("nobody"), format: 1 }), { log: "Debug", message: "the careless plugin keeps one session" }), only),
-          read: (id) => Effect.catchTag(storage.read(id), "JournalStorageError", () => Effect.succeed({ header: { id, owner: Owner.make("nobody"), format: 1 as const }, events: [] })),
+        return { storage, sessions: Sessions.of({
+          create: () => Effect.as(Effect.ignore(storage.create({ id: only, owner: Owner.make("nobody"), createdAt: 0, format: 1 }), { log: "Debug", message: "the careless plugin keeps one session" }), only),
+          read: (id) => Effect.catchTag(storage.read(id), "JournalStorageError", () => Effect.succeed({ header: { id, owner: Owner.make("nobody"), createdAt: 0, format: 1 as const }, events: [] })),
+          list: Effect.succeed([]),
+          recover: () => Effect.succeed(Option.none()),
           open: (id) => Effect.succeed(sessionOf(id)),
           turn: (id, body) => body(sessionOf(id)),
-        })
+        }) }
       }),
     }),
   }
@@ -214,17 +301,29 @@ describe("the sessions kit", () => {
       reopening: await failedChecks(sessionsConformance(careless.reopening())),
       trusting: await failedChecks(sessionsConformance(careless.trusting())),
       turnless: await failedChecks(sessionsConformance(careless.turnless())),
+      rootsOnly: await failedChecks(sessionsConformance(careless.rootsOnly())),
+      neverRecovering: await failedChecks(sessionsConformance(careless.neverRecovering())),
+      formatBlind: await failedChecks(sessionsConformance(careless.formatBlind())),
+      insisting: await failedChecks(sessionsConformance(careless.insisting())),
     }
     // Its events, a published live one included, go to a Core of its own.
-    expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered", "publish"])
+    // The end a recovery stores, and the end another writer stored, are announced there too.
+    expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered", "publish", "recover", "recovered-writer"])
     expect(failed.detached).toEqual(["open"])
     expect(failed.oneFlag).toEqual(["isolated"])
-    expect(failed.pooled).toEqual(["ordered"])
+    // A recovery asked of the plugin that does not hold the open turn closes it under the one that does.
+    expect(failed.pooled).toEqual(["ordered", "recover"])
     expect(failed.renaming).toEqual(["reserved-name"])
     expect(failed.forgiving).toEqual(["not-a-draft"])
     expect(failed.late).toEqual(["publish"])
-    expect(failed.reopening).toEqual(["closed-append"])
+    // An append to a turn another writer closed is refused the same way, and is "helpfully" stored too.
+    expect(failed.reopening).toEqual(["closed-append", "recovered-writer"])
     expect(failed.trusting).toEqual(["invalid-session"])
+    expect(failed.rootsOnly).toEqual(["list"])
+    // It refuses no recovery either, a journal of another format's included.
+    expect(failed.neverRecovering).toEqual(["format", "recover"])
+    expect(failed.formatBlind).toEqual(["format"])
+    expect(failed.insisting).toEqual(["recovered-writer"])
     expect(failed.turnless).toEqual(sorted(every))
   }, 60_000)
 })

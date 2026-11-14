@@ -1,4 +1,4 @@
-import { Deferred, Effect, Fiber, Option, Ref, Schema, Stream } from "effect"
+import { Array as Arr, Deferred, Effect, Fiber, Option, Ref, Schema, Stream } from "effect"
 import type { Context, Scope } from "effect"
 import { expect, refuses, show, unexpected } from "./conformance.entity.functions.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
@@ -6,23 +6,28 @@ import { makeCore } from "./core.adapter.js"
 import type { Core } from "./core.port.js"
 import { dataOf, liveEvent, stored, storedEvent } from "./event.entity.functions.js"
 import type { EventDefinition, KernelEvent, StoredDraft, StoredEvent } from "./event.entity.js"
-import { Owner, SessionId, TurnNumber } from "./ids.entity.js"
+import { Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
+import type { JournalStorage } from "./journal-storage.port.js"
+import { byCreation } from "./session.entity.functions.js"
 import type { Sessions } from "./sessions.port.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
 import { listenerFailedEvent, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 type CoreShape = Context.Service.Shape<typeof Core>
 type SessionsShape = Context.Service.Shape<typeof Sessions>
+type JournalStorageShape = Context.Service.Shape<typeof JournalStorage>
 
 /**
  * A session plugin as the kit opens it: a fresh one per check, over an
  * empty store of its own and the `Core` the kit hands it, released with
- * its scope.
+ * its scope. It gives that store too: the kit writes to it what another
+ * writer would have left there (a turn never closed, a journal of another
+ * format, an end stored under an open turn).
  *
  * @public
  */
 export interface SessionsSubject {
-  readonly open: (core: CoreShape) => Effect.Effect<SessionsShape, never, Scope.Scope>
+  readonly open: (core: CoreShape) => Effect.Effect<{ readonly sessions: SessionsShape; readonly storage: JournalStorageShape }, never, Scope.Scope>
 }
 
 const owner = Owner.make("kit-owner")
@@ -73,7 +78,15 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * the turn closed (`publish`); a session never created is refused
  * before any body runs (`missing`); a session asked for with an empty
  * owner, or a parent that is no id, is refused with `InvalidSession`
- * (`invalid-session`).
+ * (`invalid-session`); every session is listed with its header, by
+ * creation (`list`); a turn a writer that is gone left open is closed by
+ * `recover` as `Abandoned` and announced, the next turn runs, a free
+ * session is left as it is, and a turn this plugin holds is refused
+ * (`recover`); a turn another writer closed in the store stores nothing
+ * more: its append is refused, its close adds no second end and is heard
+ * once, and the next turn opens (`recovered-writer`); a journal of another
+ * format reads back and is listed, and no turn opens or is recovered on it
+ * (`format`).
  *
  * @public
  */
@@ -82,17 +95,17 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
   const check = (
     name: string,
     id: string,
-    body: (parts: { readonly core: CoreShape; readonly sessions: SessionsShape; readonly seen: Effect.Effect<ReadonlyArray<KernelEvent>> }) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>,
+    body: (parts: { readonly core: CoreShape; readonly sessions: SessionsShape; readonly storage: JournalStorageShape; readonly seen: Effect.Effect<ReadonlyArray<KernelEvent>> }) => Effect.Effect<void, { readonly _tag: string; readonly message: string }, Scope.Scope>,
   ): ConformanceCheck => ({
     id,
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const core = yield* makeCore()
       const seen = yield* Ref.make<ReadonlyArray<KernelEvent>>([])
-      const sessions = yield* subject.open(core)
+      const { sessions, storage } = yield* subject.open(core)
       yield* Effect.forEach(watched, (definition) =>
         core.on(definition, (event) => Ref.update(seen, (all) => [...all, event]), { wait: true, name: "kit-watch" }), { concurrency: 1, discard: true })
-      yield* body({ core, sessions, seen: Ref.get(seen) })
+      yield* body({ core, sessions, storage, seen: Ref.get(seen) })
     })).pipe(unexpected(id)),
   })
   const names = (events: ReadonlyArray<{ readonly name: string }>) => events.map((event) => event.name)
@@ -314,6 +327,81 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* refuses("invalid-session", "a session with an empty owner", sessions.create({ owner: "" }), invalid)
       yield* refuses("invalid-session", "a session with an owner of blanks", sessions.create({ owner: "   " }), invalid)
       yield* refuses("invalid-session", "a session with an empty parent", sessions.create({ owner, parent: "" }), invalid)
+    })),
+    check("every session is listed with its header, by creation", "list", ({ sessions }) => Effect.gen(function* () {
+      const none = yield* sessions.list
+      yield* expect("list", none.length === 0, `a plugin with no session listed ${show(none)}`)
+      const first = yield* sessions.create({ owner })
+      const child = yield* sessions.create({ owner: "kit-helper", parent: first })
+      yield* sessions.turn(first, (session) => session.append(note("written to")))
+      const listed = yield* sessions.list
+      const stored = [(yield* sessions.read(first)).header, (yield* sessions.read(child)).header]
+      yield* expect("list", show(Arr.sort(listed, byCreation)) === show(Arr.sort(stored, byCreation)), `two sessions with the headers ${show(stored)} were listed as ${show(listed)}`)
+      yield* expect("list", show(listed) === show(Arr.sort(listed, byCreation)), `the sessions were listed as ${show(listed)}, not by creation time and then by id`)
+      yield* expect("list", listed.some((header) => header.id === child && header.parent === first && header.owner === "kit-helper"),
+        `a session created with a parent was listed as ${show(listed.filter((header) => header.id === child))}`)
+    })),
+    check("a turn left open by a writer that is gone is closed as abandoned, and the next turn runs", "recover", ({ sessions, storage, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      yield* sessions.turn(id, (session) => session.append(note("before")))
+      const free = yield* sessions.recover(id)
+      yield* expect("recover", Option.isNone(free), `recovering a session with no turn open closed turn ${show(Option.getOrNull(free))}`)
+      // What a writer that is gone left: the start of turn 2 and a record, in the store, and no end.
+      const two = TurnNumber.make(2)
+      yield* storage.append(id, Seq.make(3), two, turnStarted(two))
+      yield* storage.append(id, Seq.make(4), two, note("left behind"))
+      yield* refuses("recover", "a turn of a session whose turn was left open", sessions.turn(id, () => Effect.void),
+        (error) => error._tag === "SessionRefused" && error.reason === "SessionBusy" && error.message.includes("Sessions.recover"))
+      const closed = yield* sessions.recover(id)
+      yield* expect("recover", Option.contains(closed, two), `recovering a session whose turn 2 was left open closed ${show(Option.getOrNull(closed))}`)
+      const journal = yield* sessions.read(id)
+      const ended = Option.fromNullishOr(journal.events.at(-1))
+      yield* expect("recover", show(names(journal.events)) === show([STARTED, noted.name, ENDED, STARTED, noted.name, ENDED]) && outcomeOf(ended) === "Abandoned" && journal.events.at(-1)?.turn === 2,
+        `a recovered session holds ${show(journal.events)}`)
+      const heard = (yield* seen).at(-1)
+      yield* expect("recover", heard !== undefined && heard._tag === "Stored" && heard.name === ENDED && heard.session === id && heard.seq === 6,
+        `the end a recovery stored was announced as ${show(heard)}`)
+      const again = yield* sessions.recover(id)
+      const after = yield* sessions.read(id)
+      yield* expect("recover", Option.isNone(again) && after.events.length === 6, `a second recovery closed ${show(Option.getOrNull(again))} and left ${show(names(after.events))}`)
+      const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
+      yield* expect("recover", next === 3, `the turn after a recovered one was turn ${next}`)
+      yield* sessions.turn(id, () => refuses("recover", "recovering a session whose turn this plugin holds open", sessions.recover(id),
+        (error) => error._tag === "SessionRefused" && error.reason === "SessionBusy"))
+      const ends = (yield* sessions.read(id)).events.filter((event) => event.name === ENDED).map((event) => outcomeOf(Option.some(event)))
+      yield* expect("recover", show(ends) === show(["Completed", "Abandoned", "Completed", "Completed"]), `four turns, the second recovered, ended ${show(ends)}`)
+    })),
+    check("a turn another writer closed stores nothing more, and the next turn opens", "recovered-writer", ({ sessions, storage, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      yield* sessions.turn(id, (session) => Effect.gen(function* () {
+        yield* session.append(note("mine"))
+        // Another writer, which took this one for gone, closes the turn in the store.
+        yield* storage.append(id, Seq.make(2), session.turn, turnEnded(session.turn, { _tag: "Abandoned" }))
+        yield* refuses("recovered-writer", "an append to a turn another writer closed", session.append(note("late")),
+          (error) => error._tag === "SessionRefused" && error.reason === "NoOpenTurn")
+      }))
+      const journal = yield* sessions.read(id)
+      yield* expect("recovered-writer", show(names(journal.events)) === show([STARTED, noted.name, ENDED]) && outcomeOf(Option.fromNullishOr(journal.events.at(-1))) === "Abandoned",
+        `a turn another writer closed left ${show(journal.events)}: it holds one end, the other writer's`)
+      const ends = (yield* seen).filter((event) => event.name === ENDED)
+      yield* expect("recovered-writer", ends.length === 1 && outcomeOf(Option.fromNullishOr(ends[0])) === "Abandoned", `the close of a turn another writer closed was heard as ${show(ends)}`)
+      const next = yield* sessions.turn(id, (session) => Effect.succeed(session.turn))
+      yield* expect("recovered-writer", next === 2, `the turn after one another writer closed was turn ${next}`)
+    })),
+    check("a journal of another format reads back and is listed, and no turn opens or is recovered on it", "format", ({ sessions, storage }) => Effect.gen(function* () {
+      const current = (yield* sessions.read(yield* sessions.create({ owner }))).header
+      const other = SessionId.make("kit-other-format")
+      const one = TurnNumber.make(1)
+      yield* storage.create({ ...current, id: other, format: current.format + 1 })
+      yield* storage.append(other, Seq.make(0), one, turnStarted(one))
+      const read = yield* sessions.read(other)
+      yield* expect("format", read.header.format === current.format + 1, `a header of format ${current.format + 1} read back as ${show(read.header)}`)
+      yield* expect("format", (yield* sessions.list).some((header) => header.id === other), "a session of another format was not listed")
+      const mismatch = (error: { readonly _tag: string; readonly reason?: string }) => error._tag === "SessionRefused" && error.reason === "FormatMismatch"
+      yield* refuses("format", "a turn on a journal of another format", sessions.turn(other, () => Effect.void), mismatch)
+      yield* refuses("format", "a recovery of a journal of another format", sessions.recover(other), mismatch)
+      const after = yield* sessions.read(other)
+      yield* expect("format", show(names(after.events)) === show([STARTED]), `the refused calls left ${show(names(after.events))} in a journal of another format`)
     })),
   ]
 }

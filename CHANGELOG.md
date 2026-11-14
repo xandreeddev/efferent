@@ -13,8 +13,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
   every other part a plain Effect layer, as two new entries beside the
   existing engine, which neither imports nor is imported by it. It is a
-  first cut, with journals kept in the process, and
-  it will change as the parts it leaves out return. `docs/kernel.md` is its
+  first cut, with journals kept in the process or in a browser's
+  storage, and it will change as the parts it leaves out return. `docs/kernel.md` is its
   direction document.
   - `@xandreed/core/kernel` holds what every agent has, whatever its
     workflow: ids, `Message`, the event envelope, the `JournalStorage` and
@@ -214,6 +214,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - `Sessions.open(id)` opens a turn in the caller's scope and closes it
     with the scope's outcome; `JournalStorage.append` takes the turn the
     record was stored in.
+  - A store that outlives its process, and the close of a turn its
+    writer left open (`docs/adr/0010-a-store-is-a-part.md`). The journal
+    format is 2: a session's header holds `createdAt`, stamped by the
+    session plugin, and a turn can end `Abandoned`. `JournalStorage.list`
+    and `Sessions.list` give every header in the order of `byCreation`
+    (the creation time, then the id), so a host finds its conversations
+    in the store. `Sessions.recover(id)` closes a turn the journal holds
+    open and the calling process does not, as `Abandoned`, and gives the
+    turn it closed (none for a free session); the host calls it, because
+    only the host knows its store has one writer. A turn refused as busy
+    because the journal holds one open says so and names `recover`. A
+    writer whose turn another writer closed is refused at its next write
+    (`NoOpenTurn`) and stores no second end: before this, such a turn's
+    close left a journal no later turn could open. `webStorageJournal(storage,
+    { prefix })` keeps journals in a browser's `localStorage`, or any value
+    with its five members (`KeyValueStore`), one key per header and per
+    event. `JournalStorageError` gains the reason `Unreadable`, for a
+    stored value that is not a journal's. The storage kit gains `list`
+    and, for a subject that gives a `pair` of handles on one medium,
+    `reopens`. The sessions kit gains `list`, `recover`, `recovered-writer`
+    and `format`, and its subject now gives the store its plugin runs on:
+    `open(core)` returns `{ sessions, storage }`. `headerOf` takes the
+    creation time as its third argument.
   - Nothing in either entry imports a `node:` or `bun:` module.
 
 ### Repository

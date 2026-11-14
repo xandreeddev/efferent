@@ -3,11 +3,12 @@ import { StoredEvent } from "./event.entity.js"
 import { Owner, SessionId, TurnNumber } from "./ids.entity.js"
 
 /**
- * The format of a kernel journal: its header and its envelopes.
+ * The format of a kernel journal: its header and its envelopes. Format 2
+ * added the header's `createdAt` and the `Abandoned` outcome of a turn.
  *
  * @public
  */
-export const JOURNAL_FORMAT = 1
+export const JOURNAL_FORMAT = 2
 
 /** What a session is created with: who it belongs to, and the session it continues, if any. */
 export const NewSession = Schema.Struct({ owner: Owner, parent: Schema.optionalKey(SessionId) })
@@ -39,6 +40,8 @@ export const SessionHeader = Schema.Struct({
   id: SessionId,
   owner: Owner,
   parent: Schema.optionalKey(SessionId),
+  /** When the session was created, in milliseconds since the epoch: what `list` orders by. */
+  createdAt: Schema.Number,
   /** The format the journal was written in. A header of any format reads back; a turn opens only on `JOURNAL_FORMAT` (`currentFormat`). */
   format: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
@@ -70,7 +73,8 @@ export type SessionState = typeof SessionState.Type
 
 /**
  * What a session refuses: a turn begun while one is open (`SessionBusy`), a
- * write to a turn that is not open (`NoOpenTurn`), a record a body
+ * write to a turn that is not open, or that another writer closed
+ * (`NoOpenTurn`), a record a body
  * appends under core's own names, which only the session plugin writes
  * (`ReservedName`), a value to append that `stored` did not make
  * (`NotADraft`), or a turn on a journal written in another format than this

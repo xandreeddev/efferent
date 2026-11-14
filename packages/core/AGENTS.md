@@ -231,7 +231,16 @@ kernel's rules:
   is the one place it is compared with `JOURNAL_FORMAT`, and the session
   plugin calls it before a turn opens (`FormatMismatch`). `Sessions.read`
   does not refuse: a host shows what it found. The storage kit checks that
-  a header's `parent` and `format` read back as given.
+  a header's `parent`, `createdAt` and `format` read back as given.
+- A store is the `JournalStorage` contract and its kit (ADR 0010). `list`
+  gives every header by `byCreation`, a function of the headers alone: a
+  store keeps no index. A store whose journals outlive its handle gives
+  the kit a `pair` and is held to `reopens`. A stored value that is not a
+  journal's is `Unreadable`, never passed over. `Sessions.recover` closes
+  a turn whose writer is gone as `Abandoned`; the kernel never calls it,
+  the host does. The session plugin keeps the journal whole when a turn
+  was closed under its writer (the sessions kit's `recovered-writer`):
+  that is why the kit's subject gives the store too.
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
   kernel's own helpers (`conformance.entity.ts` and its functions, which
   are not exported), not core's `src/conformance.functions.ts`. A check

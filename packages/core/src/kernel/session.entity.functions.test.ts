@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Result, Schema } from "effect"
+import { Array as Arr, Option, Result, Schema } from "effect"
 import { stored, storedEvent } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
-import { beginTurn, currentFormat, endTurn, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
+import { abandonedTurn, beginTurn, byCreation, currentFormat, endTurn, headerOf, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
 import { JOURNAL_FORMAT, SessionHeader as SessionHeaderSchema } from "./session.entity.js"
 import type { SessionHeader, SessionState } from "./session.entity.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
@@ -82,8 +82,39 @@ describe("the fold of a journal to a session's state", () => {
   })
 })
 
+describe("a turn whose writer is gone", () => {
+  test("is the open one: a free session has none to close, and an abandoned turn folds as an ended one", () => {
+    expect(abandonedTurn(newSession)).toEqual(Option.none())
+    expect(abandonedTurn({ _tag: "Free", turns: 3 })).toEqual(Option.none())
+    expect(abandonedTurn({ _tag: "TurnOpen", turn: TurnNumber.make(4) })).toEqual(Option.some(TurnNumber.make(4)))
+    const one = TurnNumber.make(1)
+    expect(Result.getOrThrow(sessionStateOf(journal(turnStarted(one), turnEnded(one, { _tag: "Abandoned" }))))).toEqual({ _tag: "Free", turns: 1 })
+  })
+
+  test("a turn begun on a session whose turn is open says how to close it when its writer is gone", () => {
+    expect(Result.flip(beginTurn({ _tag: "TurnOpen", turn: TurnNumber.make(2) })).pipe(Result.getOrThrow).message)
+      .toBe("turn 2 is still open: if the writer that opened it is gone, close it with `Sessions.recover`")
+  })
+})
+
+describe("a session's header", () => {
+  const at = (id: string, createdAt: number) => headerOf(SessionId.make(id), { owner: Owner.make("learner") }, createdAt)
+
+  test("holds what the session was created with, when, and this kernel's format; a parent only when one was given", () => {
+    expect(at("s-1", 42)).toEqual({ id: SessionId.make("s-1"), owner: Owner.make("learner"), createdAt: 42, format: JOURNAL_FORMAT })
+    expect(headerOf(SessionId.make("s-2"), { owner: Owner.make("helper"), parent: SessionId.make("s-1") }, 43))
+      .toEqual({ id: SessionId.make("s-2"), owner: Owner.make("helper"), parent: SessionId.make("s-1"), createdAt: 43, format: JOURNAL_FORMAT })
+  })
+
+  test("is listed by creation time, and by id for two created in the same millisecond", () => {
+    const headers = [at("s-c", 30), at("s-b", 10), at("s-a", 10), at("s-d", 20)]
+    expect(Arr.sort(headers, byCreation).map((header): string => header.id)).toEqual(["s-a", "s-b", "s-d", "s-c"])
+    expect(Arr.sort(headers.toReversed(), byCreation).map((header): string => header.id)).toEqual(["s-a", "s-b", "s-d", "s-c"])
+  })
+})
+
 describe("inspecting a session", () => {
-  const header: SessionHeader = { id: SessionId.make("s-1"), owner: Owner.make("learner"), format: JOURNAL_FORMAT }
+  const header: SessionHeader = { id: SessionId.make("s-1"), owner: Owner.make("learner"), createdAt: 1_767_225_600_000, format: JOURNAL_FORMAT }
 
   test("gives its header, the state its journal folds to and its events", () => {
     const events = journal(turnStarted(TurnNumber.make(1)), note("Hello"), turnEnded(TurnNumber.make(1), { _tag: "Completed" }), turnStarted(TurnNumber.make(2)))

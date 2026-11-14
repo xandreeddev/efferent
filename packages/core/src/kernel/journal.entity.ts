@@ -11,10 +11,12 @@ export type Journal = typeof Journal.Type
  * A storage call that was refused or could not run: a session created twice
  * (`SessionExists`), one that was never created (`SessionMissing`), an
  * append that expected another journal than the stored one (`SeqConflict`),
- * or a store that cannot be reached (`Unavailable`).
+ * a store that cannot be reached or written now (`Unavailable`), or a
+ * stored value that is not a journal's (`Unreadable`): trying again does
+ * not help that one.
  */
 export class JournalStorageError extends Schema.TaggedError<JournalStorageError>()("JournalStorageError", {
-  reason: Schema.Literals(["SessionExists", "SessionMissing", "SeqConflict", "Unavailable"]),
+  reason: Schema.Literals(["SessionExists", "SessionMissing", "SeqConflict", "Unavailable", "Unreadable"]),
   message: Schema.String,
 }) {}
 

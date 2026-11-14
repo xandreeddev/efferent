@@ -10,7 +10,8 @@ import type { SessionHeader } from "./session.entity.js"
  * The store sees every event as an envelope and never decodes its data. Every
  * refusal is a `JournalStorageError`: a session created twice (`SessionExists`),
  * one never created (`SessionMissing`), an append that expected another
- * journal than the stored one (`SeqConflict`), which writes nothing.
+ * journal than the stored one (`SeqConflict`), which writes nothing, a
+ * stored value that is not a journal's (`Unreadable`).
  * `journalStorageConformance` is the contract as runnable checks.
  */
 export class JournalStorage extends Context.Service<JournalStorage, {
@@ -23,4 +24,10 @@ export class JournalStorage extends Context.Service<JournalStorage, {
   readonly append: (id: SessionId, expectedSeq: Seq, turn: TurnNumber, event: StoredDraft) => Effect.Effect<StoredEvent, JournalStorageError>
   /** The header and the stored events, in order; with `from`, the events from that place on. */
   readonly read: (id: SessionId, from?: Seq) => Effect.Effect<Journal, JournalStorageError>
+  /**
+   * The header of every session the store holds, in the order of `byCreation`: by `createdAt`, then by id. The
+   * order is a function of the headers alone, so a store keeps no index of its own, and a host finds its
+   * sessions here.
+   */
+  readonly list: Effect.Effect<ReadonlyArray<SessionHeader>, JournalStorageError>
 }>()("@xandreed/core/kernel/JournalStorage") {}

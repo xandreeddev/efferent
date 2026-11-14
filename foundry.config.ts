@@ -115,6 +115,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-contracts",
   "sdk-kernel-plugin-inbox",
   "sdk-kernel-plugin-journal-in-process",
+  "sdk-kernel-plugin-journal-web-storage",
   "sdk-kernel-plugin-model-scripted",
   "sdk-kernel-plugin-memory-flat",
   "sdk-kernel-plugin-memory-summary",
@@ -574,12 +575,13 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-journal-web-storage", path: "packages/sdk/src/kernel/plugins/journal-web-storage/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-model-scripted", path: "packages/sdk/src/kernel/plugins/model-scripted/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-memory-flat", path: "packages/sdk/src/kernel/plugins/memory-flat/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-memory-summary", path: "packages/sdk/src/kernel/plugins/memory-summary/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-memory-window", path: "packages/sdk/src/kernel/plugins/memory-window/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-session", path: "packages/sdk/src/kernel/plugins/session/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session"], externals: [] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session"], externals: [] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can. They import evals too:

@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0010-a-store-is-a-part.md`: a store is the `JournalStorage` contract and its kit (`list` by `byCreation`, no index; a `pair` of handles for a store that outlives its handle); a turn its writer left open is closed by `Sessions.recover` as `Abandoned`, called by the host, never by the kernel; one writer per store is assumed and the journal stays whole when the host was wrong; a parent is not checked to exist
 - `docs/adr/0009-what-the-ui-shows-is-a-record.md`: what the UI shows is a view record (`plugin.render.view`, tagged `ui`, no message, same id replaces) a tool appends through `CurrentTurn`; a client folds them with `viewsOf`; progress is live; the model never sees a view
 - `docs/adr/0008-a-memory-keeps-its-summary.md`: a memory keeps what it derived (a summary) as a record of its own, tagged `memory`, whose message it sends; it gets a model's work through a contract the host provides (`Summarizer`)
 - `docs/adr/0006-a-sub-agent-is-a-session.md`: a sub-agent is a session created with the caller's as its parent, reached through a tool whose result `{ answer, session }` names it; no new contract; a helper is created under the turn its delegate call runs in (`CurrentTurn`), with a depth limit read from the parent chain
