@@ -62,6 +62,8 @@ caught up.
 | `ReadResult`, `readResult` | sdk, `plugins/tool-read-result` | the one tool the kernel ships, and its handler: reads on from a pointer to a long result |
 | The approval contract | sdk, `contracts/approval` | `Approval`, which the host provides; `approve`, `approveIn`, `grantsOf`; the `plugin.approval.decided` record |
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
+| The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
+| `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
@@ -453,6 +455,134 @@ never grants for good. A loop that would rather ask before every call,
 whatever the tool, uses `approveIn(session, request)` and stores a refusal
 as the call's result itself, `toolResult(call, refusal, true)`: a call left
 with no result is not sent again, and the model would never read the no.
+
+## Skills: instructions and tools loaded when asked for
+
+An agent with many abilities does not send them all with every request. A
+skill is instructions and tools the model is not sent until it asks (ADR
+0013). The model reads a catalogue, one line per skill, and has one tool,
+`loadSkill`. A host writes its skills as values, and makes one value of them
+with its tools:
+
+<!-- pinned: packages/sdk/src/kernel/skills.test.ts#skills -->
+
+```ts
+// A tool the agent always has.
+const Add = Tool.make("add", { parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }), success: Schema.Number, failure: Schema.String, failureMode: "return" })
+const tools = Toolkit.make(Add)
+const toolsLive = tools.toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+
+// A skill with a tool of its own: neither its instructions nor its tool is sent until the model loads it.
+const Convert = Tool.make("convert", {
+  description: "Convert a length from one unit to another.",
+  parameters: Schema.Struct({ value: Schema.Number, from: Schema.Literals(["km", "mi"]), to: Schema.Literals(["km", "mi"]) }),
+  success: Schema.Number,
+  failure: Schema.String,
+  failureMode: "return",
+})
+const units = defineSkill({
+  id: "units",
+  summary: "Convert a length between kilometres and miles.",
+  instructions: "Convert with the convert tool, never in your head.\nAnswer with the number and its unit, to one decimal.",
+  tools: Toolkit.make(Convert),
+})
+const unitsLive = units.tools.toLayer({
+  convert: ({ value, from, to }) => Effect.succeed(from === to ? value : from === "km" ? value / 1.609344 : value * 1.609344),
+})
+
+// A skill that is instructions alone.
+const haiku = defineSkill({ id: "haiku", summary: "Answer in a haiku.", instructions: "Answer in three lines of five, seven and five syllables.", tools: Toolkit.empty })
+
+// One value over the tools and the skills: the whole toolkit, the catalogue, loadSkill's handler and what to offer.
+const skillSet = skills(tools, units, haiku)
+const handlers = Layer.mergeAll(toolsLive, unitsLive, skillSet.handlers)
+const SYSTEM = `Use a tool when it helps.\n\n${skillSet.catalogue}`
+```
+
+`skills(base, ...skills)` is where the tools and the skills meet, so they
+cannot disagree: the whole toolkit, the catalogue, `loadSkill`'s handler and
+what a step offers all come from it. It refuses, where it is written, a set
+with no skill, two skills with one name, and a tool that two of the base,
+the kernel and the skills have. The catalogue is a string for the system
+text. It names every skill and says nothing of which are loaded, so it is
+the same in every request.
+
+The loop reads what to offer at each step, and gives the same toolkit to the
+model and to `callTool`:
+
+<!-- pinned: packages/sdk/src/kernel/skills.test.ts#loop -->
+
+```ts
+const turn = (conversation: SessionId, message: string) => Effect.scoped(Effect.gen(function* () {
+  const memory = yield* Memory
+  const language = yield* LanguageModel.LanguageModel
+  const session = yield* (yield* Sessions).open(conversation)
+  yield* session.append(userMessage(message))
+  for (let step = 1; step <= 5; step++) {
+    // What is offered is read from the journal at each step: the tools no skill owns, and each loaded skill's.
+    const toolkit = yield* set.offered(yield* session.journal)
+    offered.push(Object.keys(toolkit.tools))
+    const prompt = Prompt.make([{ role: "system", content: SYSTEM }, ...(yield* memory.context(session))])
+    const answer = yield* modelAnswer(language.streamText({ prompt, toolkit, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+    if (answer.toolCalls.length === 0) return answer.text
+    // The same toolkit runs the calls: a tool that was not offered is not run.
+    for (const call of answer.toolCalls) yield* callTool(toolkit, call, session)
+  }
+  return "stopped"
+}))
+```
+
+Loading stores nothing of its own. The model calls `loadSkill`, and the
+call's result is the skill's instructions: conversation, stored once and
+sent whole in every later prompt, among the messages and never in a system
+text that would change. A skill is loaded because that result is in the
+journal:
+
+<!-- pinned: packages/sdk/src/kernel/skills.test.ts#load -->
+
+```ts
+const { journal, offered, sent } = await Effect.runPromise(run([calls(load("units")), calls(convert), says("3.1 miles.")], ["How far is 5 km in miles?"]))
+// Before the skill is loaded the model is offered the base tool and loadSkill; after, the skill's tool too.
+expect(offered).toEqual([["add", "loadSkill"], ["add", "loadSkill", "convert"], ["add", "loadSkill", "convert"]])
+// Loading stored nothing of its own: the call and its result, which is the skill's instructions, kept whole.
+expect(journal.map((record) => String(record.name))).toEqual([
+  "core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "conversation.tool.result",
+  "conversation.assistant.message", "conversation.tool.result", "conversation.assistant.message", "core.session.turn.ended",
+])
+expect(results(journal)).toEqual([["loadSkill", UNITS_LOADED, false], ["convert", 5 / 1.609344, false]])
+// The skill is loaded because that result is stored.
+expect(loadedOf(journal).map(String)).toEqual(["units"])
+```
+
+`loadedOf(journal)` is the fold, and `offered(journal)` is built on it: the
+tools no skill owns, then each loaded skill's, in the order the skills were
+loaded. A tool is added and none is taken away, so a skill is loaded after a
+restart and is not loaded in another conversation. A call of a tool whose
+skill is not loaded fails as a call of an unknown tool does, also in the
+step that loads it: what is offered was read before the step.
+
+A load that adds tools changes the request's tool definitions, which a
+provider that caches the start of a prompt counts as part of that start. The
+request after such a load is a cache miss, once per load; a skill that is
+instructions alone costs none.
+
+The toolkit a step offers is typed as every tool it could hold. What a call
+of it needs is what any tool of the whole needs, whichever are held now:
+never `any`, and never less than the tools it holds. So a program provides
+what a skill's tool declares, and that skill's handlers, whether or not the
+skill is loaded yet; one that leaves either out does not compile. Its
+`tools` are typed as the whole's, though some are absent until their skill
+is loaded. Each argument of `skills` keeps its own type: a skill annotated
+`Skill`, or a base annotated `Toolkit.Any`, has lost its tools and what they
+declare, and is refused where it is passed.
+
+A memory that drops old messages can drop a load's result: a window, or a
+compaction that folds it into a summary. The skill is still loaded and its
+tools are still offered. `skillSet.withReloadNote(memory)` wraps the memory
+(ADR 0005): while a loaded skill's instructions are not in the context, it
+adds one note for the request, last, naming those skills and saying that
+`loadSkill` reads them again. The note holds no instructions, and nothing is
+stored. Loading a skill again answers its instructions again.
 
 ## A plugin of your own
 
@@ -1328,6 +1458,7 @@ fail on a careless plugin written for it.
 | `pointed` | the memory kit's pointer checks | a rule a memory applies, held where the memory is: a subject that names its `pointers` |
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
+| skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 
 ## What the first cut leaves out, and the order it returns
 

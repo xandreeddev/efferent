@@ -170,7 +170,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `Record<string, Tool.Any>`, or one such tool among its own) has lost
     what its tools declare, and
     `callTool` refuses it where it is passed (`OwnTools`): a loop written
-    over any toolkit takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`. Both stock memories send through it, the memory
+    over any toolkit takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`.
+  - Skills (ADR 0013): instructions and tools the model is not sent until
+    it asks. `defineSkill({ id, summary, instructions, tools })` is a value;
+    `skills(base, ...skills)` makes one value of a host's tools and skills:
+    the whole toolkit (`toolkit`), the catalogue for the system text
+    (`catalogue`), the handler of the new `LoadSkill` tool (`handlers`),
+    what a step offers (`offered(journal)`) and a memory wrapper
+    (`withReloadNote`). A skill is loaded by a call of `loadSkill`, whose
+    stored result is the skill's instructions, sent whole in every later
+    prompt; nothing else is stored, and `loadedOf(journal)` is the fold.
+    A step offers the tools no skill owns, then each loaded skill's in load
+    order; a call of a tool whose skill is not loaded fails as a call of an
+    unknown tool does. The offered toolkit is typed as every tool it could
+    hold, with nothing asserted: a program that leaves out what a skill's
+    tool declares, or that skill's handlers, does not compile, loaded or
+    not. When a memory no longer sends a loaded skill's instructions,
+    `withReloadNote` adds one short note for the request, naming the skill
+    and how to read it again. Refused where written: a skill with a bad
+    id, summary or instructions, also one written by hand and never
+    through `defineSkill`; a set with no skill, two skills with one name,
+    or a tool that two of the base, the kernel and the skills have. A
+    skill annotated `Skill`, or a base annotated `Toolkit.Any`, has lost
+    its tools and what they declare, and `skills` refuses it where it is
+    passed (`OwnSkills`). A load that adds tools changes the request's
+    tool definitions, so the request after it is a cache miss, once per
+    load.
+    Model text: the catalogue, `loadSkill`'s description and parameter, its
+    failure for an unknown name, and the note.
+  - Both stock memories send through `paired`, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
     (`ModelAnswer` `Calls`). The window memory drops whole turns only, so

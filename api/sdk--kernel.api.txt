@@ -17,7 +17,10 @@ const DETAIL_LIMIT
 const DecidedData
 const Decision
 const InboxQueuedData
+const LOAD_SKILL
 const ListView
+const LoadSkill
+const LoadedSkill
 const ModelScript
 const ProgressData
 const READ_RESULT
@@ -25,6 +28,7 @@ const READ_RESULT_PAGE
 const ReadResult
 const ResultPage
 const ScriptedAnswer
+const SkillId
 const SummarizedData
 const TableView
 const TextView
@@ -39,7 +43,9 @@ const approve
 const approveIn
 const autoApprove
 const callTool
+const catalogue
 const decidedEvent
+const defineSkill
 const estimateContext
 const estimateTokens
 const flatMemory
@@ -51,6 +57,7 @@ const inbox
 const inboxOf
 const inboxQueuedEvent
 const isOverBudget
+const loadedOf
 const memoryConformance
 const memoryWrapperConformance
 const messageText
@@ -64,6 +71,7 @@ const resultText
 const scriptedModel
 const sessions
 const showView
+const skills
 const summarizedEvent
 const summarizerConformance
 const summaryMemory
@@ -84,6 +92,9 @@ interface Queued
 interface RunningTurn
 interface SessionsOptions
 interface Shown
+interface Skill
+interface SkillOptions
+interface SkillSet
 interface SummarizerSubject
 interface SummaryOptions
 interface WebStorageJournalOptions
@@ -95,13 +106,18 @@ type Decision
 type InboxQueuedData
 type InboxTurn
 type InboxTurnFailure
+type LoadedSkill
 type MemoryFailure
 type ModelScript
+type Offered
+type OwnSkills
 type OwnTools
 type ProgressData
 type ResultPage
 type ScriptedAnswer
 type ScriptedCalls
+type SkillId
+type SkillTools
 type SummarizedData
 type Ticket
 type Tokens
