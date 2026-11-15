@@ -1,0 +1,30 @@
+---
+// Step 9: each button rewrites the learner's code and runs it again (see learn/playground.ts, `data-exp`). The
+// first edits two files, tools.ts and memory.ts, both or neither.
+const experiments = [
+  {
+    exp: "recall-tool", title: "Recall as a tool", button: "Take the wrapper away and add a recall tool",
+    text: "Reload the page first, so that no fact stands. This one edits two files. tools.ts gains a tool of your own, recallFacts, written over the kernel's rememberedFacts: it returns the facts that stand. memory.ts provides the flat memory with no wrapper. Press My name is Ana., then Clear context, then What is my name? Echo answers You said: \"What is my name?\". This is the start of the conversation. The fact is in the memory session, and no request is sent it: Echo was offered recallFacts and did not think to call it. Type What do you remember? and Echo calls the tool. Its row in the chat reads recallFacts({}) → [\"f1: The user's name is Ana.\"]. A model must think to ask, which is why the lesson sends the facts with a wrapper. The tool reads the memory session, so it declares the sessions: dependencies: [Sessions]. TypeScript refuses its handler without that line: \"Type 'Sessions' is not assignable to type 'never'\".",
+  },
+  {
+    exp: "facts-first", title: "Facts first", button: "Put the facts before the conversation",
+    text: "Reload the page first. memory.ts now holds a wrapper of your own, factsFirst, written over the kernel's rememberedFacts, questionOf, relevant and factsNote. It puts the note before the conversation. Press My name is Ana., then What is my name?, then I live in Lisbon., and open Context. Each prompt is the size it has with the lesson's wrapper: only the order of its rows differs. Read the bar over each prompt, the same as the prompt before. Turn 1, second model call, sent after the first fact was learned: 23 of 98 tokens, the system text alone, where the lesson's wrapper reads 27, the whole prompt before. Turn 2, where no fact changed: 98 of 111, the whole prompt before, where the lesson's wrapper reads 54, all of the prompt before but its note, which moved to the end. Turn 3, second model call, sent after the second fact was learned: 23 of 165, where the lesson's wrapper reads 86. With the facts first the note keeps its place while the facts stand as they are. A fact learned or forgotten changes the prompt's second row, and no row after it is where it was. The bar compares a prompt's messages with those of the prompt before, row by row from the start. It is the page's count, not a provider's.",
+  },
+  {
+    exp: "limit-one", title: "One fact at most", button: "Set the limit to 1",
+    text: "Reload the page first. memory.ts now reads withFacts({ limit: 1 }). Press My name is Ana., then I live in Lisbon., then What is my name? Two facts stand and one is sent. The prompt's note lists f1 alone: \"name\" is a word of that fact and of the question. Echo answers from it. Press What is 2 + 3? No word of the sum is in either fact, so the newest, f2, is sent. Type What do you remember? and Echo lists one fact, the one this request was sent: I remember 1 fact: \"The user lives in Lisbon.\" (f2). The choice is a match of words and nothing more. A host that ranks another way writes a wrapper of its own, as the experiment before this one does.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>

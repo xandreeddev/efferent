@@ -12,7 +12,9 @@
 // provides none, and the page falls back to the session memory was last
 // asked about. A tool that asks before it acts (lesson 9) asks the page:
 // its question is traced, waits for `decide`, and is traced again when it
-// no longer waits, answered or dropped with its turn.
+// no longer waits, answered or dropped with its turn. A session other than
+// the chat's that a turn opens in (a helper's, the memory session) is named
+// with its header before that turn's first record is heard.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Result, Scope, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
@@ -123,6 +125,11 @@ export type Trace =
   | { readonly _tag: "Asking"; readonly id: string; readonly action: string; readonly detail: string }
   /** A question no longer waits: it was answered, or dropped with the turn that asked (Stop, a rebuild, Clear context). */
   | { readonly _tag: "Asked"; readonly id: string }
+  /**
+   * A session other than the chat's that a turn opened in, as its header says what it is: who owns it, and the
+   * session it was created under, if any. Heard once a session, before the first record of its first turn here.
+   */
+  | { readonly _tag: "Session"; readonly session: string; readonly owner: string; readonly parent?: string }
 
 export type BuildResult =
   | { readonly _tag: "Built" }
@@ -179,6 +186,8 @@ export class LessonRuntime {
    * `modelAnswer` names its own turn, and this is not looked at.
    */
   private asked: string | undefined
+  /** The sessions, other than the chat's, whose header the page was told of (`Session`). */
+  private readonly announced = new Set<string>()
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
 
@@ -254,15 +263,28 @@ export class LessonRuntime {
   /** The page's listeners on the base's Core: every event, in the order Core hands them over, and which turn is open. */
   private listen(): Effect.Effect<void, never, Scope.Scope> {
     const core = Context.get(this.base, Core)
+    const sessionsOf = Context.get(this.base, Sessions)
     const started = (session: string, turn: number) => {
       this.openTurns.set(session, turn)
       if (session === this.session) this.lastTurn = turn
     }
+    // A turn opened in a session that is not the chat's and was not named yet: its header is read from the store and
+    // the page is told, before the turn's start reaches the page as a record. A header that cannot be read is not
+    // named, and the turn goes on: a listener the publisher waits for must not fail.
+    const named = (session: string): Effect.Effect<void> => Effect.suspend(() => {
+      if (session === this.session || this.announced.has(session)) return Effect.void
+      this.announced.add(session)
+      // Whatever the read ends with, a failure or a defect of the store, is taken as no header.
+      return Effect.map(sessionsOf.list.pipe(Effect.catchCause(() => Effect.succeed([]))), (headers) => {
+        const header = headers.find((one) => one.id === session)
+        if (header !== undefined) this.emit({ _tag: "Session", session, owner: header.owner, ...(header.parent === undefined ? {} : { parent: header.parent }) })
+      })
+    })
     const ended = (session: string) => { this.openTurns.delete(session) }
     const heard = (event: KernelEvent) => this.emit({ _tag: "Event", event })
     return Effect.gen(function* () {
       // Waited for, so a prompt sent in a turn finds that turn here.
-      yield* core.on(turnStartedEvent, (event) => Effect.sync(() => started(sessionOf(event), event.data.turn)), { name: "page-turns", wait: true })
+      yield* core.on(turnStartedEvent, (event) => Effect.andThen(Effect.sync(() => started(sessionOf(event), event.data.turn)), named(sessionOf(event))), { name: "page-turns", wait: true })
       yield* core.on(turnEndedEvent, (event) => Effect.sync(() => ended(sessionOf(event))), { name: "page-turns", wait: true })
       yield* Effect.forkScoped(Stream.runForEach(core.events, (event) => Effect.sync(() => heard(event))), { startImmediately: true })
     })

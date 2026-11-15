@@ -79,6 +79,13 @@ checks.
 - An Echo rule gets a direct test in `models/models.test.ts` that fails
   without the rule, and, where it must come before another rule, one that
   fails when it is moved after it.
+- A lesson whose state outlives Clear context and Rebuild (lesson 11's
+  facts: only a reload empties the memory session) pins its page's steps
+  as one walk on one runtime, press by press in the page's order, and
+  each experiment's text names the state it starts from, which its test
+  sets up the same way.
+- An experiment that must edit two files lists the second under `also`,
+  and its tests apply it with `applyExperiment`, as the page does.
 - `lessons/wrong-values.test.ts`: add the lesson's cases to its table. It
   is compared with the lesson list (`lessonSlugs`), and every file a
   learner can edit needs a case: what the file makes, made the wrong kind

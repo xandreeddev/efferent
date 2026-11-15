@@ -336,6 +336,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 11, "Remember across sessions", at `/learn/remember`.
+  `tools.ts` is lesson 2's calculator with the kernel's two tools that
+  remember merged in (`Toolkit.merge(Toolkit.make(calculator),
+  factTools)`), in place of lesson 2's `remember`, `recall` and their
+  `notes` array. `memory.ts` is one statement over the kernel's flat
+  memory, `withFacts({ limit: 5 })(flatMemory)`, applied over the memory
+  the page watches, so the Context tab shows the facts' note as added by
+  the code. `agent.ts` is the base program with nothing changed in its
+  loop: `main` provides `factHandlers` and memory.ts's memory, and the
+  boot hook names only the conversation's turns, since a `rememberFact`
+  call opens a turn of its own on the memory session. The page walks a
+  fact stored by a tool call (the conversation holds the call and the
+  id, the memory session the fact's record, with the conversation and
+  turn it came from), what a request is sent (the note, last, framed as
+  data), a new conversation (Clear context: sent the fact), a rebuild
+  (still sent) and a reload (gone: the page's journal is kept in the
+  page), forgetting (a record more, and the text stays in the journals
+  that said it), and what it costs. A limit `withFacts` refuses refuses
+  the build, in the kernel's words. Echo remembers "my name is X", "I
+  live in X" and "remember that X", forgets a fact by its id or by a
+  word it shares with a listed fact, and answers a question from a
+  listed fact that shares a word with it; it reads the facts from the
+  kernel's note alone. Experiments take the wrapper away and add a
+  recall tool written over `rememberedFacts` (Echo is sent no fact, and
+  only "What do you remember?" calls the tool; the tool without its
+  `dependencies: [Sessions]` does not compile, which a test pins by the
+  compiler's words), put the facts first with a wrapper of the learner's
+  own (the prompt's shared start falls to the system text when a fact is
+  learned), and set the limit to one. The Context tab's row of sessions
+  is now built from each session's header, which the runtime tells the
+  page in a new `Session` trace: the chat's, a helper (it has a parent),
+  the memory session ("Memory", kept across Clear context) or another
+  session, where every session but the chat's was called a helper. A
+  turn on the memory session reads as three steps and no model call. An
+  experiment may edit a second file (`also`), both or neither. Lesson
+  10's page links here. No published package changes.
 - Docs site: Lesson 10, "Skills", at `/learn/skills`. A new file,
   `skills.ts`, holds two skills as values (`units`, with a tool of its
   own, `convert`, and its handlers; `haiku`, instructions alone) and the

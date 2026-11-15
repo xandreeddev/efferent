@@ -10,6 +10,7 @@ import { continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, 
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
+import { applyExperiment } from "./lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
 import { loadModel, probeDevice } from "./models/registry.ts"
@@ -492,13 +493,14 @@ function boot(root: HTMLElement, lesson: Lesson) {
   document.querySelectorAll<HTMLButtonElement>("[data-exp]").forEach((button) => button.addEventListener("click", async () => {
     const experiment = lesson.experiments[button.dataset.exp ?? ""]
     if (!experiment) return
-    const label = lesson.files.find((file) => file.id === experiment.file)?.label ?? experiment.file
-    const next = experiment.apply(editor.source(experiment.file))
+    // Every file the experiment edits, its own first: all are changed, or none is.
+    const label = [experiment, ...(experiment.also ?? [])].map((edit) => lesson.files.find((file) => file.id === edit.file)?.label ?? edit.file).join(" and ")
+    const next = applyExperiment(experiment, (file) => editor.source(file))
     if (Option.isNone(next)) {
       showFoot("error", `This experiment could not find its line in ${label}. Press Reset in the Code pane to bring it back.`)
       return
     }
-    editor.setSource(experiment.file, next.value)
+    next.value.forEach(([file, text]) => editor.setSource(file, text))
     showTab(experiment.file)
     const original = button.textContent
     button.disabled = true
