@@ -78,6 +78,20 @@ const kitSession = (core: CoreShape) => Effect.gen(function* () {
     }
     yield* append(turnEnded(turn, answered ? { _tag: "Completed" } : { _tag: "Interrupted" }))
   })
+  /**
+   * A whole earlier turn whose one answer asked twice under the id `id`, for 2 + 3 and then for 4 + 5, as a model
+   * that repeats an id inside an answer would. The turn's loop ran the first call and stored its result, 5, and
+   * was told to stop before the second: the one result is the first call's.
+   */
+  const twiceTurn = (asked: string, id: string) => Effect.gen(function* () {
+    const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
+    yield* append(turnStarted(turn))
+    yield* append(userMessage(asked))
+    yield* append(assistantMessage("", { toolCalls: [{ id, name: "add", params: { a: 2, b: 3 } }, { id, name: "add", params: { a: 4, b: 5 } }] }))
+    yield* append(toolResult({ id, name: "add" }, 5))
+    yield* append(assistantMessage("It is 5."))
+    yield* append(turnEnded(turn, { _tag: "Completed" }))
+  })
   /** A whole earlier turn whose tool answered with `result`: the stored result is given back. */
   const resultTurn = (asked: string, id: string, result: string, whole = false) => Effect.gen(function* () {
     const turn = TurnNumber.make(yield* Ref.updateAndGet(turns, (count) => count + 1))
@@ -108,7 +122,7 @@ const kitSession = (core: CoreShape) => Effect.gen(function* () {
     yield* append(assistantMessage(answered))
     yield* append(turnEnded(session.turn, { _tag: "Completed" }))
   })
-  return { journal: Ref.get(journal), append, appendRecord, pastTurn, toolTurn, resultTurn, openTurn, closeTurn }
+  return { journal: Ref.get(journal), append, appendRecord, pastTurn, toolTurn, twiceTurn, resultTurn, openTurn, closeTurn }
 })
 
 /** The ids of the tool calls a context sends, and of the results it sends, in order. */
@@ -119,6 +133,10 @@ const toolTraffic = (context: ReadonlyArray<Prompt.MessageEncoded>) => {
     results: parts.flatMap(({ role, part }) => (role === "tool" && part.type === "tool-result" ? [part.id] : [])),
   }
 }
+
+/** The parameters of each call of `id` a context sends, in order. */
+const paramsOf = (context: ReadonlyArray<Prompt.MessageEncoded>, id: string): ReadonlyArray<unknown> =>
+  context.flatMap((message) => (typeof message.content === "string" ? [] : message.content.flatMap((part) => (message.role === "assistant" && part.type === "tool-call" && part.id === id ? [part.params] : []))))
 
 /** What a context sends as the result of the call `id`: each one it sends, as the kit compares it. */
 const resultsOf = (context: ReadonlyArray<Prompt.MessageEncoded>, id: string): ReadonlyArray<string> =>
@@ -218,6 +236,8 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
       yield* kit.toolTurn("And again?", "kit-call-2", false)
       // A call's id is the model's, and can repeat: the id of the call left open is asked again, and answered.
       yield* kit.toolTurn("Once more?", "kit-call-2", true)
+      // One answer can ask twice under one id: with one result stored, it is the first call's, and the second has none.
+      yield* kit.twiceTurn("And twice?", "kit-call-3")
       const session = yield* kit.openTurn("Thanks.")
       const context = yield* memory.context(session)
       const { calls, results } = toolTraffic(context)
@@ -226,8 +246,12 @@ export const memoryConformance = (subject: MemorySubject): ReadonlyArray<Conform
         message.role === "assistant" && toolTraffic([message]).calls.includes(id) && show(toolTraffic(context.slice(index + 1, index + 2)).results) === show([id])).length === 1
       yield* expect("pairs", show(calls.slice(0, 1)) === show(["kit-call-1"]) && show(results.slice(0, 1)) === show(["kit-call-1"]) && answeredOnce("kit-call-1"),
         `the context ${show(context)} does not send the answered call with its result right after it`)
-      yield* expect("pairs", show(calls) === show(["kit-call-1", "kit-call-2"]) && show(results) === show(["kit-call-1", "kit-call-2"]) && answeredOnce("kit-call-2"),
+      yield* expect("pairs", show(calls.slice(0, 2)) === show(["kit-call-1", "kit-call-2"]) && show(results.slice(0, 2)) === show(["kit-call-1", "kit-call-2"]) && answeredOnce("kit-call-2"),
         `the context ${show(context)} does not send each answered call once with its result right after it, and the unanswered call not at all: a result answers the last call of its id before it, not every call of that id`)
+      yield* expect("pairs", show(calls) === show(["kit-call-1", "kit-call-2", "kit-call-3"]) && show(results) === show(["kit-call-1", "kit-call-2", "kit-call-3"]) && answeredOnce("kit-call-3"),
+        `the context ${show(context)} does not send one call with the one result of an answer that asked twice under one id: a call is told from another by its place in the answer, not by its id alone`)
+      yield* expect("pairs", show(paramsOf(context, "kit-call-3")) === show([{ a: 2, b: 3 }]),
+        `the context ${show(context)} sends the result of an answer's first call beside another call of that answer: results answer an answer's calls of one id in the order they were asked`)
     })),
     check("a record of another use that bears text is never in the context", "other-uses", (memory, kit) => Effect.gen(function* () {
       yield* kit.pastTurn("What is a fiber?", "A light thread.")

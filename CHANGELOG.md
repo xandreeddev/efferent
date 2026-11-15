@@ -237,10 +237,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     over `scriptedModel` and a journal kept in the process
     (`docs/kernel.md`, "Testing a host"), and what a client draws a turn
     from. It is pure and refuses no journal: a record belongs to the turn
-    it was stored in, a result answers the latest call of its id that has
-    none yet, as `paired` pairs them, and a record it does not know is in
+    it was stored in, a result answers the call it was stored for, as
+    `paired` pairs them, and a record it does not know is in
     its turn's `records` alone. It is no memory, and nothing it returns is
     sent to a model.
+  - `paired` tells a call from another by its place, not by its id alone.
+    One answer of a model that asked twice under one id, with one result
+    stored, was sent with both calls, one of them with no result, which a
+    provider refuses. The results stored after such an answer now answer
+    its calls in the order they were asked: the first result is the first
+    call's, as a loop that runs the calls one after another stores them,
+    and a call with no result is not sent. `turnsOf` read the one result
+    as the later call's, and now reads it as the first's: the two pair
+    through one function. The memory kit's `pairs` check holds a memory
+    to the case, and to which call is sent beside the result.
   - Both stock memories send through `paired`, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools

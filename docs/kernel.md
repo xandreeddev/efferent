@@ -332,11 +332,14 @@ through `paired`: a call goes only with its result, a result only with its
 call, and an answer left with neither text nor a call is dropped. Pairs are
 made in order: a call's id is the model's and can repeat (a model that
 numbers its calls starts again when its process does), so a result answers
-the last call of its id before it that nothing answered yet. The
-journal keeps every record; `paired` decides only what is sent. The memory
-kit holds a memory to it (`pairs`): an answered call is sent with its result
-right after it, and an unanswered one not at all, also when its id was asked
-again later and answered. The window memory drops
+a call of the last answer before it that asked under its id. A call is told
+from another by its place, never by its id alone: when one answer asks twice
+under one id, the results stored after it answer its calls in the order they
+were asked, as a loop that runs them one after another stores them, and a
+call with no result is not sent. The journal keeps every record; `paired` decides only what is sent. The
+memory kit holds a memory to it (`pairs`): an answered call is sent with its
+result right after it, and an unanswered one not at all, also when its id
+was asked again later and answered, or twice in one answer. The window memory drops
 whole turns only, so one long tool turn can go over its budget: it fails
 with `OverBudget` like any turn that alone does not fit (ADR 0004).
 
@@ -1561,8 +1564,8 @@ test("a host's program under test: a sum is worked out by the tool, one call wit
   plugin against its contract. This runs the whole program, and reads what
   it stored.
 - **`turnsOf` is pure and refuses no journal.** A record belongs to the turn
-  it was stored in. A result answers the latest call of its id that has none
-  yet, as `paired` pairs them for a model. A call a turn was abandoned in
+  it was stored in. A result answers the call it was stored for, by the rule
+  `paired` pairs them for a model. A call a turn was abandoned in
   has no result, and a turn that ended on a call has no answer.
 - **It is no memory.** A record it does not know, a plugin's own, is in its
   turn's `records` and nowhere else, to be read with `dataOf` and the
@@ -1674,11 +1677,6 @@ are not made by accident.
   handle a memory's or an inbox turn's failures exhaustively.
 - **Two `kernel()` layers give two cores**, silently: the one nearer the
   consumer wins.
-- **Two calls under one id in one answer.** `paired` tells the calls of one
-  assistant message apart by their id alone: when a model asks twice under
-  one id and one result is stored, it sends both calls. `turnsOf` gives the
-  result to the later call. No model the kernel knows repeats an id inside
-  one answer; a provider that did would be sent a call with no result.
 
 ## Keeping a tailored context cache-stable
 

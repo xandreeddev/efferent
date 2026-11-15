@@ -1,6 +1,7 @@
-import { Match, Option } from "effect"
+import { Option } from "effect"
 import { assistantMessageEvent, dataOf, messageOf, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Message, Seq, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { callAt, pairsOf } from "../memory/memory.entity.functions.js"
 import type { CallRead, ResultRead, StepRead, TurnRead } from "./turns.entity.js"
 
 /**
@@ -11,32 +12,28 @@ import type { CallRead, ResultRead, StepRead, TurnRead } from "./turns.entity.js
 const saidBy = (event: StoredEvent): Option.Option<Message> =>
   event.name === userMessageEvent.name || event.name === assistantMessageEvent.name || event.name === toolResultEvent.name ? messageOf(event) : Option.none()
 
+/** A record of the conversation with the message it bears. */
+interface Said {
+  readonly event: StoredEvent
+  readonly message: Message
+}
+
 /**
  * The result each call of a journal has: by the place of the assistant record that asked and the call's place in
- * it. A result answers the latest call of its id that has none yet, wherever that call was asked: the rule
- * `paired` sends a conversation by, so what a test reads as a call's result is what a model was sent as it. The
- * two differ for one journal no kernel model writes, an answer that asks twice under one id: `paired` keeps both
- * of those calls where one result answered, and here the later one has the result.
+ * it. The pairs are `pairsOf`'s, the rule `paired` sends a conversation by, so what a test reads as a call's result
+ * is what a model was sent as it.
  */
 const resultsOf = (events: ReadonlyArray<StoredEvent>): ReadonlyMap<string, ResultRead> => {
-  /** The latest call of each id that no result has answered yet. */
-  const open = new Map<string, string>()
+  const said = events.flatMap((event): ReadonlyArray<Said> => Option.match(saidBy(event), { onNone: () => [], onSome: (message) => [{ event, message }] }))
+  const pairs = pairsOf(said.map((one) => one.message))
   const results = new Map<string, ResultRead>()
-  for (const event of events) {
-    Option.match(saidBy(event), {
-      onNone: () => {},
-      onSome: (message) => Match.valueTags(message, {
-        User: () => {},
-        Assistant: ({ toolCalls }) => toolCalls.forEach((call, index) => open.set(call.id, `${event.seq} ${index}`)),
-        ToolResult: ({ id, result, isFailure }) => {
-          const asked = open.get(id)
-          if (asked === undefined) return
-          open.delete(id)
-          results.set(asked, { seq: event.seq, result, isFailure })
-        },
-      }),
+  said.forEach(({ event, message }, at) => {
+    if (message._tag !== "Assistant") return
+    message.toolCalls.forEach((_, index) => {
+      const answer = said[pairs.get(callAt(at, index)) ?? -1]
+      if (answer?.message._tag === "ToolResult") results.set(`${event.seq} ${index}`, { seq: answer.event.seq, result: answer.message.result, isFailure: answer.message.isFailure })
     })
-  }
+  })
   return results
 }
 

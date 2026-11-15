@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { kernel, Sessions, stored, storedEvent, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, kernel, Sessions, stored, storedEvent, userMessage } from "@xandreed/core/kernel"
 import { inProcessJournal, sessions } from "../../index.js"
+import { paired } from "../memory/memory.entity.functions.js"
 import { callTool } from "./tool-call.entity.functions.js"
 import { CurrentTurn } from "./current-turn.port.js"
 import { SentWhole } from "./sent-whole.port.js"
+import { turnsOf } from "./turns.entity.functions.js"
 
 const Echo = Tool.make("echo", { parameters: Schema.Struct({ text: Schema.String }), success: Schema.String, failure: Schema.String, failureMode: "return" })
 const Dies = Tool.make("dies", { success: Schema.String })
@@ -43,7 +45,44 @@ const results = (calls: ReadonlyArray<{ readonly name: string; readonly params: 
   return given
 })).pipe(Effect.provide(Layer.mergeAll(handlers, sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))))))
 
+/**
+ * One answer that asks twice under one id, `same`, as a model that repeats an id would, and the first `ran` of its
+ * calls run with `callTool`, one after the other as a loop runs them. What comes back: each call a memory would
+ * send beside the result it would send with it (`paired`), and each call with the result `turnsOf` gives it.
+ */
+const repeatedId = (ran: number) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const all = yield* Sessions
+  const session = yield* all.open(yield* all.create({ owner: "test" }))
+  yield* session.append(userMessage("go"))
+  const asked = [{ id: "same", name: "echo", params: { text: "one" } }, { id: "same", name: "echo", params: { text: "two" } }]
+  yield* session.append(assistantMessage("", { toolCalls: asked }))
+  const toolkit = yield* tools
+  yield* Effect.forEach(asked.slice(0, ran), (call) => callTool(toolkit, call, session), { concurrency: 1, discard: true })
+  const journal = yield* session.journal
+  const sent = paired(journal.flatMap((event) => (event.message === undefined ? [] : [event.message])))
+  return {
+    sent: {
+      calls: sent.flatMap((message) => (message._tag === "Assistant" ? message.toolCalls.map((call) => call.input) : [])),
+      results: sent.flatMap((message) => (message._tag === "ToolResult" ? [message.result] : [])),
+    },
+    read: turnsOf(journal).flatMap((turn) => turn.steps.flatMap((step) => step.calls.map((call) => [call.input, Option.getOrNull(call.result)?.result ?? "no result"]))),
+  }
+})).pipe(Effect.provide(Layer.mergeAll(handlers, sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))))))
+
 describe("callTool", () => {
+  test("two calls of one answer under one id, run in order: each is sent and read beside its own result, never the other's", async () => {
+    expect(await repeatedId(2)).toEqual({
+      sent: { calls: [{ text: "one" }, { text: "two" }], results: ["one", "two"] },
+      read: [[{ text: "one" }, "one"], [{ text: "two" }, "two"]],
+    })
+    // The turn stopped after the first: that call is sent with its result, and the one that never ran is not sent.
+    expect(await repeatedId(1)).toEqual({
+      sent: { calls: [{ text: "one" }], results: ["one"] },
+      read: [[{ text: "one" }, "one"], [{ text: "two" }, "no result"]],
+    })
+    expect(await repeatedId(0)).toEqual({ sent: { calls: [], results: [] }, read: [[{ text: "one" }, "no result"], [{ text: "two" }, "no result"]] })
+  })
+
   test("stores the tool's answer, or its failure, as the call's result, and gives the record back", async () => {
     expect(await results([{ name: "echo", params: { text: "hi" } }, { name: "echo", params: { text: "fail" } }])).toEqual([
       { _tag: "ToolResult", id: "call-0", name: "echo", result: "hi", isFailure: false },

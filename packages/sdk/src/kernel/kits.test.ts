@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Array as Arr, Context, Effect, Layer, Option, Order, Ref, Result, Schema } from "effect"
+import { Array as Arr, Context, Effect, Layer, Match, Option, Order, Ref, Result, Schema } from "effect"
 import {
   announced,
   CONVERSATION_VOCABULARY,
@@ -468,6 +468,65 @@ describe("the memory kit", () => {
         byId(records.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage))),
     })), null)))
     expect(pairedById).toEqual(["pairs"])
+    // It pairs in order, and tells the calls of one answer apart by their id alone: both of two calls under one id
+    // are sent where one result answered.
+    const byMessage = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
+      const open = new Map<string, number>()
+      const answered = new Set<string>()
+      const answers = new Set<number>()
+      messages.forEach((message, at) => {
+        if (message._tag === "Assistant") message.toolCalls.forEach((call) => open.set(call.id, at))
+        if (message._tag !== "ToolResult") return
+        const asked = open.get(message.id)
+        if (asked === undefined) return
+        open.delete(message.id)
+        answered.add(`${asked} ${message.id}`)
+        answers.add(at)
+      })
+      return messages.flatMap((message, at): ReadonlyArray<Message> => Match.valueTags(message, {
+        User: (user): ReadonlyArray<Message> => [user],
+        ToolResult: (result): ReadonlyArray<Message> => (answers.has(at) ? [result] : []),
+        Assistant: (assistant): ReadonlyArray<Message> => {
+          const toolCalls = assistant.toolCalls.filter((call) => answered.has(`${at} ${call.id}`))
+          return assistant.text.length === 0 && toolCalls.length === 0 ? [] : [{ ...assistant, toolCalls }]
+        },
+      }))
+    }
+    const pairedByMessage = await failedChecks(memoryConformance(subject("bymessage", Layer.succeed(Memory, Memory.of({
+      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(vocabularyOf("bymessage", [], CONVERSATION_VOCABULARY))(journal)), (records) =>
+        byMessage(records.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage))),
+    })), null)))
+    expect(pairedByMessage).toEqual(["pairs"])
+    // It tells calls apart by their place, and gives a result to the last call of its id: of two calls one answer
+    // makes under one id, the second is sent beside the first one's result.
+    const byLast = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
+      const open = new Map<string, string>()
+      const pairs = new Map<string, number>()
+      messages.forEach((message, at) => Match.valueTags(message, {
+        User: () => {},
+        Assistant: ({ toolCalls }) => toolCalls.forEach((call, index) => open.set(call.id, `${at} ${index}`)),
+        ToolResult: ({ id }) => {
+          const asked = open.get(id)
+          if (asked === undefined) return
+          open.delete(id)
+          pairs.set(asked, at)
+        },
+      }))
+      const answers = new Set(pairs.values())
+      return messages.flatMap((message, at): ReadonlyArray<Message> => Match.valueTags(message, {
+        User: (user): ReadonlyArray<Message> => [user],
+        ToolResult: (result): ReadonlyArray<Message> => (answers.has(at) ? [result] : []),
+        Assistant: (assistant): ReadonlyArray<Message> => {
+          const toolCalls = assistant.toolCalls.filter((_, index) => pairs.has(`${at} ${index}`))
+          return assistant.text.length === 0 && toolCalls.length === 0 ? [] : [{ ...assistant, toolCalls }]
+        },
+      }))
+    }
+    const pairedByLast = await failedChecks(memoryConformance(subject("bylast", Layer.succeed(Memory, Memory.of({
+      context: (session) => Effect.flatMap(session.journal, (journal) => Effect.map(Effect.fromResult(readJournal(vocabularyOf("bylast", [], CONVERSATION_VOCABULARY))(journal)), (records) =>
+        byLast(records.flatMap((record) => Option.toArray(messageOf(record)))).map(promptMessage))),
+    })), null)))
+    expect(pairedByLast).toEqual(["pairs"])
     // It refuses records it should pass over: another plugin's, a record of another use, and its own that may be skipped.
     const refusing = await failedChecks(memoryConformance(strict()))
     expect(refusing).toEqual(["foreign", "other-uses", "unknown-skipped"])
