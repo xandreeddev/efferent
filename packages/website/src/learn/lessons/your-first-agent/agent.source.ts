@@ -112,7 +112,7 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
 export const moduleOf = (agent: string): string => `${IMPORTS.replace('import { Chat, chatOn } from "./chat.ts"', 'import { Chat, chatOn } from "./chat.ts"\nimport type { ChatPane } from "./chat.ts"')}
 import type { Layer } from "effect"
 
-export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>) => {
+export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {
 ${agent.replace("const turn = (message) =>", "const turn = (message: string) =>")}
   return main
 }

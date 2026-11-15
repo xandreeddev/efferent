@@ -136,13 +136,14 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
 
 /**
  * A program on the base as a module a test can compile and run, under the imports given: the turn's message is
- * typed, and `pane` and `model` are the parameters of `run`, which returns `main`. With the kernel's functions
- * nothing else needs a type: there is no call or toolkit to annotate, and no cast.
+ * typed, and `pane` and `model` are the parameters of `run`, which returns `main` and states that the program
+ * needs nothing more: a module `main` was not given is a compile error. With the kernel's functions nothing else
+ * needs a type: there is no call or toolkit to annotate, and no cast.
  */
 export const typedModule = (imports: string, agent: string): string => `${imports.replace('import { Chat, chatOn } from "./chat.ts"', 'import { Chat, chatOn } from "./chat.ts"\nimport type { ChatPane } from "./chat.ts"')}
 import type { Layer } from "effect"
 
-export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>) => {
+export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {
 ${agent.replace("const turn = (message) =>", "const turn = (message: string) =>")}
   return main
 }

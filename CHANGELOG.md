@@ -149,7 +149,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `windowMemory` and `summaryMemory` take `pointers` and count what
     they send. The memory kit holds a subject that names its `pointers`
     to four more checks (`pointer`, `pointer-whole`, `pointer-stable`,
-    `pointer-budget`). Both stock memories send through it, the memory
+    `pointer-budget`).
+  - Approvals (ADR 0012): a tool asks a person before it acts, with
+    `approve({ action, detail })` at the start of its handler, through
+    `Approval`, a contract the host provides. The answer is stored in the
+    turn as `plugin.approval.decided`; `ApprovedAlways` is a standing
+    approval of the action in that conversation, read from the journal
+    (`grantsOf`), so it is there after a restart and nowhere else. A
+    refusal is the call's failed result, in fixed words
+    (`APPROVAL_REFUSED`); an answer that is no decision approves nothing.
+    `autoApprove(allows)` wraps `Approval` with a policy, answered
+    `Allowed`, which never grants for good. `approveIn(session, request)`
+    is the same rule for a loop that asks before every call. `callTool` is
+    now typed over every tool of its toolkit, with an explicit signature:
+    what its tools declare in `dependencies`, less the turn, is
+    `ToolNeeds<Tools>`, the requirements of its effect, and a program that
+    leaves one out does not compile. It was typed over the call's name,
+    which lost them. `approve` fails with `ApprovalRefusal`, the refusal's
+    text and nothing else. A toolkit with a tool typed `Tool.Any` (a
+    `Record<string, Tool.Any>`, or one such tool among its own) has lost
+    what its tools declare, and
+    `callTool` refuses it where it is passed (`OwnTools`): a loop written
+    over any toolkit takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`. Both stock memories send through it, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
     (`ModelAnswer` `Calls`). The window memory drops whole turns only, so
@@ -257,6 +278,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: each lesson's typed program states that it needs nothing
+  more, so the learn track's type check refuses a program whose `main` was
+  not given a module it asks for. Lesson 4 has the test: without the helper
+  its `delegate` tool declares, the program does not compile. Lesson 2's
+  typed module calls the toolkit by hand with the exact parameter type
+  where it had `as never`.
 - Docs site: Lesson 8, "Pointers", at `/learn/pointers`. `memory.ts` is
   lesson 2's flat memory with one function changed: each record's message
   is read with the function `pointed` gives, made once in a statement

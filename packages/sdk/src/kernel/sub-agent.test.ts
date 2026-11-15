@@ -4,6 +4,7 @@ import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { JournalStorageError, OpenSession, SessionId } from "@xandreed/core/kernel"
 import { callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, scriptedModel, sessions } from "./index.js"
+import type { OwnTools } from "./index.js"
 import { Helper } from "./testing.port.js"
 
 /*
@@ -14,8 +15,12 @@ import { Helper } from "./testing.port.js"
  * whose result names the child. `docs/kernel.md` quotes the helper.
  */
 
-/** One turn of an agent in any session: the tools lesson's loop, with its system text and tools given. */
-const agentTurn = <Tools extends Record<string, Tool.Any>>(system: string, toolkit: Toolkit.WithHandler<Tools>) =>
+/**
+ * One turn of an agent in any session: the tools lesson's loop, with its system text and tools given. A loop
+ * written over any toolkit asks for the toolkit's own type (`OwnTools`), as `callTool` does: what its tools
+ * declare is in that type, and is what this turn then needs.
+ */
+const agentTurn = <Tools extends Record<string, Tool.Any>>(system: string, toolkit: Toolkit.WithHandler<Tools> & OwnTools<Tools>) =>
   (session: OpenSession, message: string) => Effect.gen(function* () {
     const memory = yield* Memory
     const model = yield* LanguageModel.LanguageModel
