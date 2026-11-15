@@ -1575,6 +1575,92 @@ test("a host's program under test: a sum is worked out by the tool, one call wit
 - **A client draws from the same fold.** The learn track's Context tab
   builds a turn's steps from it.
 
+## When the model fails: a planned call
+
+A model call fails: a rate limit, a provider's own error, a lost
+connection. A host tries it again a moment later, then hands it to another
+model, with Effect's `ExecutionPlan` (ADR 0015). Each step of a plan
+provides a model and says how often to try it, when, and while what holds;
+`retryable` says which failures are worth another try:
+
+<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#plan -->
+
+```ts
+// The plan: try the preferred model up to three times while its failure is worth another try, a second apart;
+// then hand the call to the spare, once.
+const planOf = (preferred: Layer.Layer<LanguageModel.LanguageModel>, spare: Layer.Layer<LanguageModel.LanguageModel>) =>
+  ExecutionPlan.make(
+    { provide: preferred, attempts: 3, schedule: Schedule.spaced("1 second"), while: retryable },
+    { provide: spare },
+  )
+```
+
+The loop asks for its answer under the plan, through the kernel's
+`planned`, before `modelAnswer` reads it. The program then needs no model
+of its own: the plan's steps provide it.
+
+<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#loop -->
+
+```ts
+// The loop asks for its answer under the plan: the model it reads is whichever the plan's step provides.
+const answer = (plan: Plan, conversation: SessionId, message: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const memory = yield* Memory
+      const toolkit = yield* tools
+      const session = yield* (yield* Sessions).open(conversation)
+      yield* session.append(userMessage(message))
+      for (let step = 1; step <= 4; step++) {
+        const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...(yield* memory.context(session))])
+        const stream = LanguageModel.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" })
+        const said = yield* modelAnswer(stream.pipe(planned(plan)), session)
+        if (said.toolCalls.length === 0) return said.text
+        for (const call of said.toolCalls) yield* callTool(toolkit, call, session)
+      }
+      return "I stopped after 4 steps."
+    }),
+  )
+```
+
+A test runs it over scripted models that fail as their script says, and
+reads each attempt as it is said about the turn:
+
+<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#test -->
+
+```ts
+test("a model that fails once with a failure worth another try is tried again, and its answer is the turn's", async () => {
+  const ran = await run([{ _tag: "Fails", retryable: true }, { _tag: "Answers", pieces: ["It is 5."] }], [{ _tag: "Answers", pieces: ["Spare."] }], "What is 2 + 3?")
+  expect(Exit.isSuccess(ran.ended)).toBe(true)
+  expect(answerOf(ran.turn)).toBe("It is 5.")
+  // Said live about the turn, never stored: the preferred model's first attempt failed, its second answered.
+  expect(ran.attempts).toEqual(["started 0.1", "failed 0.1", "started 0.2", "succeeded 0.2"])
+  expect(ran.asked).toEqual([2, 0])
+})
+```
+
+- **An answer is made once.** `planned` holds what a model sends before its
+  first piece of text or call. An attempt that fails before then has handed
+  on nothing, and the plan tries it again or hands it on. Once a piece went
+  on, a failure is final for every step: the call fails with `AnswerCut`.
+  `Stream.withExecutionPlan` alone does not hold this: a step tries again
+  after a word, and the reader sees the word twice.
+- **An error the model reports in its stream** before any content fails
+  the attempt with `ModelAnswerFailed`, which `retryable` refuses, so the
+  plan hands the call on; after content, it cuts the answer (`AnswerCut`).
+  A step's `while` reads the model's failures and `ModelAnswerFailed`.
+- **Not tried again:** a failure `retryable` refuses (an unknown error, a
+  refused request), a defect, a reader that fails, and Stop, which ends the
+  wait between attempts at once. A prompt too long fails in the memory,
+  before the call.
+- **Attempts are live, never stored.** `plugin.model.attempt` (tagged
+  `trace`) says each attempt about its turn while it happens. A call that
+  was tried again and answered leaves the journal a call that answered at
+  once leaves. The answer's record names the model that answered when its
+  stream names itself.
+- **Each call of a turn is planned anew**, from the plan's first step.
+- **`ExecutionPlan` is marked unstable in Effect 4.0.7.** The kernel uses
+  it as it is, and its tests pin the behaviours the kernel relies on.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the
@@ -1636,6 +1722,7 @@ fail on a careless plugin written for it.
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
+| planned calls | none | nothing a host implements: a plan is Effect's, and `planned` a function over a stream. The scripted model fails as its script says |
 
 ## What the first cut leaves out, and the order it returns
 

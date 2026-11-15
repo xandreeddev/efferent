@@ -19,6 +19,16 @@ const answered = (
 ])
 
 const down = AiError.make({ module: "ScriptedModel", method: "streamText", reason: new AiError.UnknownError({ description: "the scripted model was told to fail" }) })
+const busy = AiError.make({ module: "ScriptedModel", method: "streamText", reason: new AiError.InternalProviderError({ description: "the scripted model was told to fail, and to be tried again" }) })
+
+/** A failure as the script says it: worth another try or not, after the start of an answer and some pieces or before anything. */
+const failing = (retryable: boolean, pieces: ReadonlyArray<string> | undefined): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => {
+  const failure = Stream.fail(retryable ? busy : down)
+  return pieces === undefined ? failure : Stream.concat(Stream.fromIterable<Response.StreamPartEncoded>([
+    { type: "text-start", id: "scripted" },
+    ...pieces.map((delta) => ({ type: "text-delta" as const, id: "scripted", delta })),
+  ]), failure)
+}
 
 /**
  * What a scripted model was sent, call by call: each message's role and text.
@@ -46,7 +56,8 @@ const sent = (prompt: Prompt.Prompt): ScriptedCalls[number] =>
 
 /**
  * A model that follows a script and calls no provider: call `n` streams
- * the script's `n`th answer, asks for its tools, or fails as it says, and calls past the
+ * the script's `n`th answer, asks for its tools, or fails as it says (worth another try or
+ * not, before anything or after some pieces), and calls past the
  * script's end repeat its last entry. It is what a test or an example runs
  * an agent on. `calls` is what it was sent so far.
  *
@@ -61,7 +72,7 @@ export const scriptedModel = Effect.fn("kernel.scripted_model")(function* (scrip
       const stream = step === undefined ? Stream.fail(down) : Match.valueTags(step, {
         Answers: ({ pieces }) => answered(pieces),
         Calls: ({ pieces, calls }) => answered(pieces, calls, all.length + 1),
-        Fails: (): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => Stream.fail(down),
+        Fails: ({ retryable, pieces }): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => failing(retryable === true, pieces),
       })
       return [stream, [...all, sent(options.prompt)]] as const
     })),

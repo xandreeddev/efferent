@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema } from "effect"
-import { Tool, Toolkit } from "effect/ai"
-import type { LanguageModel } from "effect/ai"
+import { Effect, ExecutionPlan, Layer, Schema, Stream } from "effect"
+import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel } from "@xandreed/core/kernel"
 import type { Core, JournalStorage, OpenSession, Sessions } from "@xandreed/core/kernel"
 import type { Memory } from "./contracts/memory/memory.port.js"
-import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, inbox, inProcessJournal, sessions, skills, windowMemory } from "./index.js"
-import type { Inbox, InvalidBudget, Skill, ToolNeeds } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, inbox, inProcessJournal, planned, retryable, sessions, skills, windowMemory } from "./index.js"
+import type { AnswerCut, Inbox, ModelAnswerFailed, InvalidBudget, Skill, ToolNeeds } from "./index.js"
 import { runningTurn } from "./contracts/turn/running-turn.entity.functions.js"
 import { testTurn } from "./testing.js"
 
@@ -216,6 +215,58 @@ const rememberingWithoutSessions = (session: OpenSession) => {
   return call
 }
 
+/*
+ * A model call under a plan (`planned`) needs the model of the plan's steps, not of the program: a plan whose step
+ * provides something else leaves the call needing a model, and a program that runs it with none does not compile.
+ * What else the call needs stays in its type, and its failures gain `AnswerCut`.
+ */
+const asked = LanguageModel.streamText({ prompt: Prompt.make("Hi.") })
+const plannedCall = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  asked.pipe(planned(ExecutionPlan.make({ provide: model, attempts: 2, while: retryable })), Stream.runDrain)
+
+const plannedComplete = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
+  const call: Effect.Effect<void, unknown> = plannedCall(model)
+  return call
+}
+
+const plannedWithoutAModel = (person: Layer.Layer<Approval>) => {
+  // @ts-expect-error the plan's only step provides `Approval`: the call still needs a model, and nothing gives one
+  const call: Effect.Effect<void, unknown> = asked.pipe(planned(ExecutionPlan.make({ provide: person })), Stream.runDrain)
+  return call
+}
+
+/** Its failures hold the cut the plan cannot retry; it needs nothing once the plan gave the model. */
+const plannedCut: Same<Extract<Stream.Error<ReturnType<typeof plannedStream>>, AnswerCut>, AnswerCut> = true
+const plannedStream = (model: Layer.Layer<LanguageModel.LanguageModel>) => asked.pipe(planned(ExecutionPlan.make({ provide: model })))
+const plannedNeeds: Same<Stream.Services<ReturnType<typeof plannedStream>>, never> = true
+/**
+ * A step's `while` reads what an attempt can fail with: the model's own failures, and `ModelAnswerFailed` when the
+ * model reports an error in its stream. One that reads the two compiles; one that reads only `AiError` does not.
+ */
+const plannedWhileTooNarrow = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  // @ts-expect-error `while` reads only an `AiError`: the attempt may fail with `ModelAnswerFailed` too
+  asked.pipe(planned(ExecutionPlan.make({ provide: model, attempts: 2, while: (error: AiError.AiError) => error.isRetryable })))
+
+const plannedWhileTyped = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  asked.pipe(planned(ExecutionPlan.make({ provide: model, attempts: 2, while: (error: AiError.AiError | ModelAnswerFailed) => AiError.isAiError(error) && error.isRetryable })))
+
+/**
+ * What a tool declares stays in a planned call's type: a model that runs the tools itself needs their handlers and
+ * what they declare; a loop that runs them with `callTool` asks for them there, and the call needs nothing more.
+ */
+const plannedByTheLoop = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  LanguageModel.streamText({ prompt: Prompt.make("Hi."), toolkit: askingTools, disableToolCallResolution: true }).pipe(planned(ExecutionPlan.make({ provide: model })))
+const plannedByTheLoopNeeds: Same<Stream.Services<ReturnType<typeof plannedByTheLoop>>, never> = true
+const plannedResolving = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  LanguageModel.streamText({ prompt: Prompt.make("Hi."), toolkit: askingTools }).pipe(planned(ExecutionPlan.make({ provide: model })))
+const plannedResolvingNeeds: Same<Stream.Services<ReturnType<typeof plannedResolving>>, Approval | CurrentTurn | Tool.HandlersFor<Toolkit.Tools<typeof askingTools>>> = true
+
+const plannedResolvingWithoutApproval = (model: Layer.Layer<LanguageModel.LanguageModel>, turn: Layer.Layer<CurrentTurn>) => {
+  // @ts-expect-error the tool the model runs declares `Approval`: the plan gives the model, and nothing gives that
+  const call: Effect.Effect<void, unknown> = Stream.runDrain(plannedResolving(model)).pipe(Effect.provide(Layer.mergeAll(askingLive, turn)))
+  return call
+}
+
 describe("a stack of layers", () => {
   test("type-level: a stack missing a part, or with a part below what it needs, does not compile where its type is annotated", () => {
     // The checks are the compiler's: this file compiles only because each incomplete stack is an error, and the complete one is not.
@@ -230,6 +281,11 @@ describe("a stack of layers", () => {
   test("type-level: a program that calls the tools that remember provides the sessions they write through", () => {
     expect([rememberingComplete, rememberingWithoutSessions]).toHaveLength(2)
     expect(rememberingNeeds).toBe(true)
+  })
+
+  test("type-level: a model call under a plan needs the model of the plan's steps, keeps what its tools declare, and fails with AnswerCut too", () => {
+    expect([plannedComplete, plannedWithoutAModel, plannedResolvingWithoutApproval, plannedWhileTooNarrow, plannedWhileTyped]).toHaveLength(5)
+    expect([plannedCut, plannedNeeds, plannedResolvingNeeds, plannedByTheLoopNeeds]).toEqual([true, true, true, true])
   })
 
   test("type-level: a host with skills provides what a skill's tool declares and that skill's handlers, loaded or not", () => {
