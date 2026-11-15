@@ -9,7 +9,7 @@ import { Option, Result } from "effect"
 import { messageOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import { chatRowsOf, emptyChat, hear, sent, showing } from "../../chat-model.ts"
-import { BEFORE_THIS_PAGE, emptyBoard, record, turnsOf, viewOf } from "../../trace-model.ts"
+import { BEFORE_THIS_PAGE, emptyBoard, record, turnNumbersOf, viewOf } from "../../trace-model.ts"
 import { callIds } from "../../models/call-ids.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
@@ -97,7 +97,7 @@ describe("lesson 7 on the page (the kernel, Echo)", () => {
     expect(second.replies()).toEqual(['Earlier you said: "My name is Ana.".'])
     // The Context tab: the turn from before the reload is there with what it stored, and says its prompt was not; the new one has its own.
     const board = second.heard.reduce((all, trace) => record(all, trace, 0), emptyBoard(second.runtime.conversation))
-    expect(turnsOf(board)).toEqual([1, 2])
+    expect(turnNumbersOf(board)).toEqual([1, 2])
     const [old, fresh] = [viewOf(board, 1), viewOf(board, 2)]
     expect([old.restored, fresh.restored]).toEqual([true, false])
     expect(old.steps.map((step) => [step.id, step.state])).toEqual([

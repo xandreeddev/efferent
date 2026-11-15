@@ -5,7 +5,7 @@
 // Hovering a row lights the same record everywhere; a step lights what it
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
-import { BEFORE_THIS_PAGE, emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnsOf, viewOf } from "../trace-model.ts"
+import { BEFORE_THIS_PAGE, emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnNumbersOf, viewOf } from "../trace-model.ts"
 import type { Board, Boards, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
@@ -131,13 +131,13 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   let callsSeen = false
 
   const shownTurn = (): Option.Option<number> => {
-    const turns = turnsOf(board)
+    const turns = turnNumbersOf(board)
     return Option.orElse(Option.filter(selected, (turn) => turns.includes(turn)), () => Option.fromNullishOr(turns.at(-1)))
   }
 
   // ── turns ────────────────────────────────────────────────────────────────
   const renderTurns = (current: number) => {
-    patch(turnsBox, turnsOf(board).map((turn): Item => {
+    patch(turnsBox, turnNumbersOf(board).map((turn): Item => {
       const view = viewOf(board, turn)
       const state = Option.match(view.closed, { onNone: () => "open", onSome: (text) => (text.startsWith("Completed") ? "done" : "failed") })
       return [keyOf(turn, state, turn === current), () => {
@@ -145,7 +145,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         `Turn ${turn}`, el("span", { class: "tr-turn-mark", "aria-hidden": "true" }, state === "open" ? "…" : state === "done" ? "✓" : "✕"))
       button.addEventListener("click", () => {
         selected = Option.some(turn)
-        follow.checked = turn === turnsOf(board).at(-1)
+        follow.checked = turn === turnNumbersOf(board).at(-1)
         step = Option.none()
         pickedCall = Option.none()
         paint()
@@ -442,15 +442,15 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       const row = sessionRow(all)
       if (row.length !== before.length || row.some((tab, index) => tab.label !== before[index]?.label)) renderSessions()
       // A new turn of the chat while another session is shown: follow it back to the chat, unless the reader turned that off.
-      if (session === all.chat && session !== shownSession && follow.checked && turnsOf(filed).length !== turnsOf(known ?? filed).length) {
+      if (session === all.chat && session !== shownSession && follow.checked && turnNumbersOf(filed).length !== turnNumbersOf(known ?? filed).length) {
         showSession(all.chat)
         return
       }
       if (session !== shownSession) return
-      const turnsBefore = turnsOf(board).length
+      const turnsBefore = turnNumbersOf(board).length
       board = filed
       // A new turn: follow it, unless the reader picked one to look at.
-      if (follow.checked && turnsOf(board).length !== turnsBefore) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
+      if (follow.checked && turnNumbersOf(board).length !== turnsBefore) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
       paintSoon()
     },
     reset: (session) => {
@@ -474,6 +474,6 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       logCount.textContent = "0"
       paintSoon()
     },
-    hasTurns: () => turnsOf(all.boards.get(all.chat) ?? board).length > 0,
+    hasTurns: () => turnNumbersOf(all.boards.get(all.chat) ?? board).length > 0,
   }
 }

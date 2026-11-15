@@ -110,6 +110,11 @@ checklist, the records have the reasons.
       (`memorySession`), passes over one of another journal format, and lists again
       after it creates one. A host whose store
       outlives its process recovers that session with its conversation.
+- [ ] What a turn wrote is read back with `turnsOf(journal)`: a host's test runs its
+      own program over `scriptedModel` and a journal kept in the process, then checks the
+      turns; a client draws a turn from the same fold. Never fold a journal's turns by
+      hand in a test or a client (filters by record name, results matched by id), and
+      never build a context from `turnsOf`: it passes over records a memory must refuse.
 - [ ] What a tool declares in `dependencies` is held by the compiler: a function that
       runs a model's call is typed over every tool of the toolkit (`ToolNeeds<Tools>`),
       never over the call's name, and gives its effect an explicit type. The model's
