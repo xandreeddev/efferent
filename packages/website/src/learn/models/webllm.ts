@@ -242,7 +242,7 @@ export const loadWebLlm = async (
     return run
   }
 
-  const model = makeBrowserModel({
+  const model = makeBrowserModel(choice.id, {
     generateText: (options) => Effect.tryPromise({
       try: () => { issued += 1; const ticket = issued; return exclusive(async () => {
         const messages = alternating(toChatMessages(options.prompt))

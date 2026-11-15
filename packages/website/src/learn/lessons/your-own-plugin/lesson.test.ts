@@ -85,16 +85,21 @@ describe("lesson 3 on the page (the kernel, Echo)", () => {
     const stored = (await runtime.journal()).filter((record) => record.name === assistantMessageEvent.name)
       .map((record) => (record.data as { readonly usage?: { readonly outputTokens?: number } }).usage?.outputTokens)
     expect(stored).toEqual([30, 6, 10])
+    // And the model that answered, which names itself as its answer starts.
+    const named = (await runtime.journal()).filter((record) => record.name === assistantMessageEvent.name)
+      .map((record) => (record.data as { readonly model?: string }).model)
+    expect(named).toEqual(["echo", "echo", "echo"])
   })
 
   test("a model on your machine, which writes its call as text: the loop runs the call and stores both answers with their usage", async () => {
-    // What a GPU or CPU model's adapter streams (start, pieces, end, finish with the provider's usage), given tools
+    // What a GPU or CPU model's adapter streams (start, pieces, end, finish with the provider's usage; the page names
+    // the model before it), given tools
     // by the text protocol: the first answer is a call written as a block, the second reads its result.
     const answers = ['Let me check. <tool_call>{"name":"calculator","arguments":{"a":12,"op":"*","b":3}}</tool_call>', "It is 36."]
     let asked = 0
     const written: LoadedModel = {
       choice: { ...echoChoice, id: "written", label: "Written" },
-      model: makeBrowserModel({
+      model: makeBrowserModel("written", {
         generateText: () => Effect.die("this lesson streams"),
         streamText: () => {
           const text = answers[asked++] ?? "Nothing more."
@@ -116,6 +121,8 @@ describe("lesson 3 on the page (the kernel, Echo)", () => {
     expect(records[3]?.message).toMatchObject({ _tag: "Assistant", text: "It is 36.", toolCalls: [] })
     const usage = records.filter((record) => record.name === assistantMessageEvent.name).map((record) => (record.data as { readonly usage?: object }).usage)
     expect(usage).toEqual([{ inputTokens: 101, outputTokens: 10 }, { inputTokens: 102, outputTokens: 20 }])
+    const named = records.filter((record) => record.name === assistantMessageEvent.name).map((record) => (record.data as { readonly model?: string }).model)
+    expect(named).toEqual(["written", "written"])
     expect(statuses(heard).at(-1)).toBe("turn 1: ~30 tok, ~30 in all")
   })
 

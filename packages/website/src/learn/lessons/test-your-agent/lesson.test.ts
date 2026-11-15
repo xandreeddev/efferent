@@ -285,7 +285,7 @@ describe("lesson 12 on the page (the kernel, Echo)", () => {
     let cancelled = 0
     const stalled: LoadedModel = {
       choice: { id: "stalled", kind: "echo", label: "Stalled", blurb: "A model that never ends its answer.", memoryMB: 0 },
-      model: makeBrowserModel({
+      model: makeBrowserModel("stalled", {
         generateText: () => Effect.die("the stalled model only streams"),
         streamText: () => modelStream("Stalled", (sink) => { started++; sink.push("One"); return () => { cancelled++ } }) as never,
       }, "native"),

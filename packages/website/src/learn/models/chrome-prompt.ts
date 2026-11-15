@@ -80,7 +80,7 @@ export const loadChrome = async (onProgress: (progress: LoadProgress) => void, a
     return api.create({ ...languages, ...(history.length > 0 ? { initialPrompts: history } : {}), signal }).then((session) => ({ session, input }))
   }
 
-  const model = makeBrowserModel({
+  const model = makeBrowserModel(chromeChoice.id, {
     generateText: (options) => Effect.tryPromise({
       try: async () => {
         const messages = toChatMessages(options.prompt)
