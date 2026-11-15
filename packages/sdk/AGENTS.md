@@ -231,6 +231,8 @@ it: `./kernel` is a `restricted` subpath.
   a `.usecase.ts` and an entity's functions hold no `Layer`.
 - A plugin is a folder under `plugins/`: `journal-in-process`
   (`inProcessJournal`), `journal-web-storage` (`webStorageJournal`: a
+  branch (`fork`) written events first and its header last, the events
+  taken back when a write is refused; a
   browser's `localStorage` as a value with five members, `KeyValueStore`,
   so it names no browser type; every call is one synchronous step in an
   `Effect.try`; a new plugin folder gets its layer in `foundry.config.ts`),
@@ -411,7 +413,11 @@ it: `./kernel` is a `restricted` subpath.
   (a host's program run over a scripted model and read back with `turnsOf`,
   quoted by `docs/kernel.md`: a call with its numbers and its result, each
   message a turn of its own, a failed turn's outcome, a failed result named
-  by its record), `model-plans` (a host's loop under a plan, quoted by
+  by its record), `branches` (a conversation branched after its first turn
+  and asked again, quoted by `docs/kernel.md`; the three stock memories, a
+  summary stored before the cut, an approval for good and `readResult`
+  reading a branch as the conversation at the cut),
+  `model-plans` (a host's loop under a plan, quoted by
   `docs/kernel.md`: a retry that answers, a failure handed to the spare, an
   answer cut after a word, each call of a turn planned anew), `approvals` (a tool that asks, quoted by `docs/kernel.md`: approved,
   the answer stored between the call and its result; refused, the fixed

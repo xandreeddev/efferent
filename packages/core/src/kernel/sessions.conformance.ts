@@ -85,8 +85,14 @@ const watched: ReadonlyArray<EventDefinition<Schema.Json>> = [turnStartedEvent, 
  * turn this plugin holds is refused (`recover`); a turn another writer closed in the store stores nothing
  * more: its append is refused, its close adds no second end and is heard
  * once, and the next turn opens (`recovered-writer`); a journal of another
- * format reads back and is listed, and no turn opens or is recovered on it
- * (`format`).
+ * format reads back and is listed, and no turn opens, is recovered or is
+ * branched on it (`format`); a branch is cut at the end of the last closed
+ * turn, never in a turn still open, or at the end of the turn asked for,
+ * with the same owner and its header saying where it was cut; its journal
+ * is that much of the session's, as stored, nothing is announced, its next
+ * turn follows the copied one, the session it came from goes on unchanged,
+ * and a turn not closed, or a session with no closed turn, is refused with
+ * `NoClosedTurn` (`fork`).
  *
  * @public
  */
@@ -404,8 +410,40 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const mismatch = (error: { readonly _tag: string; readonly reason?: string }) => error._tag === "SessionRefused" && error.reason === "FormatMismatch"
       yield* refuses("format", "a turn on a journal of another format", sessions.turn(other, () => Effect.void), mismatch)
       yield* refuses("format", "a recovery of a journal of another format", sessions.recover(other), mismatch)
+      yield* refuses("format", "a branch of a journal of another format", sessions.fork(other), mismatch)
       const after = yield* sessions.read(other)
       yield* expect("format", show(names(after.events)) === show([STARTED]), `the refused calls left ${show(names(after.events))} in a journal of another format`)
+    })),
+    check("a branch starts as the session up to a closed turn, and each goes on alone", "fork", ({ sessions, seen }) => Effect.gen(function* () {
+      const id = yield* sessions.create({ owner })
+      yield* sessions.turn(id, (session) => session.append(note("one")))
+      yield* sessions.turn(id, (session) => session.append(note("two")))
+      const noClosed = (error: { readonly _tag: string; readonly reason?: string }) => error._tag === "SessionRefused" && error.reason === "NoClosedTurn"
+      yield* refuses("fork", "a branch of a session with no closed turn", Effect.flatMap(sessions.create({ owner }), (fresh) => sessions.fork(fresh)), noClosed)
+      // A turn open in the session: a branch is cut before it, at the end of the last closed turn.
+      const third = yield* sessions.open(id)
+      yield* third.append(note("three"))
+      const heard = (yield* seen).length
+      const branch = yield* sessions.fork(id)
+      yield* expect("fork", (yield* seen).length === heard, `a branch announced ${show(names((yield* seen).slice(heard)))}: the records it copies were heard when they were stored`)
+      const source = yield* sessions.read(id)
+      const copied = yield* sessions.read(branch)
+      const cut = source.events.filter((event) => event.name === ENDED)[1]?.seq ?? -1
+      yield* expect("fork", show(copied.events) === show(source.events.filter((event) => event.seq <= cut)),
+        `a branch of a session with turn 3 open read ${show(names(copied.events))}, not the session's records up to the end of turn 2 as stored`)
+      yield* expect("fork", copied.header.owner === source.header.owner && copied.header.branch?.of === id && copied.header.branch?.through === cut,
+        `a branch's header read ${show(copied.header)}, not the session's owner and a cut at ${cut} of ${id}`)
+      yield* refuses("fork", "a branch at turn 3, which is open", sessions.fork(id, { through: TurnNumber.make(3) }), noClosed)
+      yield* third.append(note("still"))
+      // The branch's next turn follows the copied one; the session's own turn goes on and closes.
+      const next = yield* sessions.turn(branch, (session) => Effect.succeed(session.turn))
+      yield* expect("fork", next === 3, `the first turn of a branch cut after turn 2 was numbered ${next}, not 3`)
+      const early = yield* sessions.fork(id, { through: TurnNumber.make(1) })
+      const firstTurn = yield* sessions.read(early)
+      yield* expect("fork", show(firstTurn.events) === show(source.events.filter((event) => event.turn === 1)), `a branch at turn 1 read ${show(names(firstTurn.events))}`)
+      const after = yield* sessions.read(id)
+      yield* expect("fork", show(names(after.events.filter((event) => event.turn === 3))) === show([STARTED, noted.name, noted.name]),
+        `the session's open turn read ${show(names(after.events.filter((event) => event.turn === 3)))} after it was branched`)
     })),
   ]
 }

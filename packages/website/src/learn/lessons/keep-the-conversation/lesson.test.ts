@@ -200,7 +200,7 @@ describe("lesson 7 on the page (the kernel, Echo)", () => {
   test("Run the kit: the store as written passes every check, a second handle on the same storage included", async () => {
     const { runtime } = await page(storageOf())
     const ran = Result.getOrThrow(await runtime.runKit("store", SOURCES))
-    expect(ran.map((check) => [check.id, check.passed])).toEqual([["create", true], ["append", true], ["conflict", true], ["read-from", true], ["missing", true], ["list", true], ["reopens", true]])
+    expect(ran.map((check) => [check.id, check.passed])).toEqual([["create", true], ["append", true], ["conflict", true], ["read-from", true], ["missing", true], ["list", true], ["fork", true], ["reopens", true]])
   })
 
   test("a store with no place check fails the kit's check of a conflict, which says what it saw", async () => {

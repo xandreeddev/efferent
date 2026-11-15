@@ -1433,8 +1433,8 @@ places, or replies a caller waits for one by one. Its rules:
 
 ## A store that outlives its process
 
-A store is a part like any other: `JournalStorage` is four calls
-(`create`, `append`, `read`, `list`) and a kit. `inProcessJournal()` keeps
+A store is a part like any other: `JournalStorage` is five calls
+(`create`, `append`, `read`, `list`, and `fork`, for a branch) and a kit. `inProcessJournal()` keeps
 journals in the process, and they are gone with it. `webStorageJournal`
 keeps them in a browser's `localStorage`: one key for a session's header,
 one for each of its events, so an append writes one key. It is handed the
@@ -1486,6 +1486,64 @@ out at its next write, which reads the journal and is refused
 holds for its own. A turn this process holds is never recovered by it
 (`SessionBusy`). The session a header names as its parent is not checked
 to exist: the parent may be in another store.
+
+## Branches
+
+A branch continues a conversation from an earlier turn and keeps the
+original (ADR 0016). It is a session whose journal starts as a copy of
+the other's, up to the end of a closed turn, made by the store in one step
+(`JournalStorage.fork`): each record as it was stored, its place, turn and
+time kept. `Sessions.fork(id, { through })` cuts at the end of turn
+`through`, or of the last closed turn; the branch's next turn follows it:
+
+<!-- pinned: packages/sdk/src/kernel/branches.test.ts#branch -->
+
+```ts
+// A conversation of two turns, then a branch cut after the first: asked the second question another way.
+// The original keeps its second turn; the branch has its own.
+const branched = Effect.gen(function* () {
+  const all = yield* Sessions
+  const conversation = yield* all.create({ owner: "host" })
+  yield* answer(conversation, "What is 2 + 3?")
+  yield* answer(conversation, "Thanks.")
+  const branch = yield* all.fork(conversation, { through: TurnNumber.make(1) })
+  yield* answer(branch, "And 2 + 4?")
+  return { original: yield* all.read(conversation), branch: yield* all.read(branch) }
+})
+```
+
+<!-- pinned: packages/sdk/src/kernel/branches.test.ts#test -->
+
+```ts
+test("a branch starts as the conversation up to the turn it was cut after, and goes on alone", async () => {
+  const { model, calls } = await Effect.runPromise(scriptedModel(script))
+  const ran = await Effect.runPromise(Effect.flatMap(branched, (both) => Effect.map(calls, (sent) => ({ ...both, sent })))
+    .pipe(Effect.provide(Layer.mergeAll(model, toolsLive, flatMemory, store))))
+  expect(told(ran.original.events)).toEqual([[1, ["What is 2 + 3?"], "It is 5."], [2, ["Thanks."], "You are welcome."]])
+  expect(told(ran.branch.events)).toEqual([[1, ["What is 2 + 3?"], "It is 5."], [2, ["And 2 + 4?"], "It is 6."]])
+  // The branch's first turn is the original's, record for record, as it was stored.
+  const firstTurn = ran.original.events.filter((event) => event.turn === 1)
+  expect(ran.branch.events.filter((event) => event.turn === 1)).toEqual(firstTurn)
+  expect([ran.branch.header.branch?.of, ran.branch.header.branch?.through]).toEqual([ran.original.header.id, firstTurn.at(-1)?.seq])
+  // Asked on the branch, the model was sent the first turn and the new question: never "Thanks.".
+  expect(ran.sent.at(-2)?.map((message) => message.text)).toEqual(["Use a tool when it helps.", "What is 2 + 3?", 'add({"a":2,"b":3})', "→ 5", "It is 5.", "And 2 + 4?"])
+})
+```
+
+- **Only a closed turn is a cut.** A turn still open is never copied: the
+  session goes on with it past the cut. A turn not closed, or a session
+  with no closed turn, is refused (`NoClosedTurn`).
+- **The header says where it was cut**: `branch: { of, through }`. `parent`
+  still means a sub-agent's caller. The field is optional, so the journal
+  format is the same.
+- **Nothing is announced**: the records were heard when they were stored.
+- **A branch carries what was stored before the cut**: an approval given
+  for good, the skills loaded, a summary a memory kept. Facts live in the
+  memory session, which every conversation shares, so a branch reads the
+  same ones.
+- **Every part reads it unchanged.** The test beside these holds it for the
+  three stock memories, a stored summary, an approval for good and
+  `readResult`.
 
 ## Testing a host
 

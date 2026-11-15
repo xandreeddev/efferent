@@ -174,7 +174,7 @@ describe("lesson 7's displayed program", () => {
       })
     }
     const learners = kit((storage) => store(storage, { prefix: "agent:" }))
-    expect(learners.map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list", "reopens"])
+    expect(learners.map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list", "fork", "reopens"])
     expect(await failedChecks(learners)).toEqual([])
     expect(await failedChecks(kit((storage) => webStorageJournal(storage, { prefix: "agent:" })))).toEqual([])
   })

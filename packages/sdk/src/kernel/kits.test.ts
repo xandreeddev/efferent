@@ -72,7 +72,7 @@ const built = <I, S, E, R>(key: Context.Key<I, S>, layer: Layer.Layer<I, E, R>, 
 
 describe("the storage kit", () => {
   const stock: JournalStorageSubject = { open: built(JournalStorage, inProcessJournal(), Layer.empty) }
-  const every = ["create", "append", "conflict", "read-from", "missing", "list"]
+  const every = ["create", "append", "conflict", "read-from", "missing", "list", "fork"]
 
   test("has the checks its doc comment lists, and passes on the in-process journal plugin", async () => {
     expect(ids(journalStorageConformance(stock))).toEqual(every)
@@ -86,12 +86,54 @@ describe("the storage kit", () => {
         append: (_id, expectedSeq, turn, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, turn, ...event }),
         read: (id) => Effect.succeed({ header: { id, owner: Owner.make("nobody"), createdAt: 0, format: 1 }, events: [] }),
         list: Effect.succeed([]),
+        fork: () => Effect.void,
       })),
     }
     expect(await failedChecks(journalStorageConformance(forgetful))).toEqual(sorted(every))
   })
 
+  test("fails the check of a branch on a store that makes one by creating it and appending a copy of each event", async () => {
+    // The design ADR 0016 rejected: places, turns and envelopes are kept, but each copy is stamped with the time it was
+    // copied at. The copy is a draft of the kit's own record, so only the time can differ.
+    const noted = storedEvent("kit", "noted", { data: Schema.Json, skippable: true, tags: ["kit.noted"] })
+    const copyOf = (event: StoredEvent): StoredDraft => stored(noted, event.data, event.message === undefined ? {} : { message: event.message })
+    const appending: JournalStorageSubject = {
+      open: Effect.map(built(JournalStorage, inProcessJournal(), Layer.empty), (storage) => JournalStorage.of({
+        ...storage,
+        fork: (header) => Effect.flatMap(storage.read(header.branch.of), (from) => Effect.andThen(
+          storage.create(header),
+          Effect.forEach(from.events.filter((event) => event.seq <= header.branch.through), (event) =>
+            storage.append(header.id, Seq.make(event.seq - 1), event.turn, copyOf(event)), { concurrency: 1, discard: true }),
+        )),
+      })),
+    }
+    expect(await failedChecks(journalStorageConformance(appending))).toEqual(["fork"])
+  })
+
   const webOver = (store: KeyValueStore, prefix = "kit:") => built(JournalStorage, webStorageJournal(store, { prefix }), Layer.empty)
+
+  test("a branch the storage refuses part way is taken back: no key under its id, and the session it was cut from as it was", async () => {
+    for (const refused of ["s-branch:2", "s-branch:header"]) {
+      const values = memoryStore()
+      // A storage that is full when the branch's event 2, or its header, is written.
+      const full: KeyValueStore = { ...values, get length() { return values.length }, setItem: (key, value) => {
+        if (key === `kit:${refused}`) Result.getOrThrowWith(Result.fail("the storage is full"), (why) => new Error(why))
+        values.setItem(key, value)
+      } }
+      const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+        const storage = yield* webOver(full)
+        const source = SessionId.make("s-source")
+        yield* storage.create({ id: source, owner: Owner.make("learner"), createdAt: 1, format: JOURNAL_FORMAT })
+        yield* Effect.forEach([0, 1, 2], (at) => storage.append(source, Seq.make(at), TurnNumber.make(1), stored(storedEvent("kit", "noted", { data: Schema.Json, skippable: true, tags: ["kit.noted"] }), { at })), { concurrency: 1, discard: true })
+        const before = yield* storage.read(source)
+        const refusal = yield* Effect.flip(storage.fork({ id: SessionId.make("s-branch"), owner: Owner.make("learner"), createdAt: 2, format: JOURNAL_FORMAT, branch: { of: source, through: Seq.make(3) } }))
+        const after = yield* storage.read(source)
+        return { reason: refusal.reason, unchanged: JSON.stringify(after) === JSON.stringify(before), listed: (yield* storage.list).map((header) => String(header.id)) }
+      })))
+      const left = Array.from({ length: values.length }, (_, index) => values.key(index)).filter((key) => key?.startsWith("kit:s-branch"))
+      expect({ refused, ...outcome, left }).toEqual({ refused, reason: "Unavailable", unchanged: true, listed: ["s-source"], left: [] })
+    }
+  })
   /** The web storage journal: a fresh storage per check, and two handles on one storage for the check of a reopening. */
   const web: JournalStorageSubject = {
     open: Effect.suspend(() => webOver(memoryStore())),
@@ -159,7 +201,7 @@ describe("the sessions kit", () => {
   const changed = (change: (inner: SessionsShape, core: CoreShape, storage: StorageShape) => SessionsShape): SessionsSubject => ({
     open: (core) => Effect.map(stockOver(core), ({ sessions: inner, storage }) => ({ sessions: change(inner, core, storage), storage })),
   })
-  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "not-a-draft", "publish", "missing", "invalid-session", "list", "recover", "recovered-writer", "format"]
+  const every = ["create", "turn", "announce", "busy", "isolated", "open", "closes", "interrupt", "listener", "close-listener", "ordered", "closed-append", "reserved-name", "not-a-draft", "publish", "missing", "invalid-session", "list", "recover", "recovered-writer", "format", "fork"]
 
   test("passes on the stock session plugin over the web storage journal", async () => {
     const overWeb: SessionsSubject = { open: (core) => stockOver(core, webStorageJournal(memoryStore(), { prefix: "kit:" })) }
@@ -197,7 +239,7 @@ describe("the sessions kit", () => {
         const parts = Layer.merge(onCore(core), Layer.succeed(JournalStorage, storage))
         const pool = [yield* built(Sessions, sessions(), parts), yield* built(Sessions, sessions(), parts)]
         const turns = yield* Ref.make(0)
-        const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), list: Effect.die("empty pool"), recover: () => Effect.die("empty pool"), open: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool") }))
+        const next = Effect.map(Ref.getAndUpdate(turns, (count) => count + 1), (count): SessionsShape => pool[count % 2] ?? pool[0] ?? Sessions.of({ create: () => Effect.die("empty pool"), read: () => Effect.die("empty pool"), list: Effect.die("empty pool"), recover: () => Effect.die("empty pool"), open: () => Effect.die("empty pool"), turn: () => Effect.die("empty pool"), fork: () => Effect.die("empty pool") }))
         return { storage, sessions: Sessions.of({
           create: (input) => Effect.flatMap(next, (one) => one.create(input)),
           read: (id) => Effect.flatMap(next, (one) => one.read(id)),
@@ -205,6 +247,7 @@ describe("the sessions kit", () => {
           recover: (id) => Effect.flatMap(next, (one) => one.recover(id)),
           open: (id) => Effect.flatMap(next, (one) => one.open(id)),
           turn: (id, body) => Effect.flatMap(next, (one) => one.turn(id, body)),
+          fork: (id, options) => Effect.flatMap(next, (one) => one.fork(id, options)),
         }) }
       }),
     }),
@@ -251,6 +294,20 @@ describe("the sessions kit", () => {
     })),
     // It lists only the sessions that have no parent.
     rootsOnly: (): SessionsSubject => changed((inner) => Sessions.of({ ...inner, list: Effect.map(inner.list, (headers) => headers.filter((header) => header.parent === undefined)) })),
+    // A branch "helpfully" takes the whole journal, the turn still open in it included.
+    wholeBranch: (): SessionsSubject => changed((inner, _core, storage) => Sessions.of({
+      ...inner,
+      fork: (id) => Effect.flatMap(storage.read(id), (journal) => Effect.as(
+        storage.fork({ ...journal.header, id: SessionId.make(`${id}-whole`), createdAt: journal.header.createdAt + 1, branch: { of: id, through: Seq.make(journal.events.length) } }),
+        SessionId.make(`${id}-whole`),
+      )),
+    })),
+    // A branch announces every record it copies, as if each were stored again.
+    loudBranch: (): SessionsSubject => changed((inner, core) => Sessions.of({
+      ...inner,
+      fork: (id, options) => Effect.tap(inner.fork(id, options), (branch) => Effect.flatMap(inner.read(branch), (journal) =>
+        Effect.forEach(journal.events, (event) => Effect.ignore(core.publish(announced({ id: branch }, event)), { log: "Debug", message: "a copied record announced" }), { concurrency: 1, discard: true }))),
+    })),
     // It takes every session for a free one: a turn left open is left open.
     neverRecovering: (): SessionsSubject => changed((inner) => Sessions.of({ ...inner, recover: () => Effect.succeed(Option.none()) })),
     // It takes a journal it cannot read for a free session.
@@ -287,6 +344,8 @@ describe("the sessions kit", () => {
           recover: () => Effect.succeed(Option.none()),
           open: (id) => Effect.succeed(sessionOf(id)),
           turn: (id, body) => body(sessionOf(id)),
+          // A branch is the session itself.
+          fork: (id) => Effect.succeed(id),
         }) }
       }),
     }),
@@ -308,11 +367,14 @@ describe("the sessions kit", () => {
       neverRecovering: await failedChecks(sessionsConformance(careless.neverRecovering())),
       formatBlind: await failedChecks(sessionsConformance(careless.formatBlind())),
       insisting: await failedChecks(sessionsConformance(careless.insisting())),
+      wholeBranch: await failedChecks(sessionsConformance(careless.wholeBranch())),
+      loudBranch: await failedChecks(sessionsConformance(careless.loudBranch())),
     }
     // Its events, a published live one included, go to a Core of its own.
     // The end a recovery stores, and the end another writer stored, are announced there too.
     expect(failed.private).toEqual(["announce", "close-listener", "listener", "ordered", "publish", "recover", "recovered-writer"])
-    expect(failed.detached).toEqual(["open"])
+    // Its turn opened in a scope is already closed: a branch cut "before the open turn" takes that turn too.
+    expect(failed.detached).toEqual(["fork", "open"])
     expect(failed.oneFlag).toEqual(["isolated"])
     // A recovery asked of the plugin that does not hold the open turn closes it under the one that does.
     expect(failed.pooled).toEqual(["ordered", "recover"])
@@ -327,6 +389,9 @@ describe("the sessions kit", () => {
     expect(failed.neverRecovering).toEqual(["format", "recover"])
     expect(failed.formatBlind).toEqual(["format"])
     expect(failed.insisting).toEqual(["recovered-writer"])
+    // It reads no format either: a journal of another format is branched too.
+    expect(failed.wholeBranch).toEqual(["fork", "format"])
+    expect(failed.loudBranch).toEqual(["fork"])
     expect(failed.turnless).toEqual(sorted(every))
   }, 60_000)
 })

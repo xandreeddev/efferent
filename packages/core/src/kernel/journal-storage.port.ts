@@ -3,7 +3,7 @@ import type { Effect } from "effect"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import type { Seq, SessionId, TurnNumber } from "./ids.entity.js"
 import type { Journal, JournalStorageError } from "./journal.entity.js"
-import type { SessionHeader } from "./session.entity.js"
+import type { Branch, SessionHeader } from "./session.entity.js"
 
 /**
  * Where journals are kept: a header and its events per session, in order.
@@ -11,7 +11,8 @@ import type { SessionHeader } from "./session.entity.js"
  * refusal is a `JournalStorageError`: a session created twice (`SessionExists`),
  * one never created (`SessionMissing`), an append that expected another
  * journal than the stored one (`SeqConflict`), which writes nothing, a
- * stored value that is not a journal's (`Unreadable`).
+ * stored value that is not a journal's (`Unreadable`), and a branch cut past
+ * the end of the journal it is cut from (`SeqConflict`).
  * `journalStorageConformance` is the contract as runnable checks.
  */
 export class JournalStorage extends Context.Service<JournalStorage, {
@@ -30,4 +31,13 @@ export class JournalStorage extends Context.Service<JournalStorage, {
    * sessions here.
    */
   readonly list: Effect.Effect<ReadonlyArray<SessionHeader>, JournalStorageError>
+  /**
+   * Store a branch (ADR 0016): a new session, `header`, whose journal starts as the events of `header.branch.of` up
+   * to `header.branch.through`, each as it was stored (its place, turn, time and envelope). In one step: a store
+   * that fails part way leaves no session under `header.id`, and the session it copies from is unchanged. Refuses
+   * an id that already has a header (`SessionExists`), a session to copy from that does not exist
+   * (`SessionMissing`), and a cut past its last event (`SeqConflict`). Nothing is announced: a store has no events
+   * to publish.
+   */
+  readonly fork: (header: SessionHeader & { readonly branch: Branch }) => Effect.Effect<void, JournalStorageError>
 }>()("@xandreed/core/kernel/JournalStorage") {}

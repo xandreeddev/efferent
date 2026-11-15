@@ -37,5 +37,15 @@ export const inProcessJournal = (): Layer.Layer<JournalStorage> => Layer.effect(
         : Effect.succeed(from === undefined ? journal : { header: journal.header, events: journal.events.filter((event) => event.seq >= from) })
     }),
     list: Effect.map(Ref.get(journals), (all) => Arr.sort(Array.from(all.values(), (journal) => journal.header), byCreation)),
+    // A branch: the events it is cut from, as they were stored, under a new header, in one change of the map.
+    fork: (header) => Ref.modify(journals, (all): Decided<void> => {
+      if (all.has(header.id)) return [Effect.fail(new JournalStorageError({ reason: "SessionExists", message: `session ${header.id} exists` })), all]
+      const from = all.get(header.branch.of)
+      if (from === undefined) return [Effect.fail(missing(header.branch.of)), all]
+      if (header.branch.through > from.events.length) {
+        return [Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: `the journal is at ${from.events.length}, not ${header.branch.through}` })), all]
+      }
+      return [Effect.void, new Map([...all, [header.id, { header, events: from.events.slice(0, header.branch.through) }]])]
+    }).pipe(Effect.flatten),
   })
 }))

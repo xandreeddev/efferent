@@ -251,6 +251,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     as the later call's, and now reads it as the first's: the two pair
     through one function. The memory kit's `pairs` check holds a memory
     to the case, and to which call is sent beside the result.
+  - Branches (`docs/adr/0016-a-branch-is-a-copy-cut-at-a-closed-turn.md`,
+    `docs/kernel.md`, "Branches"): `Sessions.fork(id, { through? })`
+    continues a conversation from the end of an earlier closed turn and
+    keeps the original. The branch is a session whose journal starts as a
+    copy of the other's, made by the store in one step: `JournalStorage`
+    gains a required call, `fork(header)`, which copies the events as they
+    were stored (place, turn, time), so a host's own store must add it. The
+    header gains an optional `branch: { of, through }` (`Branch`); the
+    journal format is the same. A turn not closed is refused with a new
+    reason, `NoClosedTurn`. Nothing is announced. Both kits gain a `fork`
+    check, and `cutOf` and `branchHeaderOf` are exported.
   - A model call that fails is tried again, then handed to another model,
     under Effect's `ExecutionPlan` (marked unstable in Effect 4.0.7),
     applied to the stream the loop asks for with `planned(plan)`
@@ -376,6 +387,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: lesson 7's store, the `JournalStorage` the learner writes over
+  `localStorage`, gains the contract's fifth call, `fork`, written events
+  first and header last. Its kit lists eight checks, `fork` among them, and
+  the store as written passes each. Lesson 7's page says five calls.
 - Docs site: the learn track's models name themselves. Each answer a page
   model streams (Echo, the GPU and CPU models, Chrome's Prompt API) starts
   with a `response-metadata` part that carries the model's id, as a

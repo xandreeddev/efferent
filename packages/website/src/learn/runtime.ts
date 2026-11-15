@@ -296,6 +296,7 @@ export class LessonRuntime {
       append: (id, expectedSeq, turn, event) => through((store) => store.append(id, expectedSeq, turn, event)),
       read: (id, from) => through((store) => store.read(id, from)),
       list: through((store) => store.list),
+      fork: (header) => through((store) => store.fork(header)),
     })
     const Base = sessions().pipe(Layer.provideMerge(Layer.succeed(JournalStorage, delegating)), Layer.provideMerge(kernel()))
     const base = await Effect.runPromise(Layer.buildWithScope(Base, root))

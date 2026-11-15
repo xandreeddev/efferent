@@ -32,7 +32,7 @@ const session = SessionId.make("kit-session")
 const stranger = SessionId.make("kit-stranger")
 const header: SessionHeader = { id: session, owner: Owner.make("kit-owner"), parent: SessionId.make("kit-parent"), createdAt: 1_767_225_600_000, format: JOURNAL_FORMAT }
 /** A header as a check compares it: its fields, whatever order a store gives their keys in. */
-const headerText = (one: SessionHeader): string => show([one.id, one.owner, one.parent ?? null, one.createdAt, one.format])
+const headerText = (one: SessionHeader): string => show([one.id, one.owner, one.parent ?? null, one.branch === undefined ? null : [one.branch.of, one.branch.through], one.createdAt, one.format])
 /** A header of another session, created at `createdAt`. */
 const headerAt = (id: string, createdAt: number): SessionHeader => ({ ...header, id: SessionId.make(id), createdAt })
 const turn = TurnNumber.make(1)
@@ -66,7 +66,13 @@ const refused = (id: string, what: string, reason: JournalStorageError["reason"]
  * events from there on, none past the end (`read-from`); a session never
  * created is missing to a read and to an append, beside one that reads
  * (`missing`); the header of every session is listed as it was given, by
- * creation time and then by id, and an empty store lists none (`list`).
+ * creation time and then by id, and an empty store lists none (`list`);
+ * a branch reads back with its header as given and the events of the
+ * session it is cut from up to its cut, each as it was stored (place,
+ * turn, time and envelope), goes on from there while that session is
+ * unchanged, and is listed; a branch under an id that exists, of a session
+ * never created, or cut past the end, is refused and leaves no session
+ * under its id (`fork`).
  * For a subject with a `pair`: a second handle reads, lists and appends
  * after what the first wrote, and the first then meets the second's
  * append as a conflict (`reopens`).
@@ -147,6 +153,34 @@ export const journalStorageConformance = (subject: JournalStorageSubject): Reado
       const listed = yield* storage.list
       yield* expect("list", show(listed.map(headerText)) === show([tiedA, tiedB, middle, late].map(headerText)),
         `four sessions created at 30, 10, 10 and 20 were listed as ${show(listed)}, not by creation time and then by id, each header as given`)
+    })),
+    check("a branch starts as the events it is cut from, as they were stored, and goes on alone", "fork", (storage) => Effect.gen(function* () {
+      yield* storage.create(header)
+      const one = yield* storage.append(session, Seq.make(0), turn, draft("one"))
+      const two = yield* storage.append(session, Seq.make(1), turn, draft("two"))
+      const three = yield* storage.append(session, Seq.make(2), next, draft("three"))
+      // Later than the events it copies, so a copy stamped with the time it was made at shows.
+      yield* Effect.sleep("5 millis")
+      const branchId = SessionId.make("kit-branch")
+      const branch = { ...headerAt("kit-branch", header.createdAt + 1), branch: { of: session, through: Seq.make(2) } }
+      yield* storage.fork(branch)
+      const copied = yield* storage.read(branchId)
+      yield* expect("fork", headerText(copied.header) === headerText(branch), `a branch's header read back as ${show(copied.header)}, not ${show(branch)}`)
+      yield* expect("fork", show(copied.events) === show([one, two]),
+        `a branch cut at 2 read back as ${show(copied.events)}, not the first two events as they were stored (their places, turns and times kept): ${show([one, two])}`)
+      const four = yield* storage.append(branchId, Seq.make(2), next, draft("four"))
+      yield* expect("fork", four.seq === 3, `an append to a branch cut at 2 was stamped ${four.seq}, not 3`)
+      const source = yield* storage.read(session)
+      yield* expect("fork", show(source.events) === show([one, two, three]), `the session a branch was cut from read ${show(source.events)} after the branch was written to`)
+      const listed = yield* storage.list
+      yield* expect("fork", show(listed.map(headerText)) === show([header, branch].map(headerText)), `a branch was listed as ${show(listed)}`)
+      yield* refused("fork", "a branch under an id that has a session", "SessionExists", storage.fork(branch))
+      const lost = { ...branch, id: SessionId.make("kit-branch-lost"), branch: { of: stranger, through: Seq.make(1) } }
+      yield* refused("fork", "a branch of a session never created", "SessionMissing", storage.fork(lost))
+      yield* refused("fork", "a branch of a session left as it was refused", "SessionMissing", storage.read(lost.id))
+      const past = { ...branch, id: SessionId.make("kit-branch-past"), branch: { of: session, through: Seq.make(4) } }
+      yield* refused("fork", "a branch cut past the end of the journal", "SeqConflict", storage.fork(past))
+      yield* refused("fork", "a branch cut past the end left as it was refused", "SessionMissing", storage.read(past.id))
     })),
     ...(subject.pair === undefined ? [] : [
       over(subject.pair)("a second handle on the same medium reads, lists and appends after what the first wrote", "reopens", ([first, second]) => Effect.gen(function* () {

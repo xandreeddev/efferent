@@ -1,11 +1,11 @@
 import { Match, Option, Order, Result } from "effect"
 import type { StoredEvent } from "./event.entity.js"
 import { TurnNumber } from "./ids.entity.js"
-import type { SessionId } from "./ids.entity.js"
+import type { Seq, SessionId } from "./ids.entity.js"
 import { readJournal } from "./journal.entity.functions.js"
 import type { Journal, UnknownRecord } from "./journal.entity.js"
 import { JOURNAL_FORMAT, SessionRefused } from "./session.entity.js"
-import type { Free, Inspection, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
+import type { Branch, Free, Inspection, NewSession, SessionHeader, SessionState, TurnOpen } from "./session.entity.js"
 import { KERNEL_VOCABULARY, turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 /**
@@ -71,6 +71,36 @@ export const headerOf = (id: SessionId, input: NewSession, createdAt: number): S
   id,
   owner: input.owner,
   ...(input.parent === undefined ? {} : { parent: input.parent }),
+  createdAt,
+  format: JOURNAL_FORMAT,
+})
+
+/**
+ * Where a branch of `events` is cut (ADR 0016): the place of the record that ended turn `through`, or the last
+ * turn that ended without `through`. The first end of a turn closes it. A turn that did not end (it is open, or
+ * never began) is refused, and so is a journal with no ended turn: a branch never holds an open turn.
+ */
+export const cutOf = (id: SessionId, events: ReadonlyArray<StoredEvent>, through?: TurnNumber): Result.Result<Seq, SessionRefused> => {
+  const ends = events.filter((event) => event.name === turnEndedEvent.name)
+  // The turn to cut after: the one asked for, or the last that ended. Its first end is the cut, either way.
+  const turn = through ?? ends.at(-1)?.turn
+  const end = ends.find((event) => event.turn === turn)
+  return end === undefined
+    ? Result.fail(new SessionRefused({
+      reason: "NoClosedTurn",
+      message: through === undefined
+        ? `session ${id} has no closed turn to branch from`
+        : `turn ${through} of session ${id} is not closed: a branch is cut at the end of a closed turn`,
+    }))
+    : Result.succeed(end.seq)
+}
+
+/** The header of a branch of `from`, cut at `through`: its owner and parent, and where it was cut. */
+export const branchHeaderOf = (id: SessionId, from: SessionHeader, through: Seq, createdAt: number): SessionHeader & { readonly branch: Branch } => ({
+  id,
+  owner: from.owner,
+  ...(from.parent === undefined ? {} : { parent: from.parent }),
+  branch: { of: from.id, through },
   createdAt,
   format: JOURNAL_FORMAT,
 })

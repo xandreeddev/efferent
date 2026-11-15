@@ -46,7 +46,10 @@ const unreadable = (key: string) => new JournalStorageError({ reason: "Unreadabl
  * a store's keys apart (a store whose prefix starts with another's is not
  * listed by it), and one writer at a time is the host's to arrange.
  * A storage that refuses a write (it is full, or blocked) is `Unavailable`;
- * a stored value that does not decode is `Unreadable`.
+ * a stored value that does not decode is `Unreadable`. A branch is written
+ * events first and header last: the header is what makes a session, so a
+ * branch the storage refused part way is no session, and its events are
+ * taken back.
  *
  * @public
  */
@@ -101,6 +104,31 @@ export const webStorageJournal = (storage: KeyValueStore, options: WebStorageJou
       }))
     }),
     read: (id, from) => Effect.all({ header: header(id), events: eventsFrom(id, from ?? 1) }, { concurrency: 1 }),
+    fork: (branch) => Effect.flatMap(Schema.encodeUnknownEffect(headerJson)(branch).pipe(Effect.orDie), (value) => Effect.flatten(step(() => {
+      if (storage.getItem(headerKey(branch.id)) !== null) {
+        return Effect.fail(new JournalStorageError({ reason: "SessionExists", message: `session ${branch.id} exists` }))
+      }
+      const { of, through } = branch.branch
+      if (storage.getItem(headerKey(of)) === null) return Effect.fail(missing(of))
+      // The events as they were stored, text for text: every one is read before anything is written.
+      const texts = Array.from({ length: through }, (_, at) => storage.getItem(eventKey(of, at + 1)))
+      if (texts.some((text) => text === null)) {
+        return Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: `the journal is not whole up to ${through}` }))
+      }
+      // Then written, events first and the header last. A write the storage refuses part way (it is full) is taken
+      // back, so no branch is left half made.
+      const written: Array<string> = []
+      return Effect.try({
+        try: () => {
+          texts.forEach((text, at) => {
+            storage.setItem(eventKey(branch.id, at + 1), text ?? "")
+            written.push(eventKey(branch.id, at + 1))
+          })
+          storage.setItem(headerKey(branch.id), value)
+        },
+        catch: (error) => new JournalStorageError({ reason: "Unavailable", message: `the storage refused: ${error instanceof Error ? error.message : "it gave no reason"}` }),
+      }).pipe(Effect.tapError(() => Effect.sync(() => written.forEach((key) => storage.removeItem(key)))))
+    }))),
     list: Effect.flatMap(step(() => {
       const found: Array<readonly [string, string]> = []
       for (let index = 0; index < storage.length; index++) {

@@ -3,7 +3,7 @@ import { Array as Arr, Option, Result, Schema } from "effect"
 import { stored, storedEvent } from "./event.entity.functions.js"
 import type { StoredDraft, StoredEvent } from "./event.entity.js"
 import { EventName, Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
-import { abandonedTurn, beginTurn, byCreation, currentFormat, endTurn, headerOf, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
+import { abandonedTurn, beginTurn, branchHeaderOf, byCreation, currentFormat, cutOf, endTurn, headerOf, inspectionOf, newSession, sessionStateOf } from "./session.entity.functions.js"
 import { JOURNAL_FORMAT, SessionHeader as SessionHeaderSchema } from "./session.entity.js"
 import type { SessionHeader, SessionState } from "./session.entity.js"
 import { turnEnded, turnStarted } from "./vocabulary.entity.functions.js"
@@ -140,5 +140,50 @@ describe("inspecting a session", () => {
   test("refuses a journal the session's transitions do not allow", () => {
     const told = (...drafts: ReadonlyArray<StoredDraft>) => Result.match(inspectionOf({ header, events: journal(...drafts) }), { onSuccess: () => "inspected", onFailure: (refusal) => refusal._tag })
     expect(told(turnEnded(TurnNumber.make(1), { _tag: "Completed" }))).toBe("SessionRefused")
+  })
+})
+
+describe("where a branch is cut", () => {
+  const id = SessionId.make("s")
+  /** Records each with its turn, at consecutive places. */
+  const turns = (...records: ReadonlyArray<readonly [number, StoredDraft]>): ReadonlyArray<StoredEvent> =>
+    records.map(([turn, draft], index) => ({ seq: Seq.make(index + 1), at: 0, turn: TurnNumber.make(turn), ...draft }))
+  const one = TurnNumber.make(1)
+  const two = TurnNumber.make(2)
+  const closedOne: ReadonlyArray<readonly [number, StoredDraft]> = [[1, turnStarted(one)], [1, note("a")], [1, turnEnded(one, { _tag: "Completed" })]]
+  const told = (result: Result.Result<Seq, { readonly reason: string }>) => Result.match(result, { onSuccess: (seq): number | string => seq, onFailure: (refusal) => refusal.reason })
+
+  const table: ReadonlyArray<readonly [string, ReadonlyArray<StoredEvent>, number | undefined, number | string]> = [
+    // the journal, the turn asked for (none: the last closed), the place cut at or the refusal
+    ["a session with no turn", [], undefined, "NoClosedTurn"],
+    ["a session whose only turn is open", turns([1, turnStarted(one)], [1, note("a")]), undefined, "NoClosedTurn"],
+    ["a closed turn, then one open: the last closed", turns(...closedOne, [2, turnStarted(two)], [2, note("b")]), undefined, 3],
+    ["a closed turn, then one open: the closed one asked for", turns(...closedOne, [2, turnStarted(two)]), 1, 3],
+    ["a closed turn, then one open: the open one asked for", turns(...closedOne, [2, turnStarted(two)]), 2, "NoClosedTurn"],
+    ["two closed turns: the last", turns(...closedOne, [2, turnStarted(two)], [2, turnEnded(two, { _tag: "Failed", reason: "x" })]), undefined, 5],
+    ["two closed turns: the first asked for", turns(...closedOne, [2, turnStarted(two)], [2, turnEnded(two, { _tag: "Completed" })]), 1, 3],
+    ["a turn that never began asked for", turns(...closedOne), 4, "NoClosedTurn"],
+    ["a turn ended twice: the first end closes it", turns(...closedOne, [1, turnEnded(one, { _tag: "Abandoned" })]), 1, 3],
+    ["a turn ended twice, the last closed: its first end too", turns(...closedOne, [1, turnEnded(one, { _tag: "Abandoned" })]), undefined, 3],
+  ]
+
+  table.forEach(([name, events, through, cut]) => {
+    test(name, () => {
+      expect(told(cutOf(id, events, through === undefined ? undefined : TurnNumber.make(through)))).toEqual(cut)
+    })
+  })
+
+  test("a branch's header keeps the session's owner and parent, and says where it was cut", () => {
+    const from: SessionHeader = { id, owner: Owner.make("learner"), parent: SessionId.make("caller"), createdAt: 5, format: JOURNAL_FORMAT }
+    expect(branchHeaderOf(SessionId.make("b"), from, Seq.make(3), 9)).toEqual({
+      id: SessionId.make("b"), owner: Owner.make("learner"), parent: SessionId.make("caller"), branch: { of: id, through: Seq.make(3) }, createdAt: 9, format: JOURNAL_FORMAT,
+    })
+  })
+
+  test("a header with a branch reads back; read by a reader that does not know branches it is a session of its own", () => {
+    const text = JSON.stringify({ id: "b", owner: "learner", branch: { of: "s", through: 3 }, createdAt: 9, format: JOURNAL_FORMAT })
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(Schema.fromJsonString(SessionHeaderSchema))(text)).branch).toEqual({ of: id, through: Seq.make(3) })
+    const withoutBranches = SessionHeaderSchema.mapFields(({ branch: _branch, ...fields }) => fields)
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(Schema.fromJsonString(withoutBranches))(text))).toEqual({ id: SessionId.make("b"), owner: Owner.make("learner"), createdAt: 9, format: JOURNAL_FORMAT })
   })
 })

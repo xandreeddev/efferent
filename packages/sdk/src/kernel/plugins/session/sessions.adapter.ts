@@ -5,7 +5,9 @@ import {
   announced,
   beginTurn,
   Core,
+  branchHeaderOf,
   currentFormat,
+  cutOf,
   headerOf,
   InvalidSession,
   isStoredDraft,
@@ -281,6 +283,17 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     read: (id) => storage.read(id),
     list: storage.list,
     recover,
+    // A branch: the journal as stored, cut at the end of a closed turn, copied by the store in one step. Nothing is
+    // claimed or announced: the records it copies were heard when they were stored, and a turn open in the session
+    // goes on there, past the cut.
+    fork: Effect.fn("kernel.session.fork")(function* (id: SessionId, forkOptions?: { readonly through?: TurnNumber }) {
+      const journal = yield* storage.read(id)
+      yield* Effect.fromResult(currentFormat(journal.header))
+      const through = yield* Effect.fromResult(cutOf(id, journal.events, forkOptions?.through))
+      const branch = yield* options.mintId ?? mintUuid
+      yield* storage.fork(branchHeaderOf(branch, journal.header, through, yield* Clock.currentTimeMillis))
+      return branch
+    }),
     // The turn closes with the scope. The scope's close cannot fail: an end that cannot be stored is its defect, and the turn stays open, as the journal says.
     open: (id) => Effect.flatMap(
       Effect.acquireRelease(begin(id), (open, exit) => Effect.orDie(end(open, exit))),   // Free → TurnOpen, or refused; the end stores core.session.turn.ended with the scope's outcome
