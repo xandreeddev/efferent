@@ -359,6 +359,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
+  A new file, `checks.ts`, holds the lines that run the program for a
+  check (`turnsAfter`: the seven layers of `main`, with the model the
+  check gives and a pane of the check's own under chat.ts's `chatOn`),
+  `check(id, name, script, messages, holds)`, two readers over the
+  kernel's `turnsOf` and three checks over lesson 2's tools: a sum is
+  worked out by the calculator, a call the model got wrong is a failed
+  result and the turn still answers, two messages are two turns.
+  `agent.ts` is the base program with `program` exported and nothing
+  else changed, so a check runs the program `main` runs. **Run checks**
+  is lesson 7's button. Each check runs on a stack of its own: the
+  page runs every file again for the checks, with the kernel's own
+  `kernel`, `inProcessJournal` and `sessions`, memory.ts's memory not
+  watched, and the shown chat.ts with its types taken out by named
+  pieces, so the page hears nothing of a check: no trace, no row in the
+  chat, no session in its store. A check that fails names the record it
+  read (`record #4: the calculator answered -1, not 5`). A stack that
+  leaves out the tools' handlers or the model does not compile, which a
+  test pins by the compiler's words; on the page, where the code is
+  untyped, the check fails in words when the program stops. Experiments
+  break the calculator (the chat still answers, and the sum's check
+  fails), add a check that asks something of every call over a script
+  that makes none (it passes and checks nothing) beside the form that
+  counts first (it fails on the same script), and add a live check that
+  runs the program on the model picked five times and says how many runs
+  passed. A kit of the page (`LessonKit`) is now a value: its `checks`,
+  which are also handed the model picked as it was loaded, a time limit
+  of its own for a check (five seconds when it states none) and whether
+  it runs alone, in which case it is refused while a turn runs and the
+  chat takes no message while it runs. A check that passes may say
+  something, which the list draws after its name. A checks.ts that makes
+  no list of checks refuses the build in words that name the file.
+  Lesson 7's page and its tests are as they were; its `lesson.ts`
+  registers its kit as such a value, and a failed check with no words
+  now reads as its name alone, with no colon after it. Lesson 11's
+  page links here. No Echo rule was added. No published package changes.
 - Docs site: the Context tab builds a turn's steps from the kernel's
   `turnsOf`, in place of its own filters over the records: the turn's
   start, its messages, each answer's calls with their results, and how it

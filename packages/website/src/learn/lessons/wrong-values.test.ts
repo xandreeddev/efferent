@@ -13,6 +13,8 @@ afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runt
 const NO_MEMORY = "memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …)."
 const NO_HANDLERS = "tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … })."
 const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."
+const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It should be the program main runs, exported so that checks.ts runs the same one."
+const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 /** tools.ts making two names that are no toolkit and no layer. */
 const TWO_NUMBERS = "const tools = 1\nconst toolsLive = 2"
 
@@ -78,6 +80,19 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["tools", "const tools = factTools.tools\nconst toolsLive = 2", "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), factTools)."],
     ["tools", "const tools = factTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
     ["agent", "const main = 42", NO_PROGRAM],
+  ],
+  "test-your-agent": [
+    ["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM],
+    // agent.ts makes two names, and checks.ts runs the second: a `program` that is no Effect, or that the file no longer makes, is refused too.
+    ["agent", "const program = 42\nconst main = Effect.void", NO_EXPORTED_PROGRAM], ["agent", "const main = Effect.void", NO_EXPORTED_PROGRAM],
+    ["checks", "const checks = 42", NO_CHECKS],
+    // The function that makes a check, never called, is no list.
+    ["checks", "const checks = () => []", NO_CHECKS],
+    ["checks", "const checks = [1]", "checks.ts did not run: entry 1 of checks is not a check. It should be { id, name, run }, as check(id, name, script, messages, holds) makes it."],
+    [
+      "checks", 'const checks = [{ id: "sum", name: "a sum", run: Effect.void }, { id: "other", name: "another", run: () => 1 }]',
+      'checks.ts did not run: the run of the check "other" is not an Effect. It should be the program run for the check, as check(id, name, script, messages, holds) makes it.',
+    ],
   ],
 }
 

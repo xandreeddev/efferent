@@ -2,16 +2,20 @@
 // over a base built once, with the Echo model, and the page hears what it
 // does. These pin what the workbench shows: the order of a turn, the queue,
 // rebuild, stop, clear, the defect of a removed module, and the refusal of a
-// record written by hand.
+// record written by hand. A second block pins how the page runs a lesson's
+// kit: its own time limit, what a check that passes may say, the model it is
+// handed, and a kit that runs alone.
 import { afterEach, describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Effect, Option, Result } from "effect"
 import { turnEndedEvent } from "@xandreed/core/kernel"
 import { loadEcho } from "./models/mock.ts"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
 import { withoutMemory, writeLastN, writeSystem } from "./lessons/your-first-agent/config-edit.ts"
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
-import { LessonRuntime } from "./runtime.ts"
+import { kitLine } from "./lesson.ts"
+import type { Lesson } from "./lesson.ts"
+import { KIT_TIMEOUT, LessonRuntime, TURN_RUNNING } from "./runtime.ts"
 import type { Trace } from "./runtime.ts"
 
 const opened: Array<LessonRuntime> = []
@@ -219,5 +223,88 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     expect(await runtime.start({ ...SOURCES, memory: "Layer.succeed(Memry, {})" })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("memory.ts did not run: ") })
     expect(await runtime.start({ ...SOURCES, agent: "const main = 42" })).toMatchObject({ _tag: "Refused", message: expect.stringContaining("main is not an Effect") })
     expect(runtime.running).toBe(false)
+  })
+})
+
+/** Lesson 1 with kits no lesson has: checks that say something, say nothing, fail, or take 300 milliseconds. */
+const SLOW = { id: "slow", name: "a check that takes 300 milliseconds", run: Effect.sleep("300 millis") }
+const kitted: Lesson = {
+  ...yourFirstAgent,
+  kits: {
+    // A kit with a limit of its own, shorter than its slow check.
+    quick: {
+      checks: () => Result.succeed([
+        { id: "said", name: "a check that says what it found", run: Effect.succeed("3 of 3") },
+        { id: "silent", name: "a check that says nothing", run: Effect.succeed(3) },
+        { id: "failed", name: "a check that fails", run: Effect.fail({ message: "it found a 4" }) },
+        SLOW,
+      ]),
+      timeout: "50 millis",
+    },
+    // The same slow check under no limit of the kit's own.
+    plain: { checks: () => Result.succeed([SLOW]) },
+    // A kit that says what it was handed as the model picked.
+    model: { checks: (_sources, _storageOf, model) => Result.succeed([{ id: "model", name: "the model picked", run: Effect.succeed(Option.isSome(model) ? "a model" : "none") }]) },
+    // A kit that runs alone: it and the chat take turns.
+    alone: { checks: () => Result.succeed([SLOW]), alone: true },
+  },
+}
+
+describe("a lesson's kit on the page", () => {
+  const kits = async () => {
+    const runtime = await LessonRuntime.create(kitted)
+    opened.push(runtime)
+    return runtime
+  }
+
+  test("a kit states its own limit for a check, and a check past it fails in words; one that states none has five seconds", async () => {
+    const runtime = await kits()
+    const ran = Result.getOrThrow(await runtime.runKit("quick", SOURCES))
+    expect(ran).toEqual([
+      // A check that passes may say something, as text: any other value says nothing.
+      { id: "said", name: "a check that says what it found", passed: true, message: "3 of 3" },
+      { id: "silent", name: "a check that says nothing", passed: true, message: "" },
+      { id: "failed", name: "a check that fails", passed: false, message: "it found a 4" },
+      { id: "slow", name: "a check that takes 300 milliseconds", passed: false, message: "Operation timed out after '50ms'" },
+    ])
+    // The lines of the list: a check that said nothing reads as lesson 7's do, its mark, its id and its name.
+    expect(ran.map(kitLine)).toEqual([
+      { state: "passed", head: "✓ said", detail: "a check that says what it found: 3 of 3" },
+      { state: "passed", head: "✓ silent", detail: "a check that says nothing" },
+      { state: "failed", head: "✗ failed", detail: "a check that fails: it found a 4" },
+      { state: "failed", head: "✗ slow", detail: "a check that takes 300 milliseconds: Operation timed out after '50ms'" },
+    ])
+    expect(KIT_TIMEOUT).toBe("5 seconds")
+    expect(Result.getOrThrow(await runtime.runKit("plain", SOURCES))).toEqual([{ id: "slow", name: "a check that takes 300 milliseconds", passed: true, message: "" }])
+    expect(await runtime.runKit("none", SOURCES)).toEqual(Result.fail("this lesson has no kit named none"))
+  })
+
+  test("a kit is handed the model picked, and none while no model is picked", async () => {
+    const runtime = await kits()
+    expect(Result.getOrThrow(await runtime.runKit("model", SOURCES)).map((check) => check.message)).toEqual(["none"])
+    runtime.setModel(loadEcho())
+    expect(Result.getOrThrow(await runtime.runKit("model", SOURCES)).map((check) => check.message)).toEqual(["a model"])
+  })
+
+  test("a kit that runs alone is refused while a turn runs, and the page is told while it runs; any other kit runs beside a turn", async () => {
+    const runtime = await kits()
+    runtime.setModel(loadEcho())
+    expect(await runtime.start(SOURCES)).toEqual({ _tag: "Built" })
+    const answered = replies(runtime)
+    const started = until(runtime, (trace) => trace._tag === "Event")
+    runtime.send("Hello")
+    await started
+    expect(runtime.busy).toBe(true)
+    expect(await runtime.runKit("alone", SOURCES)).toEqual(Result.fail(TURN_RUNNING))
+    // A kit that does not say it runs alone is not held back by the turn, and the page is told nothing of it.
+    const beside = runtime.runKit("model", SOURCES)
+    expect(runtime.checking).toBe(false)
+    expect(Result.getOrThrow(await beside).map((check) => check.passed)).toEqual([true])
+    await answered
+    expect(runtime.busy).toBe(false)
+    const running = runtime.runKit("alone", SOURCES)
+    expect(runtime.checking).toBe(true)
+    expect(Result.getOrThrow(await running).map((check) => check.passed)).toEqual([true])
+    expect(runtime.checking).toBe(false)
   })
 })

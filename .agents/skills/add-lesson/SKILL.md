@@ -86,6 +86,14 @@ checks.
   sets up the same way.
 - An experiment that must edit two files lists the second under `also`,
   and its tests apply it with `applyExperiment`, as the page does.
+- A lesson whose page runs a kit or checks (`Lesson.kits`, lessons 7 and
+  12) pins them through `runtime.runKit`: each check's id, name and
+  result, and the line the list draws (`kitLine`). One that runs the
+  learner's program (lesson 12) also pins that the page holds the same
+  traces, chat rows, journal and sessions after a run as before it, with
+  a check on the model picked applied: the model is the one thing a check
+  shares with the page. The same test asserts that the checks passed, so
+  it cannot pass on checks that never ran.
 - `lessons/wrong-values.test.ts`: add the lesson's cases to its table. It
   is compared with the lesson list (`lessonSlugs`), and every file a
   learner can edit needs a case: what the file makes, made the wrong kind

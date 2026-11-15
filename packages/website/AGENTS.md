@@ -192,7 +192,60 @@ check` (tsc over the learn code, the build, the link check) and
   - A browser script starts by removing the lesson's keys: the Chrome
     profile is kept between runs, and so is its storage.
   - `Lesson.kits` are kits the page runs over the learner's code
-    (`runtime.runKit`), listed under a `data-kit` button.
+    (`runtime.runKit`), listed under a `data-kit` button: see "Kits and
+    checks".
+- **Kits and checks** (`Lesson.kits`, `runtime.runKit`, a `data-kit`
+  button with its `data-kit-results` list). A kit is a `LessonKit`:
+  `checks(sources, storageOf, model)` gives its checks, or why the code
+  did not evaluate, and the kit states two things of its own.
+  - `timeout`: how long one check may run. Five seconds (`KIT_TIMEOUT`)
+    when the kit states none, as lesson 7's; lesson 12's checks have two
+    minutes, for a live check on a model that runs on the learner's
+    machine. A check stopped at its limit is interrupted, and with it
+    the stream it was reading. The models built on `modelStream` (WebLLM
+    on the GPU, the CPU worker, Chrome's Prompt API) have their source
+    cancelled by that stream's finalizer, so they stop generating; Echo
+    has no source, and its stream ends with its reader. The check's line
+    reads in Effect's words ("Operation timed out after …"). A lesson
+    test cuts a live check on a model built on `modelStream` that never
+    ends its answer, and reads that its source was cancelled once and
+    that the checks are over; then, with Echo picked and the program
+    built again, as the page does on a model change, the chat answers.
+    No test cuts a check on a real model.
+  - `alone`: the kit runs the learner's program on the model picked, so it
+    and the chat take turns. `runKit` refuses it while a turn runs
+    (`TURN_RUNNING`) and `runtime.checking` is true while it runs. The
+    page (`refresh` in `playground.ts`) reads both: while such a kit runs
+    the chat's Send, the chips and the model picker are off, and while a
+    turn runs, a message waits or a model loads the kit's buttons are.
+    That wiring is type-checked, not run by a test.
+  - `model` is the model picked as it was loaded, not the one the page
+    watches for the chat, and none while no model is picked: a check that
+    runs on it leaves no `Prompt` trace.
+  - A check is a `KitCheck`, `{ id, name, run }`; the kernel's
+    `ConformanceCheck` is one. A check that passes may say something, as
+    text (lesson 12's live check: "5 of 5 runs passed"). `kitLine`
+    (`lesson.ts`) gives the line the list draws, and a check that said
+    nothing reads as lesson 7's do: its mark, its id, its name. When the
+    code did not evaluate the list says "The kit did not run.", or the
+    words of its own `data-kit-refused`.
+  - Lesson 12's checks (checks.ts, "Run checks") each run the program
+    agent.ts exports on a stack of its own. The kit runs every file again,
+    apart from the page's program: agent.ts is given the kernel's own
+    `kernel`, `inProcessJournal` and `sessions` where the page's program
+    is given stand-ins, memory.ts's memory as the file made it, not
+    watched, and the shown chat.ts with its types taken out by named
+    pieces (`chatBodyOf`: the page has no TypeScript compiler). So the
+    page hears nothing of a check: no trace, no row in the chat, no
+    session in its store. The build runs the same evaluation, so a
+    checks.ts that makes no list of checks refuses the build. A check's
+    `run` is handed over with `programOf`, as `main` is.
+  - A shown file that exports a name another file imports (`export const
+    program`) has a `moduleOf` of its own, which keeps that name at the
+    module's top: the base's `typedModule` puts the whole text inside
+    `run`. A name the page gives a file of statements and no import
+    names (`model`, in checks.ts) is the parameter of the function its
+    typed module exports (`checksWith`).
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every

@@ -1,0 +1,32 @@
+---
+// Step 8: each button rewrites one of the learner's files and runs the program again (see learn/playground.ts,
+// `data-exp`). The checks are run with the button under the list, over the code as it then stands.
+const experiments = [
+  {
+    exp: "break-calculator", title: "A calculator that subtracts", button: "Break the calculator",
+    text: "tools.ts now works out a + b as a - b. The program still builds, and the chat still answers: press What is 2 + 3? and Echo says The tool answered: calculator says -1. Nothing on the page says that is wrong. Press Run checks. sum fails, and its line reads: ✗ sum a sum is worked out by the calculator, and the turn answers: record #4: the calculator answered -1, not 5. The check ran the same tools.ts, and it names the record it read, the fourth of its turn, which is the tool's result. The other two checks pass: neither works out a sum.",
+  },
+  {
+    exp: "vacuous", title: "A check that checks nothing", button: "Add a check that asks of every call",
+    text: "checks.ts gains two checks over one script, in which the model answers It is 5. and calls no tool. every-call asks that every call's result is 5, with a loop over the calls. one-call asks the same through calculated, which counts the calls first. Press Run checks. every-call passes: there was no call, so its loop found nothing wrong, and the check said nothing about the program. one-call fails on the same script: 0 calls were made, not 1. A check that asks something of each thing in a list first asks how many there are.",
+  },
+  {
+    exp: "live", title: "A live check", button: "Add a live check",
+    text: "checks.ts gains live, which makes a check with no script: it runs the program on the model you picked, five times. It also gains one such check, live-sum, which asks each run for one call of the calculator whose result is 5. Press Run checks. On Echo, which follows rules, its line reads: ✓ live-sum the model you picked works out 2 + 3 with the calculator: 5 of 5 runs passed. A real model gives a rate. A run it gets wrong fails the check, and the line says how many runs passed and what the first run that failed got wrong, such as 3 of 5 runs passed. The first that did not: 0 calls were made, not 1. A live check costs model calls: a run that calls the calculator is two, so five such runs are ten. The three scripted checks cost none.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
+<p class="learn-try"><button class="btn btn-primary" type="button" data-kit="checks">Run checks</button></p>
+<ul class="learn-kit" data-kit-results="checks" data-kit-refused="The checks did not run." hidden></ul>

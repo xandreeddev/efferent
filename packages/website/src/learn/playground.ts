@@ -10,7 +10,7 @@ import { continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, 
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
-import { applyExperiment } from "./lesson.ts"
+import { applyExperiment, kitLine } from "./lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
 import { loadModel, probeDevice } from "./models/registry.ts"
@@ -63,6 +63,10 @@ function boot(root: HTMLElement, lesson: Lesson) {
     builds: 0,
   }
   const busy = () => state.runtime?.busy ?? false
+  /** A kit that runs alone is running (lesson 12's checks): the chat takes no message, and no model is changed, until it is done. */
+  const checking = () => state.runtime?.checking ?? false
+  /** The buttons of the kits that run alone: off while a turn runs or a message waits for one, while a model loads, and while such a kit runs. */
+  const aloneButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true)
 
   // ── panes ───────────────────────────────────────────────────────────────
   const trace = mountTrace(traceHost)
@@ -80,12 +84,16 @@ function boot(root: HTMLElement, lesson: Lesson) {
   // ── status ──────────────────────────────────────────────────────────────
   const setChip = (text: string, kind: "idle" | "ready" | "error") => { chip.textContent = text; chip.dataset.state = kind }
   const refresh = () => {
-    const ready = Boolean(state.runtime && state.model && state.alive && !state.building)
+    const ready = Boolean(state.runtime && state.model && state.alive && !state.building && !checking())
     chat.setState({
       ready, running: busy() || waitingCount(board) > 0,
-      hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…" : "Your program is not running. Fix it, then press Rebuild.",
+      hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…"
+        : checking() ? "The checks are running. The chat takes messages again when they are done." : "Your program is not running. Fix it, then press Rebuild.",
     })
-    models.setBusy(state.loading || busy())
+    models.setBusy(state.loading || busy() || checking())
+    // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
+    // It is off while a model loads too: the load lets go of the model a check would run on.
+    aloneButtons.forEach((button) => { button.disabled = checking() || state.loading || busy() || waitingCount(board) > 0 })
     if (state.loading) return setChip("loading model…", "idle")
     if (!state.runtime) return setChip("starting…", "idle")
     if (!state.model) return setChip("pick a model", "idle")
@@ -236,7 +244,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }
 
   const chooseModel = async (choice: ModelChoice) => {
-    if (state.loading || busy()) return
+    if (state.loading || busy() || checking()) return
     state.loading = true
     refresh()
     models.note(choice.id, "")
@@ -410,7 +418,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
 
   const send = (texts: ReadonlyArray<string>) => {
     const runtime = state.runtime
-    if (!runtime || !state.alive || !state.model || state.building) return
+    if (!runtime || !state.alive || !state.model || state.building || checking()) return
     if (!busy() && waitingCount(board) === 0) window.dispatchEvent(new CustomEvent("learn:start"))
     texts.forEach((text) => {
       show(sent(board, text))
@@ -540,15 +548,19 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }))
   document.querySelectorAll<HTMLButtonElement>("[data-fill]").forEach((button) => button.addEventListener("click", () => send(lesson.fill)))
 
-  // Lesson 7: run a kit over the code as it stands, and list each check under the button.
+  // Lessons 7 and 12: run a kit over the code as it stands, and list each check under the button.
   document.querySelectorAll<HTMLButtonElement>("[data-kit]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.kit ?? ""
     // The list in the button's own step: a kit may have a button in more than one.
     const list = (button.closest("[data-step]") ?? document).querySelector<HTMLElement>(`[data-kit-results="${id}"]`)
     if (list === null) return
     button.disabled = true
-    const ran = await (await ensureRuntime()).runKit(id, editor.sources())
+    const running = (await ensureRuntime()).runKit(id, editor.sources())
+    // A kit that runs alone has started by now: the chat's Send goes off, and comes back on when the kit is done.
+    refresh()
+    const ran = await running
     button.disabled = false
+    refresh()
     const line = (state: "passed" | "failed", head: string, detail: string) => {
       const item = document.createElement("li")
       item.dataset.state = state
@@ -557,9 +569,10 @@ function boot(root: HTMLElement, lesson: Lesson) {
       item.append(name, detail === "" ? "" : ` ${detail}`)
       return item
     }
+    // The list says what did not run in its own words (lesson 12: "The checks did not run."), else as lesson 7's does.
     list.replaceChildren(...(ran._tag === "Failure"
-      ? [line("failed", "The kit did not run.", ran.failure)]
-      : ran.success.map((check) => line(check.passed ? "passed" : "failed", `${check.passed ? "✓" : "✗"} ${check.id}`, check.passed ? check.name : `${check.name}: ${check.message}`))))
+      ? [line("failed", list.dataset.kitRefused ?? "The kit did not run.", ran.failure)]
+      : ran.success.map(kitLine).map((drawn) => line(drawn.state, drawn.head, drawn.detail))))
     list.hidden = false
   }))
   // Lesson 7: reload the page as it stands, a turn in progress included.
