@@ -41,6 +41,12 @@ checks.
   output, then read it: a comment still sits above the line it explains.
   A control's pattern matches its line in both forms Format can leave it
   (a long `const system =` wraps onto two lines).
+- A file whose editable part must carry a type (lesson 13's failures.ts:
+  `ReadonlyArray<Failure>`) ends its read-only part with the typed
+  declaration and leaves one expression to edit, as memory.ts does: the
+  page runs the editable text as JavaScript and Format parses it with
+  Babel, and neither takes a type annotation. The tests then compile the
+  file as shown, with no named piece.
 - `moduleOf` turns the text into a typed module for tsc: replace exactly the
   lines that need types (a parameter, a table of kinds), nothing else. With
   the kernel's functions a loop needs no cast. Its `run` is annotated

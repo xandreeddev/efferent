@@ -115,6 +115,28 @@ export interface PageParts {
    * tool waits for the answer; a question whose turn is dropped is taken back.
    */
   readonly approvalOn: (pane: unknown) => Layer.Layer<Approval>
+  /**
+   * The spare (lesson 13): a second Echo, named `echo-spare`, watched as the model picked is (its prompts and usage
+   * traced under its name) and never failing. A plan's second step provides it.
+   */
+  readonly spare: Layer.Layer<LanguageModel.LanguageModel>
+  /**
+   * The model picked, failing as `failures` says (lesson 13's failures.ts): one entry each time it is asked, in
+   * order, a try of a call tried again included and a summarizer's call not counted, then it answers as it does.
+   * A call made to fail never reaches the model. The list counts from its first entry each time this is called:
+   * the lesson calls it once a build, so the list starts again with every build.
+   */
+  readonly failing: (failures: ReadonlyArray<MadeFailure>) => Layer.Layer<LanguageModel.LanguageModel>
+}
+
+/**
+ * One call of the model picked that the page makes fail (lesson 13): the fields of the kernel's scripted model's
+ * `Fails`. `retryable` makes it a provider's own error, worth another try, and without it an unknown error; with
+ * `pieces` the answer starts, shows them, then fails, and without them it fails before anything.
+ */
+export interface MadeFailure {
+  readonly retryable?: boolean
+  readonly pieces?: ReadonlyArray<string>
 }
 
 /**

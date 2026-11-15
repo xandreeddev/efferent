@@ -105,6 +105,29 @@ check` (tsc over the learn code, the build, the link check) and
     a rebuild or Clear context (a finalizer of the wait, so it is always
     said). A decision for an id nothing waits under does nothing. The
     stand-in stores nothing: `approve` stores the answer.
+  - The model watcher is one function of the model it wraps and the name
+    its answers give (`watch` in `parts`), the one forwarding assertion of
+    `streamText`; a lesson's model parts are each made with it. A
+    `Prompt` trace names the model it was sent to (`model`) and the model
+    picked when it was sent (`picked`). A stream that fails, or that holds
+    an error part, says so in a `PromptFailed` trace from the stream
+    itself, so it always follows its own prompt and comes before the
+    next; a stream that was stopped says nothing, and a summarizer's
+    carries `purpose: "summary"` and marks no try of the turn's call.
+  - Lesson 13's parts: `PageParts.spare`, a second Echo built once per
+    runtime (`loadEcho(undefined, "echo-spare")`), watched as the model
+    picked is and never failing; and `PageParts.failing(failures)`, the
+    model picked failing as failures.ts lists (`MadeFailure`, the fields
+    of the scripted model's `Fails`), one entry each time it is asked, so
+    a call tried again takes one for each try, a summarizer's call not
+    counted. A call made to fail returns the page's own
+    failing stream and never reaches the model: an `AiError` of the model
+    picked, `InternalProviderError` when `retryable` and `UnknownError`
+    otherwise, in the page's words (`madeFailureWords`, "failures.ts made
+    this call fail, and said it is worth another try"); with `pieces` the
+    answer starts and shows them first. The lesson calls `failing` once a
+    build, so the list starts again whenever the program is built:
+    Rebuild, Stop, Clear context and a model picked.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
   - What a turn's records say (its start, its messages, each answer's
@@ -131,6 +154,26 @@ check` (tsc over the learn code, the build, the link check) and
     says it is a fact's. The pane (`panes/trace.ts`) draws what these
     functions give; the DOM wiring itself is type-checked, not run by a
     test.
+  - A turn has one context per model call, and one prompt per attempt: a
+    call under a plan (lesson 13) may be tried again, and each try is a
+    prompt. The prompts are grouped by call from the prompts' own marks
+    (`attemptsByCall`): a prompt whose stream failed (`PromptFailed`)
+    belongs to the call of the prompt after it, and the prompts after the
+    last that did not fail are a call with no answer. Never from the order
+    the records are heard in, which the page hears on a fiber of its own.
+    The tools offered, the turn given, the usage and the pieces streamed
+    are each prompt's, a `Usage` the turn's last prompt's. A failed try
+    is a step of its own (`attempt`, "Attempt 1 failed", in the failure's
+    words), which happened, so the steps after it are not taken for
+    missing; the prompt step names the try that answered where the call
+    was tried more than once or sent to a model other than the one picked.
+    The live `plugin.model.attempt` events decide nothing here: lessons 1
+    to 12 have none, and neither does Effect's plan alone. With no prompt
+    marked, call `n` is prompt `n`. A call's `answeredBy` is the model its
+    answer's record names, said only where the turn's answers name more
+    than one model or one other than the model picked, so lessons 1 to 12
+    draw as they did. Nothing of a try is stored: a turn drawn from its
+    records alone shows none of its tries.
   - A prompt's row is "the same as the prompt before" when the message is
     the same one and was sent the same way: a tool's result matches its
     record by its call's id, whatever was sent for it, so its text is
@@ -167,6 +210,20 @@ check` (tsc over the learn code, the build, the link check) and
     (`decidedLine`). While a question waits the status chip says so
     (`questionsWaiting`, `WAITING_FOR_ANSWER`), and the input takes
     messages as during any turn.
+  - A turn whose answer was cut after its first words (lesson 13,
+    `AnswerCut`) keeps the words shown, a row with no `seq`, and its
+    failure's row says the answer was cut (`failureLine`), read from the
+    record of the turn's end, so a chat drawn from the journal says the
+    same and has no words. The status line says each failed try and each
+    later one from the live `plugin.model.attempt` events (`attemptLine`,
+    wired in `playground.ts`); a first try says nothing.
+- **Lesson 13's failures.ts** is one list after a read-only declaration
+  (`export const failures: ReadonlyArray<Failure> = `, with `type
+  Failure` above it), as memory.ts's layer is, not a file of statements:
+  the page runs the editable text as JavaScript and Format parses it with
+  Babel, and neither takes a type annotation. Each entry is held to its
+  fields by guards (`failuresOf`), and one that is not a failure is
+  refused in words that name the file.
 - **A durable lesson** (`Lesson.durable`, lesson 7) keeps its journal in
   the browser's storage, through the learner's own store.
   - The runtime creates no session and keeps no journal: its base's

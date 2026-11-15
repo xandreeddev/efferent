@@ -9,7 +9,7 @@ import { assistantMessage, Seq, stored as draftOf, ToolCallId, toolResult, turnE
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { APPROVAL_REFUSED, decidedEvent } from "@xandreed/sdk/kernel"
 import type { Decision } from "@xandreed/sdk/kernel"
-import { answersTo, asked, asking, chatRowsOf, decidedLine, dropWaiting, emptyChat, failed, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { answersTo, asked, asking, attemptLine, chatRowsOf, decidedLine, dropWaiting, emptyChat, failed, failureLine, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -166,6 +166,29 @@ describe("the chat's rows", () => {
 })
 
 describe("the chat's rows, record by record", () => {
+  test("an answer cut after its first words (lesson 13): the words written stay, and the failure's row says the answer was cut, from the record, live and drawn again alike", () => {
+    const reason = "AnswerCut: echo.streamText: it broke"
+    const records = journal([turnStarted(one), userMessage("Hello."), turnEnded(one, { _tag: "Failed", reason })])
+    const line = "The answer was cut: it failed after its first words were shown, and it is not made again. echo.streamText: it broke"
+    expect(failureLine(reason)).toBe(line)
+    // Any other failure is said as its record says it.
+    expect(failureLine("Broken: it broke")).toBe("Broken: it broke")
+    const writing = piece(piece(records.slice(0, 2).reduce(stored, emptyChat), 1, ""), 1, "Half ")
+    const said = failed(writing, 1, "echo.streamText: it broke")
+    expect(said.rows.map(told)).toEqual(["user: Hello.", "agent*: Half ", "error*: echo.streamText: it broke"])
+    expect(stored(said, records[2]!).rows.map(told)).toEqual(["user: Hello.", "agent*: Half ", `error: ${line}`])
+    // Drawn from the journal alone: the same failure's row, and no word, since none was stored.
+    expect(chatRowsOf(records).map(told)).toEqual(["user: Hello.", `error: ${line}`])
+  })
+
+  test("the status line of a call under a plan (lesson 13): a failed attempt, a later one starting and answering; a first attempt says nothing", () => {
+    expect(attemptLine({ outcome: "started", attempt: 1, step: 0 })).toEqual(Option.none())
+    expect(attemptLine({ outcome: "succeeded", attempt: 1, step: 0 })).toEqual(Option.none())
+    expect(attemptLine({ outcome: "failed", attempt: 1, step: 0, reason: "busy" })).toEqual(Option.some("attempt 1 failed"))
+    expect(attemptLine({ outcome: "started", attempt: 2, step: 1 })).toEqual(Option.some("attempt 2 on step 2"))
+    expect(attemptLine({ outcome: "succeeded", attempt: 2, step: 1 })).toEqual(Option.none())
+  })
+
   test("an answer being written becomes the row of its record, in place; one that only asks for tools leaves no row", () => {
     const [, asked, answered] = journal([
       turnStarted(one),

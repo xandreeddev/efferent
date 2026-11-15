@@ -4,7 +4,7 @@
 // page feeds it traces (`record`), and asks for one turn's view (`viewOf`).
 // A turn may call the model several times (a turn with tools is a loop over
 // steps), so its steps are built from what happened, call by call.
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
 import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText, turnsOf } from "@xandreed/sdk/kernel"
@@ -54,7 +54,23 @@ export const kindOf = (session: string, chat: string, header: Option.Option<Sess
     onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? "helper" : owner === FACTS_OWNER ? "memory" : "other",
   })
 
-/** Everything heard about one session. Per turn, one entry per model call, in order. */
+/**
+ * One prompt of a turn as it was sent: to which model, while which model was picked, and how its stream ended when
+ * it failed (`PromptFailed`). A prompt whose stream failed is an attempt of a model call that has no answer: the
+ * call is tried again or handed to another model (lesson 13), or it ends the turn.
+ */
+export interface AttemptSeen {
+  readonly model: string
+  readonly picked: string
+  readonly failed: Option.Option<string>
+}
+
+/**
+ * Everything heard about one session. Per turn: one context per model call, and one prompt per attempt, in order.
+ * A model call is tried once unless a plan tries it again (lesson 13): its prompts are then each attempt's, every
+ * one but the last marked failed. The tools offered, whether the turn was given, the usage, the pieces streamed
+ * and how it ended are each prompt's.
+ */
 export interface Board {
   readonly session: string
   readonly records: ReadonlyArray<StoredEvent>
@@ -64,10 +80,13 @@ export interface Board {
   readonly offered: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<string>>>
   /** Whether each prompt's stream ran with its turn given, by turn: the loop handed it to the kernel's `modelAnswer`. */
   readonly given: ReadonlyMap<number, ReadonlyArray<boolean>>
-  readonly usage: ReadonlyMap<number, ReadonlyArray<Reported>>
+  /** What the provider reported each prompt cost, by turn: none for a stream that ended before it said. */
+  readonly usage: ReadonlyMap<number, ReadonlyArray<Option.Option<Reported>>>
+  /** Each prompt's model, and whether its stream failed, by turn. */
+  readonly attempts: ReadonlyMap<number, ReadonlyArray<AttemptSeen>>
   /** What a summarizer was sent while memory compacted, by turn: model calls of their own, not the turn's. */
   readonly summaries: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<Said>>>
-  /** Pieces streamed, by turn, per model call. */
+  /** Pieces streamed, by turn, per prompt. */
   readonly pieces: ReadonlyMap<number, ReadonlyArray<number>>
   /** The newest entries of the events log, at most LOG_LIMIT. */
   readonly log: ReadonlyArray<LogEntry>
@@ -86,7 +105,7 @@ export interface Board {
 }
 
 export const emptyBoard = (session: string, kind: SessionKind = "chat"): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, kind, restored: 0,
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), attempts: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, kind, restored: 0,
 })
 
 export const LOG_LIMIT = 400
@@ -131,6 +150,13 @@ const withEntry = (board: Board, entry: LogEntry): Board => ({ ...board, log: [.
 const append = <V>(map: ReadonlyMap<number, ReadonlyArray<V>>, key: number, value: V): ReadonlyMap<number, ReadonlyArray<V>> =>
   new Map(map).set(key, [...(map.get(key) ?? []), value])
 
+/** The last entry of a turn's list changed, or the map as it was when the turn has none. */
+const changeLast = <V>(map: ReadonlyMap<number, ReadonlyArray<V>>, key: number, to: (value: V) => V): ReadonlyMap<number, ReadonlyArray<V>> => {
+  const values = map.get(key) ?? []
+  const last = values.at(-1)
+  return last === undefined ? map : new Map(map).set(key, [...values.slice(0, -1), to(last)])
+}
+
 export const tokensOf = (messages: ReadonlyArray<Said>): number => messages.reduce((sum, message) => sum + estimateTokens(message.text), 0)
 
 /** The board after one more trace, heard `at` ms after it started. Events of another conversation are left out. */
@@ -167,17 +193,29 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
         })
       }
       const pieces = append(board.pieces, trace.turn, 0)
-      return withEntry({ ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), given: append(board.given, trace.turn, trace.givenTurn === true), pieces }, {
+      const attempts = append(board.attempts, trace.turn, { model: trace.model, picked: trace.picked, failed: Option.none<string>() })
+      return withEntry({
+        ...board, prompts: append(board.prompts, trace.turn, trace.messages), offered: append(board.offered, trace.turn, trace.tools), given: append(board.given, trace.turn, trace.givenTurn === true),
+        usage: append(board.usage, trace.turn, Option.none<Reported>()), attempts, pieces,
+      }, {
         ...base, kind: "prompt", turn: trace.turn,
-        title: `prompt sent: ${trace.messages.length} messages, ~${tokensOf(trace.messages)} tokens${trace.tools.length > 0 ? `, ${trace.tools.length} tools offered` : ""}`,
+        title: `prompt sent${trace.model === trace.picked ? "" : ` to ${trace.model}`}: ${trace.messages.length} messages, ~${tokensOf(trace.messages)} tokens${trace.tools.length > 0 ? `, ${trace.tools.length} tools offered` : ""}`,
         detail: json(trace.tools.length > 0 ? { messages: trace.messages, tools: trace.tools } : trace.messages),
       })
     }
+    case "PromptFailed":
+      // The turn's last prompt is an attempt with no answer: its stream failed. A summarizer's is no try of the turn's call.
+      if (trace.session !== board.session) return board
+      if (trace.purpose === "summary") return withEntry(board, { ...base, kind: "prompt", turn: trace.turn, title: "the summarizer's stream failed", detail: trace.reason })
+      return withEntry({ ...board, attempts: changeLast(board.attempts, trace.turn, (attempt) => ({ ...attempt, failed: Option.some(trace.reason) })) }, {
+        ...base, kind: "prompt", turn: trace.turn, title: "the prompt's stream failed: that attempt has no answer", detail: trace.reason,
+      })
     case "Usage":
       // Another session's (a helper's): this board shows the chat's.
       if (trace.session !== board.session) return board
       if (trace.purpose === "summary") return withEntry(board, { ...base, kind: "usage", turn: trace.turn, title: "the provider reported the summarizer's usage", detail: json(trace.usage) })
-      return withEntry({ ...board, usage: append(board.usage, trace.turn, trace.usage) }, {
+      // The usage of the turn's last prompt: its stream reports it as it ends.
+      return withEntry({ ...board, usage: changeLast(board.usage, trace.turn, () => Option.some(trace.usage)) }, {
         ...base, kind: "usage", turn: trace.turn, title: "the provider reported its usage", detail: json(trace.usage),
       })
     case "Piece": {
@@ -221,7 +259,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
 // ── one turn's view ─────────────────────────────────────────────────────────
 
 export type StepState = "done" | "now" | "todo" | "failed" | "skipped"
-export type StepKind = "opened" | "stored-message" | "steered" | "compacted" | "context" | "prompt" | "streamed" | "stored-answer" | "tools" | "stored-record" | "closed"
+export type StepKind = "opened" | "stored-message" | "steered" | "compacted" | "context" | "attempt" | "prompt" | "streamed" | "stored-answer" | "tools" | "stored-record" | "closed"
 
 export interface StepView {
   /** Unique in the turn: the kind, and the model call it belongs to (`context-2`). */
@@ -288,10 +326,23 @@ export const keptInJournal = (sent: Said, record: Pick<StoredEvent, "name" | "da
       ? Option.some(Number(estimateTokens(resultText(message.result))))
       : Option.none())
 
+/** One attempt of a model call, as its prompt's stream ended. */
+export interface AttemptView {
+  /** Its count in the call, from 1. */
+  readonly attempt: number
+  /** The model it was sent to. */
+  readonly model: string
+  /** Why its stream failed, in the failure's words; none when it did not. */
+  readonly failed: Option.Option<string>
+  /** How many pieces of it reached the chat. */
+  readonly pieces: number
+}
+
 /** One model call of a turn: what memory gave it, and the prompt it received. */
 export interface CallView {
   readonly call: number
   readonly memory: Option.Option<ReadonlyArray<MemoryRow>>
+  /** The prompt of the call's last attempt. */
   readonly prompt: Option.Option<ReadonlyArray<PromptRow>>
   readonly promptTokens: number
   readonly reusedTokens: number
@@ -300,7 +351,39 @@ export interface CallView {
   readonly tools: ReadonlyArray<string>
   /** The journal as this call saw it. */
   readonly journal: ReadonlyArray<JournalRow>
+  /** Each prompt sent for this call, in order (lesson 13: a call under a plan may be tried again): one for a call tried once. */
+  readonly attempts: ReadonlyArray<AttemptView>
+  /**
+   * The model the answer's record names, when it is worth saying: the turn's answers name more than one model, or
+   * a model other than the one picked when the turn ran (lesson 13's spare). None for a call the picked model
+   * answered, as in every turn of lessons 1 to 12.
+   */
+  readonly answeredBy: Option.Option<string>
 }
+
+/**
+ * The prompts of a turn grouped by model call, as the places of the prompts in the turn's list. An attempt whose
+ * stream failed belongs to the call of the prompt after it: the call was tried again. The prompts after the last
+ * one that did not fail are one call more, which has no answer. The pairing is read from the prompts alone, never
+ * from the records' order, which the page hears on a fiber of its own. With no prompt marked failed, call `n` is
+ * prompt `n`.
+ */
+export const attemptsByCall = (board: Board, turn: number): ReadonlyArray<ReadonlyArray<number>> => {
+  const groups: Array<ReadonlyArray<number>> = []
+  let current: Array<number> = []
+  for (const [index, attempt] of (board.attempts.get(turn) ?? []).entries()) {
+    current.push(index)
+    if (Option.isNone(attempt.failed)) {
+      groups.push(current)
+      current = []
+    }
+  }
+  return current.length > 0 ? [...groups, current] : groups
+}
+
+/** The model a stored answer names (`model` on its record), when it names one. */
+const modelOfRecord = (record: Pick<StoredEvent, "data"> | undefined): Option.Option<string> =>
+  Predicate.hasProperty(record?.data, "model") && Predicate.isString(record.data.model) ? Option.some(record.data.model) : Option.none()
 
 export interface TurnView {
   readonly turn: number
@@ -363,9 +446,14 @@ const journalFor = (board: Board, turn: number, context: Option.Option<ContextSe
   })
 }
 
-const callViewOf = (board: Board, turn: number, index: number, previous: Option.Option<ReadonlyArray<Said>>): CallView => {
+/**
+ * One model call of a turn: its context, and the prompt of its last attempt, at the place `sent` gives in the
+ * turn's prompts; `tried` are the places of every attempt's prompt, that one included.
+ */
+const callViewOf = (board: Board, turn: number, index: number, tried: ReadonlyArray<number>, previous: Option.Option<ReadonlyArray<Said>>, answeredBy: Option.Option<string>): CallView => {
   const context = Option.fromNullishOr(board.contexts.get(turn)?.[index])
-  const promptSaid = Option.fromNullishOr(board.prompts.get(turn)?.[index])
+  const sent = tried.at(-1) ?? -1
+  const promptSaid = Option.fromNullishOr(board.prompts.get(turn)?.[sent])
   const memory = Option.map(context, ({ upTo, messages }) => {
     const links = linkContext(board.records.filter((record) => record.seq <= upTo), messages)
     return messages.map((message, at): MemoryRow => ({ role: message.role, text: message.text, tokens: estimateTokens(message.text), seq: links[at] ?? Option.none() }))
@@ -402,9 +490,13 @@ const callViewOf = (board: Board, turn: number, index: number, previous: Option.
     prompt,
     promptTokens: rows.reduce((sum: number, row: PromptRow) => sum + row.tokens, 0),
     reusedTokens: rows.reduce((sum: number, row: PromptRow) => sum + (row.reused ? row.tokens : 0), 0),
-    usage: Option.fromNullishOr(board.usage.get(turn)?.[index]),
-    tools: board.offered.get(turn)?.[index] ?? [],
+    usage: Option.flatten(Option.fromNullishOr(board.usage.get(turn)?.[sent])),
+    tools: board.offered.get(turn)?.[sent] ?? [],
     journal: journalFor(board, turn, context, inContext),
+    attempts: tried.flatMap((at, place) => Option.toArray(Option.map(Option.fromNullishOr(board.attempts.get(turn)?.[at]), (seen): AttemptView => ({
+      attempt: place + 1, model: seen.model, failed: seen.failed, pieces: board.pieces.get(turn)?.[at] ?? 0,
+    })))),
+    answeredBy,
   }
 }
 
@@ -438,7 +530,7 @@ const memoryTurnOf = (board: Board, turn: number): TurnView => {
     },
   ]
   const journal = journalFor(board, turn, Option.none(), new Set())
-  return { turn, restored: false, closed, steps, calls: [{ call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal }] }
+  return { turn, restored: false, closed, steps, calls: [{ call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal, attempts: [], answeredBy: Option.none() }] }
 }
 
 export const viewOf = (board: Board, turn: number): TurnView => {
@@ -452,14 +544,25 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   // A memory's own records that carry what it sends: the summaries it stored as it compacted (ADR 0008).
   const compactions = ofTurn.filter((record) => Option.isNone(messageOf(record)) && Option.isSome(sentMessageOf(record)))
   const summarized = board.summaries.get(turn)?.length ?? 0
-  const callCount = Math.max(board.prompts.get(turn)?.length ?? 0, board.contexts.get(turn)?.length ?? 0, answers.length)
+  // Each model call's attempts, by the places of their prompts: one each, unless a plan tried a call again.
+  const tried = attemptsByCall(board, turn)
+  const callCount = Math.max(tried.length, board.contexts.get(turn)?.length ?? 0, answers.length)
+  // The place of each call's last prompt: the one its answer came from, if it has one.
+  const sentAt = (index: number) => tried[index]?.at(-1) ?? -1
 
-  // The prompt before each call: the turn's previous call, or the previous turn's last.
+  // The model each answer's record names, and the model picked when the turn ran (none for a turn this page did not
+  // see run). A name is said where the turn's answers name more than one model, or one other than the model picked.
+  const named = answers.map((one) => modelOfRecord(board.records.find((record) => record.seq === one.seq)))
+  const names = new Set(named.flatMap(Option.toArray))
+  const picked = Option.fromNullishOr(board.attempts.get(turn)?.[0]?.picked)
+  const answeredBy = (index: number) => Option.filter(Option.flatten(Option.fromNullishOr(named[index])), (name) => names.size > 1 || Option.exists(picked, (one) => one !== name))
+
+  // The prompt before each call: the turn's previous call's, or the previous turn's last.
   const lastOf = (t: number) => Option.fromNullishOr(board.prompts.get(t)?.at(-1))
   const calls: Array<CallView> = []
   for (let index = 0; index < Math.max(1, callCount); index++) {
-    const previous = index === 0 ? lastOf(turn - 1) : Option.fromNullishOr(board.prompts.get(turn)?.[index - 1])
-    calls.push(callViewOf(board, turn, index, previous))
+    const previous = index === 0 ? lastOf(turn - 1) : Option.fromNullishOr(board.prompts.get(turn)?.[sentAt(index - 1)])
+    calls.push(callViewOf(board, turn, index, tried[index] ?? [], previous, answeredBy(index)))
   }
 
   const seqOf = (found: Option.Option<{ readonly seq: number }>) => Option.match(found, { onNone: () => [], onSome: (one) => [one.seq] })
@@ -526,15 +629,28 @@ export const viewOf = (board: Board, turn: number): TurnView => {
         ? `${plural(memoryCount, "message")} from the journal${leftOut > 0 ? `; ${leftOut} left out by memory` : ", nothing left out"}.`
         : restored ? BEFORE_THIS_PAGE : "Memory reads the journal and picks what the model sees.",
     })
+    // Each attempt of this call before its last: a prompt whose stream failed, and the call tried again (lesson 13).
+    const last = Option.fromNullishOr(view.attempts.at(-1))
+    view.attempts.slice(0, -1).forEach((attempt, place) => {
+      const next = view.attempts[place + 1]
+      raw.push({
+        id: `attempt-${n}-${attempt.attempt}`, kind: "attempt", call: n, label: at(`Attempt ${attempt.attempt} failed`), code: "the plan's step", column: "prompt", happened: true, seqs: [],
+        detail: `Attempt ${attempt.attempt}, on ${attempt.model}, failed: ${Option.getOrElse(attempt.failed, () => "its stream failed")}. ${attempt.pieces === 0
+          ? "It failed before a word of its answer, so nothing of it was shown or stored."
+          : `${plural(attempt.pieces, "piece")} of it reached the chat before it failed.`} Then the call was tried again${next === undefined ? "" : `: attempt ${next.attempt}, on ${next.model}`}.`,
+      })
+    })
+    // The model the last attempt was sent to, said where the call was tried more than once or went to a model other than the one picked.
+    const sentTo = Option.filter(last, (one) => view.attempts.length > 1 || Option.exists(picked, (name) => name !== one.model))
     raw.push({
       id: `prompt-${n}`, kind: "prompt", call: n, label: at("Prompt sent"), code: "model.streamText({ prompt })", column: "prompt", happened: Option.isSome(view.prompt), seqs: inContext,
       detail: Option.isSome(view.prompt)
-        ? `The system text from your code, ${memoryCount} from memory${added > 0 ? `, ${added} added by your code` : ""}: about ${view.promptTokens} tokens, ${view.reusedTokens} the same as the prompt before.`
+        ? `${Option.match(sentTo, { onNone: () => "", onSome: (one) => `Attempt ${one.attempt}, sent to ${one.model}. ` })}The system text from your code, ${memoryCount} from memory${added > 0 ? `, ${added} added by your code` : ""}: about ${view.promptTokens} tokens, ${view.reusedTokens} the same as the prompt before.${Option.match(Option.flatMap(last, (one) => one.failed), { onNone: () => "", onSome: (reason) => ` Its stream failed, and no attempt came after it: ${reason}.` })}`
         : restored ? BEFORE_THIS_PAGE : "The prompt is built fresh: the system text, then the context.",
     })
     // A loop on the kernel's two functions: the hints name them, not the lines a loop writes by hand (lessons 1 and 2).
-    const byKernel = board.given.get(turn)?.[index] === true
-    const streamed = pieces[index] ?? 0
+    const byKernel = board.given.get(turn)?.[sentAt(index)] === true
+    const streamed = pieces[sentAt(index)] ?? 0
     raw.push(quiet ? {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "hooks.stream (quiet)", column: "prompt", happened: Option.isSome(answer), seqs: [],
       detail: board.kind === "helper"
@@ -549,7 +665,11 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: restored ? "stored before this page loaded" : byKernel ? "modelAnswer(stream, session)" : "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
       detail: Option.match(answer, {
         onNone: () => "The answer goes into the journal, for the next call's context.",
-        onSome: (one) => asked.length > 0 ? `Record #${one.seq}: the model asked for ${plural(asked.length, "tool call")}.` : `Record #${one.seq}. The next turn's memory can read it.`,
+        onSome: (one) => {
+          // The model that answered, where it is worth saying: lesson 13's spare.
+          const by = Option.match(view.answeredBy, { onNone: () => "", onSome: (name) => `, answered by ${name}` })
+          return asked.length > 0 ? `Record #${one.seq}${by}: the model asked for ${plural(asked.length, "tool call")}.` : `Record #${one.seq}${by}. The next turn's memory can read it.`
+        },
       }),
     })
     if (asked.length > 0) {
@@ -597,10 +717,10 @@ export interface Boards {
 
 export const emptyBoards = (chat: string): Boards => ({ chat, boards: new Map([[chat, emptyBoard(chat)]]), headers: new Map(), retired: new Set() })
 
-/** The session a trace is about: an event's, a context's, a prompt's, a usage's and a header's own; anything the program told the chat is the chat's. */
+/** The session a trace is about: an event's, a context's, a prompt's and its failure's, a usage's and a header's own; anything the program told the chat is the chat's. */
 export const sessionOfTrace = (trace: Trace, chat: string): string =>
   trace._tag === "Event" ? trace.event.session
-    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "Usage" || trace._tag === "Session" ? trace.session
+    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "PromptFailed" || trace._tag === "Usage" || trace._tag === "Session" ? trace.session
       : chat
 
 /**

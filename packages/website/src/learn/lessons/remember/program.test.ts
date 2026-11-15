@@ -315,7 +315,9 @@ describe("lesson 11's displayed program", () => {
     expect(ran.prompts).toHaveLength(3)
     // The second conversation has a journal of its own: nothing of the first is in its prompt but the fact.
     expect(ran.prompts[2]).toEqual([SYSTEM, user("What is my name?"), noteOf(`f1: ${NAME}`)])
-    expect(ran.owners).toEqual(["learner", "plugin.facts", "learner"])
+    // Counted, not read in the store's order: it lists sessions by creation time, and two created in the same
+    // millisecond (the first conversation and the memory session) are listed by a random id.
+    expect(ran.owners.toSorted()).toEqual(["learner", "learner", "plugin.facts"])
   })
 
   test("a forgotten fact is sent in no later request; the conversation that forgot it still holds its text, in the call that learned it and in forgetFact's result", async () => {
