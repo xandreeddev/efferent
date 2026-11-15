@@ -61,6 +61,10 @@ checks.
   (`evaluate.ts`) and guards (`Layer.isLayer`, `typeof`), and hands `main`
   over with `programOf`, the one place the page says an untyped program
   needs nothing more.
+  An Effect a file made that needs a service the page holds (lesson 14's
+  `resume`, what `branchFrom` gave) gets it with `Effect.provideService`,
+  goes through `programOf`, and what it gives is decoded with the
+  kernel's schema (`SessionId`), never cast.
 - Comments are for the learner: what it does and why, in sentences.
 - A tool whose result the UI shows works out what it shows from a few words
   of the model's: the model's call is conversation and is sent again (ADR
@@ -70,6 +74,9 @@ checks.
   (`packages/website/AGENTS.md`, "A durable lesson"): its tests reload by
   closing a storage view, and its browser script removes the lesson's keys
   first and reloads for real.
+  What it keeps for one tab alone (lesson 14's chat picked) goes in the
+  tab's `sessionStorage` (`RuntimeOptions.tab`): its tests reload with the
+  same tab storage, and open a new tab with an empty one.
 
 ## 3. Tests that can fail
 

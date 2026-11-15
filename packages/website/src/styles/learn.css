@@ -1222,6 +1222,44 @@ body.app {
   flex-shrink: 0;
 }
 /* The sessions a program ran turns in: the chat's, and each helper's, under the call that made it. */
+/* Lesson 14: the row of chats above the messages, the one shown marked, and "Branch after turn N" under a turn. */
+.chat-row {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.45rem 0.75rem 0;
+}
+.chat-row::before {
+  content: "Chats";
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-right: 0.2rem;
+}
+.chat-tab {
+  font: inherit;
+  font-size: 0.76rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.chat-tab[aria-pressed="true"] {
+  border-color: var(--accent-3);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-3);
+  cursor: default;
+}
+.pg-msg .msg-branch .btn {
+  font-size: 0.74rem;
+  padding: 0.12rem 0.55rem;
+}
 .tr-sessions {
   display: flex;
   gap: 0.3rem;

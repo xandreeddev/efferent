@@ -15,12 +15,14 @@
 // no longer waits, answered or dropped with its turn. A session other than
 // the chat's that a turn opens in (a helper's, the memory session) is named
 // with its header before that turn's first record is heard.
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Scope, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { KernelEvent, StoredEvent } from "@xandreed/core/kernel"
+import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { Approval, CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
 import type { Decision, KeyValueStore } from "@xandreed/sdk/kernel"
+import { CHAT_OWNER, chatsOf } from "./chats.ts"
+import type { ChatEntry } from "./chats.ts"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, MadeFailure, PageParts, Sources } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
@@ -28,7 +30,7 @@ import type { LoadedModel } from "./models/types.ts"
 import { Chat } from "./page-chat.ts"
 import { saidOfMessage } from "./said.ts"
 
-const OWNER = "learner"
+const OWNER = CHAT_OWNER
 
 /** What a durable lesson's runtime shows before its program has named a conversation: no session has this id. */
 export const NO_CONVERSATION = SessionId.make("no-conversation-yet")
@@ -37,7 +39,18 @@ export const NO_CONVERSATION = SessionId.make("no-conversation-yet")
 export interface RuntimeOptions {
   /** A durable lesson's storage: the browser's `localStorage` on the page, a value of the test's own in a test. */
   readonly storage?: KeyValueStore
+  /**
+   * What a durable lesson keeps for this tab alone (lesson 14): the browser's `sessionStorage` on the page. The
+   * chat picked is kept there, so a reload shows the same chat and a new tab the latest.
+   */
+  readonly tab?: KeyValueStore
 }
+
+/** Where a durable lesson keeps the chat picked, in the tab's storage, under the lesson's prefix. */
+export const CHOSEN_KEY = "chosen"
+
+/** What `branch` says while no program runs: the page's base hands every call to the store the program builds. */
+export const NOT_RUNNING = "your program is not running, so no store is open to make a branch in. Fix it, then press Rebuild."
 
 /** Strings by key, kept in the page: what a durable lesson runs on where no storage was given. */
 const memoryStore = (): KeyValueStore => {
@@ -136,7 +149,13 @@ export type Trace =
    * A durable lesson's program named the conversation to show (its chat's `resume`), as the program started: the
    * session, and its journal as it was then, a turn closed by `resume` included.
    */
-  | { readonly _tag: "Showing"; readonly session: string; readonly journal: ReadonlyArray<StoredEvent> }
+  | {
+    readonly _tag: "Showing"; readonly session: string; readonly journal: ReadonlyArray<StoredEvent>
+    /** The session is a branch (lesson 14): the chat it was cut from, the place of its last copied record, and that chat's label in the row. */
+    readonly branch?: { readonly of: string; readonly through: number; readonly label: string }
+    /** This page showed the session before, and shows it again after another (lesson 14): what it saw of its turns is gone. */
+    readonly again?: true
+  }
   /** A tool asked before it acts (lesson 9): the question waits for the person, under an id `decide` answers it by. */
   | { readonly _tag: "Asking"; readonly id: string; readonly action: string; readonly detail: string }
   /** A question no longer waits: it was answered, or dropped with the turn that asked (Stop, a rebuild, Clear context). */
@@ -256,6 +275,11 @@ export class LessonRuntime {
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
 
+  /** The chat the page asks to show (lesson 14), kept in the tab's storage: see `PageParts.chosen`. */
+  private chosenChat: Option.Option<SessionId>
+  /** The sessions this page has shown: one shown again after another says so (`Showing.again`). */
+  private readonly shownBefore = new Set<string>()
+
   private constructor(
     private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
@@ -264,8 +288,11 @@ export class LessonRuntime {
     session: SessionId,
     /** A durable lesson's storage, seen through the lesson's prefix. */
     private readonly storage: KeyValueStore,
+    /** What a durable lesson keeps for this tab alone, seen through the lesson's prefix. */
+    private readonly tab: KeyValueStore,
   ) {
     this.session = session
+    this.chosenChat = Schema.decodeUnknownOption(SessionId)(tab.getItem(CHOSEN_KEY))
   }
 
   /**
@@ -280,7 +307,7 @@ export class LessonRuntime {
       const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
       const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
       const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
-      const runtime = new LessonRuntime(lesson, root, base, queue, session, memoryStore())
+      const runtime = new LessonRuntime(lesson, root, base, queue, session, memoryStore(), memoryStore())
       await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
       return runtime
     }
@@ -300,7 +327,8 @@ export class LessonRuntime {
     })
     const Base = sessions().pipe(Layer.provideMerge(Layer.succeed(JournalStorage, delegating)), Layer.provideMerge(kernel()))
     const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
-    const runtime = new LessonRuntime(lesson, root, base, queue, NO_CONVERSATION, prefixed(options.storage ?? memoryStore(), lesson.durable.prefix))
+    const { prefix } = lesson.durable
+    const runtime = new LessonRuntime(lesson, root, base, queue, NO_CONVERSATION, prefixed(options.storage ?? memoryStore(), prefix), prefixed(options.tab ?? memoryStore(), prefix))
     made = Option.some(runtime)
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
@@ -373,6 +401,39 @@ export class LessonRuntime {
     return this.session
   }
 
+  /** The chat the page asks to show (lesson 14): see `PageParts.chosen`. */
+  get chosen(): Option.Option<SessionId> {
+    return this.chosenChat
+  }
+
+  /** The chat the page asks to show from here on, kept in the tab's storage; none removes it. */
+  private setChosen(chat: Option.Option<SessionId>): void {
+    this.chosenChat = chat
+    Option.match(chat, { onNone: () => this.tab.removeItem(CHOSEN_KEY), onSome: (id) => this.tab.setItem(CHOSEN_KEY, id) })
+  }
+
+  /**
+   * The row of chats (lesson 14), from the store's headers: the learner's own, labelled (`chatsOf`). A branch's turn
+   * is read from its own record at the place it was cut. A store that cannot list gives an empty row.
+   */
+  private readonly chatsNow: Effect.Effect<ReadonlyArray<ChatEntry>> = Effect.suspend(() => {
+    const storage = Context.get(this.base, JournalStorage)
+    const turnOf = (header: SessionHeader) => Option.match(Option.fromNullishOr(header.branch), {
+      onNone: () => Effect.succeed([]),
+      onSome: ({ through }) => Effect.map(
+        Effect.orElseSucceed(storage.read(header.id, through), () => ({ events: [] })),
+        ({ events }) => Option.match(Option.fromNullishOr(events[0]), { onNone: () => [], onSome: (event) => [[String(header.id), Number(event.turn)] as const] }),
+      ),
+    })
+    return Effect.flatMap(Effect.orElseSucceed(Context.get(this.base, Sessions).list, () => []), (headers) =>
+      Effect.map(Effect.forEach(headers, turnOf, { concurrency: 1 }), (turns) => chatsOf(headers, new Map(turns.flat()))))
+  })
+
+  /** The row of chats (lesson 14): the learner's own conversations and their branches, labelled, by creation. */
+  async chats(): Promise<ReadonlyArray<ChatEntry>> {
+    return Effect.runPromise(this.chatsNow)
+  }
+
   /** What the page gives the learner's code under the hood: the base, the chat and the model, as the names the code uses. */
   private parts(model: LoadedModel): PageParts {
     const base = this.base
@@ -380,11 +441,15 @@ export class LessonRuntime {
     const storage = Context.get(base, JournalStorage)
     const sessionsOf = Context.get(base, Sessions)
     const emit = (trace: Trace) => Effect.sync(() => this.emit(trace))
-    /** The conversation the chat shows from here on. */
-    const shown = (session: SessionId) => {
+    /** The conversation the chat shows from here on, and whether this page showed it before another. */
+    const shown = (session: SessionId): boolean => {
+      const again = session !== this.session && this.shownBefore.has(session)
+      this.shownBefore.add(session)
       this.session = session
       this.asked = undefined
+      return again
     }
+    const chatsNow = this.chatsNow
     const chat = Chat.of({
       session: this.session,
       // One message at a time: a message is taken off the queue only when a turn is ready for it,
@@ -494,14 +559,20 @@ export class LessonRuntime {
         return storage
       })).pipe(Layer.provide(layer)),
       storage: this.storage,
+      chosen: this.chosenChat,
       // The learner's `resume` names the conversation; its journal is read before the chat is handed over, so the
       // page draws what is stored before the program takes a message.
       chatWith: (resume) => Layer.effect(Chat, Effect.gen(function* () {
         yield* Sessions
         const session = yield* resume.pipe(Effect.provideService(Sessions, sessionsOf))
         const journal = yield* Effect.mapError(sessionsOf.read(session), (error) => ({ message: `the conversation \`resume\` gave cannot be read: ${error.message}` }))
-        shown(session)
-        yield* emit({ _tag: "Showing", session, journal: journal.events })
+        const again = shown(session)
+        // A branch (lesson 14) says where it was cut, and from which chat of the row, so its copied turns say so.
+        const branch = yield* Option.match(Option.fromNullishOr(journal.header.branch), {
+          onNone: () => Effect.succeed({}),
+          onSome: ({ of, through }) => Effect.map(chatsNow, (chats) => ({ branch: { of: String(of), through: Number(through), label: chats.find((chat) => chat.id === of)?.label ?? "another chat" } })),
+        })
+        yield* emit({ _tag: "Showing", session, journal: journal.events, ...branch, ...(again ? { again: true as const } : {}) })
         return Chat.of({ ...chat, session })
       })),
     }
@@ -577,7 +648,42 @@ export class LessonRuntime {
     if (created._tag === "Failure") return { _tag: "Refused", message: `a new conversation could not be created: ${created.failure.message}` }
     if (this.lesson.durable === undefined) this.session = created.success
     this.asked = undefined
+    // No chat is asked for (lesson 14): the learner's `resume` finds the new one as the latest.
+    if (Option.isSome(this.chosenChat)) this.setChosen(Option.none())
     return this.start(this.last)
+  }
+
+  /**
+   * Show another chat of the row (lesson 14): it is the one asked for from here on, and the program starts again over
+   * it, as Rebuild does, a turn in progress ending Interrupted. The messages still waiting are dropped: they were
+   * written for the chat that was shown. Returns them, and the build.
+   */
+  async choose(chat: SessionId): Promise<{ readonly dropped: ReadonlyArray<string>; readonly result: BuildResult }> {
+    const dropped = Array.from(await Effect.runPromise(Queue.clear(this.queue)))
+    this.setChosen(Option.some(chat))
+    return { dropped, result: await this.start(this.last) }
+  }
+
+  /**
+   * Make a branch of the conversation shown (lesson 14), cut after `turn`, with the learner's `branchFrom` as it was
+   * last built, on the page's own base `Sessions`: the sessions the chat reads, over the store the program built. A
+   * kit's stack is no place for it, since a kit runs over a store of its own. Nothing is stopped and nothing
+   * switches: a turn running in the chat goes on. The chat shown becomes the one asked for, so a rebuild stays on it
+   * and does not move to the branch, which is now the latest. Gives the branch's id, or why none was made, in words.
+   */
+  async branch(turn: TurnNumber): Promise<Result.Result<SessionId, string>> {
+    const make = this.lesson.branch
+    if (make === undefined) return Result.fail("this lesson makes no branches.")
+    if (!this.running) return Result.fail(NOT_RUNNING)
+    const conversation = this.session
+    const made = make(this.last, conversation, turn)
+    if (Result.isFailure(made)) return Result.fail(made.failure)
+    const ran = await Effect.runPromise(Effect.exit(made.success.pipe(Effect.provideService(Sessions, Context.get(this.base, Sessions)))))
+    if (Exit.isFailure(ran)) {
+      return Result.fail(`branch.ts made no branch: ${Option.match(Cause.findErrorOption(ran.cause), { onNone: () => buildFailure(ran.cause), onSome: textOf })}`)
+    }
+    this.setChosen(Option.some(conversation))
+    return Result.succeed(ran.value)
   }
 
   /** The conversation's journal, as stored; none before a durable lesson's program has named a conversation. */

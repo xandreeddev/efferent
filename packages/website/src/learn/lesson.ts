@@ -5,7 +5,7 @@
 import { Option } from "effect"
 import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
-import type { Core, JournalStorage, SessionId, Sessions } from "@xandreed/core/kernel"
+import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
 import type { Approval, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { KitResult } from "./runtime.ts"
@@ -111,6 +111,12 @@ export interface PageParts {
    */
   readonly chatWith: (resume: Effect.Effect<SessionId, { readonly message: string }, Sessions>) => Layer.Layer<Chat, { readonly message: string }, Sessions>
   /**
+   * The chat the page asks to show (lesson 14): the one picked in the row of chats, or the one shown when a branch
+   * was made, so that a rebuild does not move to the branch; none after Clear context and on a new tab. The
+   * learner's `resume` is given it as `chosen`, and decides.
+   */
+  readonly chosen: Option.Option<SessionId>
+  /**
    * Who a tool asks before it acts (lesson 9): the page. A question is put to the person in the chat, and the
    * tool waits for the answer; a question whose turn is dropped is taken back.
    */
@@ -201,6 +207,12 @@ export interface Lesson {
    * names the conversation to show.
    */
   readonly durable?: { readonly prefix: string }
+  /**
+   * How a branch is made (lesson 14), from the code as it was last built: the learner's `branchFrom` called with the
+   * conversation shown and the turn a "Branch after turn N" button names, as an Effect over the sessions the page's
+   * chat reads, or why the code made none. The runtime provides its own base `Sessions` and runs it.
+   */
+  readonly branch?: (sources: Sources, conversation: SessionId, turn: TurnNumber) => Result.Result<Effect.Effect<SessionId, { readonly message: string }, Sessions>, string>
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
 }

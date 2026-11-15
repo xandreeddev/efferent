@@ -438,6 +438,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   changes. A test of lesson 11 no longer reads the store's sessions in
   the order it lists them: two created in one millisecond are listed by a
   random id.
+
+- Docs site: Lesson 14, "Branches", at `/learn/branches`. Lesson 7's
+  durable program, with a new file, `branch.ts`: `branchFrom(conversation,
+  turn)`, one call of `Sessions.fork(conversation, { through })`. The page
+  calls it when "Branch after turn N" is pressed, a button at the last
+  stored row of each closed turn (`branchPoints`), and runs it on its own
+  base `Sessions`, the store the chat reads (`Lesson.branch`,
+  `runtime.branch`): nothing is stopped and nothing switches. A row of
+  chats above the messages lists the learner's own sessions by creation
+  (owner `learner`, no parent, this kernel's format), labelled "Chat 1",
+  and a branch "Chat 1, branch after turn 2", read from the branch's own
+  record at `branch.through` (`chats.ts`). `chat.ts`'s `resume`, derived
+  from lesson 7's by named pieces, shows the chat the page asks for,
+  `chosen` (`PageParts.chosen`), when it is one of the learner's own, and
+  lesson 7's latest otherwise. Picking a chat sets `chosen` and rebuilds,
+  dropping the messages that waited; making a branch sets it to the chat
+  shown, so a rebuild does not move to the branch; Clear context clears it;
+  a reload keeps it in the tab's `sessionStorage` (`RuntimeOptions.tab`).
+  The page says when `resume` showed another chat than the one asked for.
+  A `Showing` of another session is always drawn anew (`drawsAnew`): a
+  chat and its branch share their copied records' places and times. The
+  Context tab says a branch's copied turns were "copied from Chat 1", and a
+  chat switched back to "before this chat was shown again"; a reload reads
+  as lesson 7's. Experiments cut at the latest closed turn, branch while a
+  slow tool runs, ask for a turn that is not closed (`NoClosedTurn`, in the
+  kernel's words) and put back lesson 7's `resume`. Lesson 13's page links
+  here. No Echo rule was added. No published package changes.
 - Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
   A new file, `checks.ts`, holds the lines that run the program for a
   check (`turnsAfter`: the seven layers of `main`, with the model the

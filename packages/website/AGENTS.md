@@ -44,7 +44,12 @@ check` (tsc over the learn code, the build, the link check) and
     lesson's `evaluate` says so. What a file made is read with `named`
     and held to a guard (`Layer.isLayer`, `typeof`), never cast; lesson
     7 alone says two types it cannot check, its store's and its
-    `resume`'s, each with the reason beside it. A
+    `resume`'s, each with the reason beside it. Lesson 14 reuses lesson
+    7's `storeOf` and says no type of its own: an Effect a file made
+    (`resume`, what `branchFrom` gave) is run over the page's sessions
+    with `Effect.provideService` and handed over with `programOf`, and
+    what it gives is decoded with the kernel's `SessionId` schema
+    (`sessionIdOf`). A
     lesson whose tool declares a service has a `type-level:` test that the
     program without it does not compile, naming the service (lesson 4's
     `Helper`). A loop written over any toolkit asks for the toolkit's own
@@ -248,6 +253,45 @@ check` (tsc over the learn code, the build, the link check) and
     creates a second root session waits a few milliseconds first.
   - A browser script starts by removing the lesson's keys: the Chrome
     profile is kept between runs, and so is its storage.
+  - Lesson 14's branches. `Lesson.branch` is how a branch is made:
+    branch.ts's `branchFrom`, from the sources last built, called with
+    the conversation shown and the turn pressed. `runtime.branch(turn)`
+    runs it on the page's own base `Sessions`, the sessions the chat
+    reads over the store the program built, never on a kit's stack (a kit
+    evaluates files over a store of its own, so a fork there would land
+    where the chat never reads). While no program runs it refuses in
+    words (`NOT_RUNNING`), whether no build ever passed (the base has no
+    store) or the last one was refused. It stops nothing and switches
+    nothing: a turn running in the chat goes on.
+  - "Branch after turn N" sits at the last stored row of each closed
+    turn (`branchPoints`, from the turns whose end the chat took,
+    `ChatBoard.ended`): a row drawn from the journal knows its turn as a
+    row drawn live does, and a turn still open has none.
+  - The row of chats (`chats.ts`, `runtime.chats()`) lists the store's
+    headers by creation that are the learner's own (`ownChat`: owner
+    `learner`, no parent, this kernel's format, the conditions lesson
+    7's `resume` keeps), labelled "Chat 1", and a branch for the chat it
+    was cut from and the turn of its own record at `branch.through`
+    ("Chat 1, branch after turn 2"; the same name twice is numbered).
+  - `chosen` (`PageParts.chosen`, `runtime.chosen`) is the chat the page
+    asks for, which chat.ts's `resume` is given and decides on. Picking
+    a chat sets it and rebuilds through `start` (`runtime.choose`), the
+    messages that waited dropped: they were written for the chat that
+    was shown. A branch made sets it to the chat shown, so a rebuild
+    does not move to the branch, the latest. Clear context clears it
+    before it rebuilds, so `resume` finds the new chat as the latest. It
+    is kept in the tab's `sessionStorage` (`RuntimeOptions.tab`,
+    `CHOSEN_KEY`), so a reload shows the same chat and a new tab the
+    latest; "Start over" removes it with the edits. The page says when a
+    `Showing` names another chat of the row than `chosen` (`ignoredLine`).
+  - A chat and its branch hold the same places and times up to the cut:
+    a `Showing` of another session than the one shown is drawn anew
+    (`drawsAnew`, which the page and its tests both call), whatever
+    `continues` says. A `Showing` of a branch carries where it was cut
+    (`branch`), and of a session this page showed before another
+    (`again`): the Context tab says a copied turn was "copied from Chat
+    1" and a turn of a chat shown again ran "before this chat was shown
+    again" (`restoredWords`); a reload reads as lesson 7's.
   - `Lesson.kits` are kits the page runs over the learner's code
     (`runtime.runKit`), listed under a `data-kit` button: see "Kits and
     checks".

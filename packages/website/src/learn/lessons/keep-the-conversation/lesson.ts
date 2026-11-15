@@ -51,7 +51,7 @@ const agentNames = (parts: PageParts, store: Store, resume: Effect.Effect<Sessio
  * that its function takes the storage and gives a layer of `JournalStorage` is said here, not checked: a store
  * that gives something else fails when the program builds it, or in the kit.
  */
-const storeOf = (sources: Sources): Result.Result<Store, string> =>
+export const storeOf = (sources: Sources): Result.Result<Store, string> =>
   Result.flatMap(runStatements("store.ts did not run: ", storeBodyOf(sources.store ?? ""), "store", storeNames), (store) =>
     typeof store === "function" ? Result.succeed(store as Store) : Result.fail("store.ts did not run: store is not a function. It should take the storage and its options, and give a layer."))
 

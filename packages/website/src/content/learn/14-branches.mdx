@@ -1,0 +1,110 @@
+---
+title: Branches
+description: "Continue a conversation from an earlier turn and keep the original. A branch is a session whose journal starts as a copy of the other's, up to the end of a closed turn: every part reads it unchanged."
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/branches/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+You asked something, and want to ask it another way, or go on from an earlier answer in another direction, and keep the conversation as it is. This lesson's agent makes a **branch**: a new conversation that starts as a copy of the one shown, up to the end of a turn you pick.
+
+The program is lesson 7's: the journal is kept in this browser's storage, so every chat survives a reload. One file is new, **branch.ts**, and one piece of chat.ts changed.
+
+Send **My name is Ana.** and then **What is 12 * 3?** Under each answer is a button, **Branch after turn 1**, **Branch after turn 2**. Press **Branch after turn 1**. The row of chats above the messages now reads **Chat 1** and **Chat 1, branch after turn 1**. Chat 1 is still the one shown: making a branch does not switch to it.
+
+Press **Chat 1, branch after turn 1**. The chat is drawn from the branch's journal: your first message and its answer, and nothing of turn 2. Ask **What did I say earlier?** Echo answers `Earlier you said: "My name is Ana.".`: the copied turn is the branch's own.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. A branch is a journal, and any model reads it: the model you pick is sent the copied turns as it would be sent the chat's.
+
+With Qwen2.5 0.5B picked, on the GPU, a chat of **My name is Ana.** and **I live in Lisbon.** was branched after turn 1, and both were asked **Where do I live?** On the branch, cut before Lisbon was said, Qwen answered "You live in the city.": nothing in its journal names the city. On Chat 1 it answered "You live in Lisbon.". The two answers to **Where do I live?** took about a second each, and the records of Chat 1's answers name `qwen2.5-0.5b`.
+
+</Step>
+
+<Step n={3} id="copy" title="A branch is a copy" focus="context" wide={true}>
+
+A branch is a **session whose journal starts as a copy of another's**, up to the end of a closed turn. The store makes the copy in one step, each record as it was stored: its place, its turn and its time. After that the branch is a session like any other: its next turn follows the copied ones, and it is listed and found again like any other.
+
+- **Where it was cut** is in the branch's header: `branch: { of, through }`, the session it was copied from and the place of the last record copied. A turn of a message and its answer is four records (its start, the message, the answer, its end), so a branch after turn 1 of such a chat holds four, and its `through` is 4.
+- **It is cut at a closed turn.** The cut is the record that ended the turn, never a place inside one.
+- **Nothing is announced.** The copied records were heard when they were stored. Hearing them again would count them twice.
+- **The original goes on.** Its journal is not touched: Chat 1 still holds its turn 2, and the branch has a turn 2 of its own.
+
+Open **Context** on the branch. Its first turn says **copied from Chat 1**: the records are there, and the contexts and prompts of that turn were never stored, as for any turn read back from the journal. Turn 2, which ran in the branch, reads as a turn always does.
+
+</Step>
+
+<Step n={4} id="branch-from" title="branchFrom" focus="code" file="branch">
+
+**branch.ts** is one function, `branchFrom(conversation, turn)`, and one call of the sessions:
+
+```ts
+return yield* sessions.fork(conversation, { through: TurnNumber.make(turn) })
+```
+
+The page calls it when you press **Branch after turn N**, with the chat shown and N. A turn's number is a `TurnNumber`, a whole number from 1, which `make` checks.
+
+It runs on **the page's own sessions**: the ones the chat reads, over the store your program built. That is why the new chat is in the row at once. Lesson 7's kit, by contrast, runs every check over a store of its own, so a branch made there would land where the chat never looks.
+
+A branch that cannot be made is refused, in words, and nothing is made. The kernel refuses a turn that is not closed, with `NoClosedTurn`: "turn 2 of session … is not closed: a branch is cut at the end of a closed turn". While your program is not running there is no store open to make a branch in, and the chat says "your program is not running, so no store is open to make a branch in. Fix it, then press Rebuild."
+
+</Step>
+
+<Step n={5} id="shown" title="Which chat is shown" focus="code" file="chat">
+
+The row of chats lists every conversation of yours in the store, by the time each was made: owned by `"learner"`, with no parent, in a format this kernel reads. A chat that is no branch is numbered, **Chat 1**, **Chat 2**. A branch is named for the chat it was cut from and the turn it was cut after, read from the branch's own record at `through`.
+
+Which chat is shown is still **chat.ts**'s to say, through **`resume`**. The page gives it one more name, **`chosen`**: an `Option` of a session's id, the chat the page asks for. `resume` shows that chat when it is one of yours. Otherwise it keeps lesson 7's rule, the last chat you started.
+
+- **Picking a chat** in the row sets `chosen` and runs your program again over it, as **Rebuild** does: a turn running in the chat ends, stopped. The messages still waiting are dropped, since you wrote them for the chat that was shown.
+- **Making a branch** sets `chosen` to the chat shown. A branch is the newest chat, so without that a **Rebuild** or **Stop** would show the branch.
+- **Clear context** clears `chosen` before it starts a new chat. The new chat is the latest, and `resume` shows it.
+- **A reload** keeps `chosen` in this tab's storage, as it keeps your edits, so the chat you were on comes back. A new tab has nothing kept, and shows the latest.
+
+The page compares the chat `resume` gave with the one it asked for. When they differ, the chat says so: "The page asked for Chat 1, and the resume in chat.ts showed Chat 1, branch after turn 1: it decides which chat is shown, and it did not take the one asked for."
+
+</Step>
+
+<Step n={6} id="carries" title="What a branch carries" focus="chat">
+
+A branch carries everything stored before the cut, because it is a copy, and every part reads it as it read the chat at the cut. In this lesson that is the messages, the answers and the tools' results. Pick **Chat 1** again, where you asked **What is 12 * 3?**, and press **Branch after turn 2**: the row gains **Chat 1, branch after turn 2**. Show it and send **Thanks.** The calculator's call and its result are in the prompt, as they would be in Chat 1's.
+
+ADR 0016 says the same of what later lessons store, and the kernel's tests (`branches.test.ts`) hold it for each memory, a summary, an approval and readResult:
+
+- an **"Always" approval** (lesson 9): a tool in the branch acts with nobody asked, as you decided;
+- a **summary** a memory stored (lesson 5): the branch starts with it, and the summarizer is not asked again;
+- a long result read on with **readResult** (lesson 8), by the place it had.
+
+The **skills** loaded (lesson 10) come with the branch too, the ADR says: which skills are loaded is read from the stored results of `loadSkill`, which the branch copies.
+
+What is not copied is what is not in the conversation's journal. The **facts** (lesson 11) live in the memory session, which every conversation shares: a branch reads the same facts as the chat it was cut from, and a fact learned in one is known in the other.
+
+</Step>
+
+<Step n={7} id="edges" title="Edge cases" focus="chat">
+
+- **Your first message, asked another way**, is a new chat, not a branch: no turn is before it, and a session with no closed turn is refused ("has no closed turn to branch from"). Press **Clear context** and ask again.
+- **A branch after a stopped turn** carries the turn as it was stored. Press **Make the calculator slow** (an experiment of the last step), ask **What is 6 * 7?**, press **Stop** while the calculator works, then branch after that turn and show the branch. It holds your message, the words "Let me work that out.", and the line that says the turn was stopped. The call with no result is in the journal and is never sent: send **Hello.** and Echo answers it alone.
+- **A turn stopped before any of its answer was stored** leaves your message with no answer, and a branch after it carries that message. The model is sent it with the next one: Echo, sent both, answers `You sent 2 messages: "What did I say earlier?", "Hello.". I can also see 2 earlier messages.` Echo writes fast, so such a stop is hard to make by hand.
+- **A turn still open** has no button. Pressed on an earlier turn while one runs, a branch is made at once, and the turn in the chat shown goes on: a branch never stops anything.
+- **A chat and its branch hold the same places and times**, up to the cut. The page tells them apart by the session alone: switching between them draws the chat shown from its own journal, every time.
+
+</Step>
+
+<Step n={8} id="experiments" title="Experiments" focus="code" file="branch">
+
+Each button rewrites one file, then builds the program again. The chats stay in the store: an experiment changes the code, not the conversations. Each experiment starts from an empty store and the code as it started: press **Start over** before each, which forgets every chat and your edits and reloads the page, then the experiment's button. The slow calculator is the one exception: its text says when to press it after another.
+
+<Experiments />
+
+After the last one, press **Reset** in the Code pane.
+
+**Next:** a workspace. Why a branch is a copy made by the store, cut at a closed turn, and what it carries, is in [ADR 0016](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0016-a-branch-is-a-copy-cut-at-a-closed-turn.md).
+
+</Step>

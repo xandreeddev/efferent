@@ -9,7 +9,7 @@ import { assistantMessage, Seq, stored as draftOf, ToolCallId, toolResult, turnE
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { APPROVAL_REFUSED, decidedEvent } from "@xandreed/sdk/kernel"
 import type { Decision } from "@xandreed/sdk/kernel"
-import { answersTo, asked, asking, attemptLine, chatRowsOf, decidedLine, dropWaiting, emptyChat, failed, failureLine, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { answersTo, asked, asking, attemptLine, branchPoints, chatRowsOf, drawsAnew, decidedLine, dropWaiting, emptyChat, failed, failureLine, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -345,5 +345,28 @@ describe("the chat's rows, record by record", () => {
     expect(failed(board, 2, "said after the turn").rows.filter((row) => row.kind === "error").map(told)).toEqual(["error: Broken: it broke", "error*: said after the turn"])
     // The page words a lost GPU itself: the journal's row for that turn is taken out.
     expect(withoutFailure(board, 1).rows.filter((row) => row.kind === "error")).toEqual([])
+  })
+
+  test("lesson 14: Branch after turn N is at the last stored row of each closed turn, a turn's first end alone counts, and an open turn has none", () => {
+    const two = TurnNumber.make(2)
+    const events = journal(
+      [turnStarted(one), userMessage("Hello."), assistantMessage("Hello!"), turnEnded(one, { _tag: "Completed" }), turnEnded(one, { _tag: "Completed" })],
+      [turnStarted(two), userMessage("Again."), turnEnded(two, { _tag: "Interrupted" })],
+      [turnStarted(TurnNumber.make(3)), userMessage("Open.")],
+    )
+    const board = events.reduce(stored, emptyChat)
+    expect(board.ended).toEqual([one, two])
+    expect([...branchPoints(board)].map(([id, turn]) => [board.rows.find((row) => row.id === id)?.text, Number(turn)])).toEqual([
+      ["Hello!", 1], ["Turn 2 was stopped. Your message stays in the journal.", 2],
+    ])
+  })
+
+  test("lesson 14: a Showing of another session is drawn anew, though its records hold the same places and times as the chat's", () => {
+    const records = journal([turnStarted(one), userMessage("Hello."), assistantMessage("Hello!"), turnEnded(one, { _tag: "Completed" })])
+    const board = records.reduce(stored, emptyChat)
+    // The same journal: `continues` holds for either session, the session alone tells them apart.
+    expect(drawsAnew(board, "chat", { session: "chat", journal: records })).toBe(false)
+    expect(drawsAnew(board, "chat", { session: "branch", journal: records })).toBe(true)
+    expect(drawsAnew(board, "chat", { session: "chat", journal: records.map((record) => ({ ...record, at: 1 })) })).toBe(true)
   })
 })

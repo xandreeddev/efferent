@@ -5,8 +5,8 @@
 // Hovering a row lights the same record everywhere; a step lights what it
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
-import { BEFORE_THIS_PAGE, emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnNumbersOf, viewOf } from "../trace-model.ts"
-import type { Board, Boards, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
+import { emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnNumbersOf, viewOf } from "../trace-model.ts"
+import type { Board, Boards, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, RestoredWords, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
 export interface TracePane {
@@ -260,15 +260,15 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   }
 
   // ── memory ──────────────────────────────────────────────────────────────
-  const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
+  const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>) => {
     Option.match(view.memory, {
       onNone: () => {
         // A turn on the memory session stores a fact's record: no memory builds a context from that journal.
         const quiet = board.kind === "memory"
-        memoryHead.textContent = quiet ? "none: no model is called" : restored ? "before this page loaded" : "not asked yet"
-        patch(memoryBox, [[quiet ? "memory-session" : restored ? "restored" : "none", () => el("li", { class: "tr-none" },
+        memoryHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not asked yet", onSome: (words) => words.head })
+        patch(memoryBox, [[quiet ? "memory-session" : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
           quiet ? "A turn on the memory session stores one record and calls no model: no memory builds a context from this journal. The facts it holds are read by withFacts, for each request of a conversation."
-            : restored ? BEFORE_THIS_PAGE : "Memory has not been asked for this turn's context yet.")]])
+            : Option.match(restored, { onNone: () => "Memory has not been asked for this turn's context yet.", onSome: (words) => words.detail }))]])
       },
       onSome: (rows) => {
         const tokens = rows.reduce<number>((sum, row) => sum + row.tokens, 0)
@@ -295,14 +295,14 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     row.source === "code" ? "your code · never stored"
       : row.source === "added" ? "added by your code · never stored"
         : Option.match(row.seq, { onNone: () => "memory", onSome: (seq) => `memory · #${seq}` })
-  const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
+  const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>) => {
     Option.match(view.prompt, {
       onNone: () => {
         const quiet = board.kind === "memory"
-        promptHead.textContent = quiet ? "none: no model is called" : restored ? "before this page loaded" : "not sent yet"
-        patch(promptBox, [[quiet ? "memory-session" : restored ? "restored" : "none", () => el("li", { class: "tr-none" },
+        promptHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not sent yet", onSome: (words) => words.head })
+        patch(promptBox, [[quiet ? "memory-session" : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
           quiet ? "No prompt is sent in a turn on the memory session. Open the Chat session to read the prompt that was sent the facts."
-            : restored ? BEFORE_THIS_PAGE : "No prompt has been sent in this turn yet.")]])
+            : Option.match(restored, { onNone: () => "No prompt has been sent in this turn yet.", onSome: (words) => words.detail }))]])
       },
       onSome: (rows) => {
         const share = view.promptTokens === 0 ? 0 : Math.round((view.reusedTokens / view.promptTokens) * 100)
@@ -390,8 +390,10 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     const call = callShown(view)
     renderCalls(view, call)
     renderJournal(call, lit)
-    renderMemory(call, lit, view.restored)
-    renderPrompt(call, lit, view.restored)
+    // A turn read back from the journal says why only its records are here: a reload, a switch, or a branch's copy.
+    const restored = view.restored ? Option.some(view.readBack) : Option.none()
+    renderMemory(call, lit, restored)
+    renderPrompt(call, lit, restored)
     lightHovered()
     if (lit.size > 0) root.querySelector('[data-lit=""]')?.scrollIntoView({ block: "nearest" })
   }
