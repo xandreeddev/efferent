@@ -66,6 +66,9 @@ caught up.
 | The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
 | `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
+| The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
+| `inMemoryFiles(initial?)` | sdk, `plugins/files-in-memory` | a workspace in memory |
+| `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
@@ -1545,6 +1548,147 @@ test("a branch starts as the conversation up to the turn it was cut after, and g
   three stock memories, a stored summary, an approval for good and
   `readResult`.
 
+## A workspace: files the agent acts on
+
+Files are the world an agent acts on, not a store of the agent (ADR 0017).
+The workspace is a contract, `Files` (`read`, `list`, `write`), which the
+host provides: `inMemoryFiles()` here, a page's storage, a test's map, a
+command line's disk (the kernel ships no disk). Four tools reach it,
+`readFile`, `listFiles`, `writeFile` and `editFile` (`fileTools`, with
+`fileHandlers`); a program provides `Files` alone, and one that leaves it
+out does not compile where it calls them:
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#stack -->
+
+```ts
+// What a program with the file tools provides: the model, the tools' handlers, a memory, the sessions over a store,
+// and the workspace. Nothing else: the tools never ask anyone.
+const stackOf = (model: Layer.Layer<LanguageModel.LanguageModel>, files: Layer.Layer<Files>) =>
+  Layer.mergeAll(model, fileHandlers, flatMemory, sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))).pipe(Layer.provideMerge(files))
+```
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#tools -->
+
+```ts
+// The workspace this program acts on: in memory, with one file. A test, a page and a command line each give their own.
+const files = inMemoryFiles({ "notes/todo.md": "- buy milk\n- call Ana\n" })
+const { journal, after } = await Effect.runPromise(conversation([
+  calling("readFile", { path: "notes/todo.md" }),
+  calling("editFile", { path: "notes/todo.md", find: "call Ana", replace: "call Ana at noon" }),
+  answering("Done."),
+], ["Move the call to noon."], files))
+// The read is a stored result, a page of the file; the edit is a call and its result; the file is changed.
+expect(results(journal)).toEqual([
+  [{ path: "notes/todo.md", text: "- buy milk\n- call Ana\n", from: 0, to: 22, total: 22 }, false],
+  [{ path: "notes/todo.md", characters: 30 }, false],
+])
+expect(after).toEqual({ "notes/todo.md": "- buy milk\n- call Ana at noon\n" })
+```
+
+- **The line between a workspace and a store beside the journal** is three
+  conditions, each held by a test of `files.test.ts`: no part that builds
+  the agent's state or a prompt requires `Files` (`type-level:`, and no
+  kernel source outside the files contract and its tools imports it); the
+  context a memory builds is the same whatever the workspace holds; and a
+  file reaches a prompt only as a stored result: changed after it was
+  read, the next prompt still holds what was read.
+- **A path stays in the workspace.** `workspacePath` drops empty names and
+  `.`, and refuses a path from the root, a `..`, a `\`, a `:`, a control
+  character or one over `PATH_LIMIT` (160) characters, in words the model
+  reads. A `Files` is only ever given a
+  `FilePath`.
+- **What the journal holds of files is bounded.** A read is a page of at
+  most `FILE_PAGE` (4,000) characters, sent whole (`SentWhole`); a write's
+  text is in its call, which every later prompt sends, so a write of more
+  than `WRITE_LIMIT` (4,000) characters is refused (its call is stored
+  all the same) and a longer file is written in parts (`append`); a list
+  gives at most `LIST_LIMIT` (200) paths and how many it left out.
+- **An edit is a compare and set**: the text to find must be in the file
+  once, and the write expects the text the edit read (`Expected`), so a
+  file someone changed meanwhile is not overwritten (`FileChanged`). Every
+  refusal is the call's failed result, and changes nothing.
+- **A write is said live** (`plugin.files.written`, about its turn, stored
+  nowhere), so a client that shows the workspace reads it again.
+- **An interrupted write can leave a changed file and no result**: Stop, a
+  reload or a crash between the write and its stored result. The call is
+  then never sent (`paired`), and the next read shows the file as it is.
+- **A branch shares the workspace**: files are not branched.
+
+Permission is the app's, never the tools'. They ask no one; the app wraps
+a layer around the plugin. A `Files` of its own declines by a rule, and the
+model reads why (`FilesRefused`):
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#declining -->
+
+```ts
+// A `Files` of the app's over the one it was given: writes to the `docs` folder are declined, everything else passes.
+const keepDocs = <E, R>(files: Layer.Layer<Files, E, R>) => Layer.effect(Files, Effect.gen(function* () {
+  const inner = yield* Files
+  return Files.of({
+    ...inner,
+    write: (path, text, expected) => path.startsWith("docs/")
+      ? Effect.fail(new FilesRefused({ path, reason: "the docs folder is read-only", message: `declined ${path}` }))
+      : inner.write(path, text, expected),
+  })
+})).pipe(Layer.provide(files))
+const workspace = keepDocs(inMemoryFiles({ "docs/guide.md": "# Guide\n" }))
+```
+
+Asking a person is the app's loop: a `Files` cannot ask, since its calls
+run with no turn in their type and an answer is a record of a turn. The
+loop asks before it runs a call that writes, with `approveIn` (ADR 0012),
+keyed by the app (here per file, by the path as the workspace has it, which
+`PATH_LIMIT` keeps short enough for a key):
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#path -->
+
+```ts
+/** The path a call of a file tool names, as the app keys its question by it. */
+const pathOf = (params: unknown): string => Predicate.hasProperty(params, "path") && typeof params.path === "string" ? params.path : "?"
+```
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#asking -->
+
+```ts
+// The app's turn asks before it runs a call that writes: the tools never ask, so the question is the loop's.
+// A no is stored as the call's result; a yes for good stands for the rest of the conversation, per file.
+// A path that is no path in the workspace is not asked about: the tool refuses it in words.
+const askFirst: BeforeCall<Approval> = (session, call) => {
+  if (call.name !== "writeFile" && call.name !== "editFile") return Effect.succeed(true)
+  return Result.match(workspacePath(pathOf(call.params)), {
+    onFailure: () => Effect.succeed(true),
+    onSuccess: (path) => approveIn(session, { action: `files.write:${path}`, detail: `Let the agent write ${path}.` }).pipe(Effect.matchEffect({
+      onFailure: (refusal) => Effect.as(Effect.orDie(session.append(toolResult(call, refusal, true))), false),
+      onSuccess: () => Effect.succeed(true),
+    })),
+  })
+}
+```
+
+And a judge before the person, an `Approval` of the app's over the
+person's: what the judge finds safe is `Allowed`, the rest is asked:
+
+<!-- pinned: packages/sdk/src/kernel/files.test.ts#judge -->
+
+```ts
+// An `Approval` of the app's over the person's: a judge answers first, and what it is not sure of goes to the person.
+// An app's judge asks a model; this one reads the request, so the test is the same every time.
+const judgedFirst = (judge: (detail: string) => Effect.Effect<"safe" | "unsure">) => <E, R>(below: Layer.Layer<Approval, E, R>) =>
+  Layer.effect(Approval, Effect.gen(function* () {
+    const person = yield* Approval
+    return Approval.of({
+      ask: (request) => Effect.flatMap(judge(request.detail), (verdict): Effect.Effect<Decision> => verdict === "safe" ? Effect.succeed({ _tag: "Allowed" }) : person.ask(request)),
+    })
+  })).pipe(Layer.provide(below))
+const approval = judgedFirst((detail) => Effect.succeed(detail.includes("scratch/") ? "safe" : "unsure"))(person)
+```
+
+A sandbox needs none of these: a `Files` the app can let the agent change
+freely, and no asking. `filesConformance` checks a host's own `Files`: a
+file read back as written, `FileNotFound`, an overwrite, a write that
+expects, one refused with `FileChanged` that writes nothing, and a folder
+listed by code unit, never a name that only starts like it.
+
 ## Testing a host
 
 A host's program names its model and its store by contract, so a test of it
@@ -1780,6 +1924,7 @@ fail on a careless plugin written for it.
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
+| `Files` | `filesConformance` | |
 | planned calls | none | nothing a host implements: a plan is Effect's, and `planned` a function over a stream. The scripted model fails as its script says |
 
 ## What the first cut leaves out, and the order it returns
