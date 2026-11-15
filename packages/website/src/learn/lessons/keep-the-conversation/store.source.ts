@@ -17,7 +17,7 @@ import {
 } from "@xandreed/core/kernel"`
 
 /** What the learner edits: the store. */
-export const DEFAULT_STORE = `// The store: where every record is kept. It is one more module, with four calls, and this one
+export const DEFAULT_STORE = `// The store: where every record is kept. It is one more module, with five calls, and this one
 // keeps what it is given in the browser's localStorage, so a conversation outlives the page.
 // A session's header has a key of its own, and so has each of its events:
 //   <prefix><id>:header    <prefix><id>:1    <prefix><id>:2    ...
@@ -100,6 +100,26 @@ export const store = (storage, { prefix }) => {
         }
         return Arr.sort(headers, byCreation)
       }),
+
+      // A branch: a new session whose journal starts as another's, up to a place, each event as
+      // it was stored. The events are written first and the header last: the header makes it.
+      fork: (header) =>
+        Effect.suspend(() => {
+          if (storage.getItem(headerKey(header.id)) !== null) {
+            return refused("SessionExists", \`session \${header.id} exists\`)
+          }
+          const { of, through } = header.branch
+          if (storage.getItem(headerKey(of)) === null)
+            return refused("SessionMissing", \`no session \${of}\`)
+          const texts = []
+          for (let seq = 1; seq <= through; seq++) texts.push(kept.getItem(eventKey(of, seq)))
+          if (texts.some((text) => text === null)) {
+            return refused("SeqConflict", \`the journal is not at \${through}\`)
+          }
+          texts.forEach((text, at) => kept.setItem(eventKey(header.id, at + 1), text ?? ""))
+          storage.setItem(headerKey(header.id), JSON.stringify(header))
+          return Effect.void
+        }),
     }),
   )
 }`
@@ -122,6 +142,7 @@ export const TYPED: ReadonlyArray<readonly [string, string]> = [
   ["const eventKey = (id, seq) =>", "const eventKey = (id: SessionId, seq: number) =>"],
   ["          const events = []\n", "          const events: Array<StoredEvent> = []\n"],
   ["        const headers = []\n", "        const headers: Array<SessionHeader> = []\n"],
+  ["          const texts = []\n", "          const texts: Array<string | null> = []\n"],
 ]
 
 /** The same file as a module a test can compile: the learner's text with its parameters typed. */

@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { StoredEvent } from "./event.entity.js"
-import { Owner, SessionId, TurnNumber } from "./ids.entity.js"
+import { Owner, Seq, SessionId, TurnNumber } from "./ids.entity.js"
 
 /**
  * The format of a kernel journal: its header and its envelopes. Format 2
@@ -32,7 +32,18 @@ export class InvalidSession extends Schema.TaggedError<InvalidSession>()("Invali
 }) {}
 
 /**
- * A session's header, stored once and never changed.
+ * Where a branch was cut (ADR 0016): the session it was copied from, and the place of the last record copied, the
+ * end of a closed turn. The branch's journal starts as those records, as they were stored.
+ *
+ * @public
+ */
+export const Branch = Schema.Struct({ of: SessionId, through: Seq })
+export type Branch = typeof Branch.Type
+
+/**
+ * A session's header, stored once and never changed. `parent` is the session a sub-agent works for (ADR 0006);
+ * `branch` is where a branch was cut from another session (ADR 0016). A reader that does not know `branch` reads a
+ * branch as a session of its own, which it is.
  *
  * @public
  */
@@ -40,6 +51,7 @@ export const SessionHeader = Schema.Struct({
   id: SessionId,
   owner: Owner,
   parent: Schema.optionalKey(SessionId),
+  branch: Schema.optionalKey(Branch),
   /** When the session was created, in milliseconds since the epoch: what `list` orders by. */
   createdAt: Schema.Number,
   /** The format the journal was written in. A header of any format reads back; a turn opens only on `JOURNAL_FORMAT` (`currentFormat`). */
@@ -77,11 +89,12 @@ export type SessionState = typeof SessionState.Type
  * (`NoOpenTurn`), a record a body
  * appends under core's own names, which only the session plugin writes
  * (`ReservedName`), a value to append that `stored` did not make
- * (`NotADraft`), or a turn on a journal written in another format than this
- * kernel's (`FormatMismatch`).
+ * (`NotADraft`), a turn on a journal written in another format than this
+ * kernel's (`FormatMismatch`), or a branch cut at a turn that is not closed, or of a session with no closed turn
+ * (`NoClosedTurn`).
  */
 export class SessionRefused extends Schema.TaggedError<SessionRefused>()("SessionRefused", {
-  reason: Schema.Literals(["SessionBusy", "NoOpenTurn", "ReservedName", "NotADraft", "FormatMismatch"]),
+  reason: Schema.Literals(["SessionBusy", "NoOpenTurn", "ReservedName", "NotADraft", "FormatMismatch", "NoClosedTurn"]),
   message: Schema.String,
 }) {}
 

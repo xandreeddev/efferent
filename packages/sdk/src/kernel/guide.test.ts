@@ -147,6 +147,8 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/facts.test.ts#remember",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/durable.test.ts#resume",
+      "packages/sdk/src/kernel/branches.test.ts#branch",
+      "packages/sdk/src/kernel/branches.test.ts#test",
       "packages/sdk/src/kernel/host-test.test.ts#program",
       "packages/sdk/src/kernel/host-test.test.ts#test",
       "packages/sdk/src/kernel/model-plans.test.ts#plan",

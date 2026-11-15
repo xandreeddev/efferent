@@ -241,6 +241,16 @@ kernel's rules:
   the host does. The session plugin keeps the journal whole when a turn
   was closed under its writer (the sessions kit's `recovered-writer`):
   that is why the kit's subject gives the store too.
+- A branch (ADR 0016) is a session whose journal starts as a copy of
+  another's up to the end of a closed turn: `JournalStorage.fork(header)`
+  copies the events as stored, in one step, and `Sessions.fork(id, {
+  through })` finds the cut (`cutOf`, the first end of the turn asked for,
+  or of the last closed one) and makes the header (`branchHeaderOf`). The
+  header's optional `branch: { of, through }` says where it was cut;
+  `parent` keeps meaning a sub-agent's caller, and the format is the same.
+  A fork announces nothing and claims nothing. The storage kit's `fork` and
+  the sessions kit's `fork` hold both; a branch of a journal of another
+  format is refused in the sessions kit's `format`.
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
   kernel's own helpers (`conformance.entity.ts` and its functions, which
   are not exported), not core's `src/conformance.functions.ts`. A check

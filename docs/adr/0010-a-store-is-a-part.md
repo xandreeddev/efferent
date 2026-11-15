@@ -71,3 +71,6 @@ four questions the in-process store never had to answer:
   id in the journal would then say whose turn it is, and `recover` would check it.
 - A host that needs sessions in the order its calls created them, within one millisecond.
 - A store whose `list` is too large to give whole: paging, or a filter by owner.
+
+*Amended 15 November 2026 (ADR 0016).* The contract has a fifth call, `fork`: a branch, a new session whose
+journal starts as another's up to a place, copied as stored in one step. The storage kit checks it (`fork`).

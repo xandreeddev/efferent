@@ -42,6 +42,13 @@ const handleOn = (journals: Ref.Ref<Journals>) => JournalStorage.of({
         : Effect.succeed({ header: journal.header, events: journal.events.filter((event) => from === undefined || event.seq >= from) })
     }),
     list: Effect.map(Ref.get(journals), (all) => Arr.sort(Array.from(all.values(), (journal) => journal.header), byCreation)),
+    fork: (header) => Ref.modify(journals, (all): Decided<void> => {
+      if (all.has(header.id)) return [Effect.fail(new JournalStorageError({ reason: "SessionExists", message: `session ${header.id} exists` })), all]
+      const from = all.get(header.branch.of)
+      if (from === undefined) return [Effect.fail(missing(header.branch.of)), all]
+      if (header.branch.through > from.events.length) return [Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: `the journal is at ${from.events.length}` })), all]
+      return [Effect.void, new Map([...all, [header.id, { header, events: from.events.slice(0, header.branch.through) }]])]
+    }).pipe(Effect.flatten),
 })
 
 /** A store that keeps its promises, in a map; its pair is two handles on one map. */
@@ -57,6 +64,7 @@ const forgetful: JournalStorageSubject = {
     append: (_id, expectedSeq, turn, event) => Effect.succeed({ seq: Seq.make(expectedSeq + 1), at: 0, turn, ...event }),
     read: (id) => Effect.fail(missing(id)),
     list: Effect.succeed([]),
+    fork: () => Effect.void,
   })),
 }
 
@@ -71,6 +79,44 @@ const trusting: JournalStorageSubject = {
     }),
     read: (id) => Effect.map(Ref.get(journals), (all) => all.get(id) ?? { header: { id, owner: Owner.make("nobody"), createdAt: 0, format: JOURNAL_FORMAT }, events: [] }),
     list: Effect.map(Ref.get(journals), (all) => Arr.sort(Array.from(all.values(), (journal) => journal.header), byCreation)),
+    fork: (header) => Ref.update(journals, (all) => new Map([...all, [header.id, { header, events: (all.get(header.branch.of)?.events ?? []).slice(0, header.branch.through) }]])),
+  })),
+}
+
+/** A store that makes a branch as a copy whose events carry the time of the copy, not the time each was stored. */
+const restampingBranch: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    read: (id, from) => Effect.map(storage.read(id, from), (journal) => journal.header.branch === undefined ? journal : { ...journal, events: journal.events.map((event) => ({ ...event, at: 0 })) }),
+  })),
+}
+
+/** A store that copies the whole journal into a branch, wherever it was cut. */
+const overcopying: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    fork: (header) => Effect.flatMap(storage.read(header.branch.of), (from) => storage.fork({ ...header, branch: { ...header.branch, through: Seq.make(Math.min(from.events.length, Math.max(header.branch.through, from.events.length))) } })),
+  })),
+}
+
+/** A store that keeps a branch's header without saying where it was cut. */
+const branchless: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    read: (id, from) => Effect.map(storage.read(id, from), (journal) => {
+      const { branch: _branch, ...rest } = journal.header
+      return { ...journal, header: rest }
+    }),
+  })),
+}
+
+/** A store that writes a branch's header before it looks at the cut: a branch cut past the end is refused and left half made. */
+const halfBranch: JournalStorageSubject = {
+  open: Effect.map(honest.open, (storage) => JournalStorage.of({
+    ...storage,
+    fork: (header) => Effect.flatMap(storage.read(header.branch.of), (from) => header.branch.through > from.events.length
+      ? Effect.andThen(storage.create(header), Effect.fail(new JournalStorageError({ reason: "SeqConflict", message: "past the end" })))
+      : storage.fork(header)),
   })),
 }
 
@@ -164,13 +210,13 @@ const forgetsOnReopen: JournalStorageSubject = {
 const failedChecks = (subject: JournalStorageSubject) => Effect.runPromise(Effect.forEach(journalStorageConformance(subject), (check) =>
   Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check === check.id ? check.id : `${check.id} reported as ${result.failure.check}`] : [])))).then((failed) => failed.flat().toSorted())
 
-const everyCheck = ["append", "conflict", "create", "list", "missing", "read-from"]
+const everyCheck = ["append", "conflict", "create", "fork", "list", "missing", "read-from"]
 
 describe("the storage kit", () => {
   test("its checks have the ids its doc comment lists, in that order", () => {
-    expect(journalStorageConformance(honest).map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list", "reopens"])
+    expect(journalStorageConformance(honest).map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list", "fork", "reopens"])
     // A store with no medium beside its handle gives no pair, and is not asked what a second handle reads.
-    expect(journalStorageConformance({ open: honest.open }).map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list"])
+    expect(journalStorageConformance({ open: honest.open }).map((check) => check.id)).toEqual(["create", "append", "conflict", "read-from", "missing", "list", "fork"])
   })
 
   test("a store that keeps its promises passes every check", async () => {
@@ -181,21 +227,21 @@ describe("the storage kit", () => {
     expect(await failedChecks(forgetful)).toEqual(everyCheck)
   })
 
-  test("a store that never refuses fails every check of a refusal or a place", async () => {
-    expect(await failedChecks(trusting)).toEqual(["conflict", "create", "list", "missing", "read-from"])
+  test("a store that never refuses fails every check of a refusal or a place, a branch's among them", async () => {
+    expect(await failedChecks(trusting)).toEqual(["conflict", "create", "fork", "list", "missing", "read-from"])
   })
 
-  test("a store that loses a header's parent, or rewrites its format, fails the check of a creation", async () => {
-    expect(await failedChecks(headless)).toEqual(["create"])
-    expect(await failedChecks(reformatting)).toEqual(["create"])
+  test("a store that loses a header's parent, or rewrites its format, fails the checks of a creation and of a branch", async () => {
+    expect(await failedChecks(headless)).toEqual(["create", "fork"])
+    expect(await failedChecks(reformatting)).toEqual(["create", "fork"])
   })
 
-  test("a store that restamps a header's creation time fails the checks of a creation and of the list", async () => {
-    expect(await failedChecks(redated)).toEqual(["create", "list"])
+  test("a store that restamps a header's creation time fails the checks of a creation, of the list and of a branch", async () => {
+    expect(await failedChecks(redated)).toEqual(["create", "fork", "list"])
   })
 
-  test("a store that lists in the order of creation calls, or lists only what was written to, fails the check of the list", async () => {
-    expect(await failedChecks(insertionOrdered)).toEqual(["list"])
+  test("a store that lists in the order of creation calls, or lists only what was written to, fails the check of the list (and the first, which lists no branch, the check of a branch)", async () => {
+    expect(await failedChecks(insertionOrdered)).toEqual(["fork", "list"])
     expect(await failedChecks(listingWritten)).toEqual(["list"])
   })
 
@@ -203,8 +249,15 @@ describe("the storage kit", () => {
     expect(await failedChecks(forgetsOnReopen)).toEqual(["reopens"])
   })
 
-  test("a store that does not stamp the next place fails the check of an append", async () => {
-    expect(await failedChecks(unnumbering)).toEqual(["append"])
+  test("a store that does not stamp the next place fails the checks of an append and of a branch, which goes on from its cut", async () => {
+    expect(await failedChecks(unnumbering)).toEqual(["append", "fork"])
+  })
+
+  test("a store whose branch restamps the events it copies, copies past the cut, forgets where it was cut, or is left half made by a refusal fails the check of a branch", async () => {
+    expect(await failedChecks(restampingBranch)).toEqual(["fork"])
+    expect(await failedChecks(overcopying)).toEqual(["fork"])
+    expect(await failedChecks(branchless)).toEqual(["fork"])
+    expect(await failedChecks(halfBranch)).toEqual(["fork"])
   })
 
   test("a store that stamps every event with the first turn fails the check of an append", async () => {

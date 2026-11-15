@@ -93,4 +93,14 @@ export class Sessions extends Context.Service<Sessions, {
    * the outcome and frees the session.
    */
   readonly turn: <A, E, R>(id: SessionId, body: (session: OpenSession) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | TurnFailure, R>
+  /**
+   * Branch a session (ADR 0016): a new session, with the same owner and parent, whose journal starts as `id`'s up
+   * to the end of turn `through`, or of its last closed turn without `through`, copied in the store in one step
+   * (`JournalStorage.fork`). Its header says where it was cut (`branch`), and its next turn follows the copied one.
+   * The session it comes from is unchanged and goes on: a turn open in it is never copied. A turn that is not
+   * closed, or a session with no closed turn, is refused (`SessionRefused`, `NoClosedTurn`), and so is a journal
+   * of another format (`FormatMismatch`). Nothing is announced: the copied records were heard when they were
+   * stored.
+   */
+  readonly fork: (id: SessionId, options?: { readonly through?: TurnNumber }) => Effect.Effect<SessionId, SessionRefused | JournalStorageError>
 }>()("@xandreed/core/kernel/Sessions") {}
