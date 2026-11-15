@@ -5,8 +5,8 @@ import type { LanguageModel } from "effect/ai"
 import { kernel } from "@xandreed/core/kernel"
 import type { Core, JournalStorage, OpenSession, Sessions } from "@xandreed/core/kernel"
 import type { Memory } from "./contracts/memory/memory.port.js"
-import { Approval, approve, callTool, CurrentTurn, inbox, inProcessJournal, sessions, windowMemory } from "./index.js"
-import type { Inbox, InvalidBudget, ToolNeeds } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, defineSkill, inbox, inProcessJournal, sessions, skills, windowMemory } from "./index.js"
+import type { Inbox, InvalidBudget, Skill, ToolNeeds } from "./index.js"
 import { runningTurn } from "./contracts/turn/running-turn.entity.functions.js"
 import { testTurn } from "./testing.js"
 
@@ -147,6 +147,55 @@ const byHandInItsTurn = (session: OpenSession, person: Layer.Layer<Approval>) =>
   return call
 }
 
+/*
+ * A host with skills offers some of its tools at each step (ADR 0013). The toolkit it offers is typed as every tool
+ * it could hold: what a call of it needs is what any tool of the whole needs, whichever are held now. So a program
+ * provides what a skill's tool declares, and that skill's handlers, whether or not the skill is loaded yet.
+ */
+const careful = defineSkill({ id: "careful", summary: "Ask before acting.", instructions: "Ask first.", tools: Toolkit.make(Asks) })
+const skilled = skills(plainTools, careful)
+type Skilled = Toolkit.Tools<typeof skilled.toolkit>
+const offeredNow = skilled.offered([])
+/** The whole toolkit names the base's tool, `loadSkill` and the skill's, each as its own type; what is offered is typed the same. */
+const skilledNames: Same<keyof Skilled, "plain" | "loadSkill" | "asks"> = true
+const skilledAsks: Same<Skilled["asks"], typeof Asks> = true
+const offeredIsTheWhole: Same<Toolkit.Tools<typeof offeredNow>, Skilled> = true
+/** What a call of it needs: what the skill's tool declares, less the turn. Not `any`. */
+const skilledNeeds: Same<ToolNeeds<Toolkit.Tools<typeof offeredNow>>, Approval> = true
+
+const skilledCall = (session: OpenSession) => Effect.flatMap(offeredNow, (toolkit) => callTool(toolkit, { id: "c1", name: "asks", params: {} }, session))
+
+const skilledComplete = (session: OpenSession, person: Layer.Layer<Approval>) => {
+  const call: Effect.Effect<unknown, unknown> = skilledCall(session).pipe(Effect.provide(Layer.mergeAll(askingLive, skilled.handlers, person)))
+  return call
+}
+
+const skilledWithoutApproval = (session: OpenSession) => {
+  // @ts-expect-error the skill's tool declares `Approval`: the program needs it though nothing is loaded yet
+  const call: Effect.Effect<unknown, unknown> = skilledCall(session).pipe(Effect.provide(Layer.mergeAll(askingLive, skilled.handlers)))
+  return call
+}
+
+const skilledWithoutItsHandlers = (session: OpenSession, person: Layer.Layer<Approval>) => {
+  // @ts-expect-error the handlers of the base's tool and the skill's are left out: `loadSkill`'s alone do not run them
+  const call: Effect.Effect<unknown, unknown> = skilledCall(session).pipe(Effect.provide(Layer.mergeAll(skilled.handlers, person)))
+  return call
+}
+
+/*
+ * A skill or a base typed as any toolkit has lost its tools: they would be offered and run, with what they declare
+ * missing from what the program is asked to provide. `skills` refuses each where it is passed (`OwnSkills`).
+ */
+const annotated: Skill = careful
+// @ts-expect-error a skill annotated `Skill` has lost its toolkit's type, and its tools with it
+const skilledByAnnotation = () => skills(plainTools, annotated)
+const listed: ReadonlyArray<Skill> = [careful]
+// @ts-expect-error a list typed `ReadonlyArray<Skill>` has lost every skill's toolkit's type
+const skilledByList = () => skills(plainTools, ...listed)
+const anyBase: Toolkit.Any = plainTools
+// @ts-expect-error a base annotated `Toolkit.Any` has lost its tools
+const skilledOverAnyBase = () => skills(anyBase, careful)
+
 describe("a stack of layers", () => {
   test("type-level: a stack missing a part, or with a part below what it needs, does not compile where its type is annotated", () => {
     // The checks are the compiler's: this file compiles only because each incomplete stack is an error, and the complete one is not.
@@ -156,5 +205,11 @@ describe("a stack of layers", () => {
   test("type-level: what a tool declares is held where its handler is written, where it is called by hand and where callTool runs it", () => {
     expect([withApproval, withoutApproval, undeclared, byHand, byHandInItsTurn, widened, named, mixed, none]).toHaveLength(9)
     expect([needsApproval, needsNothing, widenedIsAny, namedIsAny, mixedIsAny]).toEqual([true, true, true, true, true])
+  })
+
+  test("type-level: a host with skills provides what a skill's tool declares and that skill's handlers, loaded or not", () => {
+    expect([skilledComplete, skilledWithoutApproval, skilledWithoutItsHandlers]).toHaveLength(3)
+    expect([skilledByAnnotation, skilledByList, skilledOverAnyBase]).toHaveLength(3)
+    expect([skilledNames, skilledAsks, offeredIsTheWhole, skilledNeeds]).toEqual([true, true, true, true])
   })
 })
