@@ -5,8 +5,8 @@
 // Hovering a row lights the same record everywhere; a step lights what it
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
-import { BEFORE_THIS_PAGE, emptyBoard, LOG_LIMIT, record, turnsOf, viewOf } from "../trace-model.ts"
-import type { Board, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
+import { BEFORE_THIS_PAGE, emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnsOf, viewOf } from "../trace-model.ts"
+import type { Board, Boards, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
 export interface TracePane {
@@ -88,27 +88,17 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const logCount = q("[data-tr-log-count]")
 
   /**
-   * One board per session the program ran a turn in: the chat's, and each helper's (lesson 4), in the order they
-   * appeared. `board` is the one shown; a trace is filed under its own session's.
+   * One board per session the program ran a turn in: the chat's, each helper's (lesson 4) and the memory session's
+   * (lesson 11), in the order they appeared. What each session is, which boards a new conversation keeps and how
+   * the row names them is the model's (`heardBy`, `startedOver`, `sessionRow` in trace-model.ts). `board` is the
+   * one shown.
    */
-  const boards = new Map<string, Board>()
-  let chatSession = ""
+  let all: Boards = emptyBoards("")
   let shownSession = ""
   let board: Board = emptyBoard("")
-  const sessionOfTrace = (trace: Trace): string =>
-    trace._tag === "Event" ? trace.event.session
-      : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "Usage" ? trace.session
-        : chatSession
-  /** A helper's label: the task it was given, its first message. */
-  const labelOf = (session: string, index: number): string => {
-    if (session === chatSession) return "Chat"
-    const first = boards.get(session)?.records.find((one) => one.message?._tag === "User")
-    const task = first?.message?._tag === "User" ? first.message.text : ""
-    return `Helper ${index}${task.length > 0 ? `: ${task}` : ""}`
-  }
   const showSession = (session: string) => {
     shownSession = session
-    board = boards.get(session) ?? emptyBoard(session, session !== chatSession)
+    board = all.boards.get(session) ?? emptyBoard(session)
     selected = Option.none()
     step = Option.none()
     pickedCall = Option.none()
@@ -117,14 +107,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     renderSessions()
     paint()
   }
-  /** Sessions of a conversation Clear context left: what they still announce is not this conversation's. */
-  const retired = new Set<string>()
   const renderSessions = () => {
-    const order = [...boards.keys()]
-    sessionsBox.hidden = order.length < 2
-    patch(sessionsBox, order.map((session, index): Item => [keyOf(session, labelOf(session, index), session === shownSession), () => {
-      const button = el("button", { type: "button", class: "tr-session", "data-child": session === chatSession ? undefined : "", "aria-pressed": String(session === shownSession), title: session === chatSession ? "The chat's session" : `A helper's session, a child of the chat's: ${session}` }, labelOf(session, index))
-      button.addEventListener("click", () => showSession(session))
+    const row = sessionRow(all)
+    sessionsBox.hidden = row.length < 2
+    patch(sessionsBox, row.map((tab): Item => [keyOf(tab, tab.session === shownSession), () => {
+      const button = el("button", { type: "button", class: "tr-session", "data-kind": tab.kind, "data-child": tab.kind === "helper" ? "" : undefined, "aria-pressed": String(tab.session === shownSession), title: tab.title }, tab.label)
+      button.addEventListener("click", () => showSession(tab.session))
       return button
     }]))
   }
@@ -230,6 +218,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     "left-out": "left out by memory",
     later: "written after the context",
     "not-conversation": "not conversation: memory skips it",
+    fact: "a fact's record: what withFacts reads for each request, in every conversation",
   }
   /** The session a stored delegate result names (ADR 0006: the link from the call to the helper's session). */
   const helperOf = (seq: number): string | undefined => {
@@ -259,7 +248,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         el("p", { class: "tr-use" }, useText[row.use]),
         (() => {
           const helper = helperOf(row.seq)
-          if (helper === undefined || !boards.has(helper)) return undefined
+          if (helper === undefined || !all.boards.has(helper)) return undefined
           const open = el("button", { type: "button", class: "btn btn-quiet tr-open-session" }, "Open the helper's session ▸")
           open.addEventListener("click", () => showSession(helper))
           return open
@@ -274,8 +263,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
     Option.match(view.memory, {
       onNone: () => {
-        memoryHead.textContent = restored ? "before this page loaded" : "not asked yet"
-        patch(memoryBox, [[restored ? "restored" : "none", () => el("li", { class: "tr-none" }, restored ? BEFORE_THIS_PAGE : "Memory has not been asked for this turn's context yet.")]])
+        // A turn on the memory session stores a fact's record: no memory builds a context from that journal.
+        const quiet = board.kind === "memory"
+        memoryHead.textContent = quiet ? "none: no model is called" : restored ? "before this page loaded" : "not asked yet"
+        patch(memoryBox, [[quiet ? "memory-session" : restored ? "restored" : "none", () => el("li", { class: "tr-none" },
+          quiet ? "A turn on the memory session stores one record and calls no model: no memory builds a context from this journal. The facts it holds are read by withFacts, for each request of a conversation."
+            : restored ? BEFORE_THIS_PAGE : "Memory has not been asked for this turn's context yet.")]])
       },
       onSome: (rows) => {
         const tokens = rows.reduce<number>((sum, row) => sum + row.tokens, 0)
@@ -305,8 +298,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: boolean) => {
     Option.match(view.prompt, {
       onNone: () => {
-        promptHead.textContent = restored ? "before this page loaded" : "not sent yet"
-        patch(promptBox, [[restored ? "restored" : "none", () => el("li", { class: "tr-none" }, restored ? BEFORE_THIS_PAGE : "No prompt has been sent in this turn yet.")]])
+        const quiet = board.kind === "memory"
+        promptHead.textContent = quiet ? "none: no model is called" : restored ? "before this page loaded" : "not sent yet"
+        patch(promptBox, [[quiet ? "memory-session" : restored ? "restored" : "none", () => el("li", { class: "tr-none" },
+          quiet ? "No prompt is sent in a turn on the memory session. Open the Chat session to read the prompt that was sent the facts."
+            : restored ? BEFORE_THIS_PAGE : "No prompt has been sent in this turn yet.")]])
       },
       onSome: (rows) => {
         const share = view.promptTokens === 0 ? 0 : Math.round((view.reusedTokens / view.promptTokens) * 100)
@@ -435,32 +431,34 @@ export const mountTrace = (root: HTMLElement): TracePane => {
 
   return {
     hear: (trace) => {
-      const session = sessionOfTrace(trace)
-      if (retired.has(session)) return
-      const known = boards.get(session)
-      const filed = record(known ?? emptyBoard(session, session !== chatSession), trace, performance.now() - t0)
-      boards.set(session, filed)
-      if (known === undefined || session !== chatSession) renderSessions()
-      // A new turn of the chat while a helper is shown: follow it back to the chat, unless the reader turned that off.
-      if (session === chatSession && session !== shownSession && follow.checked && turnsOf(filed).length !== turnsOf(known ?? filed).length) {
-        showSession(chatSession)
+      const session = sessionOfTrace(trace, all.chat)
+      const known = all.boards.get(session)
+      const before = sessionRow(all)
+      all = heardBy(all, trace, performance.now() - t0)
+      const filed = all.boards.get(session)
+      // A retired session's trace, or a session's header: no board changed.
+      if (filed === undefined || filed === known) return
+      // The row changes when a session is first heard of, and when a helper's first message names its task.
+      const row = sessionRow(all)
+      if (row.length !== before.length || row.some((tab, index) => tab.label !== before[index]?.label)) renderSessions()
+      // A new turn of the chat while another session is shown: follow it back to the chat, unless the reader turned that off.
+      if (session === all.chat && session !== shownSession && follow.checked && turnsOf(filed).length !== turnsOf(known ?? filed).length) {
+        showSession(all.chat)
         return
       }
       if (session !== shownSession) return
-      const before = turnsOf(board).length
+      const turnsBefore = turnsOf(board).length
       board = filed
       // A new turn: follow it, unless the reader picked one to look at.
-      if (follow.checked && turnsOf(board).length !== before) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
+      if (follow.checked && turnsOf(board).length !== turnsBefore) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
       paintSoon()
     },
     reset: (session) => {
       stopReplay()
-      for (const old of boards.keys()) if (old !== session) retired.add(old)
-      boards.clear()
-      chatSession = session
+      // A new conversation: every other session's board goes with the old one, but the memory session's.
+      all = startedOver(all, session)
       shownSession = session
-      board = emptyBoard(session)
-      boards.set(session, board)
+      board = all.boards.get(session) ?? emptyBoard(session)
       renderSessions()
       t0 = performance.now()
       selected = Option.none()
@@ -476,6 +474,6 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       logCount.textContent = "0"
       paintSoon()
     },
-    hasTurns: () => turnsOf(boards.get(chatSession) ?? board).length > 0,
+    hasTurns: () => turnsOf(all.boards.get(all.chat) ?? board).length > 0,
   }
 }

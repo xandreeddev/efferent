@@ -2,7 +2,8 @@
 // program, and the controls and experiments its steps point at. The
 // workbench knows nothing of any one lesson; each lesson's definition lives
 // in lessons/<slug>/.
-import type { Effect, Layer, Option, Result } from "effect"
+import { Option } from "effect"
+import type { Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { ConformanceCheck, Core, JournalStorage, SessionId, Sessions } from "@xandreed/core/kernel"
 import type { Approval, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
@@ -56,12 +57,29 @@ export interface LessonControl {
   readonly write: (source: string, value: string | number) => Option.Option<string>
 }
 
-/** An experiment: a change to one file's code, then a rebuild. */
-export interface LessonExperiment {
+/** A change to one file's code. */
+export interface LessonEdit {
   readonly file: string
   /** The file's new source, or None when its line is not there. */
   readonly apply: (source: string) => Option.Option<string>
 }
+
+/**
+ * An experiment: a change to one file's code, then a rebuild. One that needs a second file changed with the first
+ * (lesson 11's `recall-tool`: a tool in tools.ts, and no wrapper in memory.ts) lists it under `also`.
+ */
+export interface LessonExperiment extends LessonEdit {
+  /** The other files the experiment edits, each as the first is. */
+  readonly also?: ReadonlyArray<LessonEdit>
+}
+
+/**
+ * Every file an experiment edits, with its new source, the experiment's own file first: all of them, or None when
+ * one of them no longer holds its line, so an experiment is never half applied. `source` gives a file's text as
+ * it stands.
+ */
+export const applyExperiment = (experiment: LessonExperiment, source: (file: string) => string): Option.Option<ReadonlyArray<readonly [file: string, text: string]>> =>
+  Option.all([experiment, ...(experiment.also ?? [])].map((edit) => Option.map(edit.apply(source(edit.file)), (text) => [edit.file, text] as const)))
 
 /**
  * What the page gives the learner's code under the hood, as the names the

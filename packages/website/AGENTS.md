@@ -27,7 +27,12 @@ check` (tsc over the learn code, the build, the link check) and
     edit a file) and `evaluate`, which runs the files with the names they
     import and the page's stand-ins (`PageParts`). An experiment that
     edits no file is a `data-fill` button: it sends the lesson's `fill`
-    (lesson 10's call of a tool before its skill is loaded).
+    (lesson 10's call of a tool before its skill is loaded). An experiment
+    that must change a second file with the first lists it under `also`
+    (lesson 11's `recall-tool`: a tool in tools.ts, and no wrapper in
+    memory.ts). `applyExperiment` gives every file's new text or none, so
+    an experiment is never half applied; the page and the tests both call
+    it.
   - `config-edit.ts`: each control's read and write and each experiment's
     edit; a line the learner rewrote is left alone (`None`).
   - `program.test.ts`: the shown files compiled with tsc (`tsconfig.learn.json`)
@@ -102,6 +107,26 @@ check` (tsc over the learn code, the build, the link check) and
     stand-in stores nothing: `approve` stores the answer.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
+  - It holds one board per session a turn ran in (`Boards`, `heardBy`),
+    and its row of sessions (`sessionRow`) names each for what its header
+    says it is (`kindOf`), never for its place in the row: the chat's
+    conversation ("Chat"); a helper, which has a parent ("Helper N" and
+    its task, lesson 4); the memory session, which the facts plugin owns
+    and which has no parent ("Memory", lesson 11); any other session of
+    the program's own ("Session N"). The runtime tells the page a
+    session's header in a `Session` trace, for every session but the
+    chat's, from its waited listener of a turn's start: so before the
+    first record of that session's first turn here, and it cannot fail
+    the turn. A header never heard makes a session "another", not a
+    helper. A new conversation (`startedOver`: Clear context, or a
+    durable lesson's program naming another one) retires every other
+    session with the old chat's, but the memory session's board, which is
+    no conversation's and keeps its records. A turn on the memory session
+    is three steps (opened, the fact's record, closed) and no model call;
+    a fact's record is summed up with where it came from, and its row
+    says it is a fact's. The pane (`panes/trace.ts`) draws what these
+    functions give; the DOM wiring itself is type-checked, not run by a
+    test.
   - A prompt's row is "the same as the prompt before" when the message is
     the same one and was sent the same way: a tool's result matches its
     record by its call's id, whatever was sent for it, so its text is
@@ -215,6 +240,41 @@ check` (tsc over the learn code, the build, the link check) and
     own answers in three fixed lines: a message with no tool, and a load
     the message did not ask for by name; a tool's answer is passed on as
     before.
+  - Lesson 11's rules, for facts, each asleep where its tool is not
+    offered, placed after lesson 10's rules. Three orders decide a
+    message, and each has a test that fails when the rule is moved: the
+    forget rule before the remember rule, the remember rule before the
+    sum's, and the forget rule before lesson 9's `forget` where a program
+    offers both. The facts Echo knows of are the lines of the kernel's note of
+    remembered facts (`factsNote`: its first line, word for word, then the
+    frame), in the last such note of the prompt: never what the user
+    typed, a call's parameters or a tool's result. A message that starts
+    with "forget" or "please forget" is `forgetFact`'s: "forget f1" calls
+    it with that id; any other with the id of the listed fact that shares
+    the most words with the message (words of four letters or more, but
+    "user", which every fact Echo writes holds; the first listed among
+    equals); with no such fact it calls nothing and is answered "I
+    remember no fact about that.". The rule sits before the next one,
+    which "Forget that my name is Ana." would wake, and a test fails when
+    it is moved after. "My name is X", "I live in X" and "remember that
+    X", in a message that does not end with a question mark, call
+    `rememberFact` with a sentence that reads on its own ("The user's
+    name is X.", "The user lives in X.", "The user said: X."). The rule
+    sits before the sum's, so "Remember that 2 + 2 is 4." is a fact where
+    `rememberFact` is offered, and a test fails when it is moved after.
+    Lesson 2's `remember({ note })` and lesson 9's `forget` are keyed on
+    other tools, and stay asleep here, as these rules do there. "What do
+    you remember?" or "what do you know" calls `recallFacts`, the tool
+    of the lesson's `recall-tool` experiment, where it is offered. A
+    `rememberFact` that stored a fact is answered "I will remember that:
+    it is fact f1."; one that failed, and every result of `forgetFact`,
+    as the tool's. With no call to make and facts listed, one message
+    that ends with a question mark is answered from them: "what do you
+    remember" with every listed fact, any other with the listed fact that
+    shares the most words with it ("I remember: "…" That is fact f1.");
+    one that shares none, like any other message. With no tool offered
+    (`echoReply`), the facts' note is read past as the clock's is: it is
+    no message of the conversation and no note of condensed turns.
   - A turn that failed leaves its message in the journal with no answer:
     Echo treats it as waiting, and the next turn answers it with the new
     one (two calls where one was expected).

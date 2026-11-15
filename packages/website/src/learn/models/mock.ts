@@ -4,7 +4,7 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
-import { APPROVAL_REFUSED, catalogue, LOAD_SKILL } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, catalogue, factsNote, FORGET_FACT, LOAD_SKILL, REMEMBER_FACT } from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
@@ -27,8 +27,21 @@ const clip = (text: string, max = 60): string => {
 /** A note a memory wrapper added for this request (lesson 3's clock): code's, not something the user said. */
 const CLOCK = /^\[Host note: it is ([^\]]+?)\.?\]$/
 const isClock = (message: ChatMessage): boolean => message.role === "user" && CLOCK.test(message.content)
-const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isClock(message)
-const isNote = (message: ChatMessage): boolean => isLedger(message) || isClock(message)
+/**
+ * The first line of the kernel's note of remembered facts (lesson 11), word for word: a message that starts with
+ * it and frames its lines lists the facts a memory wrapper added for this request.
+ */
+const FACTS_HEAD = factsNote([]).split("\n")[0] ?? ""
+const FACTS_OPEN = `${FACTS_HEAD}\n<remembered-facts>\n`
+const FACTS_CLOSE = "\n</remembered-facts>"
+/** Whether a text is the kernel's note of remembered facts: its first line, then the frame, and nothing after it. */
+const isFactsNote = (text: string): boolean => text.startsWith(FACTS_OPEN) && text.endsWith(FACTS_CLOSE)
+/** The note of remembered facts (lesson 11): code's, as the clock's is, and not a message of the conversation. */
+const isFacts = (message: ChatMessage): boolean => message.role === "user" && isFactsNote(message.content)
+/** What a wrapper added for this request and never stored: the clock's note, or the facts'. */
+const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message)
+const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isAdded(message)
+const isNote = (message: ChatMessage): boolean => isLedger(message) || isAdded(message)
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`
 /** Any note the host added (a clock, a summary of older turns): never a message to answer or a sum to work out. */
 const isHostNote = (text: string): boolean => text.startsWith("[Host note:")
@@ -55,7 +68,7 @@ export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   if (request.includes("<conversation-transcript>")) return echoSummary(request)
   const system = messages.find((message) => message.role === "system")
   const clock = messages.findLast(isClock)
-  const turns = messages.filter((message) => message.role !== "system" && !isClock(message))
+  const turns = messages.filter((message) => message.role !== "system" && !isAdded(message))
   const users = turns.filter((message) => message.role === "user" && !isNote(message))
   const last = users[users.length - 1]?.content ?? ""
   const earlierUsers = users.slice(0, -1)
@@ -220,19 +233,92 @@ const UNLOADED_CALL = /\b(?:use|call)\s+(?:the\s+)?convert\s+without\s+loading\b
 const HAIKU_SKILL = "haiku"
 const HAIKU = "An echo answers\nin five, then seven, then five:\nthe skill told it to."
 
+/** A fact as the kernel's note lists it (lesson 11): its id, and its text. */
+interface ListedFact {
+  readonly id: string
+  readonly text: string
+}
+
+/**
+ * The facts a prompt's note of remembered facts lists: read from the last user message that is the kernel's note
+ * (its first line, then the frame), a line each, `id: text`. No other message is read: not what the user typed,
+ * not a call's parameters, not a tool's result.
+ */
+const factsIn = (messages: Prompt.Prompt["content"]): ReadonlyArray<ListedFact> => {
+  const note = messages
+    .flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : []))
+    .findLast(isFactsNote)
+  if (note === undefined) return []
+  return note.slice(FACTS_OPEN.length, note.length - FACTS_CLOSE.length).split("\n").flatMap((line) => {
+    const entry = /^(f[1-9][0-9]*): (.+)$/.exec(line)
+    return entry === null ? [] : [{ id: entry[1] ?? "", text: entry[2] ?? "" }]
+  })
+}
+
+/**
+ * The words a message and a fact are matched by: those of four letters or more, in lower case, but "user", which
+ * every fact Echo writes holds ("The user's name is Ana.").
+ */
+const factWords = (text: string): ReadonlyArray<string> => (text.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter((word) => word !== "user")
+
+/** The listed fact that shares the most words with a text: the first listed among equals, and none when no fact shares one. */
+const factAbout = (facts: ReadonlyArray<ListedFact>, text: string): ListedFact | undefined => {
+  const asked = new Set(factWords(text))
+  const shared = facts.map((fact) => new Set(factWords(fact.text).filter((word) => asked.has(word))).size)
+  const most = Math.max(0, ...shared)
+  return most === 0 ? undefined : facts[shared.indexOf(most)]
+}
+
+/**
+ * The fact a message tells Echo to remember (lesson 11), as a sentence that reads on its own, for these messages
+ * and no other: "my name is X" ("The user's name is X."), "I live in X" ("The user lives in X.") and "remember
+ * that X" ("The user said: X."), X running to the first full stop, comma or other mark for the first two and to
+ * the message's end for the third. A question, a message that ends with a question mark, tells it nothing.
+ */
+const factSaid = (asked: string): string | undefined => {
+  if (/\?\s*$/.test(asked)) return undefined
+  const name = /\bmy name is\s+([^.!?,;:]+)/i.exec(asked)?.[1]?.trim()
+  if (name !== undefined && name.length > 0) return `The user's name is ${name}.`
+  const home = /\bI live in\s+([^.!?,;:]+)/i.exec(asked)?.[1]?.trim()
+  if (home !== undefined && home.length > 0) return `The user lives in ${home}.`
+  const told = /\bremember that\s+([^]+?)[.!\s]*$/i.exec(asked)?.[1]?.trim()
+  return told !== undefined && told.length > 0 ? `The user said: ${told}.` : undefined
+}
+
+/** What follows "forget" in a message that asks Echo to forget a fact: one that starts with "forget" or "please forget". */
+const toForget = (asked: string): string | undefined => /^\s*(?:please\s+)?forget\b([^]*)$/i.exec(asked)?.[1]
+
+/** The id a message names to forget, written as a fact's id is: "forget f1". */
+const idToForget = (rest: string): string | undefined => /^\s*(f[1-9][0-9]*)\b/i.exec(rest)?.[1]?.toLowerCase()
+
+/** What Echo says when it is asked to forget and no listed fact shares a word with the message. */
+const NO_SUCH_FACT = "I remember no fact about that."
+
+/** A question about everything Echo remembers: "what do you remember", "what do you know". */
+const ASKS_WHAT_IS_REMEMBERED = /\bwhat do you (?:remember|know)\b/i
+
+/** The id a successful result of `rememberFact` gives. */
+const rememberedBy = (part: ResultPart): string | undefined =>
+  part.name === REMEMBER_FACT && !part.isFailure && typeof part.result === "object" && part.result !== null && "id" in part.result && typeof part.result.id === "string"
+    ? part.result.id
+    : undefined
+
 /**
  * What Echo says of one result in words of its own. Of `lookup` or `readResult` (lesson 8): the first sentence of
  * what it was sent (of a part read on, the first whole one), and how much of the whole that is. Of a `forget` that
  * failed with the kernel's refusal, word for word (lesson 9): that nothing was deleted. Of a `loadSkill` that
  * loaded a skill (lesson 10): that it is loaded, without its instructions. Of a `convert` that answered a number:
  * the length it was asked about and the number to one decimal, with its unit, read from the call's parameters
- * (`paramsOf`). Nothing for any other tool's result, or any other failure: those are answered as the tool's.
+ * (`paramsOf`). Of a `rememberFact` that stored a fact (lesson 11): that it will remember, and the fact's id.
+ * Nothing for any other tool's result, or any other failure: those are answered as the tool's.
  */
 const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string | undefined => {
   if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
   const loaded = loadedBy(part)
   if (loaded !== undefined) return `Loaded ${loaded}.`
+  const remembered = rememberedBy(part)
+  if (remembered !== undefined) return `I will remember that: it is fact ${remembered}.`
   if (part.name === "convert" && typeof part.result === "number") {
     const params = paramsOf(part.id)
     return typeof params === "object" && params !== null && "value" in params && typeof params.value === "number"
@@ -317,6 +403,26 @@ const READ_LENGTH = 400
  * and a convert's number as "5 km is 3.1 mi.". While a result in the prompt loaded the haiku skill, Echo writes
  * its own answers in three fixed lines: where it would answer a message with no tool, and after a load the
  * message did not ask for by name; a tool's answer is passed on as before.
+ *
+ * Lesson 11's rules, for facts, each asleep where its tool is not offered. They are placed after lesson 10's rules;
+ * the orders that decide a message are said below. The facts Echo knows of are those the kernel's note of remembered
+ * facts lists (`factsNote`: its first line, word for word, then the frame, a line each), in the last such note of the
+ * prompt, and nothing else: not what the user typed, a call's parameters or a tool's result. A message that starts
+ * with "forget" or "please forget" is forgetFact's, where it is offered: "forget f1" calls it with that id; any other
+ * with the id of the listed fact that shares the most words with the message (words of four letters or more, but
+ * "user"; the first listed among equals); with no such fact it calls nothing and is answered "I remember no fact
+ * about that.". It goes before the next rule, which "Forget that my name is Ana." would wake, and before lesson 9's
+ * forget rule, for a program that offers both tools. "My name is X", "I live in X" and "remember that X", in a
+ * message that is no question, call rememberFact, where it is offered, with a sentence that reads on its own: "The
+ * user's name is X.", "The user lives in X.", "The user said: X.". It goes before the sum's rule, so "Remember that 2
+ * + 2 is 4." is a fact here. "What do you remember?" or "what do you know" calls recallFacts, a tool of the lesson's
+ * `recall-tool` experiment, where it is offered. A rememberFact that stored a fact is answered "I will remember that:
+ * it is fact f1."; one that failed, and every result of forgetFact, as the tool's. With no call to make and facts
+ * listed, one message that ends with a question mark is answered from them: "what do you remember" or "what do you
+ * know" with every listed fact, and any other with the listed fact that shares the most words with it ("I remember:
+ * "…" That is fact f1."); a question that shares none is answered like any other message. `echoReply` reads past the
+ * facts' note as it reads past the clock's: it is no message of the conversation, and no note that older turns were
+ * condensed.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
@@ -349,6 +455,10 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   const system = prompt.content.flatMap((message) => (message.role === "system" ? [message.content] : []))[0] ?? ""
   const listed = listedIn(system)
   const loaded = prompt.content.flatMap((message) => (message.role === "tool" ? message.content : [])).flatMap((part) => (part.type === "tool-result" ? loadedBy(part) ?? [] : []))
+  // The facts the kernel's note lists for this request (lesson 11): read from what was sent, the note included.
+  const known = factsIn(sent.content)
+  /** Whether a message asks to forget a fact, where the tool that forgets is offered. */
+  const forgets = (asked: string): boolean => toForget(asked) !== undefined && offered.includes(FORGET_FACT)
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
     // "Use convert without loading": a call of the units skill's tool whether or not it is offered, as a model that
     // skips the load would make. It goes before the catalogue's rule, which the word "convert" would wake.
@@ -364,6 +474,20 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // first. It goes before every rule under it: the catalogue says to load a skill before doing what it covers.
     const covering = listed.find((skill) => !loaded.includes(skill.id) && covers(skill, asked))
     if (covering !== undefined && offered.includes(LOAD_SKILL)) return [{ name: LOAD_SKILL, params: { skill: covering.id } }]
+    // "Forget f1", "forget my name": forgetFact, with the id the message names, else the id of the listed fact
+    // that shares the most words with it. With no such fact there is nothing to call, and no rule under this one
+    // is tried: "Forget that my name is Ana." is not a fact to remember.
+    if (forgets(asked)) {
+      const rest = toForget(asked) ?? ""
+      const id = idToForget(rest) ?? factAbout(known, rest)?.id
+      return id === undefined ? [] : [{ name: FORGET_FACT, params: { id } }]
+    }
+    // "My name is Ana.", "I live in Lisbon.", "Remember that the door is green.": a fact, as a sentence that reads
+    // on its own. It goes before the sum's rule: "Remember that 2 + 2 is 4." is a fact where rememberFact is offered.
+    const fact = factSaid(asked)
+    if (fact !== undefined && offered.includes(REMEMBER_FACT)) return [{ name: REMEMBER_FACT, params: { fact } }]
+    // "What do you remember?": the tool that reads the facts, where a lesson offers one (lesson 11's recall-tool).
+    if (ASKS_WHAT_IS_REMEMBERED.test(asked) && offered.includes("recallFacts")) return [{ name: "recallFacts", params: {} }]
     // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
     const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
     if (table !== null && offered.includes("show")) return [showTable(table)]
@@ -418,9 +542,18 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
       calls: [],
     }
   }
+  // Asked to forget, with no call to make: no listed fact shares a word with the message.
+  if (pending.some(forgets)) return { text: NO_SUCH_FACT, calls: [] }
   // Messages that steered the turn after its tools answered: answer from the results, and say what was heard.
   if (prompt.content[since]?.role === "tool" && pending.length > 0) {
     return { text: `${answerFrom(since)} You also said: ${pending.map((text) => `"${clip(text, 40)}"`).join(", ")}.`, calls: [] }
+  }
+  // One question, with facts listed for this request (lesson 11): answered from them, in fixed words that quote them.
+  const question = pending.length === 1 && /\?\s*$/.test(pending[0] ?? "") ? pending[0] : undefined
+  if (question !== undefined && known.length > 0) {
+    if (ASKS_WHAT_IS_REMEMBERED.test(question)) return { text: `I remember ${plural(known.length, "fact")}: ${known.map((fact) => `"${fact.text}" (${fact.id})`).join(", ")}.`, calls: [] }
+    const about = factAbout(known, question)
+    if (about !== undefined) return { text: `I remember: "${about.text}" That is fact ${about.id}.`, calls: [] }
   }
   // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
   if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }

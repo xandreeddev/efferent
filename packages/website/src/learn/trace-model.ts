@@ -5,9 +5,9 @@
 // A turn may call the model several times (a turn with tools is a loop over
 // steps), so its steps are built from what happened, call by call.
 import { Option } from "effect"
-import { assistantMessageEvent, messageOf, SessionId, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, dataOf, messageOf, SessionId, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, resultText } from "@xandreed/sdk/kernel"
+import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
 
@@ -29,7 +29,31 @@ interface ContextSeen {
   readonly messages: ReadonlyArray<Said>
 }
 
-/** Everything heard about one conversation. Per turn, one entry per model call, in order. */
+/**
+ * What a session is, read from its header and never guessed from its place in a list: the chat's conversation; a
+ * helper's (lesson 4: it has a parent); the memory session (lesson 11: the facts plugin owns it, and it continues
+ * no other); or another session of the program's own making.
+ */
+export type SessionKind = "chat" | "helper" | "memory" | "other"
+
+/** What the page heard of a session's header: who owns it, and the session it was created under, if any. */
+export interface SessionSeen {
+  readonly owner: string
+  readonly parent: Option.Option<string>
+}
+
+/**
+ * The kind of a session: the chat's is the one the page shows; any other is told by its header, as the kernel
+ * tells the memory session (the facts plugin's own, with no parent). One whose header was never heard is no
+ * helper and no memory: it is another session.
+ */
+export const kindOf = (session: string, chat: string, header: Option.Option<SessionSeen>): SessionKind =>
+  session === chat ? "chat" : Option.match(header, {
+    onNone: (): SessionKind => "other",
+    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? "helper" : owner === FACTS_OWNER ? "memory" : "other",
+  })
+
+/** Everything heard about one session. Per turn, one entry per model call, in order. */
 export interface Board {
   readonly session: string
   readonly records: ReadonlyArray<StoredEvent>
@@ -48,8 +72,11 @@ export interface Board {
   readonly log: ReadonlyArray<LogEntry>
   /** How many entries were ever logged, those dropped included. */
   readonly logged: number
-  /** A helper's session (lesson 4), not the chat's: its turn is opened by its caller, and its words stay out of the chat. */
-  readonly helper: boolean
+  /**
+   * What the session is. A helper's turn (lesson 4) is opened by its caller, and its words stay out of the chat; a
+   * turn on the memory session (lesson 11) stores a fact's record and calls no model.
+   */
+  readonly kind: SessionKind
   /**
    * The place of the last record read from the journal as the conversation was shown (a durable lesson, after a
    * reload): a turn that started at or before it ran in a page that is gone, and nothing of it but its records is here.
@@ -57,8 +84,8 @@ export interface Board {
   readonly restored: number
 }
 
-export const emptyBoard = (session: string, helper = false): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, helper, restored: 0,
+export const emptyBoard = (session: string, kind: SessionKind = "chat"): Board => ({
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, kind, restored: 0,
 })
 
 export const LOG_LIMIT = 400
@@ -83,6 +110,11 @@ export const summaryOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "
     onSome: (message) => clip(saidOfStored(message).text),
     onNone: () => {
       const data = record.data
+      // A fact's record (lesson 11), in the memory session: the fact and where it came from, or the fact that no longer stands.
+      const learned = dataOf(learnedEvent, record)
+      if (Option.isSome(learned)) return clip(`fact ${learned.value.id}, from turn ${learned.value.from.turn} of conversation ${learned.value.from.session.slice(0, 8)}: ${learned.value.text}`)
+      const forgotten = dataOf(forgottenEvent, record)
+      if (Option.isSome(forgotten)) return `fact ${forgotten.value.id} no longer stands`
       if (record.name === turnStartedEvent.name && typeof data === "object" && data !== null && "turn" in data) return `turn ${String(data.turn)} opened`
       if (record.name === turnEndedEvent.name && typeof data === "object" && data !== null && "outcome" in data) {
         const outcome = data.outcome
@@ -171,6 +203,9 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       return withEntry(board, { ...base, kind: "chat", turn: board.records.at(-1)?.turn ?? 0, title: `approval asked: ${trace.action}`, detail: trace.detail })
     case "Asked":
       return board
+    case "Session":
+      // A session's header: what the row of sessions is built from (`heardBy`), and nothing of a board's own.
+      return board
     case "Showing":
       // The conversation as its store holds it, read when the program named it: each record is taken as one announced is.
       if (trace.session !== board.session) return board
@@ -185,7 +220,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
 // ── one turn's view ─────────────────────────────────────────────────────────
 
 export type StepState = "done" | "now" | "todo" | "failed" | "skipped"
-export type StepKind = "opened" | "stored-message" | "steered" | "compacted" | "context" | "prompt" | "streamed" | "stored-answer" | "tools" | "closed"
+export type StepKind = "opened" | "stored-message" | "steered" | "compacted" | "context" | "prompt" | "streamed" | "stored-answer" | "tools" | "stored-record" | "closed"
 
 export interface StepView {
   /** Unique in the turn: the kind, and the model call it belongs to (`context-2`). */
@@ -205,7 +240,7 @@ export interface StepView {
 }
 
 /** How a record stands for the model call shown. */
-export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation"
+export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation" | "fact"
 
 export interface JournalRow {
   readonly seq: number
@@ -314,7 +349,10 @@ const journalFor = (board: Board, turn: number, context: Option.Option<ContextSe
   const upTo = Option.match(context, { onNone: () => Infinity, onSome: (seen) => seen.upTo })
   return board.records.map((record): JournalRow => {
     const role = Option.map(sentMessageOf(record), (message) => saidOfStored(message).role)
-    const use: RecordUse = Option.isNone(role) ? "not-conversation"
+    // In the memory session a fact's record is what the session is for: no memory builds a context from this journal.
+    const ofFact = board.kind === "memory" && (Option.isSome(dataOf(learnedEvent, record)) || Option.isSome(dataOf(forgottenEvent, record)))
+    const use: RecordUse = ofFact ? "fact"
+      : Option.isNone(role) ? "not-conversation"
       : record.seq > upTo ? "later"
         : Option.isNone(context) || inContext.has(record.seq) ? "in-context" : "left-out"
     return {
@@ -369,7 +407,45 @@ const callViewOf = (board: Board, turn: number, index: number, previous: Option.
   }
 }
 
+/**
+ * One turn of the memory session (lesson 11): it was opened by a call of `rememberFact` or `forgetFact`, stored
+ * one record, and closed. No memory built a context and no model was called, so it has no such steps.
+ */
+const memoryTurnOf = (board: Board, turn: number): TurnView => {
+  const ofTurn = board.records.filter((record) => record.turn === turn)
+  const started = Option.fromNullishOr(ofTurn.find((record) => record.name === turnStartedEvent.name))
+  const ended = Option.fromNullishOr(ofTurn.find((record) => record.name === turnEndedEvent.name))
+  const closed = Option.map(ended, outcomeOfRecord)
+  const failed = Option.match(closed, { onNone: () => false, onSome: (text) => !text.startsWith("Completed") })
+  const stored = ofTurn.filter((record) => record.name !== turnStartedEvent.name && record.name !== turnEndedEvent.name)
+  const steps: ReadonlyArray<StepView> = [
+    {
+      id: "opened", kind: "opened", call: 0, label: "Turn opened", code: "sessions.turn(yield* memorySession, …)", column: "journal",
+      state: Option.isSome(started) ? "done" : "now", seqs: Option.match(started, { onNone: () => [], onSome: (one) => [one.seq] }),
+      detail: Option.match(started, {
+        onNone: () => "Opening the turn.",
+        onSome: (one) => `Record #${one.seq}, ${one.name}. A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.`,
+      }),
+    },
+    ...stored.map((one, index): StepView => ({
+      id: `stored-record-${index + 1}`, kind: "stored-record", call: 0, column: "journal", state: "done", seqs: [one.seq], code: "session.append(…)",
+      label: Option.isSome(dataOf(learnedEvent, one)) ? "Fact learned" : Option.isSome(dataOf(forgottenEvent, one)) ? "Fact forgotten" : "Record stored",
+      detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}`,
+    })),
+    {
+      id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal",
+      state: Option.isNone(ended) ? (stored.length > 0 ? "now" : "todo") : failed ? "failed" : "done", seqs: Option.match(ended, { onNone: () => [], onSome: (one) => [one.seq] }),
+      detail: Option.match(ended, { onNone: () => "The turn closes when its scope ends: the record is stored, or the call failed.", onSome: (one) => `Record #${one.seq}: ${outcomeOfRecord(one)}.` }),
+    },
+  ]
+  const journal = journalFor(board, turn, Option.none(), new Set())
+  return { turn, restored: false, closed, steps, calls: [{ call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal }] }
+}
+
 export const viewOf = (board: Board, turn: number): TurnView => {
+  if (board.kind === "memory") return memoryTurnOf(board, turn)
+  // A session that is not the chat's (a helper's, or another of the program's own): its words stay out of the chat.
+  const quiet = board.kind !== "chat"
   const ofTurn = board.records.filter((record) => record.turn === turn)
   const started = Option.fromNullishOr(board.records.find((record) => record.name === turnStartedEvent.name && record.turn === turn))
   const ended = Option.fromNullishOr(ofTurn.find((record) => record.name === turnEndedEvent.name))
@@ -396,7 +472,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   const raw: Array<Raw> = []
   const first = Option.fromNullishOr(users[0])
   raw.push({
-    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: board.helper ? "sessions.open(session)" : "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
+    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: quiet ? "sessions.open(session)" : "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
     detail: Option.match(started, { onNone: () => "Opening the turn.", onSome: (one) => `Record #${one.seq}, ${one.name}. The turn's scope is open; it closes when the scope ends.` }),
   })
   // The messages the turn took as it opened: its own, and every one waiting behind it.
@@ -464,9 +540,11 @@ export const viewOf = (board: Board, turn: number): TurnView => {
     // A loop on the kernel's two functions: the hints name them, not the lines a loop writes by hand (lessons 1 and 2).
     const byKernel = board.given.get(turn)?.[index] === true
     const streamed = pieces[index] ?? 0
-    raw.push(board.helper ? {
+    raw.push(quiet ? {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "hooks.stream (quiet)", column: "prompt", happened: Option.isSome(answer), seqs: [],
-      detail: "A helper's hooks keep its words out of the chat: its answer goes back to its caller as delegate's result.",
+      detail: board.kind === "helper"
+        ? "A helper's hooks keep its words out of the chat: its answer goes back to its caller as delegate's result."
+        : "This session is not the chat's: what its model says is not drawn in the chat.",
     } : {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt", happened: streamed > 0 || Option.isSome(answer), seqs: [],
       detail: streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : Option.isSome(answer) ? "The model streamed no text: it only called tools." : "Each piece goes to the chat as it arrives.",
@@ -506,4 +584,100 @@ export const viewOf = (board: Board, turn: number): TurnView => {
           : index === firstMissing ? "now" : "todo",
   }))
   return { turn, restored, closed, steps, calls }
+}
+
+// ── the sessions a page hears of ────────────────────────────────────────────
+
+/** Everything the Context tab holds: one board per session a turn ran in, in the order they appeared, the chat's first. */
+export interface Boards {
+  /** The conversation the chat shows. */
+  readonly chat: string
+  readonly boards: ReadonlyMap<string, Board>
+  /** What was heard of each session's header (a `Session` trace), by its id. */
+  readonly headers: ReadonlyMap<string, SessionSeen>
+  /** Sessions of a conversation Clear context left: what they still announce is not this conversation's. */
+  readonly retired: ReadonlySet<string>
+}
+
+export const emptyBoards = (chat: string): Boards => ({ chat, boards: new Map([[chat, emptyBoard(chat)]]), headers: new Map(), retired: new Set() })
+
+/** The session a trace is about: an event's, a context's, a prompt's, a usage's and a header's own; anything the program told the chat is the chat's. */
+export const sessionOfTrace = (trace: Trace, chat: string): string =>
+  trace._tag === "Event" ? trace.event.session
+    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "Usage" || trace._tag === "Session" ? trace.session
+      : chat
+
+/**
+ * The boards after one more trace, heard `at` ms after they started: the trace is filed under its own session's
+ * board, made when the session is first heard of with the kind its header gives. A session's header (`Session`)
+ * is kept for that, and makes no board: a session has one once a turn runs in it. A retired session's traces are
+ * passed over.
+ */
+export const heardBy = (all: Boards, trace: Trace, at: number): Boards => {
+  const session = sessionOfTrace(trace, all.chat)
+  if (all.retired.has(session)) return all
+  if (trace._tag === "Session") {
+    const headers = new Map(all.headers).set(session, { owner: trace.owner, parent: Option.fromNullishOr(trace.parent) })
+    // The header is heard before the session's first record. Should a board be there already, it takes the kind the header gives.
+    const held = all.boards.get(session)
+    const boards = held === undefined ? all.boards : new Map(all.boards).set(session, { ...held, kind: kindOf(session, all.chat, Option.fromNullishOr(headers.get(session))) })
+    return { ...all, headers, boards }
+  }
+  const known = all.boards.get(session) ?? emptyBoard(session, kindOf(session, all.chat, Option.fromNullishOr(all.headers.get(session))))
+  return { ...all, boards: new Map(all.boards).set(session, record(known, trace, at)) }
+}
+
+/**
+ * The boards as a new conversation starts (Clear context, or a durable lesson's program naming another one): an
+ * empty board for the new chat, and every other session retired with its board, but the memory session's. The
+ * memory session is no conversation's: its board stays, with the records heard so far, and goes on being heard.
+ */
+export const startedOver = (all: Boards, chat: string): Boards => {
+  const kept = [...all.boards].filter(([session, board]) => session !== chat && board.kind === "memory")
+  const gone = [...all.boards.keys()].filter((session) => session !== chat && !kept.some(([id]) => id === session))
+  return {
+    chat,
+    boards: new Map([[chat, emptyBoard(chat)], ...kept]),
+    headers: new Map([...all.headers].filter(([session]) => kept.some(([id]) => id === session))),
+    retired: new Set([...all.retired, ...gone].filter((session) => session !== chat)),
+  }
+}
+
+/** One button of the Context tab's row of sessions. */
+export interface SessionTab {
+  readonly session: string
+  readonly kind: SessionKind
+  /** The button's text. */
+  readonly label: string
+  /** What the button says of the session when pointed at. */
+  readonly title: string
+}
+
+/** What a session was first asked: its first user message, a helper's task. */
+const taskOf = (board: Board): string => {
+  const first = board.records.find((one) => one.message?._tag === "User")?.message
+  return first?._tag === "User" ? first.text : ""
+}
+
+/**
+ * The row of sessions: the chat's first, then each other session in the order it appeared, named for what it is.
+ * A helper is numbered among the helpers and named by its task; the memory session is "Memory"; a session that is
+ * none of these is numbered among its like, with its owner.
+ */
+export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
+  const counts = { helper: 0, other: 0 }
+  return [...all.boards].map(([session, board]): SessionTab => {
+    const header = Option.fromNullishOr(all.headers.get(session))
+    const kind = kindOf(session, all.chat, header)
+    if (kind === "chat") return { session, kind, label: "Chat", title: "The chat's session" }
+    if (kind === "memory") return { session, kind, label: "Memory", title: `The memory session: it holds the facts the agent remembers, in a journal of its own, for every conversation: ${session}` }
+    const task = taskOf(board)
+    const named = task.length > 0 ? `: ${task}` : ""
+    if (kind === "helper") {
+      const under = Option.exists(header, ({ parent }) => Option.contains(parent, all.chat)) ? "the chat's" : "another session's"
+      return { session, kind, label: `Helper ${++counts.helper}${named}`, title: `A helper's session, a child of ${under}: ${session}` }
+    }
+    const owner = Option.match(header, { onNone: () => "", onSome: (seen) => `, owned by ${seen.owner}` })
+    return { session, kind, label: `Session ${++counts.other}${named}`, title: `A session of the program's own${owner}: ${session}` }
+  })
 }

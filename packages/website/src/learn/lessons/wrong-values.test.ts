@@ -65,6 +65,20 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["skills", `${BY_HAND.replace('"Units"', '"units"')}\nconst skillSet = skills(tools, units, haiku)`, "skills.ts did not run: unitsLive is not a layer. It should be units.tools.toLayer({ … })."],
     ["agent", "const main = 42", NO_PROGRAM],
   ],
+  remember: [
+    ["memory", "const memory = 42", "memory.ts did not run: memory is not a layer. It should be withFacts({ limit: 5 })(flatMemory)."],
+    // The wrapper made and never given a memory is a function, not a layer.
+    ["memory", "const memory = withFacts({ limit: 5 })", "memory.ts did not run: memory is not a layer. It should be withFacts({ limit: 5 })(flatMemory)."],
+    // A limit the kernel refuses is refused as the file runs, in the kernel's words: none, a fraction, and a memory where the options go.
+    ["memory", "const memory = withFacts({ limit: 0 })(flatMemory)", "memory.ts did not run: withFacts needs a limit, a whole number of at least 1: the most facts a request is sent. It was given 0"],
+    ["memory", "const memory = withFacts({ limit: 1.5 })(flatMemory)", "memory.ts did not run: withFacts needs a limit, a whole number of at least 1: the most facts a request is sent. It was given 1.5"],
+    ["memory", "const memory = withFacts(flatMemory)", "memory.ts did not run: withFacts needs a limit, a whole number of at least 1: the most facts a request is sent. It was given undefined"],
+    ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), factTools)."],
+    // A toolkit's tools by themselves are no toolkit: nothing yields its handlers.
+    ["tools", "const tools = factTools.tools\nconst toolsLive = 2", "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), factTools)."],
+    ["tools", "const tools = factTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
+    ["agent", "const main = 42", NO_PROGRAM],
+  ],
 }
 
 describe("a learner's file that makes the wrong kind of thing", () => {
