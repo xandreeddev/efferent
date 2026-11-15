@@ -11,7 +11,7 @@ import {
 import type { SessionId } from "@xandreed/core/kernel"
 import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
-import { programOf, run, runStatements } from "../../evaluate.ts"
+import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, LessonKit, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -46,7 +46,11 @@ const agentNames = (parts: PageParts, store: Store, resume: Effect.Effect<Sessio
   flatMemory, tools, toolsLive, pane: parts.pane, model: parts.model,
 })
 
-/** store.ts as the page runs it: the learner's `store`, or why it did not run. */
+/**
+ * store.ts as the page runs it: the learner's `store`, or why it did not run. The file is untyped JavaScript, so
+ * that its function takes the storage and gives a layer of `JournalStorage` is said here, not checked: a store
+ * that gives something else fails when the program builds it, or in the kit.
+ */
 const storeOf = (sources: Sources): Result.Result<Store, string> =>
   Result.flatMap(runStatements("store.ts did not run: ", storeBodyOf(sources.store ?? ""), "store", storeNames), (store) =>
     typeof store === "function" ? Result.succeed(store as Store) : Result.fail("store.ts did not run: store is not a function. It should take the storage and its options, and give a layer."))
@@ -56,12 +60,14 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
   Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) => {
     if (!Layer.isLayer(memory)) return Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …).")
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
-      const { tools, toolsLive } = made as { readonly tools: unknown; readonly toolsLive: unknown }
+      const tools = named(made, "tools")
+      const toolsLive = named(made, "toolsLive")
       if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
       return Result.flatMap(storeOf(sources), (store) =>
         Result.flatMap(run("chat.ts did not run: ", sources.chat ?? "", resumeNames), (resume) => {
           if (!Effect.isEffect(resume)) return Result.fail("chat.ts did not run: resume is not an Effect. It should give the conversation to go on with.")
-          const names = agentNames(parts, store, resume as Effect.Effect<SessionId, { readonly message: string }, Sessions>, parts.watchMemory(memory as Layer.Layer<Memory>), tools, toolsLive)
+          // That `resume` gives a conversation's id is said here, as the store's type is: it is checked when it runs.
+          const names = agentNames(parts, store, resume as Effect.Effect<SessionId, { readonly message: string }, Sessions>, parts.watchMemory(memory), tools, toolsLive)
           return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", names), (main) =>
             programOf(main))
         }))

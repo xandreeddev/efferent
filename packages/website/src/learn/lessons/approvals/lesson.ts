@@ -2,11 +2,11 @@
 // over lesson 2's tools and one more, `forget`, which asks before it deletes
 // every note. The page is who it asks: `approvalOn(pane)` puts the question
 // in the chat, and the answer is a record of the turn.
-import { Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
+import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { Approval, approve, approveIn, autoApprove, callTool, CurrentTurn, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import { programOf, run, runStatements } from "../../evaluate.ts"
+import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { CHAT } from "../tools/chat.source.ts"
@@ -32,9 +32,8 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
   Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) => {
     if (!Layer.isLayer(memory)) return Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …).")
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
-      // The file's two names, read as they are: the page runs untyped JavaScript, and holds neither to a type.
-      const tools = Predicate.hasProperty(made, "tools") ? made.tools : undefined
-      const toolsLive = Predicate.hasProperty(made, "toolsLive") ? made.toolsLive : undefined
+      const tools = named(made, "tools")
+      const toolsLive = named(made, "toolsLive")
       if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
       return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory), tools, toolsLive)), (main) =>
         // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.

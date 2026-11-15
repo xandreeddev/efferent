@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { callTool, Memory, modelAnswer, paired, pointed, promptMessage, ReadResult, readResult } from "@xandreed/sdk/kernel"
-import { programOf, runStatements } from "../../evaluate.ts"
+import { named, programOf, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { CHAT } from "../tools/chat.source.ts"
@@ -31,9 +31,10 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
   Result.flatMap(runStatements("memory.ts did not run: ", memoryBodyOf(sources.memory ?? ""), "flatMemory", memoryNames), (memory) => {
     if (!Layer.isLayer(memory)) return Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …).")
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
-      const { tools, toolsLive } = made as { readonly tools: unknown; readonly toolsLive: unknown }
+      const tools = named(made, "tools")
+      const toolsLive = named(made, "toolsLive")
       if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
-      return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory as Layer.Layer<Memory>), tools, toolsLive)), (main) =>
+      return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory), tools, toolsLive)), (main) =>
         // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
         programOf(main))
     })

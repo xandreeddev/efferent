@@ -50,6 +50,13 @@ export const run = (prefix: string, source: string, names: Record<string, unknow
 }
 
 /**
+ * A name a file made, read as it is: the page runs untyped JavaScript, and holds what a file made to no type. A
+ * lesson checks what it needs of the value with a guard (`Layer.isLayer`, `typeof`), and hands the rest on as it
+ * came. `undefined` when the file made no such name.
+ */
+export const named = (made: unknown, name: string): unknown => (Predicate.hasProperty(made, name) ? made[name] : undefined)
+
+/**
  * The learner's `main`, as the page runs it: an Effect, or why it is not one. The learner's code is untyped
  * JavaScript, so nothing can say before it runs what its program still needs. This is the one place the page
  * says it needs nothing more: a module `main` was not given is found when the program runs, and reported as a

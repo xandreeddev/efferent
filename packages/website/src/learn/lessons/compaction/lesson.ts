@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { callTool, framed, Memory, messageText, modelAnswer, Summarizer, SummaryFailed, summaryMemory } from "@xandreed/sdk/kernel"
-import { programOf, run, runStatements } from "../../evaluate.ts"
+import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -36,10 +36,11 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
     return Result.flatMap(run("summarizer.ts did not run: ", sources.summarizer ?? "", summarizerNames), (summarizer) => {
       if (!Layer.isLayer(summarizer)) return Result.fail("summarizer.ts did not run: summarizerLive is not a layer. It should be Layer.effect(Summarizer, …).")
       return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
-        const { tools, toolsLive } = made as { readonly tools: unknown; readonly toolsLive: unknown }
+        const tools = named(made, "tools")
+        const toolsLive = named(made, "toolsLive")
         if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
-        const watched = parts.watchMemory(memory as Layer.Layer<Memory, never, Summarizer>)
-        const summarizerLive = parts.watchSummarizer(summarizer as Layer.Layer<Summarizer, never, LanguageModel.LanguageModel>)
+        const watched = parts.watchMemory(memory)
+        const summarizerLive = parts.watchSummarizer(summarizer)
         return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, watched, summarizerLive, tools, toolsLive)), (main) =>
           // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
           programOf(main))

@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, userMessage } from "@xandreed/core/kernel"
 import { callTool, CurrentTurn, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import { programOf, run, runStatements } from "../../evaluate.ts"
+import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -26,12 +26,13 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
     return Result.flatMap(runStatements("loop.ts did not run: ", loopBodyOf(sources.loop ?? ""), "runAgent", loopNames), (runAgent) => {
       if (typeof runAgent !== "function") return fail("loop.ts did not run: runAgent is not a function. It should take an agent and return its turn.")
       return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ Helper, helperTools, tools, helperToolsLive, delegateLive }", toolsNames), (made) => {
-        const tools = made as Record<string, unknown>
+        // The five names tools.ts makes, each read as it is.
+        const tools = Object.fromEntries(["Helper", "helperTools", "tools", "helperToolsLive", "delegateLive"].map((name) => [name, named(made, name)]))
         if (!Layer.isLayer(tools.helperToolsLive) || !Layer.isLayer(tools.delegateLive)) return fail("tools.ts did not run: helperToolsLive and delegateLive should be layers, made with toLayer.")
         const names = {
           Effect, Layer, Stream, Sessions, Chat, runAgent, ...tools,
           kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
-          flatMemory: parts.watchMemory(memory as Layer.Layer<Memory>), pane: parts.pane, model: parts.model,
+          flatMemory: parts.watchMemory(memory), pane: parts.pane, model: parts.model,
         }
         return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", names), (main) =>
           programOf(main))
