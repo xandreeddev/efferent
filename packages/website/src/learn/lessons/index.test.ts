@@ -56,9 +56,10 @@ describe("lesson definitions", () => {
     expect(Option.map(lessonOf("approvals"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["tools", "agent", "chat", "memory"]))
     expect(Option.map(lessonOf("skills"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["skills", "agent", "tools", "chat", "memory"]))
     expect(Option.map(lessonOf("remember"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "tools", "agent", "chat"]))
+    expect(Option.map(lessonOf("test-your-agent"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["checks", "agent", "tools", "chat", "memory"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
     // The list of slugs is the track's order, and every slug in it finds its lesson.
-    expect(lessonSlugs).toEqual(["your-first-agent", "tools", "your-own-plugin", "sub-agents", "compaction", "render", "keep-the-conversation", "pointers", "approvals", "skills", "remember"])
+    expect(lessonSlugs).toEqual(["your-first-agent", "tools", "your-own-plugin", "sub-agents", "compaction", "render", "keep-the-conversation", "pointers", "approvals", "skills", "remember", "test-your-agent"])
     expect(lessonSlugs.filter((slug) => Option.isNone(lessonOf(slug)))).toEqual([])
   })
 

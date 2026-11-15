@@ -3,11 +3,12 @@
 // workbench knows nothing of any one lesson; each lesson's definition lives
 // in lessons/<slug>/.
 import { Option } from "effect"
-import type { Effect, Layer, Result } from "effect"
+import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
-import type { ConformanceCheck, Core, JournalStorage, SessionId, Sessions } from "@xandreed/core/kernel"
+import type { Core, JournalStorage, SessionId, Sessions } from "@xandreed/core/kernel"
 import type { Approval, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
+import type { KitResult } from "./runtime.ts"
 
 /** A part of a file's text, by offsets. */
 export interface Range {
@@ -116,8 +117,43 @@ export interface PageParts {
   readonly approvalOn: (pane: unknown) => Layer.Layer<Approval>
 }
 
-/** A kit a lesson's page can run over the learner's code: its checks, or why the code did not evaluate. */
-export type LessonKit = (sources: Sources, storageOf: () => KeyValueStore) => Result.Result<ReadonlyArray<ConformanceCheck>, string>
+/**
+ * One check a kit hands the page: its id, its name, and an Effect that fails with what the check found. A check of
+ * a kernel kit (`ConformanceCheck`) is one. A check that passes may say something too, as text: lesson 12's live
+ * check says how many of its runs passed.
+ */
+export interface KitCheck {
+  readonly id: string
+  readonly name: string
+  readonly run: Effect.Effect<unknown, unknown>
+}
+
+/**
+ * One check as the page's list draws it: whether it passed, its mark and id, in bold, and the words after them.
+ * A check that passed and said nothing reads as its name alone.
+ */
+export const kitLine = (check: KitResult): { readonly state: "passed" | "failed"; readonly head: string; readonly detail: string } => ({
+  state: check.passed ? "passed" : "failed",
+  head: `${check.passed ? "✓" : "✗"} ${check.id}`,
+  detail: check.message === "" ? check.name : `${check.name}: ${check.message}`,
+})
+
+/** A kit a lesson's page can run over the learner's code. */
+export interface LessonKit {
+  /**
+   * The kit's checks, or why the code did not evaluate. `storageOf` gives an empty storage each time it is called.
+   * `model` is the model picked, as it was loaded and not as the page watches it for the chat, so the page hears
+   * nothing of a check that runs on it; none while no model is picked.
+   */
+  readonly checks: (sources: Sources, storageOf: () => KeyValueStore, model: Option.Option<Layer.Layer<LanguageModel.LanguageModel>>) => Result.Result<ReadonlyArray<KitCheck>, string>
+  /** How long one check may run before it is stopped and counted as failed: five seconds when the kit states none. */
+  readonly timeout?: Duration.Input
+  /**
+   * The kit runs the learner's program on the model picked (lesson 12), so it and the chat take turns: it is
+   * refused while a turn runs, and the chat takes no message while it runs.
+   */
+  readonly alone?: true
+}
 
 export interface Lesson {
   /** The lesson's page slug, as in /learn/<slug>. */
@@ -143,6 +179,6 @@ export interface Lesson {
    * names the conversation to show.
    */
   readonly durable?: { readonly prefix: string }
-  /** The kits the page's "Run the kit" buttons run, by `data-kit` id. */
+  /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
 }

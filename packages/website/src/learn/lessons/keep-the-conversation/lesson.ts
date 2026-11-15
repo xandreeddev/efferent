@@ -75,7 +75,7 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
   })
 
 /** The storage kit over the learner's store: an empty storage per check, and two handles on one storage for the check of a reopening. */
-const storeKit: LessonKit = (sources, storageOf) =>
+const storeKit: LessonKit["checks"] = (sources, storageOf) =>
   Result.map(storeOf(sources), (store) => {
     const over = (storage: KeyValueStore) => Effect.map(Effect.orDie(Layer.build(store(storage, { prefix: "kit:" }))), (built) => Context.get(built, JournalStorage))
     return journalStorageConformance({
@@ -125,5 +125,5 @@ export const keepTheConversation: Lesson = {
   },
   evaluate: evaluateLesson,
   durable: { prefix: STORAGE_PREFIX },
-  kits: { store: storeKit },
+  kits: { store: { checks: storeKit } },
 }

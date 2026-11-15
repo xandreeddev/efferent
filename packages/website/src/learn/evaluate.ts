@@ -61,7 +61,8 @@ export const named = (made: unknown, name: string): unknown => (Predicate.hasPro
  * JavaScript, so nothing can say before it runs what its program still needs. This is the one place the page
  * says it needs nothing more: a module `main` was not given is found when the program runs, and reported as a
  * defect ("nothing in the stack provides …"). The typed modules the tests compile say the same of their `run`,
- * and there the compiler checks it.
+ * and there the compiler checks it. A check's `run` (lesson 12) is such a program too, and is handed over here,
+ * its refusal said in the words of its own file.
  */
 export const programOf = (main: unknown): Result.Result<Effect.Effect<unknown, unknown>, string> =>
   Effect.isEffect(main)

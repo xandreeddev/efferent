@@ -67,9 +67,15 @@ export interface KitResult {
   readonly id: string
   readonly name: string
   readonly passed: boolean
-  /** What the check found, when it failed. */
+  /** What the check found, when it failed; what it said, when it passed and said something (lesson 12's live check); else empty. */
   readonly message: string
 }
+
+/** How long one check of a kit may run, for a kit that states no limit of its own. */
+export const KIT_TIMEOUT = "5 seconds"
+
+/** What `runKit` says of a kit that runs alone, asked for while a turn runs in the chat. */
+export const TURN_RUNNING = "a turn is running in the chat. Run this when it has answered."
 
 /**
  * A message as the page shows it: who it is from, its text, and the key that matches it to the record it came
@@ -196,6 +202,9 @@ export class LessonRuntime {
   /** How many questions were ever asked: the next one's id. */
   private questionCount = 0
 
+  /** Whether a kit that runs alone (`LessonKit.alone`) is running now. */
+  private kitAlone = false
+
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
 
@@ -298,6 +307,11 @@ export class LessonRuntime {
   /** Whether a turn is open. */
   get busy(): boolean {
     return this.openTurns.has(this.session)
+  }
+
+  /** Whether a kit that runs alone is running: the chat takes no message until it is done. */
+  get checking(): boolean {
+    return this.kitAlone
   }
 
   /** Whether a program runs. */
@@ -507,18 +521,33 @@ export class LessonRuntime {
     return Effect.runPromise(Effect.orElseSucceed(Context.get(this.base, Sessions).list, () => []))
   }
 
-  /** Run one of the lesson's kits over the learner's code: each check, passed or what it found. */
+  /**
+   * Run one of the lesson's kits over the learner's code: each check, passed or what it found. The kit is handed
+   * the model as it was loaded, not the one the page watches for the chat: a check that runs on it runs on a stack
+   * of its own, and the page hears no prompt of it. A kit that runs alone is refused while a turn runs in the
+   * chat, and `checking` is true while it runs.
+   */
   async runKit(id: string, sources: Sources): Promise<Result.Result<ReadonlyArray<KitResult>, string>> {
     const kit = this.lesson.kits?.[id]
     if (kit === undefined) return Result.fail(`this lesson has no kit named ${id}`)
-    const checks = kit(sources, memoryStore)
+    const alone = kit.alone === true
+    if (alone && (this.busy || this.checking)) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    const model = Option.map(this.model, (loaded) => Layer.succeed(LanguageModel.LanguageModel, loaded.model))
+    const checks = kit.checks(sources, memoryStore, model)
     if (Result.isFailure(checks)) return Result.fail(checks.failure)
-    const ran = await Effect.runPromise(Effect.forEach(checks.success, (check) => Effect.exit(Effect.timeout(check.run, "5 seconds")).pipe(
-      Effect.map((exit): KitResult => Exit.isSuccess(exit)
-        ? { id: check.id, name: check.name, passed: true, message: "" }
-        : { id: check.id, name: check.name, passed: false, message: Option.match(Cause.findErrorOption(exit.cause), { onNone: () => buildFailure(exit.cause), onSome: textOf }) }),
-    ), { concurrency: 1 }))
-    return Result.succeed(ran)
+    const limit = kit.timeout ?? KIT_TIMEOUT
+    if (alone) this.kitAlone = true
+    try {
+      const ran = await Effect.runPromise(Effect.forEach(checks.success, (check) => Effect.exit(Effect.timeout(check.run, limit)).pipe(
+        Effect.map((exit): KitResult => Exit.isSuccess(exit)
+          // A check that passes may say something, as text: any other value says nothing.
+          ? { id: check.id, name: check.name, passed: true, message: typeof exit.value === "string" ? exit.value : "" }
+          : { id: check.id, name: check.name, passed: false, message: Option.match(Cause.findErrorOption(exit.cause), { onNone: () => buildFailure(exit.cause), onSome: textOf }) }),
+      ), { concurrency: 1 }))
+      return Result.succeed(ran)
+    } finally {
+      if (alone) this.kitAlone = false
+    }
   }
 
   async dispose(): Promise<void> {
