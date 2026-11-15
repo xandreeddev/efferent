@@ -14,7 +14,7 @@ import { Match, Option } from "effect"
 import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
 import { decidedEvent } from "@xandreed/sdk/kernel"
-import type { DecidedData, Decision } from "@xandreed/sdk/kernel"
+import type { AttemptData, DecidedData, Decision } from "@xandreed/sdk/kernel"
 import type { Trace } from "./runtime.ts"
 
 export interface ChatRow {
@@ -76,12 +76,38 @@ const finish = (board: ChatBoard, turn: number, suffix = ""): ChatBoard => Optio
   onSome: (row) => change(board, row.id, (found) => found.text.length === 0 ? Option.none() : Option.some(settled({ ...found, text: `${found.text}${suffix}` }))),
 })
 
+/**
+ * How a turn's failure begins when its answer was cut (lesson 13): the kernel words a failure as its tag, then its
+ * message (`reasonOf`), and the tag of a cut answer is `AnswerCut`.
+ */
+const CUT = "AnswerCut: "
+
+/**
+ * Why a turn failed, as the chat says it: the reason its record holds, and for an answer cut after its first words
+ * (lesson 13's `AnswerCut`) what that means, before the failure's own words. Read from the record, so a chat drawn
+ * again from the journal says the same.
+ */
+export const failureLine = (reason: string): string =>
+  reason.startsWith(CUT) ? `The answer was cut: it failed after its first words were shown, and it is not made again. ${reason.slice(CUT.length)}` : reason
+
 /** What a turn that did not complete leaves in the chat: a line for one that was stopped or abandoned, its reason for one that failed. */
 const endRow = (turn: number, outcome: TurnOutcome): Option.Option<Pick<ChatRow, "kind" | "text">> => {
   if (outcome._tag === "Interrupted") return Option.some({ kind: "note", text: `Turn ${turn} was stopped. Your message stays in the journal.` })
   if (outcome._tag === "Abandoned") return Option.some({ kind: "note", text: `Turn ${turn} was left open by a page that closed, and was closed when the next one started. What it stored stays in the journal.` })
-  if (outcome._tag === "Failed") return Option.some({ kind: "error", text: outcome.reason })
+  if (outcome._tag === "Failed") return Option.some({ kind: "error", text: failureLine(outcome.reason) })
   return Option.none()
+}
+
+/**
+ * What the chat's status line says of one attempt of a model call under a plan (lesson 13, `plugin.model.attempt`,
+ * said live and never stored): a failed attempt, and a later attempt starting and which step of the plan makes it,
+ * each short enough for the line. An attempt that answered says nothing: the turn goes on, and ends. A first attempt says nothing, so a call that
+ * answers at once leaves the line as the program set it; the page puts the program's line back when the turn ends.
+ */
+export const attemptLine = ({ outcome, attempt, step }: AttemptData): Option.Option<string> => {
+  if (outcome === "failed") return Option.some(`attempt ${attempt} failed`)
+  if (attempt === 1 || outcome !== "started") return Option.none()
+  return Option.some(`attempt ${attempt} on step ${step + 1}`)
 }
 
 /**

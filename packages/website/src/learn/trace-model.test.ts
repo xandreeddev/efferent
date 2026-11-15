@@ -22,7 +22,7 @@ import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import { LessonRuntime } from "./runtime.ts"
 import type { Trace } from "./runtime.ts"
-import { emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, sessionRow, startedOver, turnNumbersOf, viewOf } from "./trace-model.ts"
+import { attemptsByCall, emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, sessionRow, startedOver, turnNumbersOf, viewOf } from "./trace-model.ts"
 import type { Board, Boards } from "./trace-model.ts"
 
 const opened: Array<LessonRuntime> = []
@@ -166,6 +166,39 @@ describe("the Context tab's model", () => {
   test("events of another conversation are not on the board", () => {
     const board = record(emptyBoard("mine"), { _tag: "Event", event: { _tag: "Live", session: "other" as never, name: "x.y" as never, tags: [], data: null } }, 0)
     expect(board.log).toEqual([])
+  })
+
+  test("a prompt whose stream failed is an attempt of the next prompt's model call (lesson 13): calls are paired by the prompts' own marks, and each prompt keeps its usage", () => {
+    const prompt = (model: string): Trace => ({ _tag: "Prompt", session: "s", turn: 1, messages: [], tools: [], model, picked: "echo", givenTurn: true })
+    const failed = (reason: string): Trace => ({ _tag: "PromptFailed", session: "s", turn: 1, reason })
+    const usage = (inputTokens: number): Trace => ({ _tag: "Usage", session: "s", turn: 1, usage: { inputTokens } })
+    const heard = [prompt("echo"), failed("busy"), prompt("echo"), usage(10), prompt("echo"), failed("gone"), prompt("echo-spare"), usage(20), prompt("echo"), failed("cut")]
+    const board = heard.reduce((all, trace, index) => record(all, trace, index), emptyBoard("s"))
+    // Three model calls: one tried again, one handed to the spare, and a last one whose only attempt failed.
+    expect(attemptsByCall(board, 1)).toEqual([[0, 1], [2, 3], [4]])
+    const view = viewOf(board, 1)
+    expect(view.calls.map((call) => call.attempts.map((one) => `${one.attempt} ${one.model} ${Option.getOrElse(one.failed, () => "answered")}`))).toEqual([
+      ["1 echo busy", "2 echo answered"], ["1 echo gone", "2 echo-spare answered"], ["1 echo cut"],
+    ])
+    expect(view.calls.map((call) => Option.getOrNull(Option.map(call.usage, (one) => one.inputTokens ?? 0)))).toEqual([10, 20, null])
+    // A failed attempt is a step that happened: the steps after it are not taken for missing.
+    expect(view.steps.filter((step) => step.kind === "attempt").map((step) => [step.id, step.label, step.state])).toEqual([["attempt-1-1", "Attempt 1 failed (1)", "done"], ["attempt-2-1", "Attempt 1 failed (2)", "done"]])
+    // A summarizer's failed stream is no try of the turn's call; a failure is filed under its own session's board.
+    const summary: Trace = { _tag: "PromptFailed", session: "s", turn: 1, reason: "summary broke", purpose: "summary" }
+    expect(attemptsByCall(record(board, summary, 99), 1)).toEqual(attemptsByCall(board, 1))
+    const both = [...heard, { ...prompt("echo"), session: "h" }, { ...failed("helper's"), session: "h" }].reduce<Boards>((all, trace) => heardBy(all, trace, 0), emptyBoards("s"))
+    expect(attemptsByCall(both.boards.get("s")!, 1)).toEqual([[0, 1], [2, 3], [4]])
+    expect(both.boards.get("h")!.attempts.get(1)?.map((one) => Option.getOrNull(one.failed))).toEqual(["helper's"])
+    // With no prompt marked failed, call n is prompt n, as in lessons 1 to 12.
+    const plain = [prompt("echo"), usage(1), prompt("echo"), usage(2)].reduce((all, trace, index) => record(all, trace, index), emptyBoard("s"))
+    expect(attemptsByCall(plain, 1)).toEqual([[0], [1]])
+  })
+
+  test("a turn of a lesson before 13 draws as it did: one attempt a call, no attempt step, and no model named on its answer", async () => {
+    const view = viewOf(await boardAfter(["hello", "hello again"]), 2)
+    expect(view.calls.map((call) => [call.attempts.length, Option.getOrNull(call.answeredBy)])).toEqual([[1, null]])
+    expect(view.steps.some((step) => step.kind === "attempt")).toBe(false)
+    expect(view.steps.find((step) => step.kind === "prompt")?.detail.startsWith("The system text from your code")).toBe(true)
   })
 })
 

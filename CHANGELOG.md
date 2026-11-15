@@ -387,6 +387,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   were. Lessons 1 and 2, which read the stream by hand, store no name.
   `loadEcho` takes the name it gives, so a second Echo can be named apart.
 
+- Docs site: Lesson 13, "When the model fails", at `/learn/model-failures`.
+  `agent.ts` is the base program with its model call asked for under a
+  plan: the loop no longer takes the model as a service and calls
+  `LanguageModel.streamText({ … }).pipe(planned(plan))`; `plan` is
+  Effect's `ExecutionPlan`, three tries of the model picked a second apart
+  while `retryable` holds, then a spare once; `main` provides no model. A
+  new file, `failures.ts`, lists what the model picked does the next
+  times it is asked, one entry each try (`{ retryable?, pieces? }`, the fields of the
+  scripted model's `Fails`, its type declared in the file's read-only
+  part): the page makes those calls fail, in its own words ("failures.ts
+  made this call fail, and said it is worth another try"), without calling
+  the model, so the lesson shows a failure on any model. The list counts
+  the picked model's tries alone, not the spare's or a summarizer's, and
+  starts again with every build
+  (Rebuild, Stop, Clear context, a model picked). The page gives the
+  program a spare (`PageParts.spare`, a second Echo named `echo-spare`,
+  watched as the model picked is) and the model picked failing as the list
+  says (`PageParts.failing`). The runtime's model watcher is now a
+  function of the model and its name: a `Prompt` trace names the model it
+  was sent to and the model picked, and a stream that fails says so in a
+  `PromptFailed` trace. The Context tab groups a turn's prompts by model
+  call from those marks, never from the order the records are heard in:
+  a failed try is a step of its own ("Attempt 1 failed", in the failure's
+  words), the prompt step names the try that answered, each prompt keeps
+  its usage, and an answer whose record names a model other than the one
+  picked, or a turn whose answers name two, says which model answered.
+  Lessons 1 to 12 draw as they did. The chat says an answer cut after its
+  first words was cut, from the record of the turn's end, and the status
+  line follows `plugin.model.attempt`. Experiments put the failure back,
+  fail for good (the spare answers at once), cut an answer after a word,
+  ask with Effect's plan alone (the answer is made twice and stored as one
+  text) and drop the step's `while` (three tries, then the spare). Lesson
+  12's page links here. No Echo rule was added. No published package
+  changes. A test of lesson 11 no longer reads the store's sessions in
+  the order it lists them: two created in one millisecond are listed by a
+  random id.
 - Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
   A new file, `checks.ts`, holds the lines that run the program for a
   check (`turnsAfter`: the seven layers of `main`, with the model the

@@ -15,14 +15,15 @@
 // no longer waits, answered or dropped with its turn. A session other than
 // the chat's that a turn opens in (a helper's, the memory session) is named
 // with its header before that turn's first record is heard.
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Result, Scope, Stream } from "effect"
-import { LanguageModel, Prompt } from "effect/ai"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Scope, Stream } from "effect"
+import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, StoredEvent } from "@xandreed/core/kernel"
 import { Approval, CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
 import type { Decision, KeyValueStore } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
-import type { Lesson, PageParts, Sources } from "./lesson.ts"
+import type { Lesson, MadeFailure, PageParts, Sources } from "./lesson.ts"
+import { loadEcho } from "./models/mock.ts"
 import type { LoadedModel } from "./models/types.ts"
 import { Chat } from "./page-chat.ts"
 import { saidOfMessage } from "./said.ts"
@@ -108,9 +109,18 @@ export type Trace =
   | { readonly _tag: "Context"; readonly session: string; readonly turn: number; readonly upTo: number; readonly messages: ReadonlyArray<Said> }
   /**
    * A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. A
-   * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop.
+   * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop. `model` names the
+   * model it was sent to, as its answers name it, and `picked` the model picked when it was sent: they differ for
+   * the spare's prompts (lesson 13).
    */
-  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly purpose?: "summary"; readonly givenTurn?: true }
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly model: string; readonly picked: string; readonly purpose?: "summary"; readonly givenTurn?: true }
+  /**
+   * The stream of the session's turn's last prompt failed, in these words: that attempt has no answer (lesson 13,
+   * a call under a plan). Said by the stream itself, so it always follows its own prompt and comes before the
+   * next. A stream that was stopped is not said to have failed. A summarizer's (`purpose: "summary"`) is no try of
+   * the turn's model call.
+   */
+  | { readonly _tag: "PromptFailed"; readonly session: string; readonly turn: number; readonly reason: string; readonly purpose?: "summary" }
   /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
   | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
   /** The program took messages off the chat's queue: the next one, or every one that waited. */
@@ -172,6 +182,41 @@ const usageOf = (part: unknown): Option.Option<Reported> => {
 
 const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> => Prompt.make(raw).content.map(saidOfMessage)
 
+/** The name the page's spare answers under (lesson 13): a second Echo, never failing. */
+export const SPARE = "echo-spare"
+
+/**
+ * What a failure failures.ts made says (lesson 13): that the page made it, and whether it said the call is worth
+ * another try. A learner on a real model reads these words, so they never speak for the model.
+ */
+export const madeFailureWords = (failure: MadeFailure): string => {
+  const pieces = failure.pieces === undefined ? "" : ` after ${failure.pieces.length} piece${failure.pieces.length === 1 ? "" : "s"}`
+  return `failures.ts made this call fail${pieces}, and ${failure.retryable === true ? "said" : "did not say"} it is worth another try`
+}
+
+/**
+ * A call failures.ts made fail, as a model's stream fails: an `AiError` of the model named, a provider's own error
+ * when it is worth another try and an unknown error when not, as the kernel's scripted model fails. With pieces the
+ * answer starts and shows them first: they are the page's, not the model's, which is never called.
+ */
+const madeFailure = (model: string, failure: MadeFailure) => {
+  const description = madeFailureWords(failure)
+  const error = AiError.make({
+    module: model,
+    method: "streamText",
+    reason: failure.retryable === true ? new AiError.InternalProviderError({ description }) : new AiError.UnknownError({ description }),
+  })
+  const shown = failure.pieces === undefined ? [] : [
+    Response.makePart("text-start", { id: "failures" }),
+    ...failure.pieces.map((delta) => Response.makePart("text-delta", { id: "failures", delta })),
+  ]
+  return Stream.concat(Stream.fromIterable(shown), Stream.fail(error))
+}
+
+/** What ended a stream that failed, in words: its failure's own, or the defect's. */
+const failureWords = (cause: Cause.Cause<unknown>): string =>
+  Option.match(Cause.findErrorOption(cause), { onSome: textOf, onNone: () => Cause.prettyErrors(cause)[0]?.message ?? "the stream failed" })
+
 /** The session a turn's start or end is about. */
 const sessionOf = (event: { readonly session?: unknown; readonly id?: unknown }): string =>
   typeof event.session === "string" ? event.session : typeof event.id === "string" ? event.id : ""
@@ -204,6 +249,9 @@ export class LessonRuntime {
 
   /** Whether a kit that runs alone (`LessonKit.alone`) is running now. */
   private kitAlone = false
+
+  /** The page's spare (lesson 13): a second Echo, built once, which a plan's second step provides. */
+  private readonly spare: LoadedModel = loadEcho(undefined, SPARE)
 
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
@@ -354,39 +402,60 @@ export class LessonRuntime {
       this.questions.set(id, answer)
       return id
     }
-    const inner = model.model
     // With no turn provided: the session memory was last asked about, else the chat's, and the turn open in it.
     const guessed = () => {
       const session = this.asked ?? this.session
       return { session, turn: this.openTurns.get(session) ?? 0 }
     }
-    const watched = LanguageModel.LanguageModel.of({
-      ...inner,
-      // The prompt is traced when the stream runs, not when it is made: a loop makes the stream first and hands it
-      // to `modelAnswer`, which provides the turn only while it reads it.
-      streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => Stream.unwrap(Effect.gen(function* () {
-        const current = yield* Effect.serviceOption(CurrentTurn)
-        const summarizing = yield* Summarizing
-        const { session, turn } = Option.match(current, { onNone: guessed, onSome: (running) => ({ session: String(running.id), turn: Number(running.turn) }) })
-        const kit = options.toolkit
-        const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
-        const purpose = summarizing ? { purpose: "summary" as const } : {}
-        // A stream that runs with a turn was handed to the kernel's `modelAnswer` (or is a summarizer's): the Context
-        // tab then names that function, not the lines a loop would write by hand.
-        const given = Option.isSome(current) ? { givenTurn: true as const } : {}
-        yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, ...purpose, ...given })
-        return Reflect.apply(inner.streamText, inner, [options]).pipe(
-          Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
-        )
-      }))) as typeof inner.streamText,
-    })
+    const picked = model.choice.id
+    /**
+     * A model as the page hands it to the program, watched: each prompt it is sent and the usage it reports are
+     * traced under `name`, the name its answers give, and a stream that fails says so (`PromptFailed`). `failures`
+     * are what the page makes of this model's next calls (lesson 13's failures.ts), one entry each time it is asked,
+     * a try of a call tried again included, a summarizer's call not counted; each `watch` counts from the first, so
+     * a build that watches anew starts the list again. A call the page makes fail never reaches the model.
+     */
+    const watch = (inner: LanguageModel.LanguageModel, name: string, failures: ReadonlyArray<MadeFailure> = []) => {
+      let counted = 0
+      return LanguageModel.LanguageModel.of({
+        ...inner,
+        // The prompt is traced when the stream runs, not when it is made: a loop makes the stream first and hands it
+        // to `modelAnswer`, which provides the turn only while it reads it.
+        streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => Stream.unwrap(Effect.gen(function* () {
+          const current = yield* Effect.serviceOption(CurrentTurn)
+          const summarizing = yield* Summarizing
+          const { session, turn } = Option.match(current, { onNone: guessed, onSome: (running) => ({ session: String(running.id), turn: Number(running.turn) }) })
+          const kit = options.toolkit
+          const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
+          const purpose = summarizing ? { purpose: "summary" as const } : {}
+          // A stream that runs with a turn was handed to the kernel's `modelAnswer` (or is a summarizer's): the Context
+          // tab then names that function, not the lines a loop would write by hand.
+          const given = Option.isSome(current) ? { givenTurn: true as const } : {}
+          yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, model: name, picked, ...purpose, ...given })
+          // A summarizer's call is not one the list counts.
+          const made = summarizing ? Option.none() : Option.fromNullishOr(failures[counted++])
+          const failed = (reason: string) => emit({ _tag: "PromptFailed", session, turn, reason, ...purpose })
+          return Option.match(made, { onNone: () => Reflect.apply(inner.streamText, inner, [options]), onSome: (failure) => madeFailure(name, failure) }).pipe(
+            Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
+            // An error the model reports inside its stream fails the attempt too, as `modelAnswer` and `planned` read it.
+            Stream.tap((part: unknown) => (Predicate.hasProperty(part, "type") && part.type === "error" ? failed(Predicate.hasProperty(part, "error") ? textOf(part.error) : "the model reported an error") : Effect.void)),
+            // A stream stopped (Stop, a rebuild) did not fail: it is not said to.
+            Stream.tapCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : failed(failureWords(cause)))),
+          )
+        }))) as typeof inner.streamText,
+      })
+    }
     return {
       // Each requires what the real one requires, so a line removed from the stack fails as it would for real.
       kernel: () => Layer.succeed(Core, core),
       inProcessJournal: () => Layer.effect(JournalStorage, Effect.gen(function* () { yield* Core; return storage })),
       sessions: () => Layer.effect(Sessions, Effect.gen(function* () { yield* JournalStorage; yield* Core; return sessionsOf })),
       chatOn: () => Layer.effect(Chat, Effect.gen(function* () { yield* Sessions; return chat })),
-      model: Layer.succeed(LanguageModel.LanguageModel, watched),
+      model: Layer.succeed(LanguageModel.LanguageModel, watch(model.model, picked)),
+      // Lesson 13: a second Echo, watched as the model picked is and never failing, and the model picked failing as
+      // failures.ts says. Each build calls `failing` once, so the list starts again with every build.
+      spare: Layer.succeed(LanguageModel.LanguageModel, watch(this.spare.model, SPARE)),
+      failing: (failures) => Layer.succeed(LanguageModel.LanguageModel, watch(model.model, picked, failures)),
       pane: {},
       // Who a tool asks: the person, through the page. The question is announced and waits for `decide`. However the
       // wait ends (an answer, or the turn dropped by Stop, a rebuild or Clear context), the question is taken back
@@ -491,6 +560,7 @@ export class LessonRuntime {
   async stop(): Promise<{ readonly dropped: ReadonlyArray<string>; readonly result: BuildResult }> {
     const dropped = Array.from(await Effect.runPromise(Queue.clear(this.queue)))
     if (Option.isSome(this.model)) this.model.value.interrupt()
+    this.spare.interrupt()
     return { dropped, result: await this.start(this.last) }
   }
 

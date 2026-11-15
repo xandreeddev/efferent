@@ -5,8 +5,8 @@
 import { Option } from "effect"
 import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
-import { progressEvent, viewEvent } from "@xandreed/sdk/kernel"
-import { continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { attemptEvent, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
+import { attemptLine, continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
@@ -164,6 +164,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
 
   /** The conversation a durable lesson's program last named. */
   let shownSession: string | undefined
+  /** The program's own status line while a plan's attempts are said over it (lesson 13): put back when the turn ends. */
+  let programStatus: string | undefined
   function heard(event: Trace) {
     // A conversation not shown before, or the one shown under a journal that does not go on from what the page took (the
     // store was changed, or forgot): the Context tab starts over on it, before it hears of its journal.
@@ -183,6 +185,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
         const record = event.event
         if (record._tag === "Live" && record.session === conversation) {
           Option.map(dataOf(progressEvent, record), ({ id, done, total }) => views.progress(id, done, total))
+          // Lesson 13: an attempt of a model call failed, or a later one started or answered, said on the status line.
+          Option.map(Option.flatMap(dataOf(attemptEvent, record), attemptLine), (text) => {
+            // The program's own line is kept, and put back when the turn ends: an attempt's line says nothing after it.
+            if (programStatus === undefined) programStatus = statusBox.textContent ?? ""
+            statusBox.textContent = text
+          })
         }
         if (record._tag !== "Stored" || record.session !== conversation) break
         const { session: _session, _tag: _stored, ...kept } = record
@@ -192,6 +200,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
         // What the UI shows: every view record redraws the chat's views from the fold of its records.
         if (record.name === viewEvent.name) views.draw(chatRecords)
         if (record.name === turnEndedEvent.name) {
+          if (programStatus !== undefined) statusBox.textContent = programStatus
+          programStatus = undefined
           views.settle()
           window.dispatchEvent(new CustomEvent("learn:done"))
         }
@@ -211,6 +221,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
         break
       case "Status":
         statusBox.textContent = event.text
+        programStatus = undefined
         break
       case "Ended":
         state.alive = false

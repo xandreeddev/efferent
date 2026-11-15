@@ -1,0 +1,124 @@
+---
+title: When the model fails
+description: "A model call fails: a rate limit, a provider that is down, a lost connection. The loop asks for its answer under a plan: try the model again, then hand the call to another. An answer is made once: once a word of it was shown, a failure is final."
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/model-failures/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code" file="failures">
+
+So far every model call answered. A real one fails: a rate limit, a provider's own error, a lost connection. This lesson's loop asks for each answer under a **plan**. The plan tries the model again a moment later, and then hands the call to another model.
+
+To show a failure on any model, the page makes one. **failures.ts** lists what the model you picked does the next times it is asked, one entry each time, so a call tried again takes an entry for each try. As it starts, the list holds one failure worth another try:
+
+```ts
+export const failures: ReadonlyArray<Failure> = [{ retryable: true }]
+```
+
+Press **Hello.** The first try fails. The plan waits a second, and the second try answers. The status line above the chat says so while it happens: "attempt 1 failed", then "attempt 2 on step 1". When the turn ends it goes back to what the program last said there.
+
+Press **Hello.** again. The list is used up, so the model answers on the first try.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+A failure from failures.ts never reaches the model: the page returns a failing stream in its place. So the lesson runs the same way on any model, and a model on your GPU is not asked for an answer that will be thrown away.
+
+The failure's words say who made it. The failure of step 1 reads "echo.streamText: Internal provider error: failures.ts made this call fail, and said it is worth another try": the call was the model's, `echo`, and failures.ts made it fail.
+
+The plan has a second model, the **spare**: a second Echo, which the page gives your program as `spare`. Its answers name it `echo-spare`, and it never fails.
+
+With Qwen2.5 0.5B picked, on the GPU, the first **Hello.** failed as failures.ts said, the plan waited its second, and Qwen answered on the second try ("Hello, how can I assist you today?"), about four seconds in all. The failed try never reached the model: the page made it. The next message was answered on the first try in under a second. With the `down` experiment of the last step the spare answered at once, and the answer's record named `echo-spare`; the message after it went back to Qwen, which answered "What is 2 + 3?" with "5", and its record named `qwen2.5-0.5b`. These failures were the page's. A failure of Qwen's own would be an unknown error, which `retryable` does not try again: before its first word the call would go straight to the spare, and after it the answer would be cut.
+
+</Step>
+
+<Step n={3} id="plan" title="A plan" focus="code" file="agent">
+
+**agent.ts** declares `plan` above the turn. It is Effect's `ExecutionPlan`: a list of steps, each of which provides a model and says how often to try it.
+
+- `provide: model`: the model you picked.
+- `attempts: 3`: up to three tries on this step, the first one included.
+- `schedule: Schedule.spaced("1 second")`: a second between tries.
+- `while: retryable`: a failure is tried again only while this says it is worth another try.
+
+When a step gives up, the call goes to the next step. The second step here is `{ provide: spare }`, with no attempts or schedule of its own: the spare is tried once.
+
+</Step>
+
+<Step n={4} id="call" title="The call under the plan" focus="code" file="agent">
+
+The loop asks for its answer as before, with one change:
+
+```ts
+LanguageModel.streamText({ … }).pipe(planned(plan))
+```
+
+The loop no longer takes the model as a service, and `main` provides no model. The model each call reads is the one the plan's step provides. `planned` comes from the kernel. It runs the stream under the plan and adds one rule of its own, the next step's subject.
+
+In TypeScript the compiler holds this together. A step without `provide` does not compile: "Property 'provide' is missing". A plan whose steps provide something other than a model does not compile, and neither does a call without `planned(plan)` while `main` provides none: "Type 'LanguageModel' is not assignable to type 'never'". The call needs a model, and nothing gives it one.
+
+The page runs your code as JavaScript, so none of these is refused before it runs. Each builds, and the first message stops the program. Without `planned(plan)` the chat says "Your program stopped: nothing in the stack provides LanguageModel, and a part above it needs it (Service not found: effect/ai/LanguageModel)." A step with no `provide` stops it with a TypeError, and a step that provides something other than a model stops it with the same words as above. A missing model inside a plan is a defect, and no step tries a defect again: the plan's first try fails, and the spare's step is not tried.
+
+</Step>
+
+<Step n={5} id="once" title="An answer is made once" focus="chat">
+
+The chat shows an answer piece by piece, as it arrives. A piece once shown cannot be taken back. So `planned` holds what a model sends before its first piece of text or call, and that decides what a failure means:
+
+- **Before the first word**, nothing was handed on. The plan tries the call again, or hands it to the next step. The start of an answer is no word: a failure after the answer started and showed no piece is tried again.
+- **After the first word**, a failure is final, whatever the step's `while` says. The call fails with `AnswerCut`, and no model is asked again. A tool call counts as a word: an answer that asked for a tool and then failed stores no call, and runs nothing.
+
+The `cut` experiment of the last step makes such a failure. The chat keeps "Half", the word that was shown, and says why the turn failed: "The answer was cut: it failed after its first words were shown, and it is not made again." followed by the failure's own words. `modelAnswer` stores nothing of a call that failed, so the turn holds your message and its end.
+
+</Step>
+
+<Step n={6} id="retryable" title="What is worth another try" focus="code" file="failures">
+
+`retryable` is the kernel's answer to "is this failure worth another try?" A rate limit, a provider's own error and a lost connection are. An unknown error and a refused request are not, and neither is anything that is no model error.
+
+In failures.ts, `retryable: true` makes a provider's own error. An entry without it makes an unknown error, which `retryable` refuses: the first step gives up at once, with no wait, and the spare answers.
+
+- **A model that reports an error inside its stream**, before any word, has failed that try too. `retryable` refuses it, so the spare answers at once.
+- **The models that run in this page** report every failure of their own as an unknown error. So a model of yours that fails here before its first word goes straight to the spare; one that fails after it is cut, as the last step said.
+- **A rate limit's own wait is not read.** A rate limit that asks for a minute is tried again after the step's one second.
+
+</Step>
+
+<Step n={7} id="said" title="What is said, and what is stored" focus="context" wide={true}>
+
+Open **Context** on the turn you sent first. Its steps show **Attempt 1 failed**, with the failure's words, then **Prompt sent**: "Attempt 2, sent to echo." The answer is the second prompt's.
+
+Each try is said while it happens, in a live event, `plugin.model.attempt`: started, then succeeded or failed with the failure's words. The status line reads these events. They are never stored. The journal of that turn holds four records: the turn's start, your message, the answer and the turn's end. A call that answered at once leaves the same four.
+
+So the tries are gone once the page is. Drawn again from the journal, the chat shows the same stored rows: nothing of a retry, and the answer of the model that answered.
+
+The answer's record names the model that answered. Context says so only where it matters: on a turn whose answers name more than one model, or a model other than the one you picked, it reads "answered by echo-spare".
+
+</Step>
+
+<Step n={8} id="calls" title="Each call is planned anew" focus="chat">
+
+A turn with a tool call asks the model twice: once for the call, once for the answer after the tool's result. Each of the two is planned anew, from the plan's first step. So a turn may wait through retries twice: a model that fails the first try of each call keeps that turn waiting a second in each.
+
+The list in failures.ts counts each time the model you picked is asked, and not the spare. With `[{}, {}]` and **What is 12 * 3?**, the first call fails and the spare asks for the calculator. The second call fails too, and the spare answers it.
+
+The list starts again whenever the program is built: **Rebuild**, **Stop**, **Clear context**, and picking a model each build it. So after any of them, the next call fails again as the list says.
+
+**Stop** during the second between two tries ends the turn at once, as stopped. The model is not asked again.
+
+</Step>
+
+<Step n={9} id="experiments" title="Experiments" focus="code" file="failures">
+
+Each button rewrites failures.ts, and two rewrite agent.ts as well, then builds the program again, which starts the list again. Each expects agent.ts as it started: press **Reset** in the Code pane before the next one. Without it, a button that rewrites failures.ts alone runs on the agent.ts the last one left: **Cut** after **The plan alone** makes the answer twice, as that one does. Send **Hello.** after each.
+
+<Experiments />
+
+After the last one, press **Reset** again.
+
+**Next:** branches. Why a model call is planned, why an answer is made once, and what the kernel says of each try, is in [ADR 0015](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0015-a-model-call-is-planned-and-an-answer-is-made-once.md).
+
+</Step>

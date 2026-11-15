@@ -15,6 +15,7 @@ const NO_HANDLERS = "tools.ts did not run: toolsLive is not a layer. It should b
 const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."
 const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It should be the program main runs, exported so that checks.ts runs the same one."
 const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
+const NO_FAILURES = "failures.ts did not run: failures is not a list of failures. It should be an array, each entry { retryable, pieces } or {}."
 /** tools.ts making two names that are no toolkit and no layer. */
 const TWO_NUMBERS = "const tools = 1\nconst toolsLive = 2"
 
@@ -93,6 +94,17 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
       "checks", 'const checks = [{ id: "sum", name: "a sum", run: Effect.void }, { id: "other", name: "another", run: () => 1 }]',
       'checks.ts did not run: the run of the check "other" is not an Effect. It should be the program run for the check, as check(id, name, script, messages, holds) makes it.',
     ],
+  ],
+  "model-failures": [
+    ["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM],
+    // failures.ts is one list, of entries each with retryable, pieces, both or neither.
+    ["failures", "{ retryable: true }", NO_FAILURES],
+    ["failures", '"[{ retryable: true }]"', NO_FAILURES],
+    ["failures", "[true]", "failures.ts did not run: entry 1 of failures is not a failure. It should be an object, such as { retryable: true }."],
+    ["failures", "[{}, { retriable: true }]", "failures.ts did not run: entry 2 of failures has a field a failure does not have: retriable. A failure has retryable, pieces, both or neither."],
+    ["failures", '[{ retryable: "yes" }]', "failures.ts did not run: entry 1 of failures has a retryable that is not true or false."],
+    ["failures", '[{ pieces: "Half " }]', 'failures.ts did not run: entry 1 of failures has pieces that are not a list of words, such as ["Half "].'],
+    ["failures", "[{ pieces: [1] }]", 'failures.ts did not run: entry 1 of failures has pieces that are not a list of words, such as ["Half "].'],
   ],
 }
 

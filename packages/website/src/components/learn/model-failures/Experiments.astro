@@ -1,0 +1,38 @@
+---
+// Step 9: each button rewrites failures.ts, and the last two agent.ts as well, then runs the program again (see
+// learn/playground.ts, `data-exp`), which starts failures.ts's list again.
+const experiments = [
+  {
+    exp: "fails-once", title: "Fails once", button: "One failure worth another try",
+    text: "failures.ts goes back to [{ retryable: true }], as it started, and the list starts again. Press Hello. The first try fails, the plan waits a second, and the model you picked answers. Context shows Attempt 1 failed, then the prompt of attempt 2, sent to echo, and the answer. The journal holds what a call that answered at once holds.",
+  },
+  {
+    exp: "down", title: "Down", button: "One failure for good",
+    text: "failures.ts is [{}]: one unknown error, which retryable refuses. Press Hello. There is no wait: the first step gives up at once, and the spare answers. Its record names echo-spare, and so does Context. The model you picked was asked once. Press this button again, which builds the program and starts the list again, and send What is 12 * 3? This time the turn makes two model calls. The spare makes the first, which asks for the calculator. The list is used up by then, so the model you picked makes the second, and Context names the model of each answer.",
+  },
+  {
+    exp: "cut", title: "Cut", button: "A failure after a word",
+    text: "failures.ts is [{ retryable: true, pieces: [\"Half \"] }]: the answer starts, shows Half, and fails, with a failure worth another try. Press Hello. The chat keeps Half and says the answer was cut. The turn fails with AnswerCut, and neither model is asked again: once a word was shown, the answer is not made again, whatever the step's while says.",
+  },
+  {
+    exp: "plan-alone", title: "The plan alone", button: "Effect's plan without planned",
+    text: "agent.ts asks for the answer with Effect's Stream.withExecutionPlan(plan) in place of planned(plan), and failures.ts is the cut of the experiment before. Press Hello. The chat shows Half, then, a second later, the whole answer of the next try after it, and modelAnswer stores both as one text: the answer was made twice. The status line says nothing of the tries: Effect's plan says nothing about the turn. This is the rule planned adds.",
+  },
+  {
+    exp: "no-while", title: "No while", button: "A step without while",
+    text: "The first step of the plan loses its while, and failures.ts holds three failures for good. Press Hello. A step without while tries every failure again, worth it or not: three tries on the model you picked, a second apart, each failing, then the spare answers.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
