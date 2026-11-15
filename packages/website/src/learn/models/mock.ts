@@ -563,10 +563,13 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
 /** This page load's ids for Echo's tool calls. */
 const echoCallId = callIds("echo-call")
 
-/** Echo, loaded. `callId` mints the ids of its tool calls: a test passes its own to make two pages mint the same ones. */
-export const loadEcho = (callId: () => string = echoCallId): LoadedModel => {
+/**
+ * Echo, loaded, named `name` in the answers it stores (a second Echo, a spare, is named apart). `callId` mints the
+ * ids of its tool calls: a test passes its own to make two pages mint the same ones.
+ */
+export const loadEcho = (callId: () => string = echoCallId, name: string = echoChoice.id): LoadedModel => {
   let interrupted = false
-  const model = makeBrowserModel({
+  const model = makeBrowserModel(name, {
     generateText: (options) => Effect.sync(() => {
       const messages = toChatMessages(options.prompt)
       const reply = echoReply(messages)

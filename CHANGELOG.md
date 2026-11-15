@@ -376,6 +376,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn track's models name themselves. Each answer a page
+  model streams (Echo, the GPU and CPU models, Chrome's Prompt API) starts
+  with a `response-metadata` part that carries the model's id, as a
+  provider's does, so the kernel's `modelAnswer` stores which model
+  answered (`echo`, or the picked model's id, the same for a GPU model's
+  f16 and f32 builds) on every
+  `conversation.assistant.message` it makes. The Context tab shows it in
+  the record's data. Nothing new is sent to a model: prompts are as they
+  were. Lessons 1 and 2, which read the stream by hand, store no name.
+  `loadEcho` takes the name it gives, so a second Echo can be named apart.
+
 - Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
   A new file, `checks.ts`, holds the lines that run the program for a
   check (`turnsAfter`: the seven layers of `main`, with the model the

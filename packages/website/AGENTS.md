@@ -256,6 +256,11 @@ check` (tsc over the learn code, the build, the link check) and
   between page loads: a counter alone starts again on a reload, and a
   durable lesson would store two calls under one id. A test that needs
   the same ids on two pages passes its own minter (`loadEcho(callIds(…))`).
+  Every page model is built by `makeBrowserModel(name, impl, tools)`, whose
+  answers start with a `response-metadata` part naming the model (its
+  choice's id, the same for a WebLLM model's f16 and f32 builds), so
+  `modelAnswer` stores the name on the answer; `loadEcho(callId, name)`
+  names a second Echo apart.
   - Lesson 8's rules: "look up" or "tell me about" tides, volcanoes or
     honeybees goes to `lookup`. A `lookup` result is answered with the
     first sentence of what Echo was sent and how much of the whole that is:

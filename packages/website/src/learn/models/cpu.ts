@@ -85,7 +85,7 @@ const wrap = (choice: ModelChoice, worker: WorkerLike): LoadedModel => {
   }
   const interruptRequest = (id: number) => worker.postMessage({ type: "interrupt", id })
 
-  const model = makeBrowserModel({
+  const model = makeBrowserModel(choice.id, {
     generateText: (options) => Effect.tryPromise({
       try: () => new Promise<never>((resolve, reject) => {
         const messages = toChatMessages(options.prompt)
