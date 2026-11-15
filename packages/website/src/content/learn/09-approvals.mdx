@@ -1,0 +1,118 @@
+---
+title: Approvals
+description: Some actions need a person's yes. A tool asks before it acts; the answer is a record.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/approvals/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+Some of what a tool does should not happen on a model's word alone: deleting, sending, paying. A person has to say yes first.
+
+This lesson's agent has lesson 2's tools and one more, `forget`, which deletes every note. It asks before it does:
+
+- the **tool asks** where it acts, with one line at the start of its handler;
+- the **host answers**: here the host is this page, and it asks you in the chat;
+- the **answer is a record** of the turn, in the journal.
+
+Press **Remember to buy milk.**, then **Remember to call Ana.**, then **Forget my notes.** The turn stops at a question in the chat: *Delete all 2 notes.*, with three buttons, **Approve**, **Refuse** and **Always approve notes.forget**. The chip in the model bar reads *waiting for your answer*.
+
+Press **Refuse**. Echo answers *I did not delete anything: you did not approve it.* Press **What are my notes?**: both notes are there.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**. "Forget my notes.", "Delete my notes." or "Clear my notes." goes to `forget`, by rule. Any other message about notes goes to `recall`, as in lesson 2.
+
+Echo answers a refused `forget` with *I did not delete anything: you did not approve it.* Any other result it passes on as the tool's: *The tool answered: forget says "Deleted 2 notes."*
+
+The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Remember to buy milk." and then "Forget my notes.", called neither `remember` nor `forget` in two runs, so no question was asked. It answered the second message "No problem." in one run and "No new note found" in the other: nothing was saved, and nothing deleted. A model that does call `forget` is asked about as Echo is: the question comes from the tool, whatever model made the call.
+
+</Step>
+
+<Step n={3} id="tool" title="One line in the tool" focus="code" file="tools">
+
+**tools.ts** is lesson 2's, with `forget` added. Two lines of its declaration matter here:
+
+- `failure: Schema.String` with `failureMode: "return"`, as the calculator has: a refusal goes back to the model as the tool's answer;
+- `dependencies: [Approval, CurrentTurn]`, which no other tool here has: who the tool asks, and the turn it asks in.
+
+Its handler starts with the one new line: `yield* approve({ action: "notes.forget", detail: … })`.
+
+- `action` names the kind of thing, the same every time.
+- `detail` says what this call would do, for the person to read: *Delete all 2 notes.*
+
+Nothing below that line runs unless the answer is yes. A no fails the handler with a fixed text, which `callTool` stores as the call's failed result: "The user did not approve this action, so it was not done. Do not try it again unless the user asks for it." The model reads it, and the turn goes on.
+
+`remember` and `recall` do not ask.
+
+</Step>
+
+<Step n={4} id="host" title="Who is asked" focus="code" file="agent">
+
+The kernel has no person. `Approval` is a contract with one function, `ask(request)`, which answers with a decision: `Approved`, `ApprovedAlways`, `Refused`, or `Allowed`. The host provides it. A chat asks with buttons, a terminal with a prompt, a batch job answers from a policy.
+
+**agent.ts** is the base program with one module more in `main`: `Effect.provide(approvalOn(pane))`. `approvalOn` is this page's part, as `pane` and `model` are: it puts the question in the chat and waits for your answer.
+
+The approval is given to the program, not to the tools' layer. The program is what calls the tool, and what a tool declares in `dependencies` is needed by the call.
+
+While a question waits, the turn is open. You can still send a message: it waits, and joins the turn once the tool has answered.
+
+**Stop**, **Rebuild** and **Clear context** drop a question that waits. Its row goes, no answer is stored, and `forget` does not run. Each of the three also runs your files again, and the notes live in tools.ts: they are gone afterwards, though `forget` never ran.
+
+</Step>
+
+<Step n={5} id="record" title="The answer is a record" focus="context" wide={true}>
+
+Open **Context** at turn 3, the one you refused.
+
+- **Journal**: record 16 is `plugin.approval.decided`, between the model's call, record 15, and the call's result, record 17. Its payload holds what was asked and the answer: the action, the detail, and `Refused`.
+- It is tagged `trace` and bears no message. It is not conversation, and memory skips it: no prompt carries it.
+- **Prompt**, at the turn's second model call: what the model reads of your answer is the last row, the tool's failed result.
+
+`approve` stores the record. The page's approval stores nothing: it only answers.
+
+The chat's line *Refused: Delete all 2 notes.* is drawn from that record. A chat drawn again from the journal shows it in the same place, and shows no question: a question is said, never stored.
+
+</Step>
+
+<Step n={6} id="always" title="Always" focus="chat">
+
+Press **Forget my notes.** again. You are asked again: a refusal is no standing answer. This time press **Always approve notes.forget**.
+
+`forget` runs, and Echo answers *The tool answered: forget says "Deleted 2 notes."* The chat's note reads *Approved for good (notes.forget): Delete all 2 notes.*
+
+Press **Remember to buy milk.**, then **Forget my notes.** There is no question. `forget` runs: *Deleted 1 notes.* Nothing more is stored about it: the turn holds the call and its result, with no record between them.
+
+The standing approval is the record you made a moment ago. `grantsOf(journal)` lists the actions approved for good, and `approve` reads that list before it asks. It covers the action, `notes.forget`, not the one detail you were shown, which is why the button names the action.
+
+</Step>
+
+<Step n={7} id="journal" title="Rebuild, then Clear context" focus="chat">
+
+There is no store of approvals. A standing approval lives where its record lives, in the conversation's journal.
+
+Press **Rebuild**, then **Forget my notes.** You are not asked: the program started again over the same journal, and the record is in it. `forget` answers *Deleted 0 notes.*: the notes lived in tools.ts, which ran again.
+
+Press **Clear context**, then **Remember to buy milk.**, then **Forget my notes.** You are asked again: *Delete all 1 notes.* A new conversation has a journal of its own, and no approval in it. Press **Refuse**.
+
+So an approval for good is there after a restart, and is not there in another conversation. Nothing revokes one but a new conversation.
+
+</Step>
+
+<Step n={8} id="experiments" title="Experiments" focus="code">
+
+<Experiments />
+
+**Send three at once**, in a new conversation, saves two notes and reads them back in one turn. No tool in it asks, so nothing waits for you.
+
+After breaking it, press **Reset** in the Code pane.
+
+What approvals cost: the turn stays open until a person decides. A refusal costs a step: the model is asked again, to read the no.
+
+**Next:** skills: instructions and tools loaded when they are needed. Why the tool asks and the host answers, and why a standing approval is a record, is in [ADR 0012](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0012-a-tool-asks-through-a-contract.md).
+
+</Step>

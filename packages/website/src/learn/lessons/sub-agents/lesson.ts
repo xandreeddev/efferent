@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, userMessage } from "@xandreed/core/kernel"
 import { callTool, CurrentTurn, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import { run, runStatements } from "../../evaluate.ts"
+import { programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -34,7 +34,7 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
           flatMemory: parts.watchMemory(memory as Layer.Layer<Memory>), pane: parts.pane, model: parts.model,
         }
         return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", names), (main) =>
-          Effect.isEffect(main) ? Result.succeed(main as Effect.Effect<unknown, unknown>) : fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."))
+          programOf(main))
       })
     })
   })

@@ -6,17 +6,21 @@
 // still being written, a message waiting in the queue, a reply that is no
 // stored answer ("I stopped after 5 steps."), a failure the program worded
 // itself. Those rows have no `seq`, and a chat drawn from the journal alone
-// has none of them. Views are not rows: the chat draws them from the same
-// records with the kernel's `viewsOf` (views.ts).
-import { Option } from "effect"
+// has none of them. A question a tool asks before it acts (lesson 9) is such
+// a row too: it is there while it waits, and its answer is a record, drawn
+// as a note. Views are not rows: the chat draws them from the same records
+// with the kernel's `viewsOf` (views.ts).
+import { Match, Option } from "effect"
 import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
+import { decidedEvent } from "@xandreed/sdk/kernel"
+import type { DecidedData, Decision } from "@xandreed/sdk/kernel"
 import type { Trace } from "./runtime.ts"
 
 export interface ChatRow {
   /** The row's identity for whoever draws it: it stays when a row said live becomes the row of its record. */
   readonly id: number
-  readonly kind: "user" | "agent" | "tool" | "note" | "error"
+  readonly kind: "user" | "agent" | "tool" | "note" | "error" | "ask"
   readonly text: string
   readonly turn?: number
   /** The place of the record the row is drawn from. A row without one was said, never stored. */
@@ -31,6 +35,8 @@ export interface ChatRow {
   readonly dropped?: string
   /** A tool's result that is a failure. */
   readonly failed?: true
+  /** A question that waits for the person (kind `ask`): the id it is answered by, and the action a standing yes would cover. The row's text is the request's detail. */
+  readonly ask?: { readonly id: string; readonly action: string }
 }
 
 export interface ChatBoard {
@@ -79,6 +85,18 @@ const endRow = (turn: number, outcome: TurnOutcome): Option.Option<Pick<ChatRow,
 }
 
 /**
+ * What the chat says of an approval's answer (`plugin.approval.decided`, ADR 0012): who said yes or no, and to
+ * what. A yes for good names the action it covers; a yes by the host's policy says nobody was asked.
+ */
+export const decidedLine = ({ action, detail, decision }: DecidedData): string =>
+  Match.valueTags(decision, {
+    Approved: () => `Approved: ${detail}`,
+    ApprovedAlways: () => `Approved for good (${action}): ${detail}`,
+    Refused: () => `Refused: ${detail}`,
+    Allowed: () => `Allowed by policy: ${detail}`,
+  })
+
+/**
  * One stored record of the conversation the chat shows: the one step every stored row comes from. A record is
  * taken once: one read from the journal and then heard announced (a turn closed as the program started) adds
  * nothing the second time.
@@ -115,6 +133,9 @@ export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
     const text = `${board.calls.get(message.id) ?? message.name} ${message.isFailure ? "failed:" : "→"} ${JSON.stringify(message.result)}`
     return add(board, { kind: "tool", text, ...at, ...(message.isFailure ? { failed: true as const } : {}) })
   }
+  // An approval's answer is a record of the turn: a note, drawn from it now and whenever the chat is drawn again.
+  const decided = dataOf(decidedEvent, record)
+  if (Option.isSome(decided)) return add(board, { kind: "note", text: decidedLine(decided.value), ...at })
   return Option.match(dataOf(turnEndedEvent, record), {
     onNone: () => board,
     onSome: ({ outcome }) => {
@@ -190,6 +211,33 @@ export const withoutFailure = (board: ChatBoard, turn: number): ChatBoard =>
 /** How many messages wait for a turn. */
 export const waitingCount = (board: ChatBoard): number => board.rows.filter((row) => row.waiting === true && row.dropped === undefined).length
 
+/**
+ * A tool asked before it acts: the question is a row while it waits, with the request's detail as its text. It
+ * was said, not stored: the answer is what the journal keeps.
+ */
+export const asking = (board: ChatBoard, id: string, action: string, detail: string): ChatBoard =>
+  add(board, { kind: "ask", text: detail, ask: { id, action } })
+
+/** A question no longer waits, answered or dropped with its turn: its row goes. An id no row has changes nothing. */
+export const asked = (board: ChatBoard, id: string): ChatBoard =>
+  board.rows.some((row) => row.ask?.id === id) ? { ...board, rows: board.rows.filter((row) => row.ask?.id !== id) } : board
+
+/** How many questions wait for the person's answer. */
+export const questionsWaiting = (board: ChatBoard): number => board.rows.filter((row) => row.kind === "ask").length
+
+/**
+ * The three answers a question's row offers, in the order of its buttons, each with the button's words. "Always"
+ * names the action: a standing yes covers the action, not the one detail asked about.
+ */
+export const answersTo = (action: string): ReadonlyArray<{ readonly decision: Decision; readonly label: string }> => [
+  { decision: { _tag: "Approved" }, label: "Approve" },
+  { decision: { _tag: "Refused" }, label: "Refuse" },
+  { decision: { _tag: "ApprovedAlways" }, label: `Always approve ${action}` },
+]
+
+/** What the page's status chip says while a question waits: the turn is open, and waits for the person, not the model. */
+export const WAITING_FOR_ANSWER = "waiting for your answer"
+
 /** A line of the page's own: which model answers now, why something did not load. */
 export const said = (board: ChatBoard, kind: "note" | "error", text: string): ChatBoard => add(board, { kind, text })
 
@@ -233,5 +281,7 @@ export const hear = (board: ChatBoard, trace: Trace, shown: string): ChatBoard =
   if (trace._tag === "Reply") return replied(board, trace.turn, trace.text)
   if (trace._tag === "Failed") return failed(board, trace.turn, trace.message)
   if (trace._tag === "Ended") return programEnded(board, trace.reason)
+  if (trace._tag === "Asking") return asking(board, trace.id, trace.action, trace.detail)
+  if (trace._tag === "Asked") return asked(board, trace.id)
   return board
 }

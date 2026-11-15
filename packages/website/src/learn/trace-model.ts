@@ -166,6 +166,11 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       return withEntry(board, { ...base, kind: "program", turn: 0, title: "the program stopped", detail: trace.reason })
     case "Taken":
       return board
+    case "Asking":
+      // A tool asked before it acts: the question is the page's to put, in the turn the conversation has open.
+      return withEntry(board, { ...base, kind: "chat", turn: board.records.at(-1)?.turn ?? 0, title: `approval asked: ${trace.action}`, detail: trace.detail })
+    case "Asked":
+      return board
     case "Showing":
       // The conversation as its store holds it, read when the program named it: each record is taken as one announced is.
       if (trace.session !== board.session) return board

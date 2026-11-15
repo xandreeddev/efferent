@@ -31,7 +31,10 @@ check` (tsc over the learn code, the build, the link check) and
   - `program.test.ts`: the shown files compiled with tsc (`tsconfig.learn.json`)
     and run on the kernel with `scriptedModel`. The typed module's `run`
     states that its program needs nothing more (`Effect.Effect<unknown,
-    unknown>`), so a module `main` was not given is a compile error. A
+    unknown>`), so a module `main` was not given is a compile error. The
+    page runs the same text as untyped JavaScript, where nothing can say
+    that before it runs: `programOf` (`evaluate.ts`) is the one place a
+    lesson's `evaluate` says so. A
     lesson whose tool declares a service has a `type-level:` test that the
     program without it does not compile, naming the service (lesson 4's
     `Helper`). A loop written over any toolkit asks for the toolkit's own
@@ -56,7 +59,9 @@ check` (tsc over the learn code, the build, the link check) and
     writes no `Effect.orDie`.
   - `lesson.ts` gives each file exactly the names its imports list
     (`agentNames`, `toolsNames`, …): a name added to shown imports is added
-    there, and one removed is removed.
+    there, and one removed is removed. What the page gives and no import
+    names (`pane`, `model`, lesson 9's `approvalOn`) is said in a comment
+    of `main`, and is a parameter of the typed module's `run`.
 - **The runtime** (`runtime.ts`) builds the kernel, journal and sessions once,
   so the conversation outlives a rebuild, and runs the learner's `main` on a
   fiber. It wraps what it hands the program to watch it: the model (each
@@ -74,6 +79,14 @@ check` (tsc over the learn code, the build, the link check) and
     is untouched. A file whose rule must be made once is statements, as
     tools.ts is (`runStatements`, a body without `export`, an empty
     `formatPrefix`), not one expression after a read-only declaration.
+  - The page is who a tool asks (lesson 9, ADR 0012):
+    `PageParts.approvalOn(pane)` is a `Layer<Approval>` whose `ask` is
+    traced as `Asking { id, action, detail }` and waits for
+    `runtime.decide(id, decision)`. `Asked { id }` follows when the
+    question no longer waits: answered, or dropped with its turn by Stop,
+    a rebuild or Clear context (a finalizer of the wait, so it is always
+    said). A decision for an id nothing waits under does nothing. The
+    stand-in stores nothing: `approve` stores the answer.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
   - A prompt's row is "the same as the prompt before" when the message is
@@ -98,6 +111,14 @@ check` (tsc over the learn code, the build, the link check) and
   is given, by the row's id, and never reorders an element. Views are not rows: `views.ts` folds the same
   records with `viewsOf`. A new kind of thing in the chat is a case of
   `stored` when it has a record, with a test in `chat-model.test.ts`.
+  - A question a tool asks (lesson 9) is a row of kind `ask` with no
+    `seq`: its text is the request's detail, and it carries the id and
+    the action its three buttons use (`answersTo`: Approve, Refuse,
+    Always approve the action). It goes when `Asked` is heard. Its answer
+    is a record, `plugin.approval.decided`, and a note row from `stored`
+    (`decidedLine`). While a question waits the status chip says so
+    (`questionsWaiting`, `WAITING_FOR_ANSWER`), and the input takes
+    messages as during any turn.
 - **A durable lesson** (`Lesson.durable`, lesson 7) keeps its journal in
   the browser's storage, through the learner's own store.
   - The runtime creates no session and keeps no journal: its base's
@@ -147,6 +168,13 @@ check` (tsc over the learn code, the build, the link check) and
     sentence. The rule is asleep where nothing was cut short and neither
     tool is offered, so "go on" in another lesson is a message like any
     other.
+  - Lesson 9's rules: "forget", "delete" or "clear" my notes, the notes or
+    all notes goes to `forget`, where it is offered. The rule sits before
+    the one that sends any message about notes to `recall`, and a test
+    fails when it is moved after. A `forget` that failed with the
+    kernel's `APPROVAL_REFUSED`, word for word, is answered "I did not
+    delete anything: you did not approve it."; any other result of it,
+    and the same refusal of another tool, as the tool's.
   - A turn that failed leaves its message in the journal with no answer:
     Echo treats it as waiting, and the next turn answers it with the new
     one (two calls where one was expected).

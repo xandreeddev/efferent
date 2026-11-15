@@ -1,6 +1,7 @@
 // Every lesson the workbench can run, by its page slug.
 import { Option } from "effect"
 import type { Lesson } from "../lesson.ts"
+import { approvals } from "./approvals/lesson.ts"
 import { compaction } from "./compaction/lesson.ts"
 import { keepTheConversation } from "./keep-the-conversation/lesson.ts"
 import { pointers } from "./pointers/lesson.ts"
@@ -10,6 +11,6 @@ import { tools } from "./tools/lesson.ts"
 import { yourOwnPlugin } from "./your-own-plugin/lesson.ts"
 import { yourFirstAgent } from "./your-first-agent/lesson.ts"
 
-const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers]
+const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers, approvals]
 
 export const lessonOf = (slug: string): Option.Option<Lesson> => Option.fromNullishOr(lessons.find((lesson) => lesson.slug === slug))

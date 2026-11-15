@@ -50,6 +50,18 @@ export const run = (prefix: string, source: string, names: Record<string, unknow
 }
 
 /**
+ * The learner's `main`, as the page runs it: an Effect, or why it is not one. The learner's code is untyped
+ * JavaScript, so nothing can say before it runs what its program still needs. This is the one place the page
+ * says it needs nothing more: a module `main` was not given is found when the program runs, and reported as a
+ * defect ("nothing in the stack provides …"). The typed modules the tests compile say the same of their `run`,
+ * and there the compiler checks it.
+ */
+export const programOf = (main: unknown): Result.Result<Effect.Effect<unknown, unknown>, string> =>
+  Effect.isEffect(main)
+    ? Result.succeed(main as Effect.Effect<unknown, unknown>)
+    : Result.fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide.")
+
+/**
  * Effect's `Layer`, as the learner's code sees it: the same module, but a
  * part given to `provideMerge` that is no layer is refused when the
  * expression is evaluated, in words, rather than deep inside the build.

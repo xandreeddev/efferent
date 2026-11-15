@@ -5,9 +5,11 @@
 // rows.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { assistantMessage, Seq, ToolCallId, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Seq, stored as draftOf, ToolCallId, toolResult, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import { chatRowsOf, dropWaiting, emptyChat, failed, hear, piece, replied, sent, stored, taken, waitingCount, withoutFailure } from "./chat-model.ts"
+import { APPROVAL_REFUSED, decidedEvent } from "@xandreed/sdk/kernel"
+import type { Decision } from "@xandreed/sdk/kernel"
+import { answersTo, asked, asking, chatRowsOf, decidedLine, dropWaiting, emptyChat, failed, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -253,6 +255,63 @@ describe("the chat's rows, record by record", () => {
       "user: And now?",
       "error: ModelAnswerFailed: the model's stream reported an error",
     ])
+  })
+
+  test("an approval's answer is a note drawn from its record, worded by who decided: a person once, a person for good, a refusal, a policy", () => {
+    const request = { action: "notes.forget", detail: "Delete all 2 notes." }
+    const decided = (decision: Decision): StoredDraft => draftOf(decidedEvent, { ...request, decision })
+    expect((["Approved", "ApprovedAlways", "Refused", "Allowed"] as const).map((tag) => decidedLine({ ...request, decision: { _tag: tag } }))).toEqual([
+      "Approved: Delete all 2 notes.",
+      "Approved for good (notes.forget): Delete all 2 notes.",
+      "Refused: Delete all 2 notes.",
+      "Allowed by policy: Delete all 2 notes.",
+    ])
+    // In a turn: the note is the row of its record, between the model's call and the call's result, where the journal has it.
+    const call = { id: ToolCallId.make("c1"), name: "forget", params: {} }
+    const events = journal([
+      turnStarted(one), userMessage("Forget my notes."), assistantMessage("", { toolCalls: [call] }),
+      decided({ _tag: "Refused" }), toolResult(call, APPROVAL_REFUSED, true), assistantMessage("I did not."), turnEnded(one, { _tag: "Completed" }),
+    ])
+    expect(chatRowsOf(events).map(told)).toEqual([
+      "user: Forget my notes.",
+      "note: Refused: Delete all 2 notes.",
+      `tool (failed): forget({}) failed: ${JSON.stringify(APPROVAL_REFUSED)}`,
+      "agent: I did not.",
+    ])
+    expect(chatRowsOf(events)[1]).toMatchObject({ kind: "note", seq: 4, turn: 1 })
+    // Announced live, the same record gives the same row; heard a second time, nothing more.
+    const live = events.reduce(stored, emptyChat)
+    expect(events.reduce(stored, live).rows).toEqual(live.rows)
+  })
+
+  test("a question is a row with no record while it waits, before the messages that wait, and goes when it is answered or dropped", () => {
+    const [started, message, called] = journal([turnStarted(one), userMessage("Forget my notes."), assistantMessage("Let me see.", { toolCalls: [{ id: ToolCallId.make("c1"), name: "forget", params: {} }] })])
+    const open = sent([started!, message!, called!].reduce(stored, emptyChat), "And then?")
+    const waiting = asking(open, "question-1", "notes.forget", "Delete all 2 notes.")
+    expect(waiting.rows.map(told)).toEqual(["user: Forget my notes.", "agent: Let me see.", "ask*: Delete all 2 notes.", "user* (waiting): And then?"])
+    expect(waiting.rows[2]).toMatchObject({ kind: "ask", text: "Delete all 2 notes.", ask: { id: "question-1", action: "notes.forget" } })
+    expect(waiting.rows[2]?.seq).toBeUndefined()
+    expect([questionsWaiting(open), questionsWaiting(waiting)]).toEqual([0, 1])
+    // The page hears it as two traces: the question put, and the question taken back.
+    expect(hear(open, { _tag: "Asking", id: "question-1", action: "notes.forget", detail: "Delete all 2 notes." }, "any").rows.map(told)).toEqual(waiting.rows.map(told))
+    const gone = hear(waiting, { _tag: "Asked", id: "question-1" }, "any")
+    expect(gone.rows.map(told)).toEqual(open.rows.map(told))
+    expect(questionsWaiting(gone)).toBe(0)
+    // An id no row has changes nothing, and two questions go one by one.
+    expect(asked(waiting, "question-2")).toBe(waiting)
+    const two = asking(waiting, "question-2", "tool.forget", "Call forget with {}.")
+    expect(questionsWaiting(two)).toBe(2)
+    expect(asked(two, "question-1").rows.filter((row) => row.kind === "ask").map((row) => row.ask?.id)).toEqual(["question-2"])
+    // Its three buttons, in order: yes for this once, no, and yes for good, which names the action it covers.
+    expect(answersTo("notes.forget")).toEqual([
+      { decision: { _tag: "Approved" }, label: "Approve" },
+      { decision: { _tag: "Refused" }, label: "Refuse" },
+      { decision: { _tag: "ApprovedAlways" }, label: "Always approve notes.forget" },
+    ])
+    // What the page's chip says while one waits.
+    expect(WAITING_FOR_ANSWER).toBe("waiting for your answer")
+    // A chat drawn from the journal alone has no question: it was said, never stored.
+    expect(chatRowsOf([started!, message!, called!]).some((row) => row.kind === "ask")).toBe(false)
   })
 
   test("a failure the program says is shown when the journal holds none for that turn, and not twice when it does", () => {

@@ -43,7 +43,18 @@ checks.
   (a long `const system =` wraps onto two lines).
 - `moduleOf` turns the text into a typed module for tsc: replace exactly the
   lines that need types (a parameter, a table of kinds), nothing else. With
-  the kernel's functions a loop needs no cast.
+  the kernel's functions a loop needs no cast. Its `run` is annotated
+  `): Effect.Effect<unknown, unknown> =>`: the program needs nothing more,
+  so a module `main` was not given does not compile. What the page gives
+  and no import names (`pane`, `model`, lesson 9's `approvalOn`) is a
+  parameter of `run`.
+- No cast around a tool, a toolkit, a call or a layer, in the shown files,
+  the typed modules or the page's code. A loop written over any toolkit
+  takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`, as `callTool` does.
+  `lesson.ts` reads the untyped values a file made with guards
+  (`Layer.isLayer`, `Predicate.hasProperty`) and hands `main` over with
+  `programOf` (`evaluate.ts`), the one place the page says an untyped
+  program needs nothing more.
 - Comments are for the learner: what it does and why, in sentences.
 - A tool whose result the UI shows works out what it shows from a few words
   of the model's: the model's call is conversation and is sent again (ADR
@@ -57,7 +68,10 @@ checks.
 ## 3. Tests that can fail
 
 - `program.test.ts`: tsc over every shown file, and the program run on
-  `scriptedModel`, asserting the prompts the model received exactly.
+  `scriptedModel`, asserting the prompts the model received exactly. A
+  lesson whose tool declares a service has a `type-level:` test: the
+  program without that service does not compile, and the compiler's error
+  names it (lesson 4's `Helper`, lesson 9's `Approval`).
 - `lesson.test.ts`: the page's runtime with Echo. Assert each claim the mdx
   makes as it is worded, without a filter that hides the case it is about
   (no role filter on "the model never sees it"; no count that a vacuous run
@@ -84,7 +98,10 @@ checks.
 
 - [ ] Kernel cut merged or in the same PR, with its docs and ADR
 - [ ] `imports.test.ts`, `format.test.ts`, `program.test.ts` (the base holds
-      each piece replaced), `lesson.test.ts`, the Echo rule's test
+      each piece replaced; a `type-level:` test for a service a tool
+      declares), `lesson.test.ts`, the Echo rule's test
+- [ ] No cast in what the lesson adds; `run` annotated; `programOf` in
+      `lesson.ts`
 - [ ] Every button and chip the mdx names pressed in WebGPU Chrome, at
       1600×1000 and 390×844, light and dark, the screenshots looked at; Stop,
       Rebuild and Clear context tried where the lesson's state lives

@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Result, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
 import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { Memory, promptMessage } from "@xandreed/sdk/kernel"
-import { runStatements, run } from "../../evaluate.ts"
+import { programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
@@ -31,7 +31,7 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
     Layer.isLayer(memory)
       ? Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory as Layer.Layer<Memory>))), (main) =>
         // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
-        Effect.isEffect(main) ? Result.succeed(main as Effect.Effect<unknown, unknown>) : Result.fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."))
+        programOf(main))
       : Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …)."))
 
 const control = (file: string, read: LessonControl["read"], write: LessonControl["write"]): LessonControl => ({ file, read, write })

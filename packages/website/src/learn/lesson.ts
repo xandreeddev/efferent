@@ -5,7 +5,7 @@
 import type { Effect, Layer, Option, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { ConformanceCheck, Core, JournalStorage, SessionId, Sessions } from "@xandreed/core/kernel"
-import type { KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
+import type { Approval, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 
 /** A part of a file's text, by offsets. */
@@ -91,6 +91,11 @@ export interface PageParts {
    * and the conversation it gives is the one the chat and the Context tab show.
    */
   readonly chatWith: (resume: Effect.Effect<SessionId, { readonly message: string }, Sessions>) => Layer.Layer<Chat, { readonly message: string }, Sessions>
+  /**
+   * Who a tool asks before it acts (lesson 9): the page. A question is put to the person in the chat, and the
+   * tool waits for the answer; a question whose turn is dropped is taken back.
+   */
+  readonly approvalOn: (pane: unknown) => Layer.Layer<Approval>
 }
 
 /** A kit a lesson's page can run over the learner's code: its checks, or why the code did not evaluate. */

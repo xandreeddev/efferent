@@ -11,7 +11,7 @@ import {
 import type { SessionId } from "@xandreed/core/kernel"
 import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
-import { run, runStatements } from "../../evaluate.ts"
+import { programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, LessonKit, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -63,7 +63,7 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
           if (!Effect.isEffect(resume)) return Result.fail("chat.ts did not run: resume is not an Effect. It should give the conversation to go on with.")
           const names = agentNames(parts, store, resume as Effect.Effect<SessionId, { readonly message: string }, Sessions>, parts.watchMemory(memory as Layer.Layer<Memory>), tools, toolsLive)
           return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", names), (main) =>
-            Effect.isEffect(main) ? Result.succeed(main as Effect.Effect<unknown, unknown>) : Result.fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."))
+            programOf(main))
         }))
     })
   })
