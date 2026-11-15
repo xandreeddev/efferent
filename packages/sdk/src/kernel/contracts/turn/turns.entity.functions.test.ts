@@ -105,13 +105,13 @@ describe("a journal as its turns", () => {
     ])
   })
 
-  test("a result answers the latest call of its id that has none yet, as the memories pair them: an id asked twice, and a call left unanswered in an earlier turn", () => {
+  test("a result answers a call of the latest answer that asked under its id, the first of them with none yet, as the memories pair them: an id asked again in a later turn, and twice in one answer", () => {
     const journal = journalOf(
       // Turn 1 was abandoned inside its call. Turn 2's model asks under the same id, and its result is stored.
       [1, started(1)], [1, userMessage("First.")], [1, calls("", ["c1", "lookup", { topic: "tides" }])], [1, ended(1, { _tag: "Abandoned" })],
       [2, started(2)], [2, userMessage("Second.")], [2, calls("", ["c1", "lookup", { topic: "volcanoes" }])], [2, result("c1", "lookup", "Volcanoes erupt.")],
-      // One step asks twice under one id: the result answers the later of the two.
-      [2, calls("", ["c2", "calculator", { a: 1, op: "+", b: 1 }], ["c2", "calculator", { a: 2, op: "+", b: 2 }])], [2, result("c2", "calculator", 4)],
+      // One step asks twice under one id, and one result is stored: it is the first call's, as a loop runs them.
+      [2, calls("", ["c2", "calculator", { a: 1, op: "+", b: 1 }], ["c2", "calculator", { a: 2, op: "+", b: 2 }])], [2, result("c2", "calculator", 2)],
       // A result no call asked for, and a second result for a call that has one, answer nothing.
       [2, result("c9", "lookup", "No call.")], [2, result("c1", "lookup", "Again.")],
       [2, assistantMessage("Done.")], [2, ended(2)],
@@ -120,20 +120,18 @@ describe("a journal as its turns", () => {
     expect(turns[0]?.steps[0]?.calls).toEqual(['c1 lookup({"topic":"tides"}) no result'])
     expect(turns[1]?.steps.map((step) => step.calls)).toEqual([
       ['c1 lookup({"topic":"volcanoes"}) #8 "Volcanoes erupt."'],
-      ['c2 calculator({"a":1,"op":"+","b":1}) no result', 'c2 calculator({"a":2,"op":"+","b":2}) #10 4'],
+      ['c2 calculator({"a":1,"op":"+","b":1}) #10 2', 'c2 calculator({"a":2,"op":"+","b":2}) no result'],
       [],
     ])
     // The results that answered nothing are records of their turn, and no call's result.
     expect(turns[1]?.records).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
-    // The same pairs a memory sends, but for the step that asked twice under one id: `paired` tells the calls of
-    // one message apart by their id alone, so it keeps both of those where one result answered, and this gives
-    // the result to the later one. No model the kernel knows repeats an id inside one answer.
+    // The same pairs a memory sends: `paired` keeps exactly the calls that have a result here, and those results.
     const sent = paired(journal.flatMap((record) => (record.message === undefined ? [] : [record.message])))
     const kept = sent.flatMap((message) => (message._tag === "Assistant" ? message.toolCalls.map((call) => `${call.id} ${JSON.stringify(call.input)}`) : []))
     const answered = turnsOf(journal).flatMap((turn) => turn.steps.flatMap((step) => step.calls.filter((call) => Option.isSome(call.result)).map((call) => `${call.id} ${JSON.stringify(call.input)}`)))
-    expect(answered).toEqual(['c1 {"topic":"volcanoes"}', 'c2 {"a":2,"op":"+","b":2}'])
-    expect(kept).toEqual(['c1 {"topic":"volcanoes"}', 'c2 {"a":1,"op":"+","b":1}', 'c2 {"a":2,"op":"+","b":2}'])
-    expect(sent.filter((message) => message._tag === "ToolResult").map((message) => (message._tag === "ToolResult" ? message.result : null))).toEqual(["Volcanoes erupt.", 4])
+    expect(answered).toEqual(['c1 {"topic":"volcanoes"}', 'c2 {"a":1,"op":"+","b":1}'])
+    expect(kept).toEqual(answered)
+    expect(sent.filter((message) => message._tag === "ToolResult").map((message) => (message._tag === "ToolResult" ? message.result : null))).toEqual(["Volcanoes erupt.", 2])
   })
 
   test("a record it does not know is in its turn's records and nowhere else: a plugin's own record, read from there with the plugin's definition", () => {

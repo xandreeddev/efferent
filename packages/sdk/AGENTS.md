@@ -66,8 +66,14 @@ it: `./kernel` is a `restricted` subpath.
   `promptMessage` (a call as a `tool-call` part of the model's message, a
   result as a `tool` message), `paired` (a call only with its result, a
   result only with its call, an answer left empty dropped, pairs made in
-  order since a call's id can repeat: a result answers the last call of
-  its id before it; every memory sends through it, ADR 0004), `pointed`
+  order since a call's id can repeat: a result answers a call of the last
+  answer before it that asked under its id, and a call is told from
+  another by its place, so when one answer asks twice under one id the
+  results stored after it answer its calls in the order asked, the first
+  result the first call's, and a call with no result is not sent
+  (`pairsOf`: never give a result to the last call of its id, which sends
+  a call beside another's result); every memory sends through
+  it, ADR 0004), `pointed`
   (ADR 0011: `pointed(options)` gives the function a memory reads each
   record's message with in place of `messageOf`; a tool result estimated
   over `overTokens` keeps its call and says its first `previewTokens` and
@@ -124,8 +130,9 @@ it: `./kernel` is a `restricted` subpath.
   and every record stored in it, each part with the place of its record.
   It is pure and total: records are grouped by the turn each names, the
   first `core.session.turn.ended` closes a turn, a result answers the
-  latest call of its id that has none yet (the rule of `paired`; the two
-  differ only for an answer that asks twice under one id), and a record it
+  call it was stored for (`pairsOf`, the one function
+  `paired` pairs by too, so a test reads as a call's result what a model
+  was sent as it), and a record it
   does not know is in `records` alone. It is a read model for a test or a
   client, never a memory: never build a context from it; `contracts/approval` holds
   asking before acting (ADR 0012): `Approval` (`ask(request)` to a
@@ -433,8 +440,10 @@ it: `./kernel` is a `restricted` subpath.
   over a summarizer that answers in a few words), and on careless ones:
   each careless plugin fails the checks of what it is careless about and
   no others, and between them every check; the memory kit's `pairs` check
-  has the careless `unpaired`, which sends a call no result answers, and
-  `byid`, which pairs by id alone; its pointer checks have a memory that
+  has the careless `unpaired`, which sends a call no result answers,
+  `byid`, which pairs by id alone, `bymessage`, which tells the calls
+  of one answer apart by their id alone, and `bylast`, which sends the
+  second of two such calls beside the first one's result; its pointer checks have a memory that
   points a `whole` result, one that points a result only from the turn
   after it, and one that counts results whole), `browser-bundle`, `guide`, and
   beside the contracts' files their own

@@ -60,6 +60,15 @@ result answers the last call of its id before it that nothing answered yet; a re
 second result for one call, is not sent. Pairing by id alone sent a call left open as soon as a later call of the
 same id was answered.
 
+*Amended 2026-11-15.* A call is told from another by its place, the answer that asked and the call's place in it,
+not by its id within an answer. One answer can ask twice under one id. The results stored after it answer those
+calls in the order they were asked, the first result being the first call's: the order a loop that runs an answer's
+calls one after another stores them in. A call of the two that has no result is not sent. Telling the calls of one
+answer apart by id sent both where one result was stored, one of them with no result. Giving the result to the
+last call of the id would have sent a call beside another call's result. A host that runs the calls of one answer
+at once, under one id, stores results that cannot be told apart: the kernel's `callTool` is used one call after
+another.
+
 ## Consequences
 
 - A host's turn grows from one model call to a loop, written in its own program; the kernel ships the records,

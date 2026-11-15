@@ -87,6 +87,46 @@ export const promptMessage = (message: Message): Prompt.UserMessageEncoded | Pro
     }),
   })
 
+/** A call's place among `messages`: the message that asked, and the call's place in it. */
+export const callAt = (message: number, call: number): string => `${message} ${call}`
+
+/**
+ * Which result answers which call, among `messages`: for each answered call (`callAt`), the place of the message
+ * that is its result. A call is told from another by its place, never by its id alone, which is the model's and
+ * can repeat.
+ *
+ * - Across answers, the newer answer's calls of an id replace an older answer's that nothing answered: a turn
+ *   stopped while its tool ran, and its id asked again later.
+ * - Inside one answer that asks more than once under one id, the results stored after it answer those calls in
+ *   the order they were asked: the first result is the first call's. That is the order a loop that runs an
+ *   answer's calls one after another stores them in, as the kernel's `callTool` is used. A host that runs the
+ *   calls of one answer at once, under one id, stores results this cannot tell apart.
+ * - A result with no open call of its id answers nothing.
+ *
+ * It is the one rule both `paired` (what a model is sent) and `turnsOf` (what a test reads) pair by.
+ */
+export const pairsOf = (messages: ReadonlyArray<Message>): ReadonlyMap<string, number> => {
+  /** The calls of each id that no result has answered yet, in the order asked: those of the latest answer that asked under it. */
+  const open = new Map<string, ReadonlyArray<string>>()
+  const pairs = new Map<string, number>()
+  messages.forEach((message, at) =>
+    Match.valueTags(message, {
+      User: () => {},
+      Assistant: ({ toolCalls }) => {
+        const asked = new Map<string, ReadonlyArray<string>>()
+        toolCalls.forEach((call, index) => asked.set(call.id, [...(asked.get(call.id) ?? []), callAt(at, index)]))
+        asked.forEach((calls, id) => open.set(id, calls))
+      },
+      ToolResult: ({ id }) => {
+        const [first, ...rest] = open.get(id) ?? []
+        if (first === undefined) return
+        open.set(id, rest)
+        pairs.set(first, at)
+      },
+    }))
+  return pairs
+}
+
 /**
  * The messages a provider accepts, out of `messages`: a tool call is kept
  * only with its result, and a result only with its call, and an answer left
@@ -95,36 +135,27 @@ export const promptMessage = (message: Message): Prompt.UserMessageEncoded | Pro
  * otherwise send a call no result answers, which a provider refuses. The
  * journal keeps every record; this decides only what is sent.
  *
- * Pairs are made in order, since a call's id is the model's and can repeat
- * (a model that numbers its calls starts again when its process does): a
- * result answers the last call of its id before it that nothing answered
- * yet. So a call left open, then asked again under the same id and
- * answered, is sent once, with that answer; a result with no call before
- * it, or a second result for one call, is not sent.
+ * Pairs are made in order (`pairsOf`), since a call's id is the model's and
+ * can repeat (a model that numbers its calls starts again when its process
+ * does): a result answers a call of the last answer before it that asked
+ * under its id, the first of them that nothing answered yet. So a call left
+ * open, then asked again in a later answer under the same id and
+ * answered, is sent once, with that answer; of two calls one answer makes
+ * under one id, each is sent with its own result, the first stored being
+ * the first call's, and one that has none is not sent; a result with no
+ * call before it, or a second result for one call, is not sent.
  *
  * @public
  */
 export const paired = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
-  /** The message holding the last call of an id that no result has answered yet. */
-  const open = new Map<string, number>()
-  /** The calls that have their result, each as the message that asked and the id. */
-  const answered = new Set<string>()
+  const pairs = pairsOf(messages)
   /** The results that answer a call. */
-  const answers = new Set<number>()
-  messages.forEach((message, at) => {
-    if (message._tag === "Assistant") message.toolCalls.forEach((call) => open.set(call.id, at))
-    if (message._tag !== "ToolResult") return
-    const asked = open.get(message.id)
-    if (asked === undefined) return
-    open.delete(message.id)
-    answered.add(`${asked} ${message.id}`)
-    answers.add(at)
-  })
+  const answers = new Set(pairs.values())
   return messages.flatMap((message, at): ReadonlyArray<Message> =>
     Match.valueTags(message, {
       User: () => [message],
       Assistant: (assistant) => {
-        const toolCalls = assistant.toolCalls.filter((call) => answered.has(`${at} ${call.id}`))
+        const toolCalls = assistant.toolCalls.filter((_, index) => pairs.has(callAt(at, index)))
         return assistant.text.length === 0 && toolCalls.length === 0 ? [] : [{ ...assistant, toolCalls }]
       },
       ToolResult: (result) => (answers.has(at) ? [result] : []),

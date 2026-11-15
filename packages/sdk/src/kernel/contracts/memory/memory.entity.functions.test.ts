@@ -40,6 +40,17 @@ describe("memory's helpers", () => {
     expect(paired([user, asked("", "c1"), answered("c1"), again, asked("", "c1"), answered("c1")])).toEqual([user, asked("", "c1"), answered("c1"), again, asked("", "c1"), answered("c1")])
     // The first answered and the second cut off: the old result does not stand for the new call.
     expect(paired([user, asked("", "c1"), answered("c1"), again, asked("", "c1")])).toEqual([user, asked("", "c1"), answered("c1"), again])
+    // One answer that asks twice under one id. The results stored after it answer its calls in the order asked: with
+    // one result the first call is sent with it and the second is not; with two, each call has its own.
+    const callOf = (a: number) => ({ ...call("c1"), input: { a, b: 3 } })
+    const twice: Message = { _tag: "Assistant", text: "", toolCalls: [callOf(2), callOf(4)] }
+    const first: Message = { _tag: "Assistant", text: "", toolCalls: [callOf(2)] }
+    const gave = (result: number): Message => ({ _tag: "ToolResult", id: ToolCallId.make("c1"), name: "add", result, isFailure: false })
+    expect(paired([user, twice, gave(5)])).toEqual([user, first, gave(5)])
+    expect(paired([user, twice, gave(5), gave(7)])).toEqual([user, twice, gave(5), gave(7)])
+    // A third result answers nothing. An older answer's open call of the id is replaced by the newer answer's two.
+    expect(paired([user, twice, gave(5), gave(7), gave(9)])).toEqual([user, twice, gave(5), gave(7)])
+    expect(paired([user, asked("", "c1"), again, twice, gave(5)])).toEqual([user, again, first, gave(5)])
     // A result before its call, and a second result for one call, answer nothing.
     expect(paired([user, answered("c1"), asked("", "c1")])).toEqual([user])
     expect(paired([user, asked("", "c1"), answered("c1"), answered("c1")])).toEqual([user, asked("", "c1"), answered("c1")])
