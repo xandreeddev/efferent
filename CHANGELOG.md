@@ -228,6 +228,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     Model text: both tools' descriptions and parameters, `forgetFact`'s
     result, the failures for a text that is no fact, an id no fact has and
     a memory session that is busy, and the note of remembered facts.
+  - What a program did is read back from its journal with `turnsOf`: a
+    journal as its turns (`TurnRead`). For each turn it gives the messages
+    the turn took, a step for each answer of the model with its calls and
+    their results (`StepRead`, `CallRead`), the answer, how the turn
+    closed, and every record stored in it; each part names the place of
+    its record. It is what a host's test checks after running its program
+    over `scriptedModel` and a journal kept in the process
+    (`docs/kernel.md`, "Testing a host"), and what a client draws a turn
+    from. It is pure and refuses no journal: a record belongs to the turn
+    it was stored in, a result answers the latest call of its id that has
+    none yet, as `paired` pairs them, and a record it does not know is in
+    its turn's `records` alone. It is no memory, and nothing it returns is
+    sent to a model.
   - Both stock memories send through `paired`, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
@@ -336,6 +349,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the Context tab builds a turn's steps from the kernel's
+  `turnsOf`, in place of its own filters over the records: the turn's
+  start, its messages, each answer's calls with their results, and how it
+  closed. Nothing a learner sees changes. The page's own list of turn
+  numbers is now `turnNumbersOf`.
 - Docs site: Lesson 11, "Remember across sessions", at `/learn/remember`.
   `tools.ts` is lesson 2's calculator with the kernel's two tools that
   remember merged in (`Toolkit.merge(Toolkit.make(calculator),

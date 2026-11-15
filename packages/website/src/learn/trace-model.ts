@@ -5,9 +5,10 @@
 // A turn may call the model several times (a turn with tools is a loop over
 // steps), so its steps are built from what happened, call by call.
 import { Option } from "effect"
-import { assistantMessageEvent, dataOf, messageOf, SessionId, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText } from "@xandreed/sdk/kernel"
+import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText, turnsOf } from "@xandreed/sdk/kernel"
+import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
 
@@ -313,8 +314,8 @@ export interface TurnView {
 /** What a restored turn's context and prompt steps say. */
 export const BEFORE_THIS_PAGE = "This turn ran before the page was loaded. Its contexts and prompts were built for one call each and never stored: what is left is what it stored."
 
-/** The turns of the conversation, in order. */
-export const turnsOf = (board: Board): ReadonlyArray<number> =>
+/** The numbers of the conversation's turns, in order: one for each turn a record opened. */
+export const turnNumbersOf = (board: Board): ReadonlyArray<number> =>
   board.records.flatMap((record) => (record.name === turnStartedEvent.name ? [record.turn] : []))
 
 /** Which record each context message came from: matched from the newest back, so a repeated text finds its own record. */
@@ -331,16 +332,16 @@ const linkContext = (records: ReadonlyArray<StoredEvent>, messages: ReadonlyArra
   return links
 }
 
-const outcomeOfRecord = (record: StoredEvent): string => {
-  const data = record.data
-  if (typeof data === "object" && data !== null && "outcome" in data) {
-    const outcome = data.outcome
-    if (typeof outcome === "object" && outcome !== null && "_tag" in outcome) {
-      return "reason" in outcome && typeof outcome.reason === "string" ? `${String(outcome._tag)}: ${outcome.reason}` : String(outcome._tag)
-    }
-  }
-  return "closed"
-}
+/** How a turn closed, in words: its outcome, and why when it failed. */
+const outcomeText = ({ outcome }: ClosedRead): string => ("reason" in outcome ? `${outcome._tag}: ${outcome.reason}` : outcome._tag)
+
+/**
+ * One turn of a board as the kernel reads it from the records (`turnsOf`): its start, its messages, a step for
+ * each answer with its calls and their results, and how it closed. A turn no record names yet has none of them.
+ */
+const readOf = (board: Board, turn: number): TurnRead =>
+  turnsOf(board.records).find((one) => one.turn === turn)
+    ?? { turn: TurnNumber.make(turn), opened: Option.none(), messages: [], steps: [], answer: Option.none(), closed: Option.none(), records: [] }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
@@ -412,19 +413,17 @@ const callViewOf = (board: Board, turn: number, index: number, previous: Option.
  * one record, and closed. No memory built a context and no model was called, so it has no such steps.
  */
 const memoryTurnOf = (board: Board, turn: number): TurnView => {
-  const ofTurn = board.records.filter((record) => record.turn === turn)
-  const started = Option.fromNullishOr(ofTurn.find((record) => record.name === turnStartedEvent.name))
-  const ended = Option.fromNullishOr(ofTurn.find((record) => record.name === turnEndedEvent.name))
-  const closed = Option.map(ended, outcomeOfRecord)
+  const { opened: started, closed: ended, records: ofTurn } = readOf(board, turn)
+  const closed = Option.map(ended, outcomeText)
   const failed = Option.match(closed, { onNone: () => false, onSome: (text) => !text.startsWith("Completed") })
   const stored = ofTurn.filter((record) => record.name !== turnStartedEvent.name && record.name !== turnEndedEvent.name)
   const steps: ReadonlyArray<StepView> = [
     {
       id: "opened", kind: "opened", call: 0, label: "Turn opened", code: "sessions.turn(yield* memorySession, …)", column: "journal",
-      state: Option.isSome(started) ? "done" : "now", seqs: Option.match(started, { onNone: () => [], onSome: (one) => [one.seq] }),
+      state: Option.isSome(started) ? "done" : "now", seqs: Option.toArray(started),
       detail: Option.match(started, {
         onNone: () => "Opening the turn.",
-        onSome: (one) => `Record #${one.seq}, ${one.name}. A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.`,
+        onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.`,
       }),
     },
     ...stored.map((one, index): StepView => ({
@@ -435,7 +434,7 @@ const memoryTurnOf = (board: Board, turn: number): TurnView => {
     {
       id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal",
       state: Option.isNone(ended) ? (stored.length > 0 ? "now" : "todo") : failed ? "failed" : "done", seqs: Option.match(ended, { onNone: () => [], onSome: (one) => [one.seq] }),
-      detail: Option.match(ended, { onNone: () => "The turn closes when its scope ends: the record is stored, or the call failed.", onSome: (one) => `Record #${one.seq}: ${outcomeOfRecord(one)}.` }),
+      detail: Option.match(ended, { onNone: () => "The turn closes when its scope ends: the record is stored, or the call failed.", onSome: (one) => `Record #${one.seq}: ${outcomeText(one)}.` }),
     },
   ]
   const journal = journalFor(board, turn, Option.none(), new Set())
@@ -446,14 +445,10 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   if (board.kind === "memory") return memoryTurnOf(board, turn)
   // A session that is not the chat's (a helper's, or another of the program's own): its words stay out of the chat.
   const quiet = board.kind !== "chat"
-  const ofTurn = board.records.filter((record) => record.turn === turn)
-  const started = Option.fromNullishOr(board.records.find((record) => record.name === turnStartedEvent.name && record.turn === turn))
-  const ended = Option.fromNullishOr(ofTurn.find((record) => record.name === turnEndedEvent.name))
+  // The turn as the kernel reads it from the records: its start, its messages, its steps and how it closed.
+  const { opened: started, messages: users, steps: answers, closed: ended, records: ofTurn } = readOf(board, turn)
   // A turn that started before the journal was read as the page loaded ran in a page that is gone.
-  const restored = Option.exists(started, (one) => one.seq <= board.restored)
-  const users = ofTurn.filter((record) => record.name === userMessageEvent.name)
-  const answers = ofTurn.filter((record) => record.name === assistantMessageEvent.name)
-  const results = ofTurn.filter((record) => record.name === toolResultEvent.name)
+  const restored = Option.exists(started, (seq) => seq <= board.restored)
   // A memory's own records that carry what it sends: the summaries it stored as it compacted (ADR 0008).
   const compactions = ofTurn.filter((record) => Option.isNone(messageOf(record)) && Option.isSome(sentMessageOf(record)))
   const summarized = board.summaries.get(turn)?.length ?? 0
@@ -467,13 +462,13 @@ export const viewOf = (board: Board, turn: number): TurnView => {
     calls.push(callViewOf(board, turn, index, previous))
   }
 
-  const seqOf = (found: Option.Option<StoredEvent>) => Option.match(found, { onNone: () => [], onSome: (one) => [one.seq] })
+  const seqOf = (found: Option.Option<{ readonly seq: number }>) => Option.match(found, { onNone: () => [], onSome: (one) => [one.seq] })
   type Raw = Omit<StepView, "state"> & { readonly happened: boolean }
   const raw: Array<Raw> = []
   const first = Option.fromNullishOr(users[0])
   raw.push({
-    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: quiet ? "sessions.open(session)" : "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: seqOf(started),
-    detail: Option.match(started, { onNone: () => "Opening the turn.", onSome: (one) => `Record #${one.seq}, ${one.name}. The turn's scope is open; it closes when the scope ends.` }),
+    id: "opened", kind: "opened", call: 0, label: "Turn opened", code: quiet ? "sessions.open(session)" : "sessions.open(chat.session)", column: "journal", happened: Option.isSome(started), seqs: Option.toArray(started),
+    detail: Option.match(started, { onNone: () => "Opening the turn.", onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. The turn's scope is open; it closes when the scope ends.` }),
   })
   // The messages the turn took as it opened: its own, and every one waiting behind it.
   const opening = users.filter((record) => record.seq < Option.match(Option.fromNullishOr(answers[0]), { onNone: () => Infinity, onSome: (one) => one.seq }))
@@ -484,7 +479,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       onNone: () => "Your message goes into the journal first.",
       onSome: (one) => opening.length > 1
         ? `Records ${opening.map((record) => `#${record.seq}`).join(", ")}: your message, and the ${opening.length - 1} that waited behind it. One answer replies to them all.`
-        : `Record #${one.seq}, tagged ${one.tags.join(", ")}. It is in the journal before the model sees anything.`,
+        : `Record #${one.seq}, tagged ${(ofTurn.find((record) => record.seq === one.seq)?.tags ?? []).join(", ")}. It is in the journal before the model sees anything.`,
     }),
   })
   const pieces = board.pieces.get(turn) ?? []
@@ -549,7 +544,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt", happened: streamed > 0 || Option.isSome(answer), seqs: [],
       detail: streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : Option.isSome(answer) ? "The model streamed no text: it only called tools." : "Each piece goes to the chat as it arrives.",
     })
-    const asked = Option.match(answer, { onNone: () => [] as ReadonlyArray<string>, onSome: (one) => (one.message?._tag === "Assistant" ? one.message.toolCalls.map((call) => String(call.id)) : []) })
+    const asked = Option.match(answer, { onNone: () => [], onSome: (one) => one.calls })
     raw.push({
       id: `stored-answer-${n}`, kind: "stored-answer", call: n, label: at(asked.length > 0 ? "Calls stored" : "Answer stored"), code: restored ? "stored before this page loaded" : byKernel ? "modelAnswer(stream, session)" : "session.append(assistantMessage(…))", column: "journal", happened: Option.isSome(answer), seqs: seqOf(answer),
       detail: Option.match(answer, {
@@ -558,8 +553,9 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       }),
     })
     if (asked.length > 0) {
-      const done = results.filter((record) => record.message?._tag === "ToolResult" && asked.includes(String(record.message.id)))
-      const failed = done.filter((record) => record.message?._tag === "ToolResult" && record.message.isFailure).length
+      // The results the journal holds for this step's calls, in the order they were stored.
+      const done = asked.flatMap((call) => Option.toArray(call.result)).toSorted((one, other) => one.seq - other.seq)
+      const failed = done.filter((result) => result.isFailure).length
       raw.push({
         id: `tools-${n}`, kind: "tools", call: n, label: at("Tools ran"), code: restored ? "stored before this page loaded" : byKernel ? "callTool(toolkit, call, session)" : "toolkit.handle(call.name, call.params)", column: "journal", happened: done.length === asked.length, seqs: done.map((record) => record.seq),
         detail: done.length === 0 ? `Running ${plural(asked.length, "tool call")}.`
@@ -569,10 +565,10 @@ export const viewOf = (board: Board, turn: number): TurnView => {
   }
   raw.push({
     id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal", happened: Option.isSome(ended), seqs: seqOf(ended),
-    detail: Option.match(ended, { onNone: () => "The turn closes when its scope ends: answered, failed or stopped.", onSome: (one) => `Record #${one.seq}: ${outcomeOfRecord(one)}.` }),
+    detail: Option.match(ended, { onNone: () => "The turn closes when its scope ends: answered, failed or stopped.", onSome: (one) => `Record #${one.seq}: ${outcomeText(one)}.` }),
   })
 
-  const closed = Option.map(ended, outcomeOfRecord)
+  const closed = Option.map(ended, outcomeText)
   const isClosed = Option.isSome(ended)
   const failed = Option.match(closed, { onNone: () => false, onSome: (text) => !text.startsWith("Completed") })
   const firstMissing = raw.findIndex((step) => !step.happened)

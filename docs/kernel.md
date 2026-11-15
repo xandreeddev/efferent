@@ -1484,6 +1484,94 @@ holds for its own. A turn this process holds is never recovered by it
 (`SessionBusy`). The session a header names as its parent is not checked
 to exist: the parent may be in another store.
 
+## Testing a host
+
+A host's program names its model and its store by contract, so a test of it
+swaps those two layers and nothing else: the model for one that follows a
+script (`scriptedModel`), the store for a journal kept in the process. The
+program is the one the host ships. Here it is one tool and one turn:
+
+<!-- pinned: packages/sdk/src/kernel/host-test.test.ts#program -->
+
+```ts
+// The host's program: one tool, and one turn. It asks for its model, its memory and its sessions by contract.
+const Add = Tool.make("add", {
+  description: "Add two numbers.",
+  parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
+  success: Schema.Number,
+})
+const tools = Toolkit.make(Add)
+const toolsLive = tools.toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+
+const answer = (conversation: SessionId, message: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const model = yield* LanguageModel.LanguageModel
+      const memory = yield* Memory
+      const toolkit = yield* tools
+      const session = yield* (yield* Sessions).open(conversation)
+      yield* session.append(userMessage(message))
+      for (let step = 1; step <= 4; step++) {
+        const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...(yield* memory.context(session))])
+        const said = yield* modelAnswer(model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+        if (said.toolCalls.length === 0) return said.text
+        for (const call of said.toolCalls) yield* callTool(toolkit, call, session)
+      }
+      return "I stopped after 4 steps."
+    }),
+  )
+```
+
+What the program did is in the journal, and `turnsOf` reads a journal as its
+turns. For each turn it gives the messages the turn took, a step for each
+answer of the model with its calls and their results, the answer, how the
+turn closed, and every record stored in it. Each part names the place of its
+record (`seq`), so a check that fails can say which record it read:
+
+<!-- pinned: packages/sdk/src/kernel/host-test.test.ts#test -->
+
+```ts
+// The same program over a model that follows a script and a journal kept in the process: what it did, as turns.
+const turnsAfter = (script: ModelScript, messages: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const { model } = yield* scriptedModel(script)
+    const store = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
+    return yield* Effect.gen(function* () {
+      const all = yield* Sessions
+      const conversation = yield* all.create({ owner: "test" })
+      // A turn that fails is a turn too: the test reads how it closed from the journal.
+      yield* Effect.forEach(messages, (message) => Effect.exit(answer(conversation, message)), { concurrency: 1, discard: true })
+      return turnsOf((yield* all.read(conversation)).events)
+    }).pipe(Effect.provide(Layer.mergeAll(model, toolsLive, flatMemory, store)))
+  })
+
+test("a host's program under test: a sum is worked out by the tool, one call with the numbers asked, its result, then the answer", async () => {
+  const [turn] = await Effect.runPromise(turnsAfter([
+    { _tag: "Calls", pieces: [], calls: [{ name: "add", params: { a: 2, b: 3 } }] },
+    { _tag: "Answers", pieces: ["It is 5."] },
+  ], ["What is 2 + 3?"]))
+  const calls = turn?.steps.flatMap((step) => step.calls) ?? []
+  expect(calls.map((call) => [call.name, call.input, Option.getOrNull(call.result)?.result])).toEqual([["add", { a: 2, b: 3 }, 5]])
+  expect(Option.getOrNull(turn?.answer ?? Option.none())).toBe("It is 5.")
+  expect(Option.getOrNull(turn?.closed ?? Option.none())?.outcome).toEqual({ _tag: "Completed" })
+})
+```
+
+- **A kit checks a part; a test like this checks the agent.** A kit runs one
+  plugin against its contract. This runs the whole program, and reads what
+  it stored.
+- **`turnsOf` is pure and refuses no journal.** A record belongs to the turn
+  it was stored in. A result answers the latest call of its id that has none
+  yet, as `paired` pairs them for a model. A call a turn was abandoned in
+  has no result, and a turn that ended on a call has no answer.
+- **It is no memory.** A record it does not know, a plugin's own, is in its
+  turn's `records` and nowhere else, to be read with `dataOf` and the
+  plugin's definition. Nothing it returns is sent to a model, so the rule a
+  memory holds to (refuse a record it does not know, or pass over one marked
+  skippable) is not its rule.
+- **A client draws from the same fold.** The learn track's Context tab
+  builds a turn's steps from it.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the
@@ -1586,6 +1674,11 @@ are not made by accident.
   handle a memory's or an inbox turn's failures exhaustively.
 - **Two `kernel()` layers give two cores**, silently: the one nearer the
   consumer wins.
+- **Two calls under one id in one answer.** `paired` tells the calls of one
+  assistant message apart by their id alone: when a model asks twice under
+  one id and one result is stored, it sends both calls. `turnsOf` gives the
+  result to the later call. No model the kernel knows repeats an id inside
+  one answer; a provider that did would be sent a call with no result.
 
 ## Keeping a tailored context cache-stable
 

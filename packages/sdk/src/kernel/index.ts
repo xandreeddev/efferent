@@ -51,6 +51,8 @@ export type { ModelToolCall, OwnTools, ToolNeeds } from "./contracts/turn/tool-c
 export { modelAnswer } from "./contracts/turn/model-answer.entity.functions.js"
 export type { Answered } from "./contracts/turn/model-answer.entity.functions.js"
 export { ModelAnswerFailed } from "./contracts/turn/model-answer.entity.js"
+export { turnsOf } from "./contracts/turn/turns.entity.functions.js"
+export type { CallRead, ClosedRead, MessageRead, ResultRead, StepRead, TurnRead } from "./contracts/turn/turns.entity.js"
 export type { RunningTurn } from "./contracts/turn/current-turn.port.js"
 export { CardView, ListView, ProgressData, progressEvent, TableView, TextView, View, ViewData, viewEvent, ViewId } from "./contracts/render/render.entity.js"
 export { showView, viewsOf } from "./contracts/render/render.entity.functions.js"

@@ -107,6 +107,10 @@ check` (tsc over the learn code, the build, the link check) and
     stand-in stores nothing: `approve` stores the answer.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
+  - What a turn's records say (its start, its messages, each answer's
+    calls with their results, how it closed) is read with the kernel's
+    `turnsOf` (`readOf`), never by filters over the records. The page's
+    own list of a board's turn numbers is `turnNumbersOf`.
   - It holds one board per session a turn ran in (`Boards`, `heardBy`),
     and its row of sessions (`sessionRow`) names each for what its header
     says it is (`kindOf`), never for its place in the row: the chat's

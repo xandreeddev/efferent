@@ -13,7 +13,7 @@ import { evaluateStatements } from "../../evaluate.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
-import { emptyBoard, record, turnsOf, viewOf } from "../../trace-model.ts"
+import { emptyBoard, record, turnNumbersOf, viewOf } from "../../trace-model.ts"
 import type { CallView, PromptRow } from "../../trace-model.ts"
 import { DEFAULT_MEMORY as FLAT_MEMORY } from "../tools/memory.source.ts"
 import { pointers } from "./lesson.ts"
@@ -71,7 +71,7 @@ const page = async (sources: Record<string, string> = SOURCES) => {
   /** The Context tab's model calls, turn by turn, in order. */
   const calls = (): ReadonlyArray<CallView> => {
     const board = heard.reduce((all, trace) => record(all, trace, 0), emptyBoard(runtime.conversation))
-    return turnsOf(board).flatMap((turn) => viewOf(board, turn).calls)
+    return turnNumbersOf(board).flatMap((turn) => viewOf(board, turn).calls)
   }
   /** What the journal holds for each tool result, in order. */
   const results = async () => (await runtime.journal()).flatMap((event) => (event.name === toolResultEvent.name && event.message?._tag === "ToolResult" ? [{ seq: Number(event.seq), ...event.message }] : []))

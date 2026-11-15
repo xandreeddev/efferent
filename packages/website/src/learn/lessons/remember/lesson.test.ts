@@ -16,7 +16,7 @@ import { applyExperiment } from "../../lesson.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
-import { emptyBoards, heardBy, sessionRow, startedOver, turnsOf, viewOf } from "../../trace-model.ts"
+import { emptyBoards, heardBy, sessionRow, startedOver, turnNumbersOf, viewOf } from "../../trace-model.ts"
 import type { Board, Boards } from "../../trace-model.ts"
 import { remember } from "./lesson.ts"
 
@@ -151,7 +151,7 @@ describe("lesson 11 on the page (the kernel, Echo)", () => {
       [1, 1, "core.session.turn.started", ["turn"]], [2, 1, "plugin.facts.learned", ["memory"]], [3, 1, "core.session.turn.ended", ["turn"]],
       [4, 2, "core.session.turn.started", ["turn"]], [5, 2, "plugin.facts.learned", ["memory"]], [6, 2, "core.session.turn.ended", ["turn"]],
     ])
-    expect(turnsOf(memory())).toEqual([1, 2])
+    expect(turnNumbersOf(memory())).toEqual([1, 2])
     const learning = viewOf(memory(), 2)
     expect(learning.steps.map((step) => step.label)).toEqual(["Turn opened", "Fact learned", "Turn closed"])
     // The record, opened: the fact, and the conversation and turn it came from.
@@ -205,7 +205,7 @@ describe("lesson 11 on the page (the kernel, Echo)", () => {
     // The request after the call, in the same turn, is sent the one fact that stands.
     expect(noted()).toEqual([`f2: ${HOME_FACT}`])
     // The memory session: one record more, in a turn of its own. The record that learned the fact is still there.
-    expect(turnsOf(memory())).toEqual([1, 2, 3])
+    expect(turnNumbersOf(memory())).toEqual([1, 2, 3])
     expect(memory().records.slice(6).map((one) => [one.seq, one.name, one.data])).toEqual([
       [7, "core.session.turn.started", { turn: 3 }], [8, "plugin.facts.forgotten", { id: "f1" }], [9, "core.session.turn.ended", { turn: 3, outcome: { _tag: "Completed" } }],
     ])
@@ -390,7 +390,7 @@ describe("lesson 11 on the page (the kernel, Echo)", () => {
     expect(await outcomes(runtime)).toEqual(["Completed"])
     expect(heard.flatMap((trace) => (trace._tag === "Status" ? [trace.text] : []))).toEqual(["turn 1", "step 1: rememberFact", "step 1: rememberFact", "step 1: calculator"])
     // The calls ran one after the other: two turns on the memory session, both from the conversation's first turn.
-    expect(turnsOf(memory())).toEqual([1, 2])
+    expect(turnNumbersOf(memory())).toEqual([1, 2])
     expect(factsOf(memory().records).map((fact) => [String(fact.id), Number(fact.from.turn)])).toEqual([["f1", 1], ["f2", 1]])
     // The turn's second request was sent both, the newest first: the last message, the sum, shares a word with neither.
     expect(noted()).toEqual([`f2: ${HOME_FACT}`, `f1: ${NAME_FACT}`])

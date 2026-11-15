@@ -22,7 +22,7 @@ import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import { LessonRuntime } from "./runtime.ts"
 import type { Trace } from "./runtime.ts"
-import { emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, sessionRow, startedOver, turnsOf, viewOf } from "./trace-model.ts"
+import { emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, sessionRow, startedOver, turnNumbersOf, viewOf } from "./trace-model.ts"
 import type { Board, Boards } from "./trace-model.ts"
 
 const opened: Array<LessonRuntime> = []
@@ -55,7 +55,7 @@ const boardAfter = async (messages: ReadonlyArray<string>, sources: Record<strin
 describe("the Context tab's model", () => {
   test("a turn's seven steps are done, each pointing at the records it wrote", async () => {
     const board = await boardAfter(["hello"])
-    expect(turnsOf(board)).toEqual([1])
+    expect(turnNumbersOf(board)).toEqual([1])
     const view = viewOf(board, 1)
     expect(view.steps.map((step) => [step.id, step.state])).toEqual([
       ["opened", "done"], ["stored-message", "done"], ["context-1", "done"], ["prompt-1", "done"], ["streamed-1", "done"], ["stored-answer-1", "done"], ["closed", "done"],
@@ -274,7 +274,7 @@ describe("the Context tab's row of sessions", () => {
     const { runtime, all } = await boardsAfter(remember, ["My name is Ana."])
     const chat = runtime.conversation
     const memory = [...all.boards.values()].find((board) => board.kind === "memory")!
-    expect(turnsOf(memory)).toEqual([1])
+    expect(turnNumbersOf(memory)).toEqual([1])
     const view = viewOf(memory, 1)
     expect(view.closed).toEqual(Option.some("Completed"))
     expect(view.steps.map((step) => [step.id, step.label, step.state, step.code, step.seqs])).toEqual([
@@ -303,7 +303,7 @@ describe("the Context tab's row of sessions", () => {
   test("a forgotten fact is a step and a row of its own in the memory session", async () => {
     const { all } = await boardsAfter(remember, ["My name is Ana.", "Forget my name."])
     const memory = [...all.boards.values()].find((board) => board.kind === "memory")!
-    expect(turnsOf(memory)).toEqual([1, 2])
+    expect(turnNumbersOf(memory)).toEqual([1, 2])
     const view = viewOf(memory, 2)
     expect(view.steps.map((step) => [step.id, step.label, step.seqs])).toEqual([["opened", "Turn opened", [4]], ["stored-record-1", "Fact forgotten", [5]], ["closed", "Turn closed", [6]]])
     expect(view.calls[0]?.journal.map((row) => [row.seq, row.use, row.summary, row.ofTurn])).toEqual([
