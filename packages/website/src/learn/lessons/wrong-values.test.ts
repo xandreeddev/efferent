@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { loadEcho } from "../models/mock.ts"
 import { LessonRuntime } from "../runtime.ts"
-import { lessonOf } from "./index.ts"
+import { lessonOf, lessonSlugs } from "./index.ts"
 
 const opened: Array<LessonRuntime> = []
 afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runtime.dispose())) })
@@ -15,6 +15,11 @@ const NO_HANDLERS = "tools.ts did not run: toolsLive is not a layer. It should b
 const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."
 /** tools.ts making two names that are no toolkit and no layer. */
 const TWO_NUMBERS = "const tools = 1\nconst toolsLive = 2"
+
+/** skills.ts with two skills written as plain objects, the first under a name no skill may have, and handlers that are no layer. */
+const BY_HAND = `const units = { id: "Units", summary: "Convert.", instructions: "Convert.", tools: Toolkit.empty }
+const haiku = { id: "haiku", summary: "Answer in a haiku.", instructions: "Three lines.", tools: Toolkit.empty }
+const unitsLive = 3`
 
 /** Each lesson's files, each made to give the wrong kind of thing: `[file, its text, what the build says]`. */
 const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = {
@@ -46,12 +51,32 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
   ],
   pointers: [["memory", "const flatMemory = 42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM]],
   approvals: [["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM]],
+  skills: [
+    ["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS],
+    // A skill written by hand, never through defineSkill, that is none: `skills` checks it, and refuses in the kernel's words.
+    [
+      "skills", `${BY_HAND}\nconst skillSet = skills(tools, units, haiku)`,
+      'skills.ts did not run: a skill\'s id is lower-case words joined by hyphens, at most 64 characters, such as "unit-converter": "Units" is none',
+    ],
+    ["skills", "const units = 1, haiku = 2, unitsLive = 3\nconst skillSet = skills(tools, units, haiku)", "skills.ts did not run: a skill is made with defineSkill({ id, summary, instructions, tools })"],
+    // Values that never went through `skills` or `toLayer`.
+    ["skills", "const units = 1, haiku = 2, unitsLive = 3, skillSet = 4", "skills.ts did not run: skillSet is not a skill set. It should be skills(tools, units, haiku)."],
+    ["skills", `${BY_HAND}\nconst skillSet = { catalogue: "", offered: () => 1, handlers: 2, toolkit: tools }`, "skills.ts did not run: skillSet is not a skill set. It should be skills(tools, units, haiku)."],
+    ["skills", `${BY_HAND.replace('"Units"', '"units"')}\nconst skillSet = skills(tools, units, haiku)`, "skills.ts did not run: unitsLive is not a layer. It should be units.tools.toLayer({ … })."],
+    ["agent", "const main = 42", NO_PROGRAM],
+  ],
 }
 
 describe("a learner's file that makes the wrong kind of thing", () => {
-  test("every lesson of the site has its cases here", () => {
-    for (const slug of Object.keys(WRONG)) expect({ slug, found: Option.isSome(lessonOf(slug)) }).toEqual({ slug, found: true })
-    expect(Object.keys(WRONG)).toHaveLength(9)
+  test("every lesson of the site has its cases here, and every file a learner can edit has at least one", () => {
+    // The table against the lesson list: a lesson added to the site and not here fails, and so does a case for no lesson.
+    expect(Object.keys(WRONG)).toEqual([...lessonSlugs])
+    for (const slug of lessonSlugs) {
+      const lesson = Option.getOrThrow(lessonOf(slug))
+      const editable = lesson.files.filter((file) => !file.readOnly).map((file) => file.id)
+      const covered = new Set((WRONG[slug] ?? []).map(([file]) => file))
+      expect({ slug, without: editable.filter((file) => !covered.has(file)) }).toEqual({ slug, without: [] })
+    }
   })
 
   for (const [slug, cases] of Object.entries(WRONG)) {

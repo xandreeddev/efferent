@@ -4,7 +4,7 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
-import { APPROVAL_REFUSED } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, catalogue, LOAD_SKILL } from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
@@ -168,15 +168,78 @@ interface ResultPart {
 /** What Echo says when `forget` was refused (lesson 9): the person did not approve it, so nothing was deleted. */
 const NOT_APPROVED = "I did not delete anything: you did not approve it."
 
+/** The first line of the kernel's catalogue of skills (lesson 10), word for word: a system text that holds it lists skills under it. */
+const CATALOGUE_HEAD = catalogue([])
+
+/** A skill as a catalogue lists it: its name, and its line. */
+interface Listed {
+  readonly id: string
+  readonly summary: string
+}
+
+/** The skills a system text's catalogue lists: the lines under the kernel's first line, each `- name: summary`, up to the first line that is none. */
+const listedIn = (system: string): ReadonlyArray<Listed> => {
+  const lines = system.split("\n")
+  const head = lines.indexOf(CATALOGUE_HEAD)
+  if (head === -1) return []
+  const listed: Array<Listed> = []
+  for (const line of lines.slice(head + 1)) {
+    const entry = /^- ([a-z][a-z0-9]*(?:-[a-z0-9]+)*): (.+)$/.exec(line)
+    if (entry === null) break
+    listed.push({ id: entry[1] ?? "", summary: entry[2] ?? "" })
+  }
+  return listed
+}
+
+/** The words of a text that are four letters or more, in lower case: what a message and a skill's line are matched by. */
+const longWords = (text: string): ReadonlyArray<string> => text.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []
+
+/** Whether a skill's line in the catalogue covers a message: a word of the message, of four letters or more, is the skill's name or a word of its summary. */
+const covers = (skill: Listed, asked: string): boolean => {
+  const line = new Set([skill.id, ...longWords(skill.summary)])
+  return longWords(asked).some((word) => line.has(word))
+}
+
+/** The skill a successful result of `loadSkill` names. */
+const loadedBy = (part: ResultPart): string | undefined =>
+  part.name === LOAD_SKILL && !part.isFailure && typeof part.result === "object" && part.result !== null && "skill" in part.result && typeof part.result.skill === "string"
+    ? part.result.skill
+    : undefined
+
+/** The skill a message asks for by name: "load units", "load the units skill". The word after "load", in lower case. */
+const namedToLoad = (asked: string): string | undefined => /\bload\s+(?:the\s+)?([a-z][a-z0-9-]*)\b/i.exec(asked)?.[1]?.toLowerCase()
+
+/** A length and the unit to convert it to: "5 km in miles", "26.2 miles to km". */
+const LENGTH = /(-?\d+(?:\.\d+)?)\s*(km|kilometres?|kilometers?|mi|miles?)\b.*?\b(?:in|to|into)\s+(km|kilometres?|kilometers?|mi|miles?)\b/i
+const unitOf = (word: string): "km" | "mi" => (word.toLowerCase().startsWith("k") ? "km" : "mi")
+
+/** The message that asks for the units skill's tool before the skill is loaded: the one place Echo calls a tool it was not offered. */
+const UNLOADED_CALL = /\b(?:use|call)\s+(?:the\s+)?convert\s+without\s+loading\b/i
+
+/** The skill whose loaded instructions Echo follows in its own answers (lesson 10): three lines, in fixed words. */
+const HAIKU_SKILL = "haiku"
+const HAIKU = "An echo answers\nin five, then seven, then five:\nthe skill told it to."
+
 /**
  * What Echo says of one result in words of its own. Of `lookup` or `readResult` (lesson 8): the first sentence of
  * what it was sent (of a part read on, the first whole one), and how much of the whole that is. Of a `forget` that
- * failed with the kernel's refusal, word for word (lesson 9): that nothing was deleted. Nothing for any other
- * tool's result, or any other failure: those are answered as the tool's, as before.
+ * failed with the kernel's refusal, word for word (lesson 9): that nothing was deleted. Of a `loadSkill` that
+ * loaded a skill (lesson 10): that it is loaded, without its instructions. Of a `convert` that answered a number:
+ * the length it was asked about and the number to one decimal, with its unit, read from the call's parameters
+ * (`paramsOf`). Nothing for any other tool's result, or any other failure: those are answered as the tool's.
  */
-const readingOf = (part: ResultPart): string | undefined => {
+const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string | undefined => {
   if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
+  const loaded = loadedBy(part)
+  if (loaded !== undefined) return `Loaded ${loaded}.`
+  if (part.name === "convert" && typeof part.result === "number") {
+    const params = paramsOf(part.id)
+    return typeof params === "object" && params !== null && "value" in params && typeof params.value === "number"
+      && "from" in params && typeof params.from === "string" && "to" in params && typeof params.to === "string"
+      ? `${params.value} ${params.from} is ${part.result.toFixed(1)} ${params.to}.`
+      : undefined
+  }
   if (part.name === "readResult") {
     const page = pageIn(part.result)
     return page === undefined ? undefined
@@ -189,6 +252,10 @@ const readingOf = (part: ResultPart): string | undefined => {
     : `The article starts: "${firstSentence(pointer.preview)}" I was sent the first ${pointer.from} of ${pointer.total} characters. Say "read more" for the next part.`
 }
 
+/** The parameters of the call a prompt holds under an id: the last one, since an id can repeat. */
+const paramsOfCall = (messages: Prompt.Prompt["content"]) => (id: string): unknown =>
+  messages.flatMap((message) => (message.role === "assistant" ? message.content : [])).flatMap((part) => (part.type === "tool-call" && part.id === id ? [part.params] : [])).at(-1)
+
 /** Where "read more" reads on from: a result and a character, or the end of a result that was read through. */
 type ReadOn = { readonly _tag: "At"; readonly result: number; readonly from: number } | { readonly _tag: "End" }
 
@@ -200,8 +267,7 @@ type ReadOn = { readonly _tag: "At"; readonly result: number; readonly from: num
 const readOnFrom = (messages: Prompt.Prompt["content"]): ReadOn | undefined => {
   /** The result a `readResult` call asked for: the call's own parameter, found by the call's id. */
   const askedFor = (id: string): number | undefined => {
-    const calls = messages.flatMap((message) => (message.role === "assistant" ? message.content : [])).flatMap((part) => (part.type === "tool-call" && part.id === id ? [part.params] : []))
-    const params = calls.at(-1)
+    const params = paramsOfCall(messages)(id)
     return typeof params === "object" && params !== null && "result" in params && typeof params.result === "number" ? params.result : undefined
   }
   for (let at = messages.length - 1; at >= 0; at--) {
@@ -238,6 +304,19 @@ const READ_LENGTH = 400
  * sends any message about notes to recall; a forget that failed with the kernel's refusal (`APPROVAL_REFUSED`,
  * word for word) is answered "I did not delete anything: you did not approve it.", and any other result of it
  * as the tool's.
+ *
+ * Lesson 10's rules, for skills, each asleep where `loadSkill` (or `convert`) is not offered, and each ahead of
+ * every rule above, in this order. "Use convert without loading" calls convert with 5 km to mi whether or not it
+ * is offered: the one call Echo makes of a tool it was not sent. "Load units", "load the units skill" calls
+ * loadSkill with the word after "load". A length with a unit to convert it to ("5 km in miles") goes to convert,
+ * where it is offered. A message a skill's line in the catalogue covers (the kernel's catalogue in the system
+ * text; a word of the message, of four letters or more, is the skill's name or a word of its summary) calls
+ * loadSkill for the first such skill no result in the prompt has loaded. After a result that loaded a skill,
+ * Echo goes on in the same turn: the turn's messages are read again, and any call they ask for that the turn has
+ * not made is made (convert, now that it is offered). With no call left, a load is answered "Loaded units.",
+ * and a convert's number as "5 km is 3.1 mi.". While a result in the prompt loaded the haiku skill, Echo writes
+ * its own answers in three fixed lines: where it would answer a message with no tool, and after a load the
+ * message did not ask for by name; a tool's answer is passed on as before.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
@@ -252,12 +331,12 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // A result of lookup or readResult (lesson 8) and a refused forget (lesson 9) are answered in words of their own;
     // any other, and any other failure, as the tool's.
     const results = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
-    const read = results.flatMap((part) => readingOf(part) ?? [])
-    const all = results.flatMap((part) => (readingOf(part) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
+    const paramsOf = paramsOfCall(prompt.content)
+    const read = results.flatMap((part) => readingOf(part, paramsOf) ?? [])
+    const all = results.flatMap((part) => (readingOf(part, paramsOf) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
     if (read.length > 0 && all.length === 0) return read.join(" ")
     return [...read, `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`].join(" ")
   }
-  if (prompt.content.at(-1)?.role === "tool") return { text: answerFrom(prompt.content.length - 1), calls: [] }
   // Every message sent since its last answer: the turn's own, and any that steered it.
   const since = prompt.content.length - 1 - prompt.content.slice().reverse().findIndex((message) => message.role === "assistant" || message.role === "tool")
   const pending = prompt.content.slice(since > prompt.content.length - 1 ? 0 : since + 1).flatMap((message) =>
@@ -266,7 +345,25 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   // the tools of lesson 8 are offered, so "go on" anywhere else is a message like any other.
   const place = readOnFrom(prompt.content)
   const readsOn = (asked: string): boolean => /\b(?:read more|read on|go on)\b/i.test(asked) && (place !== undefined || offered.includes("lookup") || offered.includes("readResult"))
+  // The skills the system text's catalogue lists (lesson 10), and those a result in the prompt has loaded.
+  const system = prompt.content.flatMap((message) => (message.role === "system" ? [message.content] : []))[0] ?? ""
+  const listed = listedIn(system)
+  const loaded = prompt.content.flatMap((message) => (message.role === "tool" ? message.content : [])).flatMap((part) => (part.type === "tool-result" ? loadedBy(part) ?? [] : []))
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
+    // "Use convert without loading": a call of the units skill's tool whether or not it is offered, as a model that
+    // skips the load would make. It goes before the catalogue's rule, which the word "convert" would wake.
+    if (UNLOADED_CALL.test(asked) && offered.includes(LOAD_SKILL)) return [{ name: "convert", params: { value: 5, from: "km", to: "mi" } }]
+    // "Load units", "load the haiku skill": the skill named, and no other the message's words might cover.
+    const byName = namedToLoad(asked)
+    if (byName !== undefined && offered.includes(LOAD_SKILL)) return [{ name: LOAD_SKILL, params: { skill: byName } }]
+    // "How far is 5 km in miles?", "convert 26.2 miles to km": convert, where it is offered. It goes before the
+    // catalogue's rule: a tool Echo was offered needs no load.
+    const length = LENGTH.exec(asked)
+    if (length !== null && offered.includes("convert")) return [{ name: "convert", params: { value: Number(length[1]), from: unitOf(length[2] ?? ""), to: unitOf(length[3] ?? "") } }]
+    // A message a skill's line in the catalogue covers, while no result in the prompt has loaded that skill: load it
+    // first. It goes before every rule under it: the catalogue says to load a skill before doing what it covers.
+    const covering = listed.find((skill) => !loaded.includes(skill.id) && covers(skill, asked))
+    if (covering !== undefined && offered.includes(LOAD_SKILL)) return [{ name: LOAD_SKILL, params: { skill: covering.id } }]
     // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
     const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
     if (table !== null && offered.includes("show")) return [showTable(table)]
@@ -288,8 +385,30 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     if (note !== null && offered.includes("remember")) return [{ name: "remember", params: { note: note[1]?.trim() ?? "" } }]
     return []
   }
+  const working = (calls: ReadonlyArray<EchoCall>) => ({ text: calls.length > 1 ? `Let me use ${calls.length} tools.` : "Let me work that out.", calls })
+  const end = prompt.content.length - 1
+  if (prompt.content[end]?.role === "tool") {
+    // The results the prompt ends with. One that loaded a skill is not the end of the turn: the next step offers the
+    // skill's tools, so the turn's messages are read again for a call they ask for that the turn has not made.
+    let first = end
+    while (first > 0 && prompt.content[first - 1]?.role === "tool") first--
+    const results = prompt.content.slice(first).flatMap((message) => (message.role === "tool" ? message.content : [])).flatMap((part) => (part.type === "tool-result" ? [part] : []))
+    if (results.some((part) => loadedBy(part) !== undefined)) {
+      // The turn so far: everything after Echo's last answer, an answer being a message of its own with no call.
+      const answered = prompt.content.findLastIndex((message) => message.role === "assistant" && !message.content.some((part) => part.type === "tool-call"))
+      const turn = prompt.content.slice(answered + 1)
+      const asking = turn.flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : []))
+      const made = new Set(turn.flatMap((message) => (message.role === "assistant" ? message.content : [])).flatMap((part) => (part.type === "tool-call" ? [`${part.name} ${JSON.stringify(part.params)}`] : [])))
+      const more = asking.flatMap(callFor).filter((call) => !made.has(`${call.name} ${JSON.stringify(call.params)}`))
+      if (more.length > 0) return working(more)
+      // Nothing more to call. A load the message did not ask for by name, with the haiku skill loaded, is followed
+      // by an answer in the skill's form; any other is answered as loaded.
+      if (loaded.includes(HAIKU_SKILL) && results.every((part) => loadedBy(part) !== undefined) && !asking.some((asked) => namedToLoad(asked) !== undefined)) return { text: HAIKU, calls: [] }
+    }
+    return { text: answerFrom(end), calls: [] }
+  }
   const calls = pending.flatMap(callFor)
-  if (calls.length > 0) return { text: calls.length > 1 ? `Let me use ${calls.length} tools.` : "Let me work that out.", calls }
+  if (calls.length > 0) return working(calls)
   // "Read more" with no call to make: nothing was cut short, the last part reached the end, or the tool is not offered.
   if (pending.some(readsOn)) {
     return {
@@ -303,6 +422,8 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   if (prompt.content[since]?.role === "tool" && pending.length > 0) {
     return { text: `${answerFrom(since)} You also said: ${pending.map((text) => `"${clip(text, 40)}"`).join(", ")}.`, calls: [] }
   }
+  // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
+  if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }
   return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
 

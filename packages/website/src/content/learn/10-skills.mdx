@@ -1,0 +1,122 @@
+---
+title: Skills
+description: Instructions and tools the model is not sent until it asks. Loading one is a tool call; what is offered is a fold of the journal.
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/skills/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+An agent with many abilities should not send them all with every request. Each ability has instructions and tools. Sent always, they are paid for in every prompt, used or not.
+
+A **skill** is instructions and tools the model is not sent until it asks. This lesson's agent has lesson 2's tools and two skills:
+
+- the model reads a **catalogue**, one line per skill, in the system text;
+- it **loads** a skill with a tool call, `loadSkill`, whose result is the skill's instructions;
+- the loop **offers** a loaded skill's tools from the next model call on.
+
+Press **How far is 5 km in miles?** One turn makes two tool calls. The first is `loadSkill({"skill":"units"})`: its row in the chat holds the instructions it returned. The second is `convert({"value":5,"from":"km","to":"mi"})`, a tool Echo was not offered until the skill was loaded. Echo answers *5 km is 3.1 mi.*
+
+Press **Write a haiku about rain.** Echo loads the `haiku` skill, which has no tool, and answers in three lines.
+
+Press **What is 2 + 3?** No skill covers it: the calculator answers, as in lesson 2.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**, which follows the catalogue by rule.
+
+- A message a skill's line covers loads that skill first. Echo matches the message's words of four letters or more against the skill's name and the words of its line: "miles" is a word of the units skill's line, and "haiku" is the other skill's name.
+- "Load units." or "Load the haiku skill." loads a skill by name.
+- Once `convert` is offered, a length with a unit to convert it to, such as "5 km in miles", goes to `convert`. Echo answers with the number to one decimal.
+- After a load Echo goes on in the same turn, to the tool the message needs. With nothing more to call, it answers *Loaded units.*
+- While the haiku skill is loaded, Echo writes its own answers in three lines, always the same three. A tool's answer it passes on as before.
+
+The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU loaded no skill in two runs. Asked "How far is 5 km in miles?", it worked the answer out itself, 3.17 miles both times, where the tool gives 3.1. It wrote a haiku of its own without the skill. Told "Load units.", it answered "10" in one run and repeated the skill's line of the catalogue in the other. A model that does call `loadSkill` reads the instructions as Echo does: they are the call's result, whatever model made the call.
+
+</Step>
+
+<Step n={3} id="skill" title="A skill is a value" focus="code" file="skills">
+
+**skills.ts** is new. A skill is a value in your code, made with `defineSkill`:
+
+- `id`: the name the model loads it by;
+- `summary`: one line, the skill's line in the catalogue;
+- `instructions`: your own text, which loading the skill gives the model;
+- `tools`: a toolkit of the skill's own tools.
+
+`units` has one tool, `convert`, and `unitsLive` is what that tool does. `haiku` is instructions alone: its toolkit is `Toolkit.empty`.
+
+The last line makes one value of your tools and your skills: `skills(tools, units, haiku)`. `tools` is tools.ts's toolkit, lesson 2's three tools, which the agent always has. Everything the program needs of the skills comes from that one value, so a list of skills and a toolkit cannot disagree.
+
+There is no registry: skills are arguments. `skills` refuses a set that makes no sense where it is written, as the file runs. Change `id: "units"` to `id: "Units"` and press **Rebuild**: the build is refused, and the line at the foot of the Code pane says why, in the kernel's words: "skills.ts did not run: a skill's id is lower-case words joined by hyphens, at most 64 characters, such as "unit-converter": "Units" is none". Two skills under one name are refused the same way, and so is a tool that two skills have. No program runs until a build passes, and the conversation is untouched. Change the id back to `"units"` and press **Rebuild**: the program runs again, over the same conversation.
+
+</Step>
+
+<Step n={4} id="catalogue" title="The catalogue" focus="code" file="agent">
+
+**agent.ts** is the base program with three changes. The first is the system text, which now ends with `skillSet.catalogue`.
+
+Here the catalogue is three lines. The first is the kernel's own: "You have skills: instructions and tools you are not given until you load them. Before you do something a skill covers, call loadSkill with its name and follow what it returns." Then comes one line for each skill, its `id` and its `summary`: `- units: Convert a length between kilometres and miles.` and `- haiku: Answer in a haiku.`
+
+The catalogue names every skill and says nothing of which are loaded. So the system text is the same in every prompt of the conversation, before a load and after it.
+
+The model also has one tool more than tools.ts lists: `loadSkill`, the kernel's, which `skills` puts in the toolkit.
+
+</Step>
+
+<Step n={5} id="load" title="Loading is a tool call" focus="context" wide={true}>
+
+The second change is in the loop. The base read its toolkit once, before the loop. This loop reads what to offer as each step starts: `const toolkit = yield* skillSet.offered(yield* session.journal)`. The same toolkit goes to the model and to `callTool`.
+
+Open **Context** at turn 1, the conversion. The turn called the model three times: pick a call under **Model call**. The *tools* row is the first row of the **Prompt** column. The column opens at its newest rows, so scroll it to the top to read that row.
+
+- **Prompt**, call 1: the *tools* row reads `calculator, remember, recall, loadSkill`. `convert` is not offered.
+- **Journal**: record 3 is the model's call of `loadSkill`, and record 4 is its result, the skill's name and its instructions. Loading stored nothing else: a call and its result, as for any tool.
+- **Prompt**, call 2: the last row is that result, from record 4. The instructions reach the model as a tool's answer, among the messages, and never in the system text. The *tools* row now ends with `convert`.
+- **Prompt**, call 3: the same five tools, and `convert`'s number as the last row.
+
+The third change is in `main`, which provides two modules more: `unitsLive`, the handlers of the skill's tool, and `skillSet.handlers`, the handler of `loadSkill`.
+
+</Step>
+
+<Step n={6} id="fold" title="What is offered is a fold" focus="chat">
+
+Nothing keeps a list of loaded skills. A skill is loaded because the result of the call that loaded it is in the journal: `loadedOf(journal)` reads those results, and `offered` is built on it. The tools no skill owns come first, then each loaded skill's, in the order the skills were loaded.
+
+Press **Rebuild**, then **How far is 5 km in miles?** again. This turn calls the model twice, where the first took three calls: `convert` is offered from its first call, and Echo does not load again. The program started again over the same journal, and the load's result is in it.
+
+Press **Clear context**, then the same chip. Echo loads `units` again: a new conversation has a journal of its own, and no load in it.
+
+So a skill is loaded after a restart, and is not loaded in another conversation. A tool is added and none is taken away: nothing unloads a skill but a new conversation.
+
+</Step>
+
+<Step n={7} id="cost" title="What it costs" focus="context" wide={true}>
+
+Against sending everything always, a skill costs three things.
+
+- **A step.** The first conversion took three model calls, one of them to load. With the skill loaded, the same message takes two.
+- **The instructions, from then on.** The load's result is conversation: stored once, and sent whole in every later prompt. In turn 1 the prompt is 95 tokens at the first call and 165 at the second: 55 of the difference is the load's result.
+- **A cache miss for a load that adds tools.** A provider that caches the start of a prompt counts the tool definitions as part of that start. A load that adds a tool changes them, so the request after it is a cache miss, once per load, and the requests after it reuse the new start. A skill that is instructions alone adds no tool and costs none: the *tools* row is the same before and after `haiku` loads.
+
+The page does not show that miss. Its line *the same as the prompt before* compares a prompt's messages, and the tool definitions are not among them. What the page shows is where the list of tools changes: once in a conversation that loads both skills, at the call after `units` loaded.
+
+What a skill saves is whatever is not loaded: its instructions and its tools' definitions are in no request until the model asks.
+
+</Step>
+
+<Step n={8} id="experiments" title="Experiments" focus="code" file="agent">
+
+<Experiments />
+
+**Send three at once**, in a new conversation, loads both skills by name and works out a sum in one turn: three calls in one step, and one answer, *Loaded units. Loaded haiku. The tool answered: calculator says 5.* The turn's second model call is offered `convert`.
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** memory across sessions: what an agent keeps from one conversation to the next. Why a skill is loaded by a tool call, and why what is offered is read from the journal, is in [ADR 0013](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0013-a-skill-is-loaded-by-a-tool-call.md).
+
+</Step>

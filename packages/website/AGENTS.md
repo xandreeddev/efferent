@@ -25,7 +25,9 @@ check` (tsc over the learn code, the build, the link check) and
   - `lesson.ts`: the `Lesson` (files, chips, the messages "Send three" and
     `data-fill` send, controls bound to a line of a file, experiments that
     edit a file) and `evaluate`, which runs the files with the names they
-    import and the page's stand-ins (`PageParts`).
+    import and the page's stand-ins (`PageParts`). An experiment that
+    edits no file is a `data-fill` button: it sends the lesson's `fill`
+    (lesson 10's call of a tool before its skill is loaded).
   - `config-edit.ts`: each control's read and write and each experiment's
     edit; a line the learner rewrote is left alone (`None`).
   - `program.test.ts`: the shown files compiled with tsc (`tsconfig.learn.json`)
@@ -45,7 +47,12 @@ check` (tsc over the learn code, the build, the link check) and
     lesson 4's `loop.ts`).
   - `lesson.test.ts`: the lesson on the page's runtime with Echo: every claim
     the mdx makes, and every experiment.
-  - Registered in `src/learn/lessons/index.ts` and `index.test.ts`.
+  - Registered in `src/learn/lessons/index.ts` (`lessonSlugs` lists the
+    track in order) and `index.test.ts`.
+  - `lessons/wrong-values.test.ts` holds, for every lesson of that list, a
+    file that makes the wrong kind of thing to a refusal in words that
+    name the file: its table is compared with the lesson list, and every
+    file a learner can edit has at least one case.
 - **The loop's two blocks.** Lesson 2 writes them by hand: reading the
   model's stream, and running a tool call. From lesson 3 on a program uses
   the kernel's functions, `modelAnswer(stream, session, { onText })` and
@@ -77,11 +84,14 @@ check` (tsc over the learn code, the build, the link check) and
     the build (lesson 8: `pointed` given numbers it refuses, a statement
     of memory.ts above the layer): `start` returns `Refused` with the
     file's name and the refusal's words, which the page shows at the foot
-    of the Code pane. The program that ran before is stopped and none
-    takes its place until a build passes; nothing is stored and the chat
-    is untouched. A file whose rule must be made once is statements, as
-    tools.ts is (`runStatements`, a body without `export`, an empty
-    `formatPrefix`), not one expression after a read-only declaration.
+    of the Code pane. Lesson 10's skills.ts is such a file too: `skills(…)`
+    is its last statement, so a skill that is none, two under one name or
+    a tool two skills have is refused there, in the kernel's words. The
+    program that ran before is stopped and none takes its place until a
+    build passes; nothing is stored and the chat is untouched. A file
+    whose rule must be made once is statements, as tools.ts is
+    (`runStatements`, a body without `export`, an empty `formatPrefix`),
+    not one expression after a read-only declaration.
   - The page is who a tool asks (lesson 9, ADR 0012):
     `PageParts.approvalOn(pane)` is a `Layer<Approval>` whose `ask` is
     traced as `Asking { id, action, detail }` and waits for
@@ -101,6 +111,12 @@ check` (tsc over the learn code, the build, the link check) and
     holds says so on a line of its own under the row, `sent as a pointer: N tok kept in
     the journal` (`keptInJournal`, lesson 8): decided by comparing what
     was sent with what is stored, never by a pointer's words.
+  - The prompt's first row after the cache line, `tools`, lists the tools
+    that model call was offered, in order (`CallView.tools`, from the
+    `Prompt` trace): lesson 10 reads there that a skill's tool is offered
+    from the call after its load. Token counts and "the same as the
+    prompt before" are of a prompt's messages: tool definitions are in
+    neither, so that line says nothing of a tool list that changed.
 - **The chat** (`chat-model.ts`, pure, and `panes/chat.ts`) is rows. Every
   row drawn from a stored record comes from one step, `stored`, whether the
   record was just announced or is read back from a journal (`chatRowsOf`);
@@ -178,6 +194,27 @@ check` (tsc over the learn code, the build, the link check) and
     kernel's `APPROVAL_REFUSED`, word for word, is answered "I did not
     delete anything: you did not approve it."; any other result of it,
     and the same refusal of another tool, as the tool's.
+  - Lesson 10's rules, for skills, each asleep where `loadSkill` is not
+    offered (the convert rule: where `convert` is not), and each ahead of
+    every rule of lessons 2 to 9, in this order, with a test that fails
+    when one is removed and one that fails when it is moved. "Use convert
+    without loading" calls `convert` with 5 km to mi whether or not it is
+    offered: the one call Echo makes of a tool it was not sent. "Load
+    units" or "load the units skill" calls `loadSkill` with the word after
+    "load". A length with a unit to convert it to ("5 km in miles") goes
+    to `convert`. A message a skill's line in the catalogue covers calls
+    `loadSkill` for the first such skill no result in the prompt has
+    loaded: the catalogue is read from the system text by the kernel's
+    first line, word for word, and a line covers a message when a word of
+    the message, of four letters or more, is the skill's name or a word of
+    its summary. After a result that loaded a skill Echo goes on in the
+    same turn: the turn's messages are read again, and a call they ask
+    for that the turn has not made is made. With none left, a load is
+    answered "Loaded units." and a `convert` "5 km is 3.1 mi.". While a
+    result in the prompt loaded the skill named `haiku`, Echo writes its
+    own answers in three fixed lines: a message with no tool, and a load
+    the message did not ask for by name; a tool's answer is passed on as
+    before.
   - A turn that failed leaves its message in the journal with no answer:
     Echo treats it as waiting, and the next turn answers it with the new
     one (two calls where one was expected).
