@@ -75,6 +75,21 @@ describe("lesson 4's displayed program", () => {
     expect(shown[3]?.at(-1)).toMatch(/^tool: → \{"answer":"It is 42\.","session":"[0-9a-f-]+"\}$/)
   })
 
+  test("type-level: the program without the helper its delegate tool declares does not compile, and the compiler names what is missing", () => {
+    // `run` says its program needs nothing more: main is given every module it asks for. Take one away, and tsc refuses.
+    const provided = "  Effect.provide(helperLive), // the helper: an agent of its own\n"
+    expect(DEFAULT_AGENT).toContain(provided)
+    write("missing/helper", DEFAULT_AGENT.replace(provided, ""))
+    const missing = new URL("./missing/tsconfig.json", dir)
+    writeFileSync(missing, JSON.stringify({ extends: "../../../../../../tsconfig.learn.json", include: ["./*/*.ts"], exclude: [] }))
+    const checked = Bun.spawnSync(["bunx", "tsc", "-p", fileURLToPath(missing)], { cwd: fileURLToPath(new URL("../../../../", import.meta.url)) })
+    const said = `${checked.stdout.toString()}${checked.stderr.toString()}`
+    rmSync(new URL("./missing/", dir), { recursive: true, force: true })
+    expect(checked.exitCode).not.toBe(0)
+    expect(said).toContain("agent.ts")
+    expect(said).toContain("Type 'Helper' is not assignable to type 'never'")
+  }, 120_000)
+
   test("type-checks as TypeScript, all five files", () => {
     write("typed")
     writeFileSync(tsconfig, JSON.stringify({ extends: "../../../../../tsconfig.learn.json", include: ["./*/*.ts"], exclude: [] }))

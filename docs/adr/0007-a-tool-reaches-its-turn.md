@@ -46,6 +46,20 @@ call runs in.
   `Effect.orDie`.
 - **The call's result is `callTool`'s to store**, not the loop's.
 
+*Amended 15 November 2026.* `callTool`'s type is over every tool of its toolkit. It was taken over the
+call's name, which is the model's and so any text: a tool's declared dependencies fell out of the type,
+and a program that provided none of them compiled and failed when the tool ran. Now the effect needs what
+any tool of the toolkit declares, less `CurrentTurn` (`ToolNeeds<Tools>`), and such a program does not
+compile. The model's unchecked call is handed to the toolkit in one function, which holds the only two
+type assertions on a tool's path (the call's name and its parameters); core's kernel has three of other
+kinds, none of them about tools: the constructor of an opaque draft, an event's delivery narrowed after
+its data decoded, and a kit that hands a session a value made by hand. A toolkit with a tool typed
+`Tool.Any` (a `Record<string, Tool.Any>`, or one such tool among its own) has lost its tools' declarations:
+`ToolNeeds` of it is `any`, which names no dependency, so none can be found missing. `callTool` refuses such a toolkit where it is passed
+(`OwnTools`), so the loss is a compile error and not a silence. `composition.test.ts` holds, at type level, a handler that reads
+what its tool did not declare, a call by hand with no turn, and a call through `callTool` with a
+dependency left out.
+
 ## Consequences
 
 - Helpers can delegate again: a helper's helper is created under the helper, and the depth is read from

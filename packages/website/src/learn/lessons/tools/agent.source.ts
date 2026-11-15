@@ -151,16 +151,21 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
  */
 export const moduleOf = (agent: string): string => `${IMPORTS.replace('import { Chat, chatOn } from "./chat.ts"', 'import { Chat, chatOn } from "./chat.ts"\nimport type { ChatPane } from "./chat.ts"')}
 import type { Layer } from "effect"
-import type { Toolkit } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 
-export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>) => {
+export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {
 ${agent
   .replace("const turn = (message) =>", "const turn = (message: string) =>")
   .replace(
     "const runTool = (toolkit, call) =>",
     "const runTool = (toolkit: Toolkit.WithHandler<typeof tools.tools>, call: { readonly id: string; readonly name: string; readonly params: unknown }) =>",
   )
-  .replace("toolkit.handle(call.name, call.params)", "toolkit.handle(call.name as keyof typeof tools.tools, call.params as never)")}
+  // The model wrote the call's name and parameters, which the toolkit checks as it handles the call: typed over
+  // every tool, never over one name, so what any tool declares stays in the type of the effect.
+  .replace(
+    "toolkit.handle(call.name, call.params)",
+    "toolkit.handle(call.name as keyof typeof tools.tools, call.params as Tool.ParametersEncoded<(typeof tools.tools)[keyof typeof tools.tools]>)",
+  )}
   return main
 }
 `

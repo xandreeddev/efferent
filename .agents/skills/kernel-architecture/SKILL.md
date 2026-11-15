@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0012-a-tool-asks-through-a-contract.md`: a tool asks a person before it acts with `approve({ action, detail })` in its handler, through `Approval`, a contract the host provides; the answer is a record of the turn (`plugin.approval.decided`), and a standing approval is that record (`grantsOf`), never a store or a configuration; a refusal is the call's failed result, in fixed words; an answer that is no decision approves nothing; a policy is a wrapper (`autoApprove`) that never grants for good; no kit
 - `docs/adr/0011-a-long-result-is-sent-as-a-pointer.md`: a long tool result stays whole in the journal and is sent as its start and a pointer, by `pointed`, a function of the record alone (the same in every context, nothing stored); the pointer names the record's place, never the call's id; the model reads on with the kernel's `ReadResult` tool; a tool whose result must be sent whole says so with the `SentWhole` annotation, which `callTool` stores as `whole`; a memory points before it counts
 - `docs/adr/0010-a-store-is-a-part.md`: a store is the `JournalStorage` contract and its kit (`list` by `byCreation`, no index; a `pair` of handles for a store that outlives its handle); a turn its writer left open is closed by `Sessions.recover` as `Abandoned`, called by the host, never by the kernel; one writer per store is assumed and the journal stays whole when the host was wrong; a parent is not checked to exist
 - `docs/adr/0009-what-the-ui-shows-is-a-record.md`: what the UI shows is a view record (`plugin.render.view`, tagged `ui`, no message, same id replaces) a tool appends through `CurrentTurn`; a client folds them with `viewsOf`; progress is live; the model never sees a view
@@ -80,6 +81,20 @@ checklist, the records have the reasons.
       wrapper over the context, or by a record of what was pointed. A tool whose result
       must reach the model whole carries `SentWhole`; a host that sends pointers offers
       `ReadResult` with `readResult` as its handler.
+- [ ] A tool that must not act on a model's word alone asks with `approve` at the start
+      of its handler and declares `dependencies: [Approval, CurrentTurn]` and a failure
+      that is text. The answer is stored by `approve`, never by the host's `Approval`; a
+      grant is read from the journal (`grantsOf`), never kept anywhere else; a policy
+      wraps `Approval` and answers `Allowed`. A dependency a tool declares is provided to
+      the program that calls it, where `callTool`'s type asks for it.
+- [ ] What a tool declares in `dependencies` is held by the compiler: a function that
+      runs a model's call is typed over every tool of the toolkit (`ToolNeeds<Tools>`),
+      never over the call's name, and gives its effect an explicit type. The model's
+      unchecked call enters the toolkit in one function (`handled`, in `callTool`), which
+      holds the only type assertions on a tool's path: add none. Keep each tool's own
+      type where its toolkit is called: one with a tool typed `Tool.Any` has lost what
+      its tools declare, and `callTool` refuses it (`OwnTools`). A new claim of this kind gets a `type-level:`
+      test in `composition.test.ts`.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a
       tool result the model reads in every later request; a client draws it by folding the
       journal, the same fold live and after a reload.

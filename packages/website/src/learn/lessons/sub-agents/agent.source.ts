@@ -106,7 +106,7 @@ export const moduleOf = (agent: string): string => `${IMPORTS.replace('import { 
 import { LanguageModel } from "effect/ai"
 import { Memory } from "@xandreed/sdk/kernel"
 
-export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>) => {
+export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {
 ${agent
   .replace("const services = yield* Effect.context()", "const services = yield* Effect.context<Memory | LanguageModel.LanguageModel>()")
   .replace("status: (text) => chat.status(", "status: (text: string) => chat.status(")

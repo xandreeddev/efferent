@@ -29,7 +29,14 @@ check` (tsc over the learn code, the build, the link check) and
   - `config-edit.ts`: each control's read and write and each experiment's
     edit; a line the learner rewrote is left alone (`None`).
   - `program.test.ts`: the shown files compiled with tsc (`tsconfig.learn.json`)
-    and run on the kernel with `scriptedModel`.
+    and run on the kernel with `scriptedModel`. The typed module's `run`
+    states that its program needs nothing more (`Effect.Effect<unknown,
+    unknown>`), so a module `main` was not given is a compile error. A
+    lesson whose tool declares a service has a `type-level:` test that the
+    program without it does not compile, naming the service (lesson 4's
+    `Helper`). A loop written over any toolkit asks for the toolkit's own
+    type, as `callTool` does (`Toolkit.WithHandler<Tools> & OwnTools<Tools>`,
+    lesson 4's `loop.ts`).
   - `lesson.test.ts`: the lesson on the page's runtime with Echo: every claim
     the mdx makes, and every experiment.
   - Registered in `src/learn/lessons/index.ts` and `index.test.ts`.

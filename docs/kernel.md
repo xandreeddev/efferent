@@ -60,6 +60,8 @@ caught up.
 | `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | the conversation within a budget; drops whole turns, oldest first |
 | `inbox(turn)` | sdk, `plugins/inbox` | queues messages per session and answers them in order, through the host's `turn` |
 | `ReadResult`, `readResult` | sdk, `plugins/tool-read-result` | the one tool the kernel ships, and its handler: reads on from a pointer to a long result |
+| The approval contract | sdk, `contracts/approval` | `Approval`, which the host provides; `approve`, `approveIn`, `grantsOf`; the `plugin.approval.decided` record |
+| `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
@@ -340,10 +342,117 @@ it (to append a record of its own, or to start a helper under it) declares
 it in `dependencies` and reads it with `yield* CurrentTurn`; the compiler
 refuses a loop that runs such a tool without providing it.
 
+What a tool declares is held by the compiler in three places. Its handler
+may read nothing else. A call of it by the toolkit's own `handle`, by name,
+needs each service it declares, the turn included. And `callTool` needs
+what any tool of its toolkit declares, less the turn it gives: that is
+`ToolNeeds<Tools>`, the requirements in the type of `callTool`'s effect. The
+call's name is the model's, so `callTool` cannot know which tool it runs:
+its type is over every tool of the toolkit. A program that leaves out a
+service one of its tools declares does not compile where the type of what
+it runs is written out. A toolkit passed to `callTool` keeps each tool's own
+type: one with a tool typed `Tool.Any` has lost what its tools declare,
+and is refused where it is passed. The model's call itself is unchecked: its name is
+any text and its parameters any value, which the toolkit checks as it
+handles the call. That one hand-over is the only place on a tool's path
+where the kernel tells the compiler what it cannot check.
+
 Between steps a host may take messages that arrived meanwhile into the open
 turn, so a long run can be steered; the second lesson's chat does this
 with the messages waiting in its queue (`chat.drain`). That is the host's choice, not the
 kernel's.
+
+## Approvals: a tool asks before it acts
+
+Some of what a tool does should not happen on a model's word alone. A tool
+that deletes, sends or pays asks a person first, through a contract the host
+provides (ADR 0012). The kernel has no person: a chat asks with a button, a
+terminal with a prompt, and a batch job answers from a policy.
+
+The tool asks where it acts, with one line at the start of its handler.
+`action` names the kind of thing, the same every time; `detail` says what
+this call would do, for the person to read:
+
+<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#tool -->
+
+```ts
+// The notes a tool keeps, and a tool that deletes them. Deleting asks first: one line at the start of the handler.
+const notes: Array<string> = ["buy milk", "call Ana", "water the plants"]
+const Forget = Tool.make("forget", {
+  description: "Delete every note.",
+  success: Schema.String,
+  failure: Schema.String,
+  failureMode: "return",
+  // A tool that asks declares who it asks and the turn it asks in: without them in the stack, it does not run.
+  dependencies: [Approval, CurrentTurn],
+})
+const tools = Toolkit.make(Forget)
+const toolsLive = tools.toLayer({
+  forget: () => Effect.gen(function* () {
+    // Nothing below this line runs unless the answer is yes. A no fails the call with the text the model reads.
+    yield* approve({ action: "notes.forget", detail: `Delete all ${notes.length} notes.` })
+    const count = notes.splice(0).length
+    return `Deleted ${count} notes.`
+  }),
+})
+```
+
+The host provides `Approval`, whose one function answers a request with a
+decision: `Approved`, `ApprovedAlways`, `Refused`, or `Allowed`, a yes given
+by policy with nobody asked.
+
+<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#host -->
+
+```ts
+// Who is asked. A host answers from a button, a prompt or a policy: here, from a list, and with a no once it ends.
+const approval = Layer.succeed(Approval, Approval.of({
+  ask: (request) => Effect.map(Ref.updateAndGet(asked, (all) => [...all, request]), (all): Decision => answers[all.length - 1] ?? { _tag: "Refused" }),
+}))
+```
+
+<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#ask -->
+
+```ts
+const { journal, asked } = await Effect.runPromise(Effect.gen(function* () {
+  const host = yield* scripted([{ _tag: "Approved" }])
+  const ran = yield* run(calls(1), ["Forget my notes."], host.approval)
+  return { ...ran, asked: yield* host.asked }
+}))
+// The person was asked once, in the tool's words.
+expect(asked).toEqual([{ action: "notes.forget", detail: "Delete all 3 notes." }])
+// The answer is stored in the turn, between the call and its result. It bears no message: no memory sends it.
+expect(journal.map((record) => String(record.name))).toEqual([
+  "core.session.turn.started", "conversation.user.message", "conversation.assistant.message",
+  "plugin.approval.decided", "conversation.tool.result", "conversation.assistant.message", "core.session.turn.ended",
+])
+expect(decisions(journal)).toEqual([{ action: "notes.forget", detail: "Delete all 3 notes.", decision: { _tag: "Approved" } }])
+expect(results(journal)).toEqual([["Deleted 3 notes.", false]])
+```
+
+The answer is a record of the turn, `plugin.approval.decided`, tagged
+`trace`: `approve` stores it, and the host's `Approval` stores nothing. A
+standing approval is that record with `ApprovedAlways`. `grantsOf(journal)`
+folds them, and `approve` reads the fold before it asks: an action approved
+for good is not asked again in that conversation, is still approved after a
+restart, and is not approved in another conversation, whose journal is its
+own. There is no store of grants.
+
+A refusal is the call's result. `approve` fails with a fixed text
+(`APPROVAL_REFUSED`), which `callTool` stores as the failed result the model
+reads, and the turn goes on. An answer that is no decision approves nothing
+and stores nothing, since nobody decided.
+
+A tool that asks declares who it asks and the turn it asks in. `callTool`
+gives it the turn; `Approval` is the program's to provide, and a program
+that provides none does not compile where the type of what it runs is
+written out. A typed tool that asks also declares a failure that is text.
+
+A policy is a wrapper of the contract: `autoApprove(allows)(person)` answers
+`Allowed` for what the policy allows and passes every other request on. It
+never grants for good. A loop that would rather ask before every call,
+whatever the tool, uses `approveIn(session, request)` and stores a refusal
+as the call's result itself, `toolResult(call, refusal, true)`: a call left
+with no result is not sent again, and the model would never read the no.
 
 ## A plugin of your own
 
@@ -1218,6 +1327,7 @@ fail on a careless plugin written for it.
 | render (`viewsOf`) and `callTool` | none | pure functions, not contracts a plugin implements: unit tests hold them |
 | `pointed` | the memory kit's pointer checks | a rule a memory applies, held where the memory is: a subject that names its `pointers` |
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
+| `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 
 ## What the first cut leaves out, and the order it returns
 

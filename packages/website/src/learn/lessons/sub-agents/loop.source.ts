@@ -71,6 +71,7 @@ export const loopDocumentOf = (loop: string): string => `${LOOP_HEADER}${loop}\n
 export const loopModuleOf = (loop: string): string => `${LOOP_IMPORTS}
 import type { Tool, Toolkit } from "effect/ai"
 import type { OpenSession } from "@xandreed/core/kernel"
+import type { OwnTools } from "@xandreed/sdk/kernel"
 
 /** Where an agent's words, status and steers go: the chat's for the chat, quiet ones for a helper. */
 export interface Hooks {
@@ -80,7 +81,7 @@ export interface Hooks {
 }
 
 ${loop
-  .replace("export const runAgent = (agent) => (session, messages) =>", "export const runAgent = <Tools extends Record<string, Tool.Any>>(agent: { readonly system: string; readonly toolkit: Toolkit.WithHandler<Tools>; readonly hooks: Hooks }) => (session: OpenSession, messages: ReadonlyArray<string>) =>")}
+  .replace("export const runAgent = (agent) => (session, messages) =>", "export const runAgent = <Tools extends Record<string, Tool.Any>>(agent: { readonly system: string; readonly toolkit: Toolkit.WithHandler<Tools> & OwnTools<Tools>; readonly hooks: Hooks }) => (session: OpenSession, messages: ReadonlyArray<string>) =>")}
 `
 
 /** The editable part as the page runs it: statements, without `export`. */
