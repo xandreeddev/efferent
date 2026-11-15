@@ -104,6 +104,7 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
           <button class="icon-btn" type="button" data-max aria-label="Maximise Chat pane" title="Maximise">⤢</button>
         </div>
       </header>
+      {lesson.branch !== undefined && <div class="chat-row" data-chats role="group" aria-label="Chats" hidden></div>}
       <div class="pane-body" data-scroll>
         <ol class="pg-messages" data-messages aria-live="polite"></ol>
         <p class="pg-empty" data-empty>Ask the agent something. Echo needs no download; pick another model from the bar above.</p>

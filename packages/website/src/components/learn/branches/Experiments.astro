@@ -1,0 +1,36 @@
+---
+// The last step: each button rewrites one file, then builds the program again (see learn/playground.ts,
+// `data-exp`). The chats stay in the store: an experiment changes the code, not the conversations.
+const experiments = [
+  {
+    exp: "latest", title: "The latest closed turn", button: "branchFrom without a turn",
+    text: "branch.ts calls sessions.fork(conversation) and names no turn. Send two messages, then press Branch after turn 1. The branch is cut at the end of the last closed turn, turn 2, whichever button you pressed: the row names it Chat 1, branch after turn 2, read from the branch's own record. Press the same button again: a second branch, with the same name and (2) after it.",
+  },
+  {
+    exp: "open-turn", title: "A turn that is not closed", button: "Ask for the turn after",
+    text: "branch.ts now asks for the turn after the one you press. In a chat of one turn, press Branch after turn 1: turn 2 never was, and the kernel refuses with NoClosedTurn, in its words: turn 2 of the session is not closed: a branch is cut at the end of a closed turn. Then press Make the calculator slow below, which leaves branch.ts as it is, ask What is 6 * 7? and press Branch after turn 1 while the calculator works: turn 2 is open, and the refusal is the same. No branch is made either time.",
+  },
+  {
+    exp: "slow-calculator", title: "Branch while a turn runs", button: "Make the calculator slow",
+    text: "The calculator now takes four seconds. Say something, then ask What is 6 * 7? and, while the calculator works, press Branch after turn 1. The branch is made at once, cut after turn 1, and the turn in the chat shown goes on: it answers The tool answered: calculator says 42. The turn still open has no button: a branch is never cut inside a turn.",
+  },
+  {
+    exp: "resume-ignores", title: "A resume that ignores the pick", button: "Lesson 7's resume",
+    text: "Send a message and press Branch after turn 1, then this button. chat.ts's resume goes back to lesson 7's rule: the latest of your chats. After a branch, the latest is the branch, so the build shows it, though the chat you were on is the one asked for, and the chat says resume did not take it. Pick Chat 1: the page builds again, the branch is still shown, and the chat says so again. Press Reset in the Code pane: resume takes the pick again, and Chat 1 is shown.",
+  },
+]
+---
+
+<p class="learn-try"><button class="btn" type="button" data-start-over>Start over: forget everything stored</button></p>
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
+<p class="learn-try"><button class="btn btn-primary" type="button" data-reload>Reload the page</button></p>

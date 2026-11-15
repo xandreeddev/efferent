@@ -4,9 +4,10 @@
 // change, comes from the lesson's definition.
 import { Option } from "effect"
 import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
+import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { attemptEvent, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
-import { attemptLine, continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { attemptLine, branchPoints, drawsAnew, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { ignoredLine } from "./chats.ts"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
@@ -79,6 +80,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
     newChat: () => void newConversation(),
     // A press on a question's button answers it: the tool that asked goes on, or is refused.
     decide: (id, decision) => state.runtime?.decide(id, decision),
+    // Lesson 14: "Branch after turn N" makes a branch and switches nothing; a chat of the row is shown.
+    branch: (turn) => void branchAfter(turn),
+    choose: (id) => void chooseChat(id),
   })
 
   // ── status ──────────────────────────────────────────────────────────────
@@ -104,6 +108,16 @@ function boot(root: HTMLElement, lesson: Lesson) {
     setChip(busy() ? "answering" : "waiting for a message", "ready")
   }
 
+  /** The tab's own storage (`sessionStorage`), where a durable lesson keeps the chat picked (lesson 14); none where the browser gives none. */
+  const tabStorage = (): KeyValueStore | undefined => {
+    try {
+      const storage = window.sessionStorage
+      storage.getItem("efferent-learn:probe")
+      return storage
+    } catch {
+      return undefined
+    }
+  }
   /**
    * The browser's storage for a durable lesson; a storage of the page's own where the browser gives none (a
    * private window with storage blocked), with a line that says the conversation will not outlive the page.
@@ -140,7 +154,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const ensureRuntime = (): Promise<LessonRuntime> => {
     state.runtimeReady ??= import("./runtime.ts").then(async ({ LessonRuntime }) => {
       const storage = lesson.durable === undefined ? undefined : browserStorage()
-      const runtime = await LessonRuntime.create(lesson, storage === undefined ? {} : { storage })
+      const tab = lesson.durable === undefined ? undefined : tabStorage()
+      const runtime = await LessonRuntime.create(lesson, { ...(storage === undefined ? {} : { storage }), ...(tab === undefined ? {} : { tab }) })
       trace.reset(runtime.conversation)
       runtime.onTrace(heard)
       state.runtime = runtime
@@ -155,7 +170,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const show = (next: ChatBoard) => {
     if (next === board) return
     board = next
-    chat.render(board.rows)
+    // Lesson 14: the last row of each closed turn carries "Branch after turn N".
+    chat.render(board.rows, lesson.branch === undefined ? undefined : branchPoints(board))
   }
   let unseen = false
   /** The chat session's records as they are announced, for the views the chat draws (lesson 6). */
@@ -168,8 +184,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
   let programStatus: string | undefined
   function heard(event: Trace) {
     // A conversation not shown before, or the one shown under a journal that does not go on from what the page took (the
-    // store was changed, or forgot): the Context tab starts over on it, before it hears of its journal.
-    const fresh = event._tag === "Showing" && (event.session !== shownSession || !continues(board, event.journal))
+    // store was changed, or forgot): the Context tab starts over on it, before it hears of its journal. A chat and its
+    // branch hold the same places and times up to the cut, so a switch between them is told by the session alone.
+    const fresh = event._tag === "Showing" && drawsAnew(board, shownSession, event)
     if (event._tag === "Showing" && fresh) {
       shownSession = event.session
       trace.reset(event.session)
@@ -212,6 +229,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
         // from it alone; the one already shown takes the records it has not taken (a turn closed as the program started).
         if (fresh) drawFrom(event.journal, board.rows.filter((row) => row.waiting === true && row.dropped === undefined).map((row) => row.text))
         else event.journal.forEach(take)
+        // Lesson 14: the row of chats, and a word when the learner's `resume` showed another chat than the one picked.
+        if (lesson.branch !== undefined) void showChats(event.session)
         break
       case "Reply":
         chat.focus()
@@ -403,6 +422,43 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }
 
   // ── chat ────────────────────────────────────────────────────────────────
+  // ── branches (lesson 14) ────────────────────────────────────────────────
+  /** The row of chats, as the store lists them; and, as a chat was shown, a word when it is not the one asked for. */
+  const showChats = async (showing?: string) => {
+    const runtime = state.runtime
+    if (runtime === undefined) return
+    const chats = await runtime.chats()
+    chat.renderChats(chats, runtime.conversation)
+    if (showing !== undefined) Option.map(ignoredLine(runtime.chosen, showing, chats), (line) => show(said(board, "note", line)))
+  }
+  /** "Branch after turn N": the learner's branchFrom makes a branch of the chat shown, which stays shown, and a turn running in it goes on. */
+  const branchAfter = async (turn: TurnNumber) => {
+    const runtime = state.runtime
+    if (runtime === undefined) return
+    const made = await runtime.branch(turn)
+    if (made._tag === "Failure") { show(said(board, "error", made.failure)); return }
+    await showChats()
+    const label = (await runtime.chats()).find((one) => one.id === made.success)?.label ?? "A branch"
+    show(said(board, "note", `${label} was made. This chat is still the one shown: pick the branch above the chat to show it.`))
+  }
+  /**
+   * A chat of the row: it is asked for, and the program starts again over it, as Rebuild does. The messages still
+   * waiting are dropped: they were written for the chat that was shown.
+   */
+  const chooseChat = async (id: string) => {
+    const runtime = state.runtime
+    const picked = (await runtime?.chats())?.find((one) => one.id === id)
+    if (runtime === undefined || picked === undefined || state.building) return
+    state.building = true
+    state.builds++
+    refresh()
+    show(dropWaiting(board, "dropped: you switched chats"))
+    const { result } = await runtime.choose(picked.id)
+    state.building = false
+    showBuild(result, `${picked.label} is asked for.`)
+    refresh()
+  }
+
   /** A new, empty conversation in the same base: the chat and the Context tab start over. */
   const newConversation = async () => {
     const runtime = await ensureRuntime()
@@ -595,7 +651,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
     try {
       const storage = window.localStorage
       Array.from({ length: storage.length }, (_, index) => storage.key(index)).forEach((key) => { if (key !== null && key.startsWith(prefix)) storage.removeItem(key) })
-      if (sourcesKey !== undefined) window.sessionStorage.removeItem(sourcesKey)
+      // What this tab kept for the lesson: the edits, and the chat picked (lesson 14).
+      const tab = window.sessionStorage
+      Array.from({ length: tab.length }, (_, index) => tab.key(index)).forEach((key) => { if (key !== null && key.startsWith(prefix)) tab.removeItem(key) })
     } catch { /* no storage: there is nothing kept to forget */ }
     window.location.reload()
   }))

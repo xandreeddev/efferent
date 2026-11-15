@@ -4,8 +4,13 @@
 // stays open while the agent answers: what you send then waits its turn.
 // The rows it draws are the chat model's (chat-model.ts): `render` is given
 // them all each time and changes only what changed. A question a tool asks
-// before it acts is a row with three buttons, which answer it.
+// before it acts is a row with three buttons, which answer it. In lesson 14
+// the last row of each closed turn carries "Branch after turn N", and the row
+// of chats above the messages shows each chat of the store, the one shown
+// marked.
+import type { TurnNumber } from "@xandreed/core/kernel"
 import type { Decision } from "@xandreed/sdk/kernel"
+import type { ChatEntry } from "../chats.ts"
 import { answersTo, NO_TEXT } from "../chat-model.ts"
 import type { ChatRow } from "../chat-model.ts"
 import { renderMarkdown } from "../markdown.ts"
@@ -13,15 +18,32 @@ import { renderMarkdown } from "../markdown.ts"
 export interface ChatPane {
   /** An element of the pane's own at the end of the chat: the place a view is drawn in (views.ts). */
   readonly add: (kind: "view", text: string) => HTMLElement
-  /** Draw the chat's rows: a new row goes at the end, one already drawn is changed where it is, one that is gone is removed. */
-  readonly render: (rows: ReadonlyArray<ChatRow>) => void
+  /**
+   * Draw the chat's rows: a new row goes at the end, one already drawn is changed where it is, one that is gone is
+   * removed. `branches` (lesson 14) names, by row id, the turn a row closes: it carries "Branch after turn N".
+   */
+  readonly render: (rows: ReadonlyArray<ChatRow>, branches?: ReadonlyMap<number, TurnNumber>) => void
+  /** Draw the row of chats (lesson 14), the one shown marked; an empty row hides it. */
+  readonly renderChats: (chats: ReadonlyArray<ChatEntry>, shown: string) => void
   readonly clear: () => void
   readonly setState: (state: { ready: boolean; running: boolean; hint: string }) => void
   readonly focus: () => void
   readonly hasMessages: () => boolean
 }
 
-export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => void; sendThree: () => void; stop: () => void; newChat: () => void; decide: (id: string, decision: Decision) => void }): ChatPane => {
+export interface ChatHooks {
+  readonly send: (text: string) => void
+  readonly sendThree: () => void
+  readonly stop: () => void
+  readonly newChat: () => void
+  readonly decide: (id: string, decision: Decision) => void
+  /** "Branch after turn N" was pressed (lesson 14). */
+  readonly branch: (turn: TurnNumber) => void
+  /** A chat of the row was pressed (lesson 14). */
+  readonly choose: (chat: string) => void
+}
+
+export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
   const q = <T extends HTMLElement>(selector: string) => root.querySelector<T>(selector)!
   const messages = q("[data-messages]")
   const scroller = q("[data-scroll]")
@@ -33,6 +55,8 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
   const hint = q("[data-hint]")
   const chips = [...root.querySelectorAll<HTMLButtonElement>("[data-chip-text]")]
   const three = q<HTMLButtonElement>("[data-send-three]")
+  // Lesson 14's row of chats: only its page has one.
+  const chatsBox = root.querySelector<HTMLElement>("[data-chats]")
   const sent: string[] = []
   let recall = -1
 
@@ -43,9 +67,26 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
   scroller.addEventListener("scroll", () => { following = nearBottom() }, { passive: true })
   const pending = new Map<HTMLElement, string>()
   let frame = 0
+  /** The turn each drawn element closes, for its "Branch after turn N" (lesson 14). */
+  const closes = new Map<HTMLElement, TurnNumber>()
+  /** The element's button "Branch after turn N", after what it shows, when it closes a turn. */
+  const withBranch = (item: HTMLElement) => {
+    const turn = closes.get(item)
+    if (turn === undefined) return
+    const actions = document.createElement("div")
+    actions.className = "msg-actions msg-branch"
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "btn btn-quiet"
+    button.dataset.branchAfter = String(turn)
+    button.textContent = `Branch after turn ${turn}`
+    button.addEventListener("click", () => hooks.branch(turn))
+    actions.append(button)
+    item.append(actions)
+  }
   const paint = () => {
     frame = 0
-    for (const [item, text] of pending) renderMarkdown(item, text)
+    for (const [item, text] of pending) { renderMarkdown(item, text); withBranch(item) }
     pending.clear()
     if (following) scrollDown()
   }
@@ -125,7 +166,9 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
   }
   /** The rows drawn, by the row's id: its element, and what of the row it shows. */
   const drawn = new Map<number, { readonly item: HTMLElement; readonly shown: string }>()
-  const draw = (item: HTMLElement, row: ChatRow) => {
+  const draw = (item: HTMLElement, row: ChatRow, closing: TurnNumber | undefined) => {
+    if (closing === undefined) closes.delete(item)
+    else closes.set(item, closing)
     flag(item, "live", row.live === true)
     flag(item, "queued", row.waiting === true)
     flag(item, "dropped", row.dropped !== undefined)
@@ -149,31 +192,51 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
       badge.textContent = row.dropped ?? "waiting"
       item.append(badge)
     }
+    withBranch(item)
   }
-  const render = (rows: ReadonlyArray<ChatRow>) => {
+  const render = (rows: ReadonlyArray<ChatRow>, branches: ReadonlyMap<number, TurnNumber> = new Map()) => {
     const kept = new Set(rows.map((row) => row.id))
     for (const [id, { item }] of drawn) {
       if (kept.has(id)) continue
       pending.delete(item)
+      closes.delete(item)
       item.remove()
       drawn.delete(id)
     }
     for (const row of rows) {
-      const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined, row.ask?.id, row.ask?.action])
+      const closing = branches.get(row.id)
+      const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined, row.ask?.id, row.ask?.action, closing])
       // (Whether a waiting message was taken off the queue changes nothing on screen until it is stored or dropped.)
       const found = drawn.get(row.id)
       if (found?.shown === shown) continue
       const item = found?.item ?? add(row.kind, "", row.waiting === true)
       item.className = `pg-msg ${row.kind}`
-      draw(item, row)
+      draw(item, row, closing)
       drawn.set(row.id, { item, shown })
     }
+  }
+
+  const renderChats = (chats: ReadonlyArray<ChatEntry>, shown: string) => {
+    if (chatsBox === null) return
+    chatsBox.hidden = chats.length === 0
+    chatsBox.replaceChildren(...chats.map((chat) => {
+      const button = document.createElement("button")
+      button.type = "button"
+      button.className = "chat-tab"
+      button.dataset.chat = chat.id
+      button.setAttribute("aria-pressed", String(chat.id === shown))
+      button.title = chat.id === shown ? `${chat.label}: the chat shown` : `Show ${chat.label}`
+      button.textContent = chat.label
+      button.addEventListener("click", () => { if (chat.id !== shown) hooks.choose(chat.id) })
+      return button
+    }))
   }
 
   return {
     add,
     render,
-    clear: () => { messages.replaceChildren(); pending.clear(); drawn.clear(); empty.hidden = false; following = true },
+    renderChats,
+    clear: () => { messages.replaceChildren(); pending.clear(); drawn.clear(); closes.clear(); empty.hidden = false; following = true },
     setState: ({ ready, running, hint: text }) => {
       // While the agent answers, more messages may be sent: they wait in the queue.
       input.disabled = !ready

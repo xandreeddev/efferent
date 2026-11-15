@@ -106,6 +106,13 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["failures", '[{ pieces: "Half " }]', 'failures.ts did not run: entry 1 of failures has pieces that are not a list of words, such as ["Half "].'],
     ["failures", "[{ pieces: [1] }]", 'failures.ts did not run: entry 1 of failures has pieces that are not a list of words, such as ["Half "].'],
   ],
+  branches: [
+    ["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM],
+    ["chat", "42", "chat.ts did not run: resume is not an Effect. It should give the conversation to go on with."],
+    // branch.ts makes one function, which the page calls when a branch is asked for: a value that is none refuses the build.
+    ["branch", "const branchFrom = 1", "branch.ts did not run: branchFrom is not a function. It should take the conversation and a turn, and give the branch Sessions.fork makes."],
+    ["branch", "const branchFrom = Effect.void", "branch.ts did not run: branchFrom is not a function. It should take the conversation and a turn, and give the branch Sessions.fork makes."],
+  ],
 }
 
 describe("a learner's file that makes the wrong kind of thing", () => {

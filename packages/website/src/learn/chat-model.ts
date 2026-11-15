@@ -12,7 +12,7 @@
 // with the kernel's `viewsOf` (views.ts).
 import { Match, Option } from "effect"
 import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { StoredEvent, TurnOutcome } from "@xandreed/core/kernel"
+import type { StoredEvent, TurnNumber, TurnOutcome } from "@xandreed/core/kernel"
 import { decidedEvent } from "@xandreed/sdk/kernel"
 import type { AttemptData, DecidedData, Decision } from "@xandreed/sdk/kernel"
 import type { Trace } from "./runtime.ts"
@@ -49,9 +49,11 @@ export interface ChatBoard {
   readonly last: number
   /** When each record taken was stored, by its place: what tells one journal from another that holds the same places. */
   readonly times: ReadonlyArray<number>
+  /** The turns whose end was taken, in order: each is closed, and a branch may be cut after it (lesson 14). */
+  readonly ended: ReadonlyArray<TurnNumber>
 }
 
-export const emptyChat: ChatBoard = { rows: [], next: 1, calls: new Map(), last: 0, times: [] }
+export const emptyChat: ChatBoard = { rows: [], next: 1, calls: new Map(), last: 0, times: [], ended: [] }
 
 /** What the chat shows for an answer with no text. */
 export const NO_TEXT = "(the model sent no text)"
@@ -166,7 +168,9 @@ export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
     onNone: () => board,
     onSome: ({ outcome }) => {
       // What was being written when the turn ended was never stored: it stays as it stands, and says so when the turn was stopped.
-      const closed = finish(board, record.turn, outcome._tag === "Interrupted" ? "\n\n*(stopped)*" : "")
+      const finished = finish(board, record.turn, outcome._tag === "Interrupted" ? "\n\n*(stopped)*" : "")
+      // The first end of a turn closes it (a branch is cut there): one more is no other turn.
+      const closed = finished.ended.includes(record.turn) ? finished : { ...finished, ended: [...finished.ended, record.turn] }
       // A failure the program said before this record was heard is this turn's: the record's row takes its place.
       const said = outcome._tag === "Failed" ? Option.fromNullishOr(closed.rows.find((row) => row.kind === "error" && row.turn === record.turn && row.seq === undefined)) : Option.none()
       return Option.match(endRow(record.turn, outcome), {
@@ -291,6 +295,26 @@ export const showing = (board: ChatBoard, journal: ReadonlyArray<StoredEvent>, s
  */
 export const continues = (board: ChatBoard, journal: ReadonlyArray<StoredEvent>): boolean =>
   board.times.every((at, index) => journal[index]?.seq === index + 1 && journal[index]?.at === at)
+
+/**
+ * Whether a durable lesson's `Showing` draws the chat from its journal alone: a conversation other than the one
+ * shown (another chat picked, a branch, a new one), or the one shown under a journal that does not go on from what
+ * the chat took. A chat and its branch share their copied records' places and times, so only the session tells
+ * them apart: a switch between the two is always drawn anew. The page and its tests both decide with this.
+ */
+export const drawsAnew = (board: ChatBoard, shown: string | undefined, trace: { readonly session: string; readonly journal: ReadonlyArray<StoredEvent> }): boolean =>
+  trace.session !== shown || !continues(board, trace.journal)
+
+/**
+ * Where "Branch after turn N" goes (lesson 14): after the last stored row of each closed turn, by that row's id.
+ * A turn still open has none, and neither has a turn that left no row. A row drawn from the journal knows its turn
+ * as one drawn live does: both come from the record.
+ */
+export const branchPoints = (board: ChatBoard): ReadonlyMap<number, TurnNumber> =>
+  new Map(board.ended.flatMap((turn) => {
+    const last = board.rows.findLast((row) => row.turn === turn && row.seq !== undefined)
+    return last === undefined ? [] : [[last.id, turn] as const]
+  }))
 
 /** What the page heard, for the conversation the chat shows: the board after it. */
 export const hear = (board: ChatBoard, trace: Trace, shown: string): ChatBoard => {
