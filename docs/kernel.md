@@ -63,6 +63,8 @@ caught up.
 | The approval contract | sdk, `contracts/approval` | `Approval`, which the host provides; `approve`, `approveIn`, `grantsOf`; the `plugin.approval.decided` record |
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
+| The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
+| `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
@@ -1151,9 +1153,10 @@ return Memory.of({
 })
 ```
 
-The strategies still to come sit behind the same call: results replaced by
-pointers with a tool that reads them back, or facts retrieved from an index
-built from the journal.
+Two more strategies sit behind the same call, each in its section below: a
+long result sent as its start and a pointer, with a tool that reads it back,
+and facts kept in a session of their own, added for each request. Facts
+retrieved from an index built from the journal are still to come.
 
 A journal outlives the code that wrote it. A plugin reads it with a
 vocabulary: plain data, the prefixes it answers for and the record names it
@@ -1272,6 +1275,88 @@ turn that fetched it, and pays a step to read on. A page it reads is sent
 whole from then on. A host that would rather send a result whole in its own
 turn and point it afterwards writes that memory itself, and pays for the
 prompt's start changing once per result.
+
+### Facts: what an agent knows across conversations
+
+A conversation's journal holds what was said in it, and another conversation
+has a journal of its own. What an agent should still know next time is kept
+in a session of its own, the memory session (ADR 0014): a fact is a record
+there, and there is no store of facts beside the journal. Two tools of the
+kernel's write it, and a host merges them into its toolkit:
+
+<!-- pinned: packages/sdk/src/kernel/facts.test.ts#tools -->
+
+```ts
+// The agent's own tool, and the two that remember: one toolkit, each tool with its own type.
+const Add = Tool.make("add", { parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }), success: Schema.Number, failure: Schema.String, failureMode: "return" })
+const tools = Toolkit.merge(Toolkit.make(Add), factTools)
+const toolsLive = Toolkit.make(Add).toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+// What the two tools do is the kernel's: each call is a turn on the memory session.
+const handlers = Layer.mergeAll(toolsLive, factHandlers)
+```
+
+A wrapper of `Memory` reads it. For each request it adds the facts that
+stand, last, after the context the memory below returned:
+
+<!-- pinned: packages/sdk/src/kernel/facts.test.ts#memory -->
+
+```ts
+// The memory a conversation reads with, wrapped: each request is sent the conversation, then up to five facts.
+const memory = withFacts({ limit: 5 })(flatMemory)
+```
+
+So a fact remembered in one conversation is in the prompt of another:
+
+<!-- pinned: packages/sdk/src/kernel/facts.test.ts#remember -->
+
+```ts
+const { conversations, memory: held, sent } = await Effect.runPromise(run(
+  [calls(remember("The user's name is Ana.")), says("I will remember that."), says("Your name is Ana.")],
+  [["My name is Ana."], ["What is my name?"]],
+))
+const [first, second] = conversations
+// The conversation holds the call and its result, the fact's id: it stored no record of the fact.
+expect(names(first?.journal ?? [])).toEqual([
+  "core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "conversation.tool.result",
+  "conversation.assistant.message", "core.session.turn.ended",
+])
+expect(results(first?.journal ?? [])).toEqual([["rememberFact", { id: "f1" }, false]])
+// The fact is one record of the memory session, in a turn of its own, with the conversation and turn it came from.
+expect(names(held)).toEqual(["core.session.turn.started", "plugin.facts.learned", "core.session.turn.ended"])
+expect<unknown>(factsOf(held)).toEqual([{ id: "f1", text: "The user's name is Ana.", from: { session: first?.id, turn: 1 } }])
+// Another conversation, with a journal of its own, is sent the fact: last, after its own messages.
+expect(sent[2]).toEqual([
+  { role: "system", text: SYSTEM },
+  { role: "user", text: "What is my name?" },
+  { role: "user", text: noteOf("f1: The user's name is Ana.") },
+])
+```
+
+`rememberFact({ fact })` stores `plugin.facts.learned` in a turn on the
+memory session, with the conversation and turn it came from, and answers the
+fact's id. `forgetFact({ id })` stores `plugin.facts.forgotten`.
+`factsOf(journal)` folds the two into the facts that stand. A fact is one
+line of 1 to 300 characters: a longer one, or one with a second line, is
+refused in words the model reads, and never cut. The two tools declare
+`Sessions`, which they write through, so a program that calls them where
+there are no sessions does not compile.
+
+`withFacts({ limit })` sends at most `limit` facts. With more than that,
+those that share a word with the question come first, then the newest
+(`relevant`, a pure function); with fewer, all are sent. The question is the
+user's last message in the conversation's journal. The facts are framed as
+data, a line each with the id `forgetFact` takes. Nothing is stored, and a
+memory's budget does not count them: they are bounded by `limit` and by a
+fact's length. A host that ranks another way writes its own wrapper over
+`rememberedFacts`, `questionOf` and `factsNote`.
+
+What it costs: the fact's text is also in the conversation that said it, in
+the call the model made, and `forgetFact` does not remove it from there. A
+process that dies inside a turn on the memory session leaves it open, and
+the next `rememberFact` is refused as busy: a host on a store that outlives
+its process recovers the memory session (`memorySession`,
+`Sessions.recover`) as it recovers its conversation. Every agent on one
+store shares its facts.
 
 ## The inbox: queueing messages for a turn
 
@@ -1458,6 +1543,7 @@ fail on a careless plugin written for it.
 | `pointed` | the memory kit's pointer checks | a rule a memory applies, held where the memory is: a subject that names its `pointers` |
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
+| facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 
 ## What the first cut leaves out, and the order it returns

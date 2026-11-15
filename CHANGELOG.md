@@ -198,6 +198,36 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     load.
     Model text: the catalogue, `loadSkill`'s description and parameter, its
     failure for an unknown name, and the note.
+  - Facts (ADR 0014): what an agent knows across conversations. A fact is
+    a record (`plugin.facts.learned`, with the conversation and turn it
+    came from; `plugin.facts.forgotten`) in a session of its own, the
+    memory session, and `factsOf(journal)` folds them into the facts that
+    stand: there is no store of facts beside the journal. Two tools write
+    it, `RememberFact` (`rememberFact({ fact })`, which answers the fact's
+    id) and `ForgetFact` (`forgetFact({ id })`): a host merges `factTools`
+    into its toolkit and provides `factHandlers`. Each call is a turn on
+    the memory session; the tools declare `Sessions` and `CurrentTurn`, so
+    a program that calls them where there are no sessions does not
+    compile. `withFacts({ limit })` wraps a memory: for each request it
+    adds up to `limit` facts, last, framed as data, a line each with its
+    id, and stores nothing. With more facts than the limit, those that
+    share a word with the user's last message come first, then the newest
+    (`relevant`, a pure function; `questionOf` reads that message by the
+    record's name, and `factsNote` is the text added, for a wrapper of a
+    host's own). A fact is one line of 1 to 300
+    characters: another text is refused in words the model reads, and
+    never cut. `memorySession` finds or creates the session;
+    `rememberedFacts` reads the facts for a wrapper of a host's own. A
+    host on a store that outlives its process recovers the memory session
+    with `Sessions.recover`, as it recovers its conversation: a writer
+    that died inside a `rememberFact` leaves it busy. The fact's text
+    stays in the conversation that said it, in the call the model made,
+    and `forgetFact`'s result repeats it there. A host's own tool named
+    `rememberFact` or `forgetFact` is replaced by the kernel's when the
+    toolkits are merged.
+    Model text: both tools' descriptions and parameters, `forgetFact`'s
+    result, the failures for a text that is no fact, an id no fact has and
+    a memory session that is busy, and the note of remembered facts.
   - Both stock memories send through `paired`, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools
