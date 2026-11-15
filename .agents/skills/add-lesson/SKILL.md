@@ -51,10 +51,10 @@ checks.
 - No cast around a tool, a toolkit, a call or a layer, in the shown files,
   the typed modules or the page's code. A loop written over any toolkit
   takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`, as `callTool` does.
-  `lesson.ts` reads the untyped values a file made with guards
-  (`Layer.isLayer`, `Predicate.hasProperty`) and hands `main` over with
-  `programOf` (`evaluate.ts`), the one place the page says an untyped
-  program needs nothing more.
+  `lesson.ts` reads the untyped values a file made with `named`
+  (`evaluate.ts`) and guards (`Layer.isLayer`, `typeof`), and hands `main`
+  over with `programOf`, the one place the page says an untyped program
+  needs nothing more.
 - Comments are for the learner: what it does and why, in sentences.
 - A tool whose result the UI shows works out what it shows from a few words
   of the model's: the model's call is conversation and is sent again (ADR

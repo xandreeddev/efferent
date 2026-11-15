@@ -278,6 +278,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the lessons' `evaluate` functions read what a learner's file
+  made with one function, `named`, and hold it to a guard, where lessons 1
+  to 8 cast it to a type (a memory as a layer of `Memory`, the tools
+  file's two names, lesson 3's plugin, lesson 5's summarizer). Two
+  assertions remain, in lesson 7, each with its reason: the type of the
+  learner's `store` function and of its `resume`. A new test holds, for
+  every lesson, that a file which makes the wrong kind of thing is
+  refused in words that name the file. Nothing a learner sees changes. No
+  published package changes.
 - Docs site: Lesson 9, "Approvals", at `/learn/approvals`. `tools.ts` is
   lesson 2's with one tool more, `forget`, which deletes every note and
   asks first: it declares `dependencies: [Approval, CurrentTurn]`, and

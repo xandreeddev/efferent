@@ -2,7 +2,7 @@ import { Clock, Effect, Layer, Option, Ref, Result, Schema, Stream } from "effec
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessageEvent, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { callTool, estimateTokens, hostNote, Memory, messageText, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import { programOf, run, runStatements } from "../../evaluate.ts"
+import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -31,15 +31,17 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
   Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) => {
     if (!Layer.isLayer(memory)) return fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …).")
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
-      const { tools, toolsLive } = made as { readonly tools: unknown; readonly toolsLive: unknown }
+      const tools = named(made, "tools")
+      const toolsLive = named(made, "toolsLive")
       if (!Layer.isLayer(toolsLive)) return fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
       return Result.flatMap(runStatements("plugin.ts did not run: ", pluginBodyOf(sources.plugin ?? ""), "{ meter, withClock }", pluginNames), (plugins) => {
-        const { meter, withClock } = plugins as { readonly meter: unknown; readonly withClock: unknown }
+        const meter = named(plugins, "meter")
+        const withClock = named(plugins, "withClock")
         if (!Layer.isLayer(meter)) return fail("plugin.ts did not run: meter is not a layer. It should be Layer.effectDiscard(…).")
         if (typeof withClock !== "function") return fail("plugin.ts did not run: withClock is not a function. It should take the memory it wraps and return a layer.")
         // The page watches the flat memory, below the wrapper: the Context tab shows what memory returned, and the
         // Prompt column what was sent, with the clock's note as code's.
-        const watched = parts.watchMemory(memory as Layer.Layer<Memory>)
+        const watched = parts.watchMemory(memory)
         return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, watched, tools, toolsLive, meter, withClock)), (main) =>
           programOf(main))
       })

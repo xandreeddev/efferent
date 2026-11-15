@@ -34,7 +34,10 @@ check` (tsc over the learn code, the build, the link check) and
     unknown>`), so a module `main` was not given is a compile error. The
     page runs the same text as untyped JavaScript, where nothing can say
     that before it runs: `programOf` (`evaluate.ts`) is the one place a
-    lesson's `evaluate` says so. A
+    lesson's `evaluate` says so. What a file made is read with `named`
+    and held to a guard (`Layer.isLayer`, `typeof`), never cast; lesson
+    7 alone says two types it cannot check, its store's and its
+    `resume`'s, each with the reason beside it. A
     lesson whose tool declares a service has a `type-level:` test that the
     program without it does not compile, naming the service (lesson 4's
     `Helper`). A loop written over any toolkit asks for the toolkit's own

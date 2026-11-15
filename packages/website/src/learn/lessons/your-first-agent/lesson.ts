@@ -29,7 +29,7 @@ const agentNames = (parts: PageParts, flatMemory: unknown) => ({
 export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Result<Effect.Effect<unknown, unknown>, string> =>
   Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) =>
     Layer.isLayer(memory)
-      ? Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory as Layer.Layer<Memory>))), (main) =>
+      ? Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory))), (main) =>
         // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
         programOf(main))
       : Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …)."))
