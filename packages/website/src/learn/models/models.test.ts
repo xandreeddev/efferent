@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Option, Stream } from "effect"
-import { LanguageModel, Prompt } from "effect/ai"
+import { LanguageModel, Prompt, Toolkit } from "effect/ai"
 import { Seq, toolResult, TurnNumber } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, pointed, promptMessage } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, catalogue, defineSkill, pointed, promptMessage } from "@xandreed/sdk/kernel"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
@@ -831,6 +831,205 @@ describe("Echo's rules for a tool that asks (lesson 9)", () => {
 
   test("another tool refused in the same words is answered as that tool's failure: the sentence is forget's alone", () => {
     expect(echoStep(forgot(APPROVAL_REFUSED, true, "calculator"), every).text).toBe(`The tool answered: calculator failed: ${JSON.stringify(APPROVAL_REFUSED)}.`)
+  })
+})
+
+describe("Echo's rules for skills (lesson 10)", () => {
+  const units = defineSkill({ id: "units", summary: "Convert a length between kilometres and miles.", instructions: "Convert with the convert tool.", tools: Toolkit.empty })
+  const haiku = defineSkill({ id: "haiku", summary: "Answer in a haiku.", instructions: "Answer in three lines.", tools: Toolkit.empty })
+  /** A system text that ends with the kernel's catalogue of the two skills, and one with none. */
+  const LISTED = `You are a helpful assistant.\n\n${catalogue([units, haiku])}`
+  const UNLISTED = "You are a helpful assistant."
+  /** What a step is offered before any skill is loaded, and once the units skill is. */
+  const base = ["calculator", "remember", "recall", "loadSkill"]
+  const withConvert = [...base, "convert"]
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+  type Sent = ReadonlyArray<Prompt.MessageEncoded>
+  /** What Echo does with these messages after the system text. */
+  const step = (messages: Sent, offered: ReadonlyArray<string> = base, system = LISTED) => echoStep(Prompt.make([{ role: "system", content: system }, ...messages]), offered)
+  const asked = (text: string, offered: ReadonlyArray<string> = base, system = LISTED) => step([{ role: "user", content: text }], offered, system)
+  const loading = (skill: string) => ({ text: "Let me work that out.", calls: [{ name: "loadSkill", params: { skill } }] })
+  const converting = (value: number, from: string, to: string) => ({ text: "Let me work that out.", calls: [{ name: "convert", params: { value, from, to } }] })
+  /** A turn that loaded a skill and was answered: the call, its result as the kernel stores it, and Echo's answer. */
+  const loadedEarlier = (skill: typeof units, id: string) => [
+    { role: "user", content: `Load ${skill.id}.` },
+    call(id, "loadSkill", { skill: skill.id }),
+    result(id, "loadSkill", { skill: skill.id, instructions: skill.instructions }),
+    { role: "assistant", content: `Loaded ${skill.id}.` },
+  ] as const
+  const HAIKU = "An echo answers\nin five, then seven, then five:\nthe skill told it to."
+
+  test("the catalogue Echo reads is the kernel's: its first line, then one line per skill", () => {
+    expect(catalogue([units, haiku])).toBe([
+      "You have skills: instructions and tools you are not given until you load them. Before you do something a skill covers, call loadSkill with its name and follow what it returns.",
+      "- units: Convert a length between kilometres and miles.",
+      "- haiku: Answer in a haiku.",
+    ].join("\n"))
+  })
+
+  test("\"load units\" or \"load the units skill\" calls loadSkill with the word after \"load\", catalogue or none", () => {
+    // With no catalogue in the system text only this rule can ask for a load.
+    expect(asked("Load units.", base, UNLISTED)).toEqual(loading("units"))
+    expect(asked("Please load the Haiku skill.", base, UNLISTED)).toEqual(loading("haiku"))
+    // The word is the message's, a skill or not: the tool answers which skills there are.
+    expect(asked("Load wolves.")).toEqual(loading("wolves"))
+    // A skill that is loaded already is loaded again when asked for by name.
+    expect(step([...loadedEarlier(units, "c1"), { role: "user", content: "Load units." }], withConvert)).toEqual(loading("units"))
+    // Where loadSkill is not offered the message is one like any other.
+    expect(asked("Load units.", ["calculator", "remember", "recall"], UNLISTED)).toEqual({ text: 'You said: "Load units.". This is the start of the conversation.', calls: [] })
+  })
+
+  test("the rule comes before the catalogue's: a load asked for by name loads that skill, whatever else the message's words cover", () => {
+    // "miles" is a word of the units skill's line, and units comes first in the catalogue: by name, haiku is loaded.
+    expect(asked("Load haiku, then tell me how far 5 km is in miles.")).toEqual(loading("haiku"))
+  })
+
+  test("a message a skill's line in the catalogue covers loads that skill: a word of four letters or more that is its name or a word of its summary", () => {
+    expect(asked("How far is 5 km in miles?")).toEqual(loading("units"))
+    expect(asked("Convert 5 km to miles.")).toEqual(loading("units"))
+    expect(asked("What is the length of a marathon?")).toEqual(loading("units"))
+    expect(asked("Write a haiku about rain.")).toEqual(loading("haiku"))
+    // The skill's name counts, and so does a capital letter.
+    expect(asked("I need UNITS.")).toEqual(loading("units"))
+    // Short words do not: "in" and "a" are words of the haiku skill's line, "a" and "and" of the units skill's.
+    expect(asked("What is in a name, and why?").calls).toEqual([])
+    // A message no line covers goes to the rules under this one, or to none.
+    expect(asked("What is 2 + 3?")).toEqual({ text: "Let me work that out.", calls: [{ name: "calculator", params: { a: 2, op: "+", b: 3 } }] })
+    expect(asked("Hello there.").calls).toEqual([])
+  })
+
+  test("the catalogue's rule needs the catalogue, loadSkill among the tools, and a skill that no result in the prompt has loaded", () => {
+    expect(asked("How far is 5 km in miles?", base, UNLISTED)).toEqual({ text: 'You said: "How far is 5 km in miles?". This is the start of the conversation.', calls: [] })
+    expect(asked("How far is 5 km in miles?", ["calculator", "remember", "recall"]).calls).toEqual([])
+    // A line under the catalogue that lists no skill ends the list: what follows it is not read as skills.
+    expect(asked("Write a haiku about rain.", base, `${catalogue([units])}\nAnswer in English.\n- haiku: Answer in a haiku.`).calls).toEqual([])
+    // Loaded already: the message is not a reason to load again. With nothing else to call, it is answered.
+    expect(step([...loadedEarlier(units, "c1"), { role: "user", content: "What is the length of a marathon?" }], withConvert).calls).toEqual([])
+    // A load that failed loaded nothing: the skill is asked for again.
+    const failed = [{ role: "user", content: "Load units." }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", "No skill is named \"units\".", true), { role: "assistant", content: "It failed." }] as const
+    expect(step([...failed, { role: "user", content: "How far is 5 km in miles?" }])).toEqual(loading("units"))
+  })
+
+  test("the catalogue's rule comes before the rules of lessons 2 to 9: a message it covers is a load first, whatever tool it also asks for", () => {
+    // "Remember …" is the remember tool's, and "miles" is a word of the units skill's line: the load comes first.
+    expect(asked("Remember that a marathon is 26.2 miles.")).toEqual(loading("units"))
+    expect(asked("What is 2 + 3 miles?")).toEqual(loading("units"))
+  })
+
+  test("a length with a unit to convert it to goes to convert, where it is offered, with the number and the two units as km or mi", () => {
+    const after = (text: string) => step([...loadedEarlier(units, "c1"), { role: "user", content: text }], withConvert)
+    expect(after("How far is 5 km in miles?")).toEqual(converting(5, "km", "mi"))
+    expect(after("Convert 26.2 miles to km.")).toEqual(converting(26.2, "mi", "km"))
+    expect(after("Turn 10 kilometres into mi, please.")).toEqual(converting(10, "km", "mi"))
+    expect(after("What is 3 Kilometers in Miles?")).toEqual(converting(3, "km", "mi"))
+    // No unit to convert to, or no number: no call.
+    expect(after("How long is 5 km?").calls).toEqual([])
+    expect(after("How many miles to km?").calls).toEqual([])
+    // Where convert is not offered and no catalogue says a skill covers the message, it is a message like any other.
+    expect(asked("How far is 5 km in miles?", base, UNLISTED).calls).toEqual([])
+  })
+
+  test("the convert rule comes before the catalogue's and before the sum's: a tool Echo was offered needs no load, and a length is no sum", () => {
+    // Every tool offered from the start and the catalogue still in the system text: convert, and no load.
+    expect(asked("How far is 5 km in miles?", withConvert)).toEqual(converting(5, "km", "mi"))
+    // A message with a length and a sum: one call a message, and the length's comes first.
+    expect(step([...loadedEarlier(units, "c1"), { role: "user", content: "How far is 5 km in miles, and what is 2 + 3?" }], withConvert)).toEqual(converting(5, "km", "mi"))
+  })
+
+  test("\"use convert without loading\" calls convert though it is not offered: the one call Echo makes of a tool it was not sent", () => {
+    expect(base).not.toContain("convert")
+    expect(asked("Use convert without loading.")).toEqual(converting(5, "km", "mi"))
+    expect(asked("Call the convert without loading it.", base, UNLISTED)).toEqual(converting(5, "km", "mi"))
+    // It is asleep where there are no skills: without loadSkill among the tools, the message is one like any other.
+    expect(asked("Use convert without loading.", ["calculator", "remember", "recall"], UNLISTED)).toEqual({ text: 'You said: "Use convert without loading.". This is the start of the conversation.', calls: [] })
+    // Any other message that names convert is not this rule's.
+    expect(asked("Use convert.", base, UNLISTED).calls).toEqual([])
+  })
+
+  test("that rule comes before the catalogue's: \"convert\" is a word of the units skill's line, and the message is not a load", () => {
+    expect(asked("Use convert without loading.").calls.map((made) => made.name)).toEqual(["convert"])
+  })
+
+  test("the unknown tool's failure is answered as a failed tool, in the toolkit's words", () => {
+    const notFound = "Toolkit.convert.handle: Tool 'convert' not found. Available tools: calculator, remember, recall, loadSkill"
+    const sent = [{ role: "user", content: "Use convert without loading." }, call("c1", "convert", { value: 5, from: "km", to: "mi" }), result("c1", "convert", notFound, true)] as const
+    expect(step(sent)).toEqual({ text: `The tool answered: convert failed: ${JSON.stringify(notFound)}.`, calls: [] })
+  })
+
+  test("after a result that loaded a skill Echo goes on in the same turn: the message is read again, and the tool it needs, now offered, is called", () => {
+    const turn = [{ role: "user", content: "How far is 5 km in miles?" }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    expect(step(turn, withConvert)).toEqual(converting(5, "km", "mi"))
+    // Then the number is the answer: the length asked about, and the result to one decimal with its unit.
+    expect(step([...turn, call("c2", "convert", { value: 5, from: "km", to: "mi" }), result("c2", "convert", 5 / 1.609344)], withConvert)).toEqual({ text: "5 km is 3.1 mi.", calls: [] })
+  })
+
+  test("going on, a call the turn has already made is not made again, and a message that covers a second skill loads it next", () => {
+    // A sum and a length sent together: one step asked for the calculator and the load. The next asks for convert alone.
+    const together = [
+      { role: "user", content: "What is 2 + 3?" }, { role: "user", content: "How far is 5 km in miles?" },
+      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "calculator", params: { a: 2, op: "+", b: 3 } }, { type: "tool-call", id: "c2", name: "loadSkill", params: { skill: "units" } }] },
+      result("c1", "calculator", 5), result("c2", "loadSkill", { skill: "units", instructions: units.instructions }),
+    ] as const
+    expect(step(together, withConvert)).toEqual(converting(5, "km", "mi"))
+    // A message both lines cover: units is loaded first, as the catalogue lists it, then haiku.
+    const both = [{ role: "user", content: "A haiku about miles, please." }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    expect(asked("A haiku about miles, please.")).toEqual(loading("units"))
+    expect(step(both, withConvert)).toEqual(loading("haiku"))
+  })
+
+  test("a load with nothing to go on to is answered \"Loaded units.\", without the instructions; with other results, before them", () => {
+    const byName = [{ role: "user", content: "Load units." }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    expect(step(byName, withConvert)).toEqual({ text: "Loaded units.", calls: [] })
+    // Loaded by the catalogue's rule, with no length to convert: the same.
+    const covered = [{ role: "user", content: "What is the length of a marathon?" }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    expect(step(covered, withConvert)).toEqual({ text: "Loaded units.", calls: [] })
+    // Three messages one step took: two loads and a sum.
+    const three = [
+      { role: "user", content: "Load units." }, { role: "user", content: "Load haiku." }, { role: "user", content: "What is 2 + 3?" },
+      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "loadSkill", params: { skill: "units" } }, { type: "tool-call", id: "c2", name: "loadSkill", params: { skill: "haiku" } }, { type: "tool-call", id: "c3", name: "calculator", params: { a: 2, op: "+", b: 3 } }] },
+      result("c1", "loadSkill", { skill: "units", instructions: units.instructions }), result("c2", "loadSkill", { skill: "haiku", instructions: haiku.instructions }), result("c3", "calculator", 5),
+    ] as const
+    expect(step(three, withConvert)).toEqual({ text: "Loaded units. Loaded haiku. The tool answered: calculator says 5.", calls: [] })
+  })
+
+  test("a load that failed, and a convert that failed, are answered as failed tools", () => {
+    const noSuch = 'No skill is named "wolves". The skills are: units, haiku.'
+    expect(step([{ role: "user", content: "Load wolves." }, call("c1", "loadSkill", { skill: "wolves" }), result("c1", "loadSkill", noSuch, true)])).toEqual({ text: `The tool answered: loadSkill failed: ${JSON.stringify(noSuch)}.`, calls: [] })
+    const turn = [...loadedEarlier(units, "c1"), { role: "user", content: "How far is 5 km in miles?" }, call("c2", "convert", { value: 5, from: "km", to: "mi" })] as const
+    expect(step([...turn, result("c2", "convert", "no handler", true)], withConvert)).toEqual({ text: 'The tool answered: convert failed: "no handler".', calls: [] })
+    // A convert whose call the prompt does not hold is answered as the tool's: Echo has no units to say.
+    expect(step([...loadedEarlier(units, "c1"), { role: "user", content: "How far is 5 km in miles?" }, result("c9", "convert", 3.1)], withConvert)).toEqual({ text: "The tool answered: convert says 3.1.", calls: [] })
+  })
+
+  test("while a result in the prompt loaded the haiku skill, Echo answers a message with no tool in three fixed lines", () => {
+    expect(step([...loadedEarlier(haiku, "c1"), { role: "user", content: "Tell me about rain." }])).toEqual({ text: HAIKU, calls: [] })
+    expect(HAIKU.split("\n")).toHaveLength(3)
+    // Without that result, as before: the units skill loaded, or the instructions in the system text and no load.
+    expect(step([...loadedEarlier(units, "c1"), { role: "user", content: "Tell me about rain." }], withConvert)).toEqual({ text: 'You said: "Tell me about rain.". I can also see 2 earlier messages.', calls: [] })
+    expect(asked("Tell me about rain.", withConvert, `${UNLISTED}\n\n${haiku.instructions}`)).toEqual({ text: 'You said: "Tell me about rain.". This is the start of the conversation.', calls: [] })
+    // A load of haiku that failed loaded nothing.
+    const failed = [{ role: "user", content: "Load haiku." }, call("c1", "loadSkill", { skill: "haiku" }), result("c1", "loadSkill", "It failed.", true), { role: "assistant", content: "It failed." }] as const
+    expect(step([...failed, { role: "user", content: "Tell me about rain." }]).text).toBe('You said: "Tell me about rain.". I can also see 2 earlier messages.')
+  })
+
+  test("a load of haiku the message did not ask for by name is followed by the three lines; one asked for by name is answered as loaded", () => {
+    const loaded = (text: string) => [{ role: "user", content: text }, call("c1", "loadSkill", { skill: "haiku" }), result("c1", "loadSkill", { skill: "haiku", instructions: haiku.instructions })] as const
+    expect(step(loaded("Write a haiku about rain."))).toEqual({ text: HAIKU, calls: [] })
+    expect(step(loaded("Load haiku."))).toEqual({ text: "Loaded haiku.", calls: [] })
+  })
+
+  test("with haiku loaded, a tool's answer is still passed on as the tool's", () => {
+    const sum = [...loadedEarlier(haiku, "c1"), { role: "user", content: "What is 2 + 3?" }] as const
+    expect(step(sum)).toEqual({ text: "Let me work that out.", calls: [{ name: "calculator", params: { a: 2, op: "+", b: 3 } }] })
+    expect(step([...sum, call("c2", "calculator", { a: 2, op: "+", b: 3 }), result("c2", "calculator", 5)])).toEqual({ text: "The tool answered: calculator says 5.", calls: [] })
+  })
+
+  test("the rules are asleep in every other lesson: with neither loadSkill nor convert offered, a message about lengths, loads or haikus gets no call", () => {
+    const earlier = ["calculator", "remember", "recall", "delegate", "show", "lookup", "readResult", "forget"]
+    for (const text of ["How far is 5 km in miles?", "Load units.", "Write a haiku about rain.", "Use convert without loading."]) {
+      expect({ text, calls: asked(text, earlier).calls }).toEqual({ text, calls: [] })
+    }
   })
 })
 

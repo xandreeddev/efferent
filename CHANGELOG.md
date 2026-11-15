@@ -306,6 +306,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 10, "Skills", at `/learn/skills`. A new file,
+  `skills.ts`, holds two skills as values (`units`, with a tool of its
+  own, `convert`, and its handlers; `haiku`, instructions alone) and the
+  one value over them and lesson 2's tools, `skills(tools, units,
+  haiku)`. `agent.ts` is the base program with three changes: the system
+  text ends with the catalogue, the loop reads what to offer as each step
+  starts (`skillSet.offered(yield* session.journal)`) where the base took
+  its toolkit once, and `main` provides the skill's handlers and
+  `loadSkill`'s. The page walks a load (a tool call whose result is the
+  instructions, stored as any result), the tools each model call was
+  offered, which the Context tab's prompt column lists (`convert` from
+  the call after the load), a rebuild (still loaded) and a new
+  conversation (nothing loaded), and what a skill costs. A skill `skills`
+  refuses refuses the build, in the kernel's words. Echo loads a skill a
+  message's words cover, read from the catalogue in the system text, or
+  one asked for by name; goes on in the same turn to the skill's tool;
+  answers a conversion to one decimal; and writes its own answers in
+  three fixed lines while the haiku skill is loaded. Experiments offer
+  every tool and send every instruction always (two model calls where
+  the lesson takes three, and a larger first prompt), leave the catalogue
+  out (Echo loads nothing), call `convert` before its skill is loaded
+  (the call fails as a call of an unknown tool), and give `main` no
+  handlers for the skill (the page runs it and the call fails when the
+  tool runs, in the JavaScript engine's words; TypeScript refuses the
+  program, which a test pins by the compiler's words,
+  `Handler<"convert">`). Lesson 9's page links here.
+  The test that a learner's file which makes the wrong kind of thing is
+  refused now compares its table with the lesson list and requires a
+  case for every file a learner can edit. No published package changes.
 - Docs site: the lessons' `evaluate` functions read what a learner's file
   made with one function, `named`, and hold it to a guard, where lessons 1
   to 8 cast it to a type (a memory as a layer of `Memory`, the tools

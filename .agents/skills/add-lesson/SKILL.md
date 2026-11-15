@@ -77,7 +77,13 @@ checks.
   (no role filter on "the model never sees it"; no count that a vacuous run
   passes). Each experiment does what its text says.
 - An Echo rule gets a direct test in `models/models.test.ts` that fails
-  without the rule.
+  without the rule, and, where it must come before another rule, one that
+  fails when it is moved after it.
+- `lessons/wrong-values.test.ts`: add the lesson's cases to its table. It
+  is compared with the lesson list (`lessonSlugs`), and every file a
+  learner can edit needs a case: what the file makes, made the wrong kind
+  of thing, is refused in words that name the file and the name. A
+  definition the kernel refuses is a case too, in the kernel's words.
 
 ## 4. Numbers
 
@@ -99,7 +105,8 @@ checks.
 - [ ] Kernel cut merged or in the same PR, with its docs and ADR
 - [ ] `imports.test.ts`, `format.test.ts`, `program.test.ts` (the base holds
       each piece replaced; a `type-level:` test for a service a tool
-      declares), `lesson.test.ts`, the Echo rule's test
+      declares), `lesson.test.ts`, the Echo rule's test,
+      `lessons/wrong-values.test.ts` (a case for every editable file)
 - [ ] No cast in what the lesson adds; `run` annotated; `programOf` in
       `lesson.ts`
 - [ ] Every button and chip the mdx names pressed in WebGPU Chrome, at

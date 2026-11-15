@@ -1,7 +1,8 @@
 // The Context tab's model, fed the traces of real runs of lesson 1 on the
 // page's runtime: the steps of a turn, which record each context message
 // came from, what memory left out, the part of a prompt the one before
-// shares, and (lesson 8's runs) a tool's result sent as a pointer.
+// shares, (lesson 8's runs) a tool's result sent as a pointer, and (lesson
+// 10's) the tools each model call was offered.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { toolResult, userMessage } from "@xandreed/core/kernel"
@@ -12,6 +13,7 @@ import { withReminder, writeLastN } from "./lessons/your-first-agent/config-edit
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { tools } from "./lessons/tools/lesson.ts"
 import { pointers } from "./lessons/pointers/lesson.ts"
+import { skillsLesson } from "./lessons/skills/lesson.ts"
 import { yourOwnPlugin } from "./lessons/your-own-plugin/lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
@@ -129,6 +131,20 @@ describe("the Context tab's model", () => {
     expect(same(older)).toEqual([["system", true], ["user", true], ["assistant", true], ["tool", false], ["assistant", false], ["user", false]])
     // Sent the same way in both turns, the row is the prompt before's, and so is everything up to that prompt's end.
     expect(same(await boardAfter(["Look up tides.", "Thanks."], starters, pointers))).toEqual([["system", true], ["user", true], ["assistant", true], ["tool", true], ["assistant", false], ["user", false]])
+  })
+
+  test("each model call's tools are those its own prompt was offered, in order: a skill's tool from the call after the load (lesson 10)", async () => {
+    const starters = Object.fromEntries(skillsLesson.files.map((file) => [file.id, file.defaultText]))
+    const board = await boardAfter(["How far is 5 km in miles?", "What is 2 + 3?"], starters, skillsLesson)
+    const base = ["calculator", "remember", "recall", "loadSkill"]
+    // Turn 1 loads the units skill at its first call: the second and third calls are offered its tool, after the others.
+    expect(viewOf(board, 1).calls.map((call) => [call.call, call.tools])).toEqual([[1, base], [2, [...base, "convert"]], [3, [...base, "convert"]]])
+    // The next turn's calls are offered it from the first.
+    expect(viewOf(board, 2).calls.map((call) => call.tools)).toEqual([[...base, "convert"], [...base, "convert"]])
+    // The events log says how many, call by call.
+    expect(board.log.filter((entry) => entry.kind === "prompt").map((entry) => [entry.turn, /, (\d+) tools offered$/.exec(entry.title)?.[1]])).toEqual([[1, "4"], [1, "5"], [1, "5"], [2, "5"], [2, "5"]])
+    // A program that offers no tools has none to list.
+    expect(viewOf(await boardAfter(["hello"]), 1).calls.map((call) => call.tools)).toEqual([[]])
   })
 
   test("what was sent is compared with what is stored, by the call it answers: no words of a pointer are looked for", () => {

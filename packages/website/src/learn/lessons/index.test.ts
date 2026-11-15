@@ -9,7 +9,7 @@ import { loadEcho } from "../models/mock.ts"
 import { Chat } from "../page-chat.ts"
 import { LessonRuntime } from "../runtime.ts"
 import type { Trace } from "../runtime.ts"
-import { lessonOf } from "./index.ts"
+import { lessonOf, lessonSlugs } from "./index.ts"
 
 /** A lesson the site does not have: one file, `echo.ts`, a program that only answers "ok", over the page's chat. */
 const other: Lesson = {
@@ -54,7 +54,11 @@ describe("lesson definitions", () => {
     expect(Option.map(lessonOf("keep-the-conversation"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["store", "chat", "agent", "tools", "memory"]))
     expect(Option.map(lessonOf("pointers"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "tools", "agent", "chat"]))
     expect(Option.map(lessonOf("approvals"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["tools", "agent", "chat", "memory"]))
+    expect(Option.map(lessonOf("skills"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["skills", "agent", "tools", "chat", "memory"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
+    // The list of slugs is the track's order, and every slug in it finds its lesson.
+    expect(lessonSlugs).toEqual(["your-first-agent", "tools", "your-own-plugin", "sub-agents", "compaction", "render", "keep-the-conversation", "pointers", "approvals", "skills"])
+    expect(lessonSlugs.filter((slug) => Option.isNone(lessonOf(slug)))).toEqual([])
   })
 
   test("a second definition runs its own file with its own names and answers through the same runtime", async () => {

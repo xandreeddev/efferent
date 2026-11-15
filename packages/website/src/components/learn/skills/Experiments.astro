@@ -1,0 +1,36 @@
+---
+// Step 8: a button with an `exp` rewrites one of the learner's files and runs it again (see learn/playground.ts,
+// `data-exp`); the one without sends the lesson's fill, a message, and edits nothing (`data-fill`).
+const experiments = [
+  {
+    exp: "always-on", title: "Everything, always", button: "Offer every tool and send every instruction",
+    text: "The loop's toolkit is the whole one, skillSet.toolkit, and the system text holds both skills' instructions where the catalogue was. Press Clear context, then How far is 5 km in miles? Echo converts in two model calls where it took three: convert is offered from the first, and there is nothing to load. In Context, the first prompt is 105 tokens where it was 95, and its tools row lists all five: the instructions of both skills, and every tool, go with every request, used or not. The turn's last prompt is 130 tokens where it was 190. A skill that is used costs more loaded than always on: the prompt then holds the catalogue, the call that loaded the skill and that call's result. The page counts a prompt's messages, and the tool definitions sent with them are not in the count. Write a haiku about rain. is answered as any message: Echo follows the haiku skill from a load's result, and here nothing is loaded.",
+  },
+  {
+    exp: "no-catalogue", title: "Skills nobody was told about", button: "Leave the catalogue out",
+    text: "The system text is its first sentence alone. Press Clear context, then How far is 5 km in miles? Echo answers without loading: You said: \"How far is 5 km in miles?\". This is the start of the conversation. loadSkill was offered, and nothing in the prompt said what there is to load. The skills are still there: press Load units., which loads one by name, then the first chip again, and Echo converts.",
+  },
+  {
+    exp: undefined, title: "Call a tool that is not offered", button: "Send \"Use convert without loading.\"",
+    text: "This one edits nothing: reset the code first. Press Clear context, then the button. It sends a message that has Echo call convert though no step offered it, as a model that skips the load would. The call fails as a call of an unknown tool, and the tool row reads: convert({\"value\":5,\"from\":\"km\",\"to\":\"mi\"}) failed: \"Toolkit.convert.handle: Tool 'convert' not found. Available tools: calculator, remember, recall, loadSkill\". The toolkit that ran the call is the one that was offered. The model reads the failure, and the turn goes on. Press Load units., then the button again: the same call runs.",
+  },
+  {
+    exp: "no-handlers", title: "A skill with no handlers", button: "Give main no handlers for units",
+    text: "main no longer provides unitsLive. The page runs your file as JavaScript, so the build passes. Press Clear context, then How far is 5 km in miles? The load works, since loadSkill has its handler, and convert is offered from the next call. Its call fails when the tool runs: the tool row reads convert(…) failed, with an error in the JavaScript engine's own words, since there is no handler to run and untyped code is told nothing better. What is 2 + 3? still works. TypeScript refuses this program before it runs. The toolkit a step offers is typed as every tool it could hold, so the program must provide convert's handlers whether units is loaded or not, and the compiler says so: \"Type 'Handler<\"convert\">' is not assignable to type 'never'\".",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        {one.exp === undefined
+          ? <button class="btn" type="button" data-fill>{one.button}</button>
+          : <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>}
+      </li>
+    ))
+  }
+</ol>
