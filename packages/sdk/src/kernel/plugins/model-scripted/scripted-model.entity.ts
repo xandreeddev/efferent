@@ -9,7 +9,10 @@ export const ScriptedAnswer = Schema.Union([
   Schema.TaggedStruct("Answers", { pieces: Schema.Array(Schema.String) }),
   // Streams its pieces, if any, then asks for these tools, in order.
   Schema.TaggedStruct("Calls", { pieces: Schema.Array(Schema.String), calls: Schema.Array(Schema.Struct({ name: Schema.String, params: Schema.Json })) }),
-  Schema.TaggedStruct("Fails", {}),
+  // Fails. `retryable` makes the failure one worth another try (a provider's own error); with `pieces` the answer
+  // starts, hands on those pieces, and fails after them, as a stream cut mid-answer does. Neither: an unknown error,
+  // before anything.
+  Schema.TaggedStruct("Fails", { retryable: Schema.optionalKey(Schema.Boolean), pieces: Schema.optionalKey(Schema.Array(Schema.String)) }),
 ])
 export type ScriptedAnswer = typeof ScriptedAnswer.Type
 

@@ -71,3 +71,7 @@ dependency left out.
 ## What would reopen this
 
 - Tool calls run outside the turn that asked for them (background work), where no turn is open to give.
+
+*Amended 15 November 2026 (ADR 0015).* One exception to "a write that fails while the model answers fails the
+turn": `planned` says each attempt of a planned model call through `CurrentTurn`, and ignores a publish of
+it that fails, which it logs as a warning: the call goes on.

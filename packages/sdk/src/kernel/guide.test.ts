@@ -112,7 +112,7 @@ describe("docs/kernel.md", () => {
     return start < 0 ? undefined : dedent(lines.slice(start, start + quoted.length))
   }
 
-  test("quotes the lesson's program, a turn with tools, a plugin of your own, the session plugin's functions, the memories, the inbox, a host's resume, a host's test, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
+  test("quotes the lesson's program, a turn with tools, a plugin of your own, the session plugin's functions, the memories, the inbox, a host's resume, a host's test, a host's model calls under a plan, the plugin examples and the shared base exactly as the source has them, and every fence is pinned", async () => {
     const guide = await Bun.file(`${root}/docs/kernel.md`).text()
     const pins = Array.from(guide.matchAll(/<!-- pinned: ([^# ]+)(?:#([a-z-]+))? -->\n\n```ts\n([\s\S]*?)\n```/g))
     expect(pins.map((pin) => `${pin[1]}#${pin[2] ?? ""}`)).toEqual([
@@ -149,6 +149,9 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/durable.test.ts#resume",
       "packages/sdk/src/kernel/host-test.test.ts#program",
       "packages/sdk/src/kernel/host-test.test.ts#test",
+      "packages/sdk/src/kernel/model-plans.test.ts#plan",
+      "packages/sdk/src/kernel/model-plans.test.ts#loop",
+      "packages/sdk/src/kernel/model-plans.test.ts#test",
       "packages/sdk/src/kernel/swap.test.ts#swap",
     ])
     // Every fence of the document is one of the pinned quotes: two fence lines each.

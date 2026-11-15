@@ -251,6 +251,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     as the later call's, and now reads it as the first's: the two pair
     through one function. The memory kit's `pairs` check holds a memory
     to the case, and to which call is sent beside the result.
+  - A model call that fails is tried again, then handed to another model,
+    under Effect's `ExecutionPlan` (marked unstable in Effect 4.0.7),
+    applied to the stream the loop asks for with `planned(plan)`
+    (`docs/adr/0015-a-model-call-is-planned-and-an-answer-is-made-once.md`,
+    `docs/kernel.md`, "When the model fails"). Each step of the plan
+    provides a model; `retryable(error)` says which failures are worth
+    another try. An answer is made once: what a model sends before its first
+    piece of text or call is held, so an attempt that fails before then is
+    tried again or handed on, and a failure after it is final, `AnswerCut`.
+    An error a model reports in its stream before any content fails the
+    attempt with `ModelAnswerFailed`, so the plan hands the call on; one
+    after content cuts the answer. A step's `while` reads the model's
+    failures and `ModelAnswerFailed`.
+    Each attempt is said about its turn, live and never stored
+    (`plugin.model.attempt`, `attemptEvent`, `AttemptData`).
+    `scriptedModel`'s `Fails` can be worth another try (`retryable`) and
+    can come after some pieces of an answer (`pieces`).
   - Both stock memories send through `paired`, the memory
     kit's new `pairs` check holds a memory to it, and the estimate counts
     tool traffic (`messageText`). `scriptedModel` can ask for tools

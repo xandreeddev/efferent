@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0015-a-model-call-is-planned-and-an-answer-is-made-once.md`: a model call that fails is tried again and handed to another model by Effect's `ExecutionPlan`, applied to the stream the loop asks for with `planned(plan)`, never by a wrapper of `LanguageModel` (it cannot forward `streamText` without a cast); an answer is made once: parts before the first text or call are held, a failure after it is final (`AnswerCut`), for every step; an error part before content fails the attempt (`ModelAnswerFailed`), so Effect's providers' in-stream overloads are handed on, and one after content is an `AnswerCut`; a step's `while` reads the model's failures and `ModelAnswerFailed`, and `retryable(error)` is the kernel's; each attempt is said live about its turn (`plugin.model.attempt`), never stored; a publish that fails is logged; no kit
 - `docs/adr/0014-what-an-agent-knows-is-a-journal-of-its-own.md`: what an agent knows across conversations is a fact, a record (`plugin.facts.learned`, `plugin.facts.forgotten`) in a session of its own, the memory session, never a store beside the journal; two tools of the kernel's write it (`rememberFact`, `forgetFact`: each call a turn on that session, declaring `Sessions` and `CurrentTurn`), and a memory wrapper reads it (`withFacts({ limit })`: the facts that stand, added last for one request, framed as data, never stored); a fact is one line of 1 to 300 characters, refused and never cut; `relevant` is a pure function; a host on a durable store recovers the memory session; no kit
 - `docs/adr/0013-a-skill-is-loaded-by-a-tool-call.md`: a skill is a value (`defineSkill`), and a host's tools and skills are one value (`skills(base, ...skills)`), never a registry; the model reads a catalogue that never changes and loads a skill with the `loadSkill` tool, whose stored result is the instructions (`SentWhole`); nothing new is stored: `loadedOf(journal)` folds those results, and what a step offers (`offered(journal)`) is built on it, in load order, tools added and none taken away; a tool not offered is not run; the offered toolkit is typed as every tool it could hold, with nothing asserted; a memory that dropped a load's result gets a short note from `withReloadNote`, never the instructions again
 - `docs/adr/0012-a-tool-asks-through-a-contract.md`: a tool asks a person before it acts with `approve({ action, detail })` in its handler, through `Approval`, a contract the host provides; the answer is a record of the turn (`plugin.approval.decided`), and a standing approval is that record (`grantsOf`), never a store or a configuration; a refusal is the call's failed result, in fixed words; an answer that is no decision approves nothing; a policy is a wrapper (`autoApprove`) that never grants for good; no kit
@@ -123,6 +124,11 @@ checklist, the records have the reasons.
       type where its toolkit is called: one with a tool typed `Tool.Any` has lost what
       its tools declare, and `callTool` refuses it (`OwnTools`). A new claim of this kind gets a `type-level:`
       test in `composition.test.ts`.
+- [ ] A model call that may fail is asked under a plan with `planned(plan)`, between
+      the stream and `modelAnswer`: never `Stream.withExecutionPlan` alone, which tries a
+      step again after a word and repeats it, and never a retry of a turn or of an
+      answer's reader. What is worth another try is `retryable` or a host's own predicate
+      over typed failures.
 - [ ] What the UI shows is a record tagged `ui` that bears no message (a view), never a
       tool result the model reads in every later request; a client draws it by folding the
       journal, the same fold live and after a reload.

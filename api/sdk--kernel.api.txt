@@ -1,3 +1,4 @@
+class AnswerCut
 class Approval
 class CurrentTurn
 class Inbox
@@ -12,6 +13,7 @@ class Summarizer
 class SummaryFailed
 const APPROVAL_REFUSED
 const ApprovalRequest
+const AttemptData
 const CardView
 const DETAIL_LIMIT
 const DecidedData
@@ -52,6 +54,7 @@ const WindowDroppedData
 const WindowPressureData
 const approve
 const approveIn
+const attemptEvent
 const autoApprove
 const callTool
 const catalogue
@@ -81,6 +84,7 @@ const memoryWrapperConformance
 const messageText
 const modelAnswer
 const paired
+const planned
 const pointed
 const progressEvent
 const promptMessage
@@ -89,6 +93,7 @@ const readResult
 const relevant
 const rememberedFacts
 const resultText
+const retryable
 const scriptedModel
 const sessions
 const showView
@@ -131,6 +136,7 @@ interface WebStorageJournalOptions
 interface WindowOptions
 type ApprovalRefusal
 type ApprovalRequest
+type AttemptData
 type DecidedData
 type Decision
 type Fact
