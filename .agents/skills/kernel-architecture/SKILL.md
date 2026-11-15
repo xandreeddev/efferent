@@ -8,6 +8,7 @@ description: How the efferent kernel's parts compose — what core owns and what
 These records hold the decisions. Read them before you design; this skill is the
 checklist, the records have the reasons.
 
+- `docs/adr/0014-what-an-agent-knows-is-a-journal-of-its-own.md`: what an agent knows across conversations is a fact, a record (`plugin.facts.learned`, `plugin.facts.forgotten`) in a session of its own, the memory session, never a store beside the journal; two tools of the kernel's write it (`rememberFact`, `forgetFact`: each call a turn on that session, declaring `Sessions` and `CurrentTurn`), and a memory wrapper reads it (`withFacts({ limit })`: the facts that stand, added last for one request, framed as data, never stored); a fact is one line of 1 to 300 characters, refused and never cut; `relevant` is a pure function; a host on a durable store recovers the memory session; no kit
 - `docs/adr/0013-a-skill-is-loaded-by-a-tool-call.md`: a skill is a value (`defineSkill`), and a host's tools and skills are one value (`skills(base, ...skills)`), never a registry; the model reads a catalogue that never changes and loads a skill with the `loadSkill` tool, whose stored result is the instructions (`SentWhole`); nothing new is stored: `loadedOf(journal)` folds those results, and what a step offers (`offered(journal)`) is built on it, in load order, tools added and none taken away; a tool not offered is not run; the offered toolkit is typed as every tool it could hold, with nothing asserted; a memory that dropped a load's result gets a short note from `withReloadNote`, never the instructions again
 - `docs/adr/0012-a-tool-asks-through-a-contract.md`: a tool asks a person before it acts with `approve({ action, detail })` in its handler, through `Approval`, a contract the host provides; the answer is a record of the turn (`plugin.approval.decided`), and a standing approval is that record (`grantsOf`), never a store or a configuration; a refusal is the call's failed result, in fixed words; an answer that is no decision approves nothing; a policy is a wrapper (`autoApprove`) that never grants for good; no kit
 - `docs/adr/0011-a-long-result-is-sent-as-a-pointer.md`: a long tool result stays whole in the journal and is sent as its start and a pointer, by `pointed`, a function of the record alone (the same in every context, nothing stored); the pointer names the record's place, never the call's id; the model reads on with the kernel's `ReadResult` tool; a tool whose result must be sent whole says so with the `SentWhole` annotation, which `callTool` stores as `whole`; a memory points before it counts
@@ -97,6 +98,18 @@ checklist, the records have the reasons.
       one by one, so each keeps its type: never over `Object.values`, which gives
       `Tool.Any`. A skill and a base keep their own types where `skills` takes them
       (`OwnSkills`): never annotate one `Skill` or `Toolkit.Any`.
+- [ ] What an agent should know in its next conversation is a fact: the host merges
+      `factTools` into its toolkit, provides `factHandlers`, and wraps its memory with
+      `withFacts({ limit })`. Never keep facts in a list, a file or the system text, and
+      never append a fact to the conversation's own journal. A wrapper that reads what
+      the user asked reads the conversation's journal (`questionOf`), by the record's
+      name: never the context, where another wrapper's note is a user-role message too,
+      and never a message's role, which a plugin's record in the conversation may share. A note a wrapper adds
+      names no tool the same value does not also give. A plugin that needs a
+      journal of its own finds it in the store by its owner, first by creation
+      (`memorySession`), passes over one of another journal format, and lists again
+      after it creates one. A host whose store
+      outlives its process recovers that session with its conversation.
 - [ ] What a tool declares in `dependencies` is held by the compiler: a function that
       runs a model's call is typed over every tool of the toolkit (`ToolNeeds<Tools>`),
       never over the call's name, and gives its effect an explicit type. The model's

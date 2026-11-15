@@ -5,7 +5,7 @@ import type { LanguageModel } from "effect/ai"
 import { kernel } from "@xandreed/core/kernel"
 import type { Core, JournalStorage, OpenSession, Sessions } from "@xandreed/core/kernel"
 import type { Memory } from "./contracts/memory/memory.port.js"
-import { Approval, approve, callTool, CurrentTurn, defineSkill, inbox, inProcessJournal, sessions, skills, windowMemory } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, inbox, inProcessJournal, sessions, skills, windowMemory } from "./index.js"
 import type { Inbox, InvalidBudget, Skill, ToolNeeds } from "./index.js"
 import { runningTurn } from "./contracts/turn/running-turn.entity.functions.js"
 import { testTurn } from "./testing.js"
@@ -196,6 +196,26 @@ const anyBase: Toolkit.Any = plainTools
 // @ts-expect-error a base annotated `Toolkit.Any` has lost its tools
 const skilledOverAnyBase = () => skills(anyBase, careful)
 
+/*
+ * The tools that remember (ADR 0014) write to a session of their own, so they declare `Sessions`: a call of a
+ * toolkit that holds them needs it, and a program that calls them where there are no sessions does not compile.
+ */
+const remembering = Toolkit.merge(plainTools, factTools)
+/** What a call of it needs: the sessions the two tools write through, and nothing of the turn. Not `any`. */
+const rememberingNeeds: Same<ToolNeeds<Toolkit.Tools<typeof remembering>>, Sessions> = true
+const rememberingCall = (session: OpenSession) => Effect.flatMap(remembering, (toolkit) => callTool(toolkit, { id: "c1", name: "rememberFact", params: { fact: "A fact." } }, session))
+
+const rememberingComplete = (session: OpenSession, store: Layer.Layer<Sessions>) => {
+  const call: Effect.Effect<unknown, unknown> = rememberingCall(session).pipe(Effect.provide(Layer.mergeAll(askingLive, factHandlers, store)))
+  return call
+}
+
+const rememberingWithoutSessions = (session: OpenSession) => {
+  // @ts-expect-error the tools that remember declare `Sessions`: nothing here provides it
+  const call: Effect.Effect<unknown, unknown> = rememberingCall(session).pipe(Effect.provide(Layer.mergeAll(askingLive, factHandlers)))
+  return call
+}
+
 describe("a stack of layers", () => {
   test("type-level: a stack missing a part, or with a part below what it needs, does not compile where its type is annotated", () => {
     // The checks are the compiler's: this file compiles only because each incomplete stack is an error, and the complete one is not.
@@ -205,6 +225,11 @@ describe("a stack of layers", () => {
   test("type-level: what a tool declares is held where its handler is written, where it is called by hand and where callTool runs it", () => {
     expect([withApproval, withoutApproval, undeclared, byHand, byHandInItsTurn, widened, named, mixed, none]).toHaveLength(9)
     expect([needsApproval, needsNothing, widenedIsAny, namedIsAny, mixedIsAny]).toEqual([true, true, true, true, true])
+  })
+
+  test("type-level: a program that calls the tools that remember provides the sessions they write through", () => {
+    expect([rememberingComplete, rememberingWithoutSessions]).toHaveLength(2)
+    expect(rememberingNeeds).toBe(true)
   })
 
   test("type-level: a host with skills provides what a skill's tool declares and that skill's handlers, loaded or not", () => {
