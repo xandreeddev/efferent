@@ -278,6 +278,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 9, "Approvals", at `/learn/approvals`. `tools.ts` is
+  lesson 2's with one tool more, `forget`, which deletes every note and
+  asks first: it declares `dependencies: [Approval, CurrentTurn]`, and
+  its handler starts with `approve({ action, detail })`. `agent.ts` is
+  the base program with one module more in `main`, `approvalOn(pane)`:
+  the page is who a tool asks. The question is a row of the chat with
+  three buttons (Approve, Refuse, Always approve the action), there
+  while it waits and gone when it is answered or dropped by Stop, a
+  rebuild or Clear context; the status chip says a question waits. The
+  answer, `plugin.approval.decided`, is drawn in the chat as a note from
+  its record, live and when the chat is drawn again. The page walks a
+  refusal (Echo says nothing was deleted), a yes for good (not asked
+  again, still approved after a rebuild, asked again in a new
+  conversation) and where the record sits in the journal. Echo sends
+  "forget", "delete" or "clear my notes" to `forget`, ahead of the rule
+  that sends a message about notes to `recall`, and answers a refused
+  `forget` in a sentence of its own. Experiments put a policy before the
+  person (`autoApprove`: the record says `Allowed`), give `main` no
+  approval (the page runs it and the call fails with "Service not
+  found"; TypeScript refuses the program, which a test pins by the
+  compiler's words), ask in the loop before every call (`approveIn`:
+  `forget` is asked for twice) and take the question out of the tool.
+  Lesson 8's page links here. Every lesson's `evaluate` hands its
+  program over through one function, `programOf`, where each had its own
+  copy of the same type assertion. No published package changes.
 - Docs site: each lesson's typed program states that it needs nothing
   more, so the learn track's type check refuses a program whose `main` was
   not given a module it asks for. Lesson 4 has the test: without the helper

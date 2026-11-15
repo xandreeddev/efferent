@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Option, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
 import { Seq, toolResult, TurnNumber } from "@xandreed/core/kernel"
-import { pointed, promptMessage } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, pointed, promptMessage } from "@xandreed/sdk/kernel"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
@@ -780,6 +780,57 @@ describe("Echo's rules for long results (lesson 8)", () => {
   test("a \"read more\" that steers a turn after its lookup's pointer arrived reads on in the same turn", () => {
     const sent = Prompt.make([{ role: "user", content: "Look up tides." }, call("c1", "lookup", { topic: "tides" }), result("c1", "lookup", pointerAt(4)), { role: "user", content: "Read more." }])
     expect(echoStep(sent, offered)).toEqual(reading(4, 80))
+  })
+})
+
+describe("Echo's rules for a tool that asks (lesson 9)", () => {
+  const every = ["calculator", "remember", "recall", "forget"]
+  const asked = (text: string, offered: ReadonlyArray<string> = every) => echoStep(Prompt.make([{ role: "user", content: text }]), offered)
+  const forgetting = { text: "Let me work that out.", calls: [{ name: "forget", params: {} }] }
+  const recalling = { text: "Let me work that out.", calls: [{ name: "recall", params: {} }] }
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+  /** A turn that asked for `forget` and read this result. */
+  const forgot = (value: unknown, isFailure = false, name = "forget") => Prompt.make([{ role: "user", content: "Forget my notes." }, call("c1", name, {}), result("c1", name, value, isFailure)])
+
+  test("\"forget\", \"delete\" or \"clear\" my notes, the notes or all notes goes to forget, with no parameters", () => {
+    // forget is the one tool offered that takes a message about notes: without the rule, none of these gets a call.
+    const offered = ["calculator", "remember", "forget"]
+    for (const text of ["Forget my notes.", "Delete my notes.", "Clear my notes.", "Please forget the notes.", "delete all notes", "Clear all my notes, please.", "Forget all the notes."]) {
+      expect({ text, step: asked(text, offered) }).toEqual({ text, step: forgetting })
+    }
+  })
+
+  test("the rule comes before the one that sends any message about notes to recall: with both tools offered, the message goes to forget", () => {
+    expect(asked("Forget my notes.")).toEqual(forgetting)
+    expect(asked("Delete the notes.")).toEqual(forgetting)
+    expect(asked("Clear all notes.")).toEqual(forgetting)
+    // A message about notes that asks to delete none is still a question: recall.
+    expect(asked("What are my notes?")).toEqual(recalling)
+    expect(asked("Did you forget about my notes?")).toEqual(recalling)
+    expect(asked("Read me the notes.")).toEqual(recalling)
+  })
+
+  test("where forget is not offered, lesson 2's rule stands: the same message goes to recall", () => {
+    expect(asked("Forget my notes.", ["calculator", "remember", "recall"])).toEqual(recalling)
+    expect(asked("Forget my notes.", ["calculator", "remember"]).calls).toEqual([])
+  })
+
+  test("a forget that failed with the kernel's refusal, word for word, is answered as not approved: nothing was deleted", () => {
+    expect(APPROVAL_REFUSED).toBe("The user did not approve this action, so it was not done. Do not try it again unless the user asks for it.")
+    expect(echoStep(forgot(APPROVAL_REFUSED, true), every)).toEqual({ text: "I did not delete anything: you did not approve it.", calls: [] })
+  })
+
+  test("any other result of forget is answered as the tool's: what it deleted, another failure, or the refusal's words in a result that did not fail", () => {
+    expect(echoStep(forgot("Deleted 2 notes."), every)).toEqual({ text: 'The tool answered: forget says "Deleted 2 notes.".', calls: [] })
+    expect(echoStep(forgot("Service not found: @xandreed/sdk/kernel/Approval", true), every)).toEqual({ text: 'The tool answered: forget failed: "Service not found: @xandreed/sdk/kernel/Approval".', calls: [] })
+    // The refusal's words with one more: not the kernel's constant, so not read as a refusal.
+    expect(echoStep(forgot(`${APPROVAL_REFUSED} Sorry.`, true), every).text).toBe(`The tool answered: forget failed: ${JSON.stringify(`${APPROVAL_REFUSED} Sorry.`)}.`)
+    expect(echoStep(forgot(APPROVAL_REFUSED), every).text).toBe(`The tool answered: forget says ${JSON.stringify(APPROVAL_REFUSED)}.`)
+  })
+
+  test("another tool refused in the same words is answered as that tool's failure: the sentence is forget's alone", () => {
+    expect(echoStep(forgot(APPROVAL_REFUSED, true, "calculator"), every).text).toBe(`The tool answered: calculator failed: ${JSON.stringify(APPROVAL_REFUSED)}.`)
   })
 })
 

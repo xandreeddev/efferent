@@ -3,8 +3,10 @@
 // where the learner's program takes them one at a time, so the composer
 // stays open while the agent answers: what you send then waits its turn.
 // The rows it draws are the chat model's (chat-model.ts): `render` is given
-// them all each time and changes only what changed.
-import { NO_TEXT } from "../chat-model.ts"
+// them all each time and changes only what changed. A question a tool asks
+// before it acts is a row with three buttons, which answer it.
+import type { Decision } from "@xandreed/sdk/kernel"
+import { answersTo, NO_TEXT } from "../chat-model.ts"
 import type { ChatRow } from "../chat-model.ts"
 import { renderMarkdown } from "../markdown.ts"
 
@@ -19,7 +21,7 @@ export interface ChatPane {
   readonly hasMessages: () => boolean
 }
 
-export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => void; sendThree: () => void; stop: () => void; newChat: () => void }): ChatPane => {
+export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => void; sendThree: () => void; stop: () => void; newChat: () => void; decide: (id: string, decision: Decision) => void }): ChatPane => {
   const q = <T extends HTMLElement>(selector: string) => root.querySelector<T>(selector)!
   const messages = q("[data-messages]")
   const scroller = q("[data-scroll]")
@@ -96,6 +98,31 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
     if (on) item.dataset[name] = ""
     else delete item.dataset[name]
   }
+  /**
+   * A question that waits for the person: what the tool would do, in its words, and the three answers. "Always"
+   * names the action, since a standing yes covers the action, not this one detail. A press answers once.
+   */
+  const drawQuestion = (item: HTMLElement, detail: string, ask: { readonly id: string; readonly action: string }) => {
+    const text = document.createElement("p")
+    text.className = "ask-detail"
+    text.textContent = detail
+    const actions = document.createElement("div")
+    actions.className = "msg-actions"
+    actions.append(...answersTo(ask.action).map(({ decision, label }, index) => {
+      const button = document.createElement("button")
+      button.type = "button"
+      button.className = index === 0 ? "btn btn-primary" : "btn"
+      button.dataset.decide = decision._tag
+      button.textContent = label
+      button.addEventListener("click", () => {
+        actions.querySelectorAll("button").forEach((one) => { one.disabled = true })
+        hooks.decide(ask.id, decision)
+      })
+      return button
+    }))
+    item.replaceChildren(text, actions)
+    if (following) scrollDown()
+  }
   /** The rows drawn, by the row's id: its element, and what of the row it shows. */
   const drawn = new Map<number, { readonly item: HTMLElement; readonly shown: string }>()
   const draw = (item: HTMLElement, row: ChatRow) => {
@@ -109,6 +136,10 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
       // An answer not yet written is an empty element: the caret shows in it.
       if (row.live === true && row.text.length === 0) { pending.delete(item); item.replaceChildren() }
       else setReply(item, row.text.length > 0 ? row.text : NO_TEXT)
+      return
+    }
+    if (row.kind === "ask" && row.ask !== undefined) {
+      drawQuestion(item, row.text, row.ask)
       return
     }
     item.textContent = row.text
@@ -128,7 +159,7 @@ export const mountChat = (root: HTMLElement, hooks: { send: (text: string) => vo
       drawn.delete(id)
     }
     for (const row of rows) {
-      const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined])
+      const shown = JSON.stringify([row.kind, row.text, row.live, row.waiting, row.dropped, row.failed, row.seq === undefined, row.ask?.id, row.ask?.action])
       // (Whether a waiting message was taken off the queue changes nothing on screen until it is stored or dropped.)
       const found = drawn.get(row.id)
       if (found?.shown === shown) continue

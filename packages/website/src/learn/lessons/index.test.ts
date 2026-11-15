@@ -53,6 +53,7 @@ describe("lesson definitions", () => {
     expect(Option.map(lessonOf("compaction"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "summarizer", "agent", "tools", "chat"]))
     expect(Option.map(lessonOf("keep-the-conversation"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["store", "chat", "agent", "tools", "memory"]))
     expect(Option.map(lessonOf("pointers"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "tools", "agent", "chat"]))
+    expect(Option.map(lessonOf("approvals"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["tools", "agent", "chat", "memory"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
   })
 

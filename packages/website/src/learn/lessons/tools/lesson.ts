@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
 import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"
-import { run, runStatements } from "../../evaluate.ts"
+import { programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { readSystem, writeSystem } from "../your-first-agent/config-edit.ts"
@@ -35,7 +35,7 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
       if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
       return Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, parts.watchMemory(memory as Layer.Layer<Memory>), tools, toolsLive)), (main) =>
         // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
-        Effect.isEffect(main) ? Result.succeed(main as Effect.Effect<unknown, unknown>) : Result.fail("agent.ts did not run: main is not an Effect. It should be the program, given its modules with Effect.provide."))
+        programOf(main))
     })
   })
 

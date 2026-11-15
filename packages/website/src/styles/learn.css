@@ -632,6 +632,17 @@ body.app {
   gap: 0.4rem;
   margin-top: 0.5rem;
 }
+/* A question a tool asks before it acts (lesson 9): what it would do, and the three answers. */
+.pg-msg.ask {
+  justify-self: stretch;
+  max-width: none;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-soft));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  white-space: normal;
+}
+.pg-msg.ask .ask-detail {
+  margin: 0;
+}
 .pg-msg.note {
   justify-self: center;
   max-width: none;

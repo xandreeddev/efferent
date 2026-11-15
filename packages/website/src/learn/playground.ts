@@ -6,7 +6,7 @@ import { Option } from "effect"
 import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { progressEvent, viewEvent } from "@xandreed/sdk/kernel"
-import { continues, dropWaiting, emptyChat, hear, said, sent, stored, waitingCount, withoutFailure } from "./chat-model.ts"
+import { continues, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
@@ -72,6 +72,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     sendThree: () => send(lesson.three),
     stop: () => void stop(),
     newChat: () => void newConversation(),
+    // A press on a question's button answers it: the tool that asked goes on, or is refused.
+    decide: (id, decision) => state.runtime?.decide(id, decision),
   })
 
   // ── status ──────────────────────────────────────────────────────────────
@@ -88,6 +90,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (!state.model) return setChip("pick a model", "idle")
     if (state.building) return setChip("building…", "idle")
     if (!state.alive) return setChip("program stopped", "error")
+    // A tool asked before it acts: the turn is open, and waits for the person, not for the model.
+    if (questionsWaiting(board) > 0) return setChip(WAITING_FOR_ANSWER, "ready")
     setChip(busy() ? "answering" : "waiting for a message", "ready")
   }
 

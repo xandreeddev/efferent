@@ -10,13 +10,15 @@
 // the kernel's `modelAnswer` provides it, and the summary memory does around
 // its summarizer. A program that calls the model by hand (lessons 1 and 2)
 // provides none, and the page falls back to the session memory was last
-// asked about.
-import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Queue, Result, Scope, Stream } from "effect"
+// asked about. A tool that asks before it acts (lesson 9) asks the page:
+// its question is traced, waits for `decide`, and is traced again when it
+// no longer waits, answered or dropped with its turn.
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Result, Scope, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, StoredEvent } from "@xandreed/core/kernel"
-import { CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
-import type { KeyValueStore } from "@xandreed/sdk/kernel"
+import { Approval, CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
+import type { Decision, KeyValueStore } from "@xandreed/sdk/kernel"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, PageParts, Sources } from "./lesson.ts"
 import type { LoadedModel } from "./models/types.ts"
@@ -117,6 +119,10 @@ export type Trace =
    * session, and its journal as it was then, a turn closed by `resume` included.
    */
   | { readonly _tag: "Showing"; readonly session: string; readonly journal: ReadonlyArray<StoredEvent> }
+  /** A tool asked before it acts (lesson 9): the question waits for the person, under an id `decide` answers it by. */
+  | { readonly _tag: "Asking"; readonly id: string; readonly action: string; readonly detail: string }
+  /** A question no longer waits: it was answered, or dropped with the turn that asked (Stop, a rebuild, Clear context). */
+  | { readonly _tag: "Asked"; readonly id: string }
 
 export type BuildResult =
   | { readonly _tag: "Built" }
@@ -175,6 +181,11 @@ export class LessonRuntime {
   private asked: string | undefined
   private last: Sources = {}
   private building: Promise<unknown> = Promise.resolve()
+
+  /** The questions that wait for the person, by id: each is completed by `decide`, and taken out when it no longer waits. */
+  private readonly questions = new Map<string, Deferred.Deferred<Decision>>()
+  /** How many questions were ever asked: the next one's id. */
+  private questionCount = 0
 
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
@@ -301,6 +312,12 @@ export class LessonRuntime {
       fail: (error) => Effect.suspend(() => emit({ _tag: "Failed", turn: this.lastTurn, message: textOf(error) })),
       status: (text) => Effect.suspend(() => emit({ _tag: "Status", turn: this.lastTurn, text })),
     })
+    /** A question that waits from here on, under a new id. */
+    const waiting = (answer: Deferred.Deferred<Decision>): string => {
+      const id = `question-${++this.questionCount}`
+      this.questions.set(id, answer)
+      return id
+    }
     const inner = model.model
     // With no turn provided: the session memory was last asked about, else the chat's, and the turn open in it.
     const guessed = () => {
@@ -335,6 +352,24 @@ export class LessonRuntime {
       chatOn: () => Layer.effect(Chat, Effect.gen(function* () { yield* Sessions; return chat })),
       model: Layer.succeed(LanguageModel.LanguageModel, watched),
       pane: {},
+      // Who a tool asks: the person, through the page. The question is announced and waits for `decide`. However the
+      // wait ends (an answer, or the turn dropped by Stop, a rebuild or Clear context), the question is taken back
+      // and the page is told, so no question is left on screen that nothing waits for.
+      approvalOn: () => Layer.succeed(Approval, Approval.of({
+        ask: (request) => Effect.acquireUseRelease(
+          Effect.gen(function* () {
+            const answer = yield* Deferred.make<Decision>()
+            const id = waiting(answer)
+            yield* emit({ _tag: "Asking", id, action: request.action, detail: request.detail })
+            return { id, answer }
+          }),
+          ({ answer }) => Deferred.await(answer),
+          ({ id }) => Effect.suspend(() => {
+            this.questions.delete(id)
+            return emit({ _tag: "Asked", id })
+          }),
+        ),
+      })),
       watchMemory: (layer) => Layer.effect(Memory, Effect.map(Effect.gen(function* () { return yield* Memory }), (memory) => Memory.of({
         context: (session) => Effect.tap(memory.context(session), (messages) =>
           Effect.flatMap(Effect.orElseSucceed(session.journal, () => []), (journal) => {
@@ -403,6 +438,17 @@ export class LessonRuntime {
   /** Send a message: it waits in the chat's queue until the program takes it. */
   send(text: string): void {
     Queue.offerUnsafe(this.queue, text)
+  }
+
+  /**
+   * Answer a question that waits (`Asking`): the tool that asked goes on, or is refused. A question is answered
+   * once: an id nothing waits under, unknown or already answered, does nothing.
+   */
+  decide(id: string, decision: Decision): void {
+    const question = this.questions.get(id)
+    if (question === undefined) return
+    this.questions.delete(id)
+    Effect.runSync(Deferred.succeed(question, decision))
   }
 
   /** Stop: the messages still waiting are dropped, the model is told to stop, and the program starts again over the same code. Returns the dropped messages. */

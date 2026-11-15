@@ -1,0 +1,33 @@
+---
+// Step 8: each button rewrites one of the learner's files and runs it again (see learn/playground.ts, `data-exp`).
+const experiments = [
+  {
+    id: "auto-approve", title: "A policy before the person", button: "Allow every request by policy",
+    text: "main gives the program autoApprove(() => true)(approvalOn(pane)): a wrapper of the page's approval that answers every request itself. Press Clear context, then Remember to buy milk., Remember to call Ana. and Forget my notes. Nobody is asked. forget runs, and the chat's note reads \"Allowed by policy: Delete all 2 notes.\" The record says Allowed, so the journal tells a policy's yes from a person's. A policy never approves for good: each call is allowed, and recorded, on its own.",
+  },
+  {
+    id: "no-approval", title: "Nobody to ask", button: "Give main no approval",
+    text: "main no longer provides an approval. The page runs your file as JavaScript, so the build passes. Press Clear context, then the two Remember chips and Forget my notes. The call fails when the tool runs, where it would ask: forget failed: \"Service not found: @xandreed/sdk/kernel/Approval\". Nothing is deleted: What are my notes? still lists both. TypeScript refuses this program before it runs. forget declares Approval, so the program that calls it needs one, and the compiler says so: \"Type 'Approval' is not assignable to type 'never'\".",
+  },
+  {
+    id: "ask-in-loop", title: "Ask in the loop", button: "Ask before every call",
+    text: "The loop asks before it runs any call, with approveIn(session, …), and stores a refusal as the call's result itself. Press Clear context, then type What is 12 * 3? The calculator is asked for too: \"Call calculator with {\"a\":12,\"op\":\"*\",\"b\":3}.\" Approve it, press Remember to buy milk. and approve that. Now Forget my notes. is asked for twice: \"Call forget with {}.\" by the loop, then \"Delete all 1 notes.\" by the tool. The loop knows only the call. The tool knows what it is about to do. Ask in one place: in the tool, where the action is, or in the loop, for every tool alike.",
+  },
+  {
+    id: "no-ask", title: "Take the question out", button: "Remove the approve line",
+    text: "forget's handler loses its first line. Press Clear context, then the two Remember chips and Forget my notes. There is no question and no record of an answer: the notes are deleted on the model's word, and Echo answers forget says \"Deleted 2 notes.\"",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

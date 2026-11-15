@@ -4,6 +4,7 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
+import { APPROVAL_REFUSED } from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
@@ -164,12 +165,17 @@ interface ResultPart {
   readonly result: unknown
 }
 
+/** What Echo says when `forget` was refused (lesson 9): the person did not approve it, so nothing was deleted. */
+const NOT_APPROVED = "I did not delete anything: you did not approve it."
+
 /**
- * What Echo says of one result of `lookup` or `readResult` (lesson 8): the first sentence of what it was sent (of a
- * part read on, the first whole one), and how much of the whole that is. Nothing for any other tool's result, or a
- * failed one: those are answered as the tool's, as before.
+ * What Echo says of one result in words of its own. Of `lookup` or `readResult` (lesson 8): the first sentence of
+ * what it was sent (of a part read on, the first whole one), and how much of the whole that is. Of a `forget` that
+ * failed with the kernel's refusal, word for word (lesson 9): that nothing was deleted. Nothing for any other
+ * tool's result, or any other failure: those are answered as the tool's, as before.
  */
 const readingOf = (part: ResultPart): string | undefined => {
+  if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
   if (part.name === "readResult") {
     const page = pageIn(part.result)
@@ -227,7 +233,11 @@ const READ_LENGTH = 400
  * honeybees goes to lookup, and its result is answered with the first sentence Echo was sent and how much of the
  * whole that is (a pointer, or the whole article); "read more", "read on" or "go on" calls readResult from the
  * latest place a prompt gives (the last part read, else the last pointer), 400 characters at a time, and says so
- * when the tool is not offered, when nothing was cut short, or when the last part reached the end.
+ * when the tool is not offered, when nothing was cut short, or when the last part reached the end. Lesson 9's
+ * rules: "forget", "delete" or "clear" my notes, the notes or all notes goes to forget, ahead of the rule that
+ * sends any message about notes to recall; a forget that failed with the kernel's refusal (`APPROVAL_REFUSED`,
+ * word for word) is answered "I did not delete anything: you did not approve it.", and any other result of it
+ * as the tool's.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
@@ -239,7 +249,8 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const parts = prompt.content.slice(first, at + 1).flatMap((message) => (message.role === "tool" ? message.content : []))
     const helped = parts.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
     if (helped.length > 0) return `The helper answered: ${helped.join(" ")}`
-    // A result of lookup or readResult is answered in its own words (lesson 8); any other, and a failed one, as the tool's.
+    // A result of lookup or readResult (lesson 8) and a refused forget (lesson 9) are answered in words of their own;
+    // any other, and any other failure, as the tool's.
     const results = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
     const read = results.flatMap((part) => readingOf(part) ?? [])
     const all = results.flatMap((part) => (readingOf(part) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
@@ -267,6 +278,9 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     if (topic !== null && offered.includes("lookup")) return [{ name: "lookup", params: { topic: topic[1]?.toLowerCase() ?? "" } }]
     // "Read more", "read on", "go on": the next part of the result last cut short, from where the last part stopped.
     if (readsOn(asked) && place?._tag === "At" && offered.includes("readResult")) return [{ name: "readResult", params: { result: place.result, from: place.from, length: READ_LENGTH } }]
+    // "Forget my notes", "delete the notes", "clear all notes": forget, which asks a person before it deletes. It
+    // goes before the rule under it, which takes any message about notes for a question.
+    if (/\b(?:forget|delete|clear)\s+(?:all\s+(?:(?:my|the)\s+)?|my\s+|the\s+)notes\b/i.test(asked) && offered.includes("forget")) return [{ name: "forget", params: {} }]
     if (/\b(notes?|what did i ask you to remember)\b/i.test(asked) && offered.includes("recall")) return [{ name: "recall", params: {} }]
     const sum = /(-?\d+(?:\.\d+)?)\s*([-+*x×/÷])\s*(-?\d+(?:\.\d+)?)/.exec(asked)
     if (sum !== null && offered.includes("calculator")) return [{ name: "calculator", params: { a: Number(sum[1]), op: OPS[sum[2] ?? "+"] ?? "+", b: Number(sum[3]) } }]
