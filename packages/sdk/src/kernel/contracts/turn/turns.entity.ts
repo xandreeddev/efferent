@@ -1,5 +1,5 @@
 import type { Option, Schema } from "effect"
-import type { AssistantMessageData, Seq, StoredEvent, ToolCall, TurnEndedData, TurnNumber } from "@xandreed/core/kernel"
+import type { AssistantMessageData, Seq, SessionId, StoredEvent, ToolCall, TurnEndedData, TurnNumber } from "@xandreed/core/kernel"
 
 /**
  * A user's message as a journal holds it: its text, and the place of its record.
@@ -9,6 +9,8 @@ import type { AssistantMessageData, Seq, StoredEvent, ToolCall, TurnEndedData, T
 export interface MessageRead {
   readonly seq: Seq
   readonly text: string
+  /** The session that sent the message, when it was not the person: a background task's report (ADR 0018). */
+  readonly from?: SessionId
 }
 
 /**

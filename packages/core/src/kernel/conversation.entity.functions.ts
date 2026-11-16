@@ -2,7 +2,7 @@ import { Option, Schema } from "effect"
 import { stored } from "./event.entity.functions.js"
 import type { StoredDraft } from "./event.entity.js"
 import { assistantMessageEvent, toolResultEvent, userMessageEvent } from "./conversation.entity.js"
-import type { AssistantMessageData } from "./conversation.entity.js"
+import type { AssistantMessageData, UserMessageData } from "./conversation.entity.js"
 import { ToolCallId } from "./ids.entity.js"
 
 /** A tool call as a model's stream part names it: its id, the tool, and the parameters it sent. */
@@ -20,8 +20,11 @@ const fromText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
  */
 const jsonOf = (value: unknown): Schema.Json => Option.getOrElse(fromText(JSON.stringify(value) ?? "null"), () => null)
 
-/** `conversation.user.message`: the user's text, for `session.append`. */
-export const userMessage = (text: string): StoredDraft => stored(userMessageEvent, {}, { message: { _tag: "User", text } })
+/**
+ * `conversation.user.message`: the user's text, for `session.append`. `from` names the session that sent it when it
+ * is not the person's: a background task's report (ADR 0018).
+ */
+export const userMessage = (text: string, data: UserMessageData = {}): StoredDraft => stored(userMessageEvent, data, { message: { _tag: "User", text } })
 
 /**
  * `conversation.assistant.message`: the model's text, and the tools it asked for when it asked for any, for
