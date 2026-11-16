@@ -416,6 +416,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: when the GPU stops running a model in the browser, the chat
+  says why in plain words (one request gave the model more new text to read
+  at once than the GPU finishes in time, as a long message or a whole
+  conversation read again does on some laptop GPUs) and what to do: pick
+  a model that runs on the processor, which no GPU driver stops, or Clear
+  context, since the same model picked again would read the whole
+  conversation again. The old
+  message told the learner to pick the same model again.
+
 - Docs site: Lesson 13, "Evals", at `/learn/evals`, between "Test your
   agent" and "When the model fails". A check says the program did the
   right thing once; an eval runs it on many tasks, many times, and says

@@ -34,7 +34,7 @@ Two sessions now call the model at once: the chat's turn and a helper's. On Echo
 
 With Qwen2.5 0.5B on the GPU, in one run on our machine, no task was started: asked *In the background, what is 6 * 7?* it answered *6 * 7 = 42* itself, and to *Start a task: work out 12 * 3.* and to a message naming `startTask` it answered with a question. A model this small seldom calls a tool; the lesson's walk is on Echo, which calls them by rule.
 
-We then started tasks from the program instead, with Qwen doing the work. A helper's answer and a chat answer took turns on the GPU and both came back whole, and a task cancelled while its helper was writing stopped and reported nothing, the next chat answer whole. In a longer run the GPU was lost once the chat's turn sent its long history to the model afresh, after a helper's call; the page fell back to Echo. That loss is the model's on this GPU, not the tasks': it happens in other lessons too, when a long conversation is sent to the model anew.
+We then started tasks from the program instead, with Qwen doing the work. A helper's answer and a chat answer took turns on the GPU and both came back whole, and a task cancelled while its helper was writing stopped and reported nothing, the next chat answer whole. In a longer run the GPU was lost: after a helper's call, the chat's turn made the model read its long history afresh, more new text in one request than this laptop GPU finishes in the time its driver allows (about 570 tokens for Qwen here). The page fell back to Echo and said so. That limit is the GPU's, not the tasks': a long message does the same in any lesson.
 
 </Step>
 
