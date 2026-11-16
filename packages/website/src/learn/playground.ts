@@ -110,7 +110,11 @@ function boot(root: HTMLElement, lesson: Lesson) {
   })
 
   // ── status ──────────────────────────────────────────────────────────────
-  const setChip = (text: string, kind: "idle" | "ready" | "error") => { chip.textContent = text; chip.dataset.state = kind }
+  // Called after every trace the page hears: a chip already showing this is left alone.
+  const setChip = (text: string, kind: "idle" | "ready" | "error") => {
+    if (chip.textContent !== text) chip.textContent = text
+    if (chip.dataset.state !== kind) chip.dataset.state = kind
+  }
   const refresh = () => {
     const ready = Boolean(state.runtime && state.model && state.alive && !state.building && !checking())
     chat.setState({
@@ -121,7 +125,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     models.setBusy(state.loading || busy() || checking())
     // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
     // It is off while a model loads too: the load lets go of the model a check would run on.
-    aloneButtons.forEach((button) => { button.disabled = checking() || state.loading || busy() || waitingCount(board) > 0 })
+    const aloneOff = checking() || state.loading || busy() || waitingCount(board) > 0
+    aloneButtons.forEach((button) => { if (button.disabled !== aloneOff) button.disabled = aloneOff })
     if (state.loading) return setChip("loading model…", "idle")
     if (!state.runtime) return setChip("starting…", "idle")
     if (!state.model) return setChip("pick a model", "idle")

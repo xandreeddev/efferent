@@ -586,6 +586,26 @@ const memoryTurnOf = (board: Board, turn: number): TurnView => {
   return { turn, restored: false, readBack: restoredWords(board.readBack, 0), closed, steps, calls: [{ call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal, attempts: [], answeredBy: Option.none() }] }
 }
 
+/**
+ * Whether a trace changes what the Context tab draws, given the board before it (none when its session is new). A piece
+ * streamed after its call's first changes only a count of pieces: the chat draws the words, and the count is drawn once
+ * the answer is stored. So the tab paints on a call's first piece and not on the later ones, and the work of a turn
+ * does not grow with the answer's length. A second call's first piece paints, as the first call's did.
+ */
+export const paintsOn = (before: Option.Option<Board>, trace: Trace): boolean =>
+  trace._tag !== "Piece" || Option.match(before, { onNone: () => true, onSome: (board) => (board.pieces.get(trace.turn)?.at(-1) ?? 0) === 0 })
+
+/**
+ * The conversation's records a turn stored after the context of `call` was built, once the turn has closed and only
+ * for its last call, of that turn's own records: the answer, not a later turn's. The Memory column lists them
+ * under that context, so what the turn added shows as it ends. They are not part of that context: memory builds the
+ * next request's from the journal again. A turn read back from the journal has no context of its own, so none.
+ */
+export const storedAfter = (view: TurnView, call: CallView): ReadonlyArray<JournalRow> =>
+  Option.isSome(view.closed) && !view.restored && call.call === view.calls.length
+    ? call.journal.filter((row) => row.ofTurn && row.use === "later" && row.tags.includes("conversation"))
+    : []
+
 export const viewOf = (board: Board, turn: number): TurnView => {
   if (board.kind === "memory") return memoryTurnOf(board, turn)
   // A session that is not the chat's (a helper's, or another of the program's own): its words stay out of the chat.
@@ -713,8 +733,15 @@ export const viewOf = (board: Board, turn: number): TurnView => {
           ? "A task's words stay out of the chat: its answer goes back to the chat's queue as a report, answered in a turn of its own."
           : "This session is not the chat's: what its model says is not drawn in the chat.",
     } : {
-      id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt", happened: streamed > 0 || Option.isSome(answer), seqs: [],
-      detail: streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : Option.isSome(answer) ? "The model streamed no text: it only called tools." : "Each piece goes to the chat as it arrives.",
+      id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt",
+      // Streaming until the answer is stored, so the step stays lit while its words arrive; in a closed turn an answer
+      // cut after its first words (lesson 14) streamed too.
+      happened: Option.isSome(answer) || (streamed > 0 && Option.isSome(ended)), seqs: [],
+      // The count is said once the answer is stored: the tab does not paint on each piece (`paintsOn`), so a count drawn
+      // while it streams would stay at its first.
+      detail: Option.isSome(answer)
+        ? streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : "The model streamed no text: it only called tools."
+        : streamed > 0 ? "The answer is streaming to the chat, piece by piece." : "Each piece goes to the chat as it arrives.",
     })
     const asked = Option.match(answer, { onNone: () => [], onSome: (one) => one.calls })
     raw.push({

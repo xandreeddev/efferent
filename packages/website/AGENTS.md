@@ -205,6 +205,20 @@ check` (tsc over the learn code, the build, the link check) and
     from the call after its load. Token counts and "the same as the
     prompt before" are of a prompt's messages: tool definitions are in
     neither, so that line says nothing of a tool list that changed.
+  - While a model streams, only the chat's answer row changes: the pane
+    paints on a call's first piece and not on the later ones (`paintsOn`;
+    the board still counts them), so the work of a turn does not grow with
+    the answer's length, and the page's `refresh`, called after every
+    trace, writes only what changed (the chip, the chat's controls, the
+    model picker, the kit buttons). The streamed step is running until
+    the answer is stored, and says its count only then. The step running
+    is lit as it starts and left as it ends, with no animation.
+  - Once a turn has closed, the Memory column of its last call lists the
+    conversation's records stored after that context was built
+    (`storedAfter`): the answer, so what the turn added shows as it ends,
+    under a line that says memory reads the journal again for the next
+    request. They are not that context, and memory.ts is not called for
+    them.
 - **The chat** (`chat-model.ts`, pure, and `panes/chat.ts`) is rows. Every
   row drawn from a stored record comes from one step, `stored`, whether the
   record was just announced or is read back from a journal (`chatRowsOf`);

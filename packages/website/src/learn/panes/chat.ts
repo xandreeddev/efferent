@@ -255,13 +255,18 @@ export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
     }))
   }
 
+  let stateShown: { readonly ready: boolean; readonly running: boolean; readonly hint: string } | undefined
   return {
     add,
     render,
     renderChats,
     renderTasks,
     clear: () => { messages.replaceChildren(); pending.clear(); drawn.clear(); closes.clear(); empty.hidden = false; following = true },
+    // Called after every trace the page hears, a streamed piece included: only a change is drawn, so nothing but the
+    // answer's own row changes while it streams.
     setState: ({ ready, running, hint: text }) => {
+      if (stateShown?.ready === ready && stateShown.running === running && stateShown.hint === text) return
+      stateShown = { ready, running, hint: text }
       // While the agent answers, more messages may be sent: they wait in the queue.
       input.disabled = !ready
       send.disabled = !ready
