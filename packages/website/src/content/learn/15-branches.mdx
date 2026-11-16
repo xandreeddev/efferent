@@ -25,6 +25,8 @@ This lesson runs on **Echo**. A branch is a journal, and any model reads it: the
 
 With Qwen2.5 0.5B picked, on the GPU, a chat of **My name is Ana.** and **I live in Lisbon.** was branched after turn 1, and both were asked **Where do I live?** On the branch, cut before Lisbon was said (its copy ends there), Qwen answered "You live in the city.": nothing in its journal names the city. On Chat 1 it answered "You live in Lisbon.". The two answers to **Where do I live?** took about a second each, and the records of Chat 1's answers name `qwen2.5-0.5b`.
 
+DeepSeek V4.1 Flash, through the gateway, was sent **My name is Ana.** and **I live in Lisbon.**, and the chat was branched after turn 1. On the branch, asked **Where do I live?**, it called `recall`, which came back empty (lesson 2's notes live in the program, and showing another chat starts the program again, as Rebuild does), and answered "I don't know — my only note is your name, Ana; you haven't told me where you live.": the branch's copy ends before Lisbon was said (tried once).
+
 </Step>
 
 <Step n={3} id="copy" title="A branch is a copy" focus="context" wide={true}>

@@ -34,6 +34,8 @@ The chat runs on **Echo**, which follows a rule here: a sum goes to the calculat
 
 With Qwen2.5 0.5B picked, on the GPU, the three checks passed as they do on Echo, in a tenth of a second: the model was not called. The live check of the last step is where the picked model enters. There Qwen2.5 0.5B passed 0 of 5 runs, each of the four times it was tried, in about three seconds each time. Its line says what the first run that failed got wrong: "0 calls were made, not 1". Asked "What is 2 + 3?" in the chat, it called no tool, and answered "4" on one page load and "5" on another: the small models on your machine rarely call a tool, as lesson 2 showed. So the scripted checks say the program is right, and the live check says this model did not call the calculator. Neither says the other.
 
+With DeepSeek V4.1 Flash picked through the gateway and the live experiment applied, the live check passed 5 of 5 runs. That one press of **Run checks** cost $0.0021 of the key's credit: each live run sends real requests.
+
 </Step>
 
 <Step n={3} id="program" title="The program under test" focus="code" file="agent">

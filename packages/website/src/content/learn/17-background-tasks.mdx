@@ -36,6 +36,8 @@ With Qwen2.5 0.5B on the GPU, in one run on our machine, no task was started: as
 
 We then started tasks from the program instead, with Qwen doing the work. A helper's answer and a chat answer took turns on the GPU and both came back whole, and a task cancelled while its helper was writing stopped and reported nothing, the next chat answer whole. In a longer run the GPU was lost: after a helper's call, the chat's turn made the model read its long history afresh, more new text in one request than this laptop GPU finishes in the time its driver, the software that runs the GPU, allows (about 570 tokens for Qwen here). The page fell back to Echo and said so. That limit is the GPU's, not the tasks': a long message does the same in any lesson.
 
+DeepSeek V4.1 Flash, through the gateway, called `startTask` for "In the background, what is 6 * 7?" and answered at once that the task had started. The helper worked in a session of its own; its report, "6 × 7 = 42.", came back as a message, answered in a turn of its own: "The background task finished: 6 × 7 = 42." (tried once).
+
 </Step>
 
 <Step n={3} id="task" title="A task is a session of its own" focus="code" file="agent">

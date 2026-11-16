@@ -22,7 +22,7 @@ Next to the kernel are **modules**, parts you can swap, each with one job: the *
 
 Your program puts these parts together: it says which modules to use, which events to hook, and what a turn does. The code is TypeScript (JavaScript with types) written with **Effect**, a library for programs made of steps that can wait, fail or be stopped. You do not need to know it: each line is explained where it is used.
 
-Everything runs in your browser.
+Everything runs in your browser, the model too, unless you pick, in step 2, a model that runs elsewhere.
 
 </Step>
 
@@ -30,10 +30,11 @@ Everything runs in your browser.
 
 Open the **Model** list above. **Echo** is a stand-in model that answers by fixed rules. It needs no download and answers only from the messages it is sent, which is ideal for seeing what your agent remembers.
 
-For real answers use a model on your own machine; nothing you type leaves your browser.
+For real answers use a model on your own machine, where nothing you type leaves your browser, or one on another company's computers, through the gateway:
 
 - **CPU models** run on your computer's processor. They work anywhere, but are small: expect odd answers.
 - **GPU models** run on its graphics chip, which is faster, through **WebGPU**, the browser's way to reach it, with the WebLLM library (Phi-3.5 mini included). **Chrome's built-in model** needs a recent Chrome. If yours cannot run them, the list says why.
+- **The AI Gateway**, the last entry of the list, sends your messages to a model that runs on another company's computers. Vercel, the company that runs the gateway, gives you a **key** for it: a secret text, made on Vercel's site, that lets your requests be paid from your account's credit, so each request costs a little money. The page keeps the key in this tab only and sends it with each request to the gateway, so give it a small spending limit and an expiry. In one try here, DeepSeek V4.1 Flash, the gateway's first model, was sent "My name is Ana." and then "What is my name?", and answered "Your name is Ana! 😊"
 
 </Step>
 

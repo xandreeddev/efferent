@@ -416,6 +416,30 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: every lesson can run on a hosted model, through the Vercel
+  AI Gateway with the learner's own key: the last card of the model list
+  takes the key (kept in this tab only, read at each request, Forget key
+  removes it) and any gateway language model that calls tools, DeepSeek
+  V4.1 Flash first, asked of Baseten. The wire is pure and holds no key
+  (`models/gateway-wire.ts`); calls are native tool calls; the model's
+  reasoning is left on (turned off, DeepSeek dropped words mid-answer in
+  four answers of five) and not shown; the provider's usage, cached
+  tokens included, reaches the Context tab; failures are in words. The
+  gateway sends its error replies without CORS headers, so in a browser a
+  wrong key, a spent key, an unknown model and a busy provider all read
+  as one failure, worth another try, whose words name each; where the
+  status can be read, only a busy provider or a server error is retried
+  (lesson 14's plan). An answer cut short is
+  never stored as whole. Requests of one conversation share an opaque
+  cache key. Every lesson was run on DeepSeek through the gateway, from
+  Baseten, and its model step says what it did: each showed the
+  behaviour it teaches (lesson 5 once its budget was raised to 300, as it
+  tells a reader on a real model to do); lessons 12 and 13 say what a
+  press cost. Lesson 13 names a gateway candidate without the "/" the
+  eval package refuses. `models/decide.ts` is a client for the gateway's
+  decision models (Jev): typed questions, each answer typed by its
+  question, and a scripted decider for tests; no lesson uses it yet.
+
 - Docs site: the learn track is written for a reader who knows a little
   JavaScript and nothing else. It no longer compares the kernel with
   Neovim (lessons 1, 3 and 4, and the code comments the lessons show:

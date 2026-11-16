@@ -24,6 +24,8 @@ This lesson runs on **Echo**. "Show a table of squares to 5" or "show the times 
 
 The small models on your machine rarely call a tool, as lesson 2 showed. Hosted models (lesson 2) use `show` when their system text tells them to.
 
+DeepSeek V4.1 Flash, through the gateway, called `show` with `{"id":"squares-1-5","table":"squares","n":5}` (step 3 says what each field is) for "Show a table of the squares of 1 to 5.", and the chat drew the table (tried once).
+
 </Step>
 
 <Step n={3} id="tool" title="A tool that shows" focus="code" file="tools">

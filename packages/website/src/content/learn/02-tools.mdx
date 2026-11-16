@@ -31,6 +31,8 @@ Nothing new is hidden behind this. Effect AI is the part of the Effect library f
 
 The models on your machine are given the tools in their system text, one line each with an example call, and asked to answer with a `<tool_call>` block. A model this small often skips the tool and answers on its own: a 0.5B model, one made of half a billion learned numbers, may still get 12 * 3 right. Sometimes it writes a call wrong. A wrong call is stored as a failure, and the model can try again. Hosted models, larger models a provider (lesson 1) runs on its own computers, reached over the internet, are trained for tools and use them reliably.
 
+DeepSeek V4.1 Flash, through the gateway, called the calculator tool (step 3 shows it) with `{"a":12,"op":"*","b":3}` for "What is 12 * 3?" and answered "12 × 3 = 36." (tried once).
+
 </Step>
 
 <Step n={3} id="tools" title="The tools" focus="code" file="tools">

@@ -31,6 +31,8 @@ Echo answers a refused `forget` with *I did not delete anything: you did not app
 
 The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Remember to buy milk." and then "Forget my notes.", called neither `remember` nor `forget` in two runs, so no question was asked. It answered the second message "No problem." in one run and "No new note found" in the other: nothing was saved, and nothing deleted. A model that does call `forget` is asked about as Echo is: the question comes from the tool, whatever model made the call.
 
+DeepSeek V4.1 Flash, through the gateway, saved "The user likes tea." with `remember`, which asks no one. For "Forget my notes." it called `forget`: the question came, **Approve** answered it, the decision was stored, and `forget` deleted the note (tried once).
+
 </Step>
 
 <Step n={3} id="tool" title="One line in the tool" focus="code" file="tools">

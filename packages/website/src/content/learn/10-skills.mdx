@@ -37,6 +37,8 @@ This lesson runs on **Echo**, which follows the catalogue by rule.
 
 The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU loaded no skill in two runs. Asked "How far is 5 km in miles?", it worked the answer out itself, 3.17 miles both times, where the tool gives 3.1. It wrote a haiku of its own without the skill. Told "Load units.", it answered "10" in one run and repeated the skill's line of the catalogue in the other. A model that does call `loadSkill` reads the instructions as Echo does: they are the call's result, whatever model made the call.
 
+DeepSeek V4.1 Flash, through the gateway, loaded the units skill first for "Convert 5 km to miles.", then called `convert` with `{"value":5,"from":"km","to":"mi"}` and answered "5 km is 3.1 mi." (tried once).
+
 </Step>
 
 <Step n={3} id="skill" title="A skill is a value" focus="code" file="skills">
