@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Option, Stream } from "effect"
-import { LanguageModel, Prompt, Toolkit } from "effect/ai"
+import { Effect, Fiber, Option, Schema, Stream } from "effect"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Seq, SessionId, toolResult, TurnNumber } from "@xandreed/core/kernel"
 import { APPROVAL_REFUSED, catalogue, defineSkill, FactId, factsNote, FactText, pointed, promptMessage } from "@xandreed/sdk/kernel"
 import { callIds } from "./call-ids.ts"
@@ -1334,6 +1334,45 @@ describe("Echo's rules for the workspace (lesson 16)", () => {
     const missing = "The text to find is not in notes/todo.md, so nothing was changed. Call readFile and copy the text exactly, spaces and line breaks included."
     expect(answered("editFile", missing, true).text).toBe(`The tool answered: editFile failed: ${JSON.stringify(missing)}.`)
     expect(answered("writeFile", APPROVAL_REFUSED, true).text).toBe(`The tool answered: writeFile failed: ${JSON.stringify(APPROVAL_REFUSED)}.`)
+  })
+})
+
+describe("lesson 13's rules: a message that states something and asks about it, and an Echo that answers in words", () => {
+  const sys = { role: "system", content: "You are a helpful assistant." } as const
+  const user = (content: string) => ({ role: "user", content }) as const
+
+  test("a message that says what something is, then asks about it under the same name, is answered with the first sentence", () => {
+    expect(echoReply([sys, user("The meeting is on Tuesday. When is the meeting?")])).toBe("The meeting is on Tuesday.")
+    expect(echoReply([sys, user("The keys are under the mat. Where are the keys?")])).toBe("The keys are under the mat.")
+    // With tools offered and no rule of theirs woken, the answer is the same: no call is made.
+    expect(echoStep(Prompt.make([{ role: "user", content: "The meeting is on Tuesday. When is the meeting?" }]), ["calculator", "remember", "recall"]))
+      .toEqual({ text: "The meeting is on Tuesday.", calls: [] })
+  })
+
+  test("without the rule, Echo repeats the message, which holds the answer too: another name, or another form, is repeated", () => {
+    // A question about another name, and the two sentences in another order: no such message, so Echo repeats it.
+    expect(echoReply([sys, user("The meeting is on Tuesday. When is the party?")])).toBe('You said: "The meeting is on Tuesday. When is the party?". This is the start of the conversation.')
+    expect(echoReply([sys, user("Tuesday is the day of the meeting. When is the meeting?")])).toBe('You said: "Tuesday is the day of the meeting. When is the meeting?". This is the start of the conversation.')
+  })
+
+  const calculator = Tool.make("calculator", { parameters: Schema.Struct({ a: Schema.Number, op: Schema.String, b: Schema.Number }), success: Schema.Number })
+  const toolkit = Toolkit.make(calculator)
+  /** What a model streams for one message with the calculator offered: its text, and the names of the tools it called. */
+  const offered = (loaded: LoadedModel, text: string) =>
+    Effect.runPromise(Stream.runCollect(LanguageModel.streamText({ prompt: text, toolkit, disableToolCallResolution: true })).pipe(
+      Effect.provideService(LanguageModel.LanguageModel, loaded.model),
+      Effect.map((parts) => ({
+        text: parts.flatMap((part) => (part.type === "text-delta" ? [part.delta] : [])).join(""),
+        calls: parts.flatMap((part) => (part.type === "tool-call" ? [part.name] : [])),
+        model: parts.flatMap((part) => (part.type === "response-metadata" ? [part.modelId] : [])),
+      })),
+    ))
+
+  test("an Echo loaded to use words calls no tool it is offered, and answers as Echo does with none; the rule of the stated sentence holds there too", async () => {
+    expect(await offered(loadEcho(), "What is 2 + 3?")).toEqual({ text: "Let me work that out.", calls: ["calculator"], model: ["echo"] })
+    const words = loadEcho(undefined, "echo-no-tools", "words")
+    expect(await offered(words, "What is 2 + 3?")).toEqual({ text: 'You said: "What is 2 + 3?". This is the start of the conversation.', calls: [], model: ["echo-no-tools"] })
+    expect(await offered(words, "The meeting is on Tuesday. When is the meeting?")).toEqual({ text: "The meeting is on Tuesday.", calls: [], model: ["echo-no-tools"] })
   })
 })
 

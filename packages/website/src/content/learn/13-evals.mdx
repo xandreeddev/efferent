@@ -1,0 +1,110 @@
+---
+title: Evals
+description: A check says your agent did the right thing once. An eval runs it on many tasks, many times, and says how often, model by model.
+minutes: 30
+---
+
+import Step from '../../components/learn/Step.astro'
+import Evals from '../../components/learn/evals/Evals.astro'
+import Experiments from '../../components/learn/evals/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code" file="evals">
+
+A check of [lesson 12](/learn/test-your-agent/) runs the program on a script and says whether it did the right thing. That answers one question: is the program right? It never says how often a model gets a task right. An **eval** does: it runs the program on many tasks, many times each, with each model you compare, and counts.
+
+This lesson adds one file you edit, **evals.ts**, in the words of the eval package, `@xandreed/evals`:
+
+- a **dataset**: four tasks, each a message to send and a reference written by hand;
+- two **graders**: code that reads what the program did beside the reference, and says yes or no, with a reason;
+- how many times each task runs, and the **gates** a model must pass.
+
+A second file, **runnable.ts**, is read-only: how the page runs the eval. Press **Run evals**.
+
+<Evals />
+
+The table fills as trials end. Echo reads **20 of 20 passed (0.84 to 1)**, each task 5 of 5. echo-no-tools, an Echo that calls no tool, reads **10 of 20 passed (0.3 to 0.7)**: it answers the two questions about a meeting and some keys, and none of the two sums. Under each, its gate, and under them all: *The suite is blocked: echo-no-tools failed a blocking gate.* Nothing was said in the chat, and Context shows no turn: each trial ran the program on a stack of its own, as a check of lesson 12 does.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+With Echo picked, the eval compares two **candidates**: Echo, and echo-no-tools. Pick another model and it is a third, run on the same tasks and compared with Echo. The candidates differ by their model alone: the program, its tools and its memory are the same for all, so a broken tool breaks every candidate alike.
+
+A trial on a model in your browser is slow: the run is one trial at a time, up to two minutes each, and with a third candidate it holds sixty trials. The line above the table counts them as they end. **Stop** interrupts the run where it is: the candidates it finished keep their table, and the one it cut short says so.
+
+With Qwen2.5 0.5B on the GPU, in one run on our machine, the sixty trials took about thirty seconds. Qwen read **12 of 20 passed (0.39 to 0.78)**, and failed the gate at 0.6. It called no tool in any of its twenty trials.
+
+</Step>
+
+<Step n={3} id="words" title="The words" focus="code" file="evals">
+
+The eval package uses the words of [Anthropic's definitions](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). Each is a line of evals.ts or runnable.ts.
+
+- A **task** is one case of `dataset.cases`: an `id`, the `input` sent (the message), and its `reference`. `tasksFromDataset` in runnable.ts makes the tasks from the dataset.
+- A **trial** is one run of one task by one candidate. `repetitions` is how many trials each task gets for each candidate: five.
+- A **grader** is one of `evaluators`: an `id`, a `version`, the `metrics` it measures, and `run`, which returns them with a `reason`. `graderFromEvaluator` in runnable.ts puts each behind a grader. They are code here; a grader can also be a model, or a person.
+- A **suite** is the tasks, the candidates, the repetitions and the gates, in runnable.ts's `app`.
+- A **gate** is one of `gates`: a grader's metric, its pass rate over a candidate's trials, and the least it may be. `blocking` makes a gate one the suite must pass.
+- A **candidate** is a model compared: in runnable.ts, one for each model the page gives.
+
+runnable.ts adds three more. The **runnable** is the program agent.ts exports, run on one task's message: its output is the answer, and its evidence the turns, read with the kernel's `turnsOf` as in lesson 12. The **projection** is what a grader is handed: the turns, and the task's reference beside them. The program never sees a reference. The **transcript** is each record the trial's turn stored. Open a task in the table, then a trial: its grades' reasons, and its transcript.
+
+</Step>
+
+<Step n={4} id="golden" title="The golden set is written by hand" focus="code" file="evals">
+
+Each reference was written by hand: for a sum, the call that works it out and the text a right answer holds (`5`); for a question, the text alone (`Tuesday`). The graders compare what the program did with that, never with what some model once answered.
+
+Echo is the **reference solution**: a model that passes every task, by rule. A test of this lesson pins that it does, 20 of 20. A golden set that its own reference solution fails has a wrong reference, or a task no model can pass.
+
+The two questions hold their answer: *The meeting is on Tuesday. When is the meeting?* A model that repeats the message would hold `Tuesday` and pass. Echo with no rule for a message does that: *You said: "…"*. So the answer's grader fails an answer that holds the whole message, and Echo has a rule for a message that says what something is and then asks about it: it answers with the first sentence, *The meeting is on Tuesday.* Without that rule Echo would fail its own golden set.
+
+echo-no-tools is Echo told to use no tool. It answers both questions, and repeats each sum: its line under the answer's grader reads *the answer repeats the message*.
+
+</Step>
+
+<Step n={5} id="rate" title="A rate, not a pass" focus="code" file="evals">
+
+A check passes or fails. An eval gives a **rate**: how many of a candidate's trials passed. Five passes of five is not a promise that the next run passes: it says the rate is likely between **0.57 and 1**. That range is the **Wilson interval**, from the package's statistics (`@xandreed/evals/stats`), and it is in brackets after each count. Twenty passes of twenty narrow it to **0.84 to 1**; ten of twenty leave **0.3 to 0.7**.
+
+A rate needs many trials: a model need not answer the same way each time.
+
+In that run Qwen's five trials agreed on three tasks and not on the sum: it answered *5* twice and *4* three times, so sum read 2 of 5 (0.12 to 0.77). It worked out *12 * 3 = 36* itself, five times of five, with no tool: the answer's grader passed it, and the tool's grader said each time that it called no tool.
+
+</Step>
+
+<Step n={6} id="compare" title="Compare models with Echo" focus="code" file="runnable">
+
+runnable.ts runs the suite once for each candidate, one after the other, so a candidate's trials are graded and its gates decided as soon as they have all run. Then it compares every trial with Echo's, with the package's `compareDecisionTrials(rows, "echo")`. A **regression** is a task and repetition Echo passed and the candidate failed. Under the table, echo-no-tools reads *10 of 20 passed; regressions against Echo: sum, product*.
+
+The package has no function from a trial to the row it compares, so runnable.ts has one, `rowOf`: how the trial ended, whether it passed (every gate's grader said yes), and how long it took. The table counts the same rows, so the two never disagree.
+
+This is how a model is chosen: the same tasks, the same graders, the same program, and a rate for each model with its interval. A model is better than another on these tasks when its interval sits above the other's, not when it passed one run more.
+
+Against Echo, Qwen's regressions were sum and keys. On keys it answered *Under the mat.* five times of five, and the answer's grader failed each one: the reference is *under the mat*, and the grader compares the letters exactly, a capital U included. That is a grader too narrow, the first kind the next step names, found by a real model.
+
+</Step>
+
+<Step n={7} id="graders" title="What a grader can get wrong" focus="code" file="evals">
+
+A grader is code, and it can be wrong in the ways code is.
+
+- **Too lenient.** A grader that passes any answer passes a wrong one. An experiment of the next step makes one.
+- **Too narrow.** The answer's grader looks for the reference's text, letter for letter: a model that answers *under the doormat* fails *under the mat*, and so does *Under the mat.*, as Qwen found. The tool's grader compares the call's input as text, so `{"b":3,"op":"+","a":2}` is not `{"a":2,"op":"+","b":3}`, though the numbers are the same.
+- **Fooled.** The answer's grader refuses only a copy of the whole message, word for word. A model that repeats it with one word more, *The meeting is on Tuesday. When is the meeting, then?*, holds `Tuesday` and passes.
+
+So a grader needs checking too: against answers a person labelled, before its rates are trusted. The package's `Calibration` does that, and a later lesson builds one.
+
+</Step>
+
+<Step n={8} id="experiments" title="Experiments" focus="code" file="evals">
+
+**Run evals** runs evals.ts and tools.ts as they stand in the editor. The run and the chat take turns: while the evals run, the chat takes no message, and while a turn runs in the chat, **Run evals** is off.
+
+<Experiments />
+
+After breaking it, press **Reset** in the Code pane.
+
+**Next:** [when the model fails](/learn/model-failures/): the loop asks for its answer under a plan, which tries the model again and then hands the call to a spare. The eval package's words, its parts and its command line are in [the evaluation domain](https://github.com/xandreeddev/efferent/blob/main/docs/evaluation-domain.md).
+
+</Step>

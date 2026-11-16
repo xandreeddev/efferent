@@ -16,6 +16,9 @@ const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be th
 const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It should be the program main runs, exported so that checks.ts runs the same one."
 const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 const NO_FAILURES = "failures.ts did not run: failures is not a list of failures. It should be an array, each entry { retryable, pieces } or {}."
+const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
+/** Lesson 13's evals.ts with a dataset of no case: what the cases after it change is held alone. */
+const EMPTY_SET = 'const dataset = { id: "d", version: "1", input: Schema.String, reference: Schema.String, cases: [] }'
 /** tools.ts making two names that are no toolkit and no layer. */
 const TWO_NUMBERS = "const tools = 1\nconst toolsLive = 2"
 
@@ -93,6 +96,23 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     [
       "checks", 'const checks = [{ id: "sum", name: "a sum", run: Effect.void }, { id: "other", name: "another", run: () => 1 }]',
       'checks.ts did not run: the run of the check "other" is not an Effect. It should be the program run for the check, as check(id, name, script, messages, holds) makes it.',
+    ],
+  ],
+  evals: [
+    ["tools", TWO_NUMBERS, NO_HANDLERS],
+    // evals.ts makes four names, each held to its kind before anything of the eval runs.
+    ["evals", "const dataset = 1, evaluators = [], repetitions = 5, gates = []", NO_DATASET],
+    ["evals", "const dataset = { id: \"d\", version: \"1\", input: 1, reference: 2, cases: [] }, evaluators = [], repetitions = 5, gates = []", NO_DATASET],
+    [
+      "evals", "const dataset = { id: \"d\", version: \"1\", input: Schema.String, reference: Schema.String, cases: [1] }, evaluators = [], repetitions = 5, gates = []",
+      "evals.ts did not run: case 1 of the dataset is not a case. It should be { id, family, split, review, input, reference, provenance }.",
+    ],
+    ["evals", `${EMPTY_SET}, evaluators = [{ id: "answer" }], repetitions = 5, gates = []`, "evals.ts did not run: evaluators is not a list of graders. It should be an array, each entry { id, version, metrics, run }."],
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 0, gates = []`, "evals.ts did not run: repetitions is not a whole number of at least 1."],
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 2.5, gates = []`, "evals.ts did not run: repetitions is not a whole number of at least 1."],
+    [
+      "evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = {}`,
+      "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, aggregate, mode, minimum, maximum, requiresReviewedReference }.",
     ],
   ],
   "model-failures": [

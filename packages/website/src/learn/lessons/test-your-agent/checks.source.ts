@@ -28,8 +28,11 @@ export const LIST_INTRO = `// The checks. Each has an id, a name, the script the
 export const checks = [
 `
 
-/** What the learner edits. Plain JavaScript, so the page runs it as written. */
-export const DEFAULT_CHECKS = `// Run the program for a check. It is the program main runs, over a stack of the check's own: the
+/**
+ * The function that runs the program for a check, with its comment: the first lines of checks.ts. Lesson 13's
+ * runnable.ts runs a trial with the same lines, derived from these by named pieces.
+ */
+export const TURNS_AFTER = `// Run the program for a check. It is the program main runs, over a stack of the check's own: the
 // same modules, the model the check gives, and a chat that is a list. Each message is sent once
 // the one before it is answered, so each is a turn of its own. What comes back is the journal the
 // program left, read as its turns.
@@ -70,7 +73,10 @@ const turnsAfter = (model, messages) =>
       Effect.provide(kernel()), // events every module can hook
       Effect.provide(model), // a model that follows a script, or the model you picked
     )
-  })
+  })`
+
+/** What the learner edits. Plain JavaScript, so the page runs it as written. */
+export const DEFAULT_CHECKS = `${TURNS_AFTER}
 
 // One check. The program runs on a script, and holds reads the turns it left: it returns what is
 // wrong, in words, or nothing. What is wrong is the check's failure.

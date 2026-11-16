@@ -310,6 +310,7 @@
         "@lezer/highlight": "^1.2.5",
         "@mlc-ai/web-llm": "0.2.88",
         "@xandreed/core": "workspace:*",
+        "@xandreed/evals": "workspace:*",
         "@xandreed/foundry": "workspace:*",
         "@xandreed/plugin-agent-loop": "workspace:*",
         "@xandreed/plugin-memory-window": "workspace:*",

@@ -269,8 +269,10 @@ export class LessonRuntime {
   /** How many questions were ever asked: the next one's id. */
   private questionCount = 0
 
-  /** Whether a kit that runs alone (`LessonKit.alone`) is running now. */
+  /** Whether a kit that runs alone (`LessonKit.alone`), or another run that takes turns with the chat (`runAlone`), is running now. */
   private kitAlone = false
+  /** The run `runAlone` started (lesson 13's evals), while it runs: what `stopAlone` interrupts. */
+  private aloneRun: Option.Option<Fiber.Fiber<unknown, unknown>> = Option.none()
 
   /** The page's spare (lesson 14): a second Echo, built once, which a plan's second step provides. */
   private readonly spare: LoadedModel = loadEcho(undefined, SPARE)
@@ -753,7 +755,36 @@ export class LessonRuntime {
     }
   }
 
+  /**
+   * Run work that takes turns with the chat, as a kit that runs alone does (lesson 13's evals): refused while a turn
+   * runs (`TURN_RUNNING`) or while another such run is under way, and `checking` is true from the call until it is
+   * over. `start` is handed the model picked as it was loaded, not the one the page watches for the chat, so the
+   * page hears no prompt of it, and gives the work or why there is none; it may load what the work needs first.
+   * The work runs on a fiber of its own, which `stopAlone` interrupts. What comes back is how it ended: a run that
+   * was stopped ends interrupted.
+   */
+  async runAlone<A>(start: (model: Option.Option<LoadedModel>) => Promise<Result.Result<Effect.Effect<A, unknown>, string>>): Promise<Result.Result<Exit.Exit<A, unknown>, string>> {
+    if (this.busy || this.checking) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    this.kitAlone = true
+    try {
+      const made = await start(this.model)
+      if (Result.isFailure(made)) return Result.fail(made.failure)
+      const fiber = Effect.runFork(made.success)
+      this.aloneRun = Option.some(fiber)
+      return Result.succeed(await Effect.runPromise(Fiber.await(fiber)))
+    } finally {
+      this.aloneRun = Option.none()
+      this.kitAlone = false
+    }
+  }
+
+  /** Stop the run `runAlone` started, where it is: it ends interrupted. Nothing happens while none runs. */
+  async stopAlone(): Promise<void> {
+    if (Option.isSome(this.aloneRun)) await Effect.runPromise(Fiber.interrupt(this.aloneRun.value))
+  }
+
   async dispose(): Promise<void> {
+    await this.stopAlone()
     await this.stopProgram()
     await Effect.runPromise(Scope.close(this.root, Exit.void))
   }

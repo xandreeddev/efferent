@@ -22,14 +22,14 @@ import { breakCalculator, vacuous, withLive } from "./config-edit.ts"
 
 const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, paired, promptMessage }
 const toolsNames = { Effect, Schema, Tool, Toolkit }
-const chatNames = { Context, Effect, Layer, Queue, Stream, Sessions }
+export const chatNames = { Context, Effect, Layer, Queue, Stream, Sessions }
 
 /**
  * What agent.ts is run with besides the names of `effect` and the kernel's functions: the base's parts, the chat,
  * and what the page gives and no import names (`pane`, `model`). The page's own program is given the page's
  * stand-ins; a check's is given the kernel's own parts and chat.ts as it is shown.
  */
-interface Stack {
+export interface Stack {
   readonly kernel: unknown
   readonly inProcessJournal: unknown
   readonly sessions: unknown
@@ -52,7 +52,7 @@ const checksNames = (made: { readonly program: unknown; readonly Chat: unknown; 
 })
 
 /** What memory.ts, tools.ts and agent.ts made, run in that order over one stack. */
-interface Made {
+export interface Made {
   readonly flatMemory: unknown
   readonly toolsLive: unknown
   readonly main: unknown
@@ -62,9 +62,9 @@ interface Made {
 /**
  * memory.ts, tools.ts, then agent.ts, run with the stack given: what they made, or why one did not run. `memoryOf`
  * gives what agent.ts is handed as memory.ts's `flatMemory`: the page watches it, and a check takes it as the
- * file made it.
+ * file made it. Lesson 13 runs the same three files, for its own page and for each trial of its evals.
  */
-const madeOn = (sources: Sources, stack: Stack, memoryOf: <E, R>(memory: Layer.Layer<Memory, E, R>) => unknown): Result.Result<Made, string> =>
+export const madeOn = (sources: Sources, stack: Stack, memoryOf: <E, R>(memory: Layer.Layer<Memory, E, R>) => unknown): Result.Result<Made, string> =>
   Result.flatMap(run("memory.ts did not run: ", sources.memory ?? "", memoryNames), (memory) => {
     if (!Layer.isLayer(memory)) return Result.fail("memory.ts did not run: flatMemory is not a layer. It should be Layer.succeed(Memory, …).")
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
@@ -79,7 +79,7 @@ const madeOn = (sources: Sources, stack: Stack, memoryOf: <E, R>(memory: Layer.L
   })
 
 /** A pane nothing draws on. A check's stack runs agent.ts for its `program`; the `main` the file also makes over this pane is never run. */
-const NO_PANE = { onSend: () => {}, appendToAnswer: () => {}, finishAnswer: () => {}, showError: () => {}, showStatus: () => {} }
+export const NO_PANE = { onSend: () => {}, appendToAnswer: () => {}, finishAnswer: () => {}, showError: () => {}, showStatus: () => {} }
 
 const NOT_A_LIST = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 

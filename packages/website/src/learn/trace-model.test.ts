@@ -189,7 +189,7 @@ describe("the Context tab's model", () => {
     const both = [...heard, { ...prompt("echo"), session: "h" }, { ...failed("helper's"), session: "h" }].reduce<Boards>((all, trace) => heardBy(all, trace, 0), emptyBoards("s"))
     expect(attemptsByCall(both.boards.get("s")!, 1)).toEqual([[0, 1], [2, 3], [4]])
     expect(both.boards.get("h")!.attempts.get(1)?.map((one) => Option.getOrNull(one.failed))).toEqual(["helper's"])
-    // With no prompt marked failed, call n is prompt n, as in lessons 1 to 12.
+    // With no prompt marked failed, call n is prompt n, as in lessons 1 to 13.
     const plain = [prompt("echo"), usage(1), prompt("echo"), usage(2)].reduce((all, trace, index) => record(all, trace, index), emptyBoard("s"))
     expect(attemptsByCall(plain, 1)).toEqual([[0], [1]])
   })

@@ -62,6 +62,20 @@ export const echoSummary = (request: string): string => {
   return `You said ${plural(count, "thing")} earlier${last === undefined ? "" : `, the last: "${clip(last, 40)}"`}.`
 }
 
+/**
+ * Lesson 13's rule: one message that says what something is, then asks about it in the next sentence, under the
+ * same name ("The meeting is on Tuesday. When is the meeting?", "The keys are under the mat. Where are the
+ * keys?"). It is answered with the first sentence, which says it. A question about another name, or the two
+ * sentences in another form ("Tuesday is the day of the meeting."), is no such message.
+ */
+const STATED = /^\s*(the\s+([a-z]+(?:\s+[a-z]+)*?)\s+(?:is|are)\s+[^.?!]+)\.\s+(?:when|where|what|who)\s+(?:is|are)\s+the\s+([a-z]+(?:\s+[a-z]+)*?)\s*\?\s*$/i
+
+/** The sentence a message stated before asking about it (lesson 13), or none. */
+const statedIn = (asked: string): string | undefined => {
+  const match = STATED.exec(asked)
+  return match !== null && match[2]?.toLowerCase() === match[3]?.toLowerCase() ? `${match[1]}.` : undefined
+}
+
 /** What Echo says, from the messages the agent sent it. */
 export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   const request = messages.findLast((message) => message.role === "user")?.content ?? ""
@@ -99,6 +113,10 @@ export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   if (/\b(context|journal|window|system prompt|what can you see)\b/i.test(last)) {
     return `I was sent a system prompt of ${system?.content.length ?? 0} characters, ${plural(earlier, "earlier message")}${ledger ? " (one is a note condensing older turns)" : ""}, and your message.`
   }
+  // Lesson 13: a message that states something, then asks about it, is answered with what it stated. Without
+  // this rule Echo repeats the message, which holds the answer too: a grader could not tell the two apart.
+  const stated = statedIn(last)
+  if (stated !== undefined) return stated
   return `You said: "${clip(last)}". ${earlier > 0 ? `I can also see ${plural(earlier, "earlier message")}.` : "This is the start of the conversation."}`
 }
 
@@ -638,9 +656,11 @@ const echoCallId = callIds("echo-call")
 
 /**
  * Echo, loaded, named `name` in the answers it stores (a second Echo, a spare, is named apart). `callId` mints the
- * ids of its tool calls: a test passes its own to make two pages mint the same ones.
+ * ids of its tool calls: a test passes its own to make two pages mint the same ones. `uses` is `"tools"` for
+ * Echo as every lesson has it, and `"words"` for lesson 13's weaker candidate, `echo-no-tools`: an Echo that calls
+ * no tool, even one it is offered, and answers every message in words, as it does with no tool offered.
  */
-export const loadEcho = (callId: () => string = echoCallId, name: string = echoChoice.id): LoadedModel => {
+export const loadEcho = (callId: () => string = echoCallId, name: string = echoChoice.id, uses: "tools" | "words" = "tools"): LoadedModel => {
   let interrupted = false
   const model = makeBrowserModel(name, {
     generateText: (options) => Effect.sync(() => {
@@ -650,7 +670,7 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
     }),
     streamText: (options) => {
       const messages = toChatMessages(options.prompt)
-      const { text: reply, calls } = options.tools.length > 0 ? echoStep(options.prompt, options.tools.map((tool) => tool.name)) : { text: echoReply(messages), calls: [] }
+      const { text: reply, calls } = uses === "tools" && options.tools.length > 0 ? echoStep(options.prompt, options.tools.map((tool) => tool.name)) : { text: echoReply(messages), calls: [] }
       interrupted = false
       const asked = calls.map((call) => ({ type: "tool-call" as const, id: callId(), name: call.name, params: call.params }))
       return Stream.fromIterable(words(reply)).pipe(
