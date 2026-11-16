@@ -1366,6 +1366,98 @@ its process recovers the memory session (`memorySession`,
 `Sessions.recover`) as it recovers its conversation. Every agent on one
 store shares its facts.
 
+### A graph: what an agent knows, connected
+
+Facts are sentences that do not know of each other: "Ana works at Acme." and
+"Acme is in Lisbon." never meet, and a question that shares no word with the
+second ("In what city does Ana work?") ranks it last, behind every newer fact
+about Ana. A graph keeps what an agent knows as links between things (ADR
+0019): a link is a record in a session of its own, the graph session, and two
+links that name one thing are connected through it. Three tools of the
+kernel's write and read it:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#tools -->
+
+```ts
+// The agent's own tool, and the three of the graph: one toolkit, each tool with its own type.
+const Add = Tool.make("add", { parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }), success: Schema.Number, failure: Schema.String, failureMode: "return" })
+const tools = Toolkit.merge(Toolkit.make(Add), graphTools)
+const toolsLive = Toolkit.make(Add).toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+// What the three tools do is the kernel's: each link stored is a turn on the graph session.
+const handlers = Layer.mergeAll(toolsLive, graphHandlers)
+```
+
+A wrapper of `Memory` reads it. For each request it walks from the things the
+question names and adds the links near them, last:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#memory -->
+
+```ts
+// The memory a conversation reads with, wrapped: each request is sent the conversation, then up to five links
+// near what the question names, two links away at most. "I", "me" and "my" name the thing called "user".
+const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["i", "me", "my"] } })(flatMemory)
+```
+
+So the link that answers reaches the request through the one the question
+names, and comes before the links that do not lead to an answer:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#connect -->
+
+```ts
+const { conversations, graph, sent } = await Effect.runPromise(run(
+  [
+    calls(link("Ana", "works at", "Acme"), link("Acme", "is in", "Lisbon"), link("Ana", "lives in", "Porto")), says("Noted."),
+    says("Ana works in Lisbon."),
+  ],
+  [["Ana works at Acme, which is in Lisbon. She lives in Porto."], ["In what city does Ana work?"]],
+))
+// The conversation holds the calls and their results, the links' ids: it stored no record of the links.
+expect(results(conversations[0]?.journal ?? [])).toEqual([["linkThings", { id: "e1" }, false], ["linkThings", { id: "e2" }, false], ["linkThings", { id: "e3" }, false]])
+// Each link is a record of the graph session, each in a turn of its own.
+expect(names(graph).filter((name) => name.startsWith("plugin."))).toEqual(["plugin.graph.linked", "plugin.graph.linked", "plugin.graph.linked"])
+// The question names Ana: the path to Lisbon is sent first, though "Acme is in Lisbon" shares no word with it.
+expect(sent[2]).toEqual([
+  { role: "system", text: SYSTEM },
+  { role: "user", text: "In what city does Ana work?" },
+  { role: "user", text: noteOf("e1: Ana works at Acme.", "e2: Acme is in Lisbon.", "e3: Ana lives in Porto.") },
+])
+```
+
+`linkThings({ subject, relation, object })` stores `plugin.graph.linked` in a
+turn on the graph session, with the conversation and turn it came from, and
+answers the link's id; a link that says what a standing one says, once its
+parts are normalised, is not stored again and its id is answered.
+`unlinkThings({ id })` stores `plugin.graph.unlinked`. `followThings({ name })`
+reads a thing's links, newest first, at most twenty and how many more, and
+stores nothing: a model reaches further with it than a request was sent.
+`linksOf(journal)` folds the records into the links that stand. A thing is
+its name's words in lower case (`normalName`): "Acme" and "ACME" are one
+thing, "NYC" and "New York" two until a link says they are one. Nothing is
+merged by meaning: a small embedding model in the browser scored Lisbon
+nearer Paris than Lisboa (ADR 0019).
+
+`withGraph({ hops, limit, speaker? })` finds the things the question names
+(`namedIn`: a thing whose words are a run of the question's; the speaker's
+words, given by the host, name the speaker's thing), walks their links from
+either end up to `hops` away, and ranks each link by its path (`near`, a
+pure function): the question's words of four letters or more that the
+relations and names on the path to it meet, then fewer links away, then the
+newer. It sends at most `limit` of them, best first, a sentence each with its
+id, framed as data (`linksNote`). With nothing named, nothing is added; the
+question is the user's last message in the conversation's journal
+(`questionOf`, the memory contract's). Nothing is stored, and a memory's
+budget does not count the links: they are bounded by `limit` and by a name's
+length. The order matters to a small model: Qwen2.5 0.5B named the right city
+when the path came first and not when another link about Ana did; DeepSeek
+V4.1 Flash named it either way (ADR 0019 has the counts).
+
+What it costs: the walk reads every link of the graph session for each
+request, and a hub (a thing with many links, such as the speaker) is cut by
+`limit`, the links the question meets first. As for facts, a process that
+dies inside a turn on the graph session leaves it busy until the host
+recovers it (`graphSession`, `Sessions.recover`), and every agent on one
+store shares its graph.
+
 ## The inbox: queueing messages for a turn
 
 The inbox is a plugin over the host's own turn, and the proof that a plugin

@@ -115,6 +115,9 @@ own messages, and is not stored as something said (ADR 0005).
 - Two agents on one store that must not share facts: an owner the host names, held in one
   value that gives the tools, their handlers and the wrapper, so they cannot disagree.
 - Facts in numbers a word match cannot rank: an `Embedder` contract, and a wrapper over it.
+  (ADR 0019 measured one small embedding model in the browser, 17 November 2026: it scored
+  Lisbon nearer Paris than Lisboa, so it was left out again. Facts that need joining are
+  linked instead.)
 - A fact that must be removed from every journal that holds its text (a request to erase):
   the conversation's records would have to change, which a journal does not do today.
 - A branch of a conversation (a copy of its journal): the facts are not copied, since they
