@@ -99,4 +99,8 @@ answer. The inbox runs the host's turn function (`inbox(turn)`) for each message
 - A record that is for the conversation and for another use at once in a way two tags
   cannot express.
 
+*Note, 16 November 2026 (ADR 0017).* A workspace of files is not a store beside the journal: it is the world
+the agent acts on, reached only by tools through the `Files` contract. No part that builds the agent's state or a
+prompt reads it, and a file reaches a prompt only as a stored tool result.
+
 A change to this decision is a new record that supersedes this one; this one is not edited.

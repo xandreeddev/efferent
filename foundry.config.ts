@@ -123,6 +123,8 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-plugin-session",
   "sdk-kernel-plugin-tool-read-result",
   "sdk-kernel-plugin-approval-auto",
+  "sdk-kernel-plugin-files-in-memory",
+  "sdk-kernel-plugin-tool-files",
   "sdk-kernel-plugin-skills",
   "sdk-kernel-plugin-facts",
   "core/kernel",
@@ -589,7 +591,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-plugin-facts", path: "packages/sdk/src/kernel/plugins/facts/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-skills", path: "packages/sdk/src/kernel/plugins/skills/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-tool-read-result", path: "packages/sdk/src/kernel/plugins/tool-read-result/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts"], externals: [] },
+      { name: "sdk-kernel-plugin-files-in-memory", path: "packages/sdk/src/kernel/plugins/files-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-files", path: "packages/sdk/src/kernel/plugins/tool-files/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files"], externals: [] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can. They import evals too:

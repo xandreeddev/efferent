@@ -94,3 +94,7 @@ way, and one of them asks nobody.
   a rule for which journal is read.
 - A branch of a conversation (a copy of its journal): whether it inherits the grants it copied.
 - A request that must show more than text (a diff, a file): `detail` would become a view.
+
+*Note, 16 November 2026 (ADR 0017).* `Approval` is an optional contract: an app may build its permission layer
+with it, and no kernel tool depends on it. The file tools never ask; an app that asks a person before a write
+does it in its loop, with `approveIn`, or answers first with a judge of its own over the person's `Approval`.

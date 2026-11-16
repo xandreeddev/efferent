@@ -81,9 +81,17 @@ export const pageOf = (journal: ReadonlyArray<StoredEvent>, at: number, from: nu
   const text = resultText(message.value.result)
   // An empty result has one page, from 0: nothing.
   if (from >= text.length && from > 0) return Result.fail(pastTheEnd(at, text.length))
-  // A start inside a character moves past it; an end inside one moves before it, but a page always reads something.
+  return Result.succeed({ ...pageAt(text, from, length), total: text.length })
+}
+
+/**
+ * The part of `text` a page from `from` of up to `length` characters reads, never half a character: a start inside
+ * a character moves past it, an end inside one moves before it, and a page always reads something. `from` is the
+ * caller's to keep below the text's length. The one rule `readResult` and `readFile` read pages by.
+ */
+export const pageAt = (text: string, from: number, length: number): { readonly text: string; readonly from: number; readonly to: number } => {
   const start = splits(text, from) ? from + 1 : from
   const asked = endAt(text, Math.min(text.length, start + Math.max(1, length)))
   const to = asked > start ? asked : Math.min(text.length, start + 2)
-  return Result.succeed({ text: text.slice(start, to), from: start, to, total: text.length })
+  return { text: text.slice(start, to), from: start, to }
 }

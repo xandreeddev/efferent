@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, flatMemory, Inbox, inbox, inProcessJournal, Memory, memoryConformance, modelAnswer, scriptedModel, sessions, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { callTool, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inProcessJournal, Memory, memoryConformance, modelAnswer, scriptedModel, sessions, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -38,6 +38,7 @@ const kits = {
   sessionsOverWebStorage: sessionsConformance({ open: (core) => sessionsOver(core, webStorageJournal(memoryStore(), { prefix: "consumer:" })) }),
   memory: memoryConformance({ name: "window", budgetTokens, open: (core) => built(Memory, windowMemory({ budgetTokens }), onCore(core)) }),
   flatMemory: memoryConformance({ name: "flat", open: (core) => built(Memory, flatMemory, onCore(core)) }),
+  files: filesConformance({ open: built(Files, inMemoryFiles(), Layer.empty) }),
 }
 /** Run a kit's checks one after another: how many ran, and what each failure said. */
 const run = (checks) => Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) =>

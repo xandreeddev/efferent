@@ -31,8 +31,8 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import type { KeyValueStore, SummarizerSubject } from "./index.js"
-import { flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
+import type { FilePath, FilesSubject, KeyValueStore, SummarizerSubject } from "./index.js"
+import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
  * The three contracts' kits: each passes on its stock plugin, and each
@@ -616,5 +616,59 @@ describe("the summarizer kit", () => {
     // Blank only when it is handed an earlier summary: the second half of the check.
     expect(await failedChecks(summarizerConformance(subject(({ earlier }) => Effect.succeed(Option.isSome(earlier) ? "" : "A sum."))))).toEqual(["answers"])
     expect(await failedChecks(summarizerConformance(subject(() => Effect.die("the summarizer broke"))))).toEqual(["answers"])
+  })
+})
+
+describe("the files kit", () => {
+  type FilesShape = Context.Service.Shape<typeof Files>
+  /** A workspace in memory with some of its calls replaced, each given the one it replaces. */
+  const careless = (change: (inner: FilesShape) => Partial<FilesShape>): FilesSubject => ({
+    open: Effect.map(built(Files, inMemoryFiles(), Layer.empty), (inner) => Files.of({ ...inner, ...change(inner) })),
+  })
+
+  test("has the checks its doc comment lists, and passes on the workspace in memory", async () => {
+    const stock: FilesSubject = { open: built(Files, inMemoryFiles(), Layer.empty) }
+    expect(ids(filesConformance(stock))).toEqual(["read-back", "not-found", "overwrite", "expected", "changed", "list"])
+    expect(await failedChecks(filesConformance(stock))).toEqual([])
+  })
+
+  test("each careless workspace fails the check of what it is careless about, and between them every check", async () => {
+    const failed = {
+      // It keeps text without the spaces at its ends.
+      trimming: await failedChecks(filesConformance(careless((inner) => ({ write: (path, text, expected) => inner.write(path, text.trim(), expected) })))),
+      // It reads a path with no file as an empty one.
+      emptyForMissing: await failedChecks(filesConformance(careless((inner) => ({ read: (path) => Effect.catchTag(inner.read(path), "FileNotFound", () => Effect.succeed("")) })))),
+      // It keeps the first text written to a path, when nothing is expected.
+      firstWins: await failedChecks(filesConformance(careless((inner) => ({
+        write: (path, text, expected) => expected === undefined ? Effect.ignore(inner.write(path, text, { _tag: "Absent" }), { log: "Debug", message: "the careless workspace keeps the first text" }) : inner.write(path, text, expected),
+      })))),
+      // It refuses every write that expects anything.
+      suspicious: await failedChecks(filesConformance(careless((inner) => ({
+        write: (path, text, expected) => expected === undefined ? inner.write(path, text) : Effect.fail(new FileChanged({ path, message: "always changed" })),
+      })))),
+      // It writes whatever was expected.
+      blind: await failedChecks(filesConformance(careless((inner) => ({ write: (path, text) => inner.write(path, text) })))),
+      // It lists in the order files were written.
+      unordered: await failedChecks(filesConformance(careless((inner) => {
+        const written: Array<FilePath> = []
+        return {
+          write: (path, text, expected) => Effect.tap(inner.write(path, text, expected), () => Effect.sync(() => { if (!written.includes(path)) written.push(path) })),
+          list: (folder) => Effect.succeed(Option.match(folder, { onNone: () => [...written], onSome: (name) => written.filter((path) => path.startsWith(`${name}/`)) })),
+        }
+      }))),
+      // It lists every name that starts like the folder's.
+      byStart: await failedChecks(filesConformance(careless((inner) => ({
+        list: (folder) => Effect.map(inner.list(Option.none()), (all) => Option.match(folder, { onNone: () => all, onSome: (name) => all.filter((path) => path.startsWith(name)) })),
+      })))),
+    }
+    expect(failed).toEqual({
+      trimming: ["read-back"],
+      emptyForMissing: ["changed", "not-found"],
+      firstWins: ["overwrite"],
+      suspicious: ["expected"],
+      blind: ["changed"],
+      unordered: ["list"],
+      byStart: ["list"],
+    })
   })
 })

@@ -4,8 +4,8 @@ import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel } from "@xandreed/core/kernel"
 import type { Core, JournalStorage, OpenSession, Sessions } from "@xandreed/core/kernel"
 import type { Memory } from "./contracts/memory/memory.port.js"
-import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, inbox, inProcessJournal, planned, retryable, sessions, skills, windowMemory } from "./index.js"
-import type { AnswerCut, Inbox, ModelAnswerFailed, InvalidBudget, Skill, ToolNeeds } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, fileHandlers, fileTools, inbox, inMemoryFiles, inProcessJournal, planned, retryable, sessions, skills, windowMemory } from "./index.js"
+import type { AnswerCut, Files, Inbox, ModelAnswerFailed, InvalidBudget, Skill, ToolNeeds } from "./index.js"
 import { runningTurn } from "./contracts/turn/running-turn.entity.functions.js"
 import { testTurn } from "./testing.js"
 
@@ -216,6 +216,24 @@ const rememberingWithoutSessions = (session: OpenSession) => {
 }
 
 /*
+ * The file tools (ADR 0017) need the workspace and nothing else of the program: they never ask, so no `Approval`,
+ * and the turn they say a write about is the one `callTool` gives.
+ */
+const filesNeeds: Same<ToolNeeds<typeof fileTools.tools>, Files> = true
+const filesCall = (session: OpenSession) => Effect.flatMap(fileTools, (toolkit) => callTool(toolkit, { id: "c1", name: "readFile", params: { path: "a.txt" } }, session))
+
+const filesComplete = (session: OpenSession) => {
+  const call: Effect.Effect<unknown, unknown> = filesCall(session).pipe(Effect.provide(Layer.merge(fileHandlers, inMemoryFiles())))
+  return call
+}
+
+const filesWithoutTheWorkspace = (session: OpenSession) => {
+  // @ts-expect-error the file tools declare `Files`: nothing here provides it
+  const call: Effect.Effect<unknown, unknown> = filesCall(session).pipe(Effect.provide(fileHandlers))
+  return call
+}
+
+/*
  * A model call under a plan (`planned`) needs the model of the plan's steps, not of the program: a plan whose step
  * provides something else leaves the call needing a model, and a program that runs it with none does not compile.
  * What else the call needs stays in its type, and its failures gain `AnswerCut`.
@@ -276,6 +294,11 @@ describe("a stack of layers", () => {
   test("type-level: what a tool declares is held where its handler is written, where it is called by hand and where callTool runs it", () => {
     expect([withApproval, withoutApproval, undeclared, byHand, byHandInItsTurn, widened, named, mixed, none]).toHaveLength(9)
     expect([needsApproval, needsNothing, widenedIsAny, namedIsAny, mixedIsAny]).toEqual([true, true, true, true, true])
+  })
+
+  test("type-level: a program that calls the file tools provides the workspace, and nothing else: they never ask", () => {
+    expect([filesComplete, filesWithoutTheWorkspace]).toHaveLength(2)
+    expect(filesNeeds).toBe(true)
   })
 
   test("type-level: a program that calls the tools that remember provides the sessions they write through", () => {

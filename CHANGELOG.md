@@ -251,6 +251,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     as the later call's, and now reads it as the first's: the two pair
     through one function. The memory kit's `pairs` check holds a memory
     to the case, and to which call is sent beside the result.
+  - A workspace (`docs/adr/0017-a-workspace-is-the-world-the-agent-acts-on.md`,
+    `docs/kernel.md`, "A workspace"): files are the world an agent acts
+    on, reached only by tools through a new contract, `Files` (`read`,
+    `list` by folder, `write` with an optional `Expected`, a compare and
+    set that fails with `FileChanged`), with its kit, `filesConformance`,
+    and a workspace in memory, `inMemoryFiles`. Four tools reach it,
+    `readFile` (a page of at most 4,000 characters, sent whole),
+    `listFiles` (at most 200 paths), `writeFile` (a text of more than
+    4,000 characters refused, `append` for more) and `editFile` (`find` there once, replaced
+    against the text read), in `fileTools` with `fileHandlers`; a program
+    provides `Files` alone. A path is a `FilePath`, which cannot leave the
+    workspace (`workspacePath`). The tools never ask: permission is the
+    app's, a `Files` that declines (`FilesRefused`), `approveIn` in its
+    loop, or a judge over the person's `Approval`. A write is said live
+    (`plugin.files.written`). No part that builds the agent's state or a
+    prompt reads a file, and tests hold it.
   - Branches (`docs/adr/0016-a-branch-is-a-copy-cut-at-a-closed-turn.md`,
     `docs/kernel.md`, "Branches"): `Sessions.fork(id, { through? })`
     continues a conversation from the end of an earlier closed turn and
