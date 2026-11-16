@@ -34,6 +34,8 @@ A trial on a model in your browser is slow: the run is one trial at a time, up t
 
 With Qwen2.5 0.5B on the GPU, in one run on our machine, the sixty trials took about thirty seconds. Qwen read **12 of 20 passed (0.39 to 0.78)**, and failed the gate at 0.6. It called no tool in any of its twenty trials.
 
+With DeepSeek V4.1 Flash picked through the gateway, one press of Run evals ran 60 trials, 20 of them on DeepSeek: it passed 20 of 20 (0.84 to 1), as Echo did. That press cost $0.0053 of the key's credit: each trial on a gateway model sends one real request or more, so every press of **Run evals** costs about that much.
+
 </Step>
 
 <Step n={3} id="words" title="The words" focus="code" file="evals">

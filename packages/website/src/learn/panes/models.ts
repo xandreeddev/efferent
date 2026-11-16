@@ -1,4 +1,7 @@
 // The model bar: the current model, its status, and a panel to choose another.
+import { Option } from "effect"
+import { gatewayChoice } from "../models/gateway.ts"
+import { forgetGatewayKey, gatewayKey, listGatewayModels, pickedGatewayModel, pickGatewayModel, saveGatewayKey } from "../models/gateway-key.ts"
 import { catalogue, sizeText } from "../models/registry.ts"
 import type { Device, Entry } from "../models/registry.ts"
 import type { LoadProgress, ModelChoice } from "../models/types.ts"
@@ -44,13 +47,61 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
   document.addEventListener("click", (event) => { if (!panel.hidden && !root.contains(event.target as Node)) setOpen(false) })
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") setOpen(false) })
 
+  const cardOf = (id: string) => cards.get(id) ?? (id.startsWith("gateway:") ? cards.get("gateway") : undefined)
+  /** The gateway's card is in use when the model picked in it is the one loaded: picking another one turns it on. */
+  const activeHere = (id: string) => (id === "gateway" ? active === gatewayChoice(pickedGatewayModel()).id : id === active)
   const refresh = () => cards.forEach(({ entry, node, button }, id) => {
-    const isActive = id === active
+    const isActive = activeHere(id)
     node.toggleAttribute("data-active", isActive)
     button.disabled = isActive || busy
     const state = entry.availability.state
     button.textContent = isActive ? "In use" : state === "unavailable" ? "Try anyway" : state === "downloadable" ? "Download and use" : "Use"
   })
+
+  /**
+   * The gateway's key and model. The key goes in a password field and is kept for this tab only (gateway-key.ts); the
+   * models are the gateway's own list of language models that call tools, read when the search is first used.
+   */
+  const gatewayForm = (card: HTMLElement): HTMLElement => {
+    const form = el("div", { class: "gateway", "data-gateway": "" })
+    const keyInput = el("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Your AI Gateway key", "aria-label": "Your AI Gateway key", "data-gateway-key": "" })
+    const save = el("button", { class: "btn btn-quiet", type: "button", "data-gateway-save": "" }, "Save key")
+    const forget = el("button", { class: "btn btn-quiet", type: "button", "data-gateway-forget": "" }, "Forget key")
+    const keyState = el("p", { class: "msg", "data-gateway-key-state": "" })
+    const showKey = () => {
+      const has = Option.isSome(gatewayKey())
+      keyState.textContent = has
+        ? "A key is kept for this tab only: closing the tab, or Forget key, removes it. Code you run in the editor runs in this same page and could read it, so use a key made for this page, with a small spending limit and an expiry."
+        : "No key yet. Make one in your Vercel dashboard (AI Gateway, API keys) with a small spending limit and an expiry, and paste it here. Code you run in the editor runs in this same page, and could read the key: use a key made for this page alone."
+      forget.hidden = !has
+    }
+    save.addEventListener("click", () => { saveGatewayKey(keyInput.value); keyInput.value = ""; showKey() })
+    forget.addEventListener("click", () => { forgetGatewayKey(); showKey() })
+    const search = el("input", { type: "search", placeholder: "Search the gateway's models", "aria-label": "Search the gateway's models", list: "gateway-models", value: pickedGatewayModel(), "data-gateway-model": "" })
+    const options = el("datalist", { id: "gateway-models" })
+    let listed = false
+    search.addEventListener("focus", () => {
+      if (listed) return
+      listed = true
+      listGatewayModels().then((ids) => { options.replaceChildren(...ids.map((id) => el("option", { value: id }))) }).catch((error: unknown) => {
+        keyState.textContent = error instanceof Error ? error.message : String(error)
+        listed = false
+      })
+    })
+    search.addEventListener("change", () => {
+      const model = search.value.trim()
+      if (model.length === 0) return
+      pickGatewayModel(model)
+      const title = card.querySelector("h3")
+      if (title) title.textContent = gatewayChoice(model).label
+      refresh()
+    })
+    const keyRow = el("div", { class: "row" })
+    keyRow.append(keyInput, save, forget)
+    form.append(keyRow, search, options, keyState)
+    showKey()
+    return form
+  }
 
   return {
     render: (device) => {
@@ -61,7 +112,7 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
       const adapter = device.gpu.adapter ? ` WebGPU: ${device.gpu.adapter}${device.gpu.f16 ? " (half precision)" : ""}.` : ""
       hint.textContent = gpuless
         ? "No GPU model or Chrome's built-in model can run on this browser as it is, so the CPU models are the ones that will run here. Open a card below to see how to fix the others."
-        : `Models run on your own machine. Nothing you type leaves your browser. Start small.${adapter}`
+        : `Models run on your own machine, and nothing you type leaves your browser, but the gateway's: it sends your messages to a hosted model, with your key. Start small.${adapter}`
       for (const entry of entries) {
         const { choice, availability } = entry
         const node = el("li", { class: "pg-model" })
@@ -70,6 +121,7 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
         node.append(head, el("p", {}, choice.blurb))
         let fix: HTMLDetailsElement | undefined
         if (availability.state === "unavailable") node.append(el("p", { class: "why" }, availability.reason))
+        else if (choice.kind === "gateway") node.append(gatewayForm(node))
         else if (choice.kind !== "echo") node.append(el("p", { class: "ok" }, "Works on this device."))
         if (entry.fix && availability.state === "unavailable") {
           fix = el("details", { class: "fix" })
@@ -81,9 +133,10 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
         const row = el("div", { class: "row" })
         row.append(button)
         node.append(row, note)
-        button.addEventListener("click", () => hooks.choose(choice))
+        // The gateway's card loads the model picked in it when the button is pressed, not the one it was drawn with.
+        button.addEventListener("click", () => hooks.choose(choice.kind === "gateway" ? gatewayChoice(pickedGatewayModel()) : choice))
         list.append(node)
-        cards.set(choice.id, { entry, node, button, note, ...(fix ? { fix } : {}) })
+        cards.set(choice.kind === "gateway" ? "gateway" : choice.id, { entry, node, button, note, ...(fix ? { fix } : {}) })
       }
       refresh()
     },
@@ -96,9 +149,9 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
       barFill.style.width = `${Math.round(progress.fraction * 100)}%`
       barText.textContent = progress.text
     },
-    note: (id, text) => { const card = cards.get(id); if (card) card.note.textContent = text },
+    note: (id, text) => { const card = cardOf(id); if (card) card.note.textContent = text },
     fail: (id, text) => {
-      const card = cards.get(id)
+      const card = cardOf(id)
       if (!card) return
       card.note.textContent = text
       if (card.fix) card.fix.open = true

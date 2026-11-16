@@ -33,6 +33,8 @@ The plan has a second model, the **spare**: a second Echo, which the page gives 
 
 With Qwen2.5 0.5B picked, on the GPU, the first **Hello.** failed as failures.ts said, the plan waited its second, and Qwen answered on the second try ("Hello, how can I assist you today?"), about four seconds in all. The failed try never reached the model: the page made it. The next message was answered on the first try in under a second. With the `down` experiment of the last step the spare answered at once, and the answer's record named `echo-spare`; the message after it went back to Qwen, which answered "What is 2 + 3?" with "5", and its record named `qwen2.5-0.5b`. These failures were the page's. A failure of Qwen's own would be an **unknown error**, a failure of no known kind, which `retryable` does not try again. Before its **first word**, the first piece of text or call the answer shows, the call would go straight to the spare, and after it the answer would be cut.
 
+With DeepSeek V4.1 Flash picked through the gateway, "What is 2 + 2?" was sent. The starter failures.ts lists one failure worth another try, which the page makes before the model is asked: the Context tab shows **Attempt 1 failed** before the prompt. The second try reached DeepSeek, which called the calculator and answered "2 + 2 = 4." (tried once).
+
 </Step>
 
 <Step n={3} id="plan" title="A plan" focus="code" file="agent">

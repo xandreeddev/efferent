@@ -35,6 +35,8 @@ Echo reads the facts from the note the wrapper adds to a request, and from nowhe
 
 A real model reads the note as it reads any message. Qwen2.5 0.5B on the GPU was asked "What is my name?" as the first message of a new conversation, after Echo had stored the name. It answered "Your name is Ana." in six runs of six, two of them with the facts first, as an experiment of step 9 puts them: the fact reached it in the note. It called neither `rememberFact` nor `forgetFact` in any run, so it stored no fact and forgot none: the small models on your machine rarely call a tool, as lesson 2 showed. Its answers to other messages were poor wherever the note was. Told "I live in Lisbon." as a first message, it answered "The user's name is Ana" in two runs of two with the facts last, and in two more, with the facts first, something that was no answer. It never worked out 2 + 3.
 
+DeepSeek V4.1 Flash, through the gateway, stored "The user's name is Ana." as a fact with `rememberFact`. After Clear context, in a conversation that held only the new question, it answered "What is my name?" with "Your name is Ana.", from the fact (tried once).
+
 </Step>
 
 <Step n={3} id="tools" title="Two tools, merged" focus="code" file="tools">

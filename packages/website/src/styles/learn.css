@@ -2170,3 +2170,26 @@ body.app {
   transition: width 0.2s;
 }
 .pg-msg.view .vw-progress[data-done] { opacity: 0.6; }
+
+/* The gateway's card: a key kept for the tab, and the model to use. */
+.pg-model .gateway {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.4rem 0;
+}
+.pg-model .gateway .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.pg-model .gateway input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}

@@ -66,9 +66,15 @@ export const modelsFor = (picked: LoadedModel): ReadonlyArray<readonly [string, 
   return [
     [BASELINE, of(echo)],
     [NO_TOOLS, of(loadEcho(undefined, NO_TOOLS, "words"))],
-    ...(picked.choice.id === BASELINE ? [] : [[picked.choice.id, of(picked)] as const]),
+    ...(picked.choice.id === BASELINE ? [] : [[candidateName(picked.choice.id), of(picked)] as const]),
   ]
 }
+
+/**
+ * A model's id as a candidate's name. The eval package takes a name as one segment, with no "/" or "@", and a gateway
+ * model's id holds a "/" (`gateway:deepseek/deepseek-v4.1-flash-1017`), so each becomes ":".
+ */
+export const candidateName = (id: string): string => id.replace(/[/@]/g, ":")
 
 /** What runnable.ts imports, but the page's two names and what the other files made. */
 const runnableNames = {

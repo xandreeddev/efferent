@@ -32,6 +32,8 @@ These rules come before lesson 2's, so a path under `notes/` is no question abou
 
 A real model may not call the tools at all. On this machine, **Qwen2.5 0.5B** was sent **List the files.**, **Read notes/todo.md.** and **Write a file named hello.txt that says hello.**, twice, and called no tool either time, so no file changed. The first time it wrote the calls as text instead: `listFiles()`, `readFile()` with no path, and `writeFile("hello.txt", "hello\n")`. The second time it repeated each message as an instruction: "List the files of the workspace.", "Read the notes/todo.md.", "Write the file hello.txt." Each answer took under a second, the first about four. The rest of this lesson runs on Echo.
 
+DeepSeek V4.1 Flash, through the gateway, called `listFiles` for "List the files." and named the three files (tried once).
+
 </Step>
 
 <Step n={3} id="contract" title="A contract the host gives" focus="code" file="workspace">

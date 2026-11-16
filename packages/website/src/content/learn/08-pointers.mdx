@@ -34,6 +34,8 @@ Echo answers with the first sentence of what it was sent, and how much of the wh
 
 The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Look up tides." and then "Read more.", called neither `lookup` nor `readResult` in two runs: each time it answered "Its result comes back inside text.", a line of its tool instructions, garbled. Asked how high the tide is in the Bay of Fundy, it answered from what it knows, 13 metres in one run and 3 feet in the other. The article never reached its prompt. A model that does call `lookup` is sent the **preview**, the start of the article, and decides from it whether to read on.
 
+DeepSeek V4.1 Flash, through the gateway, called `lookup` for "Look up tides.", then, without being asked, `readResult` twice: from character 160, then from 2160 to the article's end at 2,347. Asked "Read more of it.", it said it had read the whole article (tried once).
+
 </Step>
 
 <Step n={3} id="memory" title="One function changed" focus="code" file="memory">

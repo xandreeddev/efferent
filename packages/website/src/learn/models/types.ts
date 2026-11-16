@@ -1,6 +1,6 @@
 import type { LanguageModel } from "effect/ai"
 
-export type ModelKind = "echo" | "chrome" | "webllm" | "cpu"
+export type ModelKind = "echo" | "chrome" | "webllm" | "cpu" | "gateway"
 
 export interface ModelChoice {
   readonly id: string
@@ -18,6 +18,8 @@ export interface ModelChoice {
   readonly cpu?: { readonly id: string; readonly dtype: string }
   /** WebLLM only: the model ids (half-precision needs the GPU's shader-f16 feature) and the memory each needs. */
   readonly webllm?: { readonly f16: string; readonly f32: string; readonly memoryF32MB: number }
+  /** Gateway only: the gateway's id of the model, and the providers asked first (others may answer when they are busy). */
+  readonly gateway?: { readonly model: string; readonly order: ReadonlyArray<string> }
 }
 
 export type Availability =

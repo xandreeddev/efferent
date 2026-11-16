@@ -514,6 +514,43 @@ check` (tsc over the learn code, the build, the link check) and
     run says so: the candidates it finished stay graded, and the one it
     cut short is not graded (the package grades a run's trials once they
     have all run).
+- **A hosted model through the Vercel AI Gateway**, with the learner's
+  own key (`models/gateway.ts`, the last card of the model list).
+  - The wire is pure and holds no key (`gateway-wire.ts`: `wireMessages`,
+    `wireTools`, `requestBody`, `readChunk`, `endReading`), so the kernel's
+    model providers can reuse it. Calls are native tool calls; a call is
+    handed on whole at the stream's end; the model's reasoning is left on
+    (off, DeepSeek dropped words mid-answer) and not shown; the usage gives `cacheRead`, so the
+    Context tab's usage line says what the provider read from its cache.
+  - The key is kept in memory and the tab's `sessionStorage`
+    (`efferent-gateway:key`, outside the lessons' prefix), never in
+    `localStorage`, an address, a trace or the journal, and is read at each
+    request, so Forget key stops the model in use. The address is fixed in
+    code. A reload returns to Echo; the model list (the gateway's language
+    models with tool use) loads when its search is first used.
+  - `DEFAULT_GATEWAY_MODEL` is `deepseek/deepseek-v4.1-flash-1017`, asked of
+    Baseten first (`order`; another provider answers when Baseten is busy).
+    Requests of one conversation share a `prompt_cache_key`, a hash of its
+    first two messages: opaque, and the same for each of its requests.
+  - Failures are `AiError`s in words. The gateway sends its error replies
+    (a wrong key, a key past its limit, an unknown model, a busy provider)
+    without CORS headers, so in a browser each is a failed fetch: one
+    failure, worth another try, whose words name all of them. Where the
+    status can be read (tests, a host outside a browser) `failureOf` maps
+    it: 401 and 403 (`AuthenticationError`) and 402 (`QuotaExhaustedError`)
+    are not worth another try, 429 (`RateLimitError`) and 5xx
+    (`InternalProviderError`) are, so lesson 14's plan retries them. A provider that fails part way, a connection
+    that ends early and an answer cut before any word each fail too, so an
+    empty or half answer is never stored as whole; an aborted request ends
+    nothing by itself (the page's Stop stops the program), and fails after
+    a second if nobody does.
+  - Lesson 13 names a gateway candidate without its "/", which the eval
+    package refuses in a name (`candidateName`).
+  - Tests use a fake `fetch` shaped like the gateway's own stream
+    (`gateway.test.ts`). A browser script talks to the gateway through a
+    Playwright route that adds the key, so the page and the kept Chrome
+    profile only ever hold a dummy, and replays recorded answers by a hash of
+    the request body.
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every
