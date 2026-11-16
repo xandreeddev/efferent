@@ -455,6 +455,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the order it lists them: two created in one millisecond are listed by a
   random id.
 
+- Docs site: Lesson 15, "A workspace", at `/learn/workspace`. The base
+  program with the kernel's four file tools merged into the toolkit its
+  loop offers and calls (`Toolkit.merge(tools, fileTools)`), `fileHandlers`
+  provided, and the workspace as a new file, `workspace.ts`, gives it:
+  one function of the page's files, a sandbox as it starts. The page's
+  workspace is one `Files` in memory, built once per runtime from the
+  lesson's seed (`Lesson.workspace`) and given to the program as a value
+  (`PageParts.files`), so the files outlive Rebuild, Stop, Clear context
+  and every experiment, and a reload starts them over. The Code pane has a
+  Files tab beside Context for such a lesson (`workspace-pane.ts`,
+  `panes/files.ts`): it reads the page's own `Files`, never the journal or
+  what workspace.ts wraps, again on `plugin.files.written` and at every
+  turn's end, and a person's Save is a compare and set against the text it
+  loaded, a draft kept when the agent writes the file. The chat's status
+  line says a write, and a write or an edit that wrote nothing
+  (`workspaceLine`), until the next turn starts. Echo learns the file tools ("list the files", "read
+  X", "read X from N", "write X: text", "in X replace A with B"), each
+  where its tool is offered and ahead of lesson 2's rules. Experiments
+  decline writes under `docs/` (`FilesRefused`), ask before a write keyed
+  by the file (`approveIn`), put a judge before the person (`Allowed` under
+  `scratch/`) and answer writes late, so Stop leaves a changed file and a
+  call with no result. Lesson 14's page links here. No published package
+  changes.
 - Docs site: Lesson 14, "Branches", at `/learn/branches`. Lesson 7's
   durable program, with a new file, `branch.ts`: `branchFrom(conversation,
   turn)`, one call of `Sessions.fork(conversation, { through })`. The page

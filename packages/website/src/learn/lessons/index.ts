@@ -13,10 +13,11 @@ import { skillsLesson } from "./skills/lesson.ts"
 import { subAgents } from "./sub-agents/lesson.ts"
 import { testYourAgent } from "./test-your-agent/lesson.ts"
 import { tools } from "./tools/lesson.ts"
+import { workspace } from "./workspace/lesson.ts"
 import { yourOwnPlugin } from "./your-own-plugin/lesson.ts"
 import { yourFirstAgent } from "./your-first-agent/lesson.ts"
 
-const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers, approvals, skillsLesson, remember, testYourAgent, modelFailures, branches]
+const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers, approvals, skillsLesson, remember, testYourAgent, modelFailures, branches, workspace]
 
 /** Every lesson's slug, in the order of the track. */
 export const lessonSlugs: ReadonlyArray<string> = lessons.map((lesson) => lesson.slug)

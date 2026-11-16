@@ -4,7 +4,7 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
-import { APPROVAL_REFUSED, catalogue, factsNote, FORGET_FACT, LOAD_SKILL, REMEMBER_FACT } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, catalogue, EDIT_FILE, factsNote, FORGET_FACT, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, WRITE_FILE } from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
@@ -315,6 +315,8 @@ const rememberedBy = (part: ResultPart): string | undefined =>
 const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string | undefined => {
   if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
+  const file = fileReadingOf(part)
+  if (file !== undefined) return file
   const loaded = loadedBy(part)
   if (loaded !== undefined) return `Loaded ${loaded}.`
   const remembered = rememberedBy(part)
@@ -336,6 +338,63 @@ const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string 
   return pointer === undefined
     ? `The article is ${part.result.length} characters long. It starts: "${firstSentence(part.result)}"`
     : `The article starts: "${firstSentence(pointer.preview)}" I was sent the first ${pointer.from} of ${pointer.total} characters. Say "read more" for the next part.`
+}
+
+/**
+ * What a file tool's result says in Echo's words (lesson 15), for a result that did not fail: a page `readFile`
+ * returned (the file, the characters it holds, its start, and the message that reads on when more follows), the
+ * paths `listFiles` gave (a few named, the rest counted), or what `writeFile` and `editFile` wrote. Nothing for
+ * any other result: a failure is answered as the tool's, in the kernel's words.
+ */
+const fileReadingOf = (part: ResultPart): string | undefined => {
+  const result: unknown = part.result
+  if (part.isFailure || typeof result !== "object" || result === null) return undefined
+  if (part.name === READ_FILE) {
+    const page = pageIn(result)
+    const path = "path" in result && typeof result.path === "string" ? result.path : undefined
+    if (page === undefined || path === undefined) return undefined
+    const more = page.to < page.total ? ` Say "read ${path} from ${page.to}" for the next part.` : ""
+    return `I read ${path}, characters ${page.from} to ${page.to} of ${page.total}: "${clip(page.text)}"${more}`
+  }
+  if (part.name === LIST_FILES && "paths" in result && Array.isArray(result.paths) && "more" in result && typeof result.more === "number") {
+    const paths = result.paths.map(String)
+    if (paths.length === 0) return "There are no files there."
+    const named = paths.length > 5 ? `${paths.slice(0, 3).join(", ")} and ${paths.length - 3} more` : paths.join(", ")
+    const left = result.more > 0 ? `, and ${result.more} more were left out` : ""
+    return `I see ${plural(paths.length, "file")}${left}: ${named}.`
+  }
+  if ((part.name === WRITE_FILE || part.name === EDIT_FILE) && "path" in result && typeof result.path === "string" && "characters" in result && typeof result.characters === "number") {
+    return `I ${part.name === WRITE_FILE ? "wrote" : "changed"} ${result.path}: it holds ${plural(result.characters, "character")} now.`
+  }
+  return undefined
+}
+
+/** "List the files", "list files in notes": `listFiles`, with the folder when one is named. */
+const LIST_ASKED = /^\s*list\s+(?:all\s+)?(?:the\s+)?files(?:\s+(?:in|of|under)\s+(\S+?))?[.!?]?\s*$/i
+/**
+ * "Read notes/todo.md", "read notes/long.md from 4000": `readFile`, from a character when one is named. A path holds
+ * a dot or a slash with more after it, so "read more." is none.
+ */
+const READ_ASKED = /^\s*read\s+(?=\S*[./]\S)(\S+?)(?:\s+from\s+(\d+))?[.!?]?\s*$/i
+/** "Write a.txt: hello": `writeFile`, with the text after the colon. */
+const WRITE_ASKED = /^\s*write\s+(\S+?)\s*:\s*([^]*?)\s*$/i
+/** "In notes/todo.md replace milk with eggs": `editFile`, the text to find and the text to put in its place. */
+const EDIT_ASKED = /^\s*in\s+(\S+?),?\s+replace\s+([^]+?)\s+with\s+([^]+?)[.!]?\s*$/i
+
+/**
+ * The file tool a message asks for (lesson 15), each where its tool is offered, by the four phrasings above, each
+ * anchored at the message's start. None for any other message.
+ */
+const fileCallFor = (asked: string, offered: ReadonlyArray<string>): EchoCall | undefined => {
+  const list = LIST_ASKED.exec(asked)
+  if (list !== null && offered.includes(LIST_FILES)) return { name: LIST_FILES, params: list[1] === undefined ? {} : { folder: list[1] } }
+  const read = READ_ASKED.exec(asked)
+  if (read !== null && offered.includes(READ_FILE)) return { name: READ_FILE, params: { path: read[1] ?? "", ...(read[2] === undefined ? {} : { from: Number(read[2]) }) } }
+  const write = WRITE_ASKED.exec(asked)
+  if (write !== null && offered.includes(WRITE_FILE)) return { name: WRITE_FILE, params: { path: write[1] ?? "", text: write[2] ?? "" } }
+  const edit = EDIT_ASKED.exec(asked)
+  if (edit !== null && offered.includes(EDIT_FILE)) return { name: EDIT_FILE, params: { path: edit[1] ?? "", find: edit[2] ?? "", replace: edit[3] ?? "" } }
+  return undefined
 }
 
 /** The parameters of the call a prompt holds under an id: the last one, since an id can repeat. */
@@ -423,6 +482,15 @@ const READ_LENGTH = 400
  * "…" That is fact f1."); a question that shares none is answered like any other message. `echoReply` reads past the
  * facts' note as it reads past the clock's: it is no message of the conversation, and no note that older turns were
  * condensed.
+ *
+ * Lesson 15's rules, for the workspace, each asleep where its tool is not offered, placed after lesson 11's rules and
+ * before every rule of lessons 2 to 9, each anchored at the start of the message. "List the files" (or "list files
+ * in notes") calls listFiles; "read X", where X holds a dot or a slash, calls readFile, and "read X from N" reads
+ * from character N; "write X: text" calls writeFile with the text after the colon; "in X replace A with B" calls
+ * editFile with A to find and B to put in its place. A path under notes/ is no question about notes, a number in a
+ * text is no sum, and "remember" in a text is no note. A page that was read is answered with the file, its range and
+ * its start, and the message that reads on when more follows; a list with its paths; a write or an edit with what
+ * the file holds now. A file tool that failed is answered as the tool's, in the kernel's words.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
@@ -488,6 +556,11 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     if (fact !== undefined && offered.includes(REMEMBER_FACT)) return [{ name: REMEMBER_FACT, params: { fact } }]
     // "What do you remember?": the tool that reads the facts, where a lesson offers one (lesson 11's recall-tool).
     if (ASKS_WHAT_IS_REMEMBERED.test(asked) && offered.includes("recallFacts")) return [{ name: "recallFacts", params: {} }]
+    // "List the files", "read notes/todo.md", "write a.txt: hello", "in notes/todo.md replace milk with eggs": the
+    // file tools (lesson 15), each where it is offered. They go before the rules of lessons 2 to 9: a path under
+    // notes/ is no question about notes, a number in a text is no sum, and "remember" in a text is no note.
+    const file = fileCallFor(asked, offered)
+    if (file !== undefined) return [file]
     // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
     const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
     if (table !== null && offered.includes("show")) return [showTable(table)]

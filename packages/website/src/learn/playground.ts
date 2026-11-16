@@ -1,9 +1,10 @@
 // The playground: wires the panes (model bar, code and context, chat) to the
 // lesson runtime, which runs the kernel in the page and the learner's
 // program over it. What it runs, and what the controls and experiments
-// change, comes from the lesson's definition.
+// change, comes from the lesson's definition. A lesson with a workspace
+// (lesson 15) has a Files tab too, over the page's own files.
 import { Option } from "effect"
-import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
+import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { attemptEvent, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
 import { attemptLine, branchPoints, drawsAnew, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
@@ -19,12 +20,16 @@ import type { Device } from "./models/registry.ts"
 import type { LoadedModel, ModelChoice } from "./models/types.ts"
 import { mountChat } from "./panes/chat.ts"
 import { mountEditor } from "./panes/editor.ts"
+import { mountFiles } from "./panes/files.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
 import type { BuildResult, LessonRuntime, Trace } from "./runtime.ts"
 import { viewBoard } from "./views.ts"
+import { workspaceLine, WorkspacePane } from "./workspace-pane.ts"
 
 const CONTEXT_TAB = "context"
+/** The Files tab of a lesson with a workspace (lesson 15). */
+const FILES_TAB = "files"
 
 const root = document.querySelector<HTMLElement>(".wb-bench")
 if (root) {
@@ -47,6 +52,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const statusBox = q("[data-status]")
   const editorHost = q("[data-editor]")
   const traceHost = q("[data-trace]")
+  /** The Files tab's body: only a lesson with a workspace has one. */
+  const filesHost = root.querySelector<HTMLElement>("[data-files]")
   const contextTab = q<HTMLButtonElement>(`[data-file="${CONTEXT_TAB}"]`)
   const rebuildButton = q<HTMLButtonElement>("[data-rebuild]")
   const formatButton = q<HTMLButtonElement>("[data-format]")
@@ -83,6 +90,14 @@ function boot(root: HTMLElement, lesson: Lesson) {
     // Lesson 14: "Branch after turn N" makes a branch and switches nothing; a chat of the row is shown.
     branch: (turn) => void branchAfter(turn),
     choose: (id) => void chooseChat(id),
+  })
+
+  // Lesson 15: the Files tab, over the page's workspace once the runtime has built it. It reads the page's own files.
+  let workspacePane: WorkspacePane | undefined
+  const filesPane = filesHost === null ? undefined : mountFiles(filesHost, {
+    choose: (path) => void workspacePane?.choose(path),
+    edit: (draft) => workspacePane?.edit(draft),
+    save: () => void workspacePane?.save(),
   })
 
   // ── status ──────────────────────────────────────────────────────────────
@@ -159,6 +174,11 @@ function boot(root: HTMLElement, lesson: Lesson) {
       trace.reset(runtime.conversation)
       runtime.onTrace(heard)
       state.runtime = runtime
+      Option.map(runtime.workspace, (files) => {
+        if (filesPane === undefined) return
+        workspacePane = new WorkspacePane(files, filesPane.render)
+        void workspacePane.refresh()
+      })
       return runtime
     })
     return state.runtimeReady
@@ -182,6 +202,15 @@ function boot(root: HTMLElement, lesson: Lesson) {
   let shownSession: string | undefined
   /** The program's own status line while a plan's attempts are said over it (lesson 13): put back when the turn ends. */
   let programStatus: string | undefined
+  /**
+   * The program's own status line while a workspace line is said over it (lesson 15): a write, or a write that failed.
+   * Put back when the next turn starts, so the line speaks of the turn that is running or just ended, never an older one.
+   */
+  let underWorkspace: string | undefined
+  const sayWorkspace = (text: string) => {
+    if (underWorkspace === undefined) underWorkspace = statusBox.textContent ?? ""
+    statusBox.textContent = text
+  }
   function heard(event: Trace) {
     // A conversation not shown before, or the one shown under a journal that does not go on from what the page took (the
     // store was changed, or forgot): the Context tab starts over on it, before it hears of its journal. A chat and its
@@ -194,6 +223,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     trace.hear(event)
     if (contextTab.getAttribute("aria-selected") !== "true" && !unseen) { unseen = true; contextTab.dataset.unseen = "" }
     window.dispatchEvent(new CustomEvent("learn:trace", { detail: event }))
+    // Lesson 15: the Files tab reads the workspace again after a write a tool said, and after every turn's end.
+    void workspacePane?.hear(event)
     const conversation = state.runtime?.conversation
     // The chat's rows first: a stored record of the conversation shown, a piece, a reply, a failure, the program's end.
     if (conversation !== undefined) show(hear(board, event, conversation))
@@ -202,6 +233,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
         const record = event.event
         if (record._tag === "Live" && record.session === conversation) {
           Option.map(dataOf(progressEvent, record), ({ id, done, total }) => views.progress(id, done, total))
+          // Lesson 15: a tool wrote a file, said on the status line.
+          Option.map(workspaceLine(record), sayWorkspace)
           // Lesson 13: an attempt of a model call failed, or a later one started or answered, said on the status line.
           Option.map(Option.flatMap(dataOf(attemptEvent, record), attemptLine), (text) => {
             // The program's own line is kept, and put back when the turn ends: an attempt's line says nothing after it.
@@ -210,6 +243,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
           })
         }
         if (record._tag !== "Stored" || record.session !== conversation) break
+        // Lesson 15: a write or an edit whose result failed, so nothing was written, said on the status line.
+        Option.map(workspaceLine(record), sayWorkspace)
+        if (record.name === turnStartedEvent.name && underWorkspace !== undefined) {
+          statusBox.textContent = underWorkspace
+          underWorkspace = undefined
+        }
         const { session: _session, _tag: _stored, ...kept } = record
         // A record the chat took already, read from the journal as the conversation was shown, is not taken twice.
         if (kept.seq <= (chatRecords.at(-1)?.seq ?? 0)) break
@@ -241,6 +280,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       case "Status":
         statusBox.textContent = event.text
         programStatus = undefined
+        underWorkspace = undefined
         break
       case "Ended":
         state.alive = false
@@ -366,7 +406,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   rebuildButton.addEventListener("click", () => void rebuild())
 
   const formatCode = async () => {
-    if (!traceHost.hidden) return
+    if (editorHost.hidden) return
     formatButton.disabled = true
     formatButton.textContent = "Formatting…"
     const before = editor.source(editor.file())
@@ -405,20 +445,26 @@ function boot(root: HTMLElement, lesson: Lesson) {
     }, 350)
   }
 
-  /** A file the lesson has, the Context tab, or the main file. */
-  const tabOf = (id: string | undefined): string => id === CONTEXT_TAB ? CONTEXT_TAB : lesson.files.find((file) => file.id === id)?.id ?? lesson.mainFile
+  /** A file the lesson has, the Context tab, the Files tab where the lesson has one, or the main file. */
+  const tabOf = (id: string | undefined): string =>
+    id === CONTEXT_TAB || (id === FILES_TAB && filesHost !== null) ? id : lesson.files.find((file) => file.id === id)?.id ?? lesson.mainFile
   root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showTab(tabOf(tab.dataset.file))))
   const showTab = (tab: string) => {
     const context = tab === CONTEXT_TAB
-    editorHost.hidden = context
+    const files = tab === FILES_TAB && filesHost !== null
+    const code = !context && !files
+    editorHost.hidden = !code
     traceHost.hidden = !context
-    formatButton.hidden = context
-    syntaxBox.hidden = context
-    if (context) { unseen = false; delete contextTab.dataset.unseen } else editor.showFile(tab)
+    if (filesHost !== null) filesHost.hidden = !files
+    formatButton.hidden = !code
+    syntaxBox.hidden = !code
+    if (context) { unseen = false; delete contextTab.dataset.unseen } else if (code) editor.showFile(tab)
+    // The Files tab shows the workspace as it is now.
+    if (files) void workspacePane?.refresh()
     const readOnly = lesson.files.find((file) => file.id === tab)?.readOnly === true
     formatButton.disabled = readOnly
     root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.file === tab)))
-    if (!context) checkSyntaxSoon()
+    if (code) checkSyntaxSoon()
   }
 
   // ── chat ────────────────────────────────────────────────────────────────
@@ -478,6 +524,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       trace.reset(runtime.conversation)
     }
     statusBox.textContent = ""
+    underWorkspace = undefined
     state.building = false
     showBuild(result, "a new, empty conversation; the old one stays in the journal store.")
     refresh()
@@ -517,19 +564,21 @@ function boot(root: HTMLElement, lesson: Lesson) {
 
   type Focus = { pane?: string | undefined; file?: string | undefined; unfold?: string | undefined; wide?: string | undefined }
   const applyFocus = (detail: Focus) => {
-    // A step about the context opens the Context tab in the Code pane.
+    // A step about the context opens the Context tab in the Code pane; one about the files (lesson 15), its Files tab.
     const context = detail.pane === "context" || detail.file === CONTEXT_TAB
-    const pane = context ? "code" : detail.pane
+    const files = filesHost !== null && (detail.pane === FILES_TAB || detail.file === FILES_TAB)
+    const pane = context || files ? "code" : detail.pane
     if (detail.wide === "true" || context) grid.dataset.wide = "true"; else delete grid.dataset.wide
     if (pane) { grid.dataset.focus = pane; root.dataset.focus = detail.pane ?? pane } else { delete grid.dataset.focus; delete root.dataset.focus }
     const file = tabOf(detail.file)
-    if (file !== CONTEXT_TAB) {
+    if (file !== CONTEXT_TAB && file !== FILES_TAB) {
       showTab(file)
       const open = new Set((detail.unfold ?? "").split(",").map((s) => s.trim()))
       const folded = lesson.files.find((entry) => entry.id === file)?.folded ?? []
       editor.foldOnly(folded.filter((section) => !open.has(section)))
     }
     if (context) showTab(CONTEXT_TAB)
+    if (files) showTab(FILES_TAB)
   }
   window.addEventListener("learn:focus", (event) => applyFocus((event as CustomEvent<Focus>).detail))
   const active = document.querySelector<HTMLElement>("[data-step][data-active]")

@@ -3,7 +3,8 @@
 // lesson's files, and the Context tab that shows what happened in each
 // turn), and the Chat. Behaviour lives in learn/playground.ts; markup
 // carries `data-*` hooks. What it shows of a lesson comes from the lesson's
-// definition.
+// definition. A lesson with a workspace (lesson 15) has one more tab beside
+// Context, Files: the page's files as they are, which a person can edit.
 import { Option } from "effect"
 import { lessonOf } from "../../learn/lessons/index.ts"
 
@@ -41,6 +42,11 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
           <button role="tab" type="button" class="tab-context" data-file="context" aria-selected="false" title="What happened in each turn: the journal, memory and the prompt">
             <span class="dot" aria-hidden="true"></span>Context
           </button>
+          {lesson.workspace !== undefined && (
+            <button role="tab" type="button" class="tab-files" data-file="files" aria-selected="false" title="The workspace's files as they are: the agent changes them with its tools, and you can change them here">
+              Files
+            </button>
+          )}
         </div>
         <span class="syntax" data-syntax aria-live="polite"></span>
         <div class="pane-actions" data-code-actions>
@@ -92,6 +98,22 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
           <ol class="tr-log" data-tr-log></ol>
         </details>
       </div>
+      {lesson.workspace !== undefined && (
+        <div class="pane-body wsp" data-files hidden>
+          <p class="wsp-sub">The page's workspace, as it is now: read again after each write and each turn. Edit a file and press Save to change it as someone other than the agent.</p>
+          <div class="wsp-cols">
+            <ul class="wsp-list" data-ws-list aria-label="Files of the workspace"></ul>
+            <div class="wsp-file">
+              <div class="wsp-head">
+                <strong data-ws-path>No file</strong>
+                <button class="btn btn-quiet" type="button" data-ws-save disabled title="Write your text to the file, unless it changed since this tab loaded it">Save</button>
+              </div>
+              <textarea data-ws-text spellcheck="false" aria-label="The file's text" disabled></textarea>
+              <p class="wsp-notice" data-ws-notice aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+      )}
       <div class="pane-foot" data-build data-state="idle" aria-live="polite">Your program has not run yet.</div>
     </section>
 

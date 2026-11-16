@@ -14,12 +14,15 @@
 // its question is traced, waits for `decide`, and is traced again when it
 // no longer waits, answered or dropped with its turn. A session other than
 // the chat's that a turn opens in (a helper's, the memory session) is named
-// with its header before that turn's first record is heard.
+// with its header before that turn's first record is heard. A lesson with a
+// workspace (lesson 15) has one `Files`, built once in the root scope from
+// its seed: the program is given it as a value, and the page's file pane
+// reads and writes the same one.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { Approval, CurrentTurn, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
+import { Approval, CurrentTurn, Files, inMemoryFiles, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
 import type { Decision, KeyValueStore } from "@xandreed/sdk/kernel"
 import { CHAT_OWNER, chatsOf } from "./chats.ts"
 import type { ChatEntry } from "./chats.ts"
@@ -280,6 +283,9 @@ export class LessonRuntime {
   /** The sessions this page has shown: one shown again after another says so (`Showing.again`). */
   private readonly shownBefore = new Set<string>()
 
+  /** The page's workspace (lesson 15), built once with the runtime: none for a lesson that declares none. */
+  private files: Option.Option<Context.Service.Shape<typeof Files>> = Option.none()
+
   private constructor(
     private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
@@ -308,6 +314,7 @@ export class LessonRuntime {
       const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
       const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
       const runtime = new LessonRuntime(lesson, root, base, queue, session, memoryStore(), memoryStore())
+      await runtime.openWorkspace()
       await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
       return runtime
     }
@@ -330,8 +337,25 @@ export class LessonRuntime {
     const { prefix } = lesson.durable
     const runtime = new LessonRuntime(lesson, root, base, queue, NO_CONVERSATION, prefixed(options.storage ?? memoryStore(), prefix), prefixed(options.tab ?? memoryStore(), prefix))
     made = Option.some(runtime)
+    await runtime.openWorkspace()
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
+  }
+
+  /** The lesson's workspace, in memory from its seed, built once in the root scope: it lasts as long as the runtime. */
+  private async openWorkspace(): Promise<void> {
+    const seed = this.lesson.workspace?.seed
+    if (seed === undefined) return
+    const built = await Effect.runPromise(Layer.buildWithScope(inMemoryFiles(seed), this.root))
+    this.files = Option.some(Context.get(built, Files))
+  }
+
+  /**
+   * The page's workspace (lesson 15), as it is: the one the program is given, never what the learner's workspace.ts
+   * wraps around it. The file pane reads and writes it, since a person is not the agent. None for a lesson without one.
+   */
+  get workspace(): Option.Option<Context.Service.Shape<typeof Files>> {
+    return this.files
   }
 
   /** Hear what the program does. Returns the unsubscribe. */
@@ -560,6 +584,8 @@ export class LessonRuntime {
       })).pipe(Layer.provide(layer)),
       storage: this.storage,
       chosen: this.chosenChat,
+      // The page's workspace, the same one on every build: what the program is given, and what the pane shows.
+      files: Option.map(this.files, (files) => Layer.succeed(Files, files)),
       // The learner's `resume` names the conversation; its journal is read before the chat is handed over, so the
       // page draws what is stored before the program takes a message.
       chatWith: (resume) => Layer.effect(Chat, Effect.gen(function* () {

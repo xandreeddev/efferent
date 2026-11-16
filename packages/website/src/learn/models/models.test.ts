@@ -1258,6 +1258,85 @@ describe("Echo's rules for facts (lesson 11)", () => {
   })
 })
 
+describe("Echo's rules for the workspace (lesson 15)", () => {
+  const files = ["readFile", "listFiles", "writeFile", "editFile"]
+  // Lesson 15's toolkit: lesson 2's three tools, and the four file tools.
+  const every = ["calculator", "remember", "recall", ...files]
+  const asked = (text: string, offered: ReadonlyArray<string> = every) => echoStep(Prompt.make([{ role: "user", content: text }]), offered)
+  const calling = (name: string, params: Record<string, unknown>) => ({ text: "Let me work that out.", calls: [{ name, params }] })
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+  /** A turn that asked for one file tool and read this result. */
+  const answered = (name: string, value: unknown, isFailure = false) => echoStep(Prompt.make([{ role: "user", content: "Do it." }, call("c1", name, {}), result("c1", name, value, isFailure)]), every)
+
+  test("\"list the files\" calls listFiles, and \"list the files in X\" names the folder", () => {
+    expect(asked("List the files.")).toEqual(calling("listFiles", {}))
+    expect(asked("list files")).toEqual(calling("listFiles", {}))
+    expect(asked("List all the files in notes.")).toEqual(calling("listFiles", { folder: "notes" }))
+    expect(asked("List the files under docs")).toEqual(calling("listFiles", { folder: "docs" }))
+  })
+
+  test("\"read X\" calls readFile with the path, \"read X from N\" from that character; a word with no dot or slash is no path", () => {
+    expect(asked("Read notes/todo.md.")).toEqual(calling("readFile", { path: "notes/todo.md" }))
+    expect(asked("read a.txt")).toEqual(calling("readFile", { path: "a.txt" }))
+    expect(asked("Read notes/long.md from 4000.")).toEqual(calling("readFile", { path: "notes/long.md", from: 4000 }))
+    expect(asked("Read ../secret.txt")).toEqual(calling("readFile", { path: "../secret.txt" }))
+    // "Read more" is lesson 8's, and "read me the notes" a question: neither names a path.
+    expect(asked("Read more.", files).calls).toEqual([])
+    expect(asked("Read me the notes.", files).calls).toEqual([])
+  })
+
+  test("\"write X: text\" calls writeFile with the text after the colon, as it was typed", () => {
+    expect(asked("Write a.txt: hello")).toEqual(calling("writeFile", { path: "a.txt", text: "hello" }))
+    expect(asked("write scratch/plan.md: Step one. Step two.")).toEqual(calling("writeFile", { path: "scratch/plan.md", text: "Step one. Step two." }))
+  })
+
+  test("\"in X replace A with B\" calls editFile with A to find and B to put in its place", () => {
+    expect(asked("In notes/todo.md replace milk with eggs.")).toEqual(calling("editFile", { path: "notes/todo.md", find: "milk", replace: "eggs" }))
+    expect(asked("in notes/todo.md, replace call Ana with call Ana at noon")).toEqual(calling("editFile", { path: "notes/todo.md", find: "call Ana", replace: "call Ana at noon" }))
+  })
+
+  test("the rules come before lesson 2's: a path under notes/ is no question about notes, a number no sum, \"remember\" in a text no note", () => {
+    // Each of these is another rule's without the file rules, or with them moved after it.
+    expect(asked("Read notes/todo.md.")).toEqual(calling("readFile", { path: "notes/todo.md" }))
+    expect(asked("Read notes/todo.md.", ["calculator", "remember", "recall"])).toEqual(calling("recall", {}))
+    expect(asked("Write sums.txt: 2 + 2")).toEqual(calling("writeFile", { path: "sums.txt", text: "2 + 2" }))
+    expect(asked("Write sums.txt: 2 + 2", ["calculator", "remember", "recall"])).toEqual(calling("calculator", { a: 2, op: "+", b: 2 }))
+    expect(asked("Write a.txt: remember the milk")).toEqual(calling("writeFile", { path: "a.txt", text: "remember the milk" }))
+    expect(asked("Write a.txt: remember the milk", ["calculator", "remember", "recall"])).toEqual(calling("remember", { note: "the milk" }))
+    expect(asked("In notes/todo.md replace 2 with 3")).toEqual(calling("editFile", { path: "notes/todo.md", find: "2", replace: "3" }))
+  })
+
+  test("each rule is asleep where its tool is not offered: the same messages call no file tool in lessons 2 to 14", () => {
+    for (const text of ["List the files.", "Read docs/guide.md.", "Write a.txt: hello", "In a.txt replace hello with bye"]) {
+      expect({ text, calls: asked(text, ["calculator", "remember", "recall"]).calls }).toEqual({ text, calls: [] })
+    }
+    // Each tool alone takes only its own phrasing.
+    expect(asked("Read a.txt", ["listFiles"]).calls).toEqual([])
+    expect(asked("Write a.txt: x", ["readFile", "editFile"]).calls).toEqual([])
+  })
+
+  test("a page read is answered with the file, its range and its start, and how to read on when more follows", () => {
+    expect(answered("readFile", { path: "notes/todo.md", text: "- buy milk\n- call Ana\n", from: 0, to: 22, total: 22 })).toEqual({ text: 'I read notes/todo.md, characters 0 to 22 of 22: "- buy milk - call Ana"', calls: [] })
+    expect(answered("readFile", { path: "notes/long.md", text: "x".repeat(4000), from: 0, to: 4000, total: 6000 }).text)
+      .toBe(`I read notes/long.md, characters 0 to 4000 of 6000: "${"x".repeat(59)}…" Say "read notes/long.md from 4000" for the next part.`)
+  })
+
+  test("a list is answered with its paths, a long one with three named and the rest counted; a write or an edit with what the file holds now", () => {
+    expect(answered("listFiles", { paths: ["docs/guide.md", "notes/todo.md"], more: 0 }).text).toBe("I see 2 files: docs/guide.md, notes/todo.md.")
+    expect(answered("listFiles", { paths: ["a", "b", "c", "d", "e", "f"], more: 4 }).text).toBe("I see 6 files, and 4 more were left out: a, b, c and 3 more.")
+    expect(answered("listFiles", { paths: [], more: 0 }).text).toBe("There are no files there.")
+    expect(answered("writeFile", { path: "a.txt", characters: 5 }).text).toBe("I wrote a.txt: it holds 5 characters now.")
+    expect(answered("editFile", { path: "notes/todo.md", characters: 1 }).text).toBe("I changed notes/todo.md: it holds 1 character now.")
+  })
+
+  test("a file tool that failed is answered as the tool's, in the words it gave", () => {
+    const missing = "The text to find is not in notes/todo.md, so nothing was changed. Call readFile and copy the text exactly, spaces and line breaks included."
+    expect(answered("editFile", missing, true).text).toBe(`The tool answered: editFile failed: ${JSON.stringify(missing)}.`)
+    expect(answered("writeFile", APPROVAL_REFUSED, true).text).toBe(`The tool answered: writeFile failed: ${JSON.stringify(APPROVAL_REFUSED)}.`)
+  })
+})
+
 describe("the ids of a page model's tool calls", () => {
   test("a minter counts from one after its own run, and two page loads never share an id", () => {
     const first = callIds("echo-call", "aaaaaa")
