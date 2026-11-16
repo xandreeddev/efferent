@@ -50,7 +50,7 @@ export const relevant = (facts: ReadonlyArray<Fact>, question: string, limit: nu
 
 /**
  * The question a context is built for: the text of the last `conversation.user.message` in the conversation's
- * journal, or no text when there is none. It is read from the journal by the record's name, never by a message's
+ * journal (never a report another session sent, ADR 0018), or no text when there is none. It is read from the journal by the record's name, never by a message's
  * role: a wrapper's note in a context is a user-role message, and so is one a plugin stores in the conversation
  * under a record of its own.
  *
@@ -58,7 +58,8 @@ export const relevant = (facts: ReadonlyArray<Fact>, question: string, limit: nu
  */
 export const questionOf = (journal: ReadonlyArray<StoredEvent>): string =>
   journal
-    .flatMap((event) => (Option.isSome(dataOf(userMessageEvent, event)) ? Option.toArray(messageOf(event)) : []))
+    // The person's messages only: a report another session sent (ADR 0018) names it in `from`, and is no question.
+    .flatMap((event) => (Option.exists(dataOf(userMessageEvent, event), (data) => data.from === undefined) ? Option.toArray(messageOf(event)) : []))
     .flatMap((message) => (message._tag === "User" ? [message.text] : []))
     .at(-1) ?? ""
 

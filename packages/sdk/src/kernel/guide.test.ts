@@ -155,6 +155,8 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/files.test.ts#path",
       "packages/sdk/src/kernel/files.test.ts#asking",
       "packages/sdk/src/kernel/files.test.ts#judge",
+      "packages/sdk/src/kernel/tasks.test.ts#helper",
+      "packages/sdk/src/kernel/tasks.test.ts#program",
       "packages/sdk/src/kernel/host-test.test.ts#program",
       "packages/sdk/src/kernel/host-test.test.ts#test",
       "packages/sdk/src/kernel/model-plans.test.ts#plan",

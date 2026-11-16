@@ -46,7 +46,7 @@ caught up.
 | Part | Where | What it is |
 |---|---|---|
 | Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `Tag`; `Message`; `StoredEvent` and `KernelEvent` |
-| The conversation's records | core | `conversation.user.message` and `conversation.assistant.message`, `userMessage(text)` and `assistantMessage(text, meta?)`, `CONVERSATION_VOCABULARY` |
+| The conversation's records | core | `conversation.user.message` and `conversation.assistant.message`, `userMessage(text, { from? })` (`from`: the session that sent it, when not the person, ADR 0018) and `assistantMessage(text, meta?)`, `CONVERSATION_VOCABULARY` |
 | Event definitions | core for its own, and the folder of each contract or plugin for theirs | a name, what the event is for (its tags), the schema of the data, stored or live, and for a stored one whether it may be skipped |
 | Contracts | core | `JournalStorage`, `Sessions`, each with a kit |
 | Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal |
@@ -69,6 +69,8 @@ caught up.
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
 | `inMemoryFiles(initial?)` | sdk, `plugins/files-in-memory` | a workspace in memory |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
+| The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
+| `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
 | `scriptedModel(script)` | sdk, `plugins/model-scripted` | a model that follows a script and calls no provider, for tests and examples |
 
 A file's suffix says its role, as everywhere in this repository: `.entity.ts`
@@ -1689,6 +1691,85 @@ file read back as written, `FileNotFound`, an overwrite, a write that
 expects, one refused with `FileChanged` that writes nothing, and a folder
 listed by code unit, never a name that only starts like it.
 
+## Background tasks: work that goes on while the conversation does
+
+A task is work a helper does in a session of its own, a child of the one
+that started it, while the conversation goes on (ADR 0018). The turn that
+starts it returns at once; when the work ends, its report comes back to the
+program, which answers it in a turn of the conversation's own, between the
+person's messages. The work is the host's, a `TaskRun`: a turn of a helper
+on its own model, as lesson 4's sub-agent is:
+
+<!-- pinned: packages/sdk/src/kernel/tasks.test.ts#helper -->
+
+```ts
+// The helper's work: a turn of its own in the task's session, on a model of its own. Its answer is the report's text.
+const helperOf = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  (session: OpenSession, task: string) => Effect.gen(function* () {
+    const helper = yield* LanguageModel.LanguageModel
+    yield* session.append(userMessage(task))
+    const answer = yield* modelAnswer(helper.streamText({ prompt: Prompt.make([{ role: "system", content: "Answer the task in one sentence." }, { role: "user", content: task }]) }), session)
+    return answer.text
+  }).pipe(Effect.provide(model))
+```
+
+`tasks(run)` is the plugin (`Tasks`: `start`, `cancel`), and `startTask`
+and `cancelTask` the tools (`taskTools`, `taskHandlers`). When a task ends,
+its report goes to `TaskReports`, which the host provides: into the one
+queue its loop takes the person's messages from, so the loop runs one turn
+for each, in the order they came:
+
+<!-- pinned: packages/sdk/src/kernel/tasks.test.ts#program -->
+
+```ts
+// What comes into the conversation: a message the person sent, or a task's report. One queue holds both, in the
+// order they came: the program takes one, runs one turn for it, then takes the next, so a report is never taken into
+// a turn that runs, and a message sent during a turn waits for it as before.
+type Input = { readonly _tag: "Message"; readonly text: string } | { readonly _tag: "Report"; readonly report: TaskReport }
+
+// Where a task's report goes when it ends: into that queue, behind what came before it.
+const reportsInto = (inputs: Queue.Queue<Input>) =>
+  Layer.succeed(TaskReports, TaskReports.of({ deliver: (report) => Effect.asVoid(Queue.offer(inputs, { _tag: "Report", report })) }))
+
+const serve = (conversation: SessionId, inputs: Queue.Queue<Input>, turns: number) => Effect.gen(function* () {
+  const all = yield* Sessions
+  const turn = agentTurn(SYSTEM)
+  for (let served = 0; served < turns; served++) {
+    const input = yield* Queue.take(inputs)
+    yield* Match.valueTags(input, {
+      Message: ({ text }) => all.turn(conversation, (session) => turn(session, userMessage(text))),
+      // A report goes to the session that started the task, as a user message whose `from` is the task's session.
+      Report: ({ report }) => all.turn(report.parent, (session) => turn(session, taskReport(report))),
+    })
+  }
+})
+```
+
+- **A report is a user message that says who sent it.** `taskReport(report)`
+  stores the report's words (a `hostNote` naming the task, the answer
+  `framed` in `<task-result>` as data, cut at 4,000 characters) as a
+  `conversation.user.message` whose `from` is the task's session. A
+  person's message has no `from`, so a chat, `turnsOf` (`MessageRead.from`)
+  and facts' `questionOf` tell the two apart.
+- **One queue, one turn at a time.** The loop takes one item between
+  turns, so a report never enters a turn that is running and a message sent
+  during a turn waits for it as before. A `Stream.merge` of two queues
+  reads ahead; a race of two takes rests on the loser having taken
+  nothing, which one queue does not need.
+- **Reports come in the order tasks end.** A failed task reports why, in
+  its own words or, for a defect, in fixed ones. A cancelled task, and every
+  task the plugin's close cuts short (Stop, a rebuild), reports nothing:
+  `cancelTask`'s result says it was cancelled.
+- **At most `running` tasks at once** (four when left out); the next is
+  refused in words. A task counts as running until its report is
+  delivered, so a delivery that waits keeps its slot. A session cancels
+  only the tasks it started.
+- **In the process only.** A task's work, and the reports a host's queue
+  still holds, die with the process; the task's session keeps what it stored, its turn left
+  open for `Sessions.recover`.
+- **Task ids start again** with the plugin (`t1`): a client keys a task by
+  its session.
+
 ## Testing a host
 
 A host's program names its model and its store by contract, so a test of it
@@ -1925,6 +2006,8 @@ fail on a careless plugin written for it.
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
+| `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |
+| `TaskReports` | none | the host's sink, one call that puts a report in its queue: the tests hold the plugin's side (a delivery that waits keeps its task's slot) |
 | planned calls | none | nothing a host implements: a plan is Effect's, and `planned` a function over a stream. The scripted model fails as its script says |
 
 ## What the first cut leaves out, and the order it returns

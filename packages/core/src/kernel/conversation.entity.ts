@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import type { StoredDefinition } from "./event.entity.js"
 import { coreStoredEvent } from "./event.entity.functions.js"
 import type { Vocabulary } from "./journal.entity.js"
+import { SessionId } from "./ids.entity.js"
 import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
 
 /*
@@ -14,11 +15,14 @@ import { turnEndedEvent, turnStartedEvent } from "./vocabulary.entity.js"
  */
 
 /**
- * The data of `conversation.user.message`: none. The message is the record's.
+ * The data of `conversation.user.message`: where the message came from, when another session sent it. A person's
+ * message has none; a background task's report (ADR 0018) names the task's session in `from`, so a part that must
+ * tell the person's words from a report (a chat, a fold of what the person asked) reads it here. The message is the
+ * record's. The key is optional, so a journal written before it reads the same.
  *
  * @public
  */
-export const UserMessageData = Schema.Struct({})
+export const UserMessageData = Schema.Struct({ from: Schema.optionalKey(SessionId) })
 export type UserMessageData = typeof UserMessageData.Type
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))

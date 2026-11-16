@@ -251,6 +251,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     as the later call's, and now reads it as the first's: the two pair
     through one function. The memory kit's `pairs` check holds a memory
     to the case, and to which call is sent beside the result.
+  - Background tasks (`docs/adr/0018-a-background-task-reports-in-a-turn-of-its-own.md`,
+    `docs/kernel.md`, "Background tasks"): a task is a child session and
+    one turn in it on the `tasks(run)` plugin's scope, through the host's
+    helper (`TaskRun`), so `startTask` returns at once. Its report goes to
+    `TaskReports`, which the host provides, into the one queue its loop
+    takes the person's messages from, and is stored by `taskReport` as a
+    user message naming the task's session. Core's
+    `conversation.user.message` gains an optional `from`, the session that
+    sent it when it was not the person (`userMessage(text, { from })`); the
+    format does not change. `turnsOf` gives a message's `from`, and facts'
+    `questionOf` passes over a report. `startTask` and `cancelTask`
+    (`taskTools`, `taskHandlers`); a cancelled task reports nothing; at
+    most four tasks run at once by default.
   - A workspace (`docs/adr/0017-a-workspace-is-the-world-the-agent-acts-on.md`,
     `docs/kernel.md`, "A workspace"): files are the world an agent acts
     on, reached only by tools through a new contract, `Files` (`read`,

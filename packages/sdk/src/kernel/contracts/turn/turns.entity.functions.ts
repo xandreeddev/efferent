@@ -1,6 +1,6 @@
 import { Option } from "effect"
 import { assistantMessageEvent, dataOf, messageOf, toolResultEvent, turnEndedEvent, turnStartedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { Message, Seq, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import type { Message, Seq, SessionId, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { callAt, pairsOf } from "../memory/memory.entity.functions.js"
 import type { CallRead, ResultRead, StepRead, TurnRead } from "./turns.entity.js"
 
@@ -11,6 +11,10 @@ import type { CallRead, ResultRead, StepRead, TurnRead } from "./turns.entity.js
  */
 const saidBy = (event: StoredEvent): Option.Option<Message> =>
   event.name === userMessageEvent.name || event.name === assistantMessageEvent.name || event.name === toolResultEvent.name ? messageOf(event) : Option.none()
+
+/** Who sent a message, when it was not the person: the session a user message's record names (ADR 0018). */
+const senderOf = (event: StoredEvent): { readonly from?: SessionId } =>
+  Option.match(Option.flatMap(dataOf(userMessageEvent, event), (data) => Option.fromNullishOr(data.from)), { onNone: () => ({}), onSome: (from) => ({ from }) })
 
 /** A record of the conversation with the message it bears. */
 interface Said {
@@ -64,7 +68,7 @@ const turnOf = (turn: TurnNumber, records: ReadonlyArray<StoredEvent>, results: 
     opened: place(records.find((event) => event.name === turnStartedEvent.name)),
     messages: records.flatMap((event) => Option.match(saidBy(event), {
       onNone: () => [],
-      onSome: (message) => (message._tag === "User" ? [{ seq: event.seq, text: message.text }] : []),
+      onSome: (message) => (message._tag === "User" ? [{ seq: event.seq, text: message.text, ...senderOf(event) }] : []),
     })),
     steps,
     answer: Option.flatMap(last, (step) => (step.calls.length === 0 ? Option.some(step.text) : Option.none())),
